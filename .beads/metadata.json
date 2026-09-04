@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "jarvis",
+  "project_id": "af9fbb18-8ac8-4f31-9846-88131045f1fd"
+}
