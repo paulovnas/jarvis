@@ -13,10 +13,9 @@ dist
 dist-ssr
 *.local
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+# Editor & workspace directories
+.vscode/
+.idea/
 .DS_Store
 *.suo
 *.ntvs*
@@ -24,8 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 
-# Beads / Dolt files (added by bd init)
+# Local AI tooling & assistants
+.beads/
+.claude/
+.codex/
 .dolt/
 *.db
 .beads-credential-key
-.beads/proxieddb/
