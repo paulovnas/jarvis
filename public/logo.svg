@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Background Gradient (One Dark Canvas) -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2c313a" />
+      <stop offset="35%" stop-color="#21252b" />
+      <stop offset="100%" stop-color="#181a1f" />
+    </linearGradient>
+
+    <!-- Radial Glow behind emblem -->
+    <radialGradient id="centerGlow" cx="50%" cy="48%" r="50%">
+      <stop offset="0%" stop-color="#61afef" stop-opacity="0.22" />
+      <stop offset="45%" stop-color="#56b6c2" stop-opacity="0.08" />
+      <stop offset="100%" stop-color="#21252b" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Chevron Neon Gradient -->
+    <linearGradient id="chevronGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#56b6c2" />
+      <stop offset="100%" stop-color="#61afef" />
+    </linearGradient>
+
+    <!-- J Monogram Gradient -->
+    <linearGradient id="jGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#61afef" />
+      <stop offset="55%" stop-color="#56b6c2" />
+      <stop offset="100%" stop-color="#98c379" />
+    </linearGradient>
+
+    <!-- Soft Drop Shadow for Icon Depth -->
+    <filter id="emblemShadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#000000" flood-opacity="0.55" />
+    </filter>
+
+    <!-- Sparkle Glow -->
+    <filter id="nodeGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Squircle Base Canvas -->
+  <rect
+    x="32"
+    y="32"
+    width="960"
+    height="960"
+    rx="224"
+    ry="224"
+    fill="url(#bgGrad)"
+    stroke="#3e4451"
+    stroke-width="6"
+  />
+
+  <!-- Center Ambient Radiance -->
+  <rect
+    x="32"
+    y="32"
+    width="960"
+    height="960"
+    rx="224"
+    ry="224"
+    fill="url(#centerGlow)"
+  />
+
+  <!-- Subtle Top Highlight Rim -->
+  <rect
+    x="38"
+    y="38"
+    width="948"
+    height="948"
+    rx="218"
+    ry="218"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="2"
+    stroke-opacity="0.1"
+  />
+
+  <!-- Main Jarvis Icon Symbol -->
+  <g filter="url(#emblemShadow)">
+    <!-- Terminal Code Prompt Chevron ">" -->
+    <path
+      d="M 270 380 L 390 490 L 270 600"
+      fill="none"
+      stroke="url(#chevronGrad)"
+      stroke-width="68"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+
+    <!-- Terminal Prompt Cursor Line "_" -->
+    <line
+      x1="440"
+      y1="600"
+      x2="520"
+      y2="600"
+      stroke="#98c379"
+      stroke-width="48"
+      stroke-linecap="round"
+    />
+
+    <!-- The "J" Backbone of the Agent -->
+    <path
+      d="M 660 270 L 660 590 C 660 720 570 790 440 790 C 350 790 280 740 240 680"
+      fill="none"
+      stroke="url(#jGrad)"
+      stroke-width="68"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+
+    <!-- AI Intelligence Core Indicator / Head Light -->
+    <g transform="translate(660, 270)" filter="url(#nodeGlow)">
+      <circle r="36" fill="#61afef" opacity="0.4" />
+      <circle r="22" fill="#98c379" />
+      <circle r="12" fill="#ffffff" />
+    </g>
+  </g>
+</svg>
