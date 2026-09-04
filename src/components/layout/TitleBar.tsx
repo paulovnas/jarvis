@@ -3,7 +3,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy, Minus, Square, X } from "lucide-react";
 import { JarvisLogo } from "@/components/JarvisLogo";
 
-export function TitleBar() {
+export type TitleBarContext = "Iniciando" | "Onboarding" | "Início";
+
+type TitleBarProps = {
+  context?: TitleBarContext;
+};
+
+export function TitleBar({ context = "Onboarding" }: TitleBarProps) {
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
@@ -68,7 +74,7 @@ export function TitleBar() {
         </span>
         <span className="text-[#3e4451]">•</span>
         <span className="text-[11px] text-muted-foreground/80 truncate">
-          Onboarding
+          {context}
         </span>
       </div>
 

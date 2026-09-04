@@ -5,11 +5,20 @@ import { TitleBar } from "./TitleBar";
 
 describe("TitleBar Component", () => {
   it("renderiza branding do Jarvis e indicador de contexto", () => {
-    render(<TitleBar />);
+    render(<TitleBar context="Onboarding" />);
 
     expect(screen.getByText("Jarvis")).toBeInTheDocument();
     expect(screen.getByText("Onboarding")).toBeInTheDocument();
   });
+
+  it.each(["Iniciando", "Onboarding", "Início"] as const)(
+    "renderiza o contexto %s",
+    (context) => {
+      render(<TitleBar context={context} />);
+
+      expect(screen.getByRole("banner")).toHaveTextContent(context);
+    },
+  );
 
   it("renderiza os botões de controle de janela com acessibilidade e cursor-pointer", () => {
     render(<TitleBar />);

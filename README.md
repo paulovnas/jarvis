@@ -58,7 +58,14 @@ jarvis/
 │   └── logo.svg             # Logo vetorial canônica do Jarvis (1024x1024)
 ├── src/
 │   ├── components/
+│   │   ├── chat/                 # Componentes do chat central (mensagens, tools, colapso de trabalho, composer)
 │   │   ├── layout/
+│   │   │   ├── Home.tsx          # Shell desktop de 3 colunas redimensionáveis
+│   │   │   ├── Home.test.tsx     # Testes unitários do shell Home
+│   │   │   ├── Inspector.tsx     # Sidebar lateral direita colapsável de contexto
+│   │   │   ├── Inspector.test.tsx # Testes unitários do Inspector
+│   │   │   ├── Sidebar.tsx       # Sidebar lateral esquerda (Workspace, projetos, conversas)
+│   │   │   ├── Sidebar.test.tsx  # Testes unitários da Sidebar esquerda
 │   │   │   ├── TitleBar.tsx      # Barra de título customizada com controles Tauri
 │   │   │   └── TitleBar.test.tsx # Testes unitários da barra de título
 │   │   ├── ui/                   # 25+ componentes instalados via shadcn/ui
@@ -110,6 +117,17 @@ Acesse em `http://localhost:1420`.
 ```bash
 bun run tauri dev
 ```
+### Persistência e migrações
+
+O runtime Rust mantém a base de dados em `~/.jarvis/jarvis.db`. O diretório `.jarvis` é criado somente quando necessário, e uma base existente é preservada.
+
+O schema fica em `src/db/schema.ts`. Para gerar uma nova migração Drizzle em `drizzle/`, execute:
+
+```bash
+bun run db:generate
+```
+
+Os arquivos de migração gerados formam um histórico imutável: nunca edite, renomeie ou remova uma migração já criada. Alterações de schema devem gerar uma nova migração versionada.
 
 ---
 
