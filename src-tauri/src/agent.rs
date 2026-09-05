@@ -1,5 +1,9 @@
+mod compaction;
+pub(crate) mod diffs;
 mod journal;
+pub(crate) mod maintenance;
 mod provider;
+pub(crate) mod queue;
 mod title;
 mod tools;
 pub(crate) mod web_search;
@@ -124,6 +128,8 @@ struct Turn {
     duration_ms: u64,
     user: String,
     options: TurnOptions,
+    #[serde(default)]
+    context_window: Option<u64>,
     status: TurnStatus,
     steps: Vec<Step>,
     error: Option<AgentError>,
@@ -137,10 +143,14 @@ struct StoredTurn {
 #[serde(rename_all = "camelCase")]
 pub struct ChatSnapshot {
     conversation_id: String,
+    compacting: bool,
     revision: u64,
     turns: Vec<Turn>,
     active_turn_id: Option<String>,
     pending_approval: Option<ToolCall>,
+    queued_messages: Vec<queue::QueuedMessage>,
+    context: compaction::ContextInfo,
+    file_changes: Vec<diffs::FileSummary>,
 }
 struct Approval {
     tool: ToolCall,
@@ -157,6 +167,9 @@ struct SessionData {
     revision: u64,
     storage_failed: bool,
     last_emit: std::time::Instant,
+    extras: journal::Extras,
+    compacting: bool,
+    manual_compaction: bool,
 }
 struct Session {
     id: String,
@@ -166,13 +179,36 @@ struct Session {
     emit: Arc<dyn Fn(ChatSnapshot) + Send + Sync>,
 }
 impl Session {
+    fn checkpoint(
+        &self,
+        data: &mut SessionData,
+        kind: &str,
+        value: &impl Serialize,
+    ) -> Result<(), AgentError> {
+        if data.storage_failed {
+            return Err(AgentError::storage());
+        }
+        journal::append_event(&self.journal, kind, value).inspect_err(|_| {
+            data.storage_failed = true;
+        })
+    }
+    #[cfg(test)]
     fn reserve(
         &self,
         content: String,
         options: TurnOptions,
     ) -> Result<watch::Receiver<bool>, AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
-        if data.active.is_some() {
+        self.reserve_locked(&mut data, content, options, None)
+    }
+    fn reserve_locked(
+        &self,
+        data: &mut SessionData,
+        content: String,
+        options: TurnOptions,
+        id: Option<String>,
+    ) -> Result<watch::Receiver<bool>, AgentError> {
+        if data.active.is_some() || data.compacting || data.manual_compaction {
             return Err(AgentError::new(
                 "already_running",
                 "Esta conversa já possui uma execução em andamento.",
@@ -181,7 +217,7 @@ impl Session {
         if data.storage_failed {
             return Err(AgentError::storage());
         }
-        let id = library::new_id()?;
+        let id = id.map(Ok).unwrap_or_else(library::new_id)?;
         let turn = StoredTurn {
             wire: vec![json!({"role":"user", "content":content})],
             turn: Turn {
@@ -190,6 +226,7 @@ impl Session {
                 duration_ms: 0,
                 user: content,
                 options,
+                context_window: None,
                 status: TurnStatus::Running,
                 steps: vec![],
                 error: None,
@@ -212,6 +249,7 @@ impl Session {
     fn snapshot_data(&self, data: &SessionData) -> ChatSnapshot {
         ChatSnapshot {
             conversation_id: self.id.clone(),
+            compacting: data.compacting || data.manual_compaction,
             revision: data.revision,
             turns: data.turns.iter().map(|item| item.turn.clone()).collect(),
             active_turn_id: data.active.as_ref().map(|active| active.id.clone()),
@@ -221,6 +259,9 @@ impl Session {
                     .as_ref()
                     .map(|approval| approval.tool.clone())
             }),
+            queued_messages: data.extras.queue.clone(),
+            context: compaction::info(data),
+            file_changes: diffs::summaries(data),
         }
     }
     fn snapshot(&self) -> Result<ChatSnapshot, AgentError> {
@@ -236,6 +277,9 @@ impl Session {
         change(&mut data);
         data.revision += 1;
         if durable {
+            if data.storage_failed {
+                return Err(AgentError::storage());
+            }
             if let Some(last) = data.turns.last() {
                 if journal::append(&self.journal, last).is_err() {
                     data.storage_failed = true;
@@ -256,11 +300,10 @@ impl Session {
     }
     fn input(&self) -> Result<Vec<Value>, AgentError> {
         let data = self.data.lock().map_err(|_| AgentError::internal())?;
-        let input: Vec<Value> = data
-            .turns
-            .iter()
-            .flat_map(|turn| turn.wire.iter().cloned())
-            .collect();
+        if data.storage_failed {
+            return Err(AgentError::storage());
+        }
+        let input = compaction::input(&data);
         if serde_json::to_vec(&input)
             .map_err(|_| AgentError::internal())?
             .len()
@@ -301,7 +344,10 @@ impl AgentState {
                 .iter()
                 .map(|session| session.data.lock().map_err(|_| internal()))
                 .collect::<Result<Vec<_>, _>>()?;
-            if locked.iter().any(|data| data.active.is_some()) {
+            if locked
+                .iter()
+                .any(|data| data.active.is_some() || data.compacting || data.manual_compaction)
+            {
                 return Err(library::LibraryError::new(
                     "active_conversation",
                     "Interrompa as conversas em execução antes de excluir este item.",
@@ -331,6 +377,7 @@ impl AgentState {
                 let data = session.data.lock().map_err(|_| AgentError::internal())?;
                 Ok(AgentActivity {
                     conversation_id: session.id.clone(),
+                    compacting: data.compacting || data.manual_compaction,
                     revision: data.revision,
                     active_turn_id: data.active.as_ref().map(|active| active.id.clone()),
                 })
@@ -349,7 +396,16 @@ impl AgentState {
             return Ok(session.clone());
         }
         let (path, root) = library::agent_location(state, home, id)?;
-        let turns = journal::load(&path)?;
+        let (turns, mut extras) = journal::load_all(&path)?;
+        let recorded_files: std::collections::HashSet<_> = extras.files.keys().cloned().collect();
+        diffs::load_legacy(&root, &turns, &mut extras.files);
+        for file in extras
+            .files
+            .values()
+            .filter(|file| !recorded_files.contains(&file.path))
+        {
+            journal::append_event(&path, "file_checkpoint", file)?;
+        }
         let handle = app.clone();
         let session = Arc::new(Session {
             id: id.into(),
@@ -361,6 +417,9 @@ impl AgentState {
                 revision: 1,
                 storage_failed: false,
                 last_emit: std::time::Instant::now(),
+                extras,
+                compacting: false,
+                manual_compaction: false,
             }),
             emit: Arc::new(move |snapshot| {
                 let _ = handle.emit("agent:updated", snapshot);
@@ -399,6 +458,7 @@ async fn cancelled(signal: &mut watch::Receiver<bool>) {
 #[serde(rename_all = "camelCase")]
 pub struct AgentActivity {
     conversation_id: String,
+    compacting: bool,
     revision: u64,
     active_turn_id: Option<String>,
 }
@@ -458,30 +518,85 @@ pub async fn start_agent_turn(
         let session = agent.session(&app, &state, &home, &conversation_id)?;
         // Revalidate the project for every turn, including already loaded conversations.
         library::agent_location(&state, &home, &conversation_id)?;
-        let signal = session.reserve(content, options)?;
+        let signal = session.submit(content, options)?;
+        let signal = if signal.is_some() {
+            signal
+        } else {
+            session.reserve_next()?
+        };
         Ok::<_, AgentError>((session, signal))
     })
     .await
     .map_err(|_| AgentError::internal())??;
     let initial = session.snapshot()?;
     (session.emit)(initial.clone());
-    tauri::async_runtime::spawn(async move {
-        let result = run_turn(
-            &session,
-            &run_state,
-            &oauth,
-            &mcp,
-            &run_home,
-            signal.clone(),
-        )
-        .await;
-        let completed = result.is_ok();
-        finish(&session, result);
-        if completed {
-            generate_title(&session, &run_state, &oauth, &run_home, &run_app).await;
-        }
-    });
+    if let Some(signal) = signal {
+        spawn_run(session, run_state, oauth, mcp, run_home, run_app, signal);
+    }
     Ok(initial)
+}
+
+fn spawn_run(
+    session: Arc<Session>,
+    state: AppState,
+    oauth: OpenAiCodexState,
+    mcp: crate::mcp::McpState,
+    home: PathBuf,
+    app: tauri::AppHandle,
+    mut signal: watch::Receiver<bool>,
+) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let result = match library::agent_location(&state, &home, &session.id) {
+                Ok(_) => run_turn(&session, &state, &oauth, &mcp, &home, signal).await,
+                Err(error) => Err(error.into()),
+            };
+            let completed = result.is_ok();
+            finish(&session, result);
+            if !completed {
+                break;
+            }
+            match session.reserve_next() {
+                Ok(Some(next)) => {
+                    signal = next;
+                    if let Ok(snapshot) = session.snapshot() {
+                        (session.emit)(snapshot);
+                    }
+                }
+                _ => break,
+            }
+        }
+        generate_title(&session, &state, &oauth, &home, &app).await;
+    });
+}
+
+#[tauri::command]
+pub async fn resume_agent_queue(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
+    oauth: tauri::State<'_, OpenAiCodexState>,
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+) -> Result<ChatSnapshot, AgentError> {
+    let session = agent.existing(&conversation_id)?;
+    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    library::agent_location(&persistence, &home, &conversation_id)?;
+    let signal = session.reserve_next()?;
+    let snapshot = session.snapshot()?;
+    (session.emit)(snapshot.clone());
+    if let Some(signal) = signal {
+        let mcp = app.state::<crate::mcp::McpState>().inner().clone();
+        spawn_run(
+            session,
+            persistence.inner().clone(),
+            oauth.inner().clone(),
+            mcp,
+            home,
+            app,
+            signal,
+        );
+    }
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -594,7 +709,7 @@ async fn run_turn(
     let auth_home = home.to_path_buf();
     let auth_options = options.clone();
     let auth = tauri::async_runtime::spawn_blocking(move || {
-        auth_oauth.inference_credential(
+        auth_oauth.inference_model(
             &auth_state,
             &auth_home,
             &auth_options.account,
@@ -602,29 +717,25 @@ async fn run_turn(
             auth_options.reasoning.as_deref(),
         )
     });
-    let credential = tokio::select! {
+    let (credential, model) = tokio::select! {
         _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
         result = auth => result.map_err(|_| AgentError::internal())??,
     };
+    session.update(true, |data| {
+        data.turns.last_mut().unwrap().turn.context_window = model.context_window;
+    })?;
     let discovery_signal = signal.clone();
     let mut mcp_clients = tokio::select! {
         _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
         clients = crate::mcp::runtime::TurnClients::discover(mcp, state, home, &session.root, discovery_signal) => clients.map_err(|err| AgentError::new("mcp_error", &err.message))?,
     };
+    let mut overflow_retried = false;
     for _ in 0..32 {
         crate::persistence::require_enabled_account(state, home, &options.account)?;
         let step_started = std::time::Instant::now();
         if *signal.borrow() {
             return Err(AgentError::cancelled());
         }
-        session.update(false, |data| {
-            data.turns
-                .last_mut()
-                .unwrap()
-                .turn
-                .steps
-                .push(Step::default());
-        })?;
         let search_config = web_search::load(state, home)?;
         let search_enabled = search_config.account_alias.as_deref().is_some_and(|alias| {
             crate::persistence::require_enabled_account(state, home, alias).is_ok()
@@ -643,6 +754,25 @@ async fn run_turn(
         if search_enabled {
             definitions.push(web_search::definition());
         }
+        let overhead =
+            compaction::estimate(&json!({"instructions":instructions,"tools":definitions}));
+        compaction::ensure(
+            session,
+            &credential,
+            &options,
+            overhead,
+            false,
+            signal.clone(),
+        )
+        .await?;
+        session.update(false, |data| {
+            data.turns
+                .last_mut()
+                .unwrap()
+                .turn
+                .steps
+                .push(Step::default());
+        })?;
         let input = session.input()?;
         let response = provider::stream(
             &credential,
@@ -669,15 +799,46 @@ async fn run_turn(
                 })
             },
         )
-        .await?;
+        .await;
+        let response = match response {
+            Ok(response) => {
+                overflow_retried = false;
+                response
+            }
+            Err(error) if error.code == "context_overflow" && !overflow_retried => {
+                overflow_retried = true;
+                session.update(false, |data| {
+                    data.turns.last_mut().unwrap().turn.steps.pop();
+                })?;
+                compaction::ensure(
+                    session,
+                    &credential,
+                    &options,
+                    overhead,
+                    true,
+                    signal.clone(),
+                )
+                .await?;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         let calls = provider::tool_calls(&response.output)?;
-        let previous = session.input()?;
+        let previous: Vec<Value> = session
+            .data
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .turns
+            .iter()
+            .flat_map(|turn| turn.wire.clone())
+            .collect();
         if calls
             .iter()
             .any(|call| previous.iter().any(|item| item["call_id"] == call.id))
         {
             return Err(AgentError::new("duplicate_tool_call", "O provedor repetiu um identificador de ferramenta. A execução foi interrompida antes de repetir a ação."));
         }
+        let usage = response.usage.clone();
         session.update(true, |data| {
             let current = data.turns.last_mut().unwrap();
             let step = current.turn.steps.last_mut().unwrap();
@@ -688,6 +849,7 @@ async fn run_turn(
             step.tools = calls.clone();
             current.wire.extend(response.output);
         })?;
+        compaction::record_usage(session, usage.as_ref())?;
         if calls.is_empty() {
             return Ok(());
         }
@@ -728,7 +890,22 @@ async fn run_turn(
                 } else if tool.name == "web_search" {
                     web_search::execute(state, oauth, home, &tool.args, signal.clone()).await
                 } else {
-                    tools::execute(&session.root, &tool, options.mode, signal.clone()).await
+                    match tools::execute_with_revision(
+                        &session.root,
+                        &tool,
+                        options.mode,
+                        signal.clone(),
+                    )
+                    .await
+                    {
+                        Ok((output, revision)) => {
+                            if let Some(revision) = revision {
+                                diffs::record(session, revision)?;
+                            }
+                            Ok(output)
+                        }
+                        Err(error) => Err(error),
+                    }
                 }
             } else {
                 Err(AgentError::new(
@@ -775,6 +952,7 @@ fn finish(session: &Session, result: Result<(), AgentError>) {
             }
         }
         data.active = None;
+        data.compacting = false;
     });
     if update.is_err() {
         // Surface journal failure even if the final checkpoint could not be written.

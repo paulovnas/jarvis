@@ -16,6 +16,8 @@ pub(crate) struct ProviderModel {
     pub(crate) reasoning_levels: Vec<String>,
     #[serde(rename = "defaultReasoningLevel")]
     pub(crate) default_reasoning_level: Option<String>,
+    #[serde(default, rename = "contextWindow")]
+    pub(crate) context_window: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -625,12 +627,14 @@ mod tests {
                 ProviderModel {
                     id: "gpt-first".to_owned(),
                     name: "GPT First".to_owned(),
+                    context_window: None,
                     reasoning_levels: vec!["medium".to_owned()],
                     default_reasoning_level: None,
                 },
                 ProviderModel {
                     id: "gpt-later".to_owned(),
                     name: "GPT Later".to_owned(),
+                    context_window: None,
                     reasoning_levels: vec!["none".to_owned()],
                     default_reasoning_level: Some("none".to_owned()),
                 },
@@ -651,9 +655,27 @@ mod tests {
             serde_json::json!([{
                 "id": "model-one", "name": "model-one",
                 "reasoningLevels": ["low", "medium", "xhigh", "future"],
-                "defaultReasoningLevel": "medium"
+                "defaultReasoningLevel": "medium", "contextWindow": null
             }])
         );
+    }
+
+    #[test]
+    fn context_window_uses_only_a_positive_reported_integer() {
+        for (value, expected) in [
+            (serde_json::json!(128000), Some(128000)),
+            (serde_json::json!(0), None),
+            (serde_json::json!(-1), None),
+            (serde_json::json!(128.5), None),
+            (serde_json::json!("128000"), None),
+            (serde_json::Value::Null, None),
+        ] {
+            let models = normalize_codex_models(&serde_json::json!({"models":[{
+                "id":"model", "context_window":value
+            }]})).unwrap();
+            assert_eq!(models[0].context_window, expected);
+            assert_eq!(serde_json::to_value(&models[0]).unwrap()["contextWindow"], serde_json::json!(expected));
+        }
     }
 
     #[test]
@@ -1114,6 +1136,18 @@ impl OpenAiCodexState {
         model: &str,
         reasoning: Option<&str>,
     ) -> Result<CodexCredential, ProviderError> {
+        self.inference_model(state, home, alias, model, reasoning)
+            .map(|(credential, _)| credential)
+    }
+
+    pub(crate) fn inference_model(
+        &self,
+        state: &persistence::AppState,
+        home: &std::path::Path,
+        alias: &str,
+        model: &str,
+        reasoning: Option<&str>,
+    ) -> Result<(CodexCredential, ProviderModel), ProviderError> {
         let (credential, models) = self.credential_and_models(state, home, alias)?;
         let selected = models.iter().find(|item| item.id == model).ok_or_else(|| {
             ProviderError::new(
@@ -1132,7 +1166,7 @@ impl OpenAiCodexState {
                 "O nível de raciocínio não é aceito pelo modelo selecionado.",
             ));
         }
-        Ok(credential)
+        Ok((credential, selected.clone()))
     }
 
     pub(crate) fn credential_and_models(
@@ -2059,6 +2093,9 @@ fn normalize_codex_models(payload: &serde_json::Value) -> Option<Vec<ProviderMod
                 name: name.to_owned(),
                 reasoning_levels,
                 default_reasoning_level,
+                context_window: entry.get("context_window")
+                    .and_then(serde_json::Value::as_u64)
+                    .filter(|value| *value > 0 && *value <= 9_007_199_254_740_991),
             },
         ));
     }

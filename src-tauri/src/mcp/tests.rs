@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::json;
 use std::{
+    collections::HashMap,
     fs,
     path::PathBuf,
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
@@ -61,7 +62,6 @@ impl Fixture {
             mcp: McpState(Arc::new(Manager {
                 guard: Mutex::new(()),
                 secrets: secrets.clone(),
-                checks: Mutex::new(HashMap::new()),
             })),
             secrets,
         }
@@ -83,6 +83,48 @@ impl Drop for Fixture {
 }
 fn fixture_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/mcp/fixtures/server.mjs")
+}
+
+#[tokio::test]
+async fn discovery_names_survive_restart_and_stale_checks_do_not_overwrite_new_configuration() {
+    let f = Fixture::new();
+    let server = f.local("docs");
+    let (_sender, signal) = watch::channel(false);
+    let _clients = runtime::TurnClients::discover(&f.mcp, &f.state, &f.home, &f.home, signal)
+        .await
+        .unwrap();
+    let reopened = McpState(Arc::new(Manager {
+        guard: Mutex::new(()),
+        secrets: f.secrets.clone(),
+    }));
+    let check = reopened
+        .list(&AppState::default(), &f.home)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.id == server.id)
+        .unwrap()
+        .last_check
+        .unwrap();
+    assert_eq!(check.tool_count, check.tools.len());
+    assert_eq!(check.tools.len(), 2);
+    assert!(check
+        .tools
+        .iter()
+        .all(|name| !name.contains("fixture-sensitive-value")));
+    let raw = f.mcp.edit(&f.state, &f.home, &server.id).unwrap();
+    f.mcp
+        .save(&f.state, &f.home, Some(&server.id), &raw)
+        .unwrap();
+    f.mcp.record_check(&f.state, &f.home, &server, check);
+    assert!(f
+        .mcp
+        .list(&f.state, &f.home)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.id == server.id)
+        .unwrap()
+        .last_check
+        .is_none());
 }
 
 #[test]

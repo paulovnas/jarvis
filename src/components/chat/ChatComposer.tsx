@@ -1,5 +1,5 @@
 import { useRef, useState, type KeyboardEvent } from "react";
-import { ArrowUp, Check, ChevronDown, Plus, Square } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, Plus, Square, ListOrdered, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -16,15 +16,21 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import type { ProviderModel } from "@/core/provider-accounts";
 import type { CollaborationMode } from "./types";
-import type { TurnOptions } from "@/core/chat";
+import type { QueuedMessage, TurnOptions } from "@/core/chat";
 
 interface ChatComposerProps {
   onSendMessage: (content: string, options: TurnOptions) => Promise<boolean>;
   onStop?: () => Promise<void>;
   running?: boolean;
+  compacting?: boolean;
   initialOptions?: TurnOptions;
   disabled?: boolean;
   modelGroups: ProviderModelGroup[];
+  draftKey?: string;
+  drafts?: Map<string, string>;
+  queuedMessages?: QueuedMessage[];
+  onRemoveQueued?: (id: string) => Promise<string | null>;
+  onResumeQueue?: () => Promise<void>;
 }
 
 const REASONING_LABELS: Record<string, string> = {
@@ -71,10 +77,38 @@ export function ChatComposer({
   modelGroups,
   disabled = false,
   running = false,
+  compacting = false,
   onStop,
   initialOptions,
+  draftKey,
+  drafts,
+  queuedMessages = [],
+  onRemoveQueued,
+  onResumeQueue,
 }: ChatComposerProps) {
-  const [text, setText] = useState("");
+  const [text, updateText] = useState(() => draftKey ? drafts?.get(draftKey) ?? "" : "");
+  const textRef = useRef(text);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const [removing, setRemoving] = useState<string[]>([]);
+  const removeLocks = useRef(new Set<string>());
+  const [resuming, setResuming] = useState(false);
+  const setText = (value: string) => {
+    textRef.current = value;
+    if (draftKey) { if (value) drafts?.set(draftKey, value); else drafts?.delete(draftKey); }
+    updateText(value);
+  };
+  const removeQueued = async (id: string) => {
+    if (!onRemoveQueued || removeLocks.current.has(id)) return;
+    removeLocks.current.add(id); setRemoving([...removeLocks.current]);
+    try {
+      const restored = await onRemoveQueued(id);
+      if (restored !== null) {
+        const current = draftKey && drafts ? drafts.get(draftKey) ?? "" : textRef.current;
+        setText(current ? `${current}\n\n${restored}` : restored);
+        textarea.current?.focus();
+      }
+    } finally { removeLocks.current.delete(id); setRemoving([...removeLocks.current]); }
+  };
   const [sending, setSending] = useState(false);
   const sendLock = useRef(false);
   const [selection, setSelection] = useState<{
@@ -86,14 +120,16 @@ export function ChatComposer({
 
   const handleSend = async () => {
     const trimmed = text.trim();
-    if (!trimmed || disabled || running || sendLock.current || !currentModelDef) return;
+    if (!trimmed || disabled || compacting || sendLock.current || !currentModelDef) return;
     const separator = currentModelDef.value.indexOf("/");
     if (separator < 1) return;
     sendLock.current = true;
     setSending(true);
     try {
-      const accepted = await onSendMessage(trimmed, { account: currentModelDef.value.slice(0, separator), model: currentModelDef.value.slice(separator + 1), reasoning, mode, approvalMode });
-      if (accepted) setText("");
+      const submitted = text;
+      const accepted = await onSendMessage(trimmed, running && initialOptions ? initialOptions : { account: currentModelDef.value.slice(0, separator), model: currentModelDef.value.slice(separator + 1), reasoning, mode, approvalMode });
+      const current = draftKey && drafts ? drafts.get(draftKey) ?? "" : textRef.current;
+      if (accepted && current === submitted) setText("");
     } finally { sendLock.current = false; setSending(false); }
   };
 
@@ -122,14 +158,24 @@ export function ChatComposer({
 
   return (
     <div className="w-full">
-      <div role="group" aria-label="Mensagem e opções de envio" data-working={running || undefined} className="chat-composer relative isolate w-full rounded-[22px] border border-[#3e4451] bg-[#21252b] shadow-2xl shadow-black/30 transition-all focus-within:border-[#61afef]/60 focus-within:ring-1 focus-within:ring-[#61afef]/30">
+      {queuedMessages.length > 0 && <section aria-label="Mensagens agendadas" className="mx-3 rounded-t-xl border border-b-0 border-border bg-card px-3 py-2">
+        <div className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground"><ListOrdered className="size-3.5" /><span>{running ? "Após a resposta atual" : "Fila pausada"} · {queuedMessages.length}</span>
+          {!running && <Button variant="ghost" size="sm" className="ml-auto h-6 cursor-pointer text-[11px]" disabled={resuming || compacting} onClick={() => { setResuming(true); void onResumeQueue?.().finally(() => setResuming(false)); }}>Continuar fila</Button>}
+        </div>
+        <div className="max-h-36 overflow-y-auto">{queuedMessages.map((message, index) => <div key={message.id} className="flex items-center gap-2 border-t border-border/50 py-1.5 text-xs">
+          <span className="text-muted-foreground tabular-nums">{index + 1}</span><p className="min-w-0 flex-1 truncate" title={message.content}>{message.content}</p>
+          <Button variant="ghost" size="icon" className="size-6 shrink-0 cursor-pointer text-muted-foreground" aria-label={`Retirar mensagem ${index + 1} e editar`} title="Cancelar envio e devolver ao campo de texto" disabled={compacting || removing.includes(message.id)} onClick={() => { void removeQueued(message.id); }}><X className="size-3.5" /></Button>
+        </div>)}</div>
+      </section>}
+      <div role="group" aria-label="Mensagem e opções de envio" aria-busy={compacting} data-working={running || compacting || undefined} className="chat-composer relative isolate w-full rounded-[22px] border border-[#3e4451] bg-[#21252b] shadow-2xl shadow-black/30 transition-all focus-within:border-[#61afef]/60 focus-within:ring-1 focus-within:ring-[#61afef]/30">
         {/* Textarea no topo com padding interno espaçoso longe das extremidades */}
         <div className="w-full">
           <Textarea
+            ref={textarea}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={disabled || sending || running || !currentModelDef}
+            disabled={disabled || compacting}
             placeholder="Pergunte ou dê uma instrução ao Jarvis (ex: 'refatore os testes do backend')..."
             className="min-h-[84px] w-full resize-none border-0 bg-transparent px-5 pt-4 pb-2 text-[14.5px] leading-relaxed text-[#e6e6e6] placeholder:text-[#7f848e] placeholder:leading-relaxed focus-visible:ring-0 focus-visible:outline-none"
           />
@@ -153,20 +199,17 @@ export function ChatComposer({
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}
           <div className="flex items-center gap-1 sm:gap-2">
             <DropdownMenu>
-              <DropdownMenuTrigger disabled={running || sending} aria-label="Selecionar autorização de ferramentas" className="flex h-7.5 cursor-pointer items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-accent">
+              <DropdownMenuTrigger disabled={running || sending || compacting} aria-label="Selecionar autorização de ferramentas" className="flex h-7.5 cursor-pointer items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-accent">
                 {approvalMode === "manual" ? "Manual" : "YOLO"}<ChevronDown className="size-3" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" side="top" className="max-w-80">
                 <DropdownMenuGroup>
-                  <DropdownMenuLabel>Autorização no modo Build</DropdownMenuLabel>
                   <DropdownMenuItem className="cursor-pointer" onClick={() => setApprovalMode("manual")}>
-                    Manual — confirmar edições e comandos {approvalMode === "manual" && <Check className="size-3" />}
+                    Manual {approvalMode === "manual" && <Check className="size-3" />}
                   </DropdownMenuItem>
                   <DropdownMenuItem className="cursor-pointer" onClick={() => setApprovalMode("yolo")}>
-                    YOLO — executar automaticamente {approvalMode === "yolo" && <Check className="size-3" />}
+                    YOLO {approvalMode === "yolo" && <Check className="size-3" />}
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel className="whitespace-normal text-xs font-normal text-muted-foreground">Comandos iniciam na pasta do projeto e usam as permissões do seu usuário no computador.</DropdownMenuLabel>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -174,7 +217,7 @@ export function ChatComposer({
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label="Selecionar modo de execução"
-                disabled={running || sending}
+                disabled={running || sending || compacting}
                 className="flex h-7.5 cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 text-xs font-medium text-[#abb2bf] shadow-none transition-colors hover:bg-[#2c313a] hover:text-[#e6e6e6] focus-visible:ring-1 focus-visible:ring-[#3e4451]"
               >
                 <span className="truncate">{MODE_LABELS[mode]}</span>
@@ -218,7 +261,7 @@ export function ChatComposer({
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label="Selecionar modelo de IA"
-                disabled={running || sending}
+                disabled={running || sending || compacting}
                 className="flex h-7.5 cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 text-xs font-medium text-[#abb2bf] shadow-none transition-colors hover:bg-[#2c313a] hover:text-[#e6e6e6] focus-visible:ring-1 focus-visible:ring-[#3e4451]"
               >
                 <span className="truncate">{displayModelLabel}</span>
@@ -321,12 +364,13 @@ export function ChatComposer({
             </DropdownMenu>
 
             {/* Botão redondo com seta pra cima no canto inferior direito */}
-            {running ? <Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button> : <Button
+            {running && !compacting && <Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button>}
+            <Button
               type="button"
               size="icon"
               onClick={() => { void handleSend(); }}
-              disabled={!text.trim() || disabled || sending || !currentModelDef}
-              aria-label="Enviar mensagem"
+              disabled={!text.trim() || disabled || compacting || sending || !currentModelDef}
+              aria-label={running ? "Agendar mensagem" : "Enviar mensagem"}
               className={`size-7.5 cursor-pointer rounded-full transition-all ${
                 text.trim()
                   ? "bg-[#61afef] text-[#1e2227] shadow-sm shadow-[#61afef]/30 hover:bg-[#61afef]/90 active:scale-95"
@@ -334,7 +378,7 @@ export function ChatComposer({
               }`}
             >
               <ArrowUp className="size-3.5 stroke-[2.5]" />
-            </Button>}
+            </Button>
           </div>
         </div>
       </div>

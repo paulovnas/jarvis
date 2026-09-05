@@ -29,7 +29,7 @@ fn options(approval_mode: ApprovalMode) -> TurnOptions {
         approval_mode,
     }
 }
-fn session(fixture: &Fixture) -> Arc<Session> {
+pub(super) fn session(fixture: &Fixture) -> Arc<Session> {
     let journal = fixture.root.join("session.jsonl");
     fs::write(&journal, "{}\n").unwrap();
     Arc::new(Session {
@@ -43,6 +43,9 @@ fn session(fixture: &Fixture) -> Arc<Session> {
             revision: 1,
             storage_failed: false,
             last_emit: std::time::Instant::now(),
+            extras: journal::Extras::default(),
+            compacting: false,
+            manual_compaction: false,
         }),
     })
 }
@@ -64,7 +67,7 @@ fn activity_tracks_loaded_sessions_without_exposing_history() {
     assert!(running[0].active_turn_id.is_some());
     let revision = running[0].revision;
     let public = serde_json::to_value(&running).unwrap();
-    assert_eq!(public[0].as_object().unwrap().len(), 3);
+    assert_eq!(public[0].as_object().unwrap().len(), 4);
     assert!(!public.to_string().contains("Private request"));
     finish(&session, Err(AgentError::cancelled()));
     let ended = state.activity().unwrap();
@@ -255,11 +258,15 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
             }),
             storage_failed: false,
             last_emit: std::time::Instant::now(),
+            extras: journal::Extras::default(),
+            compacting: false,
+            manual_compaction: false,
             turns: vec![StoredTurn {
                 wire: vec![json!({"encrypted_content":"private-replay"})],
                 turn: Turn {
                     id: "turn".into(),
                     user: "hello".into(),
+                    context_window: None,
                     created_at: 1,
                     duration_ms: 0,
                     options: TurnOptions {

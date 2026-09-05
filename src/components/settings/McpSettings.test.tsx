@@ -18,6 +18,7 @@ describe("McpSettings", () => {
     mocked.mockReset().mockImplementation(async (command) => {
       if (command === "list_mcp_servers") return [server];
       if (command === "get_mcp_config") return MCP_TEMPLATE;
+      if (command === "test_mcp_server") return { toolCount: 2, tools: ["resolve-library-id", "query-docs"], error: null };
       throw new Error("Unexpected command");
     });
   });
@@ -51,7 +52,10 @@ describe("McpSettings", () => {
     expect(mocked).toHaveBeenCalledWith("save_mcp_server", { id: server.id, config: configured });
     expect(screen.getByRole("button", { name: "Testar conexão" })).toBeEnabled();
     expect(screen.queryByDisplayValue(configured)).not.toBeInTheDocument();
-    expect(mocked).not.toHaveBeenCalledWith("test_mcp_server", expect.anything());
+    expect(mocked).toHaveBeenCalledWith("test_mcp_server", { id: server.id });
+    expect(await screen.findByText("resolve-library-id")).toBeVisible();
+    expect(screen.getByText("query-docs")).toBeVisible();
+    expect(screen.queryByText(/As ferramentas ficam disponíveis|configuração é preservada/)).not.toBeInTheDocument();
   });
 
   it("valida o JSON e mantém o editor aberto após falha de armazenamento", async () => {
@@ -90,8 +94,10 @@ describe("McpSettings", () => {
 
   it("pede confirmação antes da exclusão e mantém os dados ao cancelar", async () => {
     const user = userEvent.setup();
-    render(<McpSettings />);
+    const countChanged = vi.fn();
+    render(<McpSettings onCountChange={countChanged} />);
     await user.click(await screen.findByRole("button", { name: "Detalhes do MCP context7" }));
+    expect(countChanged).toHaveBeenLastCalledWith(1);
     await user.click(screen.getByRole("button", { name: "Excluir" }));
     let dialog = screen.getByRole("alertdialog");
     expect(within(dialog).getByText(/removidas definitivamente/)).toBeVisible();
@@ -103,17 +109,43 @@ describe("McpSettings", () => {
     mocked.mockResolvedValueOnce([]);
     await user.click(within(dialog).getByRole("button", { name: "Excluir MCP" }));
     expect(await screen.findByText(/Nenhum MCP cadastrado/)).toBeVisible();
+    expect(countChanged).toHaveBeenLastCalledWith(0);
     expect(mocked).toHaveBeenLastCalledWith("delete_mcp_server", { id: server.id });
   });
 
-  it("testa a conexão somente quando solicitado e mostra as ferramentas descobertas", async () => {
-    mocked.mockResolvedValueOnce([{ ...server, configured: true }]);
+  it("preserva ferramentas em cache e permite atualizar a descoberta", async () => {
+    mocked.mockResolvedValueOnce([{ ...server, configured: true, lastCheck: { toolCount: 1, tools: ["old-tool"], error: null } }]);
     const user = userEvent.setup();
     render(<McpSettings />);
     await user.click(await screen.findByRole("button", { name: "Detalhes do MCP context7" }));
-    mocked.mockResolvedValueOnce({ toolCount: 2, error: null });
+    expect(screen.getByText("old-tool")).toBeVisible();
+    expect(mocked).not.toHaveBeenCalledWith("test_mcp_server", expect.anything());
+    mocked.mockResolvedValueOnce({ toolCount: 2, tools: ["resolve-library-id", "query-docs"], error: null });
     await user.click(screen.getByRole("button", { name: "Testar conexão" }));
-    expect(await screen.findByText(/2 ferramentas na última verificação/)).toBeVisible();
+    expect(await screen.findByText(/2 ferramentas/)).toBeVisible();
+    expect(screen.getByText("query-docs")).toBeVisible();
+    expect(screen.queryByText("old-tool")).not.toBeInTheDocument();
     expect(mocked).toHaveBeenLastCalledWith("test_mcp_server", { id: server.id });
+  });
+
+  it("descobre MCPs existentes sem cache e ignora os desativados", async () => {
+    mocked.mockResolvedValueOnce([{ ...server, configured: true }, { ...server, id: "disabled", name: "disabled", configured: true, enabled: false }]);
+    render(<McpSettings />);
+    await waitFor(() => expect(mocked).toHaveBeenCalledWith("test_mcp_server", { id: server.id }));
+    expect(mocked).not.toHaveBeenCalledWith("test_mcp_server", { id: "disabled" });
+    expect(screen.queryByText(/No modo Manual/)).not.toBeInTheDocument();
+  });
+
+  it("mantém o MCP salvo quando a descoberta falha e mostra o erro no card", async () => {
+    const user = userEvent.setup(); render(<McpSettings />);
+    await user.click(await screen.findByRole("button", { name: "Detalhes do MCP context7" }));
+    await user.click(screen.getByRole("button", { name: "Editar" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Configuração JSON" }), { target: { value: MCP_TEMPLATE.replace("YOUR_API_KEY", "test-only-key") } });
+    mocked.mockResolvedValueOnce([{ ...server, revision: 1, configured: true }]);
+    mocked.mockResolvedValueOnce({ toolCount: 0, tools: [], error: "MCP indisponível" });
+    await user.click(screen.getByRole("button", { name: "Salvar MCP" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByRole("alert")).toHaveTextContent("MCP indisponível");
+    expect(screen.getByRole("button", { name: "Testar conexão" })).toBeEnabled();
   });
 });

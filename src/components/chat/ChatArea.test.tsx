@@ -27,6 +27,38 @@ describe("Persistent live conversation", () => {
       listeners.add(callback); return () => { listeners.delete(callback); };
     });
   });
+  it("submits during execution and removes queued messages through the native commands", async () => {
+    const user = userEvent.setup();
+    const turn = { ...savedTurn(), status: "running" as const };
+    const running = { ...emptyChat(), turns: [turn], activeTurnId: turn.id };
+    const queued = { id: "q1", content: "Depois rode os testes", options: turn.options };
+    call.mockImplementation(async command => {
+      if (command === "start_agent_turn") return { ...running, revision: 2, queuedMessages: [queued] };
+      if (command === "remove_queued_message") return { message: queued, snapshot: { ...running, revision: 3, queuedMessages: [] } };
+      return running;
+    });
+    render(<TestChat />); await screen.findByRole("textbox");
+    await user.type(screen.getByRole("textbox"), "Depois rode os testes{Enter}");
+    expect(await screen.findByRole("region", { name: "Mensagens agendadas" })).toHaveTextContent("Depois rode os testes");
+    await user.click(screen.getByRole("button", { name: "Retirar mensagem 1 e editar" }));
+    expect(call).toHaveBeenCalledWith("remove_queued_message", { conversationId: "c1", messageId: "q1" });
+    expect(screen.queryByRole("region", { name: "Mensagens agendadas" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toHaveValue("Depois rode os testes");
+  });
+
+  it("locks and restores typing during automatic compaction events", async () => {
+    const user = userEvent.setup(); render(<TestChat />);
+    await screen.findByRole("textbox");
+    await user.type(screen.getByRole("textbox"), "Rascunho preservado");
+    const context = { tokens: 900, limit: 1000, estimated: false, compacting: true, compactions: 0 };
+    await update({ ...emptyChat(), revision: 2, context });
+    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeDisabled();
+    await update({ ...emptyChat(), revision: 3, context: { ...context, tokens: 100, compacting: false, compactions: 1 } });
+    expect(screen.getByRole("textbox")).toHaveValue("Rascunho preservado");
+    expect(screen.getByRole("textbox")).toBeEnabled();
+  });
+
   it("starts without demo messages and opens a real selected conversation", async () => {
     const { rerender } = render(<TestChat library={emptyLibrary()} />);
     expect(screen.getByText("Seu próximo projeto começa aqui")).toBeInTheDocument();
@@ -121,7 +153,8 @@ describe("Persistent live conversation", () => {
     await user.type(screen.getByRole("textbox"), "Meu pedido"); await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
     await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
     expect(screen.getByRole("textbox")).toHaveValue("Meu pedido");
-    rerender(<TestChat connected={false} />); expect(screen.getByRole("textbox")).toBeDisabled();
+    rerender(<TestChat connected={false} />); expect(screen.getByRole("textbox")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeDisabled();
   });
   it("ignores old conversation loads and unrelated events after switching", async () => {
     let resolve!: (value: unknown) => void;

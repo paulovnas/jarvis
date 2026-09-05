@@ -164,6 +164,7 @@ fn search_always_requests_luna_even_when_other_models_are_available() {
     let catalog = ["gpt-5.5", "gpt-5.6-luna"].map(|id| ProviderModel {
         id: id.into(),
         name: id.into(),
+        context_window: None,
         reasoning_levels: vec![],
         default_reasoning_level: None,
     });
@@ -181,6 +182,7 @@ fn missing_luna_is_an_explicit_error_instead_of_selecting_another_model() {
     let catalog = [ProviderModel {
         id: "gpt-5.5".into(),
         name: "GPT-5.5".into(),
+        context_window: None,
         reasoning_levels: vec![],
         default_reasoning_level: None,
     }];

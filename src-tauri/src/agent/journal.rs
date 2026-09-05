@@ -1,4 +1,7 @@
-use super::{AgentError, StoredTurn, TurnStatus};
+use super::{
+    compaction::Checkpoint, diffs::FileRevision, queue::QueuedMessage, AgentError, StoredTurn,
+    TurnStatus,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -14,7 +17,14 @@ const MAX_RECORD: usize = 10 * 1024 * 1024;
 struct Record {
     r#type: String,
     version: u8,
-    data: StoredTurn,
+    data: serde_json::Value,
+}
+
+#[derive(Default)]
+pub(super) struct Extras {
+    pub queue: Vec<QueuedMessage>,
+    pub context: Option<Checkpoint>,
+    pub files: std::collections::BTreeMap<String, FileRevision>,
 }
 
 fn open(path: &Path, write: bool) -> Result<File, AgentError> {
@@ -34,10 +44,18 @@ fn open(path: &Path, write: bool) -> Result<File, AgentError> {
 }
 
 pub(super) fn append(path: &Path, turn: &StoredTurn) -> Result<(), AgentError> {
+    append_event(path, "turn_checkpoint", turn)
+}
+
+pub(super) fn append_event(
+    path: &Path,
+    kind: &str,
+    value: &impl Serialize,
+) -> Result<(), AgentError> {
     let mut bytes = serde_json::to_vec(&Record {
-        r#type: "turn_checkpoint".into(),
+        r#type: kind.into(),
         version: 1,
-        data: turn.clone(),
+        data: serde_json::to_value(value).map_err(|_| AgentError::storage())?,
     })
     .map_err(|_| AgentError::storage())?;
     bytes.push(b'\n');
@@ -57,7 +75,7 @@ pub(super) fn append(path: &Path, turn: &StoredTurn) -> Result<(), AgentError> {
         .map_err(|_| AgentError::storage())
 }
 
-pub(super) fn load(path: &Path) -> Result<Vec<StoredTurn>, AgentError> {
+pub(super) fn load_all(path: &Path) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
     let mut bytes = vec![];
     open(path, false)?
         .take(MAX_JOURNAL + 1)
@@ -67,6 +85,7 @@ pub(super) fn load(path: &Path) -> Result<Vec<StoredTurn>, AgentError> {
         return Err(AgentError::storage());
     }
     let mut turns: Vec<StoredTurn> = vec![];
+    let mut extras = Extras::default();
     let mut valid_end = 0;
     for (index, line) in bytes.split_inclusive(|byte| *byte == b'\n').enumerate() {
         if !line.ends_with(b"\n") {
@@ -85,19 +104,44 @@ pub(super) fn load(path: &Path) -> Result<Vec<StoredTurn>, AgentError> {
                 "O histórico contém um registro inválido. O arquivo original foi preservado.",
             )
         })?;
-        if record.r#type != "turn_checkpoint" || record.version != 1 {
+        if record.version != 1 {
             return Err(AgentError::storage());
         }
+        match record.r#type.as_str() {
+            "queue_checkpoint" => {
+                extras.queue =
+                    serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+                continue;
+            }
+            "context_checkpoint" => {
+                extras.context =
+                    Some(serde_json::from_value(record.data).map_err(|_| AgentError::storage())?);
+                continue;
+            }
+            "file_checkpoint" => {
+                let file: FileRevision =
+                    serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+                extras.files.insert(file.path.clone(), file);
+                continue;
+            }
+            "turn_checkpoint" => {}
+            _ => return Err(AgentError::storage()),
+        }
+        let turn: StoredTurn =
+            serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
         if turns
             .last()
-            .is_some_and(|last| last.turn.id == record.data.turn.id)
+            .is_some_and(|last| last.turn.id == turn.turn.id)
         {
-            *turns.last_mut().unwrap() = record.data;
+            *turns.last_mut().unwrap() = turn;
         } else {
-            if turns.iter().any(|turn| turn.turn.id == record.data.turn.id) {
+            if turns
+                .iter()
+                .any(|previous| previous.turn.id == turn.turn.id)
+            {
                 return Err(AgentError::storage());
             }
-            turns.push(record.data);
+            turns.push(turn);
         }
     }
     if valid_end < bytes.len() {
@@ -131,7 +175,20 @@ pub(super) fn load(path: &Path) -> Result<Vec<StoredTurn>, AgentError> {
             append(path, turn)?;
         }
     }
-    Ok(turns)
+    // A queued message and its turn share an ID. A crash between the durable
+    // turn reservation and the queue update must never replay the same message.
+    extras
+        .queue
+        .retain(|message| !turns.iter().any(|turn| turn.turn.id == message.id));
+    if let Some(context) = &extras.context {
+        context.validate(&turns)?;
+    }
+    Ok((turns, extras))
+}
+
+#[cfg(test)]
+fn load(path: &Path) -> Result<Vec<StoredTurn>, AgentError> {
+    load_all(path).map(|(turns, _)| turns)
 }
 
 pub(super) fn interrupt_tools(turn: &mut StoredTurn) {
@@ -164,6 +221,7 @@ mod tests {
                 created_at: 1,
                 duration_ms: 0,
                 user: "Read".into(),
+                context_window: Some(128_000),
                 options: TurnOptions {
                     account: "test".into(),
                     model: "model".into(),
@@ -204,10 +262,22 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].turn.status, TurnStatus::Interrupted);
         assert_eq!(loaded[0].turn.steps[0].text, "Checking");
+        assert_eq!(loaded[0].turn.context_window, Some(128_000));
         assert_eq!(loaded[0].wire[2]["call_id"], "call-1");
         let twice = load(&path).unwrap();
         assert_eq!(twice[0].wire.len(), 3);
     }
+    #[test]
+    fn legacy_turn_without_context_window_remains_readable() {
+        let mut value = serde_json::to_value(turn()).unwrap();
+        value["turn"]
+            .as_object_mut()
+            .unwrap()
+            .remove("contextWindow");
+        let stored: StoredTurn = serde_json::from_value(value).unwrap();
+        assert_eq!(stored.turn.context_window, None);
+    }
+
     #[test]
     fn incomplete_tail_is_backed_up_but_corrupt_complete_record_is_not_rewritten() {
         let fixture = Fixture::new();

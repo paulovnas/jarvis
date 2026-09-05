@@ -4,9 +4,8 @@ pub mod runtime;
 use crate::persistence::{AppState, PersistenceError};
 use config::Config;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     path::Path,
     sync::{Arc, Mutex},
 };
@@ -48,10 +47,11 @@ pub struct Server {
     pub revision: i64,
     pub last_check: Option<Check>,
 }
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Check {
     pub tool_count: usize,
+    pub tools: Vec<String>,
     pub error: Option<String>,
 }
 
@@ -109,7 +109,6 @@ impl Secrets for Keychain {
 struct Manager {
     guard: Mutex<()>,
     secrets: Arc<dyn Secrets>,
-    checks: Mutex<HashMap<String, (i64, Check)>>,
 }
 #[derive(Clone)]
 pub struct McpState(Arc<Manager>);
@@ -118,12 +117,11 @@ impl Default for McpState {
         Self(Arc::new(Manager {
             guard: Mutex::new(()),
             secrets: Arc::new(Keychain),
-            checks: Mutex::new(HashMap::new()),
         }))
     }
 }
 fn rows(connection: &Connection) -> Result<Vec<Server>, McpError> {
-    let mut statement = connection.prepare("SELECT id, name, kind, enabled, configured, revision FROM mcp_servers ORDER BY created_at, name")?;
+    let mut statement = connection.prepare("SELECT id, name, kind, enabled, configured, revision, last_check FROM mcp_servers ORDER BY created_at, name")?;
     let rows = statement.query_map([], |row| {
         Ok(Server {
             id: row.get(0)?,
@@ -132,7 +130,9 @@ fn rows(connection: &Connection) -> Result<Vec<Server>, McpError> {
             enabled: row.get(3)?,
             configured: row.get(4)?,
             revision: row.get(5)?,
-            last_check: None,
+            last_check: row
+                .get::<_, Option<String>>(6)?
+                .and_then(|raw| serde_json::from_str(&raw).ok()),
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -148,15 +148,7 @@ fn find(connection: &Connection, id: &str) -> Result<Server, McpError> {
 }
 impl McpState {
     pub fn list(&self, state: &AppState, home: &Path) -> Result<Vec<Server>, McpError> {
-        let mut servers = state.with_connection(home, |connection| rows(connection))?;
-        let checks = self.0.checks.lock().map_err(|_| storage_error())?;
-        for server in &mut servers {
-            server.last_check = checks
-                .get(&server.id)
-                .filter(|(revision, _)| *revision == server.revision)
-                .map(|(_, check)| check.clone());
-        }
-        Ok(servers)
+        state.with_connection(home, |connection| rows(connection))
     }
     fn config(&self, server: &Server) -> Result<Config, McpError> {
         let raw = if server.id == "builtin-context7" && server.revision == 0 {
@@ -198,7 +190,7 @@ impl McpState {
             // Versioned secrets make the committed DB revision the only active config.
             self.0.secrets.store(&key(&server), &config.named(&server.name))?;
             let update = (|| -> Result<(), McpError> {
-                transaction.execute("INSERT INTO mcp_servers (id, name, kind, enabled, configured, revision) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO UPDATE SET name=excluded.name, kind=excluded.kind, enabled=excluded.enabled, configured=excluded.configured, revision=excluded.revision", params![server.id, server.name, server.kind, server.enabled, server.configured, server.revision])?;
+                transaction.execute("INSERT INTO mcp_servers (id, name, kind, enabled, configured, revision) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO UPDATE SET name=excluded.name, kind=excluded.kind, enabled=excluded.enabled, configured=excluded.configured, revision=excluded.revision, last_check=NULL", params![server.id, server.name, server.kind, server.enabled, server.configured, server.revision])?;
                 transaction.commit()?;
                 Ok(())
             })();
@@ -268,9 +260,12 @@ impl McpState {
             match self.config(&server) {
                 Ok(config) => active.push((server, config)),
                 Err(err) => self.record_check(
+                    state,
+                    home,
                     &server,
                     Check {
                         tool_count: 0,
+                        tools: vec![],
                         error: Some(err.message),
                     },
                 ),
@@ -285,10 +280,17 @@ impl McpState {
                 current.enabled && current.configured && current.revision == server.revision
             })
     }
-    pub fn record_check(&self, server: &Server, check: Check) {
-        if let Ok(mut checks) = self.0.checks.lock() {
-            checks.insert(server.id.clone(), (server.revision, check));
-        }
+    pub fn record_check(&self, state: &AppState, home: &Path, server: &Server, check: Check) {
+        let Ok(raw) = serde_json::to_string(&check) else {
+            return;
+        };
+        let _ = state.with_connection(home, |connection| {
+            connection.execute(
+                "UPDATE mcp_servers SET last_check = ?3 WHERE id = ?1 AND revision = ?2",
+                params![server.id, server.revision, raw],
+            )?;
+            Ok::<_, McpError>(())
+        });
     }
 }
 

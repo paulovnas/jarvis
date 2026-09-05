@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const mcpCheckSchema = z.object({ toolCount: z.number().int().nonnegative(), error: z.string().nullable() });
+export const mcpCheckSchema = z.object({ toolCount: z.number().int().nonnegative(), tools: z.array(z.string()).default([]), error: z.string().nullable() });
 export const mcpServersSchema = z.array(z.object({
   id: z.string(), name: z.string(), kind: z.enum(["local", "remote"]),
   enabled: z.boolean(), configured: z.boolean(), revision: z.number().int(), lastCheck: mcpCheckSchema.nullable(),

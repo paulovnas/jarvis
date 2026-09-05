@@ -222,6 +222,53 @@ pub(super) async fn execute(
         .await
         .map_err(|_| AgentError::internal())?
 }
+
+pub(super) async fn execute_with_revision(
+    root: &Path,
+    tool: &ToolCall,
+    mode: Mode,
+    signal: watch::Receiver<bool>,
+) -> Result<(String, Option<super::diffs::FileRevision>), AgentError> {
+    if !matches!(tool.name.as_str(), "write" | "edit") {
+        return execute(root, tool, mode, signal)
+            .await
+            .map(|output| (output, None));
+    }
+    if mode == Mode::Plan {
+        return Err(error("O modo Plan permite apenas leitura."));
+    }
+    let root = root.to_path_buf();
+    let tool = tool.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if *signal.borrow() {
+            return Err(AgentError::cancelled());
+        }
+        let path = scoped(&root, argument(&tool.args, "path")?, tool.name == "write")?;
+        let before = match fs::symlink_metadata(&path) {
+            Ok(_) => Some(read_text(&path)?),
+            Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => return Err(error("Não foi possível ler o arquivo antes da alteração.")),
+        };
+        let output = file_tool(&root, &tool, &signal)?;
+        let after = read_text(&path)?;
+        let relative = path
+            .strip_prefix(&root)
+            .map_err(|_| error("Caminho fora do projeto."))?
+            .to_string_lossy()
+            .to_string();
+        Ok((
+            output,
+            Some(super::diffs::FileRevision::new(
+                relative,
+                before,
+                Some(after),
+                "conversation",
+            )),
+        ))
+    })
+    .await
+    .map_err(|_| AgentError::internal())?
+}
 fn file_tool(
     root: &Path,
     tool: &ToolCall,

@@ -34,9 +34,9 @@ describe("Home shell", () => {
     expect(screen.getByRole("complementary", { name: "Workspace" })).toBeInTheDocument();
     await screen.findByRole("heading", { name: "Primeira conversa" });
     expect(screen.getByRole("combobox", { name: "Selecionar workspace" })).toHaveTextContent("Pessoal");
-    expect(screen.getByRole("tab", { name: /projetos/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /conversas/i })).toBeInTheDocument();
-    expect(screen.getByText("Projeto selecionado")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Novo" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Detalhes" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Atividades" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("main", { name: "Conversa" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Primeira conversa" })).toBeInTheDocument();
     expect(screen.getByText("Arquivos alterados")).toBeInTheDocument();
@@ -72,7 +72,7 @@ describe("Home shell", () => {
     await user.keyboard("{Enter}");
 
     expect(
-      await screen.findByText("OpenAI Codex · openai-codex-pessoal"),
+      await screen.findByText("openai-codex-pessoal"),
     ).toBeInTheDocument();
     expect(screen.getAllByText("GPT-5.6 Luna").length).toBeGreaterThan(0);
     expect(screen.getByText("GPT-5.6 Sol")).toBeInTheDocument();
@@ -104,6 +104,7 @@ describe("Home shell", () => {
     render(<Home />);
     const selector = await screen.findByRole("button", { name: "Selecionar modelo de IA" });
     await user.click(screen.getByRole("button", { name: "Configurações" }));
+    await user.click(await screen.findByRole("tab", { name: /Provedores/ }));
     expect(await screen.findByText("Nenhuma conta conectada")).toBeInTheDocument();
 
     await act(async () => resolveInitial([{

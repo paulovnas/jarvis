@@ -54,9 +54,9 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, sa
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <div className="flex min-w-0 items-center gap-2">
               <CardTitle className="min-w-0 truncate" title={account.alias}>{account.alias}</CardTitle>
-              <Badge variant="secondary" className="shrink-0">
+              <Badge variant="outline" className={`shrink-0 ${!account.enabled ? "text-muted-foreground" : !account.modelsAvailable ? "border-[#e5c07b]/30 bg-[#e5c07b]/10 text-[#e5c07b]" : "border-[#98c379]/30 bg-[#98c379]/10 text-[#98c379]"}`}>
                 <CheckCircle2 aria-hidden="true" data-icon="inline-start" />
-                {account.enabled ? "Conectada" : "Desativada"}
+                {!account.enabled ? "Desativada" : account.modelsAvailable ? "Conectada" : "Indisponível"}
               </Badge>
             </div>
             <CardDescription id={summaryId}>
@@ -66,7 +66,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, sa
           <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
         </div>
       </CollapsibleTrigger>
-      <CollapsibleContent className="flex flex-col gap-3">
+      <CollapsibleContent className="flex flex-col gap-4 border-t border-border/70 pt-4">
         <CardContent className="flex flex-col gap-3 pb-1">
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
             <dt className="text-muted-foreground">E-mail</dt>

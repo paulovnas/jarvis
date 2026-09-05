@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -11,7 +11,7 @@ import { AssistantMessageTurn } from "./AssistantMessageTurn";
 import { UserMessageBubble } from "./UserMessageBubble";
 import { ToolApproval } from "./ToolApproval";
 
-function ConversationView({ context, modelGroups, chat }: { context: ConversationDetails; modelGroups: ProviderModelGroup[]; chat: ChatController }) {
+function ConversationView({ context, modelGroups, chat, drafts }: { context: ConversationDetails; modelGroups: ProviderModelGroup[]; chat: ChatController; drafts: Map<string, string> }) {
   const bottom = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const snapshot = chat.snapshot;
@@ -51,18 +51,19 @@ function ConversationView({ context, modelGroups, chat }: { context: Conversatio
     </ScrollArea>
     <footer className="max-h-[65%] overflow-auto px-5 pb-4 pt-2">
       {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.id} tool={snapshot.pendingApproval} projectPath={context.project.path} onAnswer={chat.approve} />}
-      <ChatComposer disabled={chat.pending} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} initialOptions={last?.options} />
+      <ChatComposer compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} initialOptions={last?.options} />
       {modelGroups.length === 0 && <p className="mt-2 text-center text-xs text-muted-foreground">Conecte uma conta em Configurações para enviar mensagens.</p>}
     </footer>
   </>;
 }
 
 export function ChatArea({ modelGroups = [], library, chat }: { modelGroups?: ProviderModelGroup[]; library: LibrarySnapshot | null; chat: ChatController }) {
+  const [drafts] = useState(() => new Map<string, string>());
   const id = library?.selection.conversationId;
   const project = library?.projects.find(item => item.id === library.selection.projectId);
   const workspace = library?.workspaces.find(item => item.id === project?.workspaceId);
   const conversation = library?.conversations.find(item => item.id === id);
   return <main aria-label="Conversa" className="flex h-full min-h-0 min-w-0 flex-col bg-background">
-    {id && project && workspace && conversation ? <ConversationView key={id} context={{ workspace, project, conversation }} modelGroups={modelGroups} chat={chat} /> : <Empty className="flex-1"><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>{project ? "Inicie uma conversa" : "Seu próximo projeto começa aqui"}</EmptyTitle><EmptyDescription>{project ? `Crie ou selecione uma conversa em ${project.name} pela barra lateral.` : "Selecione um projeto na barra lateral ou crie um workspace para organizar seu trabalho."}</EmptyDescription></EmptyHeader></Empty>}
+    {id && project && workspace && conversation ? <ConversationView key={id} drafts={drafts} context={{ workspace, project, conversation }} modelGroups={modelGroups} chat={chat} /> : <Empty className="flex-1"><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>{project ? "Inicie uma conversa" : "Seu próximo projeto começa aqui"}</EmptyTitle><EmptyDescription>{project ? `Crie ou selecione uma conversa em ${project.name} pela barra lateral.` : "Selecione um projeto na barra lateral ou crie um workspace para organizar seu trabalho."}</EmptyDescription></EmptyHeader></Empty>}
   </main>;
 }

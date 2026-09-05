@@ -100,9 +100,20 @@
   to { --chat-glow-angle: 360deg; }
 }
 
+.context-meter[data-compacting="true"] [data-slot="progress-track"] {
+  background: conic-gradient(from var(--chat-glow-angle, 0deg),
+    var(--color-onedark-blue), var(--color-onedark-cyan),
+    var(--color-onedark-green), var(--color-onedark-yellow),
+    var(--color-onedark-red), var(--color-onedark-purple), var(--color-onedark-blue));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-onedark-cyan) 55%, transparent);
+  animation: chat-glow-turn 5s linear infinite;
+}
+.context-meter[data-compacting="true"] [data-slot="progress-indicator"] { opacity: 0; }
+
 @media (prefers-reduced-motion: reduce) {
   .chat-composer[data-working="true"]::before,
   .chat-composer[data-working="true"]::after,
+  .context-meter[data-compacting="true"] [data-slot="progress-track"],
   [data-slot="spinner"] {
     animation: none;
   }

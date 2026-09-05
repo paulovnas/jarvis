@@ -1,112 +1,77 @@
-import { Folder, ListChecks, Files, Users } from "lucide-react";
+import type { ReactNode } from "react";
+import { Activity, ChevronRight, Folder, ListChecks, Files, Info, Users } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { LibrarySnapshot } from "@/core/library";
 import type { ChatSnapshot } from "@/core/chat";
+import type { ProviderAccount } from "@/core/provider-accounts";
+import { conversationContext } from "@/core/inspector";
+import { ChangedFiles } from "./ChangedFiles";
+import { ContextUsage } from "./ContextUsage";
 
-export function Inspector({ library, chat }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null }) {
+function ActivitySection({ title, icon, count, children }: { title: string; icon: ReactNode; count?: number; children: ReactNode }) {
+  return <Collapsible defaultOpen className="border-b border-border/60 py-2">
+    <CollapsibleTrigger render={<Button variant="ghost" />} className="group h-9 w-full cursor-pointer justify-start gap-2 px-2 text-xs">
+      {icon}<span>{title}</span>{count !== undefined && <Badge variant="secondary" className="px-1.5 text-[10px]">{count}</Badge>}<ChevronRight aria-hidden="true" className="ml-auto size-3 text-muted-foreground group-aria-expanded:rotate-90" />
+    </CollapsibleTrigger>
+    <CollapsibleContent className="px-2 pb-3 pt-2">{children}</CollapsibleContent>
+  </Collapsible>;
+}
+
+export function Inspector({ library, chat, accounts = [], onCompact, compacting = false, pending = false }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; compacting?: boolean; pending?: boolean }) {
   const selectedChat = chat?.conversationId === library?.selection.conversationId ? chat : null;
   const turns = selectedChat?.turns ?? [];
   const last = turns[turns.length - 1];
   const tools = turns.flatMap(turn => turn.steps.flatMap(step => step.tools));
-  const files = [...new Set(tools.filter(tool => tool.status === "completed" && ["write", "edit"].includes(tool.name)).map(tool => tool.args.path).filter((path): path is string => typeof path === "string"))];
-  const lastPlan = [...turns].reverse().find(turn => turn.options.mode === "plan" && turn.status === "completed");
-  const usage = last?.steps.reduce((total, step) => ({ input: total.input + (step.usage?.inputTokens ?? 0), output: total.output + (step.usage?.outputTokens ?? 0) }), { input: 0, output: 0 });
-  const workspace = library?.workspaces.find(
-    (item) => item.id === library.selection.workspaceId,
-  );
-  const project = library?.projects.find(
-    (item) => item.id === library.selection.projectId,
-  );
-  const conversation = library?.conversations.find(
-    (item) => item.id === library.selection.conversationId,
-  );
-  return (
-    <aside
-      aria-label="Inspector"
-      className="flex h-full min-h-0 flex-col border-l border-border bg-card"
-    >
-      <header className="border-b border-border px-4 py-4">
-        <h2 className="text-sm font-semibold">Contexto</h2>
-      </header>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-5 p-4">
+  const workspace = library?.workspaces.find(item => item.id === library.selection.workspaceId);
+  const project = library?.projects.find(item => item.id === library.selection.projectId);
+  const conversation = library?.conversations.find(item => item.id === library.selection.conversationId);
+  const files = selectedChat?.fileChanges ?? [];
+  const status = selectedChat?.pendingApproval ? "Aguardando autorização" : last ? ({ running: "Em andamento", completed: "Concluída", cancelled: "Interrompida", interrupted: "Interrompida ao encerrar", error: "Falhou" })[last.status] : null;
+  return <aside aria-label="Inspector" className="flex h-full min-h-0 flex-col border-l border-border bg-card">
+    <Tabs defaultValue="activities" className="min-h-0 flex-1 gap-0">
+      <TabsList variant="line" className="h-12 w-full shrink-0 justify-start gap-4 rounded-none border-b border-border px-4">
+        <TabsTrigger value="details" className="cursor-pointer gap-2 text-xs"><Info aria-hidden="true" className="size-3.5" />Detalhes</TabsTrigger>
+        <TabsTrigger value="activities" className="cursor-pointer gap-2 text-xs"><Activity aria-hidden="true" className="size-3.5" />Atividades</TabsTrigger>
+      </TabsList>
+      <TabsContent value="details" className="m-0 min-h-0 flex-1">
+        <ScrollArea className="h-full"><div className="space-y-6 p-4">
           <section aria-label="Seleção atual">
-            <h3 className="mb-3 flex items-center gap-2 text-sm font-medium">
-              <Folder className="size-4 text-primary" />
-              Projeto selecionado
-            </h3>
-            {workspace ? (
-              <dl className="space-y-3 text-xs">
-                <div>
-                  <dt className="text-muted-foreground">Workspace</dt>
-                  <dd className="mt-1 break-words">{workspace.name}</dd>
-                </div>
-                {project && (
-                  <>
-                    <div>
-                      <dt className="text-muted-foreground">Projeto</dt>
-                      <dd className="mt-1 break-words">{project.name}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">Pasta</dt>
-                      <dd className="mt-1 break-all font-mono">
-                        {project.path}
-                      </dd>
-                    </div>
-                  </>
-                )}
-                {conversation && (
-                  <div>
-                    <dt className="text-muted-foreground">Conversa</dt>
-                    <dd className="mt-1 break-words">{conversation.title}</dd>
-                  </div>
-                )}
-              </dl>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Nenhum workspace selecionado.
-              </p>
-            )}
+            <h3 className="mb-4 flex items-center gap-2 text-xs font-medium"><Folder aria-hidden="true" className="size-4 text-primary" />Projeto selecionado</h3>
+            {workspace ? <dl className="space-y-4 text-xs">
+              <div><dt className="text-muted-foreground">Workspace</dt><dd className="mt-1 break-words">{workspace.name}</dd></div>
+              {project && <><div><dt className="text-muted-foreground">Projeto</dt><dd className="mt-1 break-words">{project.name}</dd></div><div><dt className="text-muted-foreground">Pasta</dt><dd className="mt-1 break-all font-mono text-[11px]">{project.path}</dd></div></>}
+              {conversation && <div><dt className="text-muted-foreground">Conversa</dt><dd className="mt-1 break-words">{conversation.title}</dd></div>}
+            </dl> : <p className="text-xs text-muted-foreground">Nenhum workspace selecionado.</p>}
           </section>
-          <Separator />
-          {last && <section aria-label="Execução atual" className="space-y-2 text-xs">
-            <h3 className="text-sm font-medium">Execução</h3>
-            <p>{selectedChat?.pendingApproval ? "Aguardando autorização" : ({ running: "Em andamento", completed: "Concluída", cancelled: "Interrompida", interrupted: "Interrompida ao encerrar", error: "Falhou" })[last.status]}</p>
+          {last && <section aria-label="Execução atual" className="space-y-3 border-t border-border pt-4 text-xs">
+            <h3 className="font-medium">Última execução</h3>
+            <Badge variant="outline" className={last.status === "completed" ? "border-[#98c379]/30 bg-[#98c379]/10 text-[#98c379]" : last.status === "error" ? "border-destructive/30 text-destructive" : "border-[#e5c07b]/30 text-[#e5c07b]"}>{status}</Badge>
             <p className="break-all text-muted-foreground">{last.options.account} / {last.options.model}</p>
             <p>{last.options.mode === "plan" ? "Plan · Somente leitura" : `Build · ${last.options.approvalMode === "manual" ? "Manual" : "YOLO"}`}</p>
             {last.options.reasoning && <p>Raciocínio: {last.options.reasoning}</p>}
             {last.status !== "running" && <p>Duração: {(last.durationMs / 1000).toFixed(1)}s</p>}
-            {usage && last.steps.some(step => step.usage) && <p>Tokens informados: {usage.input.toLocaleString("pt-BR")} entrada · {usage.output.toLocaleString("pt-BR")} saída</p>}
           </section>}
-          <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <ListChecks className="size-4" />
-              Plano
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              {lastPlan ? "A última resposta no modo Plan está disponível no histórico da conversa." : "Nenhum plano nesta conversa."}
-            </p>
-          </section>
-          <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <Files className="size-4" />
-              Arquivos alterados
-            </h3>
-            {files.length ? <ul className="space-y-1 text-xs">{files.map(path => <li key={path} className="break-all font-mono">{path}</li>)}</ul> : <p className="text-xs text-muted-foreground">Nenhuma alteração registrada.</p>}
-            {tools.some(tool => tool.name === "bash") && <p className="mt-2 text-xs text-muted-foreground">Comandos podem ter alterado outros arquivos. Consulte suas saídas no histórico.</p>}
-          </section>
-          <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <Users className="size-4" />
-              Subagentes
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              Nenhum subagente em execução.
-            </p>
-          </section>
-        </div>
-      </ScrollArea>
-    </aside>
-  );
+        </div></ScrollArea>
+      </TabsContent>
+      <TabsContent value="activities" className="m-0 min-h-0 flex-1">
+        <ScrollArea className="h-full"><div key={selectedChat?.conversationId ?? "empty"} className="px-2">
+          <ActivitySection title="Plano" icon={<ListChecks aria-hidden="true" className="size-4 text-[#c678dd]" />}>
+            <p className="text-xs text-muted-foreground">Nenhum plano estruturado nesta conversa.</p>
+          </ActivitySection>
+          <ActivitySection title="Arquivos alterados" icon={<Files aria-hidden="true" className="size-4 text-primary" />} count={files.length}>
+            {files.length && selectedChat ? <ChangedFiles key={selectedChat.conversationId} files={files} conversationId={selectedChat.conversationId} /> : <p className="text-xs text-muted-foreground">Nenhuma alteração registrada.</p>}
+            {tools.some(tool => tool.name === "bash" || tool.name.startsWith("mcp_")) && <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">Alterações feitas pelo terminal ou por MCPs ainda não entram nesta lista.</p>}
+          </ActivitySection>
+          <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-[#e5c07b]" />}>
+            <p className="text-xs text-muted-foreground">Nenhum subagente em execução.</p>
+          </ActivitySection>
+        </div></ScrollArea>
+      </TabsContent>
+    </Tabs>
+    <ContextUsage key={selectedChat?.conversationId ?? "empty"} context={conversationContext(turns, accounts)} live={selectedChat?.context} onCompact={onCompact} compacting={compacting} disabled={!selectedChat || turns.length === 0 || !!selectedChat.activeTurnId || pending} />
+  </aside>;
 }

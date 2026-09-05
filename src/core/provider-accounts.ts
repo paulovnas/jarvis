@@ -3,6 +3,7 @@ export type ProviderModel = {
   name: string;
   reasoningLevels: string[];
   defaultReasoningLevel: string | null;
+  contextWindow?: number | null;
 };
 
 export type ProviderAccount = {
@@ -22,6 +23,7 @@ function isProviderModel(value: unknown): value is ProviderModel {
   return (
     typeof model.id === "string" &&
     typeof model.name === "string" &&
+    (model.contextWindow == null || (Number.isSafeInteger(model.contextWindow) && model.contextWindow > 0)) &&
     Array.isArray(model.reasoningLevels) &&
     model.reasoningLevels.every(
       (level: unknown) => typeof level === "string" && /^[a-z0-9_-]{1,32}$/.test(level),

@@ -1,7 +1,8 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer, type ProviderModelGroup } from "./ChatComposer";
+import { chatOptions } from "@/test/chat-fixtures";
 
 const models: ProviderModelGroup[] = [{
   provider: "OpenAI Codex · pessoal",
@@ -22,6 +23,72 @@ async function openModel(user: ReturnType<typeof userEvent.setup>, name: RegExp)
 }
 
 describe("ChatComposer model reasoning", () => {
+  it("shows only the policy names and blocks the draft during compaction", async () => {
+    const user = userEvent.setup(); const send = vi.fn();
+    const { rerender } = render(<ChatComposer modelGroups={models} onSendMessage={send} />);
+    screen.getByRole("button", { name: "Selecionar autorização de ferramentas" }).focus();
+    await user.keyboard("{Enter}");
+    expect((await screen.findAllByRole("menuitem")).map(item => item.textContent?.trim())).toEqual(["Manual", "YOLO"]);
+    await user.keyboard("{Escape}");
+    await user.type(screen.getByRole("textbox"), "Rascunho");
+    rerender(<ChatComposer modelGroups={models} onSendMessage={send} compacting />);
+    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toBeDisabled();
+    expect(screen.getByRole("group", { name: "Mensagem e opções de envio" })).toHaveAttribute("data-working", "true");
+    rerender(<ChatComposer modelGroups={models} onSendMessage={send} />);
+    expect(screen.getByRole("textbox")).toHaveValue("Rascunho");
+    expect(screen.getByRole("textbox")).toBeEnabled();
+  });
+  it("allows typing and queueing during a run while locking all selectors", async () => {
+    const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
+    render(<ChatComposer modelGroups={models} onSendMessage={send} running initialOptions={chatOptions} />);
+    for (const name of ["Selecionar modelo de IA", "Selecionar modo de execução", "Selecionar autorização de ferramentas"]) expect(screen.getByRole("button", { name })).toBeDisabled();
+    expect(screen.getByRole("textbox")).toBeEnabled();
+    await user.type(screen.getByRole("textbox"), "Depois verifique os testes{Enter}");
+    expect(send).toHaveBeenCalledWith("Depois verifique os testes", chatOptions);
+    expect(screen.getByRole("textbox")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Interromper execução" })).toBeEnabled();
+  });
+
+  it("does not erase text typed while an enqueue acknowledgement is pending", async () => {
+    const user = userEvent.setup(); let resolve!: (value: boolean) => void;
+    const send = vi.fn(() => new Promise<boolean>(done => { resolve = done; }));
+    render(<ChatComposer modelGroups={models} onSendMessage={send} running />);
+    const field = screen.getByRole("textbox");
+    await user.type(field, "Pedido{Enter}");
+    expect(field).toBeEnabled();
+    await user.type(field, " ainda digitando");
+    await act(async () => resolve(true));
+    expect(field).toHaveValue("Pedido ainda digitando");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores removed queued text after the existing draft and offers resume when paused", async () => {
+    const user = userEvent.setup(); const remove = vi.fn().mockResolvedValue("Verifique o build"); const resume = vi.fn().mockResolvedValue(undefined);
+    render(<ChatComposer modelGroups={models} onSendMessage={vi.fn()} queuedMessages={[{ id: "q1", content: "Verifique o build", options: chatOptions }]} onRemoveQueued={remove} onResumeQueue={resume} />);
+    await user.type(screen.getByRole("textbox"), "Meu rascunho");
+    await user.click(screen.getByRole("button", { name: "Retirar mensagem 1 e editar" }));
+    expect(remove).toHaveBeenCalledWith("q1");
+    expect(screen.getByRole("textbox")).toHaveValue("Meu rascunho\n\nVerifique o build");
+    expect(screen.getByRole("textbox")).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Continuar fila" }));
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores a pending cancellation to its original conversation after switching", async () => {
+    const user = userEvent.setup(); const drafts = new Map<string, string>();
+    let resolve!: (value: string) => void;
+    const remove = vi.fn(() => new Promise<string>(done => { resolve = done; }));
+    const { rerender } = render(<ChatComposer key="first" draftKey="first" drafts={drafts} modelGroups={models} onSendMessage={vi.fn()} queuedMessages={[{ id: "q1", content: "Pedido", options: chatOptions }]} onRemoveQueued={remove} />);
+    await user.click(screen.getByRole("button", { name: "Retirar mensagem 1 e editar" }));
+    rerender(<ChatComposer key="second" draftKey="second" drafts={drafts} modelGroups={models} onSendMessage={vi.fn()} />);
+    await user.type(screen.getByRole("textbox"), "Outra conversa");
+    await act(async () => resolve("Pedido"));
+    expect(screen.getByRole("textbox")).toHaveValue("Outra conversa");
+    rerender(<ChatComposer key="first" draftKey="first" drafts={drafts} modelGroups={models} onSendMessage={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Pedido"));
+  });
   it("sends the selected Manual policy and Plan mode and keeps rejected drafts", async () => {
     const user = userEvent.setup();
     const send = vi.fn().mockResolvedValue(false);

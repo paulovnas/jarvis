@@ -114,6 +114,30 @@ fn failure(status: u16) -> AgentError {
         _ => AgentError::new("provider_unavailable", "O provedor está indisponível no momento. Tente novamente em instantes."),
     }
 }
+fn context_overflow(value: &Value) -> bool {
+    let error = value
+        .get("error")
+        .or_else(|| {
+            value
+                .get("response")
+                .and_then(|response| response.get("error"))
+        })
+        .unwrap_or(value);
+    let code = error["code"].as_str().unwrap_or_default();
+    let message = error["message"].as_str().unwrap_or_default().to_lowercase();
+    matches!(
+        code,
+        "context_length_exceeded" | "context_window_exceeded" | "max_context_length"
+    ) || message.contains("maximum context length")
+        || message.contains("exceeds the context window")
+        || message.contains("context window exceeded")
+}
+fn overflow_error() -> AgentError {
+    AgentError::new(
+        "context_overflow",
+        "A janela de contexto do modelo foi excedida.",
+    )
+}
 fn request_body(
     options: &TurnOptions,
     instructions: &str,
@@ -170,7 +194,10 @@ pub(super) fn authenticated_request(
         .header("originator", "codex_cli_rs")
         .header("version", OPENAI_CODEX_CLIENT_VERSION)
         .header("session_id", session_id)
-        .header("x-codex-routing-hint", format!("model={}", body["model"].as_str().unwrap_or_default()))
+        .header(
+            "x-codex-routing-hint",
+            format!("model={}", body["model"].as_str().unwrap_or_default()),
+        )
         .header("accept", "text/event-stream")
         .header("content-type", "application/json")
         .body(serde_json::to_vec(&body).map_err(|_| AgentError::internal())?);
@@ -187,24 +214,39 @@ pub(super) async fn receive(
         result = request.send() => result.map_err(|_| AgentError::new("provider_network", "Não foi possível conectar ao provedor. Verifique a conexão e tente novamente."))?,
     };
     if !response.status().is_success() {
-        if response.status().as_u16() == 400 {
+        if matches!(response.status().as_u16(), 400 | 413) {
             // Inspect only a bounded error body for the known unsupported-model
             // case. Never return upstream bodies, which can contain private data.
             let read_error = async {
                 let mut bytes = vec![];
                 while let Ok(Some(chunk)) = response.chunk().await {
-                    if bytes.len() + chunk.len() > 64 * 1024 { break; }
+                    if bytes.len() + chunk.len() > 64 * 1024 {
+                        break;
+                    }
                     bytes.extend_from_slice(&chunk);
                 }
                 let detail = String::from_utf8_lossy(&bytes).to_lowercase();
-                detail.contains("model") && (detail.contains("model is not supported") || detail.contains("not supported when using codex with a chatgpt account"))
+                (
+                    detail.contains("model")
+                        && (detail.contains("model is not supported")
+                            || detail
+                                .contains("not supported when using codex with a chatgpt account")),
+                    serde_json::from_slice::<Value>(&bytes)
+                        .is_ok_and(|value| context_overflow(&value)),
+                )
             };
-            let unsupported = tokio::select! {
+            let (unsupported, overflow) = tokio::select! {
                 _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-                result = tokio::time::timeout(Duration::from_secs(5), read_error) => result.unwrap_or(false),
+                result = tokio::time::timeout(Duration::from_secs(5), read_error) => result.unwrap_or((false, false)),
             };
+            if overflow {
+                return Err(overflow_error());
+            }
             if unsupported {
-                return Err(AgentError::new("provider_model_unsupported", "O modelo não é compatível com esta conta ChatGPT."));
+                return Err(AgentError::new(
+                    "provider_model_unsupported",
+                    "O modelo não é compatível com esta conta ChatGPT.",
+                ));
             }
         }
         return Err(failure(response.status().as_u16()));
@@ -256,6 +298,9 @@ pub(super) async fn receive(
                 Some("response.completed" | "response.done") => {
                     return output.finish(event["response"].clone())
                 }
+                Some("response.failed" | "error") if context_overflow(&event) => {
+                    return Err(overflow_error())
+                }
                 Some("response.failed" | "error") => return Err(AgentError::new(
                     "provider_failed",
                     "O provedor não conseguiu concluir esta resposta. O progresso foi preservado.",
@@ -303,7 +348,11 @@ fn completed(response: &Value) -> Result<Response, AgentError> {
             input_tokens: value["input_tokens"].as_u64().unwrap_or(0),
             output_tokens: value["output_tokens"].as_u64().unwrap_or(0),
         });
-    if text.is_empty() && !output.iter().any(|item| item["type"] == "function_call" || item["type"] == "web_search_call") {
+    if text.is_empty()
+        && !output
+            .iter()
+            .any(|item| item["type"] == "function_call" || item["type"] == "web_search_call")
+    {
         return Err(protocol_error());
     }
     Ok(Response {
@@ -448,6 +497,32 @@ mod tests {
         assert_eq!(body["store"], false);
         assert!(body.get("account").is_none());
     }
+    #[tokio::test]
+    async fn context_overflow_is_classified_for_http_and_sse_without_retrying_unrelated_errors() {
+        use std::io::{Read, Write};
+        for (status, body, expected) in [
+            (400, r#"{"error":{"code":"context_length_exceeded","message":"private"}}"#, "context_overflow"),
+            (413, r#"{"error":{"message":"Maximum context length exceeded"}}"#, "context_overflow"),
+            (400, r#"{"error":{"code":"invalid_request","message":"invalid tool"}}"#, "provider_request"),
+            (413, r#"{"error":{"message":"request too large"}}"#, "provider_unavailable"),
+            (200, "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"context_window_exceeded\"}}}\n\n", "context_overflow"),
+            (200, "data: {\"type\":\"error\",\"code\":\"invalid_request\"}\n\n", "provider_failed"),
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let request = reqwest::Client::new().get(format!("http://{}", listener.local_addr().unwrap()));
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut bytes = [0; 4096]; let _ = stream.read(&mut bytes);
+                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            });
+            let (_send, signal) = watch::channel(false);
+            let error = receive(request, signal, |_| Ok(())).await.err().unwrap();
+            assert_eq!(error.code, expected);
+            assert!(!error.message.contains("private"));
+            server.join().unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn cancellation_drops_an_idle_http_request_promptly() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

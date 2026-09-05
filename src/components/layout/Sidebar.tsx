@@ -1,6 +1,8 @@
 import { useState, type CSSProperties } from "react";
 import {
   Folder,
+  ChevronRight,
+  Layers,
   FolderPlus,
   MessageSquare,
   MessageSquarePlus,
@@ -35,7 +37,8 @@ import {
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { Conversation, Project } from "@/core/library";
 import type { LibraryController } from "@/hooks/use-library";
 import { ItemNameDialog } from "./ItemNameDialog";
@@ -63,6 +66,7 @@ export function AppSidebar({
   runningConversationIds?: ReadonlySet<string>;
 }) {
   const [dialog, setDialog] = useState<NameDialog | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [deletion, setDeletion] = useState<Exclude<NameDialog, { kind: "workspace" }> | null>(null);
   const { snapshot, loading, pending, error } = library;
   const selected = snapshot?.selection;
@@ -73,9 +77,6 @@ export function AppSidebar({
     snapshot?.projects.filter((item) => item.workspaceId === workspace?.id) ??
     [];
   const project = projects.find((item) => item.id === selected?.projectId);
-  const conversations =
-    snapshot?.conversations.filter((item) => item.projectId === project?.id) ??
-    [];
   const busy = loading || pending;
   const openDialog = (value: NameDialog) => {
     library.clearError();
@@ -121,7 +122,8 @@ export function AppSidebar({
         className="h-full min-h-0 w-full"
       >
         <Sidebar collapsible="none" className="h-full w-full bg-sidebar">
-          <SidebarHeader className="gap-3 border-b border-border p-3">
+          <SidebarHeader className="gap-2 border-b border-border p-3">
+            <span className="px-1 text-[11px] font-medium text-muted-foreground">Workspace</span>
             <div className="flex items-center gap-2">
               <Select
                 items={(snapshot?.workspaces ?? []).map((item) => ({
@@ -154,27 +156,23 @@ export function AppSidebar({
                   </SelectGroup>
                 </SelectContent>
               </Select>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="shrink-0 cursor-pointer"
-                aria-label="Novo workspace"
-                disabled={busy || !snapshot}
-                onClick={() => openDialog({ kind: "workspace" })}
-              >
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Novo" title="Novo" className="shrink-0 cursor-pointer" disabled={busy || !snapshot} />}>
                 <Plus />
-              </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-64">
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="truncate">{project ? project.name : "Selecione um projeto"}</DropdownMenuLabel>
+                  <DropdownMenuItem className="cursor-pointer" disabled={!project || busy} onClick={() => { if (project) { setExpanded(values => ({ ...values, [project.id]: true })); void library.createConversation(project.id); } }}><MessageSquarePlus />Nova conversa</DropdownMenuItem>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuItem className="cursor-pointer" disabled={!workspace || busy} onClick={() => { if (workspace) void library.addProject(workspace.id); }}><FolderPlus />Novo projeto</DropdownMenuItem>
+                  <DropdownMenuItem className="cursor-pointer" disabled={busy} onClick={() => openDialog({ kind: "workspace" })}><Layers />Novo workspace</DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
             </div>
-            <Button
-              className="w-full cursor-pointer"
-              disabled={busy || !project}
-              onClick={() => {
-                if (project) void library.createConversation(project.id);
-              }}
-            >
-              <MessageSquarePlus />
-              Nova conversa
-            </Button>
           </SidebarHeader>
           <SidebarContent className="gap-0">
             {loading && (
@@ -202,19 +200,8 @@ export function AppSidebar({
               </div>
             )}
             {!loading && snapshot && (
-              <Tabs defaultValue="projects" className="min-h-0 flex-1 gap-0">
-                <TabsList className="m-3 grid w-auto grid-cols-2">
-                  <TabsTrigger value="projects" className="cursor-pointer">
-                    Projetos
-                  </TabsTrigger>
-                  <TabsTrigger value="conversations" className="cursor-pointer">
-                    Conversas
-                  </TabsTrigger>
-                </TabsList>
-                <TabsContent
-                  value="projects"
-                  className="m-0 overflow-y-auto px-3 pb-3"
-                >
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                <div className="mb-3 flex items-center justify-between px-1 text-[11px] font-medium text-muted-foreground"><span>Projetos</span><span>{projects.length}</span></div>
                   {!workspace ? (
                     <Empty>
                       <EmptyHeader>
@@ -226,30 +213,23 @@ export function AppSidebar({
                     </Empty>
                   ) : (
                     <>
-                      <Button
-                        variant="outline"
-                        className="mb-3 w-full cursor-pointer"
-                        disabled={busy}
-                        onClick={() => {
-                          void library.addProject(workspace.id);
-                        }}
-                      >
-                        <FolderPlus />
-                        Novo projeto
-                      </Button>
                       {!projects.length && (
                         <Empty>
                           <EmptyHeader>
                             <EmptyTitle>Nenhum projeto</EmptyTitle>
                             <EmptyDescription>
-                              Selecione a pasta de um projeto neste workspace.
+                              Use Novo → Novo projeto para selecionar uma pasta.
                             </EmptyDescription>
                           </EmptyHeader>
                         </Empty>
                       )}
                       <SidebarMenu aria-label="Projetos do workspace">
-                        {projects.map((item) => (
+                        {projects.map((item) => {
+                          const conversations = snapshot.conversations.filter(entry => entry.projectId === item.id);
+                          const isOpen = expanded[item.id] ?? item.id === project?.id;
+                          return (
                           <SidebarMenuItem key={item.id}>
+                            <Collapsible open={isOpen} onOpenChange={(open) => setExpanded(values => ({ ...values, [item.id]: open }))}>
                             <LibraryItemMenu
                               disabled={busy}
                               onEdit={() =>
@@ -257,85 +237,47 @@ export function AppSidebar({
                               }
                               onDelete={() => { library.clearError(); setDeletion({ kind: "project", item }); }}
                             >
-                              <SidebarMenuButton
+                              <CollapsibleTrigger render={<SidebarMenuButton
                                 size="lg"
-                                className="h-auto min-h-12 cursor-pointer"
+                                className="h-10 cursor-pointer"
                                 isActive={item.id === project?.id}
                                 disabled={busy}
+                                title={item.path}
                                 onClick={() => {
-                                  void library.select({
+                                  if (item.id !== project?.id) void library.select({
                                     kind: "project",
                                     id: item.id,
                                   });
                                 }}
-                              >
+                              />}>
+                                <ChevronRight aria-hidden="true" className={`size-3 text-muted-foreground transition-transform motion-reduce:transition-none ${isOpen ? "rotate-90" : ""}`} />
                                 {snapshot.conversations.some(entry => entry.projectId === item.id && runningConversationIds?.has(entry.id)) ? <Spinner aria-label="Projeto com conversa em execução" className="text-primary motion-reduce:animate-none" /> : <Folder className="text-primary" />}
                                 <span className="min-w-0 flex-1">
                                   <span className="block truncate">
                                     {item.name}
                                   </span>
-                                  <span
-                                    className="block truncate text-xs text-muted-foreground"
-                                    title={item.path}
-                                  >
-                                    {item.path}
-                                  </span>
                                 </span>
                                 <Badge variant="secondary">
-                                  {
-                                    snapshot.conversations.filter(
-                                      (entry) => entry.projectId === item.id,
-                                    ).length
-                                  }
+                                  {conversations.length}
                                 </Badge>
-                              </SidebarMenuButton>
+                              </CollapsibleTrigger>
                             </LibraryItemMenu>
-                            {item.id === project?.id && (
-                              <div className="my-2 ml-4 border-l border-border pl-2">
+                              <CollapsibleContent className="my-1 ml-3 border-l border-border pl-2">
                                 {conversations.length ? (
                                   conversationList(conversations)
                                 ) : (
                                   <p className="p-2 text-xs text-muted-foreground">
-                                    Nenhuma conversa. Crie a primeira acima.
+                                    Use Novo → Nova conversa para começar.
                                   </p>
                                 )}
-                              </div>
-                            )}
+                              </CollapsibleContent>
+                            </Collapsible>
                           </SidebarMenuItem>
-                        ))}
+                        ); })}
                       </SidebarMenu>
                     </>
                   )}
-                </TabsContent>
-                <TabsContent
-                  value="conversations"
-                  className="m-0 overflow-y-auto px-3 pb-3"
-                >
-                  {project && (
-                    <p className="mb-3 truncate text-xs text-muted-foreground">
-                      {project.name}
-                    </p>
-                  )}
-                  {conversations.length ? (
-                    conversationList(conversations)
-                  ) : (
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyTitle>
-                          {project
-                            ? "Nenhuma conversa"
-                            : "Selecione um projeto"}
-                        </EmptyTitle>
-                        <EmptyDescription>
-                          {project
-                            ? "Crie a primeira conversa usando o botão acima."
-                            : "As conversas pertencem ao projeto selecionado."}
-                        </EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  )}
-                </TabsContent>
-              </Tabs>
+              </div>
             )}
           </SidebarContent>
           <SidebarFooter className="border-t border-border p-3">

@@ -5,6 +5,7 @@ import { McpSettings } from "./McpSettings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
+  BookOpen,
   ExternalLink,
   Link2,
   Plus,
@@ -26,6 +27,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { mcpServersSchema } from "@/core/mcp";
 import {
   Card,
   CardContent,
@@ -106,7 +109,13 @@ function safeErrorMessage(error: unknown, fallback: string): string {
 
 
 export function SettingsDialog({ open, onOpenChange, onAccountsChange }: SettingsDialogProps) {
-  const [activeTab, setActiveTab] = useState<string>("providers");
+  const [activeTab, setActiveTab] = useState<string>("general");
+  const [mcpCount, setMcpCount] = useState<number | null>(null);
+  const mcpCountVersion = useRef(0);
+  const updateMcpCount = useCallback((count: number) => {
+    mcpCountVersion.current += 1;
+    setMcpCount(count);
+  }, []);
   const [view, setView] = useState<SettingsView>("list");
   const [listState, setListState] = useState<ListState>("loading");
   const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
@@ -168,7 +177,18 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
     );
   }, [open, updateAccounts]);
 
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    const version = mcpCountVersion.current;
+    void invoke<unknown>("list_mcp_servers").then((value) => {
+      if (active && version === mcpCountVersion.current) setMcpCount(mcpServersSchema.parse(value).length);
+    }).catch(() => { if (active && version === mcpCountVersion.current) setMcpCount(null); });
+    return () => { active = false; };
+  }, [open]);
+
   const openAddView = () => {
+    if (startingRef.current || cancellingRef.current) return;
     setView("add");
     setConnectionError(null);
     setSuffixError(null);
@@ -270,15 +290,17 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
       }
     } finally {
       startingRef.current = false;
+      closeRequestedRef.current = false;
       setStarting(false);
     }
   };
 
   const cancelActiveConnection = useCallback(
-    async (closeAfter: boolean) => {
+    async (closeAfter: boolean, closeSettings = true) => {
+      const close = () => { setView("list"); if (closeSettings) onOpenChange(false); };
       const connection = activeConnectionRef.current;
       if (!connection) {
-        if (closeAfter) onOpenChange(false);
+        if (closeAfter) close();
         return;
       }
       if (cancellingRef.current) return;
@@ -301,13 +323,13 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
         }
         cancellingRef.current = false;
         setCancelling(false);
-        if (closeAfter) onOpenChange(false);
+        if (closeAfter) close();
       }
     },
     [onOpenChange],
   );
 
-  const handleDialogOpenChange = (nextOpen: boolean) => {
+  const handleDialogOpenChange = (nextOpen: boolean, closeSettings = true) => {
     if (nextOpen) {
       onOpenChange(true);
       return;
@@ -316,19 +338,21 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
 
     if (startingRef.current && !activeConnectionRef.current) {
       closeRequestedRef.current = true;
-      onOpenChange(false);
+      setView("list");
+      if (closeSettings) onOpenChange(false);
       return;
     }
 
     if (activeConnectionRef.current) {
       closingRef.current = true;
-      void cancelActiveConnection(true).finally(() => {
+      void cancelActiveConnection(true, closeSettings).finally(() => {
         closingRef.current = false;
       });
       return;
     }
 
-    onOpenChange(false);
+    setView("list");
+    if (closeSettings) onOpenChange(false);
   };
 
   const handleReopenBrowser = async () => {
@@ -487,15 +511,15 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
   const renderAdd = () => {
     const computedAlias = `${ALIAS_PREFIX}${suffix}`;
     return (
-      <Card className="rounded-xl border-[#3e4451] bg-[#21252b]">
-        <CardHeader>
-          <CardTitle className="text-base text-[#e6e6e6]">Adicionar conta</CardTitle>
-          <CardDescription className="text-xs text-[#abb2bf]">
+      <>
+        <DialogHeader>
+          <DialogTitle>Adicionar conta</DialogTitle>
+          <DialogDescription>
             Vincule uma conta ChatGPT Plus ou Pro usando o fluxo OAuth seguro no navegador.
-          </CardDescription>
-        </CardHeader>
+          </DialogDescription>
+        </DialogHeader>
         <form onSubmit={handleConnect}>
-          <CardContent className="space-y-5">
+          <div className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="provider-alias-suffix" className="text-xs text-[#e6e6e6]">
                 Sufixo do alias
@@ -545,7 +569,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
                 <span>{connectionError}</span>
               </div>
             )}
-          </CardContent>
+          </div>
           <CardFooter className="justify-between gap-2 border-t border-[#3e4451]/70 pt-4">
             <Button
               type="button"
@@ -558,7 +582,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               disabled={starting}
               className="cursor-pointer text-xs text-[#abb2bf] hover:bg-[#2c313a]"
             >
-              Voltar
+              Cancelar
             </Button>
             <Button type="submit" disabled={starting} className="cursor-pointer gap-2 text-xs bg-[#61afef] text-[#1e2227] hover:bg-[#61afef]/90">
               <ShieldCheck className="size-3.5" />
@@ -566,18 +590,18 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
             </Button>
           </CardFooter>
         </form>
-      </Card>
+      </>
     );
   };
 
   const renderWaiting = () => (
-    <Card className="rounded-xl border-[#61afef]/35 bg-[#21252b]">
-      <CardHeader>
-        <CardTitle className="text-base text-[#e6e6e6]">Conectar com ChatGPT</CardTitle>
-        <CardDescription className="text-xs text-[#abb2bf]">
+    <>
+      <DialogHeader>
+        <DialogTitle>Conectar com ChatGPT</DialogTitle>
+        <DialogDescription>
           A janela de autenticação foi aberta no navegador padrão.
-        </CardDescription>
-      </CardHeader>
+        </DialogDescription>
+      </DialogHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-3 rounded-lg border border-[#61afef]/25 bg-[#61afef]/5 p-4" aria-live="polite">
           <Spinner aria-label="Aguardando autenticação no navegador" className="size-5 text-[#61afef]" />
@@ -613,16 +637,16 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
           Abrir navegador novamente
         </Button>
       </CardFooter>
-    </Card>
+    </>
   );
 
   return (
     <>
-      <Sheet open={open} onOpenChange={handleDialogOpenChange}>
+      <Sheet open={open} onOpenChange={(nextOpen) => handleDialogOpenChange(nextOpen)}>
         <SheetContent
           side="left"
           showCloseButton
-          className="dark flex flex-col h-full w-full sm:max-w-none md:w-[50vw] min-w-[500px] max-w-[850px] border-r border-[#3e4451] bg-[#1e2227] p-0 text-[#abb2bf] shadow-2xl overflow-hidden"
+          className="dark flex h-full w-[min(960px,85vw)] flex-col data-[side=left]:w-[min(960px,85vw)] data-[side=left]:sm:max-w-none border-r border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden"
         >
           <SheetHeader className="border-b border-[#3e4451] bg-[#21252b] px-6 py-4.5">
             <SheetTitle className="text-xl font-heading font-semibold text-[#e6e6e6]">Configurações</SheetTitle>
@@ -630,46 +654,42 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
           </SheetHeader>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 min-h-0">
-            <div className="border-b border-[#3e4451] bg-[#21252b]/60 px-6">
-              <TabsList variant="line" className="h-11 gap-6 border-b-0 p-0">
+            <div className="overflow-x-auto border-b border-border bg-card/60 px-6">
+              <TabsList variant="line" className="h-12 w-max gap-5 border-b-0 p-0">
+                <TabsTrigger value="general" className="cursor-pointer gap-2 px-2 text-xs"><Settings aria-hidden="true" className="size-3.5" />Geral</TabsTrigger>
                 <TabsTrigger
                   value="providers"
                   className="cursor-pointer gap-2 border-b-2 border-transparent px-2 py-2.5 text-xs font-medium text-[#abb2bf] data-[state=active]:border-[#61afef] data-[state=active]:text-[#61afef] transition-colors"
                 >
                   <Sparkles className="size-3.5 text-[#61afef]" />
                   <span>Provedores</span>
-                  {accounts.length > 0 && (
+                  {listState === "ready" && (
                     <Badge className="border-[#61afef]/30 bg-[#61afef]/10 text-[10px] text-[#61afef] px-1.5 py-0">
                       {accounts.length}
                     </Badge>
                   )}
                 </TabsTrigger>
-                <TabsTrigger value="mcps" className="cursor-pointer gap-2 px-2 py-2.5 text-xs"><Plug aria-hidden="true" className="size-3.5" />MCPs</TabsTrigger>
-                <TabsTrigger
-                  value="general"
-                  disabled
-                  className="cursor-not-allowed gap-2 px-2 py-2.5 text-xs font-medium text-[#7f848e] opacity-60"
-                >
-                  <Settings className="size-3.5" />
-                  <span>Geral</span>
-                  <Badge variant="outline" className="border-[#7f848e]/30 text-[9px] text-[#7f848e] px-1 py-0">
-                    Em breve
-                  </Badge>
-                </TabsTrigger>
+                <TabsTrigger value="skills" className="cursor-pointer gap-2 px-2 text-xs"><BookOpen aria-hidden="true" className="size-3.5" />Skills</TabsTrigger>
+                <TabsTrigger value="mcps" className="cursor-pointer gap-2 px-2 text-xs"><Plug aria-hidden="true" className="size-3.5" />MCPs{mcpCount !== null && <Badge variant="outline" className="border-[#56b6c2]/30 bg-[#56b6c2]/10 px-1.5 py-0 text-[10px] text-[#56b6c2]">{mcpCount}</Badge>}</TabsTrigger>
               </TabsList>
             </div>
 
+            <TabsContent value="general" className="m-0 min-h-0 flex-1" />
+            <TabsContent value="skills" className="m-0 min-h-0 flex-1" />
             <TabsContent value="providers" className="flex-1 min-h-0 m-0 p-0">
-              <ScrollArea className="h-[calc(100vh-8.5rem)] px-6 py-6">
-                {view === "list" && renderList()}
-                {view === "add" && renderAdd()}
-                {view === "waiting" && renderWaiting()}
+              <ScrollArea className="h-full px-6 py-6">
+                {renderList()}
               </ScrollArea>
             </TabsContent>
             <TabsContent value="mcps" className="flex-1 min-h-0 m-0 p-0">
-              <ScrollArea className="h-[calc(100vh-8.5rem)] px-6 py-6">{activeTab === "mcps" && <McpSettings />}</ScrollArea>
+              <ScrollArea className="h-full px-6 py-6">{activeTab === "mcps" && <McpSettings onCountChange={updateMcpCount} />}</ScrollArea>
             </TabsContent>
           </Tabs>
+          <Dialog open={open && view !== "list"} onOpenChange={(nextOpen) => { if (!nextOpen) handleDialogOpenChange(false, false); }}>
+            <DialogContent className="dark max-h-[85vh] overflow-y-auto sm:max-w-xl">
+              {view === "waiting" ? renderWaiting() : renderAdd()}
+            </DialogContent>
+          </Dialog>
         </SheetContent>
       </Sheet>
 

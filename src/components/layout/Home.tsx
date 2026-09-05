@@ -45,7 +45,7 @@ export function Home() {
   const modelGroups = accounts
     .filter((account) => account.enabled && account.modelsAvailable && account.models.length > 0)
     .map((account) => ({
-      provider: `OpenAI Codex · ${account.alias}`,
+      provider: account.alias,
       models: account.models.map((model) => ({
         value: `${account.alias}/${model.id}`,
         label: model.name,
@@ -102,7 +102,7 @@ export function Home() {
           maxSize="550px"
           className="h-full min-h-0 min-w-0"
         >
-          <Inspector library={library.snapshot} chat={chat.snapshot} />
+          <Inspector library={library.snapshot} chat={chat.snapshot} accounts={accounts} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} />
         </ResizablePanel>
       </ResizablePanelGroup>
 

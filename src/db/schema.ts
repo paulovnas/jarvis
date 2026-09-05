@@ -38,6 +38,7 @@ export const mcpServers = sqliteTable("mcp_servers", {
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   configured: integer("configured", { mode: "boolean" }).notNull().default(false),
   revision: integer("revision").notNull().default(0),
+  lastCheck: text("last_check"),
   createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
 }, (table) => [check("mcp_servers_kind", sql`${table.kind} IN ('local', 'remote')`)]);
 

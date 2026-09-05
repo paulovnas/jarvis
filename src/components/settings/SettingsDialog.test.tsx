@@ -1,5 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,6 +10,7 @@ const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => command === "get_web_search_config"
     ? Promise.resolve({ accountAlias: null })
+    : command === "list_mcp_servers" ? Promise.resolve([])
     : args === undefined ? invokeMock(command) : invokeMock(command, args),
 }));
 
@@ -48,6 +49,7 @@ function account(
 
 function renderSettings(onOpenChange = vi.fn()) {
   render(<SettingsDialog open onOpenChange={onOpenChange} />);
+  fireEvent.click(screen.getByRole("tab", { name: /Provedores/ }));
   return onOpenChange;
 }
 
@@ -57,6 +59,34 @@ describe("SettingsDialog provider accounts", () => {
     invokeMock.mockReset();
     openUrlMock.mockReset();
     openUrlMock.mockResolvedValue(undefined);
+  });
+
+  it("ordena as abas, abre Geral vazia e mantém Skills disponível", async () => {
+    invokeMock.mockResolvedValueOnce([account("openai-codex-pessoal")]);
+    const user = userEvent.setup();
+    render(<SettingsDialog open onOpenChange={vi.fn()} />);
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Provedores", "Skills", "MCPs"]);
+    expect(tabs[0]).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Geral" })).toBeEmptyDOMElement();
+    await user.click(tabs[2]);
+    expect(await screen.findByRole("tabpanel", { name: "Skills" })).toBeEmptyDOMElement();
+    await waitFor(() => expect(screen.getByRole("tab", { name: /MCPs/ })).toHaveTextContent("0"));
+    expect(screen.getByRole("tab", { name: /Provedores/ })).toHaveTextContent("1");
+  });
+
+  it("fecha o formulário sem fechar o drawer e restaura o foco", async () => {
+    invokeMock.mockResolvedValueOnce([]);
+    const user = userEvent.setup();
+    const changed = renderSettings();
+    const add = await screen.findByRole("button", { name: "Adicionar conta" });
+    await user.click(add);
+    const dialog = screen.getByRole("dialog", { name: "Adicionar conta" });
+    expect(within(dialog).getByRole("textbox", { name: "Sufixo do alias" })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Adicionar conta" })).not.toBeInTheDocument());
+    expect(changed).not.toHaveBeenCalledWith(false);
+    expect(screen.getByRole("tab", { name: /Provedores/ })).toHaveAttribute("aria-selected", "true");
   });
 
   it("mostra o skeleton ao abrir e depois o estado vazio", async () => {
@@ -266,7 +296,7 @@ describe("SettingsDialog provider accounts", () => {
     });
     cancel.resolve();
     wait.reject({ code: "cancelled", message: "A conexão foi cancelada." });
-    expect(await screen.findByText("Adicionar conta")).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Adicionar conta" })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -313,7 +343,7 @@ describe("SettingsDialog provider accounts", () => {
     await user.type(screen.getByRole("textbox", { name: "Sufixo do alias" }), "empresa");
     await user.click(screen.getByRole("button", { name: "Conectar com ChatGPT" }));
     await user.click(screen.getByRole("button", { name: "Close" }));
-    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
 
     begin.resolve({ flowId: "flow-before-browser", authorizationUrl: "https://example.test/auth" });
     await waitFor(() =>
@@ -325,7 +355,7 @@ describe("SettingsDialog provider accounts", () => {
     expect(invokeMock).not.toHaveBeenCalledWith("wait_openai_codex_connection", expect.anything());
   });
 
-  it("cancela o fluxo antes de fechar Configurações", async () => {
+  it("cancela o fluxo ao fechar a modal e mantém Configurações aberta", async () => {
     const user = userEvent.setup();
     const wait = deferred<ProviderAccount>();
     const cancel = deferred<void>();
@@ -349,7 +379,7 @@ describe("SettingsDialog provider accounts", () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
 
     cancel.resolve();
-    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Conectar com ChatGPT" })).not.toBeInTheDocument());
     wait.resolve(account("openai-codex-empresa"));
   });
 

@@ -251,6 +251,12 @@ impl Client {
     pub fn tool_count(&self) -> usize {
         self.tools.len()
     }
+    fn tool_names(&self) -> Vec<String> {
+        self.tools
+            .iter()
+            .map(|tool| self.redact(tool.original.clone()))
+            .collect()
+    }
     fn redact(&self, text: String) -> String {
         self.config
             .secrets()
@@ -295,9 +301,12 @@ impl TurnClients {
                 match result {
                     Ok(client) => {
                         mcp.record_check(
+                            state,
+                            home,
                             &server,
                             Check {
                                 tool_count: client.tool_count(),
+                                tools: client.tool_names(),
                                 error: None,
                             },
                         );
@@ -306,9 +315,12 @@ impl TurnClients {
                         }
                     }
                     Err(err) => mcp.record_check(
+                        state,
+                        home,
                         &server,
                         Check {
                             tool_count: 0,
+                            tools: vec![],
                             error: Some(err.message),
                         },
                     ),
@@ -332,20 +344,34 @@ impl TurnClients {
                 client.close().await;
                 continue;
             }
-            if client.service.service().changed.load(Ordering::Relaxed)
-                && !matches!(
+            if client.service.service().changed.load(Ordering::Relaxed) {
+                if matches!(
                     tokio::time::timeout(client.config.timeout(), client.refresh()).await,
                     Ok(Ok(()))
-                )
-            {
-                client.tools.clear();
-                mcp.record_check(
-                    &client.server,
-                    Check {
-                        tool_count: 0,
-                        error: Some("Não foi possível atualizar as ferramentas.".into()),
-                    },
-                );
+                ) {
+                    mcp.record_check(
+                        state,
+                        home,
+                        &client.server,
+                        Check {
+                            tool_count: client.tool_count(),
+                            tools: client.tool_names(),
+                            error: None,
+                        },
+                    );
+                } else {
+                    client.tools.clear();
+                    mcp.record_check(
+                        state,
+                        home,
+                        &client.server,
+                        Check {
+                            tool_count: 0,
+                            tools: vec![],
+                            error: Some("Não foi possível atualizar as ferramentas.".into()),
+                        },
+                    );
+                }
             }
             // Keep the complete request below OpenAI's tool count limit.
             definitions.extend(
@@ -409,7 +435,7 @@ impl TurnClients {
                 other => {
                     client.service.cancellation_token().cancel();
                     let failure = if other.is_err() { error("A ferramenta MCP excedeu o tempo limite. A ação pode já ter sido realizada; confira antes de repetir.") } else { protocol_error() };
-                    mcp.record_check(&client.server, Check { tool_count: 0, error: Some(failure.message.clone()) });
+                    mcp.record_check(state, home, &client.server, Check { tool_count: 0, tools: vec![], error: Some(failure.message.clone()) });
                     return Err(failure);
                 }
             },
@@ -474,17 +500,20 @@ pub async fn test_mcp_server(
     let check = match connect(server.clone(), config, &home, signal).await {
         Ok(mut client) => {
             let count = client.tool_count();
+            let tools = client.tool_names();
             client.close().await;
             Check {
                 tool_count: count,
+                tools,
                 error: None,
             }
         }
         Err(err) => Check {
             tool_count: 0,
+            tools: vec![],
             error: Some(err.message),
         },
     };
-    mcp.record_check(&server, check.clone());
+    mcp.record_check(&state, &home, &server, check.clone());
     Ok(check)
 }

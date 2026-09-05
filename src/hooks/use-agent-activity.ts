@@ -14,12 +14,12 @@ export function useAgentActivity() {
     const accept = (value: unknown) => {
       const next = agentActivitySchema.safeParse(value);
       if (!next.success) return;
-      const { conversationId, revision, activeTurnId } = next.data;
+      const { conversationId, revision, activeTurnId, compacting } = next.data;
       const previous = latest.get(conversationId);
       if (previous && previous.revision >= revision) return;
       latest.set(conversationId, { revision, activeTurnId });
       setRunningIds(current => {
-        const running = activeTurnId !== null;
+        const running = activeTurnId !== null || compacting === true;
         if (current.has(conversationId) === running) return current;
         const updated = new Set(current);
         if (running) updated.add(conversationId);
