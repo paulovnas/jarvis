@@ -6,6 +6,20 @@
 @import "@fontsource/roboto/500.css";
 @import "@fontsource/roboto/700.css";
 
+@source not "../docs";
+
+.skill-editor:has(> p:only-child > br:only-child)::before {
+  content: attr(data-placeholder);
+  pointer-events: none;
+  position: absolute;
+  color: var(--muted-foreground);
+}
+.skill-editor[aria-disabled="true"] { opacity: 0.5; }
+.skill-editor p { margin: 0; }
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="skeleton"] { animation: none; }
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

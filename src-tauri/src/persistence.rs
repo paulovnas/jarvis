@@ -37,6 +37,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 7,
         sql: include_str!("../../drizzle/0006_mcp_discovery.sql"),
     },
+    Migration {
+        version: 8,
+        sql: include_str!("../../drizzle/0007_antigravity_provider.sql"),
+    },
 ];
 
 #[derive(Debug)]
@@ -220,8 +224,8 @@ pub(crate) fn insert_provider_account(
 ) -> Result<ProviderAccountRecord, PersistenceError> {
     connection.execute(
         "INSERT INTO provider_accounts (alias, provider_kind, account_id)
-         VALUES (?1, 'openai-codex', ?2)",
-        params![alias, account_id],
+         VALUES (?1, ?3, ?2)",
+        params![alias, account_id, if alias.starts_with("antigravity-") { "antigravity" } else { "openai-codex" }],
     )?;
     connection
         .query_row(
@@ -356,6 +360,25 @@ pub async fn complete_onboarding(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn antigravity_migration_preserves_codex_accounts_and_search_selection() {
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.pragma_update(None, "foreign_keys", true).unwrap();
+        for migration in super::MIGRATIONS.iter().take(7) { connection.execute_batch(migration.sql).unwrap(); }
+        connection.pragma_update(None, "user_version", 7).unwrap();
+        super::insert_provider_account(&connection, "openai-codex-old", "account-old").unwrap();
+        connection.execute("UPDATE provider_accounts SET enabled=0", []).unwrap();
+        connection.execute("INSERT INTO web_search_config (id,account_alias) VALUES (1,'openai-codex-old')", []).unwrap();
+        super::initialize_database(&mut connection).unwrap();
+        let accounts=super::list_provider_accounts(&connection).unwrap();
+        assert_eq!(accounts.len(),1); assert_eq!(accounts[0].alias,"openai-codex-old"); assert!(!accounts[0].enabled);
+        assert_eq!(connection.query_row("SELECT account_alias FROM web_search_config", [], |row|row.get::<_,String>(0)).unwrap(),"openai-codex-old");
+        super::insert_provider_account(&connection,"antigravity-new","google:123").unwrap();
+        assert_eq!(super::list_provider_accounts(&connection).unwrap().len(),2);
+        assert_eq!(connection.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row|row.get::<_,i64>(0)).unwrap(),0);
+        super::delete_provider_account(&connection,"openai-codex-old").unwrap();
+        assert!(connection.query_row("SELECT account_alias FROM web_search_config", [], |row|row.get::<_,Option<String>>(0)).unwrap().is_none());
+    }
     use super::*;
 
     fn in_memory_database() -> Connection {
@@ -383,7 +406,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -448,7 +471,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {

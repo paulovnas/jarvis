@@ -1,4 +1,4 @@
-import { AlertCircle, Check, ChevronRight, FilePenLine, FileText, FolderSearch, Globe, Search, Terminal, Wrench } from "lucide-react";
+import { AlertCircle, BookOpen, Check, ChevronRight, FilePenLine, FileText, FolderSearch, Globe, Search, Terminal, Wrench } from "lucide-react";
 import { readWebSearchResult } from "@/core/web-search";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
@@ -8,11 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Spinner } from "@/components/ui/spinner";
 import type { ToolCallItem } from "./types";
+import { QuestionHistory } from "./QuestionHistory";
 
 const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
 
 const tools = {
   read: { label: "Leitura de arquivo", icon: FileText },
+  read_skill: { label: "Leitura de skill", icon: BookOpen },
+  find_skills: { label: "Busca de skills", icon: BookOpen },
   list: { label: "Listagem de arquivos", icon: FolderSearch },
   search: { label: "Busca no projeto", icon: Search },
   web_search: { label: "Pesquisa na web", icon: Globe },
@@ -22,8 +25,9 @@ const tools = {
 };
 
 export function ToolCallCard({ tool }: { tool: ToolCallItem }) {
+  if (tool.name === "ask_user") return <QuestionHistory tool={tool} />;
   const { label, icon: Icon } = tools[tool.name as keyof typeof tools] ?? { label: tool.name, icon: Wrench };
-  const detail = tool.args?.path ?? tool.args?.command ?? tool.args?.query;
+  const detail = tool.name === "read_skill" ? tool.output?.match(/^Skill: (.+)/)?.[1] ?? tool.args?.path : tool.args?.path ?? tool.args?.command ?? tool.args?.query;
   const searchResult = tool.name === "web_search" && tool.output ? readWebSearchResult(tool.output) : null;
   const status = { pending: "Aguardando autorização", running: "Executando", completed: "Concluída", error: "Não concluída" }[tool.status];
   return (

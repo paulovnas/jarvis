@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { queuedMessageSchema, readChat, type ChatSnapshot, type TurnOptions } from "@/core/chat";
+import { queuedMessageSchema, readChat, type ChatDraft, type MessagePart, type ChatSnapshot, type TurnOptions } from "@/core/chat";
 import { libraryError } from "@/core/library";
+import type { PendingQuestion, QuestionResponse } from "@/core/questions";
 
 export function useChat(conversationId: string | null) {
   const [loaded, setLoaded] = useState<ChatSnapshot | null>(null);
@@ -46,12 +47,12 @@ export function useChat(conversationId: string | null) {
     return () => { active = false; dispose?.(); if (generation.current === request) generation.current += 1; };
   }, [conversationId, attempt, accept]);
 
-  const send = async (content: string, options: TurnOptions): Promise<boolean> => {
+  const send = async (content: string, options: TurnOptions, parts?: MessagePart[]): Promise<boolean> => {
     if (!conversationId || !snapshot || sending.current || compactLocks.current.has(conversationId) || snapshot.context?.compacting) return false;
     const id = conversationId; const request = generation.current;
     sending.current = true; setPendingId(id);
     try {
-      const result = await invoke<unknown>("start_agent_turn", { conversationId: id, content, options });
+      const result = await invoke<unknown>("start_agent_turn", { conversationId: id, content, options, ...(parts?.length ? { parts } : {}) });
       if (generation.current === request) accept(result, id);
       return true;
     } catch (cause) {
@@ -71,7 +72,7 @@ export function useChat(conversationId: string | null) {
       return true;
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível responder à autorização.")); return false; }
   };
-  const removeQueued = async (messageId: string): Promise<string | null> => {
+  const removeQueued = async (messageId: string): Promise<ChatDraft | null> => {
     if (!conversationId) return null;
     const id = conversationId; const request = generation.current;
     try {
@@ -79,8 +80,17 @@ export function useChat(conversationId: string | null) {
       const message = queuedMessageSchema.parse(result.message);
       const next = readChat(result.snapshot, id);
       if (generation.current === request) accept(next, id);
-      return message.content;
+      return { content: message.content, ...(message.parts?.length ? { parts: message.parts } : {}) };
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível retirar a mensagem da fila.")); return null; }
+  };
+  const answerQuestion = async (question: PendingQuestion, response: QuestionResponse): Promise<boolean> => {
+    if (!conversationId || snapshot?.activeTurnId !== question.turnId || snapshot.pendingQuestion?.toolId !== question.toolId) return false;
+    const id = conversationId; const request = generation.current;
+    try {
+      const result = await invoke<unknown>("answer_agent_question", { conversationId: id, turnId: question.turnId, toolId: question.toolId, response });
+      if (generation.current === request) accept(result, id);
+      return true;
+    } catch (cause) { toast.error(libraryError(cause, "Não foi possível enviar as respostas. Tente novamente.")); return false; }
   };
   const resumeQueue = async () => {
     if (!conversationId) return;
@@ -102,6 +112,6 @@ export function useChat(conversationId: string | null) {
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível compactar o contexto.")); return false; }
     finally { compactLocks.current.delete(id); setCompactingIds(new Set(compactLocks.current)); }
   };
-  return { snapshot, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, send, stop, approve, removeQueued, resumeQueue, compact, retry: () => setAttempt(value => value + 1) };
+  return { snapshot, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, send, stop, approve, answerQuestion, removeQueued, resumeQueue, compact, retry: () => setAttempt(value => value + 1) };
 }
 export type ChatController = ReturnType<typeof useChat>;

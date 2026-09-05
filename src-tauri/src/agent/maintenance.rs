@@ -60,6 +60,7 @@ pub async fn compact_agent_context(
     let (lease, options) = begin(session.clone())?;
     let state = persistence.inner().clone();
     let oauth = oauth.inner().clone();
+    let skill_home = home.clone();
     let auth_options = options.clone();
     let (credential, model) = tauri::async_runtime::spawn_blocking(move || {
         oauth.inference_model(
@@ -76,9 +77,12 @@ pub async fn compact_agent_context(
         data.turns.last_mut().unwrap().turn.context_window = model.context_window;
     })?;
     let (_cancel, signal) = watch::channel(false);
-    let overhead = compaction::estimate(
-        &json!({"instructions": tools::instructions(&session.root, options.mode), "tools": tools::definitions(options.mode)}),
-    );
+    let skills = crate::skills::active(&skill_home, &session.root).await.map_err(|cause| AgentError::new("skill_error", &cause.message))?;
+    let mut instructions = tools::instructions(&session.root, options.mode);
+    instructions.push_str(&crate::skills::prompt(&skills));
+    let mut definitions = tools::definitions(options.mode);
+    if !skills.is_empty() { definitions.extend([crate::skills::definition(), crate::skills::search_definition()]); }
+    let overhead = compaction::estimate(&json!({"instructions": instructions, "tools": definitions}));
     let result = tokio::time::timeout(
         Duration::from_secs(600),
         compaction::ensure(&session, &credential, &options, overhead, true, signal),

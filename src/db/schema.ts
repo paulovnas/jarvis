@@ -26,7 +26,7 @@ export const providerAccounts = sqliteTable(
   (table) => [
     check(
       "provider_accounts_provider_kind_check",
-      sql`${table.providerKind} = 'openai-codex'`,
+      sql`${table.providerKind} IN ('openai-codex', 'antigravity')`,
     ),
   ],
 );

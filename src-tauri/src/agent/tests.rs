@@ -255,6 +255,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                 id: "turn".into(),
                 cancel,
                 approval: None,
+                question: None,
             }),
             storage_failed: false,
             last_emit: std::time::Instant::now(),
@@ -266,6 +267,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                 turn: Turn {
                     id: "turn".into(),
                     user: "hello".into(),
+                    parts: vec![],
                     context_window: None,
                     created_at: 1,
                     duration_ms: 0,

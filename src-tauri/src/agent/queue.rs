@@ -6,13 +6,25 @@ pub(super) struct QueuedMessage {
     pub id: String,
     pub content: String,
     pub options: TurnOptions,
+    #[serde(default)]
+    pub parts: Vec<skill_input::MessagePart>,
 }
 
 impl Session {
+    #[cfg(test)]
     pub(super) fn submit(
         &self,
         content: String,
         options: TurnOptions,
+    ) -> Result<Option<watch::Receiver<bool>>, AgentError> {
+        self.submit_message(content, options, vec![])
+    }
+
+    pub(super) fn submit_message(
+        &self,
+        content: String,
+        options: TurnOptions,
+        parts: Vec<skill_input::MessagePart>,
     ) -> Result<Option<watch::Receiver<bool>>, AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
         if data.storage_failed {
@@ -26,7 +38,7 @@ impl Session {
         }
         if data.active.is_none() && data.extras.queue.is_empty() {
             return self
-                .reserve_locked(&mut data, content, options, None)
+                .reserve_locked(&mut data, content, options, None, parts)
                 .map(Some);
         }
         if data.extras.queue.len() >= 20 {
@@ -46,6 +58,7 @@ impl Session {
             id: library::new_id()?,
             content,
             options,
+            parts,
         });
         self.checkpoint(&mut data, "queue_checkpoint", &queue)?;
         data.extras.queue = queue;
@@ -67,6 +80,7 @@ impl Session {
             message.content,
             message.options,
             Some(message.id),
+            message.parts,
         )?;
         data.extras.queue.remove(0);
         Ok(Some(signal))

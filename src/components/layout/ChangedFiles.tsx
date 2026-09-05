@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { FileCode2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/spinner";
+import { DiffSkeleton } from "./LoadingSkeletons";
 import { fileDiffSchema, type FileChange, type FileDiff } from "@/core/chat";
 import { libraryError } from "@/core/library";
 
@@ -35,7 +35,7 @@ function DiffView({ conversationId, file, revision }: { conversationId: string; 
   }, [conversationId, file.path, revision, attempt]);
   return <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={`Diff de ${file.path}`}>
     <div className="flex min-w-0 items-center gap-3 border-b border-border px-4 py-3"><p className="min-w-0 flex-1 truncate font-mono text-xs" title={file.path}>{file.path}</p><Counts {...file} /></div>
-    {!result ? <p role="status" className="flex items-center gap-2 p-4 text-xs text-muted-foreground"><Spinner className="size-4" />Carregando alterações…</p> : result.error ? <div className="space-y-3 p-4"><p role="alert" className="text-xs text-destructive">{result.error}</p><Button variant="outline" size="sm" className="cursor-pointer" onClick={() => { setResult(null); setAttempt(value => value + 1); }}>Tentar novamente</Button></div> : result.diff && <>
+    {!result ? <DiffSkeleton /> : result.error ? <div className="space-y-3 p-4"><p role="alert" className="text-xs text-destructive">{result.error}</p><Button variant="outline" size="sm" className="cursor-pointer" onClick={() => { setResult(null); setAttempt(value => value + 1); }}>Tentar novamente</Button></div> : result.diff && <>
       <p className="border-b border-border/50 px-4 py-2 text-[11px] text-muted-foreground">{result.diff.base === "conversation" ? "Comparação com o início das alterações nesta conversa." : result.diff.base === "git" ? "Histórico anterior: comparação com o último commit (HEAD)." : "O histórico anterior não contém uma versão original para comparação."}</p>
       <div className="min-h-0 flex-1 overflow-auto" tabIndex={0} aria-label="Linhas do diff">
         <table className="w-full border-collapse font-mono text-[11px] leading-5"><thead className="sr-only"><tr><th>Linha anterior</th><th>Linha atual</th><th>Alteração</th><th>Conteúdo</th></tr></thead><tbody>

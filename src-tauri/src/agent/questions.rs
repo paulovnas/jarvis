@@ -1,0 +1,188 @@
+use super::{cancelled, journal, AgentError, AgentState, ChatSnapshot, Session, ToolCall};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::HashSet;
+use tokio::sync::{oneshot, watch};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QuestionOption {
+    label: String,
+    #[serde(default)]
+    description: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Question {
+    id: String,
+    question: String,
+    #[serde(default)]
+    options: Vec<QuestionOption>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Request {
+    questions: Vec<Question>,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingQuestion {
+    turn_id: String,
+    tool_id: String,
+    questions: Vec<Question>,
+}
+pub(super) struct Pending {
+    pub request: PendingQuestion,
+    started: std::time::Instant,
+    reply: oneshot::Sender<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Answer {
+    id: String,
+    value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selected_label: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Response {
+    cancelled: bool,
+    answers: Vec<Answer>,
+}
+fn invalid(message: &str) -> AgentError {
+    AgentError::new("invalid_question", message)
+}
+fn bounded(value: &str, maximum: usize) -> bool {
+    !value.trim().is_empty() && value.chars().count() <= maximum
+}
+fn parse_request(args: &Value) -> Result<Request, AgentError> {
+    let request: Request = serde_json::from_value(args.clone())
+        .map_err(|_| invalid("Formato de perguntas inválido."))?;
+    if !(1..=3).contains(&request.questions.len()) {
+        return Err(invalid("Envie de uma a três perguntas por vez."));
+    }
+    let mut ids = HashSet::new();
+    for question in &request.questions {
+        if !bounded(&question.id, 64) || !ids.insert(&question.id)
+            || !bounded(&question.question, 1000) || question.options.len() > 6 {
+            return Err(invalid("Perguntas devem ter identificadores únicos, texto curto e até seis opções."));
+        }
+        let mut labels = HashSet::new();
+        for option in &question.options {
+            if !bounded(&option.label, 200) || !labels.insert(option.label.trim())
+                || option.description.as_ref().is_some_and(|text| text.chars().count() > 500) {
+                return Err(invalid("As opções devem ser curtas e distintas."));
+            }
+        }
+    }
+    Ok(request)
+}
+fn validate_response(request: &PendingQuestion, response: &Response) -> Result<(), AgentError> {
+    if response.cancelled {
+        return if response.answers.is_empty() { Ok(()) } else { Err(invalid("Uma solicitação cancelada não pode conter respostas.")) };
+    }
+    if response.answers.len() != request.questions.len() {
+        return Err(invalid("Responda todas as perguntas antes de enviar."));
+    }
+    let mut ids = HashSet::new();
+    for answer in &response.answers {
+        let question = request.questions.iter().find(|question| question.id == answer.id)
+            .ok_or_else(|| invalid("Esta resposta não corresponde às perguntas abertas."))?;
+        if !ids.insert(&answer.id) || !bounded(&answer.value, 4000) {
+            return Err(invalid("Cada pergunta precisa de uma resposta válida, com até 4.000 caracteres."));
+        }
+        if let Some(label) = &answer.selected_label {
+            if answer.value != *label || !question.options.iter().any(|option| option.label == *label) {
+                return Err(invalid("A opção escolhida não foi oferecida nesta pergunta."));
+            }
+        }
+    }
+    Ok(())
+}
+pub(super) fn definition() -> Value {
+    json!({
+        "type": "function", "name": "ask_user",
+        "description": "Ask the user 1-3 concise clarification questions and wait for their answers in the Jarvis UI. Use this instead of listing questions/options in chat when missing preferences, requirements or decisions materially affect the task and cannot be resolved from available evidence. Write questions and choices in Brazilian Portuguese unless the user requests another language. Supply 0-6 distinct choices per question; descriptions are optional and should only explain useful tradeoffs. The UI always includes a free-text answer: do not add Other/manual answer options. No answer is selected automatically, including in YOLO mode. A cancelled response means the user did not answer: do not invent an answer or treat it as authorization. This tool collects user input; it does not replace tool execution approvals.",
+        "parameters": {
+            "type": "object", "additionalProperties": false, "required": ["questions"],
+            "properties": {"questions": {"type": "array", "minItems": 1, "maxItems": 3,
+                "items": {"type": "object", "additionalProperties": false, "required": ["id", "question"],
+                    "properties": {
+                        "id": {"type": "string", "minLength": 1, "maxLength": 64},
+                        "question": {"type": "string", "minLength": 1, "maxLength": 1000},
+                        "options": {"type": "array", "maxItems": 6, "items": {
+                            "type": "object", "additionalProperties": false, "required": ["label"],
+                            "properties": {"label": {"type": "string", "minLength": 1, "maxLength": 200}, "description": {"type": "string", "maxLength": 500}}
+                        }}
+                    }
+                }
+            }}
+        }
+    })
+}
+pub(super) fn cancelled_output() -> String {
+    json!({"cancelled": true, "answers": []}).to_string()
+}
+pub(super) async fn execute(session: &Session, tool: &ToolCall, mut signal: watch::Receiver<bool>) -> Result<String, AgentError> {
+    let request = parse_request(&tool.args)?;
+    if *signal.borrow() { return Err(AgentError::cancelled()); }
+    let (reply, received) = oneshot::channel();
+    session.update(true, |data| {
+        if let Some(active) = &mut data.active {
+            active.question = Some(Pending {
+                request: PendingQuestion { turn_id: active.id.clone(), tool_id: tool.id.clone(), questions: request.questions },
+                started: std::time::Instant::now(), reply,
+            });
+        }
+    })?;
+    tokio::select! {
+        biased;
+        _ = cancelled(&mut signal) => Err(AgentError::cancelled()),
+        result = received => result.map_err(|_| AgentError::cancelled()),
+    }
+}
+#[tauri::command]
+pub fn answer_agent_question(
+    agent: tauri::State<'_, AgentState>, conversation_id: String, turn_id: String,
+    tool_id: String, response: Response,
+) -> Result<ChatSnapshot, AgentError> {
+    let session = agent.existing(&conversation_id)?;
+    answer(&session, &turn_id, &tool_id, response)
+}
+fn answer(session: &Session, turn_id: &str, tool_id: &str, response: Response) -> Result<ChatSnapshot, AgentError> {
+    let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
+    if data.storage_failed { return Err(AgentError::storage()); }
+    let pending = data.active.as_ref()
+        .filter(|active| active.id == turn_id && !*active.cancel.borrow())
+        .and_then(|active| active.question.as_ref())
+        .filter(|pending| pending.request.tool_id == tool_id)
+        .ok_or_else(|| AgentError::new("stale_question", "Esta solicitação de perguntas não está mais ativa."))?;
+    validate_response(&pending.request, &response)?;
+    let output = serde_json::to_string(&response).map_err(|_| AgentError::internal())?;
+    let elapsed = pending.started.elapsed().as_millis() as u64;
+    // Acknowledge only after both the visible answer and provider result are durable.
+    let mut current = data.turns.last().filter(|turn| turn.turn.id == turn_id).cloned().ok_or_else(AgentError::internal)?;
+    let tool = current.turn.steps.iter_mut().flat_map(|step| &mut step.tools)
+        .find(|tool| tool.id == tool_id && tool.name == "ask_user").ok_or_else(AgentError::internal)?;
+    tool.output = output.clone();
+    tool.status = "completed".into();
+    tool.duration_ms = elapsed;
+    current.wire.push(json!({"type":"function_call_output", "call_id":tool_id, "output":output}));
+    if journal::append(&session.journal, &current).is_err() {
+        data.storage_failed = true;
+        if let Some(active) = &data.active { let _ = active.cancel.send(true); }
+        return Err(AgentError::storage());
+    }
+    *data.turns.last_mut().ok_or_else(AgentError::internal)? = current;
+    let pending = data.active.as_mut().and_then(|active| active.question.take()).ok_or_else(AgentError::internal)?;
+    data.revision += 1;
+    let snapshot = session.snapshot_data(&data);
+    drop(data);
+    (session.emit)(snapshot.clone());
+    let _ = pending.reply.send(output);
+    Ok(snapshot)
+}
+
+#[cfg(test)]
+mod tests;

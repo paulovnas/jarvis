@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
+import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { MCP_TEMPLATE, mcpCheckSchema, mcpServersSchema, validateMcpJson, type McpServer } from "@/core/mcp";
@@ -97,7 +97,7 @@ export function McpSettings({ onCountChange }: { onCountChange?: (count: number)
       </div>
     </div>
     {busy && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner aria-hidden="true" />Processando MCP…</p>}
-    {loading ? <Skeleton role="status" aria-label="Carregando MCPs" className="h-20 rounded-xl" /> : error ? <p role="alert" className="text-xs text-destructive">{error}</p> : servers.length === 0 ? <p className="rounded-xl border border-dashed p-6 text-center text-xs text-muted-foreground">Nenhum MCP cadastrado.</p> : servers.map((server) => <McpServerCard key={server.id} server={server} busy={busy || checking.has(server.id)} checking={checking.has(server.id)}
+    {loading ? <CardsSkeleton label="Carregando MCPs" /> : error ? <p role="alert" className="text-xs text-destructive">{error}</p> : servers.length === 0 ? <p className="rounded-xl border border-dashed p-6 text-center text-xs text-muted-foreground">Nenhum MCP cadastrado.</p> : servers.map((server) => <McpServerCard key={server.id} server={server} busy={busy || checking.has(server.id)} checking={checking.has(server.id)}
       onToggle={(enabled) => { void perform(async () => { update(await invoke("set_mcp_enabled", { id: server.id, enabled })); if (enabled) void checkServer({ ...server, enabled }); toast.success(enabled ? "MCP ativado" : "MCP desativado"); }); }}
       onEdit={() => { void perform(async () => { const value = await invoke<string>("get_mcp_config", { id: server.id }); if (mounted.current) { setRaw(value); setEditorError(null); setEditor({ id: server.id }); } }); }}
       onDelete={() => { setDeleteError(null); setDeleting(server); }}

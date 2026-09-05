@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { invoke } from "@tauri-apps/api/core";
 import { WebSearchSettings } from "./WebSearchSettings";
 import { McpSettings } from "./McpSettings";
+import { SkillsSettings } from "./SkillsSettings";
+import { skillsSnapshotSchema } from "@/core/skills";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
@@ -56,13 +58,13 @@ import {
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
+import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { accountList, type ProviderAccount } from "@/core/provider-accounts";
 import { ProviderAccountCard } from "./ProviderAccountCard";
 
 
-const ALIAS_PREFIX = "openai-codex-";
 const ALIAS_SUFFIX_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 
@@ -111,6 +113,9 @@ function safeErrorMessage(error: unknown, fallback: string): string {
 export function SettingsDialog({ open, onOpenChange, onAccountsChange }: SettingsDialogProps) {
   const [activeTab, setActiveTab] = useState<string>("general");
   const [mcpCount, setMcpCount] = useState<number | null>(null);
+  const [skillCount, setSkillCount] = useState<number | null>(null);
+  const skillCountVersion = useRef(0);
+  const updateSkillCount = useCallback((count: number) => { skillCountVersion.current += 1; setSkillCount(count); }, []);
   const mcpCountVersion = useRef(0);
   const updateMcpCount = useCallback((count: number) => {
     mcpCountVersion.current += 1;
@@ -121,6 +126,9 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
   const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
   const [listError, setListError] = useState<string | null>(null);
   const [suffix, setSuffix] = useState("");
+  const [provider, setProvider] = useState("openai-codex");
+  const aliasPrefix = `${provider}-`;
+  const connectionLabel = provider === "antigravity" ? "Antigravity" : "ChatGPT";
   const [suffixError, setSuffixError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -187,6 +195,16 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
     return () => { active = false; };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    const version = skillCountVersion.current;
+    void invoke("list_skills").then(value => {
+      if (active && version === skillCountVersion.current) setSkillCount(skillsSnapshotSchema.parse(value).skills.length);
+    }).catch(() => { if (active && version === skillCountVersion.current) setSkillCount(null); });
+    return () => { active = false; };
+  }, [open]);
+
   const openAddView = () => {
     if (startingRef.current || cancellingRef.current) return;
     setView("add");
@@ -211,7 +229,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
     setSuffixError(validationError);
     if (validationError) return;
 
-    const alias = `${ALIAS_PREFIX}${suffix}`;
+    const alias = `${aliasPrefix}${suffix}`;
     startingRef.current = true;
     setStarting(true);
     setConnectionError(null);
@@ -408,15 +426,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
   const renderList = () => {
     if (listState === "loading") {
       return (
-        <div
-          role="status"
-          aria-live="polite"
-          aria-label="Carregando contas conectadas"
-          className="flex flex-col gap-3"
-        >
-          <Skeleton className="h-20 w-full rounded-xl" />
-          <Skeleton className="h-20 w-full rounded-xl" />
-        </div>
+        <CardsSkeleton label="Carregando contas conectadas" />
       );
     }
 
@@ -477,7 +487,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               </EmptyMedia>
               <EmptyTitle className="text-base text-[#e6e6e6]">Nenhuma conta conectada</EmptyTitle>
               <EmptyDescription className="max-w-sm text-xs text-[#7f848e]">
-                Conecte sua conta ChatGPT Plus ou Pro para habilitar os modelos de código no Jarvis sem custo de API por token.
+                Adicione uma conta para acessar seus modelos.
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
@@ -509,17 +519,29 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
   };
 
   const renderAdd = () => {
-    const computedAlias = `${ALIAS_PREFIX}${suffix}`;
+    const computedAlias = `${aliasPrefix}${suffix}`;
     return (
       <>
         <DialogHeader>
           <DialogTitle>Adicionar conta</DialogTitle>
           <DialogDescription>
-            Vincule uma conta ChatGPT Plus ou Pro usando o fluxo OAuth seguro no navegador.
+            Conecte pelo navegador.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleConnect}>
           <div className="space-y-5">
+            <div className="space-y-2">
+              <Label htmlFor="account-provider">Provedor</Label>
+              <Select value={provider} onValueChange={(value) => { if (value) { setProvider(value); setConnectionError(null); } }} disabled={starting}>
+                <SelectTrigger id="account-provider" className="w-full cursor-pointer">
+                  <SelectValue>{provider === "antigravity" ? "Antigravity" : "OpenAI Codex"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="openai-codex" className="cursor-pointer">OpenAI Codex</SelectItem>
+                  <SelectItem value="antigravity" className="cursor-pointer">Antigravity</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="provider-alias-suffix" className="text-xs text-[#e6e6e6]">
                 Sufixo do alias
@@ -527,7 +549,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               <InputGroup className="border-[#3e4451] bg-[#1e2227]">
                 <InputGroupAddon className="border-r border-[#3e4451] bg-[#2c313a]/50 pl-2.5">
                   <InputGroupText className="font-mono text-xs text-[#56b6c2]">
-                    {ALIAS_PREFIX}
+                    {aliasPrefix}
                   </InputGroupText>
                 </InputGroupAddon>
                 <InputGroupInput
@@ -555,14 +577,6 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               </p>
             </div>
 
-            <div className="rounded-lg border border-[#56b6c2]/25 bg-[#56b6c2]/5 p-3.5 text-xs leading-relaxed text-[#abb2bf]">
-              <div className="flex items-center gap-1.5 font-medium text-[#56b6c2] mb-1">
-                <ShieldCheck className="size-4" />
-                <span>Autenticação Direta e Segura</span>
-              </div>
-              A autenticação usa sua assinatura ChatGPT Plus ou Pro no navegador oficial da OpenAI. As credenciais ficam guardadas exclusivamente no Keychain do macOS; a interface e o banco mantêm apenas os metadados da conta.
-            </div>
-
             {connectionError && (
               <div role="alert" className="flex items-start gap-2 rounded-lg border border-[#e06c75]/35 bg-[#e06c75]/5 p-3 text-xs text-[#e06c75]">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -586,7 +600,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
             </Button>
             <Button type="submit" disabled={starting} className="cursor-pointer gap-2 text-xs bg-[#61afef] text-[#1e2227] hover:bg-[#61afef]/90">
               <ShieldCheck className="size-3.5" />
-              {starting ? "Iniciando conexão…" : connectionError ? "Tentar novamente" : "Conectar com ChatGPT"}
+              {starting ? "Iniciando conexão…" : connectionError ? "Tentar novamente" : `Conectar com ${connectionLabel}`}
             </Button>
           </CardFooter>
         </form>
@@ -597,7 +611,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
   const renderWaiting = () => (
     <>
       <DialogHeader>
-        <DialogTitle>Conectar com ChatGPT</DialogTitle>
+        <DialogTitle>Conectar com {connectionLabel}</DialogTitle>
         <DialogDescription>
           A janela de autenticação foi aberta no navegador padrão.
         </DialogDescription>
@@ -607,7 +621,6 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
           <Spinner aria-label="Aguardando autenticação no navegador" className="size-5 text-[#61afef]" />
           <div>
             <p className="text-sm font-medium text-[#e6e6e6]">Aguardando autenticação no navegador</p>
-            <p className="text-xs text-[#7f848e] mt-0.5">Conclua o login na aba aberta do ChatGPT para autorizar o acesso.</p>
           </div>
         </div>
         {connectionError && (
@@ -669,13 +682,13 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
                     </Badge>
                   )}
                 </TabsTrigger>
-                <TabsTrigger value="skills" className="cursor-pointer gap-2 px-2 text-xs"><BookOpen aria-hidden="true" className="size-3.5" />Skills</TabsTrigger>
+                <TabsTrigger value="skills" className="cursor-pointer gap-2 px-2 text-xs"><BookOpen aria-hidden="true" className="size-3.5" />Skills{skillCount !== null && <Badge variant="outline" className="border-[#c678dd]/30 bg-[#c678dd]/10 px-1.5 py-0 text-[10px] text-[#c678dd]">{skillCount}</Badge>}</TabsTrigger>
                 <TabsTrigger value="mcps" className="cursor-pointer gap-2 px-2 text-xs"><Plug aria-hidden="true" className="size-3.5" />MCPs{mcpCount !== null && <Badge variant="outline" className="border-[#56b6c2]/30 bg-[#56b6c2]/10 px-1.5 py-0 text-[10px] text-[#56b6c2]">{mcpCount}</Badge>}</TabsTrigger>
               </TabsList>
             </div>
 
             <TabsContent value="general" className="m-0 min-h-0 flex-1" />
-            <TabsContent value="skills" className="m-0 min-h-0 flex-1" />
+            <TabsContent value="skills" className="m-0 min-h-0 flex-1"><ScrollArea className="h-full px-6 py-6">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</ScrollArea></TabsContent>
             <TabsContent value="providers" className="flex-1 min-h-0 m-0 p-0">
               <ScrollArea className="h-full px-6 py-6">
                 {renderList()}

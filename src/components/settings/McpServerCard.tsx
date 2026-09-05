@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { McpServer } from "@/core/mcp";
 
 export function McpServerCard({ server, busy, checking = false, onToggle, onEdit, onDelete, onTest }: {
@@ -29,7 +29,7 @@ export function McpServerCard({ server, busy, checking = false, onToggle, onEdit
     <CollapsibleContent className="flex flex-col gap-4 border-t border-border/70 pt-4">
       <CardContent className="flex flex-col gap-2 text-xs text-muted-foreground">
         {!server.configured && <p>Adicione sua chave de API.</p>}
-        {checking && <span role="status" aria-label="Descobrindo ferramentas"><Spinner className="size-4" /></span>}
+        {checking && <div role="status" aria-label="Descobrindo ferramentas" className="flex flex-wrap gap-1.5"><Skeleton className="h-5 w-28 rounded-full" /><Skeleton className="h-5 w-36 rounded-full" /><Skeleton className="h-5 w-24 rounded-full" /></div>}
         {!!server.lastCheck?.tools.length && <div aria-label={`Ferramentas de ${server.name}`} className="flex max-h-56 flex-wrap gap-1.5 overflow-y-auto">{server.lastCheck.tools.map(tool => <Badge key={tool} variant="outline" className="max-w-full break-all whitespace-normal border-[#56b6c2]/30 bg-[#56b6c2]/10 text-[#56b6c2]">{tool}</Badge>)}</div>}
         {server.lastCheck && !server.lastCheck.error && server.lastCheck.tools.length === 0 && !checking && <p>Nenhuma ferramenta encontrada.</p>}
         {server.lastCheck?.error && <p role="alert" className="text-destructive">{server.lastCheck.error}</p>}

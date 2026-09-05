@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
 import { ArrowUp, Check, ChevronDown, Plus, Square, ListOrdered, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,13 +13,16 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Textarea } from "@/components/ui/textarea";
+import { ComposerSkeleton } from "@/components/layout/LoadingSkeletons";
+import { MessageContent } from "./MessageContent";
 import type { ProviderModel } from "@/core/provider-accounts";
 import type { CollaborationMode } from "./types";
-import type { QueuedMessage, TurnOptions } from "@/core/chat";
+import { mergeDrafts, type ChatDraft, type MessagePart, type QueuedMessage, type TurnOptions } from "@/core/chat";
+
+const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
 interface ChatComposerProps {
-  onSendMessage: (content: string, options: TurnOptions) => Promise<boolean>;
+  onSendMessage: (content: string, options: TurnOptions, parts?: MessagePart[]) => Promise<boolean>;
   onStop?: () => Promise<void>;
   running?: boolean;
   compacting?: boolean;
@@ -27,9 +30,9 @@ interface ChatComposerProps {
   disabled?: boolean;
   modelGroups: ProviderModelGroup[];
   draftKey?: string;
-  drafts?: Map<string, string>;
+  drafts?: Map<string, ChatDraft>;
   queuedMessages?: QueuedMessage[];
-  onRemoveQueued?: (id: string) => Promise<string | null>;
+  onRemoveQueued?: (id: string) => Promise<ChatDraft | null>;
   onResumeQueue?: () => Promise<void>;
 }
 
@@ -86,16 +89,17 @@ export function ChatComposer({
   onRemoveQueued,
   onResumeQueue,
 }: ChatComposerProps) {
-  const [text, updateText] = useState(() => draftKey ? drafts?.get(draftKey) ?? "" : "");
-  const textRef = useRef(text);
-  const textarea = useRef<HTMLTextAreaElement>(null);
+  const [draft, updateDraft] = useState<ChatDraft>(() => draftKey ? drafts?.get(draftKey) ?? { content: "" } : { content: "" });
+  const text = draft.content;
+  const draftRef = useRef(draft);
+  const input = useRef<{ focus: () => void }>(null);
   const [removing, setRemoving] = useState<string[]>([]);
   const removeLocks = useRef(new Set<string>());
   const [resuming, setResuming] = useState(false);
-  const setText = (value: string) => {
-    textRef.current = value;
-    if (draftKey) { if (value) drafts?.set(draftKey, value); else drafts?.delete(draftKey); }
-    updateText(value);
+  const setDraft = (value: ChatDraft) => {
+    draftRef.current = value;
+    if (draftKey) { if (value.content) drafts?.set(draftKey, value); else drafts?.delete(draftKey); }
+    updateDraft(value);
   };
   const removeQueued = async (id: string) => {
     if (!onRemoveQueued || removeLocks.current.has(id)) return;
@@ -103,9 +107,9 @@ export function ChatComposer({
     try {
       const restored = await onRemoveQueued(id);
       if (restored !== null) {
-        const current = draftKey && drafts ? drafts.get(draftKey) ?? "" : textRef.current;
-        setText(current ? `${current}\n\n${restored}` : restored);
-        textarea.current?.focus();
+        const current = draftKey && drafts ? drafts.get(draftKey) ?? { content: "" } : draftRef.current;
+        setDraft(mergeDrafts(current, restored));
+        input.current?.focus();
       }
     } finally { removeLocks.current.delete(id); setRemoving([...removeLocks.current]); }
   };
@@ -126,18 +130,12 @@ export function ChatComposer({
     sendLock.current = true;
     setSending(true);
     try {
-      const submitted = text;
-      const accepted = await onSendMessage(trimmed, running && initialOptions ? initialOptions : { account: currentModelDef.value.slice(0, separator), model: currentModelDef.value.slice(separator + 1), reasoning, mode, approvalMode });
-      const current = draftKey && drafts ? drafts.get(draftKey) ?? "" : textRef.current;
-      if (accepted && current === submitted) setText("");
+      const submitted = draftRef.current;
+      const options = running && initialOptions ? initialOptions : { account: currentModelDef.value.slice(0, separator), model: currentModelDef.value.slice(separator + 1), reasoning, mode, approvalMode };
+      const accepted = submitted.parts?.length ? await onSendMessage(trimmed, options, submitted.parts) : await onSendMessage(trimmed, options);
+      const current = draftKey && drafts ? drafts.get(draftKey) ?? { content: "" } : draftRef.current;
+      if (accepted && JSON.stringify(current) === JSON.stringify(submitted)) setDraft({ content: "" });
     } finally { sendLock.current = false; setSending(false); }
-  };
-
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void handleSend();
-    }
   };
 
   const availableModels = modelGroups.flatMap((group) => group.models);
@@ -163,26 +161,14 @@ export function ChatComposer({
           {!running && <Button variant="ghost" size="sm" className="ml-auto h-6 cursor-pointer text-[11px]" disabled={resuming || compacting} onClick={() => { setResuming(true); void onResumeQueue?.().finally(() => setResuming(false)); }}>Continuar fila</Button>}
         </div>
         <div className="max-h-36 overflow-y-auto">{queuedMessages.map((message, index) => <div key={message.id} className="flex items-center gap-2 border-t border-border/50 py-1.5 text-xs">
-          <span className="text-muted-foreground tabular-nums">{index + 1}</span><p className="min-w-0 flex-1 truncate" title={message.content}>{message.content}</p>
+          <span className="text-muted-foreground tabular-nums">{index + 1}</span><p className="min-w-0 flex-1 truncate" title={message.content}><MessageContent content={message.content} parts={message.parts} /></p>
           <Button variant="ghost" size="icon" className="size-6 shrink-0 cursor-pointer text-muted-foreground" aria-label={`Retirar mensagem ${index + 1} e editar`} title="Cancelar envio e devolver ao campo de texto" disabled={compacting || removing.includes(message.id)} onClick={() => { void removeQueued(message.id); }}><X className="size-3.5" /></Button>
         </div>)}</div>
       </section>}
-      <div role="group" aria-label="Mensagem e opções de envio" aria-busy={compacting} data-working={running || compacting || undefined} className="chat-composer relative isolate w-full rounded-[22px] border border-[#3e4451] bg-[#21252b] shadow-2xl shadow-black/30 transition-all focus-within:border-[#61afef]/60 focus-within:ring-1 focus-within:ring-[#61afef]/30">
-        {/* Textarea no topo com padding interno espaçoso longe das extremidades */}
-        <div className="w-full">
-          <Textarea
-            ref={textarea}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={disabled || compacting}
-            placeholder="Pergunte ou dê uma instrução ao Jarvis (ex: 'refatore os testes do backend')..."
-            className="min-h-[84px] w-full resize-none border-0 bg-transparent px-5 pt-4 pb-2 text-[14.5px] leading-relaxed text-[#e6e6e6] placeholder:text-[#7f848e] placeholder:leading-relaxed focus-visible:ring-0 focus-visible:outline-none"
-          />
-        </div>
+      <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} onSend={() => { void handleSend(); }} disabled={disabled || compacting} compacting={compacting} working={running || compacting}>
 
         {/* Linha de controles inferior no padrão Metis */}
-        <div className="flex items-center justify-between px-3.5 pb-2.5 pt-1">
+        <div className="flex w-full items-center justify-between px-3.5 pb-2.5 pt-1">
           {/* Canto inferior esquerdo: botão de anexo com ícone plus */}
           <Button
             type="button"
@@ -381,7 +367,7 @@ export function ChatComposer({
             </Button>
           </div>
         </div>
-      </div>
+      </SkillInput></Suspense>
     </div>
   );
 }

@@ -62,7 +62,7 @@ describe("ProviderAccountCard", () => {
     render(<ProviderAccountCard account={{ ...account, email: null, accountType: "unknown", createdAt: 0, models: [] }} onDisconnect={onDisconnect} onEnabledChange={vi.fn()} />);
     expect(screen.getByText("OpenAI Codex · Nenhum modelo")).toBeVisible();
     await user.click(screen.getByRole("button"));
-    expect(screen.getByText("Não informado pela OpenAI")).toBeVisible();
+    expect(screen.getByText("Não informado")).toBeVisible();
     expect(screen.getByText("Não identificado")).toBeVisible();
     expect(screen.getByText("Data indisponível")).toBeVisible();
     expect(screen.getByText("A assinatura não retornou modelos.")).toBeVisible();

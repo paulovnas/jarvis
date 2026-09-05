@@ -26,7 +26,7 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 base64 = "0.22"
 getrandom = "0.3"
-reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls", "json"] }
 sha2 = "0.10"
 url = "2.5"
 tauri-plugin-dialog = "2"
@@ -36,5 +36,8 @@ rmcp = { version = "3.2.0", default-features = false, features = ["client", "tra
 jsonschema = { version = "0.53.0", default-features = false }
 process-wrap = { version = "9.1.0", default-features = false, features = ["tokio1", "process-group", "kill-on-drop"] }
 similar = "2.7"
+serde_yaml_ng = "0.10"
+regex = "1"
+tempfile = "3"
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "3.7", default-features = false }

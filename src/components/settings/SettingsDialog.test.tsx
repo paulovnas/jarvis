@@ -11,6 +11,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => command === "get_web_search_config"
     ? Promise.resolve({ accountAlias: null })
     : command === "list_mcp_servers" ? Promise.resolve([])
+    : command === "list_skills" ? Promise.resolve({ includeAgents: false, directory: "/home/.jarvis/skills", skills: [], warnings: [] })
     : args === undefined ? invokeMock(command) : invokeMock(command, args),
 }));
 
@@ -54,6 +55,35 @@ function renderSettings(onOpenChange = vi.fn()) {
 }
 
 describe("SettingsDialog provider accounts", () => {
+  it("conecta Antigravity pelo navegador e mostra seus modelos no mesmo card", async () => {
+    const user = userEvent.setup();
+    const google = account("antigravity-pessoal", { providerKind: "antigravity", email: "google@example.com", models: [{ id: "gemini-pro", name: "Gemini Pro", reasoningLevels: ["low", "high"], defaultReasoningLevel: "high" }] });
+    const login = deferred<ProviderAccount>(); let connected = false;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_provider_accounts") return Promise.resolve(connected ? [google] : []);
+      if (command === "begin_openai_codex_connection") return Promise.resolve({ flowId: "google-flow", authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?state=test" });
+      if (command === "wait_openai_codex_connection") return login.promise;
+      return Promise.resolve(undefined);
+    });
+    renderSettings();
+    await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
+    expect(screen.getByRole("combobox", { name: "Provedor" })).toHaveTextContent("OpenAI Codex");
+    await user.click(screen.getByRole("combobox", { name: "Provedor" }));
+    await user.click(await screen.findByRole("option", { name: "Antigravity" }));
+    expect(screen.getByRole("combobox", { name: "Provedor" })).toHaveTextContent("Antigravity");
+    await user.type(screen.getByRole("textbox", { name: "Sufixo do alias" }), "pessoal");
+    await user.click(screen.getByRole("button", { name: "Conectar com Antigravity" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("begin_openai_codex_connection", { alias: "antigravity-pessoal" }));
+    expect(openUrlMock).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/v2/auth?state=test");
+    expect(screen.getByRole("dialog", { name: "Conectar com Antigravity" })).toBeInTheDocument();
+    connected = true; login.resolve(google);
+    const card = await screen.findByRole("button", { name: "Detalhes de antigravity-pessoal" });
+    expect(card).toHaveTextContent("Antigravity");
+    await user.click(card);
+    expect(await screen.findByText("Gemini Pro")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /Ativar antigravity-pessoal/ })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Desconectar" })).toBeInTheDocument();
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
     invokeMock.mockReset();
@@ -70,7 +100,8 @@ describe("SettingsDialog provider accounts", () => {
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel", { name: "Geral" })).toBeEmptyDOMElement();
     await user.click(tabs[2]);
-    expect(await screen.findByRole("tabpanel", { name: "Skills" })).toBeEmptyDOMElement();
+    expect(await screen.findByRole("button", { name: "Marketplace" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Skills/ })).toHaveTextContent("0"));
     await waitFor(() => expect(screen.getByRole("tab", { name: /MCPs/ })).toHaveTextContent("0"));
     expect(screen.getByRole("tab", { name: /Provedores/ })).toHaveTextContent("1");
   });

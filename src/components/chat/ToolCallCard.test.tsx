@@ -7,6 +7,14 @@ import { ToolCallCard } from "./ToolCallCard";
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 
 describe("ToolCallCard Web Search", () => {
+  it("mostra a skill pelo nome e mantém as instruções recolhidas", async () => {
+    const user = userEvent.setup();
+    render(<ToolCallCard tool={{ id: "skill1", name: "read_skill", status: "completed", args: { id: "opaque-id" }, output: "Skill: react-expert\nRead components first" }} />);
+    const button = screen.getByRole("button", { name: /Leitura de skill · react-expert/ });
+    expect(screen.queryByText(/Read components first/)).not.toBeInTheDocument();
+    await user.click(button);
+    expect(screen.getByText(/Read components first/)).toBeVisible();
+  });
   it("mostra a consulta compacta e expande conta, resposta e fontes clicáveis", async () => {
     const user = userEvent.setup();
     render(<ToolCallCard tool={{ id: "search1", name: "web_search", status: "completed", args: { query: "Tauri documentação" }, output: JSON.stringify({ accountAlias: "openai-codex-pesquisa", model: "gpt-5.4", answer: "Resultado verificado", sources: [{ title: "Documentação oficial", url: "https://v2.tauri.app/" }] }) }} />);

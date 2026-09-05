@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::persistence::{self, PersistenceError, ProviderAccountRecord};
 
+pub(crate) mod antigravity;
+
 pub(crate) const OPENAI_CODEX_ALIAS_PREFIX: &str = "openai-codex-";
 pub(crate) const KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.openai-codex";
 pub(crate) const OPENAI_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
@@ -78,6 +80,12 @@ pub(crate) struct CodexCredential {
     pub(crate) email: Option<String>,
     #[serde(default, rename = "planType")]
     pub(crate) plan_type: Option<String>,
+    #[serde(default, rename = "projectId", skip_serializing_if = "Option::is_none")]
+    pub(crate) project_id: Option<String>,
+    #[serde(skip)]
+    pub(crate) antigravity_models: std::collections::BTreeMap<String, serde_json::Value>,
+    #[serde(skip)]
+    pub(crate) antigravity_endpoint: Option<String>,
 }
 
 impl CodexCredential {
@@ -97,6 +105,9 @@ impl CodexCredential {
             account_id: account_id.into(),
             email,
             plan_type,
+            project_id: None,
+            antigravity_models: Default::default(),
+            antigravity_endpoint: None,
         }
     }
 }
@@ -169,6 +180,7 @@ pub(crate) fn validate_alias_suffix(suffix: &str) -> Result<(), AliasValidationE
 pub(crate) fn validate_provider_alias(alias: &str) -> Result<(), AliasValidationError> {
     let suffix = alias
         .strip_prefix(OPENAI_CODEX_ALIAS_PREFIX)
+        .or_else(|| alias.strip_prefix("antigravity-"))
         .ok_or(AliasValidationError::InvalidAlias)?;
     validate_alias_suffix(suffix).map_err(|_| AliasValidationError::InvalidAlias)
 }
@@ -219,6 +231,9 @@ pub(crate) fn commit_provider_account(
 ) -> Result<ProviderAccount, ProviderAccountError> {
     validate_provider_alias(alias).map_err(ProviderAccountError::InvalidAlias)?;
     if credential.account_id.is_empty() {
+        return Err(ProviderAccountError::InvalidAccountId);
+    }
+    if alias.starts_with("antigravity-") != credential.project_id.is_some() {
         return Err(ProviderAccountError::InvalidAccountId);
     }
     if persistence::provider_account_exists(connection, alias, &credential.account_id)? {
@@ -279,24 +294,29 @@ fn deserialize_credential(value: &[u8]) -> Result<CodexCredential, SecretStoreEr
 #[cfg(target_os = "macos")]
 impl SecretStore for KeychainSecretStore {
     fn load(&self, alias: &str) -> Result<CodexCredential, SecretStoreError> {
-        let value = security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, alias)
+        let value = security_framework::passwords::get_generic_password(secret_service(alias), alias)
             .map_err(|_| SecretStoreError::OperationFailed)?;
         deserialize_credential(&value)
     }
 
     fn store(&self, alias: &str, credential: &CodexCredential) -> Result<(), SecretStoreError> {
         let value = serialize_credential(credential)?;
-        security_framework::passwords::set_generic_password(KEYCHAIN_SERVICE, alias, &value)
+        security_framework::passwords::set_generic_password(secret_service(alias), alias, &value)
             .map_err(|_| SecretStoreError::OperationFailed)
     }
 
     fn remove(&self, alias: &str) -> Result<(), SecretStoreError> {
-        match security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, alias) {
+        match security_framework::passwords::delete_generic_password(secret_service(alias), alias) {
             Ok(()) => Ok(()),
             Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
             Err(_) => Err(SecretStoreError::OperationFailed),
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn secret_service(alias: &str) -> &'static str {
+    if alias.starts_with("antigravity-") { "com.foxtag.jarvis.antigravity" } else { KEYCHAIN_SERVICE }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -776,7 +796,7 @@ impl ProviderError {
             ),
             ProviderAccountError::DuplicateAccount => Self::new(
                 "duplicate_account",
-                "Esta conta do ChatGPT já está conectada.",
+                "Esta conta já está conectada.",
             ),
             #[cfg(not(target_os = "macos"))]
             ProviderAccountError::SecretStore(SecretStoreError::Unavailable) => Self::new(
@@ -988,7 +1008,8 @@ impl OAuthManager {
             ));
         }
 
-        let (listener, port) = bind_callback_listener(&self.callback_ports)?;
+        let google = alias.starts_with("antigravity-");
+        let (listener, port) = bind_callback_listener(if google { &[51121] } else { &self.callback_ports })?;
         listener.set_nonblocking(true).map_err(|_| {
             ProviderError::new(
                 "port_unavailable",
@@ -999,13 +1020,13 @@ impl OAuthManager {
         let (verifier, challenge) = create_pkce()?;
         let state = random_token(32)?;
         let flow_id = random_token(16)?;
-        let redirect_uri = format!("http://localhost:{port}{OPENAI_CODEX_CALLBACK_ROUTE}");
-        let authorization_url = build_authorization_url(
+        let redirect_uri = if google { format!("http://127.0.0.1:{port}/oauth-callback") } else { format!("http://localhost:{port}{OPENAI_CODEX_CALLBACK_ROUTE}") };
+        let authorization_url = if google { antigravity::authorization_url(&redirect_uri, &challenge, &state)? } else { build_authorization_url(
             &self.endpoints.authorize_url,
             &redirect_uri,
             &challenge,
             &state,
-        )?;
+        )? };
 
         let flow = std::sync::Arc::new(OAuthFlow {
             id: flow_id.clone(),
@@ -1202,7 +1223,7 @@ impl OpenAiCodexState {
                 "Reconecte a conta nas configurações para enviar mensagens.",
             )
         })?;
-        if credential.account_id != record.account_id {
+        if credential.account_id != record.account_id || (record.provider_kind == "antigravity") != credential.project_id.is_some() {
             return Err(ProviderError::new(
                 "account_mismatch",
                 "Reconecte a conta selecionada nas configurações.",
@@ -1217,7 +1238,7 @@ impl OpenAiCodexState {
         }
         let client = build_codex_client().map_err(|_| ProviderError::internal())?;
         let models =
-            fetch_codex_models(&client, OPENAI_CODEX_BASE_URL, &credential).ok_or_else(|| {
+            fetch_provider_models(&client, &mut credential).ok_or_else(|| {
                 ProviderError::new(
                     "catalog_unavailable",
                     "Não foi possível verificar os modelos da conta. Tente novamente.",
@@ -1301,11 +1322,15 @@ fn run_oauth_flow_inner(
     app_state: &persistence::AppState,
     home_dir: &std::path::Path,
 ) -> Result<ProviderAccount, ProviderError> {
-    let code = wait_for_callback(listener, &flow.state, &flow.cancelled, manager.timeout)?;
+    let google = flow.alias.starts_with("antigravity-");
+    let code = wait_for_callback_route(listener, &flow.state, &flow.cancelled, manager.timeout, if google { "/oauth-callback" } else { OPENAI_CODEX_CALLBACK_ROUTE })?;
     if flow.cancelled.load(std::sync::atomic::Ordering::Acquire) {
         return Err(ProviderError::new("cancelled", "A conexão foi cancelada."));
     }
 
+    let credential = if google {
+        antigravity::exchange(&code, &flow.verifier, &flow.redirect_uri, &flow.cancelled)?
+    } else {
     let token = exchange_authorization_code(
         &manager.endpoints,
         &code,
@@ -1315,14 +1340,14 @@ fn run_oauth_flow_inner(
     if flow.cancelled.load(std::sync::atomic::Ordering::Acquire) {
         return Err(ProviderError::new("cancelled", "A conexão foi cancelada."));
     }
-    let credential = CodexCredential::new(
+    CodexCredential::new(
         token.access,
         token.refresh,
         token.expires,
         token.account_id,
         token.email,
         token.plan_type,
-    );
+    ) };
     let _commit_guard = flow
         .commit_guard
         .lock()
@@ -1355,11 +1380,12 @@ enum CallbackEvent {
     Continue,
 }
 
-fn wait_for_callback(
+fn wait_for_callback_route(
     listener: std::net::TcpListener,
     expected_state: &str,
     cancelled: &std::sync::atomic::AtomicBool,
     timeout: std::time::Duration,
+    route: &str,
 ) -> Result<String, ProviderError> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -1374,7 +1400,7 @@ fn wait_for_callback(
         }
 
         match listener.accept() {
-            Ok((mut stream, _)) => match process_callback(&mut stream, expected_state) {
+            Ok((mut stream, _)) => match process_callback_route(&mut stream, expected_state, route) {
                 CallbackEvent::Code(code) => return Ok(code),
                 CallbackEvent::Denied => {
                     return Err(ProviderError::new("denied", "A autorização foi recusada."));
@@ -1400,7 +1426,7 @@ fn wait_for_callback(
     }
 }
 
-fn process_callback(stream: &mut std::net::TcpStream, expected_state: &str) -> CallbackEvent {
+fn process_callback_route(stream: &mut std::net::TcpStream, expected_state: &str, route: &str) -> CallbackEvent {
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(250)));
     let request = match read_http_request(stream) {
@@ -1427,7 +1453,7 @@ fn process_callback(stream: &mut std::net::TcpStream, expected_state: &str) -> C
         write_html_response(stream, "400 Bad Request", "Retorno inválido.");
         return CallbackEvent::Continue;
     };
-    if url.path() != OPENAI_CODEX_CALLBACK_ROUTE {
+    if url.path() != route {
         write_html_response(stream, "404 Not Found", "Rota não encontrada.");
         return CallbackEvent::Continue;
     }
@@ -1519,7 +1545,7 @@ fn render_callback_html(status: &str, body: &str) -> String {
                 ),
                 "Autenticação recebida",
                 "Conexão autorizada",
-                "Sua conta do ChatGPT foi conectada com sucesso ao Jarvis.",
+                "Volte ao Jarvis para concluir a conexão da conta.",
                 "Você pode fechar esta janela com segurança e voltar ao aplicativo.",
             )
         } else {
@@ -1946,6 +1972,7 @@ fn refresh_credential(
     endpoints: &OAuthEndpoints,
     credential: &CodexCredential,
 ) -> Result<CodexCredential, ProviderError> {
+    if credential.project_id.is_some() { return antigravity::refresh(credential); }
     let mut form = url::form_urlencoded::Serializer::new(String::new());
     form.append_pair("grant_type", "refresh_token")
         .append_pair("client_id", OPENAI_CODEX_CLIENT_ID)
@@ -2145,7 +2172,7 @@ fn account_details(
     if !record.enabled {
         return ProviderAccount::from_record(record, Some(&credential), Vec::new(), false);
     }
-    let original = credential.clone();
+    let original = serde_json::to_vec(&credential).ok();
     let profile = token_profile(&credential.access, None);
     credential.email = credential.email.or(profile.email);
     credential.plan_type = credential.plan_type.or(profile.plan_type);
@@ -2157,12 +2184,12 @@ fn account_details(
     }
 
     let models = client.and_then(|client| {
-        if credential.plan_type.is_none() {
+        if credential.project_id.is_none() && credential.plan_type.is_none() {
             credential.plan_type = fetch_plan_type(client, OPENAI_CODEX_BASE_URL, &credential);
         }
-        fetch_codex_models(client, OPENAI_CODEX_BASE_URL, &credential)
+        fetch_provider_models(client, &mut credential)
     });
-    if credential != original {
+    if serde_json::to_vec(&credential).ok() != original {
         let _ = secret_store.store(&record.alias, &credential);
     }
     let models_available = models.is_some();
@@ -2172,6 +2199,11 @@ fn account_details(
         models.unwrap_or_default(),
         models_available,
     )
+}
+
+fn fetch_provider_models(client: &reqwest::blocking::Client, credential: &mut CodexCredential) -> Option<Vec<ProviderModel>> {
+    if credential.project_id.is_some() { antigravity::fetch_models(client, credential) }
+    else { fetch_codex_models(client, OPENAI_CODEX_BASE_URL, credential) }
 }
 
 fn commit_provider_account_with_state(

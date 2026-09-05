@@ -4,3 +4,9 @@
 [submodule "docs/omp"]
 	path = docs/omp
 	url = https://github.com/can1357/oh-my-pi.git
+[submodule "docs/skills-manager"]
+	path = docs/skills-manager
+	url = https://github.com/xingkongliang/skills-manager
+[submodule "docs/open-design"]
+	path = docs/open-design
+	url = https://github.com/nexu-io/open-design.git

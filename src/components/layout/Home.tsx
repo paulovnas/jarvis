@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ResizableHandle,
@@ -6,13 +6,15 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { ChatArea } from "@/components/chat/ChatArea";
-import { SettingsDialog } from "@/components/settings/SettingsDialog";
+import { SettingsSkeleton } from "./LoadingSkeletons";
 import { accountList, type ProviderAccount } from "@/core/provider-accounts";
 import { Inspector } from "./Inspector";
 import { AppSidebar } from "./Sidebar";
 import { useLibrary } from "@/hooks/use-library";
 import { useChat } from "@/hooks/use-chat";
 import { useAgentActivity } from "@/hooks/use-agent-activity";
+
+const SettingsDialog = lazy(() => import("@/components/settings/SettingsDialog").then(module => ({ default: module.SettingsDialog })));
 
 export function Home() {
   const library = useLibrary();
@@ -106,11 +108,11 @@ export function Home() {
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      <SettingsDialog
+      <Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         onAccountsChange={updateAccounts}
-      />
+      /></Suspense>
     </div>
   );
 }

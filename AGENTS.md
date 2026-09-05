@@ -36,6 +36,7 @@ Jarvis é uma GUI de coding agent construída com **Tauri v2 (Rust) + React 19 +
   - Texto principal: `#abb2bf`
   - Destaques semânticos: Azul `#61afef` (primário/ações), Verde `#98c379` (sucesso/terminal), Ciano `#56b6c2` (info/workspace), Amarelo `#e5c07b` (atenção/chaves), Vermelho `#e06c75` (destrutivo/erro), Roxo `#c678dd`.
 - **Feedback visual:** Use o componente Sonner (`toast` / `Toaster`) para notificações de ação do usuário.
+- **Loading states:** Use structural shadcn Skeletons for content loading, preserving the expected layout. Reuse `src/components/layout/LoadingSkeletons.tsx`; keep accessible status labels and respect reduced motion. Reserve spinners for ongoing actions or execution without a predictable content structure.
 
 ### Testes são OBRIGATÓRIOS (não opcionais)
 

@@ -36,6 +36,7 @@ export interface ChatErrorData {
 }
 
 export interface ChatMessage {
+  parts?: import("@/core/chat").MessagePart[];
   id: string;
   role: MessageRole;
   content: string;

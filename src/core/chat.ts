@@ -1,4 +1,21 @@
 import { z } from "zod";
+import { pendingQuestionSchema } from "./questions";
+
+export const messagePartSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({ type: z.literal("skill"), id: z.string(), name: z.string() }),
+]);
+export type MessagePart = z.infer<typeof messagePartSchema>;
+export interface ChatDraft { content: string; parts?: MessagePart[] }
+export function draftText(parts: MessagePart[]): string {
+  return parts.map(part => part.type === "text" ? part.text : `/${part.name}`).join("");
+}
+export function mergeDrafts(current: ChatDraft, restored: ChatDraft): ChatDraft {
+  const parts = [...(current.parts ?? (current.content ? [{ type: "text" as const, text: current.content }] : [])),
+    ...(current.content ? [{ type: "text" as const, text: "\n\n" }] : []),
+    ...(restored.parts ?? [{ type: "text" as const, text: restored.content }])];
+  return { content: draftText(parts), parts };
+}
 
 export const turnOptionsSchema = z.object({
   account: z.string(),
@@ -15,6 +32,7 @@ const toolSchema = z.object({
 const turnSchema = z.object({
   id: z.string(), createdAt: z.number().nonnegative(), durationMs: z.number().nonnegative(),
   user: z.string(), options: turnOptionsSchema,
+  parts: z.array(messagePartSchema).optional(),
   contextWindow: z.number().int().positive().nullable().optional(),
   status: z.enum(["running", "completed", "cancelled", "error", "interrupted"]),
   steps: z.array(z.object({
@@ -24,7 +42,7 @@ const turnSchema = z.object({
   })),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
 });
-export const queuedMessageSchema = z.object({ id: z.string(), content: z.string(), options: turnOptionsSchema });
+export const queuedMessageSchema = z.object({ id: z.string(), content: z.string(), options: turnOptionsSchema, parts: z.array(messagePartSchema).optional() });
 export const fileChangeSchema = z.object({
   path: z.string(), additions: z.number().int().nonnegative().nullable(),
   deletions: z.number().int().nonnegative().nullable(), base: z.enum(["conversation", "git", "unknown"]),
@@ -43,6 +61,7 @@ const snapshotSchema = z.object({
   turns: z.array(turnSchema), activeTurnId: z.string().nullable(), pendingApproval: toolSchema.nullable(),
   queuedMessages: z.array(queuedMessageSchema).optional(), context: contextInfoSchema.optional(), fileChanges: z.array(fileChangeSchema).optional(),
   compacting: z.boolean().optional(),
+  pendingQuestion: pendingQuestionSchema.nullable().optional(),
 });
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>;
 export type FileChange = z.infer<typeof fileChangeSchema>;

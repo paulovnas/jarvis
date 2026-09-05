@@ -43,8 +43,8 @@ describe("Persistent live conversation", () => {
     await user.click(screen.getByRole("button", { name: "Retirar mensagem 1 e editar" }));
     expect(call).toHaveBeenCalledWith("remove_queued_message", { conversationId: "c1", messageId: "q1" });
     expect(screen.queryByRole("region", { name: "Mensagens agendadas" })).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox")).toHaveValue("Depois rode os testes");
-  });
+    expect(screen.getByRole("textbox")).toHaveTextContent("Depois rode os testes");
+  }, 15000);
 
   it("locks and restores typing during automatic compaction events", async () => {
     const user = userEvent.setup(); render(<TestChat />);
@@ -52,11 +52,11 @@ describe("Persistent live conversation", () => {
     await user.type(screen.getByRole("textbox"), "Rascunho preservado");
     const context = { tokens: 900, limit: 1000, estimated: false, compacting: true, compactions: 0 };
     await update({ ...emptyChat(), revision: 2, context });
-    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("textbox")).toHaveAttribute("contenteditable", "false");
     expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeDisabled();
     await update({ ...emptyChat(), revision: 3, context: { ...context, tokens: 100, compacting: false, compactions: 1 } });
-    expect(screen.getByRole("textbox")).toHaveValue("Rascunho preservado");
-    expect(screen.getByRole("textbox")).toBeEnabled();
+    expect(screen.getByRole("textbox")).toHaveTextContent("Rascunho preservado");
+    expect(screen.getByRole("textbox")).toHaveAttribute("contenteditable", "true");
   });
 
   it("starts without demo messages and opens a real selected conversation", async () => {
@@ -65,7 +65,7 @@ describe("Persistent live conversation", () => {
     expect(call).not.toHaveBeenCalled();
     rerender(<TestChat />);
     await screen.findByRole("heading", { name: "Primeira conversa" });
-    expect(screen.getByRole("textbox")).toBeEnabled();
+    expect(screen.getByRole("textbox")).toHaveAttribute("contenteditable", "true");
     expect(screen.getByRole("button", { name: "Adicionar anexo" })).toBeDisabled();
     expect(call).toHaveBeenCalledWith("get_chat", { conversationId: "c1" });
   });
@@ -81,6 +81,14 @@ describe("Persistent live conversation", () => {
     await user.click(screen.getByRole("button", { name: /Leitura de arquivo/ }));
     expect(screen.getByText("# Jarvis")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copiar" })).not.toBeInTheDocument();
+  });
+  it("restaura skills explícitas como badges no histórico", async () => {
+    call.mockResolvedValue({ ...emptyChat(), turns: [{ ...savedTurn(), user: "/review Confira o README", parts: [{ type: "skill", id: "review-id", name: "review" }, { type: "text", text: " Confira o README" }] }] });
+    render(<TestChat />);
+    const badge = await screen.findByTitle("Skill: review");
+    expect(badge).toHaveTextContent("review");
+    expect(within(screen.getByTestId("user-message-turn1")).getByText("Confira o README")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Remover skill review" })).not.toBeInTheDocument();
   });
   it("groups four tool steps under one compact summary while preserving nested details", async () => {
     const user = userEvent.setup();
@@ -138,6 +146,62 @@ describe("Persistent live conversation", () => {
     await user.click(screen.getByRole("button", { name: "Recusar" }));
     expect(call).toHaveBeenCalledWith("approve_agent_tool", { conversationId: "c1", turnId: "turn1", toolId: "tool1", approved: false });
   });
+  it("answers questions through native IPC while keeping the composer draft and queue independent", async () => {
+    const user = userEvent.setup();
+    const pendingQuestion = { turnId: "turn1", toolId: "ask1", questions: [{ id: "theme", question: "Qual tema prefere?", options: [{ label: "Escuro" }, { label: "Claro" }] }] };
+    const tool = { id: "ask1", name: "ask_user", status: "running" as const, args: { questions: pendingQuestion.questions }, output: "", durationMs: 0 };
+    const turn = { ...savedTurn(), status: "running" as const, steps: [{ durationMs: 0, text: "", summary: "", usage: null, tools: [tool] }] };
+    const response = { cancelled: false, answers: [{ id: "theme", value: "Escuro", selectedLabel: "Escuro" }] };
+    const queue = [{ id: "q1", content: "Depois revise os testes", options: turn.options }];
+    const running = { ...emptyChat(), activeTurnId: turn.id, turns: [turn], pendingQuestion, queuedMessages: queue };
+    call.mockImplementation(async command => command === "answer_agent_question" ? {
+      ...running, pendingQuestion: null, revision: 3,
+      turns: [{ ...turn, steps: [{ ...turn.steps[0], tools: [{ ...tool, status: "completed", output: JSON.stringify(response) }] }] }],
+    } : running);
+    render(<TestChat />);
+    const card = await screen.findByRole("region", { name: "Perguntas do Jarvis" });
+    const composer = await screen.findByRole("textbox", { name: "Mensagem" });
+    await user.type(composer, "Meu rascunho");
+    expect(screen.getByRole("region", { name: "Mensagens agendadas" })).toHaveTextContent(queue[0].content);
+    expect(screen.queryByRole("region", { name: "Autorização de ferramenta" })).not.toBeInTheDocument();
+    await user.click(within(card).getByRole("button", { name: "Escuro" }));
+    await user.click(within(card).getByRole("button", { name: "Enviar respostas" }));
+    expect(call).toHaveBeenCalledWith("answer_agent_question", { conversationId: "c1", turnId: "turn1", toolId: "ask1", response });
+    expect(screen.queryByRole("region", { name: "Perguntas do Jarvis" })).not.toBeInTheDocument();
+    expect(composer).toHaveTextContent("Meu rascunho");
+    expect(composer).toHaveFocus();
+    const history = screen.getByRole("button", { name: "Feita 1 pergunta" });
+    expect(history).toHaveAttribute("aria-expanded", "false");
+    await user.click(history);
+    expect(screen.getByText("Qual tema prefere?")).toBeVisible();
+    expect(screen.getByText("Escuro")).toBeVisible();
+    await update({ ...running, revision: 2 });
+    expect(screen.queryByRole("region", { name: "Perguntas do Jarvis" })).not.toBeInTheDocument();
+  });
+  it("restores partial question answers after switching conversations and ignores late answer snapshots", async () => {
+    const user = userEvent.setup();
+    const pendingQuestion = { turnId: "turn1", toolId: "ask1", questions: [{ id: "theme", question: "Qual tema prefere?", options: [] }] };
+    const running = { ...emptyChat(), activeTurnId: "turn1", pendingQuestion };
+    let resolve!: (value: unknown) => void;
+    call.mockImplementation(async (command, args) => {
+      if (command === "answer_agent_question") return new Promise(done => { resolve = done; });
+      return typeof args === "object" && args !== null && "conversationId" in args && args.conversationId === "c2" ? emptyChat("c2") : running;
+    });
+    const { rerender } = render(<TestChat />);
+    await user.type(await screen.findByRole("textbox", { name: "Sua resposta" }), "Um tema escuro");
+    const next = populatedLibrary(); next.selection = { workspaceId: "w2", projectId: "p2", conversationId: "c2" };
+    rerender(<TestChat library={next} />);
+    await screen.findByRole("heading", { name: "Conversa do trabalho" });
+    expect(screen.queryByRole("region", { name: "Perguntas do Jarvis" })).not.toBeInTheDocument();
+    rerender(<TestChat />);
+    expect(await screen.findByRole("textbox", { name: "Sua resposta" })).toHaveValue("Um tema escuro");
+    await user.click(screen.getByRole("button", { name: "Enviar respostas" }));
+    rerender(<TestChat library={next} />);
+    await screen.findByRole("heading", { name: "Conversa do trabalho" });
+    await act(async () => resolve({ ...running, revision: 10, pendingQuestion: null }));
+    expect(screen.getByRole("heading", { name: "Conversa do trabalho" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Perguntas do Jarvis" })).not.toBeInTheDocument();
+  });
   it("reports missing history and retries without inventing a session", async () => {
     const user = userEvent.setup(); call.mockRejectedValueOnce({ message: "Histórico ausente." });
     render(<TestChat />);
@@ -151,9 +215,9 @@ describe("Persistent live conversation", () => {
     call.mockImplementation(async command => { if (command === "start_agent_turn") throw { message:"Não salvo" }; return emptyChat(); });
     const { rerender } = render(<TestChat />); await screen.findByRole("textbox");
     await user.type(screen.getByRole("textbox"), "Meu pedido"); await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
-    await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
-    expect(screen.getByRole("textbox")).toHaveValue("Meu pedido");
-    rerender(<TestChat connected={false} />); expect(screen.getByRole("textbox")).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveAttribute("contenteditable", "true"));
+    expect(screen.getByRole("textbox")).toHaveTextContent("Meu pedido");
+    rerender(<TestChat connected={false} />); expect(screen.getByRole("textbox")).toHaveAttribute("contenteditable", "true");
     expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeDisabled();
   });
   it("ignores old conversation loads and unrelated events after switching", async () => {

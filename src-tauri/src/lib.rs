@@ -4,6 +4,7 @@ mod library;
 mod mcp;
 mod openai_codex;
 mod persistence;
+mod skills;
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -20,6 +21,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             greet,
+            skills::list_skills,
+            skills::set_skills_agents,
+            skills::set_skill_enabled,
+            skills::delete_skill,
+            skills::get_skill_detail,
+            skills::browse_skill_marketplace,
+            skills::get_marketplace_skill,
+            skills::install_marketplace_skill,
+            skills::check_skill_updates,
+            skills::update_skills,
             mcp::list_mcp_servers,
             mcp::get_mcp_config,
             mcp::save_mcp_server,
@@ -48,6 +59,7 @@ pub fn run() {
             agent::diffs::get_agent_file_diff,
             agent::cancel_agent_turn,
             agent::approve_agent_tool,
+            agent::questions::answer_agent_question,
             openai_codex::list_provider_accounts,
             openai_codex::set_provider_enabled,
             openai_codex::begin_openai_codex_connection,

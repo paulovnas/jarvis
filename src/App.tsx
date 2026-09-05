@@ -21,6 +21,7 @@ import {
   CardHeader,
 } from "@/components/ui/card";
 import { Toaster } from "@/components/ui/sonner";
+import { HomeSkeleton } from "@/components/layout/LoadingSkeletons";
 
 const LazyHome = lazy(() => import("@/components/layout/Home"));
 
@@ -146,17 +147,7 @@ export function App() {
     switch (bootstrap.status) {
       case "loading":
         return (
-          <main className="flex flex-1 items-center justify-center p-4 sm:p-6">
-            <div
-              role="status"
-              aria-live="polite"
-              className="rounded-lg border border-border/80 bg-card px-6 py-5 text-center shadow-2xl shadow-black/30"
-            >
-              <p className="text-sm text-muted-foreground">
-                Carregando configuração…
-              </p>
-            </div>
-          </main>
+          <main className="flex min-h-0 flex-1"><HomeSkeleton /></main>
         );
 
       case "error":
@@ -188,22 +179,7 @@ export function App() {
       case "home":
         return (
           <main className="flex min-h-0 flex-1">
-            <Suspense
-              fallback={
-                <div className="flex h-full items-center justify-center p-4 sm:p-6">
-                  <div
-                    role="status"
-                    aria-live="polite"
-                    aria-atomic="true"
-                    className="rounded-lg border border-border/80 bg-card px-6 py-5 text-center shadow-2xl shadow-black/30"
-                  >
-                    <p className="text-sm text-muted-foreground">
-                      Carregando interface principal…
-                    </p>
-                  </div>
-                </div>
-              }
-            >
+            <Suspense fallback={<HomeSkeleton />}>
               <LazyHome />
             </Suspense>
           </main>

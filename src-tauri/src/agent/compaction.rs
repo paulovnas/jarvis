@@ -55,7 +55,7 @@ fn visible(value: &Value) -> Value {
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
-                .filter(|(key, _)| key.as_str() != "encrypted_content")
+                .filter(|(key, _)| key.as_str() != "encrypted_content" && !key.starts_with("_antigravity"))
                 .map(|(key, value)| (key.clone(), visible(value)))
                 .collect(),
         ),

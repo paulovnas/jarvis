@@ -35,7 +35,7 @@ import {
   SidebarMenuItem,
   SidebarProvider,
 } from "@/components/ui/sidebar";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SidebarSkeleton } from "./LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -175,13 +175,7 @@ export function AppSidebar({
             </div>
           </SidebarHeader>
           <SidebarContent className="gap-0">
-            {loading && (
-              <div role="status" className="space-y-3 p-4">
-                <span className="sr-only">Carregando projetos</span>
-                <Skeleton className="h-12 w-full" />
-                <Skeleton className="h-12 w-full" />
-              </div>
-            )}
+            {loading && <SidebarSkeleton />}
             {error && !dialog && !deletion && (
               <div className="space-y-2 p-3">
                 <p role="alert" className="text-sm text-destructive">

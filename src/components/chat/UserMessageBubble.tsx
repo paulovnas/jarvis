@@ -1,5 +1,6 @@
 import { FileCode2, User } from "lucide-react";
 import type { ChatMessage } from "./types";
+import { MessageContent } from "./MessageContent";
 
 interface UserMessageBubbleProps {
   message: ChatMessage;
@@ -32,7 +33,7 @@ export function UserMessageBubble({ message }: UserMessageBubbleProps) {
         )}
 
         <div className="group relative rounded-2xl rounded-tr-xs border border-[#3e4451]/80 bg-[#2c313a] px-5 py-3.5 text-[14.5px] leading-relaxed text-[#e6e6e6] shadow-md shadow-black/10">
-          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+          <p className="whitespace-pre-wrap break-words"><MessageContent content={message.content} parts={message.parts} /></p>
           <div className="mt-2 flex items-center justify-end gap-1.5 text-[11px] text-[#7f848e]">
             <span>{message.timestamp}</span>
             <User className="size-3 text-[#61afef]" />

@@ -7,6 +7,8 @@ use std::{
 };
 use tokio::sync::watch;
 
+mod antigravity;
+
 const MAX_EVENT: usize = 4 * 1024 * 1024;
 const MAX_STREAM: usize = 16 * 1024 * 1024;
 pub(super) enum Delta {
@@ -145,6 +147,11 @@ fn request_body(
     tools: Vec<Value>,
     session_id: &str,
 ) -> Value {
+    let input: Vec<Value> = input.into_iter().filter_map(|mut item| {
+        if item["type"] == "reasoning" && !item["encrypted_content"].is_string() { return None; }
+        if let Some(map) = item.as_object_mut() { map.retain(|key, _| !key.starts_with("_antigravity")); }
+        Some(item)
+    }).collect();
     let mut body = json!({
         "model":options.model, "instructions":instructions, "input":input,
         "tools":tools, "tool_choice":"auto", "parallel_tool_calls":false,
@@ -169,6 +176,9 @@ pub(super) async fn stream(
     signal: watch::Receiver<bool>,
     on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
+    if credential.project_id.is_some() {
+        return antigravity::stream(credential, session_id, options, instructions, input, tools, signal, on_delta).await;
+    }
     let body = request_body(options, instructions, input, tools, session_id);
     let request = authenticated_request(credential, session_id, &body, Duration::from_secs(600))?;
     receive(request, signal, on_delta).await

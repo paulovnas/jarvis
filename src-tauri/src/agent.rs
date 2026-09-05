@@ -4,7 +4,9 @@ mod journal;
 pub(crate) mod maintenance;
 mod provider;
 pub(crate) mod queue;
+pub(crate) mod questions;
 mod title;
+mod skill_input;
 mod tools;
 pub(crate) mod web_search;
 
@@ -127,6 +129,8 @@ struct Turn {
     created_at: u64,
     duration_ms: u64,
     user: String,
+    #[serde(default)]
+    parts: Vec<skill_input::MessagePart>,
     options: TurnOptions,
     #[serde(default)]
     context_window: Option<u64>,
@@ -148,6 +152,7 @@ pub struct ChatSnapshot {
     turns: Vec<Turn>,
     active_turn_id: Option<String>,
     pending_approval: Option<ToolCall>,
+    pending_question: Option<questions::PendingQuestion>,
     queued_messages: Vec<queue::QueuedMessage>,
     context: compaction::ContextInfo,
     file_changes: Vec<diffs::FileSummary>,
@@ -160,6 +165,7 @@ struct Active {
     id: String,
     cancel: watch::Sender<bool>,
     approval: Option<Approval>,
+    question: Option<questions::Pending>,
 }
 struct SessionData {
     turns: Vec<StoredTurn>,
@@ -199,7 +205,7 @@ impl Session {
         options: TurnOptions,
     ) -> Result<watch::Receiver<bool>, AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
-        self.reserve_locked(&mut data, content, options, None)
+        self.reserve_locked(&mut data, content, options, None, vec![])
     }
     fn reserve_locked(
         &self,
@@ -207,6 +213,7 @@ impl Session {
         content: String,
         options: TurnOptions,
         id: Option<String>,
+        parts: Vec<skill_input::MessagePart>,
     ) -> Result<watch::Receiver<bool>, AgentError> {
         if data.active.is_some() || data.compacting || data.manual_compaction {
             return Err(AgentError::new(
@@ -225,6 +232,7 @@ impl Session {
                 created_at: now(),
                 duration_ms: 0,
                 user: content,
+                parts,
                 options,
                 context_window: None,
                 status: TurnStatus::Running,
@@ -241,6 +249,7 @@ impl Session {
             id,
             cancel,
             approval: None,
+            question: None,
         });
         data.turns.push(turn);
         data.revision += 1;
@@ -260,6 +269,7 @@ impl Session {
                     .map(|approval| approval.tool.clone())
             }),
             queued_messages: data.extras.queue.clone(),
+            pending_question: data.active.as_ref().and_then(|active| active.question.as_ref().map(|pending| pending.request.clone())),
             context: compaction::info(data),
             file_changes: diffs::summaries(data),
         }
@@ -493,11 +503,11 @@ pub async fn get_chat(
 pub async fn start_agent_turn(
     app: tauri::AppHandle,
     persistence: tauri::State<'_, AppState>,
-    oauth: tauri::State<'_, OpenAiCodexState>,
     agent: tauri::State<'_, AgentState>,
     conversation_id: String,
     content: String,
     options: TurnOptions,
+    parts: Option<Vec<skill_input::MessagePart>>,
 ) -> Result<ChatSnapshot, AgentError> {
     let content = content.trim().to_owned();
     if content.is_empty() || content.len() > 100_000 || options.model.len() > 200 {
@@ -507,7 +517,7 @@ pub async fn start_agent_turn(
         ));
     }
     let state = persistence.inner().clone();
-    let oauth = oauth.inner().clone();
+    let oauth = app.state::<OpenAiCodexState>().inner().clone();
     let agent = agent.inner().clone();
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     let run_app = app.clone();
@@ -518,7 +528,8 @@ pub async fn start_agent_turn(
         let session = agent.session(&app, &state, &home, &conversation_id)?;
         // Revalidate the project for every turn, including already loaded conversations.
         library::agent_location(&state, &home, &conversation_id)?;
-        let signal = session.submit(content, options)?;
+        let (content, parts) = skill_input::normalize(&home, &session.root, content, parts.unwrap_or_default())?;
+        let signal = session.submit_message(content, options, parts)?;
         let signal = if signal.is_some() {
             signal
         } else {
@@ -704,6 +715,10 @@ async fn run_turn(
         .turn
         .options
         .clone();
+    tokio::select! {
+        _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+        result = skill_input::load(session, home) => result?,
+    }
     let auth_state = state.clone();
     let auth_oauth = oauth.clone();
     let auth_home = home.to_path_buf();
@@ -743,6 +758,12 @@ async fn run_turn(
         let mut instructions = tools::instructions(&session.root, options.mode);
         instructions.push_str(web_search::instructions(search_enabled));
         let mut definitions = tools::definitions(options.mode);
+        let skills = tokio::select! {
+            _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+            skills = crate::skills::active(home, &session.root) => skills.map_err(|cause| AgentError::new("skill_error", &cause.message))?,
+        };
+        instructions.push_str(&crate::skills::prompt(&skills));
+        if !skills.is_empty() { definitions.extend([crate::skills::definition(), crate::skills::search_definition()]); }
         let mcp_definitions = tokio::select! {
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
             definitions = mcp_clients.definitions(mcp, state, home, options.mode == Mode::Plan) => definitions,
@@ -874,7 +895,9 @@ async fn run_turn(
                 }
             })?;
             let result = if permitted {
-                if tool.name.starts_with("mcp_") {
+                if tool.name == "ask_user" {
+                    questions::execute(session, &tool, signal.clone()).await
+                } else if tool.name.starts_with("mcp_") {
                     mcp_clients
                         .execute(
                             mcp,
@@ -889,6 +912,17 @@ async fn run_turn(
                         .map_err(|err| AgentError::new("mcp_error", &err.message))
                 } else if tool.name == "web_search" {
                     web_search::execute(state, oauth, home, &tool.args, signal.clone()).await
+                } else if tool.name == "read_skill" {
+                    tokio::select! {
+                        _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+                        result = crate::skills::read(home, &session.root, &tool.args) => result.map_err(|cause| AgentError::new("skill_error", &cause.message)),
+                    }
+                } else if tool.name == "find_skills" {
+                    let available = tokio::select! {
+                        _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+                        result = crate::skills::active(home, &session.root) => result.map_err(|cause|AgentError::new("skill_error", &cause.message))?,
+                    };
+                    crate::skills::search(&available, &tool.args).map_err(|cause|AgentError::new("skill_error", &cause.message))
                 } else {
                     match tools::execute_with_revision(
                         &session.root,
@@ -915,13 +949,16 @@ async fn run_turn(
             };
             let (output, status) = match result {
                 Ok(output) => (output, "completed"),
+                Err(error) if error.code == "cancelled" || error.code == "session_storage" => return Err(error),
                 Err(error) => (error.message, "error"),
             };
             session.update(true, |data| {
                 let current = data.turns.last_mut().unwrap();
-                current.wire.push(
+                if !current.wire.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == tool.id) {
+                    current.wire.push(
                     json!({"type":"function_call_output", "call_id":tool.id, "output":output}),
-                );
+                    );
+                }
                 let step = current.turn.steps.last_mut().unwrap();
                 step.duration_ms = step_started.elapsed().as_millis() as u64;
                 if let Some(item) = step.tools.iter_mut().find(|item| item.id == tool.id) {

@@ -201,6 +201,9 @@ pub(super) fn interrupt_tools(turn: &mut StoredTurn) {
             {
                 tool.status = "error".into();
                 tool.output = "Execução interrompida; resultado desconhecido. Verifique o estado atual antes de repetir a operação.".into();
+                if tool.name == "ask_user" {
+                    tool.output = super::questions::cancelled_output();
+                }
                 turn.wire.push(
                     json!({"type":"function_call_output", "call_id":tool.id, "output":tool.output}),
                 );
@@ -221,6 +224,7 @@ mod tests {
                 created_at: 1,
                 duration_ms: 0,
                 user: "Read".into(),
+                parts: vec![],
                 context_window: Some(128_000),
                 options: TurnOptions {
                     account: "test".into(),

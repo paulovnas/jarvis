@@ -60,7 +60,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, sa
               </Badge>
             </div>
             <CardDescription id={summaryId}>
-              OpenAI Codex · {modelSummary}
+              {account.providerKind === "antigravity" ? "Antigravity" : "OpenAI Codex"} · {modelSummary}
             </CardDescription>
           </div>
           <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
@@ -70,7 +70,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, sa
         <CardContent className="flex flex-col gap-3 pb-1">
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
             <dt className="text-muted-foreground">E-mail</dt>
-            <dd className="break-all text-right">{account.email ?? "Não informado pela OpenAI"}</dd>
+            <dd className="break-all text-right">{account.email ?? "Não informado"}</dd>
             <dt className="text-muted-foreground">Tipo de conta</dt>
             <dd className="text-right">{ACCOUNT_TYPE_LABELS[account.accountType]}</dd>
             <dt className="text-muted-foreground">Conectada em</dt>
