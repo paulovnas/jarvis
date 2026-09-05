@@ -1,132 +1,145 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type EventCallback } from "@tauri-apps/api/event";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { emptyLibrary, populatedLibrary } from "@/test/library-fixtures";
+import { emptyChat, savedTurn } from "@/test/chat-fixtures";
+import type { LibrarySnapshot } from "@/core/library";
+import type { ChatSnapshot } from "@/core/chat";
+import { useChat } from "@/hooks/use-chat";
 import { ChatArea } from "./ChatArea";
 
-describe("ChatArea component", () => {
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+const call = vi.mocked(invoke);
+const listeners = new Set<EventCallback<unknown>>();
+function TestChat({ library = populatedLibrary(), connected = true }: { library?: LibrarySnapshot; connected?: boolean }) {
+  const chat = useChat(library.selection.conversationId);
+  return <ChatArea library={library} chat={chat} modelGroups={connected ? [{ provider:"Codex", models:[{ value:"openai-codex-pessoal/model",label:"Modelo real",reasoningLevels:["medium"],defaultReasoningLevel:"medium" }] }] : []} />;
+}
+async function update(snapshot: ChatSnapshot) {
+  await act(async () => { for (const handler of listeners) handler({ event: "agent:updated", id: 1, payload: snapshot }); });
+}
+describe("Persistent live conversation", () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
-    window.HTMLElement.prototype.scrollIntoView = vi.fn();
-  });
-
-  it("renderiza o cabeçalho do chat, mensagens do usuário e respostas do assistente", () => {
-    render(<ChatArea />);
-
-    expect(screen.getByRole("main", { name: "Área do chat" })).toBeInTheDocument();
-    expect(screen.getByText("Sessão de Engenharia")).toBeInTheDocument();
-    expect(screen.getByText(/Onboarding & App Shell/i)).toBeInTheDocument();
-
-    // Mensagem do usuário com anexo
-    expect(
-      screen.getByText("Jarvis, implemente a persistência SQLite e o layout de três colunas para o desktop.")
-    ).toBeInTheDocument();
-    expect(screen.getByText("docs/PLAN-FEAT-onboarding-app-shell.md")).toBeInTheDocument();
-
-    // Resposta do assistente
-    expect(screen.getByText("Implementação concluída com sucesso")).toBeInTheDocument();
-    expect(screen.getByText("Trabalhou por 14s")).toBeInTheDocument();
-  });
-
-  it("expande e recolhe o bloco 'Trabalhou por {tempo}' ao clicar", async () => {
-    const user = userEvent.setup();
-    render(<ChatArea />);
-
-    // Inicialmente o detalhe de raciocínio não está visível
-    expect(screen.queryByText("Raciocínio interno do agente")).not.toBeInTheDocument();
-
-    // Clica no botão de colapso de trabalho
-    const workButton = screen.getByRole("button", { name: /Trabalhou por 14s/i });
-    await user.click(workButton);
-
-    // Agora o raciocínio interno e as ferramentas executadas devem estar visíveis
-    expect(screen.getByText("Raciocínio interno do agente")).toBeInTheDocument();
-    expect(screen.getByText("Chamadas de ferramentas")).toBeInTheDocument();
-    expect(screen.getByText("Leitura de arquivo")).toBeInTheDocument();
-    expect(screen.getByText("Edição de código")).toBeInTheDocument();
-
-    // Clica novamente para recolher
-    await user.click(workButton);
-    expect(screen.queryByText("Raciocínio interno do agente")).not.toBeInTheDocument();
-  });
-
-  it("expande uma chamada de ferramenta para visualizar parâmetros e saída", async () => {
-    const user = userEvent.setup();
-    render(<ChatArea />);
-
-    // Abre o trabalho de 14s
-    const workButton = screen.getByRole("button", { name: /Trabalhou por 14s/i });
-    await user.click(workButton);
-
-    // Clica na ferramenta "Leitura de arquivo"
-    const toolButton = screen.getByRole("button", { name: /Leitura de arquivo/i });
-    await user.click(toolButton);
-
-    expect(screen.getByText("Saída do terminal")).toBeInTheDocument();
-    expect(screen.getByText(/export const appConfig/i)).toBeInTheDocument();
-  });
-
-  it("renderiza o alerta de erro operacional e aciona o retry", async () => {
-    const user = userEvent.setup();
-    const toastInfoSpy = vi.spyOn(toast, "info");
-    render(<ChatArea />);
-
-    expect(
-      screen.getByText("Servidor local de inteligência artificial offline")
-    ).toBeInTheDocument();
-    expect(screen.getByText(/\$ curl -s http:\/\/127.0.0.1:11434\/api\/tags/i)).toBeInTheDocument();
-
-    const retryButton = screen.getByRole("button", { name: /Tentar novamente/i });
-    await user.click(retryButton);
-
-    expect(toastInfoSpy).toHaveBeenCalledWith("Ação mockada", expect.any(Object));
-  });
-
-  it("permite digitar e enviar uma nova mensagem pelo composer", async () => {
-    const user = userEvent.setup();
-    render(<ChatArea />);
-
-    const textarea = screen.getByPlaceholderText(/Pergunte ou dê uma instrução ao Jarvis/i);
-    await user.type(textarea, "Adicione validação para o novo layout");
-
-    const sendButton = screen.getByRole("button", { name: "Enviar mensagem" });
-    await user.click(sendButton);
-
-    // A mensagem enviada deve aparecer no chat
-    expect(screen.getByText("Adicione validação para o novo layout")).toBeInTheDocument();
-
-    // Espera a resposta dinâmica do assistente
-    await waitFor(
-      () => {
-        expect(
-          screen.getByText(/Recebi sua solicitação: "Adicione validação para o novo layout"/i)
-        ).toBeInTheDocument();
-      },
-      { timeout: 3000 }
-    );
-  });
-
-  it("exibe os labels legíveis nos seletores de modelo e modo ao invés dos valores brutos", async () => {
-    const user = userEvent.setup();
-    render(<ChatArea />);
-
-    const modelButton = screen.getByRole("button", {
-      name: /Selecionar modelo de IA/i,
+    listeners.clear(); call.mockReset().mockResolvedValue(emptyChat());
+    vi.mocked(listen).mockImplementation(async (_name, callback) => {
+      listeners.add(callback); return () => { listeners.delete(callback); };
     });
-    expect(modelButton).toHaveTextContent(/Gemini 2.5 Pro/i);
-    expect(screen.queryByText("gemini-2.5-pro")).not.toBeInTheDocument();
-    expect(screen.queryByText(/claude/i)).not.toBeInTheDocument();
-
-    expect(
-      screen.getByRole("button", { name: "Selecionar modo de execução" })
-    ).toHaveTextContent("Build (Escrita & Execução)");
-    expect(screen.queryByText("build")).not.toBeInTheDocument();
-
-    // Clica no seletor de modelo para abrir o menu agrupado por provider
-    await user.click(modelButton);
-    await waitFor(() => {
-      expect(screen.getByText("Antigravity")).toBeInTheDocument();
-      expect(screen.getByText("OpenAI")).toBeInTheDocument();
-    });
+  });
+  it("starts without demo messages and opens a real selected conversation", async () => {
+    const { rerender } = render(<TestChat library={emptyLibrary()} />);
+    expect(screen.getByText("Seu próximo projeto começa aqui")).toBeInTheDocument();
+    expect(call).not.toHaveBeenCalled();
+    rerender(<TestChat />);
+    await screen.findByRole("heading", { name: "Primeira conversa" });
+    expect(screen.getByRole("textbox")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Adicionar anexo" })).toBeDisabled();
+    expect(call).toHaveBeenCalledWith("get_chat", { conversationId: "c1" });
+  });
+  it("restores messages, provider summary and real tool results", async () => {
+    const user = userEvent.setup(); call.mockResolvedValue({ ...emptyChat(), turns: [savedTurn()] });
+    render(<TestChat />);
+    expect(await screen.findByText("Leia o README")).toBeInTheDocument();
+    expect(await screen.findByText("Tauri")).toBeInTheDocument();
+    expect(screen.queryByText("Gemini 2.5 Pro")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Trabalhou por/ }));
+    await user.click(screen.getByRole("button", { name: /Resumo de raciocínio do provedor/ }));
+    expect(screen.getByText("Verificando o projeto.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Leitura de arquivo/ }));
+    expect(screen.getByText("# Jarvis")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copiar" })).not.toBeInTheDocument();
+  });
+  it("groups four tool steps under one compact summary while preserving nested details", async () => {
+    const user = userEvent.setup();
+    const turn = savedTurn();
+    turn.durationMs = 11000;
+    turn.steps = [0, 1, 2, 3].map(index => ({ ...turn.steps[0], summary: "", text: index === 0 ? "Vou conferir os arquivos." : "", tools: [{ ...turn.steps[0].tools[0], id: `read-${index}`, args: { path: `file-${index}.md` }, output: `Conteúdo ${index}` }] }));
+    turn.steps.push({ durationMs: 1000, summary: "", text: "Este projeto organiza tarefas.", tools: [], usage: null });
+    call.mockResolvedValue({ ...emptyChat(), turns: [turn] });
+    render(<TestChat />);
+    expect(await screen.findByText("Este projeto organiza tarefas.")).toBeInTheDocument();
+    expect(screen.getAllByTestId(/^assistant-message-/)).toHaveLength(1);
+    const summary = screen.getByRole("button", { name: /Trabalhou por 11s.*4 ações/ });
+    expect(summary).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: /Leitura de arquivo/ })).not.toBeInTheDocument();
+    summary.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getAllByRole("button", { name: /Leitura de arquivo/ })).toHaveLength(4);
+    expect(screen.queryByText("Conteúdo 0")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Leitura de arquivo.*file-0/ }));
+    expect(screen.getByText("Conteúdo 0")).toBeVisible();
+    expect(screen.queryByText("Conteúdo 1")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Observações do agente/ }));
+    expect(screen.getByText("Vou conferir os arquivos.")).toBeVisible();
+    await user.click(summary);
+    expect(within(screen.getByLabelText("Processamento do Jarvis")).getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByText("Este projeto organiza tarefas.")).toBeVisible();
+  });
+  it("sends selected options, streams revisioned results and cancels only the current turn", async () => {
+    const user = userEvent.setup();
+    const running: ChatSnapshot = { ...emptyChat(), revision: 2, turns: [{ ...savedTurn(), status: "running", steps: [] }], activeTurnId: "turn1" };
+    call.mockImplementation(async command => command === "start_agent_turn" ? running : emptyChat());
+    render(<TestChat />);
+    await screen.findByRole("textbox");
+    await user.type(screen.getByRole("textbox"), "Leia o README");
+    await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
+    expect(call).toHaveBeenCalledWith("start_agent_turn", { conversationId: "c1", content: "Leia o README", options: { account: "openai-codex-pessoal", model: "model", reasoning: "medium", mode: "build", approvalMode: "yolo" } });
+    await screen.findByRole("button", { name: "Interromper execução" });
+    expect(screen.getByRole("group", { name: "Mensagem e opções de envio" })).toHaveAttribute("data-working", "true");
+    expect(screen.getByRole("main", { name: "Conversa" })).not.toHaveAttribute("data-working");
+    await update({ ...running, revision: 4, turns: [{ ...savedTurn(), status: "running" }] });
+    expect(await screen.findByText("Tauri")).toBeInTheDocument();
+    await update({ ...running, revision: 3 });
+    expect(screen.getByText("Tauri")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Interromper execução" }));
+    expect(call).toHaveBeenCalledWith("cancel_agent_turn", { conversationId: "c1", turnId: "turn1" });
+    await update({ ...emptyChat(), revision: 5, turns: [savedTurn()] });
+    expect(screen.getByRole("group", { name: "Mensagem e opções de envio" })).not.toHaveAttribute("data-working");
+  });
+  it("shows exact tool arguments and correlates a manual denial", async () => {
+    const user = userEvent.setup();
+    const tool = { ...savedTurn().steps[0].tools[0], name: "edit", args: { path: "README.md", oldText: "before", newText: "after" }, status: "pending" as const };
+    call.mockResolvedValue({ ...emptyChat(), activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running" }], pendingApproval: tool });
+    render(<TestChat />);
+    expect(await screen.findByText("before")).toBeInTheDocument(); expect(screen.getByText("after")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Recusar" }));
+    expect(call).toHaveBeenCalledWith("approve_agent_tool", { conversationId: "c1", turnId: "turn1", toolId: "tool1", approved: false });
+  });
+  it("reports missing history and retries without inventing a session", async () => {
+    const user = userEvent.setup(); call.mockRejectedValueOnce({ message: "Histórico ausente." });
+    render(<TestChat />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Histórico ausente.");
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    await screen.findByRole("textbox");
+  });
+  it("keeps a rejected message draft and disables send without an account", async () => {
+    const user = userEvent.setup();
+    call.mockImplementation(async command => { if (command === "start_agent_turn") throw { message:"Não salvo" }; return emptyChat(); });
+    const { rerender } = render(<TestChat />); await screen.findByRole("textbox");
+    await user.type(screen.getByRole("textbox"), "Meu pedido"); await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
+    await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+    expect(screen.getByRole("textbox")).toHaveValue("Meu pedido");
+    rerender(<TestChat connected={false} />); expect(screen.getByRole("textbox")).toBeDisabled();
+  });
+  it("ignores old conversation loads and unrelated events after switching", async () => {
+    let resolve!: (value: unknown) => void;
+    call.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const { rerender } = render(<TestChat />);
+    await waitFor(() => expect(call).toHaveBeenCalledTimes(1));
+    const next = populatedLibrary(); next.selection = { workspaceId:"w2",projectId:"p2",conversationId:"c2" };
+    call.mockResolvedValue(emptyChat("c2")); rerender(<TestChat library={next} />);
+    await screen.findByRole("heading", { name:"Conversa do trabalho" });
+    await act(async () => resolve({ ...emptyChat(), turns:[savedTurn()] }));
+    await update({ ...emptyChat(), revision:99,turns:[savedTurn()] });
+    expect(screen.queryByText("Leia o README")).not.toBeInTheDocument();
+    rerender(<TestChat library={emptyLibrary()} />); expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+  it("updates renamed context without reopening the history", async () => {
+    const { rerender } = render(<TestChat />); await screen.findByRole("textbox");
+    const library = populatedLibrary(); library.projects[0].name = "Meu projeto"; library.conversations[0].title = "Título editado";
+    rerender(<TestChat library={library} />);
+    expect(screen.getByRole("heading", { name:"Título editado" })).toBeInTheDocument(); expect(screen.getByText("Pessoal / Meu projeto")).toBeInTheDocument(); expect(call).toHaveBeenCalledTimes(1);
   });
 });

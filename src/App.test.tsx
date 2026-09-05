@@ -1,9 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import {
+  emptyLibrary,
+  populatedLibrary,
+} from "@/test/library-fixtures";
+import { emptyChat } from "@/test/chat-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -29,11 +34,62 @@ function titleBar() {
   return screen.getAllByRole("banner")[0];
 }
 
-
 describe("App bootstrap and onboarding", () => {
+  beforeAll(async () => {
+    // Exercise the real Home while keeping module transformation outside UI wait deadlines.
+    await import("@/components/layout/Home");
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
     invokeMock.mockReset();
+    invokeMock.mockImplementation((command) => {
+      if (command === "list_provider_accounts") return Promise.resolve([]);
+      if (command === "get_agent_activity") return Promise.resolve([]);
+      if (command === "get_library_snapshot")
+        return Promise.resolve(emptyLibrary());
+      return Promise.reject(new Error(`Unexpected Tauri command: ${command}`));
+    });
+  });
+
+  it("suppresses the native menu including portals and permits only scoped project menus", async () => {
+    invokeMock.mockImplementation((command) => {
+      if (command === "get_app_config")
+        return Promise.resolve({ onboardingCompleted: true });
+      if (command === "get_library_snapshot")
+        return Promise.resolve(populatedLibrary());
+      if (command === "get_chat")
+        return Promise.resolve(emptyChat());
+      return Promise.resolve([]);
+    });
+    const user = userEvent.setup();
+    const { unmount } = render(<App />);
+    const project = await screen.findByRole("button", {
+      name: /Jarvis/,
+    });
+    const backgroundEvent = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(document.body, backgroundEvent);
+    expect(backgroundEvent.defaultPrevented).toBe(true);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    fireEvent.contextMenu(project);
+    await user.click(await screen.findByRole("menuitem", { name: "Editar" }));
+    const name = await screen.findByLabelText("Nome do projeto");
+    const portalEvent = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(name, portalEvent);
+    expect(portalEvent.defaultPrevented).toBe(true);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    unmount();
+    const afterUnmount = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(document.body, afterUnmount);
+    expect(afterUnmount.defaultPrevented).toBe(false);
   });
 
   it("mantém loading visível e não mostra onboarding antes da leitura persistida", async () => {
@@ -67,9 +123,7 @@ describe("App bootstrap and onboarding", () => {
       await screen.findByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).toBeInTheDocument();
     expect(titleBar()).toHaveTextContent("Onboarding");
-    expect(
-      screen.getByRole("button", { name: "Finalizar" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Finalizar" })).toBeEnabled();
     expect(screen.queryByTestId("home-shell")).not.toBeInTheDocument();
   });
 
@@ -78,7 +132,9 @@ describe("App bootstrap and onboarding", () => {
 
     render(<App />);
 
-    expect(await screen.findByTestId("home-shell")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("home-shell", {}, { timeout: 5_000 }),
+    ).toBeInTheDocument();
     expect(titleBar()).toHaveTextContent("Início");
     expect(
       screen.queryByRole("heading", { name: /bem-vindo ao jarvis/i }),
@@ -100,9 +156,7 @@ describe("App bootstrap and onboarding", () => {
       screen.queryByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).not.toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole("button", { name: "Tentar novamente" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
     retryConfig.resolve({ onboardingCompleted: false });
     expect(screen.getByRole("status")).toBeInTheDocument();
     expect(
@@ -125,14 +179,14 @@ describe("App bootstrap and onboarding", () => {
     });
     await user.click(finishButton);
 
-    expect(
-      screen.getByRole("button", { name: /finalizando/i }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /finalizando/i })).toBeDisabled();
     expect(screen.queryByTestId("home-shell")).not.toBeInTheDocument();
     expect(invokeMock).toHaveBeenNthCalledWith(2, "complete_onboarding");
 
     completion.resolve({ onboardingCompleted: true });
-    expect(await screen.findByTestId("home-shell")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("home-shell", {}, { timeout: 5_000 }),
+    ).toBeInTheDocument();
     expect(titleBar()).toHaveTextContent("Início");
   });
 
@@ -145,9 +199,7 @@ describe("App bootstrap and onboarding", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(
-      await screen.findByRole("button", { name: "Finalizar" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Finalizar" }));
 
     await waitFor(() =>
       expect(toastErrorSpy).toHaveBeenCalledWith(
@@ -155,9 +207,7 @@ describe("App bootstrap and onboarding", () => {
         expect.objectContaining({ description: "Tente novamente." }),
       ),
     );
-    expect(
-      screen.getByRole("button", { name: "Finalizar" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Finalizar" })).toBeEnabled();
     expect(titleBar()).toHaveTextContent("Onboarding");
     expect(screen.queryByTestId("home-shell")).not.toBeInTheDocument();
   });
@@ -169,9 +219,7 @@ describe("App bootstrap and onboarding", () => {
 
     const user = userEvent.setup();
     render(<App />);
-    await user.click(
-      await screen.findByRole("button", { name: "Finalizar" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Finalizar" }));
 
     expect(
       await screen.findByRole("button", { name: "Finalizar" }),
@@ -197,7 +245,9 @@ describe("App bootstrap and onboarding", () => {
 
     const toastSpy = vi.spyOn(toast, "message");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /docs de referência/i }));
+    await user.click(
+      screen.getByRole("button", { name: /docs de referência/i }),
+    );
 
     expect(toastSpy).toHaveBeenCalledWith(
       "Base de Conhecimento",

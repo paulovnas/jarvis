@@ -59,6 +59,12 @@ const SETUP_STEPS = [
 ];
 
 export function App() {
+  useEffect(() => {
+    // Suppress the WebView menu without stopping our scoped context-menu triggers.
+    const preventNativeMenu = (event: MouseEvent) => event.preventDefault();
+    document.addEventListener("contextmenu", preventNativeMenu);
+    return () => document.removeEventListener("contextmenu", preventNativeMenu);
+  }, []);
   const [bootstrap, setBootstrap] = useState<BootstrapState>({
     status: "loading",
   });

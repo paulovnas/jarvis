@@ -1,13 +1,59 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { ChatArea } from "@/components/chat/ChatArea";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
+import { accountList, type ProviderAccount } from "@/core/provider-accounts";
 import { Inspector } from "./Inspector";
 import { AppSidebar } from "./Sidebar";
+import { useLibrary } from "@/hooks/use-library";
+import { useChat } from "@/hooks/use-chat";
+import { useAgentActivity } from "@/hooks/use-agent-activity";
 
 export function Home() {
+  const library = useLibrary();
+  const chat = useChat(library.snapshot?.selection.conversationId ?? null);
+  const runningConversationIds = useAgentActivity();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
+  const accountsVersion = useRef(0);
+  const updateAccounts = useCallback((updated: ProviderAccount[]) => {
+    accountsVersion.current += 1;
+    setAccounts(updated);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const version = accountsVersion.current;
+    void invoke<ProviderAccount[]>("list_provider_accounts").then(
+      (result) => {
+        if (active && version === accountsVersion.current) setAccounts(accountList(result));
+      },
+      () => {
+        if (active && version === accountsVersion.current) setAccounts([]);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const modelGroups = accounts
+    .filter((account) => account.modelsAvailable && account.models.length > 0)
+    .map((account) => ({
+      provider: `OpenAI Codex · ${account.alias}`,
+      models: account.models.map((model) => ({
+        value: `${account.alias}/${model.id}`,
+        label: model.name,
+        reasoningLevels: model.reasoningLevels,
+        defaultReasoningLevel: model.defaultReasoningLevel,
+      })),
+    }));
+
   return (
     <div
       data-testid="home-shell"
@@ -25,7 +71,7 @@ export function Home() {
           maxSize="500px"
           className="h-full min-h-0 min-w-0"
         >
-          <AppSidebar />
+          <AppSidebar library={library} runningConversationIds={runningConversationIds} onOpenSettings={() => setSettingsOpen(true)} />
         </ResizablePanel>
 
         <ResizableHandle
@@ -40,7 +86,7 @@ export function Home() {
           minSize="360px"
           className="h-full min-h-0 min-w-0"
         >
-          <ChatArea />
+          <ChatArea modelGroups={modelGroups} library={library.snapshot} chat={chat} />
         </ResizablePanel>
 
         <ResizableHandle
@@ -56,9 +102,15 @@ export function Home() {
           maxSize="550px"
           className="h-full min-h-0 min-w-0"
         >
-          <Inspector />
+          <Inspector library={library.snapshot} chat={chat.snapshot} />
         </ResizablePanel>
       </ResizablePanelGroup>
+
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        onAccountsChange={updateAccounts}
+      />
     </div>
   );
 }

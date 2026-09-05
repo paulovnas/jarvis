@@ -8,6 +8,27 @@
       "when": 1788529354980,
       "tag": "0000_heavy_tomas",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788544357346,
+      "tag": "0001_nervous_nighthawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788559307704,
+      "tag": "0002_silky_meltdown",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1788561550535,
+      "tag": "0003_amazing_sasquatch",
+      "breakpoints": true
     }
   ]
 }

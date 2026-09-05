@@ -1,6 +1,6 @@
 export type MessageRole = "user" | "assistant";
 
-export type ToolStatus = "completed" | "running" | "error";
+export type ToolStatus = "pending" | "completed" | "running" | "error";
 
 export interface ToolCallItem {
   id: string;
@@ -15,8 +15,11 @@ export interface ToolCallItem {
 
 export interface AssistantWorkData {
   durationSeconds: number;
-  thinking: string;
-  tools: ToolCallItem[];
+  steps: {
+    thinking: string;
+    commentary: string;
+    tools: ToolCallItem[];
+  }[];
 }
 
 export interface MessageAttachment {
@@ -41,14 +44,7 @@ export interface ChatMessage {
   work?: AssistantWorkData;
   error?: ChatErrorData;
   streaming?: boolean;
+  model?: string;
 }
 
 export type CollaborationMode = "build" | "plan";
-
-export type AiModel =
-  | "gemini-2.5-pro"
-  | "gemini-2.5-flash"
-  | "gemini-2.0-flash-thinking"
-  | "gpt-4o"
-  | "gpt-4o-mini"
-  | "o3-mini";

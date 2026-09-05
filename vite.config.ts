@@ -18,6 +18,10 @@ export default defineConfig(async () => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
+  // Reference projects under docs contain HTML entry points and unrelated dependencies.
+  optimizeDeps: {
+    entries: ["index.html"],
+  },
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,
@@ -32,7 +36,7 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      ignored: ["**/src-tauri/**", "**/docs/**"],
     },
   },
 }));

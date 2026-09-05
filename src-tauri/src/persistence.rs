@@ -1,6 +1,5 @@
 use std::{
-    fmt,
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -9,10 +8,24 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("../../drizzle/0000_heavy_tomas.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("../../drizzle/0000_heavy_tomas.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("../../drizzle/0001_nervous_nighthawk.sql"),
+    },
+    Migration {
+        version: 3,
+        sql: include_str!("../../drizzle/0002_silky_meltdown.sql"),
+    },
+    Migration {
+        version: 4,
+        sql: include_str!("../../drizzle/0003_amazing_sasquatch.sql"),
+    },
+];
 
 #[derive(Debug)]
 struct Migration {
@@ -78,10 +91,11 @@ fn open_database(path: &Path) -> Result<Connection, PersistenceError> {
     Ok(connection)
 }
 
-fn initialize_database(connection: &mut Connection) -> Result<(), PersistenceError> {
-    let mut current_version = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+pub(crate) fn initialize_database(connection: &mut Connection) -> Result<(), PersistenceError> {
+    connection.pragma_update(None, "foreign_keys", true)?;
+    let mut current_version =
+        connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     let latest_version = MIGRATIONS.last().map_or(0, |migration| migration.version);
-
     if current_version > latest_version {
         return Err(PersistenceError::new(format!(
             "Database schema version {current_version} is newer than the supported version {latest_version}"
@@ -138,6 +152,85 @@ fn read_app_config(connection: &Connection) -> Result<AppConfig, PersistenceErro
         .map_err(Into::into)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProviderAccountRecord {
+    pub(crate) alias: String,
+    pub(crate) provider_kind: String,
+    pub(crate) account_id: String,
+    pub(crate) created_at: i64,
+}
+
+fn provider_account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderAccountRecord> {
+    Ok(ProviderAccountRecord {
+        alias: row.get(0)?,
+        provider_kind: row.get(1)?,
+        account_id: row.get(2)?,
+        created_at: row.get(3)?,
+    })
+}
+
+pub(crate) fn list_provider_accounts(
+    connection: &Connection,
+) -> Result<Vec<ProviderAccountRecord>, PersistenceError> {
+    let mut statement = connection.prepare(
+        "SELECT alias, provider_kind, account_id, created_at
+         FROM provider_accounts
+         ORDER BY created_at, alias",
+    )?;
+    let rows = statement.query_map([], provider_account_from_row)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+pub(crate) fn provider_account_exists(
+    connection: &Connection,
+    alias: &str,
+    account_id: &str,
+) -> Result<bool, PersistenceError> {
+    connection
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1
+                 FROM provider_accounts
+                 WHERE alias = ?1 OR account_id = ?2
+             )",
+            params![alias, account_id],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
+}
+
+pub(crate) fn insert_provider_account(
+    connection: &Connection,
+    alias: &str,
+    account_id: &str,
+) -> Result<ProviderAccountRecord, PersistenceError> {
+    connection.execute(
+        "INSERT INTO provider_accounts (alias, provider_kind, account_id)
+         VALUES (?1, 'openai-codex', ?2)",
+        params![alias, account_id],
+    )?;
+    connection
+        .query_row(
+            "SELECT alias, provider_kind, account_id, created_at
+             FROM provider_accounts
+             WHERE alias = ?1",
+            params![alias],
+            provider_account_from_row,
+        )
+        .map_err(Into::into)
+}
+
+pub(crate) fn delete_provider_account(
+    connection: &Connection,
+    alias: &str,
+) -> Result<(), PersistenceError> {
+    connection.execute(
+        "DELETE FROM provider_accounts WHERE alias = ?1",
+        params![alias],
+    )?;
+    Ok(())
+}
+
 fn complete_app_config(connection: &mut Connection) -> Result<AppConfig, PersistenceError> {
     let transaction = connection.transaction()?;
     let updated = transaction.execute(
@@ -155,11 +248,14 @@ fn complete_app_config(connection: &mut Connection) -> Result<AppConfig, Persist
 }
 
 impl AppState {
-    fn with_connection<T>(
+    pub(crate) fn with_connection<T, E>(
         &self,
         home_dir: &Path,
-        operation: impl FnOnce(&mut Connection) -> Result<T, PersistenceError>,
-    ) -> Result<T, PersistenceError> {
+        operation: impl FnOnce(&mut Connection) -> Result<T, E>,
+    ) -> Result<T, E>
+    where
+        E: From<PersistenceError>,
+    {
         let mut connection = self
             .connection
             .lock()
@@ -180,6 +276,13 @@ impl AppState {
     fn complete_onboarding(&self, home_dir: &Path) -> Result<AppConfig, PersistenceError> {
         self.with_connection(home_dir, complete_app_config)
     }
+
+    pub(crate) fn list_provider_accounts(
+        &self,
+        home_dir: &Path,
+    ) -> Result<Vec<ProviderAccountRecord>, PersistenceError> {
+        self.with_connection(home_dir, |connection| list_provider_accounts(connection))
+    }
 }
 
 #[tauri::command]
@@ -187,10 +290,9 @@ pub async fn get_app_config(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppConfig, PersistenceError> {
-    let home_dir = app
-        .path()
-        .home_dir()
-        .map_err(|error| PersistenceError::new(format!("Unable to resolve home directory: {error}")))?;
+    let home_dir = app.path().home_dir().map_err(|error| {
+        PersistenceError::new(format!("Unable to resolve home directory: {error}"))
+    })?;
     let state = state.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || state.get_app_config(&home_dir))
@@ -203,10 +305,9 @@ pub async fn complete_onboarding(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppConfig, PersistenceError> {
-    let home_dir = app
-        .path()
-        .home_dir()
-        .map_err(|error| PersistenceError::new(format!("Unable to resolve home directory: {error}")))?;
+    let home_dir = app.path().home_dir().map_err(|error| {
+        PersistenceError::new(format!("Unable to resolve home directory: {error}"))
+    })?;
     let state = state.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || state.complete_onboarding(&home_dir))
@@ -243,21 +344,21 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 1);
+        assert_eq!(version, 4);
         assert_eq!(count, 1);
-        assert_eq!(read_app_config(&connection).expect("default config"), AppConfig {
-            onboarding_completed: false,
-        });
+        assert_eq!(
+            read_app_config(&connection).expect("default config"),
+            AppConfig {
+                onboarding_completed: false,
+            }
+        );
     }
 
     #[test]
     fn singleton_check_rejects_an_extra_row() {
         let connection = in_memory_database();
 
-        let result = connection.execute(
-            "INSERT INTO app_config (id) VALUES (?1)",
-            params![2_i64],
-        );
+        let result = connection.execute("INSERT INTO app_config (id) VALUES (?1)", params![2_i64]);
 
         assert!(result.is_err());
     }
@@ -279,8 +380,106 @@ mod tests {
                 onboarding_completed: true,
             }
         );
-        assert_eq!(read_app_config(&connection).expect("completed config"), AppConfig {
-            onboarding_completed: true,
-        });
+        assert_eq!(
+            read_app_config(&connection).expect("completed config"),
+            AppConfig {
+                onboarding_completed: true,
+            }
+        );
+    }
+
+    #[test]
+    fn latest_schema_preserves_existing_app_config() {
+        let mut connection = Connection::open_in_memory().expect("in-memory SQLite");
+        connection
+            .execute_batch(include_str!("../../drizzle/0000_heavy_tomas.sql"))
+            .expect("historical migration");
+        connection
+            .pragma_update(None, "user_version", 1_i64)
+            .expect("schema version");
+        connection
+            .execute(
+                "INSERT INTO app_config (id, onboarding_completed) VALUES (?1, ?2)",
+                params![1_i64, 1_i64],
+            )
+            .expect("existing app config");
+
+        initialize_database(&mut connection).expect("latest schema");
+
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("schema version");
+        assert_eq!(version, 4);
+        assert_eq!(
+            read_app_config(&connection).expect("preserved app config"),
+            AppConfig {
+                onboarding_completed: true,
+            }
+        );
+        assert_eq!(
+            list_provider_accounts(&connection)
+                .expect("provider account list")
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn provider_accounts_support_two_aliases_and_reject_duplicate_keys() {
+        let connection = in_memory_database();
+        insert_provider_account(&connection, "openai-codex-one", "account-one")
+            .expect("first account");
+        insert_provider_account(&connection, "openai-codex-two", "account-two")
+            .expect("second account");
+
+        assert_eq!(
+            list_provider_accounts(&connection)
+                .expect("account list")
+                .len(),
+            2
+        );
+        assert!(insert_provider_account(&connection, "openai-codex-one", "account-three").is_err());
+        assert!(insert_provider_account(&connection, "openai-codex-three", "account-two").is_err());
+    }
+
+    #[test]
+    fn provider_account_delete_is_parameterized_and_schema_has_no_token_columns() {
+        let connection = in_memory_database();
+        insert_provider_account(&connection, "openai-codex-one", "account-one")
+            .expect("first account");
+        insert_provider_account(&connection, "openai-codex-two", "account-two")
+            .expect("second account");
+
+        delete_provider_account(
+            &connection,
+            "openai-codex-one'; DELETE FROM provider_accounts; --",
+        )
+        .expect("parameterized delete");
+        assert_eq!(
+            list_provider_accounts(&connection)
+                .expect("account list")
+                .len(),
+            2
+        );
+
+        delete_provider_account(&connection, "openai-codex-one").expect("delete account");
+        let mut statement = connection
+            .prepare("PRAGMA table_info(provider_accounts)")
+            .expect("provider schema");
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("provider columns")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("provider column names");
+        assert_eq!(
+            columns,
+            vec!["alias", "provider_kind", "account_id", "created_at"]
+        );
+        assert_eq!(
+            list_provider_accounts(&connection)
+                .expect("account list")
+                .len(),
+            1
+        );
     }
 }

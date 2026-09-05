@@ -65,6 +65,49 @@
     --color-onedark-muted: #7f848e;
 }
 
+@property --chat-glow-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.chat-composer[data-working="true"]::before,
+.chat-composer[data-working="true"]::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 1;
+  border-radius: inherit;
+  padding: 2px;
+  pointer-events: none;
+  background: conic-gradient(from var(--chat-glow-angle, 0deg),
+    var(--color-onedark-blue), var(--color-onedark-cyan),
+    var(--color-onedark-green), var(--color-onedark-yellow),
+    var(--color-onedark-red), var(--color-onedark-purple), var(--color-onedark-blue));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation: chat-glow-turn 5s linear infinite;
+}
+
+.chat-composer[data-working="true"]::before {
+  opacity: 0.55;
+  filter: blur(4px);
+}
+
+@keyframes chat-glow-turn {
+  to { --chat-glow-angle: 360deg; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-composer[data-working="true"]::before,
+  .chat-composer[data-working="true"]::after,
+  [data-slot="spinner"] {
+    animation: none;
+  }
+}
+
 :root {
     --background: #fafafa;
     --foreground: #383a42;
