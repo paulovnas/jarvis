@@ -70,7 +70,7 @@ export function SkillsSettings({ onCountChange }: { onCountChange?: (count: numb
         <Button size="sm" className="cursor-pointer" onClick={() => setMarketplace(true)}><Store aria-hidden="true" />Marketplace</Button>
       </div>
     </div>
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-3 py-2.5">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2.5">
       <Label htmlFor="skills-agents" className="cursor-pointer text-xs">Incluir .agents/skills</Label>
       <Switch id="skills-agents" className="cursor-pointer" checked={snapshot?.includeAgents ?? false} disabled={!snapshot || !!busy} onCheckedChange={enabled => { void perform("agents", async () => { update(await invoke("set_skills_agents", { enabled })); }); }} />
     </div>

@@ -35,7 +35,7 @@ export function QuestionCard({ request, drafts, draftKey, onAnswer }: {
     if (accepted) drafts.delete(draftKey);
     else { submitting.current = false; setPending(false); }
   };
-  return <Card size="sm" role="region" aria-label="Perguntas do Jarvis" aria-busy={pending} className="mx-auto mb-3 max-w-4xl rounded-2xl" onKeyDown={event => {
+  return <Card size="sm" role="region" aria-label="Perguntas do Jarvis" aria-busy={pending} className="mx-auto mb-3 max-w-4xl rounded-lg" onKeyDown={event => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); void submit(true); }
   }}>
     <CardHeader className="flex flex-row items-start justify-between gap-3">

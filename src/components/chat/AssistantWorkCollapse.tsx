@@ -13,19 +13,19 @@ export function AssistantWorkCollapse({ work, isStreaming = false }: { work: Ass
   const failures = tools.filter(tool => tool.status === "error").length;
   return (
     <Collapsible render={<section aria-label="Processamento do Jarvis" />} className="min-w-0 text-muted-foreground">
-      <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-8 max-w-full cursor-pointer justify-start gap-2 px-1 text-left">
+      <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-8 max-w-full cursor-pointer justify-start gap-2 px-1 text-left text-[11px]">
         {isStreaming ? <Spinner aria-label="Em execução" className="motion-reduce:animate-none" data-icon="inline-start" /> : <BrainCircuit aria-hidden="true" data-icon="inline-start" />}
         <span className="truncate">{isStreaming ? waiting ? "Aguardando sua resposta" : "Pensando e executando…" : `Trabalhou por ${work.durationSeconds}s`}</span>
-        {tools.length > 0 && <span className="shrink-0 text-muted-foreground">· {tools.length} {tools.length === 1 ? "ação" : "ações"}</span>}
+        {tools.length > 0 && <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">· {tools.length} {tools.length === 1 ? "ação" : "ações"}</span>}
         {failures > 0 && <span className="sr-only">{failures} {failures === 1 ? "ação não concluída" : "ações não concluídas"}</span>}
         <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
       </CollapsibleTrigger>
-      <CollapsibleContent className="ml-2 flex min-w-0 flex-col gap-0.5 border-l border-border py-1 pl-3">
+      <CollapsibleContent className="flex min-w-0 flex-col gap-1.5 py-2">
         {work.steps.map((step, index) => <Fragment key={index}>
           {(step.thinking || step.commentary) && <Collapsible>
             <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group max-w-full cursor-pointer justify-start gap-2 px-1">
               {step.thinking ? <BrainCircuit aria-hidden="true" data-icon="inline-start" /> : <MessageSquare aria-hidden="true" data-icon="inline-start" />}
-              <span className="truncate">{step.thinking ? "Resumo de raciocínio do provedor" : "Observações do agente"} · {index + 1}</span>
+              <span className="truncate text-[11px]">{step.thinking ? "Raciocínio" : "Observações"} · {index + 1}</span>
               <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
             </CollapsibleTrigger>
             <CollapsibleContent className="flex flex-col gap-2 py-2 pl-6 text-sm leading-relaxed">

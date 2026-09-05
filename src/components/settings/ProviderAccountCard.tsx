@@ -45,7 +45,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, sa
         nativeButton={false}
         aria-label={`Detalhes de ${account.alias}`}
         aria-describedby={summaryId}
-        className="group cursor-pointer rounded-xl py-3 transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        className="group cursor-pointer rounded-lg py-3 transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       >
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
@@ -53,13 +53,13 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, sa
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <div className="flex min-w-0 items-center gap-2">
-              <CardTitle className="min-w-0 truncate" title={account.alias}>{account.alias}</CardTitle>
+              <CardTitle className="min-w-0 truncate font-mono text-xs!" title={account.alias}>{account.alias}</CardTitle>
               <Badge variant="outline" className={`shrink-0 ${!account.enabled ? "text-muted-foreground" : !account.modelsAvailable ? "border-[#e5c07b]/30 bg-[#e5c07b]/10 text-[#e5c07b]" : "border-[#98c379]/30 bg-[#98c379]/10 text-[#98c379]"}`}>
                 <CheckCircle2 aria-hidden="true" data-icon="inline-start" />
                 {!account.enabled ? "Desativada" : account.modelsAvailable ? "Conectada" : "Indisponível"}
               </Badge>
             </div>
-            <CardDescription id={summaryId}>
+            <CardDescription id={summaryId} className="text-xs">
               {account.providerKind === "antigravity" ? "Antigravity" : "OpenAI Codex"} · {modelSummary}
             </CardDescription>
           </div>

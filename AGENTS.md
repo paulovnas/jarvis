@@ -25,17 +25,19 @@ Jarvis é uma GUI de coding agent construída com **Tauri v2 (Rust) + React 19 +
 - NADA é criado do zero "na unha" (botões, inputs, modais, menus...). Exceção única: o shadcn não oferece o componente; nesse caso, construa-o COMPONdo primitivos shadcn/Radix existentes, dentro de `src/components/`.
 - **cursor-pointer obrigatório:** todo componente interativo (button, select, menu item, tab, switch, checkbox, link, card clicável, etc.) DEVE indicar interatividade com cursor pointer. O CSS base (`src/index.css`) já cobre elementos nativos, mas qualquer elemento customizado clicável DEVE receber explicitamente a classe `cursor-pointer`.
 - Componentes gerados pelo shadcn (`src/components/ui`, hooks gerados como `use-mobile`) são código de registry: não reestilizar à mão nem "consertar" lint neles — já estão isentos no eslint config.
-### Design System: Fonte Roboto + Tema One Dark
+### Design System: Precision Industrial / Cyber-Deck
 
-- **Tipografia:** Fonte padrão é **Roboto** (`@fontsource/roboto`), importada em `src/index.css`. Tanto `--font-sans` quanto `--font-heading` apontam para Roboto.
-- **Cores e Tema:** O tema visual padrão do Jarvis é baseado no **One Dark** (Atom / One Dark Pro):
-  - Background principal: `#282c34`
-  - Superfícies/Cards: `#21252b`
-  - Painéis secundários: `#2c313a`
-  - Bordas: `#3e4451`
-  - Texto principal: `#abb2bf`
+- **Direção de arte:** siga `DESIGN.md`. Superfícies de grafite, bisel superior sutil e módulos compactos; preserve o neon arco-íris do composer em execução.
+- **Tipografia:** **Roboto** na interface e prosa; **JetBrains Mono** nos metadados, caminhos, modelos, tokens e durações. Fontes locais em `src/index.css`.
+- **Cores e Tema:** use tokens semânticos em vez de hexadecimais nos componentes:
+  - Background principal: `#181b20`
+  - Superfícies/Cards: `#20242b`; sidebar: `#14171b`
+  - Painéis secundários: `#292e37`
+  - Bordas: branco com 9% de opacidade; destaque superior inset de 1px
+  - Texto principal: `#d7dce5`; secundário: `#969eac`
   - Destaques semânticos: Azul `#61afef` (primário/ações), Verde `#98c379` (sucesso/terminal), Ciano `#56b6c2` (info/workspace), Amarelo `#e5c07b` (atenção/chaves), Vermelho `#e06c75` (destrutivo/erro), Roxo `#c678dd`.
 - **Feedback visual:** Use o componente Sonner (`toast` / `Toaster`) para notificações de ação do usuário.
+- **Forma:** cards e painéis de 6–8px; cápsula de 22px apenas no composer. Micro-labels curtas em caixa alta; textos úteis e concisos.
 - **Loading states:** Use structural shadcn Skeletons for content loading, preserving the expected layout. Reuse `src/components/layout/LoadingSkeletons.tsx`; keep accessible status labels and respect reduced motion. Reserve spinners for ongoing actions or execution without a predictable content structure.
 
 ### Testes são OBRIGATÓRIOS (não opcionais)

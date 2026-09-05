@@ -44,6 +44,7 @@ import type { LibraryController } from "@/hooks/use-library";
 import { ItemNameDialog } from "./ItemNameDialog";
 import { LibraryItemMenu } from "./LibraryItemMenu";
 import { DeleteItemDialog } from "./DeleteItemDialog";
+import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 
 type NameDialog =
   | { kind: "workspace" }
@@ -66,7 +67,9 @@ export function AppSidebar({
   runningConversationIds?: ReadonlySet<string>;
 }) {
   const [dialog, setDialog] = useState<NameDialog | null>(null);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const { layout, updateLayout } = useDesktopLayout();
+  const expanded = layout.expandedProjects;
+  const setExpanded = (update: (values: Record<string, boolean>) => Record<string, boolean>) => updateLayout(current => ({ expandedProjects: update(current.expandedProjects) }));
   const [deletion, setDeletion] = useState<Exclude<NameDialog, { kind: "workspace" }> | null>(null);
   const { snapshot, loading, pending, error } = library;
   const selected = snapshot?.selection;
@@ -122,8 +125,8 @@ export function AppSidebar({
         className="h-full min-h-0 w-full"
       >
         <Sidebar collapsible="none" className="h-full w-full bg-sidebar">
-          <SidebarHeader className="gap-2 border-b border-border p-3">
-            <span className="px-1 text-[11px] font-medium text-muted-foreground">Workspace</span>
+          <SidebarHeader className="gap-2 border-b border-border px-3 pt-3 pb-3.5">
+            <span className="micro-label flex items-center gap-2 px-1 text-muted-foreground"><Layers aria-hidden="true" className="size-3 text-onedark-cyan" />Workspace</span>
             <div className="flex items-center gap-2">
               <Select
                 items={(snapshot?.workspaces ?? []).map((item) => ({
@@ -138,7 +141,7 @@ export function AppSidebar({
               >
                 <SelectTrigger
                   aria-label="Selecionar workspace"
-                  className="w-full min-w-0 cursor-pointer"
+                  className="h-8 w-full min-w-0 cursor-pointer border-border bg-card/60 text-xs shadow-[inset_0_1px_0_#ffffff0a]"
                 >
                   <SelectValue placeholder="Selecione um workspace" />
                 </SelectTrigger>
@@ -195,7 +198,7 @@ export function AppSidebar({
             )}
             {!loading && snapshot && (
               <div className="min-h-0 flex-1 overflow-y-auto p-3">
-                <div className="mb-3 flex items-center justify-between px-1 text-[11px] font-medium text-muted-foreground"><span>Projetos</span><span>{projects.length}</span></div>
+                <div className="micro-label mb-3 flex items-center justify-between px-1 text-muted-foreground"><span>Projetos</span><span className="font-mono tabular-nums">{projects.length}</span></div>
                   {!workspace ? (
                     <Empty>
                       <EmptyHeader>
@@ -233,7 +236,7 @@ export function AppSidebar({
                             >
                               <CollapsibleTrigger render={<SidebarMenuButton
                                 size="lg"
-                                className="h-10 cursor-pointer"
+                                className="h-9 cursor-pointer"
                                 isActive={item.id === project?.id}
                                 disabled={busy}
                                 title={item.path}
@@ -251,7 +254,7 @@ export function AppSidebar({
                                     {item.name}
                                   </span>
                                 </span>
-                                <Badge variant="secondary">
+                                <Badge variant="secondary" className="border border-border bg-transparent font-mono text-muted-foreground">
                                   {conversations.length}
                                 </Badge>
                               </CollapsibleTrigger>
@@ -274,10 +277,10 @@ export function AppSidebar({
               </div>
             )}
           </SidebarContent>
-          <SidebarFooter className="border-t border-border p-3">
+          <SidebarFooter className="border-t border-border px-3 py-2">
             <Button
               variant="ghost"
-              className="w-full cursor-pointer justify-start"
+              className="h-9 w-full cursor-pointer justify-start text-xs text-muted-foreground"
               onClick={onOpenSettings}
             >
               <Settings />

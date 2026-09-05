@@ -41,7 +41,7 @@ describe("Inspector", () => {
     const user = userEvent.setup();
     render(<Inspector library={populatedLibrary()} />);
     expect(screen.getByText("Nenhuma alteração registrada.")).toBeInTheDocument();
-    expect(screen.getByText("Nenhum plano estruturado nesta conversa.")).toBeInTheDocument();
+    expect(screen.getByText("Nenhum plano.")).toBeInTheDocument();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Detalhes" }));
     expect(await screen.findByText("Pessoal")).toBeInTheDocument();

@@ -87,7 +87,7 @@ describe("WebSearchSettings", () => {
     invokeMock.mockResolvedValue({ accountAlias: "openai-codex-ausente" });
     render(<WebSearchSettings accounts={[account("openai-codex-outra")]} />);
     expect(await screen.findByRole("combobox")).toHaveTextContent("openai-codex-ausente · Indisponível");
-    expect(screen.getByText(/A conta selecionada está indisponível/)).toBeInTheDocument();
+    expect(screen.getByText(/Conta indisponível/)).toBeInTheDocument();
     expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 });

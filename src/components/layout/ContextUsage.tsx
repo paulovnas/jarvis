@@ -9,7 +9,7 @@ import type { ContextInfo } from "@/core/chat";
 const format = (value: number) => value.toLocaleString("pt-BR");
 
 function contextColor(percent: number | null) {
-  if (percent === null) return "#7f848e";
+  if (percent === null) return "var(--muted-foreground)";
   const value = Math.max(0, Math.min(100, percent));
   const green = [152, 195, 121], yellow = [229, 192, 123], red = [224, 108, 117];
   const [from, to, ratio] = value <= 60 ? [green, yellow, value / 60] as const : [yellow, red, (value - 60) / 40] as const;
@@ -30,14 +30,14 @@ export function ContextUsage({ context, live, onCompact, compacting = false, dis
   const color = contextColor(percent);
   return <footer aria-label="Contexto da conversa" aria-busy={busy} data-compacting={busy || undefined} className="context-meter shrink-0 border-t border-border bg-sidebar px-4 py-3" style={{ "--context-color": color } as CSSProperties}>
     <div className="flex items-center gap-2 text-xs">
-      <Gauge aria-hidden="true" className="size-4 transition-colors motion-reduce:transition-none" style={{ color }} /><span className="font-medium">Contexto</span>
-      <span className="ml-auto tabular-nums transition-colors motion-reduce:transition-none" style={{ color }}>{percent === null ? "—" : `${Math.round(percent)}%`}</span>
+      <Gauge aria-hidden="true" className="size-3.5 transition-colors motion-reduce:transition-none" style={{ color }} /><span className="micro-label">Contexto</span>
+      <span className="ml-auto font-mono text-[11px] tabular-nums transition-colors motion-reduce:transition-none" style={{ color }}>{percent === null ? "—" : `${Math.round(percent)}%`}</span>
     </div>
     <div className="mt-2 flex items-center gap-2">
       <Button variant="ghost" size="icon" aria-label="Compactar contexto" title="Compactar contexto" disabled={disabled || busy || !onCompact} className="size-6 shrink-0 cursor-pointer text-muted-foreground" onClick={() => setConfirming(true)}><RefreshCw aria-hidden="true" className={`size-3.5 ${busy ? "animate-spin motion-reduce:animate-none" : ""}`} /></Button>
       {percent !== null ? <Progress aria-label="Ocupação da janela de contexto" value={Math.min(100, percent)} className="min-w-0 flex-1 [&_[data-slot=progress-indicator]]:bg-[var(--context-color)] [&_[data-slot=progress-indicator]]:motion-reduce:transition-none" /> : <div className="h-1 flex-1 rounded-full bg-muted" />}
     </div>
-    {tokens !== null && <p className="mt-1 text-right text-[11px] text-muted-foreground tabular-nums">{estimated ? "≈ " : ""}{format(tokens)}{limit ? ` / ${format(limit)}` : ""} tokens</p>}
+    {tokens !== null && <p className="mt-1 text-right font-mono text-[10px] text-muted-foreground tabular-nums">{estimated ? "≈ " : ""}{format(tokens)}{limit ? ` / ${format(limit)}` : ""} tokens</p>}
     <AlertDialog open={confirming} onOpenChange={setConfirming}>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Compactar contexto?</AlertDialogTitle><AlertDialogDescription>O histórico completo será preservado.</AlertDialogDescription></AlertDialogHeader>
         <AlertDialogFooter><AlertDialogCancel className="cursor-pointer">Cancelar</AlertDialogCancel><AlertDialogAction className="cursor-pointer" disabled={disabled || busy || !onCompact} onClick={() => { setConfirming(false); setPending(true); void onCompact?.().finally(() => setPending(false)); }}>Compactar</AlertDialogAction></AlertDialogFooter>

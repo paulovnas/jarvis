@@ -71,8 +71,8 @@ const MODE_OPTIONS = [
 
 
 const MODE_LABELS: Record<CollaborationMode, string> = {
-  build: "Build (Escrita & Execução)",
-  plan: "Plan (Somente Leitura)",
+  build: "Build",
+  plan: "Plan",
 };
 
 export function ChatComposer({
@@ -168,7 +168,7 @@ export function ChatComposer({
       <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} onSend={() => { void handleSend(); }} disabled={disabled || compacting} compacting={compacting} working={running || compacting}>
 
         {/* Linha de controles inferior no padrão Metis */}
-        <div className="flex w-full items-center justify-between px-3.5 pb-2.5 pt-1">
+        <div className="composer-controls flex w-full items-center justify-between gap-1 px-3 pb-3 pt-1">
           {/* Canto inferior esquerdo: botão de anexo com ícone plus */}
           <Button
             type="button"
@@ -177,13 +177,13 @@ export function ChatComposer({
             disabled
             title="Anexos ainda não disponíveis"
             aria-label="Adicionar anexo"
-            className="size-7.5 cursor-pointer rounded-full bg-[#2c313a] text-[#abb2bf] transition-colors hover:bg-[#3e4451] hover:text-[#e6e6e6]"
+            className="size-7.5 cursor-pointer rounded-full bg-secondary text-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <Plus className="size-3.5 stroke-[2.2]" />
           </Button>
 
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}
-          <div className="flex items-center gap-1 sm:gap-2">
+          <div className="composer-options flex flex-1 items-center gap-0.5">
             <DropdownMenu>
               <DropdownMenuTrigger disabled={running || sending || compacting} aria-label="Selecionar autorização de ferramentas" className="flex h-7.5 cursor-pointer items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-accent">
                 {approvalMode === "manual" ? "Manual" : "YOLO"}<ChevronDown className="size-3" />
@@ -204,17 +204,17 @@ export function ChatComposer({
               <DropdownMenuTrigger
                 aria-label="Selecionar modo de execução"
                 disabled={running || sending || compacting}
-                className="flex h-7.5 cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 text-xs font-medium text-[#abb2bf] shadow-none transition-colors hover:bg-[#2c313a] hover:text-[#e6e6e6] focus-visible:ring-1 focus-visible:ring-[#3e4451]"
+                className="flex h-7.5 cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 text-xs font-medium text-foreground shadow-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
               >
                 <span className="truncate">{MODE_LABELS[mode]}</span>
-                <ChevronDown className="size-3 shrink-0 text-[#7f848e]" />
+                <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
               </DropdownMenuTrigger>
 
               <DropdownMenuContent
                 align="end"
                 side="top"
                 sideOffset={8}
-                className="min-w-[190px] border-[#3e4451] bg-[#21252b] p-1.5 text-[#e6e6e6]"
+                className="min-w-[190px] border-border bg-card p-1.5 text-foreground"
               >
                 <DropdownMenuGroup>
                   <DropdownMenuLabel className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#e5c07b]">
@@ -226,10 +226,10 @@ export function ChatComposer({
                       <DropdownMenuItem
                         key={opt.value}
                         onClick={() => setMode(opt.value)}
-                        className={`flex cursor-pointer items-center justify-between py-1.5 pl-3 pr-2 text-xs hover:bg-[#2c313a] ${
+                        className={`flex cursor-pointer items-center justify-between py-1.5 pl-3 pr-2 text-xs hover:bg-secondary ${
                           isSelected
                             ? "font-medium text-[#61afef]"
-                            : "text-[#abb2bf]"
+                            : "text-foreground"
                         }`}
                       >
                         <span>{opt.label}</span>
@@ -248,21 +248,21 @@ export function ChatComposer({
               <DropdownMenuTrigger
                 aria-label="Selecionar modelo de IA"
                 disabled={running || sending || compacting}
-                className="flex h-7.5 cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 text-xs font-medium text-[#abb2bf] shadow-none transition-colors hover:bg-[#2c313a] hover:text-[#e6e6e6] focus-visible:ring-1 focus-visible:ring-[#3e4451]"
+                className="composer-model flex h-7.5 cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 font-mono text-[10px] font-medium text-foreground shadow-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
               >
                 <span className="truncate">{displayModelLabel}</span>
-                <ChevronDown className="size-3 shrink-0 text-[#7f848e]" />
+                <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
               </DropdownMenuTrigger>
 
               <DropdownMenuContent
                 align="end"
                 side="top"
                 sideOffset={8}
-                className="min-w-[220px] border-[#3e4451] bg-[#21252b] p-1.5 text-[#e6e6e6]"
+                className="min-w-[220px] border-border bg-card p-1.5 text-foreground"
               >
                 {modelGroups.length === 0 ? (
                   <DropdownMenuGroup>
-                    <DropdownMenuLabel className="px-2.5 py-2 text-xs font-normal text-[#7f848e]">
+                    <DropdownMenuLabel className="px-2.5 py-2 text-xs font-normal text-muted-foreground">
                       Conecte um provedor em Configurações.
                     </DropdownMenuLabel>
                   </DropdownMenuGroup>
@@ -270,7 +270,7 @@ export function ChatComposer({
                   modelGroups.map((group, groupIndex) => (
                     <div key={group.provider}>
                       {groupIndex > 0 && (
-                        <DropdownMenuSeparator className="my-1.5 bg-[#3e4451]" />
+                        <DropdownMenuSeparator className="my-1.5 bg-accent" />
                       )}
                       <DropdownMenuGroup>
                         <DropdownMenuLabel className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#56b6c2]">
@@ -283,22 +283,22 @@ export function ChatComposer({
                             return (
                               <DropdownMenuSub key={option.value}>
                                 <DropdownMenuSubTrigger
-                                  className={`cursor-pointer py-1.5 pl-3 pr-2 text-xs hover:bg-[#2c313a] ${
+                                  className={`cursor-pointer py-1.5 pl-3 pr-2 text-xs hover:bg-secondary ${
                                     isSelected
                                       ? "font-medium text-[#61afef]"
-                                      : "text-[#abb2bf]"
+                                      : "text-foreground"
                                   }`}
                                 >
                                   <span className="flex-1 truncate">{option.label}</span>
                                   {isSelected && reasoning && (
-                                    <span className="mr-1 text-[10px] text-[#7f848e]">
+                                    <span className="mr-1 text-[10px] text-muted-foreground">
                                       {reasoningLabel(reasoning)}
                                     </span>
                                   )}
                                 </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent className="min-w-[130px] border-[#3e4451] bg-[#21252b] p-1 text-[#e6e6e6]">
+                                <DropdownMenuSubContent className="min-w-[130px] border-border bg-card p-1 text-foreground">
                                   <DropdownMenuGroup>
-                                    <DropdownMenuLabel className="px-2 py-1 text-[10px] font-medium text-[#7f848e]">
+                                    <DropdownMenuLabel className="px-2 py-1 text-[10px] font-medium text-muted-foreground">
                                       Raciocínio
                                     </DropdownMenuLabel>
                                     {option.reasoningLevels.map((level) => (
@@ -307,10 +307,10 @@ export function ChatComposer({
                                         onClick={() => {
                                           setSelection({ model: option.value, reasoning: level });
                                         }}
-                                        className={`flex cursor-pointer items-center justify-between px-2.5 py-1.5 text-xs hover:bg-[#2c313a] ${
+                                        className={`flex cursor-pointer items-center justify-between px-2.5 py-1.5 text-xs hover:bg-secondary ${
                                           isSelected && reasoning === level
-                                            ? "bg-[#2c313a]/50 font-medium text-[#61afef]"
-                                            : "text-[#abb2bf]"
+                                            ? "bg-secondary/50 font-medium text-[#61afef]"
+                                            : "text-foreground"
                                         }`}
                                       >
                                         <span>{reasoningLabel(level)}</span>
@@ -331,10 +331,10 @@ export function ChatComposer({
                               onClick={() => {
                                 setSelection({ model: option.value, reasoning: null });
                               }}
-                              className={`flex cursor-pointer items-center justify-between py-1.5 pl-3 pr-2 text-xs hover:bg-[#2c313a] ${
+                              className={`flex cursor-pointer items-center justify-between py-1.5 pl-3 pr-2 text-xs hover:bg-secondary ${
                                 isSelected
                                   ? "font-medium text-[#61afef]"
-                                  : "text-[#abb2bf]"
+                                  : "text-foreground"
                               }`}
                             >
                               <span>{option.label}</span>
@@ -359,8 +359,8 @@ export function ChatComposer({
               aria-label={running ? "Agendar mensagem" : "Enviar mensagem"}
               className={`size-7.5 cursor-pointer rounded-full transition-all ${
                 text.trim()
-                  ? "bg-[#61afef] text-[#1e2227] shadow-sm shadow-[#61afef]/30 hover:bg-[#61afef]/90 active:scale-95"
-                  : "cursor-not-allowed bg-[#2c313a] text-[#7f848e]"
+                  ? "bg-[#61afef] text-primary-foreground shadow-sm shadow-[#61afef]/30 hover:bg-[#61afef]/90 active:scale-95"
+                  : "cursor-not-allowed bg-secondary text-muted-foreground"
               }`}
             >
               <ArrowUp className="size-3.5 stroke-[2.5]" />

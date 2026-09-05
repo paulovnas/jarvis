@@ -16,7 +16,7 @@ export function McpServerCard({ server, busy, checking = false, onToggle, onEdit
   const status = !server.enabled ? "Desativado" : !server.configured ? "Configuração pendente" : server.lastCheck?.error ? "Verificar conexão" : "Ativado";
   const statusColor = !server.enabled ? "text-muted-foreground" : !server.configured ? "border-[#e5c07b]/30 bg-[#e5c07b]/10 text-[#e5c07b]" : server.lastCheck?.error ? "border-destructive/30 bg-destructive/10 text-destructive" : "border-[#98c379]/30 bg-[#98c379]/10 text-[#98c379]";
   return <Collapsible render={<Card size="sm" />} className="gap-0 py-0">
-    <CollapsibleTrigger render={<CardHeader />} nativeButton={false} aria-label={`Detalhes do MCP ${server.name}`} className="group cursor-pointer rounded-xl py-3 transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+    <CollapsibleTrigger render={<CardHeader />} nativeButton={false} aria-label={`Detalhes do MCP ${server.name}`} className="group cursor-pointer rounded-lg py-3 transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
       <div className="flex min-w-0 items-center gap-3">
         <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Plug aria-hidden="true" className="size-4" /></div>
         <div className="flex min-w-0 flex-1 flex-col gap-1">

@@ -5,6 +5,8 @@
 @import "@fontsource/roboto/400.css";
 @import "@fontsource/roboto/500.css";
 @import "@fontsource/roboto/700.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
 
 @source not "../docs";
 
@@ -25,6 +27,7 @@
 @theme inline {
     --font-heading: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-sans: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -59,24 +62,24 @@
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
-    /* Cores canônicas One Dark */
-    --color-onedark-bg: #282c34;
-    --color-onedark-dark: #21252b;
-    --color-onedark-gutter: #1e2227;
-    --color-onedark-panel: #2c313a;
-    --color-onedark-border: #3e4451;
+    --radius-xl: var(--radius);
+    --radius-2xl: var(--radius);
+    --radius-3xl: var(--radius);
+    --radius-4xl: var(--radius);
+    /* Semantic accents retained from the original One Dark palette. */
+    --color-onedark-bg: var(--background);
+    --color-onedark-dark: var(--card);
+    --color-onedark-gutter: var(--sidebar);
+    --color-onedark-panel: var(--secondary);
+    --color-onedark-border: var(--border);
     --color-onedark-blue: #61afef;
     --color-onedark-green: #98c379;
     --color-onedark-cyan: #56b6c2;
     --color-onedark-yellow: #e5c07b;
     --color-onedark-purple: #c678dd;
     --color-onedark-red: #e06c75;
-    --color-onedark-text: #abb2bf;
-    --color-onedark-muted: #7f848e;
+    --color-onedark-text: var(--foreground);
+    --color-onedark-muted: var(--muted-foreground);
 }
 
 @property --chat-glow-angle {
@@ -157,7 +160,7 @@
     --chart-3: #0184bc;
     --chart-4: #c18401;
     --chart-5: #a626a4;
-    --radius: 0.625rem;
+    --radius: 0.5rem;
     --sidebar: #f0f0f1;
     --sidebar-foreground: #383a42;
     --sidebar-primary: #4078f2;
@@ -169,38 +172,111 @@
 }
 
 .dark {
-    /* One Dark Pro / Atom One Dark Canonical Palette */
-    --background: #282c34;
-    --foreground: #abb2bf;
-    --card: #21252b;
-    --card-foreground: #abb2bf;
-    --popover: #21252b;
-    --popover-foreground: #abb2bf;
+    /* Precision Industrial: graphite chassis, raised anodized surfaces. */
+    --background: #181b20;
+    --foreground: #d7dce5;
+    --card: #20242b;
+    --card-foreground: #d7dce5;
+    --popover: #20242b;
+    --popover-foreground: #d7dce5;
     --primary: #61afef;
     --primary-foreground: #1e2227;
-    --secondary: #2c313a;
-    --secondary-foreground: #abb2bf;
-    --muted: #21252b;
-    --muted-foreground: #7f848e;
-    --accent: #3e4451;
-    --accent-foreground: #e6e6e6;
+    --secondary: #292e37;
+    --secondary-foreground: #d7dce5;
+    --muted: #20242b;
+    --muted-foreground: #969eac;
+    --accent: #303640;
+    --accent-foreground: #eef1f6;
     --destructive: #e06c75;
-    --border: #3e4451;
-    --input: #353b45;
+    --border: rgb(255 255 255 / 9%);
+    --input: rgb(255 255 255 / 12%);
     --ring: #61afef;
     --chart-1: #61afef;
     --chart-2: #98c379;
     --chart-3: #56b6c2;
     --chart-4: #e5c07b;
     --chart-5: #c678dd;
-    --sidebar: #1e2227;
-    --sidebar-foreground: #abb2bf;
+    --sidebar: #14171b;
+    --sidebar-foreground: #c3cad5;
     --sidebar-primary: #61afef;
     --sidebar-primary-foreground: #1e2227;
-    --sidebar-accent: #2c313a;
-    --sidebar-accent-foreground: #abb2bf;
-    --sidebar-border: #181a1f;
+    --sidebar-accent: #252c36;
+    --sidebar-accent-foreground: #eef1f6;
+    --sidebar-border: rgb(255 255 255 / 9%);
     --sidebar-ring: #61afef;
+    --edge-highlight: inset 0 1px 0 rgb(255 255 255 / 7%);
+}
+
+/* Application design layer; registry primitives remain untouched. */
+.dark [data-slot="card"], .dark [data-slot="dialog-content"],
+.dark [data-slot="select-content"], .dark [data-slot="dropdown-menu-content"] {
+  --tw-inset-shadow: var(--edge-highlight);
+}
+.dark [data-slot="badge"] { border-radius: 4px; }
+.desktop-shell [data-sidebar="menu-button"][data-active] {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  box-shadow: inset 2px 0 var(--primary);
+}
+@layer components {
+  .micro-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    line-height: 1.5;
+  }
+  .instrument-panel {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    box-shadow: var(--edge-highlight), 0 4px 16px rgb(0 0 0 / 8%);
+  }
+  .dark [data-slot="card"],
+  .dark [data-slot="dialog-content"],
+  .dark [data-slot="alert-dialog-content"],
+  .dark [data-slot="dropdown-menu-content"],
+  .dark [data-slot="dropdown-menu-sub-content"],
+  .dark [data-slot="select-content"] {
+    box-shadow: var(--edge-highlight), 0 8px 24px rgb(0 0 0 / 14%);
+  }
+  .dark [data-slot="badge"] {
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .desktop-shell [data-sidebar="menu-button"] {
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .desktop-shell [data-sidebar="menu-button"][data-active] {
+    background: color-mix(in srgb, var(--primary) 10%, transparent);
+    box-shadow: inset 2px 0 var(--primary);
+  }
+  .panel-separator { transition: background-color 140ms ease; }
+  .tool-slot {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--card) 75%, transparent);
+    box-shadow: var(--edge-highlight);
+  }
+  .tool-slot[data-open] { background: var(--card); }
+  .tool-slot > [data-slot="collapsible-trigger"] { border-radius: 6px; }
+  .chat-composer {
+    box-shadow: var(--edge-highlight), 0 8px 32px rgb(0 0 0 / 22%);
+  }
+  .inspector-section > [data-slot="collapsible-trigger"] {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .assistant-prose > :first-child { margin-top: 0; }
+  .assistant-prose > :last-child { margin-bottom: 0; }
+  .composer-controls { flex-wrap: wrap; row-gap: 4px; }
+  .composer-options { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
+  .composer-model { min-width: 0; max-width: 230px; }
+  .titlebar-control { border-radius: 0; }
 }
 
 @layer base {

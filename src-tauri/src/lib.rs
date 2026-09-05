@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod agent;
+mod desktop;
 mod library;
 mod mcp;
 mod openai_codex;
@@ -13,14 +14,19 @@ fn greet(name: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(desktop::DesktopState::default())
         .manage(persistence::AppState::default())
         .manage(openai_codex::OpenAiCodexState::default())
         .manage(agent::AgentState::default())
         .manage(mcp::McpState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(desktop::setup)
+        .on_window_event(desktop::on_window_event)
         .invoke_handler(tauri::generate_handler![
             greet,
+            desktop::get_desktop_layout,
+            desktop::save_desktop_layout,
             skills::list_skills,
             skills::set_skills_agents,
             skills::set_skill_enabled,
@@ -67,8 +73,13 @@ pub fn run() {
             openai_codex::cancel_openai_codex_connection,
             disconnect_provider_account
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                desktop::flush(app);
+            }
+        });
 }
 
 #[tauri::command]

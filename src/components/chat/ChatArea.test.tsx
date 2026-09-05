@@ -76,7 +76,7 @@ describe("Persistent live conversation", () => {
     expect(await screen.findByText("Tauri")).toBeInTheDocument();
     expect(screen.queryByText("Gemini 2.5 Pro")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Trabalhou por/ }));
-    await user.click(screen.getByRole("button", { name: /Resumo de raciocínio do provedor/ }));
+    await user.click(screen.getByRole("button", { name: /Raciocínio/ }));
     expect(screen.getByText("Verificando o projeto.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Leitura de arquivo/ }));
     expect(screen.getByText("# Jarvis")).toBeInTheDocument();
@@ -110,7 +110,7 @@ describe("Persistent live conversation", () => {
     await user.click(screen.getByRole("button", { name: /Leitura de arquivo.*file-0/ }));
     expect(screen.getByText("Conteúdo 0")).toBeVisible();
     expect(screen.queryByText("Conteúdo 1")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Observações do agente/ }));
+    await user.click(screen.getByRole("button", { name: /Observações/ }));
     expect(screen.getByText("Vou conferir os arquivos.")).toBeVisible();
     await user.click(summary);
     expect(within(screen.getByLabelText("Processamento do Jarvis")).getAllByRole("button")).toHaveLength(1);
@@ -237,6 +237,6 @@ describe("Persistent live conversation", () => {
     const { rerender } = render(<TestChat />); await screen.findByRole("textbox");
     const library = populatedLibrary(); library.projects[0].name = "Meu projeto"; library.conversations[0].title = "Título editado";
     rerender(<TestChat library={library} />);
-    expect(screen.getByRole("heading", { name:"Título editado" })).toBeInTheDocument(); expect(screen.getByText("Pessoal / Meu projeto")).toBeInTheDocument(); expect(call).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("heading", { name:"Título editado" })).toBeInTheDocument(); expect(screen.getByTitle("/projects/jarvis")).toHaveTextContent("Pessoal / Meu projeto"); expect(call).toHaveBeenCalledTimes(1);
   });
 });

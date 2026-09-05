@@ -13,10 +13,12 @@ import { AppSidebar } from "./Sidebar";
 import { useLibrary } from "@/hooks/use-library";
 import { useChat } from "@/hooks/use-chat";
 import { useAgentActivity } from "@/hooks/use-agent-activity";
+import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 
 const SettingsDialog = lazy(() => import("@/components/settings/SettingsDialog").then(module => ({ default: module.SettingsDialog })));
 
 export function Home() {
+  const { layout, updateLayout } = useDesktopLayout();
   const library = useLibrary();
   const chat = useChat(library.snapshot?.selection.conversationId ?? null);
   const runningConversationIds = useAgentActivity();
@@ -59,17 +61,22 @@ export function Home() {
   return (
     <div
       data-testid="home-shell"
-      className="dark flex h-full min-h-0 w-full min-w-[1024px] overflow-hidden bg-[#282c34] font-sans text-[#abb2bf]"
+      className="desktop-shell dark flex h-full min-h-0 w-full min-w-[1024px] overflow-hidden bg-background font-sans text-foreground"
     >
       <ResizablePanelGroup
         id="home-shell-panels"
         orientation="horizontal"
+        defaultLayout={Object.keys(layout.panels).length ? layout.panels : undefined}
+        onLayoutChanged={(panels) => {
+          // Native resizing also changes the constrained proportions. Persist what is visible.
+          if (Object.keys(panels).some(id => Math.abs(panels[id] - (layout.panels[id] ?? -1)) > 0.001)) updateLayout({ panels });
+        }}
         className="h-full min-h-0 w-full flex-1"
       >
         <ResizablePanel
           id="home-sidebar-panel"
-          defaultSize="22%"
-          minSize="240px"
+          defaultSize="20%"
+          minSize="220px"
           maxSize="500px"
           className="h-full min-h-0 min-w-0"
         >
@@ -77,14 +84,13 @@ export function Home() {
         </ResizablePanel>
 
         <ResizableHandle
-          withHandle
           aria-label="Redimensionar barra lateral"
-          className="cursor-pointer cursor-col-resize bg-[#3e4451] hover:bg-[#61afef]/50"
+          className="panel-separator cursor-col-resize bg-border hover:bg-primary/50"
         />
 
         <ResizablePanel
           id="home-main-panel"
-          defaultSize="50%"
+          defaultSize="56%"
           minSize="360px"
           className="h-full min-h-0 min-w-0"
         >
@@ -92,15 +98,14 @@ export function Home() {
         </ResizablePanel>
 
         <ResizableHandle
-          withHandle
           aria-label="Redimensionar inspector"
-          className="cursor-pointer cursor-col-resize bg-[#3e4451] hover:bg-[#61afef]/50"
+          className="panel-separator cursor-col-resize bg-border hover:bg-primary/50"
         />
 
         <ResizablePanel
           id="home-inspector-panel"
-          defaultSize="28%"
-          minSize="360px"
+          defaultSize="24%"
+          minSize="280px"
           maxSize="550px"
           className="h-full min-h-0 min-w-0"
         >

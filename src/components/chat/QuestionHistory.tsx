@@ -10,8 +10,8 @@ export function QuestionHistory({ tool }: { tool: ToolCallItem }) {
   const questions = request.success ? request.data.questions : [];
   const waiting = tool.status === "running" || tool.status === "pending";
   return <Collapsible className="min-w-0 text-muted-foreground" data-testid={`question-history-${tool.id}`}>
-    <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-8 max-w-full cursor-pointer justify-start gap-2 px-1">
-      <CircleHelp aria-hidden="true" data-icon="inline-start" />
+    <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-8 max-w-full cursor-pointer justify-start gap-2 px-1 text-[11px]">
+      <CircleHelp aria-hidden="true" data-icon="inline-start" className="text-onedark-cyan" />
       <span>{questions.length === 1 ? "Feita 1 pergunta" : questions.length ? `Feitas ${questions.length} perguntas` : "Perguntas não disponíveis"}</span>
       <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
     </CollapsibleTrigger>

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Globe } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -64,21 +64,20 @@ export function WebSearchSettings({ accounts }: { accounts: ProviderAccount[] })
     }
   }
 
-  return <Card className="gap-4 py-4">
+  return <Card className="gap-3 py-4">
     <CardHeader className="gap-1 px-4">
       <CardTitle className="flex items-center gap-2 text-sm"><Globe aria-hidden="true" className="size-4 text-primary" />Web Search</CardTitle>
-      <CardDescription className="text-xs">Escolha a conta usada nas pesquisas na web, independentemente da conta da conversa.</CardDescription>
     </CardHeader>
     <CardContent className="px-4">
       {loading ? <Skeleton className="h-8 w-full" role="status" aria-label="Carregando Web Search" /> : error ?
         <div className="flex flex-col gap-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button variant="outline" size="sm" className="cursor-pointer self-start" onClick={() => { setLoading(true); setRetry((value) => value + 1); }}>Recarregar Web Search</Button></div> :
         <Field>
-          <FieldLabel htmlFor="web-search-account" className="text-xs">Conta para pesquisa</FieldLabel>
+          <FieldLabel htmlFor="web-search-account" className="sr-only">Conta para pesquisa</FieldLabel>
           <Select items={items} value={selected ?? OFF} onValueChange={(value) => { void save(value); }} disabled={saving}>
-            <SelectTrigger id="web-search-account" className="w-full cursor-pointer" aria-describedby="web-search-status"><SelectValue />{saving && <Spinner aria-hidden="true" />}</SelectTrigger>
+            <SelectTrigger id="web-search-account" className="w-full cursor-pointer font-mono text-xs" aria-describedby="web-search-status"><SelectValue />{saving && <Spinner aria-hidden="true" />}</SelectTrigger>
             <SelectContent><SelectGroup>{items.map((item) => <SelectItem key={item.value} value={item.value} disabled={unavailable && item.value === selected} className="cursor-pointer">{item.label}</SelectItem>)}</SelectGroup></SelectContent>
           </Select>
-          <p id="web-search-status" className="text-xs text-muted-foreground" role="status">{saving ? "Salvando…" : unavailable ? "A conta selecionada está indisponível. Escolha outra conta ou desligue a pesquisa." : compatible.length === 0 ? "Conecte uma conta compatível para habilitar a pesquisa." : selected ? "O agente poderá pesquisar e incluir fontes nas respostas." : "O agente não usará a ferramenta de pesquisa na web."}</p>
+          <p id="web-search-status" className="text-xs text-muted-foreground empty:hidden" role="status">{saving ? "Salvando…" : unavailable ? "Conta indisponível. Escolha outra ou desligue a pesquisa." : compatible.length === 0 ? "Conecte uma conta compatível." : null}</p>
         </Field>}
     </CardContent>
   </Card>;

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { MessageSquare } from "lucide-react";
+import { FolderGit2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -33,10 +33,12 @@ function ConversationView({ context, modelGroups, chat, drafts, questionDrafts }
   if (!snapshot) return <ConversationSkeleton />;
   const last = snapshot.turns[snapshot.turns.length - 1];
   return <>
-    <header className="border-b border-border px-5 py-4">
-      <p className="mb-1 truncate text-xs text-muted-foreground">{context.workspace.name} / {context.project.name}</p>
-      <h1 className="truncate text-base font-semibold">{context.conversation.title}</h1>
-      <p className="mt-1 truncate text-xs text-muted-foreground" title={context.project.path}>{context.project.path}</p>
+    <header className="flex h-[72px] shrink-0 items-center gap-3 border-b border-border px-5">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-card text-primary shadow-[inset_0_1px_0_#ffffff0d]"><FolderGit2 aria-hidden="true" className="size-4" /></div>
+      <div className="min-w-0 flex-1">
+        <p className="mb-1 truncate font-mono text-[10px] text-muted-foreground" title={context.project.path}>{context.workspace.name} <span className="px-1 text-muted-foreground/50">/</span> {context.project.name}</p>
+        <h1 className="truncate text-sm font-medium">{context.conversation.title}</h1>
+      </div>
     </header>
     <ScrollArea className="min-h-0 flex-1" onScrollCapture={event => {
       const target = event.target;
@@ -62,7 +64,7 @@ function ConversationView({ context, modelGroups, chat, drafts, questionDrafts }
       </div>}
       <div ref={bottom} />
     </ScrollArea>
-    <footer ref={footer} className="max-h-[65%] overflow-auto px-5 pb-4 pt-2">
+    <footer ref={footer} className="max-h-[65%] overflow-auto px-5 pb-4 pt-3">
       {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.id} tool={snapshot.pendingApproval} projectPath={context.project.path} onAnswer={chat.approve} />}
       {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} />}
       <ChatComposer compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} initialOptions={last?.options} />

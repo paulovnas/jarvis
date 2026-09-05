@@ -31,18 +31,18 @@ export function ToolCallCard({ tool }: { tool: ToolCallItem }) {
   const searchResult = tool.name === "web_search" && tool.output ? readWebSearchResult(tool.output) : null;
   const status = { pending: "Aguardando autorização", running: "Executando", completed: "Concluída", error: "Não concluída" }[tool.status];
   return (
-    <Collapsible data-testid={`tool-call-${tool.id}`} className="min-w-0">
-      <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group flex h-auto min-h-8 w-full cursor-pointer justify-start gap-2 px-1 text-left">
-        <Icon aria-hidden="true" data-icon="inline-start" />
+    <Collapsible data-testid={`tool-call-${tool.id}`} className="tool-slot min-w-0">
+      <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group flex h-auto min-h-9 w-full cursor-pointer justify-start gap-2 px-2.5 text-left text-[11px]">
+        <Icon aria-hidden="true" data-icon="inline-start" className={`size-3.5 shrink-0 ${tool.name === "bash" ? "text-onedark-green" : tool.name.includes("skill") ? "text-onedark-purple" : tool.name === "web_search" ? "text-onedark-cyan" : "text-primary"}`} />
         <span className="min-w-0 flex-1 truncate" title={typeof detail === "string" ? detail : undefined}>
-          {label}{typeof detail === "string" && <> · <span className="text-foreground">{detail}</span></>}
+          <span className="text-muted-foreground">{label}</span>{typeof detail === "string" && <> <span className="mx-1 text-muted-foreground/50">/</span> <span className="font-mono text-[10px] text-foreground">{detail}</span></>}
         </span>
         <span className="sr-only">{status}</span>
         {tool.status === "running" || tool.status === "pending" ? <Spinner aria-hidden="true" className="motion-reduce:animate-none" /> : tool.status === "error" ? <AlertCircle aria-hidden="true" className="text-destructive" /> : <Check aria-hidden="true" className="text-onedark-green" />}
         <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
       </CollapsibleTrigger>
-      <CollapsibleContent className="flex min-w-0 flex-col gap-3 py-2 pl-6 text-xs">
-        <p>{status}{tool.durationMs !== undefined && ` · ${(tool.durationMs / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}s`}</p>
+      <CollapsibleContent className="flex min-w-0 flex-col gap-3 border-t border-border p-3 text-xs">
+        <p className="font-mono text-[10px] tabular-nums text-muted-foreground">{status}{tool.durationMs !== undefined && ` · ${(tool.durationMs / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}s`}</p>
         {tool.args && <div><p className="mb-1">Parâmetros</p><pre className="max-h-48 overflow-auto rounded-md bg-muted p-3 text-foreground">{JSON.stringify(tool.args, null, 2)}</pre></div>}
         {searchResult ? <div className="flex max-h-80 flex-col gap-3 overflow-auto rounded-md bg-muted p-3 text-foreground">
           <p className="text-xs text-muted-foreground">{searchResult.accountAlias} · {searchResult.model}</p>

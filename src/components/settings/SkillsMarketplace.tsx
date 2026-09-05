@@ -208,7 +208,7 @@ export function SkillsMarketplace({
           <DialogHeader className="pr-8">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="flex size-9 items-center justify-center rounded-xl border border-primary/25 bg-primary/10 text-primary shadow-xs">
+                <div className="flex size-9 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary shadow-xs">
                   <Store aria-hidden="true" className="size-4.5" />
                 </div>
                 <div>
@@ -420,18 +420,18 @@ export function SkillsMarketplace({
                 {Array.from({ length: 9 }, (_, i) => (
                   <Card
                     key={i}
-                    className="flex flex-col justify-between gap-3.5 rounded-xl border border-[#3e4451]/60 bg-[#282c34] p-3.5"
+                    className="flex flex-col justify-between gap-3.5 rounded-lg border border-border/60 bg-background p-3.5"
                   >
                     <div className="flex items-start gap-3">
-                      <Skeleton className="size-9 shrink-0 rounded-lg bg-[#21252b]" />
+                      <Skeleton className="size-9 shrink-0 rounded-lg bg-card" />
                       <div className="flex-1 space-y-2">
-                        <Skeleton className="h-4 w-3/4 rounded bg-[#21252b]" />
-                        <Skeleton className="h-3 w-1/2 rounded bg-[#21252b]" />
+                        <Skeleton className="h-4 w-3/4 rounded bg-card" />
+                        <Skeleton className="h-3 w-1/2 rounded bg-card" />
                       </div>
                     </div>
-                    <div className="flex items-center justify-between border-t border-[#3e4451]/40 pt-2.5">
-                      <Skeleton className="h-4 w-20 rounded bg-[#21252b]" />
-                      <Skeleton className="h-7 w-20 rounded-lg bg-[#21252b]" />
+                    <div className="flex items-center justify-between border-t border-border/40 pt-2.5">
+                      <Skeleton className="h-4 w-20 rounded bg-card" />
+                      <Skeleton className="h-7 w-20 rounded-lg bg-card" />
                     </div>
                   </Card>
                 ))}
@@ -451,7 +451,7 @@ export function SkillsMarketplace({
               </div>
             ) : visible.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                <div className="flex size-12 items-center justify-center rounded-2xl border border-border/60 bg-muted/30 text-muted-foreground">
+                <div className="flex size-12 items-center justify-center rounded-lg border border-border/60 bg-muted/30 text-muted-foreground">
                   <Search className="size-6 opacity-60" />
                 </div>
                 <div className="space-y-1">
@@ -487,7 +487,7 @@ export function SkillsMarketplace({
                   return (
                     <Card
                       key={skill.id}
-                      className="group relative flex min-w-0 flex-col justify-between gap-3.5 rounded-xl border border-[#3e4451] bg-[#282c34] p-3.5 shadow-sm transition-all duration-150 hover:bg-[#2c313a] hover:border-[#61afef]/60 hover:shadow-md"
+                      className="group relative flex min-w-0 flex-col justify-between gap-3.5 rounded-lg border border-border bg-background p-3.5 shadow-sm transition-all duration-150 hover:bg-secondary hover:border-[#61afef]/60 hover:shadow-md"
                     >
                       <div className="flex items-start justify-between gap-2.5">
                         <Button
@@ -502,9 +502,9 @@ export function SkillsMarketplace({
                             })
                           }
                         >
-                          <Avatar size="sm" className="size-9 shrink-0 rounded-lg border border-[#3e4451] bg-[#21252b]">
+                          <Avatar size="sm" className="size-9 shrink-0 rounded-lg border border-border bg-card">
                             <AvatarImage src={avatarUrl} alt={owner} loading="lazy" />
-                            <AvatarFallback className="rounded-lg bg-[#21252b] text-[10px] font-semibold text-[#abb2bf]">
+                            <AvatarFallback className="rounded-lg bg-card text-[10px] font-semibold text-foreground">
                               {initials}
                             </AvatarFallback>
                           </Avatar>
@@ -519,14 +519,14 @@ export function SkillsMarketplace({
                             </div>
                             {skill.skillId !== skill.name ? (
                               <span
-                                className="block truncate font-mono text-[11px] text-[#7f848e]"
+                                className="block truncate font-mono text-[11px] text-muted-foreground"
                                 title={skill.skillId}
                               >
                                 {skill.skillId}
                               </span>
                             ) : (
                               <span
-                                className="block truncate text-xs text-[#7f848e]"
+                                className="block truncate text-xs text-muted-foreground"
                                 title={skill.source}
                               >
                                 {skill.source}
@@ -539,7 +539,7 @@ export function SkillsMarketplace({
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            className="size-7 cursor-pointer text-[#7f848e] hover:text-[#e5e5e6] hover:bg-[#21252b]"
+                            className="size-7 cursor-pointer text-muted-foreground hover:text-[#e5e5e6] hover:bg-card"
                             title="Ver no skills.sh"
                             aria-label={`Ver ${skill.name} no skills.sh`}
                             onClick={() => {
@@ -555,7 +555,7 @@ export function SkillsMarketplace({
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#3e4451]/60 pt-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2.5">
                         <div className="flex min-w-0 items-center gap-2">
                           <button
                             type="button"
@@ -565,12 +565,12 @@ export function SkillsMarketplace({
                             }}
                             title={`Filtrar por @${skill.source}`}
                             aria-label={`Filtrar por @${skill.source}`}
-                            className="cursor-pointer max-w-[140px] truncate rounded-md bg-[#21252b] border border-[#3e4451]/60 hover:border-[#61afef]/40 px-2 py-0.5 text-[11px] font-medium text-[#abb2bf] hover:text-white transition-colors"
+                            className="cursor-pointer max-w-[140px] truncate rounded-md bg-card border border-border/60 hover:border-[#61afef]/40 px-2 py-0.5 text-[11px] font-medium text-foreground hover:text-white transition-colors"
                           >
                             @{skill.source}
                           </button>
                           <span
-                            className="flex items-center gap-1 text-[11px] tabular-nums text-[#7f848e] shrink-0"
+                            className="flex items-center gap-1 text-[11px] tabular-nums text-muted-foreground shrink-0"
                             title={`${skill.installs.toLocaleString("pt-BR")} instalações`}
                           >
                             <ArrowDownToLine aria-hidden="true" className="size-3" />
@@ -591,7 +591,7 @@ export function SkillsMarketplace({
                             <Button
                               variant="secondary"
                               size="sm"
-                              className="h-7 cursor-pointer text-xs gap-1.5 font-medium bg-[#21252b] border border-[#3e4451] text-[#abb2bf] hover:bg-[#61afef] hover:text-[#1e2227] hover:border-transparent rounded-lg transition-colors"
+                              className="h-7 cursor-pointer text-xs gap-1.5 font-medium bg-card border border-border text-foreground hover:bg-[#61afef] hover:text-primary-foreground hover:border-transparent rounded-lg transition-colors"
                               disabled={installing !== null}
                               aria-label={`Instalar ${skill.name}`}
                               onClick={() => {

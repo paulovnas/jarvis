@@ -227,7 +227,7 @@ describe("App bootstrap and onboarding", () => {
     expect(screen.queryByTestId("home-shell")).not.toBeInTheDocument();
   });
 
-  it("preserva o conteúdo visual do onboarding e o toast dos docs", async () => {
+  it("apresenta os recursos disponíveis sem detalhes internos de implementação", async () => {
     invokeMock.mockResolvedValueOnce({ onboardingCompleted: false });
 
     render(<App />);
@@ -239,21 +239,8 @@ describe("App bootstrap and onboarding", () => {
     expect(
       screen.getByText("Permissões & Ferramentas Locais"),
     ).toBeInTheDocument();
-    expect(screen.getByText("One Dark Theme")).toBeInTheDocument();
-    expect(screen.getByText("One Dark")).toBeInTheDocument();
-    expect(screen.getByText("Roboto")).toBeInTheDocument();
-
-    const toastSpy = vi.spyOn(toast, "message");
-    const user = userEvent.setup();
-    await user.click(
-      screen.getByRole("button", { name: /docs de referência/i }),
-    );
-
-    expect(toastSpy).toHaveBeenCalledWith(
-      "Base de Conhecimento",
-      expect.objectContaining({
-        description: expect.stringMatching(/docs\/metis/i),
-      }),
-    );
+    expect(screen.getByText("Conecte suas contas OpenAI Codex ou Antigravity.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Finalizar" })).toBeEnabled();
+    expect(screen.queryByText(/docs\/metis/)).not.toBeInTheDocument();
   });
 });

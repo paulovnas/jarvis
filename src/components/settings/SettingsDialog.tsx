@@ -63,6 +63,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { accountList, type ProviderAccount } from "@/core/provider-accounts";
 import { ProviderAccountCard } from "./ProviderAccountCard";
+import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 
 
 const ALIAS_SUFFIX_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -111,7 +112,9 @@ function safeErrorMessage(error: unknown, fallback: string): string {
 
 
 export function SettingsDialog({ open, onOpenChange, onAccountsChange }: SettingsDialogProps) {
-  const [activeTab, setActiveTab] = useState<string>("general");
+  const { layout, updateLayout } = useDesktopLayout();
+  const activeTab = layout.settingsTab;
+  const setActiveTab = (value: string) => { if (value === "general" || value === "providers" || value === "skills" || value === "mcps") updateLayout({ settingsTab: value }); };
   const [mcpCount, setMcpCount] = useState<number | null>(null);
   const [skillCount, setSkillCount] = useState<number | null>(null);
   const skillCountVersion = useRef(0);
@@ -438,7 +441,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               <AlertTriangle className="size-4" />
               Não foi possível carregar as contas
             </CardTitle>
-            <CardDescription className="text-[#abb2bf]">{listError}</CardDescription>
+            <CardDescription className="text-foreground">{listError}</CardDescription>
           </CardHeader>
           <CardFooter>
             <Button
@@ -462,16 +465,13 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="font-heading text-base font-semibold text-[#e6e6e6]">Provedores Conectados</h2>
-            <p className="mt-0.5 text-xs text-[#7f848e]">
-              Gerencie suas contas e modelos de IA.
-            </p>
+            <h2 className="micro-label text-muted-foreground">Provedores conectados</h2>
           </div>
           {accounts.length > 0 && (
             <Button
               type="button"
               onClick={openAddView}
-              className="cursor-pointer gap-1.5 bg-[#61afef] text-xs font-medium text-[#1e2227] hover:bg-[#61afef]/90"
+              className="cursor-pointer gap-1.5 bg-[#61afef] text-xs font-medium text-primary-foreground hover:bg-[#61afef]/90"
             >
               <Plus className="size-3.5" />
               Adicionar conta
@@ -480,18 +480,18 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
         </div>
 
         {accounts.length === 0 ? (
-          <Empty className="min-h-72 rounded-xl border border-dashed border-[#3e4451] bg-[#21252b]/50">
+          <Empty className="min-h-72 rounded-lg border border-dashed border-border bg-card/50">
             <EmptyHeader>
               <EmptyMedia variant="icon" className="bg-[#56b6c2]/10 text-[#56b6c2]">
                 <Link2 className="size-5" />
               </EmptyMedia>
-              <EmptyTitle className="text-base text-[#e6e6e6]">Nenhuma conta conectada</EmptyTitle>
-              <EmptyDescription className="max-w-sm text-xs text-[#7f848e]">
+              <EmptyTitle className="text-base text-foreground">Nenhuma conta conectada</EmptyTitle>
+              <EmptyDescription className="max-w-sm text-xs text-muted-foreground">
                 Adicione uma conta para acessar seus modelos.
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
-              <Button type="button" onClick={openAddView} className="cursor-pointer gap-2 bg-[#61afef] text-xs text-[#1e2227] hover:bg-[#61afef]/90">
+              <Button type="button" onClick={openAddView} className="cursor-pointer gap-2 bg-[#61afef] text-xs text-primary-foreground hover:bg-[#61afef]/90">
                 <Plus className="size-4" />
                 Adicionar conta
               </Button>
@@ -543,11 +543,11 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="provider-alias-suffix" className="text-xs text-[#e6e6e6]">
+              <Label htmlFor="provider-alias-suffix" className="text-xs text-foreground">
                 Sufixo do alias
               </Label>
-              <InputGroup className="border-[#3e4451] bg-[#1e2227]">
-                <InputGroupAddon className="border-r border-[#3e4451] bg-[#2c313a]/50 pl-2.5">
+              <InputGroup className="border-border bg-sidebar">
+                <InputGroupAddon className="border-r border-border bg-secondary/50 pl-2.5">
                   <InputGroupText className="font-mono text-xs text-[#56b6c2]">
                     {aliasPrefix}
                   </InputGroupText>
@@ -561,10 +561,10 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
                   disabled={starting}
                   aria-invalid={suffixError !== null}
                   aria-describedby="provider-alias-help provider-alias-error"
-                  className="font-mono text-xs text-[#e6e6e6] placeholder:text-[#7f848e]"
+                  className="font-mono text-xs text-foreground placeholder:text-muted-foreground"
                 />
               </InputGroup>
-              <p id="provider-alias-help" className="text-[11px] text-[#7f848e]">
+              <p id="provider-alias-help" className="text-[11px] text-muted-foreground">
                 Use 1–32 caracteres: letras minúsculas, números e hífens internos.
               </p>
               {suffixError && (
@@ -572,7 +572,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
                   {suffixError}
                 </p>
               )}
-              <p className="text-xs text-[#abb2bf]">
+              <p className="text-xs text-foreground">
                 Alias completo: <code className="font-mono text-[#61afef]">{computedAlias}</code>
               </p>
             </div>
@@ -584,7 +584,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               </div>
             )}
           </div>
-          <CardFooter className="justify-between gap-2 border-t border-[#3e4451]/70 pt-4">
+          <CardFooter className="justify-between gap-2 border-t border-border/70 pt-4">
             <Button
               type="button"
               variant="ghost"
@@ -594,11 +594,11 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
                 setSuffixError(null);
               }}
               disabled={starting}
-              className="cursor-pointer text-xs text-[#abb2bf] hover:bg-[#2c313a]"
+              className="cursor-pointer text-xs text-foreground hover:bg-secondary"
             >
               Cancelar
             </Button>
-            <Button type="submit" disabled={starting} className="cursor-pointer gap-2 text-xs bg-[#61afef] text-[#1e2227] hover:bg-[#61afef]/90">
+            <Button type="submit" disabled={starting} className="cursor-pointer gap-2 text-xs bg-[#61afef] text-primary-foreground hover:bg-[#61afef]/90">
               <ShieldCheck className="size-3.5" />
               {starting ? "Iniciando conexão…" : connectionError ? "Tentar novamente" : `Conectar com ${connectionLabel}`}
             </Button>
@@ -620,7 +620,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
         <div className="flex items-center gap-3 rounded-lg border border-[#61afef]/25 bg-[#61afef]/5 p-4" aria-live="polite">
           <Spinner aria-label="Aguardando autenticação no navegador" className="size-5 text-[#61afef]" />
           <div>
-            <p className="text-sm font-medium text-[#e6e6e6]">Aguardando autenticação no navegador</p>
+            <p className="text-sm font-medium text-foreground">Aguardando autenticação no navegador</p>
           </div>
         </div>
         {connectionError && (
@@ -629,7 +629,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
           </p>
         )}
       </CardContent>
-      <CardFooter className="flex-col-reverse items-stretch gap-2 border-t border-[#3e4451]/70 pt-4 sm:flex-row sm:justify-end">
+      <CardFooter className="flex-col-reverse items-stretch gap-2 border-t border-border/70 pt-4 sm:flex-row sm:justify-end">
         <Button
           type="button"
           variant="outline"
@@ -659,10 +659,10 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
         <SheetContent
           side="left"
           showCloseButton
-          className="dark flex h-full w-[min(960px,85vw)] flex-col data-[side=left]:w-[min(960px,85vw)] data-[side=left]:sm:max-w-none border-r border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden"
+          className="settings-panel dark flex h-full w-[min(960px,85vw)] flex-col gap-0 data-[side=left]:w-[min(960px,85vw)] data-[side=left]:sm:max-w-none border-r border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden"
         >
-          <SheetHeader className="border-b border-[#3e4451] bg-[#21252b] px-6 py-4.5">
-            <SheetTitle className="text-xl font-heading font-semibold text-[#e6e6e6]">Configurações</SheetTitle>
+          <SheetHeader className="border-b border-border bg-sidebar px-6 py-5">
+            <SheetTitle className="flex items-center gap-3 text-base font-heading font-medium text-foreground"><Settings aria-hidden="true" className="size-4 text-muted-foreground" />Configurações</SheetTitle>
             <SheetDescription className="sr-only">Painel de configurações do Jarvis</SheetDescription>
           </SheetHeader>
 
@@ -672,7 +672,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
                 <TabsTrigger value="general" className="cursor-pointer gap-2 px-2 text-xs"><Settings aria-hidden="true" className="size-3.5" />Geral</TabsTrigger>
                 <TabsTrigger
                   value="providers"
-                  className="cursor-pointer gap-2 border-b-2 border-transparent px-2 py-2.5 text-xs font-medium text-[#abb2bf] data-[state=active]:border-[#61afef] data-[state=active]:text-[#61afef] transition-colors"
+                  className="cursor-pointer gap-2 border-b-2 border-transparent px-2 py-2.5 text-xs font-medium text-foreground data-[state=active]:border-[#61afef] data-[state=active]:text-[#61afef] transition-colors"
                 >
                   <Sparkles className="size-3.5 text-[#61afef]" />
                   <span>Provedores</span>
@@ -715,10 +715,10 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
           }
         }}
       >
-        <AlertDialogContent size="sm" className="dark border-[#3e4451] bg-[#21252b] text-[#abb2bf]">
+        <AlertDialogContent size="sm" className="dark border-border bg-card text-foreground">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-[#e6e6e6]">Desconectar conta?</AlertDialogTitle>
-            <AlertDialogDescription className="text-xs text-[#abb2bf]">
+            <AlertDialogTitle className="text-foreground">Desconectar conta?</AlertDialogTitle>
+            <AlertDialogDescription className="text-xs text-foreground">
               A conta <code className="font-mono text-[#61afef]">{disconnectAlias}</code> será removida deste workspace.
             </AlertDialogDescription>
           </AlertDialogHeader>
