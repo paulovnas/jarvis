@@ -145,13 +145,23 @@ pub(super) async fn stream(
     signal: watch::Receiver<bool>,
     on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
+    let body = request_body(options, instructions, input, tools, session_id);
+    let request = authenticated_request(credential, session_id, &body, Duration::from_secs(600))?;
+    receive(request, signal, on_delta).await
+}
+
+pub(super) fn authenticated_request(
+    credential: &CodexCredential,
+    session_id: &str,
+    body: &Value,
+    timeout: Duration,
+) -> Result<reqwest::RequestBuilder, AgentError> {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(20))
-        .timeout(Duration::from_secs(600))
+        .timeout(timeout)
         .build()
         .map_err(|_| AgentError::internal())?;
-    let body = request_body(options, instructions, input, tools, session_id);
     let request = client
         .post(format!("{OPENAI_CODEX_BASE_URL}/codex/responses"))
         .bearer_auth(&credential.access)
@@ -160,14 +170,14 @@ pub(super) async fn stream(
         .header("originator", "codex_cli_rs")
         .header("version", OPENAI_CODEX_CLIENT_VERSION)
         .header("session_id", session_id)
-        .header("x-codex-routing-hint", format!("model={}", options.model))
+        .header("x-codex-routing-hint", format!("model={}", body["model"].as_str().unwrap_or_default()))
         .header("accept", "text/event-stream")
         .header("content-type", "application/json")
         .body(serde_json::to_vec(&body).map_err(|_| AgentError::internal())?);
-    receive(request, signal, on_delta).await
+    Ok(request)
 }
 
-async fn receive(
+pub(super) async fn receive(
     request: reqwest::RequestBuilder,
     mut signal: watch::Receiver<bool>,
     mut on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
@@ -177,6 +187,26 @@ async fn receive(
         result = request.send() => result.map_err(|_| AgentError::new("provider_network", "Não foi possível conectar ao provedor. Verifique a conexão e tente novamente."))?,
     };
     if !response.status().is_success() {
+        if response.status().as_u16() == 400 {
+            // Inspect only a bounded error body for the known unsupported-model
+            // case. Never return upstream bodies, which can contain private data.
+            let read_error = async {
+                let mut bytes = vec![];
+                while let Ok(Some(chunk)) = response.chunk().await {
+                    if bytes.len() + chunk.len() > 64 * 1024 { break; }
+                    bytes.extend_from_slice(&chunk);
+                }
+                let detail = String::from_utf8_lossy(&bytes).to_lowercase();
+                detail.contains("model") && (detail.contains("model is not supported") || detail.contains("not supported when using codex with a chatgpt account"))
+            };
+            let unsupported = tokio::select! {
+                _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+                result = tokio::time::timeout(Duration::from_secs(5), read_error) => result.unwrap_or(false),
+            };
+            if unsupported {
+                return Err(AgentError::new("provider_model_unsupported", "O modelo não é compatível com esta conta ChatGPT."));
+            }
+        }
         return Err(failure(response.status().as_u16()));
     }
     let mut parser = Sse::default();
@@ -262,6 +292,7 @@ fn completed(response: &Value) -> Result<Response, AgentError> {
                 if item["encrypted_content"].is_string() { output.push(item.clone()); }
             },
             Some("function_call") => output.push(json!({"type":"function_call", "call_id":item["call_id"], "name":item["name"], "arguments":item["arguments"]})),
+            Some("web_search_call") => output.push(item.clone()),
             _ => return Err(protocol_error()),
         }
     }
@@ -272,7 +303,7 @@ fn completed(response: &Value) -> Result<Response, AgentError> {
             input_tokens: value["input_tokens"].as_u64().unwrap_or(0),
             output_tokens: value["output_tokens"].as_u64().unwrap_or(0),
         });
-    if text.is_empty() && !output.iter().any(|item| item["type"] == "function_call") {
+    if text.is_empty() && !output.iter().any(|item| item["type"] == "function_call" || item["type"] == "web_search_call") {
         return Err(protocol_error());
     }
     Ok(Response {

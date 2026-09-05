@@ -138,7 +138,7 @@ Existing Keychain entries may require **Always Allow** once when moving from the
 
 ### Provider accounts and models (OpenAI Codex)
 
-In **Configurações > Provedores**, connect ChatGPT subscription accounts through the `openai-codex` provider. Connected cards show the email, account type and models available to each account. The chat selector uses the same account catalog, grouped by alias; it contains no sample models.
+In **Configurações > Provedores**, connect ChatGPT subscription accounts through the `openai-codex` provider. Account cards start collapsed with their alias, connection status and model count. Click a card header or use Enter/Space to reveal the email, account type, connection date, available models and disconnect action. Model availability failures remain visible in the collapsed summary. The chat selector uses the same account catalog, grouped by alias; it contains no sample models.
 
 - **Immutable alias:** `openai-codex-<suffix>`, with 1–32 lowercase ASCII letters/digits and internal hyphens (`^[a-z0-9]+(?:-[a-z0-9]+)*$`). Renaming requires disconnecting and reconnecting. The same account cannot be connected under two aliases.
 - **SQLite metadata:** `~/.jarvis/jarvis.db` stores `alias`, `provider_kind`, opaque `account_id` and `created_at`.
@@ -156,6 +156,12 @@ Account selection, login and consent happen in the browser. **Cancelar conexão*
 #### Current exclusions
 
 Device-code flow, API keys, a generic provider registry, alias renaming and secure credential storage on platforms other than macOS remain outside this implementation. Codex model execution is described below.
+
+### Web Search
+
+Below the accounts in **Configurações > Provedores**, **Web Search** defaults to **Desligado**. Select a connected OpenAI Codex account to enable the agent's `web_search` tool in both Plan and Build. The setting is global and persists in SQLite; disconnecting that account resets it to off. Search never falls back to another account or uses the conversation's model/account selection.
+
+The Rust adapter makes a separate ChatGPT Responses request using the selected search account's Keychain credentials and catalog. Only the focused query is sent, without the conversation transcript or project files. OpenAI Web Search always uses **GPT-5.6 Luna** (`gpt-5.6-luna`), fixed in the adapter independently of the chat model. If Luna is unavailable or the search fails, the tool reports an error without switching models. The operation has a 90-second total timeout, supports cancellation and requires completed hosted search plus source URLs before reporting success. It returns a bounded answer, up to 10 deduplicated HTTP(S) sources, the search account and model, and separate usage metadata in the tool result. Expand **Pesquisa na web** in the compact activity row to see the result and open its sources. Provider failures remain tool errors, with no credentials or upstream error bodies exposed.
 
 ### Workspaces, projects and conversations
 
@@ -185,7 +191,7 @@ The Rust core sends turns to the connected Codex account using the selected mode
 
 Each user turn has a single assistant response and a compact, initially collapsed activity row showing total duration and tool count. Expanding it reveals individual tool rows and provider summaries; each row opens its own details. Intermediate agent commentary remains available there. Responses have no copy-action footer. A thin rotating rainbow border around the rounded composer card (text input and selectors) indicates active execution, and sidebar spinners track active conversations and their projects even while viewing another conversation. Reduced-motion preferences keep these indicators static. Activity stops on completion, cancellation or failure; pending Manual approvals remain active.
 
-- **Plan** exposes `read`, `list` and literal `search` only. The backend rejects mutation tools even if requested by the model.
+- **Plan** exposes `read`, `list`, literal project `search`, and `web_search` when enabled. The backend rejects mutation tools even if requested by the model.
 - **Build** also exposes atomic `write`, unique exact-match `edit`, and `bash`.
 - **Manual** displays the exact arguments and waits for a one-time authorization for each edit/write/command. Reads run automatically. Refusing a tool returns a denial to the agent.
 - **YOLO** executes tools automatically. Commands start in the project directory with the host user's permissions; the working directory is not an operating-system sandbox. File tools reject paths outside the project, parent traversal and symlinks.

@@ -2,6 +2,7 @@ mod journal;
 mod provider;
 mod title;
 mod tools;
+pub(crate) mod web_search;
 
 use crate::{library, openai_codex::OpenAiCodexState, persistence::AppState};
 use serde::{Deserialize, Serialize};
@@ -595,7 +596,6 @@ async fn run_turn(
         _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
         result = auth => result.map_err(|_| AgentError::internal())??,
     };
-    let instructions = tools::instructions(&session.root, options.mode);
     for _ in 0..32 {
         let step_started = std::time::Instant::now();
         if *signal.borrow() {
@@ -609,6 +609,14 @@ async fn run_turn(
                 .steps
                 .push(Step::default());
         })?;
+        let search_config = web_search::load(state, home)?;
+        let search_enabled = search_config.account_alias.is_some();
+        let mut instructions = tools::instructions(&session.root, options.mode);
+        instructions.push_str(web_search::instructions(search_enabled));
+        let mut definitions = tools::definitions(options.mode);
+        if search_enabled {
+            definitions.push(web_search::definition());
+        }
         let input = session.input()?;
         let response = provider::stream(
             &credential,
@@ -616,7 +624,7 @@ async fn run_turn(
             &options,
             &instructions,
             input,
-            tools::definitions(options.mode),
+            definitions,
             signal.clone(),
             |delta| {
                 session.update(false, |data| {
@@ -677,7 +685,11 @@ async fn run_turn(
                 }
             })?;
             let result = if permitted {
-                tools::execute(&session.root, &tool, options.mode, signal.clone()).await
+                if tool.name == "web_search" {
+                    web_search::execute(state, oauth, home, &tool.args, signal.clone()).await
+                } else {
+                    tools::execute(&session.root, &tool, options.mode, signal.clone()).await
+                }
             } else {
                 Err(AgentError::new(
                     "denied",

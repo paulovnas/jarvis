@@ -1,0 +1,58 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+import type { ProviderAccount } from "@/core/provider-accounts";
+import { ProviderAccountCard } from "./ProviderAccountCard";
+
+const account: ProviderAccount = {
+  alias: "openai-codex-pessoal", providerKind: "openai-codex", createdAt: 1_735_689_600,
+  email: "dev@example.test", accountType: "personal", modelsAvailable: true,
+  models: [{ id: "test-model", name: "Modelo de teste", reasoningLevels: [], defaultReasoningLevel: null }],
+};
+
+describe("ProviderAccountCard", () => {
+  it("começa compacto e permite expandir e recolher pelo teclado", async () => {
+    const user = userEvent.setup();
+    const onDisconnect = vi.fn();
+    render(<ProviderAccountCard account={account} onDisconnect={onDisconnect} />);
+    const trigger = screen.getByRole("button", { name: `Detalhes de ${account.alias}` });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("OpenAI Codex · 1 modelo")).toBeVisible();
+    expect(screen.queryByText(account.email!)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Desconectar" })).not.toBeInTheDocument();
+
+    await user.tab();
+    expect(trigger).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(account.email!)).toBeVisible();
+    expect(screen.getByText("Modelo de teste")).toBeVisible();
+    await user.keyboard(" ");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Desconectar" })).not.toBeInTheDocument());
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
+    expect(onDisconnect).not.toHaveBeenCalled();
+  });
+
+  it("mantém indisponibilidade de modelos visível no resumo", async () => {
+    const user = userEvent.setup();
+    render(<ProviderAccountCard account={{ ...account, modelsAvailable: false, models: [] }} onDisconnect={vi.fn()} />);
+    expect(screen.getByText("OpenAI Codex · Modelos indisponíveis")).toBeVisible();
+    await user.click(screen.getByRole("button"));
+    expect(screen.getByText("Não foi possível consultar os modelos agora.")).toBeVisible();
+  });
+
+  it("distingue uma lista vazia de modelos e preserva os dados ausentes", async () => {
+    const user = userEvent.setup();
+    const onDisconnect = vi.fn();
+    render(<ProviderAccountCard account={{ ...account, email: null, accountType: "unknown", createdAt: 0, models: [] }} onDisconnect={onDisconnect} />);
+    expect(screen.getByText("OpenAI Codex · Nenhum modelo")).toBeVisible();
+    await user.click(screen.getByRole("button"));
+    expect(screen.getByText("Não informado pela OpenAI")).toBeVisible();
+    expect(screen.getByText("Não identificado")).toBeVisible();
+    expect(screen.getByText("Data indisponível")).toBeVisible();
+    expect(screen.getByText("A assinatura não retornou modelos.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Desconectar" }));
+    expect(onDisconnect).toHaveBeenCalledExactlyOnceWith(account.alias);
+  });
+});

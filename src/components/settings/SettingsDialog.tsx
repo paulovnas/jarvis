@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { WebSearchSettings } from "./WebSearchSettings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
-  Bot,
-  CheckCircle2,
   ExternalLink,
   Link2,
   Plus,
@@ -55,15 +54,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { accountList, type ProviderAccount } from "@/core/provider-accounts";
+import { ProviderAccountCard } from "./ProviderAccountCard";
 
 
 const ALIAS_PREFIX = "openai-codex-";
 const ALIAS_SUFFIX_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const ACCOUNT_TYPE_LABELS: Record<ProviderAccount["accountType"], string> = {
-  personal: "Pessoal",
-  enterprise: "Enterprise",
-  unknown: "Não identificado",
-};
 
 
 type SettingsView = "list" | "add" | "waiting";
@@ -105,19 +100,6 @@ function safeErrorMessage(error: unknown, fallback: string): string {
   return typeof value.code === "string" && typeof value.message === "string" && value.message.length > 0
     ? value.message
     : fallback;
-}
-
-
-function formatConnectionDate(timestamp: number): string {
-  if (!timestamp || timestamp <= 0) return "Data indisponível";
-  const date = new Date(timestamp * 1000);
-  return date.toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 
@@ -385,10 +367,10 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
           role="status"
           aria-live="polite"
           aria-label="Carregando contas conectadas"
-          className="space-y-4"
+          className="flex flex-col gap-3"
         >
-          <Skeleton className="h-32 w-full rounded-xl bg-[#21252b]" />
-          <Skeleton className="h-32 w-full rounded-xl bg-[#21252b]" />
+          <Skeleton className="h-20 w-full rounded-xl" />
+          <Skeleton className="h-20 w-full rounded-xl" />
         </div>
       );
     }
@@ -422,12 +404,12 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
     }
 
     return (
-      <div className="space-y-5">
+      <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="font-heading text-base font-semibold text-[#e6e6e6]">Provedores Conectados</h2>
             <p className="mt-0.5 text-xs text-[#7f848e]">
-              Contas de assinatura para execução autônoma de modelos pelo Jarvis.
+              Gerencie suas contas e modelos de IA.
             </p>
           </div>
           {accounts.length > 0 && (
@@ -461,106 +443,20 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
             </EmptyContent>
           </Empty>
         ) : (
-          <div className="space-y-4">
+          <div className="flex flex-col gap-3">
             {accounts.map((account) => (
-              <Card
+              <ProviderAccountCard
                 key={account.alias}
-                data-testid={`provider-account-${account.alias}`}
-                className="rounded-xl border-[#3e4451] bg-[#21252b] transition-all hover:border-[#61afef]/30"
-              >
-                <CardHeader className="gap-2 pb-3.5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-[#3e4451] bg-[#1e2227] text-[#56b6c2] shadow-xs">
-                        <Bot className="size-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <CardTitle className="truncate font-mono text-sm font-semibold text-[#e6e6e6]">
-                          {account.alias}
-                        </CardTitle>
-                        <CardDescription className="mt-0.5 text-xs text-[#7f848e]">
-                          OpenAI Codex
-                        </CardDescription>
-                      </div>
-                    </div>
-                    <Badge className="shrink-0 border-[#98c379]/30 bg-[#98c379]/10 text-[10px] font-medium text-[#98c379] gap-1">
-                      <CheckCircle2 className="size-3" />
-                      Conectada
-                    </Badge>
-                  </div>
-                </CardHeader>
-
-                <CardContent className="space-y-4 py-3 text-xs">
-                  <dl className="space-y-2">
-                    <div className="flex items-start justify-between gap-4 border-b border-[#3e4451]/40 py-1">
-                      <dt className="shrink-0 text-[#7f848e]">E-mail:</dt>
-                      <dd className="break-all text-right text-[#abb2bf]">
-                        {account.email ?? "Não informado pela OpenAI"}
-                      </dd>
-                    </div>
-                    <div className="flex items-center justify-between gap-4 border-b border-[#3e4451]/40 py-1">
-                      <dt className="text-[#7f848e]">Tipo de conta:</dt>
-                      <dd className="text-[#abb2bf]">{ACCOUNT_TYPE_LABELS[account.accountType]}</dd>
-                    </div>
-                    <div className="flex items-center justify-between gap-4 py-1">
-                      <dt className="text-[#7f848e]">Conectada em:</dt>
-                      <dd className="text-right text-[#abb2bf]">
-                        {formatConnectionDate(account.createdAt)}
-                      </dd>
-                    </div>
-                  </dl>
-
-                  <div className="border-t border-[#3e4451]/70 pt-3">
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <span className="font-medium text-[#e6e6e6]">Modelos disponíveis</span>
-                      {account.modelsAvailable && (
-                        <Badge
-                          variant="outline"
-                          className="border-[#56b6c2]/30 bg-[#56b6c2]/10 text-[10px] text-[#56b6c2]"
-                        >
-                          {account.models.length}
-                        </Badge>
-                      )}
-                    </div>
-                    {!account.modelsAvailable ? (
-                      <p className="text-[#e5c07b]">Não foi possível consultar os modelos agora.</p>
-                    ) : account.models.length === 0 ? (
-                      <p className="text-[#7f848e]">A assinatura não retornou modelos.</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-1.5">
-                        {account.models.map((model) => (
-                          <Badge
-                            key={model.id}
-                            variant="outline"
-                            title={model.id}
-                            className="border-[#3e4451] bg-[#2c313a] font-mono text-[10px] text-[#abb2bf]"
-                          >
-                            {model.name}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-
-                <CardFooter className="justify-end border-t border-[#3e4451]/70 pt-3">
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    onClick={() => {
-                      setDisconnectAlias(account.alias);
-                      setDisconnectError(null);
-                    }}
-                    className="cursor-pointer gap-1.5 text-xs h-8"
-                  >
-                    <ExternalLink className="size-3 rotate-45" />
-                    Desconectar
-                  </Button>
-                </CardFooter>
-              </Card>
+                account={account}
+                onDisconnect={(alias) => {
+                  setDisconnectAlias(alias);
+                  setDisconnectError(null);
+                }}
+              />
             ))}
           </div>
         )}
+        <WebSearchSettings accounts={accounts} />
       </div>
     );
   };

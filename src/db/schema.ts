@@ -30,6 +30,11 @@ export const providerAccounts = sqliteTable(
   ],
 );
 
+export const webSearchConfig = sqliteTable("web_search_config", {
+  id: integer("id").primaryKey(),
+  accountAlias: text("account_alias").references(() => providerAccounts.alias, { onDelete: "set null" }),
+}, (table) => [check("web_search_config_singleton", sql`${table.id} = 1`)]);
+
 export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(),
   name: text("name").notNull().unique(),

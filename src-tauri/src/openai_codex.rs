@@ -1106,6 +1106,30 @@ impl OpenAiCodexState {
         model: &str,
         reasoning: Option<&str>,
     ) -> Result<CodexCredential, ProviderError> {
+        let (credential, models) = self.credential_and_models(state, home, alias)?;
+        let selected = models.iter().find(|item| item.id == model).ok_or_else(|| {
+            ProviderError::new(
+                "invalid_model",
+                "O modelo selecionado não está disponível nesta conta.",
+            )
+        })?;
+        if reasoning.is_some_and(|effort| {
+            !selected.reasoning_levels.iter().any(|level| level == effort)
+        }) {
+            return Err(ProviderError::new(
+                "invalid_reasoning",
+                "O nível de raciocínio não é aceito pelo modelo selecionado.",
+            ));
+        }
+        Ok(credential)
+    }
+
+    pub(crate) fn credential_and_models(
+        &self,
+        state: &persistence::AppState,
+        home: &std::path::Path,
+        alias: &str,
+    ) -> Result<(CodexCredential, Vec<ProviderModel>), ProviderError> {
         validate_provider_alias(alias).map_err(|_| ProviderError::invalid_alias())?;
         let _guard = self
             .manager
@@ -1148,24 +1172,7 @@ impl OpenAiCodexState {
                     "Não foi possível verificar os modelos da conta. Tente novamente.",
                 )
             })?;
-        let selected = models.iter().find(|item| item.id == model).ok_or_else(|| {
-            ProviderError::new(
-                "invalid_model",
-                "O modelo selecionado não está disponível nesta conta.",
-            )
-        })?;
-        if reasoning.is_some_and(|effort| {
-            !selected
-                .reasoning_levels
-                .iter()
-                .any(|level| level == effort)
-        }) {
-            return Err(ProviderError::new(
-                "invalid_reasoning",
-                "O nível de raciocínio não é aceito pelo modelo selecionado.",
-            ));
-        }
-        Ok(credential)
+        Ok((credential, models))
     }
 }
 

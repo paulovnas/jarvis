@@ -20,6 +20,8 @@ pub fn run() {
             greet,
             persistence::get_app_config,
             persistence::complete_onboarding,
+            agent::web_search::get_web_search_config,
+            agent::web_search::set_web_search_config,
             library::get_library_snapshot,
             library::create_workspace,
             library::add_project,
