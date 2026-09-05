@@ -1,0 +1,6 @@
+[submodule "docs/metis"]
+	path = docs/metis
+	url = https://github.com/Wholiver/metis.git
+[submodule "docs/omp"]
+	path = docs/omp
+	url = https://github.com/can1357/oh-my-pi.git
