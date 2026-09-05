@@ -1,0 +1,75 @@
+import { execFileSync, spawnSync } from "node:child_process";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { projectIdentifier, selectSigningIdentity, signedDevArguments, signingCommand } from "./macos-signing";
+
+const firstHash = "A".repeat(40);
+const secondHash = "B".repeat(40);
+const identities = `  1) ${firstHash} "Apple Development: Local Developer (TEAM)"\n     1 valid identities found`;
+
+describe("macOS signing setup", () => {
+  it("automatically selects the single valid application certificate", () => {
+    expect(selectSigningIdentity(identities).hash).toBe(firstHash);
+  });
+
+  it("refuses to silently switch between multiple certificates", () => {
+    const multiple = `${identities}\n  2) ${secondHash} "Developer ID Application: Local Developer (TEAM)"`;
+    expect(() => selectSigningIdentity(multiple)).toThrow("mais de um certificado");
+    expect(selectSigningIdentity(multiple, secondHash.toLowerCase()).hash).toBe(secondHash);
+  });
+
+  it("accepts an explicit certificate name and rejects ad hoc or unavailable identities", () => {
+    expect(selectSigningIdentity(identities, "Apple Development: Local Developer (TEAM)").hash).toBe(firstHash);
+    for (const requested of ["-", "Missing", secondHash]) {
+      expect(() => selectSigningIdentity(identities, requested)).toThrow("exatamente um certificado");
+    }
+  });
+
+  it("does not select installer certificates or start unsigned when no certificate exists", () => {
+    expect(() => selectSigningIdentity(`1) ${firstHash} "Developer ID Installer: Local Developer (TEAM)"`)).toThrow("Nenhum certificado");
+    expect(() => selectSigningIdentity("0 valid identities found")).toThrow("Nenhum certificado");
+  });
+
+  it("requires an explicit hash when certificate names are ambiguous", () => {
+    const sameName = `${identities}\n  2) ${secondHash} "Apple Development: Local Developer (TEAM)"`;
+    expect(() => selectSigningIdentity(sameName, "Apple Development: Local Developer (TEAM)")).toThrow("exatamente um certificado");
+  });
+
+  it("keeps help and unrelated Tauri commands independent of certificates", () => {
+    for (const args of [["info"], ["dev", "--help"], ["help", "build"], ["--version"], ["icon"]]) {
+      expect(signingCommand(args)).toBeUndefined();
+    }
+    expect(signingCommand(["dev", "--", "--", "--help"])).toBe("dev");
+    expect(signingCommand(["build", "--debug"])).toBe("build");
+    expect(signingCommand(["bundle", "--bundles", "app"])).toBe("bundle");
+  });
+
+  it("preserves Cargo and app arguments and checkout paths containing spaces", () => {
+    const original = ["dev", "--no-watch", "--", "--locked", "--", "hello world"];
+    const prepared = signedDevArguments(original, "/tmp/Jarvis Project");
+    expect(prepared.slice(0, 2)).toEqual(original.slice(0, 2));
+    expect(prepared.slice(4)).toEqual(original.slice(2));
+    const config: { build: { runner: { args: string[] } } } = JSON.parse(prepared[3]);
+    for (const argument of [config.build.runner.args[1], config.build.runner.args[3]]) {
+      const runner: string[] = JSON.parse(argument.slice(argument.indexOf("[")));
+      expect(runner).toEqual(["/bin/sh", "/tmp/Jarvis Project/scripts/run-signed-macos.sh"]);
+    }
+    expect(() => signedDevArguments(["dev", "--runner", "custom"], "/tmp")).toThrow("remova a opção");
+  });
+
+  it.skipIf(process.platform === "win32")("refuses to launch an executable without signing configuration", () => {
+    const result = spawnSync("/bin/sh", [path.resolve("scripts/run-signed-macos.sh"), "/untrusted/executable"], {
+      env: { PATH: process.env.PATH }, encoding: "utf8",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("bun run tauri dev");
+  });
+
+  it("uses the application's configured identifier", () => {
+    expect(projectIdentifier(process.cwd())).toBe("com.foxtag.jarvis");
+  });
+
+  it.skipIf(process.platform === "win32")("uses a valid shell runner", () => {
+    expect(() => execFileSync("/bin/sh", ["-n", "scripts/run-signed-macos.sh"])).not.toThrow();
+  });
+});

@@ -8,9 +8,10 @@
     "db:generate": "drizzle-kit generate",
     "build": "bun run typecheck && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
+    "tauri": "bun scripts/tauri.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:macos-keychain": "bun scripts/check-macos-keychain.ts",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
     "check": "bun run lint && bun run typecheck && bun run test && bun run build"

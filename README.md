@@ -117,6 +117,25 @@ Acesse em `http://localhost:1420`.
 ```bash
 bun run tauri dev
 ```
+
+#### Stable macOS signing and Keychain access
+
+Use `bun run tauri dev`, `bun run tauri build`, or `bun run tauri build --debug --bundles app` for native development and local bundles. These commands select the single installed Apple application-signing certificate and share it with Cargo and Tauri. The dev runner signs the executable before every launch, including hot rebuilds, using the application's bundle identifier. The bundler signs the app with the same certificate. Other platforms and Tauri help/info commands do not require an Apple certificate.
+
+If no certificate exists, create an **Apple Development** certificate through Xcode's account settings. If several certificates exist, select one explicitly in your shell:
+
+```bash
+security find-identity -v -p codesigning
+export APPLE_SIGNING_IDENTITY="<certificate SHA-1 from the command above>"
+bun run tauri dev
+```
+
+Keep that selection consistent across dev and bundled builds. Certificates, private keys and personal identity names are not stored in the repository. The wrapper stops on missing or ambiguous certificates instead of silently producing an ad hoc signature. Direct `cargo run` or `bunx tauri` bypasses this workflow. An Apple Development certificate is for local testing; public distribution requires the appropriate Developer ID signing and notarization setup. Tauri reports that notarization was skipped when those distribution credentials are absent; the local app is still signed.
+
+Existing Keychain entries may require **Always Allow** once when moving from the previous ad hoc signature to the stable identity. Subsequent rebuilds retain that identity; a locked Keychain or a changed signing identity can still require authorization. Credentials remain in Keychain, and its access rules are not relaxed.
+
+`bun run test:macos-keychain` compiles two different disposable native executables, signs both through the dev runner, and verifies that the second reads the first's temporary Keychain item with interaction disabled. It also checks that an unrelated app identifier is denied and removes the test item afterwards. This test requires macOS and an unlocked signing key; it never reads provider credentials.
+
 ### Provider accounts and models (OpenAI Codex)
 
 In **Configurações > Provedores**, connect ChatGPT subscription accounts through the `openai-codex` provider. Connected cards show the email, account type and models available to each account. The chat selector uses the same account catalog, grouped by alias; it contains no sample models.
