@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { WebSearchSettings } from "./WebSearchSettings";
+import { McpSettings } from "./McpSettings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
   ExternalLink,
   Link2,
   Plus,
+  Plug,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -117,6 +119,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
   const [disconnectAlias, setDisconnectAlias] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
+  const [toggling, setToggling] = useState(false);
+  const togglingRef = useRef(false);
 
   const activeConnectionRef = useRef<ActiveConnection | null>(null);
   const listRequestRef = useRef(0);
@@ -360,6 +364,23 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
     }
   };
 
+  const handleEnabledChange = async (alias: string, enabled: boolean) => {
+    if (togglingRef.current) return;
+    togglingRef.current = true;
+    setToggling(true);
+    try {
+      await invoke("set_provider_enabled", { alias, enabled });
+      updateAccounts(accounts.map((account) => account.alias === alias ? { ...account, enabled } : account));
+      await loadAccounts();
+      toast.success(enabled ? "Conta ativada" : "Conta desativada");
+    } catch {
+      toast.error("Não foi possível alterar a ativação da conta.");
+    } finally {
+      togglingRef.current = false;
+      setToggling(false);
+    }
+  };
+
   const renderList = () => {
     if (listState === "loading") {
       return (
@@ -448,6 +469,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               <ProviderAccountCard
                 key={account.alias}
                 account={account}
+                saving={toggling}
+                onEnabledChange={(alias, enabled) => { void handleEnabledChange(alias, enabled); }}
                 onDisconnect={(alias) => {
                   setDisconnectAlias(alias);
                   setDisconnectError(null);
@@ -621,6 +644,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
                     </Badge>
                   )}
                 </TabsTrigger>
+                <TabsTrigger value="mcps" className="cursor-pointer gap-2 px-2 py-2.5 text-xs"><Plug aria-hidden="true" className="size-3.5" />MCPs</TabsTrigger>
                 <TabsTrigger
                   value="general"
                   disabled
@@ -641,6 +665,9 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
                 {view === "add" && renderAdd()}
                 {view === "waiting" && renderWaiting()}
               </ScrollArea>
+            </TabsContent>
+            <TabsContent value="mcps" className="flex-1 min-h-0 m-0 p-0">
+              <ScrollArea className="h-[calc(100vh-8.5rem)] px-6 py-6">{activeTab === "mcps" && <McpSettings />}</ScrollArea>
             </TabsContent>
           </Tabs>
         </SheetContent>

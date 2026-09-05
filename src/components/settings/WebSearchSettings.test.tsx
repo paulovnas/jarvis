@@ -10,10 +10,20 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const invokeMock = vi.mocked(invoke);
 const account = (alias: string, providerKind = "openai-codex"): ProviderAccount => ({
-  alias, providerKind, models: [], modelsAvailable: false, createdAt: 1, email: null, accountType: "personal",
+  alias, providerKind, enabled: true, models: [], modelsAvailable: false, createdAt: 1, email: null, accountType: "personal",
 });
 
 describe("WebSearchSettings", () => {
+  it("preserva a conta desativada e volta a disponibilizá-la ao reativar", async () => {
+    invokeMock.mockResolvedValue({ accountAlias: "openai-codex-pesquisa" });
+    const active = account("openai-codex-pesquisa");
+    const view = render(<WebSearchSettings accounts={[{ ...active, enabled: false }]} />);
+    expect(await screen.findByRole("combobox")).toHaveTextContent("Indisponível");
+    view.rerender(<WebSearchSettings accounts={[active]} />);
+    expect(screen.getByRole("combobox")).toHaveTextContent(active.alias);
+    expect(screen.getByRole("combobox")).not.toHaveTextContent("Indisponível");
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
   beforeEach(() => { vi.clearAllMocks(); invokeMock.mockReset(); });
 
   it("começa desligado e oferece apenas contas de provedores compatíveis", async () => {

@@ -159,9 +159,26 @@ Device-code flow, API keys, a generic provider registry, alias renaming and secu
 
 ### Web Search
 
+Provider cards include an **Ativada/Desativada** switch. Disabling preserves the account and Keychain credentials, removes its models from the chat selector, and prevents new inference requests. Existing accounts migrate as enabled. A disabled Web Search account remains selected but unavailable until re-enabled; it never falls back to another account.
+
 Below the accounts in **Configurações > Provedores**, **Web Search** defaults to **Desligado**. Select a connected OpenAI Codex account to enable the agent's `web_search` tool in both Plan and Build. The setting is global and persists in SQLite; disconnecting that account resets it to off. Search never falls back to another account or uses the conversation's model/account selection.
 
 The Rust adapter makes a separate ChatGPT Responses request using the selected search account's Keychain credentials and catalog. Only the focused query is sent, without the conversation transcript or project files. OpenAI Web Search always uses **GPT-5.6 Luna** (`gpt-5.6-luna`), fixed in the adapter independently of the chat model. If Luna is unavailable or the search fails, the tool reports an error without switching models. The operation has a 90-second total timeout, supports cancellation and requires completed hosted search plus source URLs before reporting success. It returns a bounded answer, up to 10 deduplicated HTTP(S) sources, the search account and model, and separate usage metadata in the tool result. Expand **Pesquisa na web** in the compact activity row to see the result and open its sources. Provider failures remain tool errors, with no credentials or upstream error bodies exposed.
+
+### MCP tools
+
+**Configurações > MCPs** manages up to 32 named servers with compact expandable cards, reversible activation, editing, connection checks, and confirmed deletion. The editor accepts one named server object in the [OpenCode MCP format](https://opencode.ai/docs/mcp-servers/), without the outer `mcp` key. Context7 is seeded once with `YOUR_API_KEY` and never starts until the placeholder is replaced. Removing it does not seed it again.
+
+- Local servers use `type: "local"`, `command: string[]`, optional `environment` and `cwd`. Commands execute directly without a shell. Relative `cwd` uses the project directory during conversations and the home directory during an explicit connection check. Node/npx must be installed for Context7.
+- Remote servers use `type: "remote"`, `url`, and optional `headers` over Streamable HTTP. Redirects are disabled to avoid forwarding custom headers. Remote OAuth, legacy SSE, and OpenCode variable/file substitutions are not implemented; use literal values and header authentication. Unknown options are rejected.
+- `enabled` defaults to true. `timeout` applies to discovery and calls in milliseconds (default 5000; range 1000–120000). A first npx installation may need a larger timeout.
+- SQLite stores only server metadata and a configuration revision. Full configurations are versioned in macOS Keychain under `com.foxtag.jarvis.mcp` and cross IPC only when editing. The seed template is public. MCP output is bounded and configured secret values are redacted; raw protocol errors and subprocess stderr are not exposed.
+
+The Rust MCP SDK connects configured, enabled servers for each agent turn, discovers and namespaces their tools, and closes owned connections at the end. Server failures are isolated. Tool list change notifications refresh the registry between model requests. Config changes and activation are rechecked before dispatch. Tools are available when useful without forced invocation; server-provided instructions are not appended to the agent prompt.
+
+**Manual** requires approval for every MCP call; **YOLO** runs calls automatically. **Plan** exposes only tools annotated by the configured server as read-only and not destructive. These annotations are server claims, not a sandbox. JSON Schema validates arguments before dispatch. Text, embedded resource text and structured results enter the existing compact activity view; sampling, elicitation, standalone resources/prompts and image/audio results are outside this first implementation. Timeouts and cancellation never retry an uncertain action automatically.
+
+Deterministic stdio and local HTTP fixtures verify protocol initialization, discovery, execution, redaction, cancellation/process cleanup, disabled/stale configuration, and failure isolation. Live Context7 validation requires a user-supplied key and separate user authorization.
 
 ### Workspaces, projects and conversations
 

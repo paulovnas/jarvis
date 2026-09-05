@@ -8,6 +8,7 @@ export type ProviderModel = {
 export type ProviderAccount = {
   alias: string;
   providerKind: string;
+  enabled: boolean;
   createdAt: number;
   email: string | null;
   accountType: "personal" | "enterprise" | "unknown";
@@ -37,6 +38,7 @@ function isProviderAccount(value: unknown): value is ProviderAccount {
   return (
     typeof account.alias === "string" &&
     typeof account.providerKind === "string" &&
+    typeof account.enabled === "boolean" &&
     typeof account.createdAt === "number" &&
     (typeof account.email === "string" || account.email === null) &&
     (account.accountType === "personal" ||

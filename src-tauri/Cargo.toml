@@ -32,5 +32,8 @@ url = "2.5"
 tauri-plugin-dialog = "2"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs"] }
 libc = "0.2.189"
+rmcp = { version = "3.2.0", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+jsonschema = { version = "0.53.0", default-features = false }
+process-wrap = { version = "9.1.0", default-features = false, features = ["tokio1", "process-group", "kill-on-drop"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "3.7", default-features = false }

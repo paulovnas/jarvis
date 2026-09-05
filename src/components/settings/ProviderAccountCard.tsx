@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import type { ProviderAccount } from "@/core/provider-accounts";
 
 const ACCOUNT_TYPE_LABELS: Record<ProviderAccount["accountType"], string> = {
@@ -20,12 +21,14 @@ function formatConnectionDate(timestamp: number): string {
   });
 }
 
-export function ProviderAccountCard({ account, onDisconnect }: {
+export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, saving = false }: {
   account: ProviderAccount;
   onDisconnect: (alias: string) => void;
+  onEnabledChange: (alias: string, enabled: boolean) => void;
+  saving?: boolean;
 }) {
   const summaryId = useId();
-  const modelSummary = !account.modelsAvailable
+  const modelSummary = !account.enabled ? "Desativada" : !account.modelsAvailable
     ? "Modelos indisponíveis"
     : account.models.length === 0
       ? "Nenhum modelo"
@@ -53,7 +56,7 @@ export function ProviderAccountCard({ account, onDisconnect }: {
               <CardTitle className="min-w-0 truncate" title={account.alias}>{account.alias}</CardTitle>
               <Badge variant="secondary" className="shrink-0">
                 <CheckCircle2 aria-hidden="true" data-icon="inline-start" />
-                Conectada
+                {account.enabled ? "Conectada" : "Desativada"}
               </Badge>
             </div>
             <CardDescription id={summaryId}>
@@ -76,7 +79,7 @@ export function ProviderAccountCard({ account, onDisconnect }: {
           <Separator />
           <div className="flex flex-col gap-2">
             <span className="font-medium">Modelos disponíveis</span>
-            {!account.modelsAvailable ? (
+            {!account.enabled ? <p className="text-muted-foreground">Ative a conta para disponibilizar seus modelos.</p> : !account.modelsAvailable ? (
               <p className="text-muted-foreground">Não foi possível consultar os modelos agora.</p>
             ) : account.models.length === 0 ? (
               <p className="text-muted-foreground">A assinatura não retornou modelos.</p>
@@ -89,8 +92,12 @@ export function ProviderAccountCard({ account, onDisconnect }: {
             )}
           </div>
         </CardContent>
-        <CardFooter className="justify-end">
-          <Button type="button" variant="destructive" size="sm" onClick={() => onDisconnect(account.alias)} className="cursor-pointer">
+        <CardFooter className="justify-between gap-3">
+          <label className="flex cursor-pointer items-center gap-2 text-xs">
+            <Switch aria-label={`Ativar ${account.alias}`} checked={account.enabled} onCheckedChange={(enabled) => onEnabledChange(account.alias, enabled)} disabled={saving} className="cursor-pointer" />
+            {account.enabled ? "Ativada" : "Desativada"}
+          </label>
+          <Button type="button" variant="destructive" size="sm" disabled={saving} onClick={() => onDisconnect(account.alias)} className="cursor-pointer">
             <Unplug aria-hidden="true" data-icon="inline-start" />
             Desconectar
           </Button>

@@ -20,6 +20,7 @@ export const providerAccounts = sqliteTable(
     alias: text("alias").primaryKey(),
     providerKind: text("provider_kind").notNull(),
     accountId: text("account_id").notNull().unique(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
   },
   (table) => [
@@ -29,6 +30,16 @@ export const providerAccounts = sqliteTable(
     ),
   ],
 );
+
+export const mcpServers = sqliteTable("mcp_servers", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  kind: text("kind").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  configured: integer("configured", { mode: "boolean" }).notNull().default(false),
+  revision: integer("revision").notNull().default(0),
+  createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
+}, (table) => [check("mcp_servers_kind", sql`${table.kind} IN ('local', 'remote')`)]);
 
 export const webSearchConfig = sqliteTable("web_search_config", {
   id: integer("id").primaryKey(),

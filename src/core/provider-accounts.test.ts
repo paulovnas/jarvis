@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { accountList, type ProviderAccount } from "./provider-accounts";
 
 const account: ProviderAccount = {
-  alias: "openai-codex-pessoal", providerKind: "openai-codex", createdAt: 1,
+  alias: "openai-codex-pessoal", providerKind: "openai-codex", enabled: true, createdAt: 1,
   email: null, accountType: "personal", modelsAvailable: true,
   models: [{ id: "compact", name: "Compact", reasoningLevels: ["medium", "xhigh"], defaultReasoningLevel: "medium" }],
 };

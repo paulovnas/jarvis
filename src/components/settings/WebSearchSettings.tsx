@@ -38,7 +38,7 @@ export function WebSearchSettings({ accounts }: { accounts: ProviderAccount[] })
     return () => { active = false; mountedRef.current = false; };
   }, [retry]);
 
-  const compatible = accounts.filter((account) => account.providerKind === "openai-codex");
+  const compatible = accounts.filter((account) => account.enabled && account.providerKind === "openai-codex");
   const unavailable = selected !== null && !compatible.some((account) => account.alias === selected);
   const items = [
     { value: OFF, label: "Desligado" },

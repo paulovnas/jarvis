@@ -29,6 +29,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 5,
         sql: include_str!("../../drizzle/0004_web_search.sql"),
     },
+    Migration {
+        version: 6,
+        sql: include_str!("../../drizzle/0005_nostalgic_shockwave.sql"),
+    },
 ];
 
 #[derive(Debug)]
@@ -162,6 +166,7 @@ pub(crate) struct ProviderAccountRecord {
     pub(crate) provider_kind: String,
     pub(crate) account_id: String,
     pub(crate) created_at: i64,
+    pub(crate) enabled: bool,
 }
 
 fn provider_account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderAccountRecord> {
@@ -170,6 +175,7 @@ fn provider_account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provid
         provider_kind: row.get(1)?,
         account_id: row.get(2)?,
         created_at: row.get(3)?,
+        enabled: row.get(4)?,
     })
 }
 
@@ -177,7 +183,7 @@ pub(crate) fn list_provider_accounts(
     connection: &Connection,
 ) -> Result<Vec<ProviderAccountRecord>, PersistenceError> {
     let mut statement = connection.prepare(
-        "SELECT alias, provider_kind, account_id, created_at
+        "SELECT alias, provider_kind, account_id, created_at, enabled
          FROM provider_accounts
          ORDER BY created_at, alias",
     )?;
@@ -215,7 +221,7 @@ pub(crate) fn insert_provider_account(
     )?;
     connection
         .query_row(
-            "SELECT alias, provider_kind, account_id, created_at
+            "SELECT alias, provider_kind, account_id, created_at, enabled
              FROM provider_accounts
              WHERE alias = ?1",
             params![alias],
@@ -233,6 +239,31 @@ pub(crate) fn delete_provider_account(
         params![alias],
     )?;
     Ok(())
+}
+
+pub(crate) fn require_enabled_account(
+    state: &AppState,
+    home: &Path,
+    alias: &str,
+) -> Result<(), crate::openai_codex::ProviderError> {
+    if state
+        .list_provider_accounts(home)
+        .map_err(|_| {
+            crate::openai_codex::ProviderError::new(
+                "database_error",
+                "Não foi possível verificar a conta.",
+            )
+        })?
+        .iter()
+        .any(|record| record.alias == alias && record.enabled)
+    {
+        Ok(())
+    } else {
+        Err(crate::openai_codex::ProviderError::new(
+            "account_disabled",
+            "A conta foi desativada ou desconectada. Ative uma conta nas configurações.",
+        ))
+    }
 }
 
 fn complete_app_config(connection: &mut Connection) -> Result<AppConfig, PersistenceError> {
@@ -348,7 +379,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -413,7 +444,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {
@@ -477,7 +508,13 @@ mod tests {
             .expect("provider column names");
         assert_eq!(
             columns,
-            vec!["alias", "provider_kind", "account_id", "created_at"]
+            vec![
+                "alias",
+                "provider_kind",
+                "account_id",
+                "created_at",
+                "enabled"
+            ]
         );
         assert_eq!(
             list_provider_accounts(&connection)

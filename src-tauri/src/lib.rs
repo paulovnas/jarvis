@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod agent;
 mod library;
+mod mcp;
 mod openai_codex;
 mod persistence;
 #[tauri::command]
@@ -14,10 +15,17 @@ pub fn run() {
         .manage(persistence::AppState::default())
         .manage(openai_codex::OpenAiCodexState::default())
         .manage(agent::AgentState::default())
+        .manage(mcp::McpState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             greet,
+            mcp::list_mcp_servers,
+            mcp::get_mcp_config,
+            mcp::save_mcp_server,
+            mcp::set_mcp_enabled,
+            mcp::delete_mcp_server,
+            mcp::runtime::test_mcp_server,
             persistence::get_app_config,
             persistence::complete_onboarding,
             agent::web_search::get_web_search_config,
@@ -37,6 +45,7 @@ pub fn run() {
             agent::cancel_agent_turn,
             agent::approve_agent_tool,
             openai_codex::list_provider_accounts,
+            openai_codex::set_provider_enabled,
             openai_codex::begin_openai_codex_connection,
             openai_codex::wait_openai_codex_connection,
             openai_codex::cancel_openai_codex_connection,

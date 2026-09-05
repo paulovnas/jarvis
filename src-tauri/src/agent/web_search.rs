@@ -50,7 +50,7 @@ fn save_config(
     let transaction = connection.transaction().map_err(|_| storage_error())?;
     if let Some(alias) = &account_alias {
         let compatible: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1 AND provider_kind = 'openai-codex')",
+            "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1 AND enabled = 1 AND provider_kind = 'openai-codex')",
             params![alias], |row| row.get(0),
         ).map_err(|_| storage_error())?;
         if !compatible {

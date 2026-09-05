@@ -203,6 +203,40 @@ async fn manual_waits_for_matching_approval_and_yolo_does_not_prompt() {
     assert!(session.snapshot().unwrap().pending_approval.is_none());
 }
 
+#[tokio::test]
+async fn mcp_calls_require_manual_approval_even_in_plan() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let mut plan = options(ApprovalMode::Manual);
+    plan.mode = Mode::Plan;
+    let signal = session
+        .reserve("Look up documentation".into(), plan.clone())
+        .unwrap();
+    let tool = ToolCall {
+        id: "mcp-call".into(),
+        name: "mcp_docs_lookup_hash".into(),
+        args: json!({"query":"React"}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    let (s, t, p, cancel) = (session.clone(), tool.clone(), plan.clone(), signal.clone());
+    let pending = tokio::spawn(async move { authorize(&s, &t, &p, cancel).await });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while session.snapshot().unwrap().pending_approval.is_none() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!pending.is_finished());
+    let turn = session.snapshot().unwrap().active_turn_id.unwrap();
+    answer_approval(&session, &turn, &tool.id, false).unwrap();
+    assert!(!pending.await.unwrap().unwrap());
+    plan.approval_mode = ApprovalMode::Yolo;
+    assert!(authorize(&session, &tool, &plan, signal).await.unwrap());
+}
+
 #[test]
 fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
     let fixture = Fixture::new();

@@ -36,6 +36,7 @@ function account(
   return {
     alias,
     providerKind: "openai-codex",
+    enabled: true,
     createdAt: 1_735_689_600,
     email: null,
     accountType: "unknown",

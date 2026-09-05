@@ -51,6 +51,7 @@ describe("Home shell", () => {
       {
         alias: "openai-codex-pessoal",
         providerKind: "openai-codex",
+        enabled: true,
         createdAt: 1_735_689_600,
         email: "dev@example.com",
         accountType: "personal",
@@ -60,6 +61,8 @@ describe("Home shell", () => {
           { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", reasoningLevels: [], defaultReasoningLevel: null },
         ],
       },
+      { alias: "openai-codex-disabled", providerKind: "openai-codex", enabled: false, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true,
+        models: [{ id: "disabled-model", name: "Modelo desativado", reasoningLevels: [], defaultReasoningLevel: null }] },
     ]);
     render(<Home />);
 
@@ -74,6 +77,7 @@ describe("Home shell", () => {
     expect(screen.getAllByText("GPT-5.6 Luna").length).toBeGreaterThan(0);
     expect(screen.getByText("GPT-5.6 Sol")).toBeInTheDocument();
     expect(screen.queryByText("Antigravity")).not.toBeInTheDocument();
+    expect(screen.queryByText("Modelo desativado")).not.toBeInTheDocument();
     screen.getByRole("menuitem", { name: /GPT-5.6 Luna/ }).focus();
     await user.keyboard("{ArrowRight}");
     await user.click(await screen.findByRole("menuitem", { name: "Extra alto" }));
@@ -103,7 +107,7 @@ describe("Home shell", () => {
     expect(await screen.findByText("Nenhuma conta conectada")).toBeInTheDocument();
 
     await act(async () => resolveInitial([{
-      alias: "openai-codex-removed", providerKind: "openai-codex", createdAt: 1,
+      alias: "openai-codex-removed", providerKind: "openai-codex", enabled: true, createdAt: 1,
       email: null, accountType: "personal", modelsAvailable: true,
       models: [{ id: "old", name: "Old model", reasoningLevels: [], defaultReasoningLevel: null }],
     }]));

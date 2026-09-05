@@ -29,6 +29,7 @@ pub(crate) enum ProviderAccountType {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct ProviderAccount {
     pub(crate) alias: String,
+    pub(crate) enabled: bool,
     #[serde(rename = "providerKind")]
     pub(crate) provider_kind: String,
     #[serde(rename = "createdAt")]
@@ -50,6 +51,7 @@ impl ProviderAccount {
     ) -> Self {
         Self {
             alias: record.alias,
+            enabled: record.enabled,
             provider_kind: record.provider_kind,
             created_at: record.created_at,
             email: credential.and_then(|value| value.email.clone()),
@@ -555,6 +557,7 @@ mod tests {
     fn provider_metadata_does_not_serialize_account_id() {
         let account = ProviderAccount {
             alias: "openai-codex-one".to_owned(),
+            enabled: true,
             provider_kind: "openai-codex".to_owned(),
             created_at: 1_735_689_600,
             email: Some("person@example.com".to_owned()),
@@ -710,9 +713,14 @@ pub struct ProviderError {
     pub code: String,
     pub message: String,
 }
+impl From<PersistenceError> for ProviderError {
+    fn from(_: PersistenceError) -> Self {
+        Self::database()
+    }
+}
 
 impl ProviderError {
-    fn new(code: &'static str, message: &'static str) -> Self {
+    pub(crate) fn new(code: &'static str, message: &'static str) -> Self {
         Self {
             code: code.to_owned(),
             message: message.to_owned(),
@@ -1114,7 +1122,10 @@ impl OpenAiCodexState {
             )
         })?;
         if reasoning.is_some_and(|effort| {
-            !selected.reasoning_levels.iter().any(|level| level == effort)
+            !selected
+                .reasoning_levels
+                .iter()
+                .any(|level| level == effort)
         }) {
             return Err(ProviderError::new(
                 "invalid_reasoning",
@@ -1145,6 +1156,12 @@ impl OpenAiCodexState {
             .ok_or_else(|| {
                 ProviderError::new("account_missing", "A conta selecionada foi desconectada.")
             })?;
+        if !record.enabled {
+            return Err(ProviderError::new(
+                "account_disabled",
+                "Ative a conta nas configurações para usá-la.",
+            ));
+        }
         let mut credential = self.manager.secret_store.load(alias).map_err(|_| {
             ProviderError::new(
                 "credential_missing",
@@ -2088,6 +2105,9 @@ fn account_details(
     let Ok(mut credential) = secret_store.load(&record.alias) else {
         return ProviderAccount::from_record(record, None, Vec::new(), false);
     };
+    if !record.enabled {
+        return ProviderAccount::from_record(record, Some(&credential), Vec::new(), false);
+    }
     let original = credential.clone();
     let profile = token_profile(&credential.access, None);
     credential.email = credential.email.or(profile.email);
@@ -2189,6 +2209,42 @@ pub async fn begin_openai_codex_connection(
 }
 
 #[tauri::command]
+pub async fn set_provider_enabled(
+    app: tauri::AppHandle,
+    persistence_state: tauri::State<'_, persistence::AppState>,
+    oauth_state: tauri::State<'_, OpenAiCodexState>,
+    alias: String,
+    enabled: bool,
+) -> Result<(), ProviderError> {
+    let home = home_dir(&app)?;
+    let state = persistence_state.inner().clone();
+    let manager = oauth_state.manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = manager
+            .credentials_guard
+            .lock()
+            .map_err(|_| ProviderError::internal())?;
+        state.with_connection(&home, |connection| {
+            let changed = connection
+                .execute(
+                    "UPDATE provider_accounts SET enabled = ?2 WHERE alias = ?1",
+                    rusqlite::params![alias, enabled],
+                )
+                .map_err(|_| ProviderError::database())?;
+            if changed != 1 {
+                return Err(ProviderError::new(
+                    "account_missing",
+                    "A conta não está mais cadastrada.",
+                ));
+            }
+            Ok(())
+        })
+    })
+    .await
+    .map_err(|_| ProviderError::internal())?
+}
+
+#[tauri::command]
 pub async fn wait_openai_codex_connection(
     oauth_state: tauri::State<'_, OpenAiCodexState>,
     flow_id: String,
@@ -2241,6 +2297,40 @@ mod oauth_tests {
         thread::JoinHandle,
         time::Duration,
     };
+
+    #[test]
+    fn disabled_account_is_preserved_and_rejected_before_keychain_or_network() {
+        let home = test_home();
+        let state = persistence::AppState::default();
+        state
+            .with_connection(&home, |connection| {
+                let record = persistence::insert_provider_account(
+                    connection,
+                    "openai-codex-disabled",
+                    "fixture-account",
+                )?;
+                assert!(record.enabled);
+                connection.execute(
+                    "UPDATE provider_accounts SET enabled = 0 WHERE alias = ?1",
+                    [&record.alias],
+                )?;
+                Ok::<_, PersistenceError>(())
+            })
+            .unwrap();
+        let oauth = OpenAiCodexState::default();
+        let err = oauth
+            .credential_and_models(&state, &home, "openai-codex-disabled")
+            .err()
+            .unwrap();
+        assert_eq!(err.code, "account_disabled");
+        let records = state.list_provider_accounts(&home).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].account_id, "fixture-account");
+        assert!(!records[0].enabled);
+        assert!(persistence::require_enabled_account(&state, &home, &records[0].alias).is_err());
+        drop(state);
+        std::fs::remove_dir_all(home).unwrap();
+    }
 
     static NEXT_HOME: AtomicU64 = AtomicU64::new(1);
 

@@ -43,7 +43,7 @@ export function Home() {
   }, []);
 
   const modelGroups = accounts
-    .filter((account) => account.modelsAvailable && account.models.length > 0)
+    .filter((account) => account.enabled && account.modelsAvailable && account.models.length > 0)
     .map((account) => ({
       provider: `OpenAI Codex · ${account.alias}`,
       models: account.models.map((model) => ({
