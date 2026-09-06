@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { coreError, coreSnapshotSchema, type CoreId, type CoreSnapshot } from "@/core/core-components";
+import { coreDownloadEventSchema, coreError, coreSnapshotSchema, type CoreId, type CoreSnapshot } from "@/core/core-components";
 
 export function useCore() {
   const [snapshot, setSnapshot] = useState<CoreSnapshot | null>(null);
+  const currentSnapshot = useRef<CoreSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
   const mounted = useRef(false);
@@ -13,7 +14,7 @@ export function useCore() {
   const busy = useRef(false);
   const accept = useCallback((value: unknown) => {
     const parsed = coreSnapshotSchema.parse(value);
-    if (mounted.current) { revision.current += 1; setSnapshot(parsed); setError(null); }
+    if (mounted.current) { revision.current += 1; currentSnapshot.current = parsed; setSnapshot(parsed); setError(null); }
     return parsed;
   }, []);
   const refresh = useCallback(async () => {
@@ -23,10 +24,22 @@ export function useCore() {
   }, [accept]);
   useEffect(() => {
     mounted.current = true;
-    let unlisten: (() => void) | undefined;
-    void listen("core:changed", event => { if (mounted.current) { try { accept(event.payload); } catch { void refresh(); } } }).then(stop => { if (mounted.current) unlisten = stop; else stop(); }).catch(() => { /* Explicit commands remain available if event registration fails. */ });
-    void refresh();
-    return () => { mounted.current = false; revision.current += 1; unlisten?.(); };
+    let disposed = false;
+    const stops: (() => void)[] = [];
+    const keep = (stop: () => void) => { if (disposed) stop(); else stops.push(stop); };
+    void Promise.allSettled([
+      listen("core:changed", event => { if (!disposed) { try { accept(event.payload); } catch { void refresh(); } } }).then(keep),
+      listen("core:download", event => {
+        const parsed = coreDownloadEventSchema.safeParse(event.payload);
+        const current = currentSnapshot.current;
+        if (disposed || !parsed.success || !current || !current.items.some(item => item.id === parsed.data.id && item.stage !== null)) return;
+        revision.current += 1;
+        const next = { ...current, items: current.items.map(item => item.id === parsed.data.id ? { ...item, download: parsed.data.download } : item) };
+        currentSnapshot.current = next;
+        setSnapshot(next);
+      }).then(keep),
+    ]).then(() => { if (!disposed) void refresh(); });
+    return () => { disposed = true; mounted.current = false; revision.current += 1; stops.forEach(stop => stop()); };
   }, [accept, refresh]);
   const check = useCallback(async () => {
     try { accept(await invoke("check_core_updates")); }

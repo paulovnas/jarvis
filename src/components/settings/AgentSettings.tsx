@@ -11,7 +11,7 @@ import type { ProviderAccount } from "@/core/provider-accounts";
 
 type Role = WorkflowAgent["role"];
 const GROUPS: { flow: Workflow; roles: Role[] }[] = [
-  { flow: "standard", roles: ["builder"] }, { flow: "planned", roles: ["planner", "builder", "designer"] },
+  { flow: "standard", roles: ["builder"] }, { flow: "designer", roles: ["designer"] }, { flow: "planned", roles: ["planner", "builder", "designer"] },
   { flow: "complete", roles: ["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer"] },
 ];
 const GUIDANCE: Record<Role, string> = {

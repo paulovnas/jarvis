@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import ChatMarkdown from "@/components/chat/ChatMarkdown";
+import { LazyChatMarkdown as ChatMarkdown } from "@/components/chat/LazyChatMarkdown";
 import { boardSchema, statusFor, type Bead } from "@/core/dashboard";
 import { useDashboardQuery } from "@/hooks/use-dashboard-query";
 

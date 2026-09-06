@@ -13,16 +13,17 @@ fn requires_every_component_and_never_treats_newer_release_as_missing() {
         if id == ComponentId::Ponytail {
             ponytail::tests::fixture_package(&path, "1.0.0");
         }
+        if id == ComponentId::OpenDesign { design::tests::prepare_fixture(&path, &[]).unwrap(); }
         manifest.installations.insert(
             id,
             Installation {
-                version: "1.0.0".into(),
+                version: if id == ComponentId::OpenDesign { "1.2.3" } else { "1.0.0" }.into(),
                 directory,
                 files: vec!["verified".into()],
             },
         );
         save_manifest(home.path(), &manifest).unwrap();
-        assert_eq!(require_ready(home.path()).is_ok(), id == ComponentId::Beads);
+        assert_eq!(require_ready(home.path()).is_ok(), id == ComponentId::OpenDesign);
     }
     let state = CoreState::default();
     state
@@ -70,7 +71,7 @@ fn preflight_routes_http_without_blocking_regular_mutations() {
 async fn official_installation_smoke() {
     let home = tempfile::tempdir().unwrap();
     for id in ComponentId::ALL {
-        let version = install::install(home.path(), id, |stage| eprintln!("{}: {stage}", id.key()))
+        let version = install::install(home.path(), id, |stage| eprintln!("{}: {stage}", id.key()), |_| {})
             .await
             .unwrap();
         assert!(!version.is_empty());

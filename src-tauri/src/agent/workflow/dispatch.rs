@@ -13,11 +13,18 @@ pub(super) fn definitions(role: Role) -> Vec<Value> {
         definition("hub_complete", "Deliver your final structured handoff to the parent and end this agent. Do not use until child work has settled. Reviewer uses approved/rework/blocked; other roles use completed/blocked. Cite actual evidence and validation, and list limitations honestly. taskIds contains exact Beads IDs actually addressed or reviewed (including the epic when reviewed); only approved IDs can be closed in Complete. Use [] for research without a task.", json!({"verdict":{"type":"string","enum":["completed","approved","rework","blocked"]},"summary":string,"outcomes":strings,"evidence":strings,"validation":strings,"limitations":strings,"taskIds":strings}), &["verdict","summary","outcomes","evidence","validation","limitations","taskIds"]),
     ];
     if role.coordinator() {
+        tools.push(definition("hub_respond_guidance", "Answer a pending child's guidance request using its exact requestId. Resolve from known context or ask_user first; do not invent a user decision. Only its parent can respond.", json!({"requestId":string,"answer":string}), &["requestId","answer"]));
         tools.extend([
             definition("hub_cancel", "Cancel a direct child and its descendants. Wait for completion before replacing its work; cancellation is not successful completion.", json!({"id":string}), &["id"]),
-            definition("hub_spawn", "Start an isolated permitted agent and return its ID immediately. Supply focused context and acceptance criteria. Dependencies are earlier agent IDs and form a DAG. Production roles require a real Beads ID. Scope is project-relative paths; overlapping writers queue. Use '.' for whole-project shell/MCP access; narrow writers can only read/write their assigned paths and run workflow_check. Up to four independent leaf agents run in parallel.", json!({"role":{"type":"string","enum":["planner","investigator","writer","orchestrator","designer","builder","reviewer"]},"title":{"type":"string","minLength":1,"maxLength":120},"prompt":string,"acceptance":strings,"scope":strings,"beadId":{"type":["string","null"]},"dependencies":strings}), &["role","title","prompt","acceptance","scope","dependencies"]),
+            definition("hub_spawn", "Start an isolated permitted agent and return its ID immediately. Supply focused context and acceptance criteria. Dependencies are earlier agent IDs and form a DAG. Production roles require a real Beads ID. Designer phase=discovery is read-only, may precede planning and needs no Bead. Complete Planner can spawn Designer only in discovery. Default phase=implementation. Scope is project-relative paths; overlapping writers queue. Use '.' for whole-project shell/MCP access; narrow writers can only read/write their assigned paths and run workflow_check. Up to four independent leaf agents run in parallel.", json!({"role":{"type":"string","enum":["planner","investigator","writer","orchestrator","designer","builder","reviewer"]},"phase":{"type":"string","enum":["implementation","discovery"]},"title":{"type":"string","minLength":1,"maxLength":120},"prompt":string,"acceptance":strings,"scope":strings,"beadId":{"type":["string","null"]},"dependencies":strings}), &["role","title","prompt","acceptance","scope","dependencies"]),
             definition("hub_retry", "Continue an existing direct child from its durable context, after inspecting the task/files and uncertain side effects. Use for recovery or focused rework/follow-up. No automatic replay; at most two additional rounds. Role, scope, dependencies and permissions stay fixed.", json!({"id":string,"prompt":string}), &["id","prompt"]),
         ]);
+    }
+    if role == Role::Designer || role.coordinator() {
+        tools.push(definition("hub_request_guidance", "Ask your parent for a material missing decision and wait for its correlated response. Include context, impact and recommendation. Delegated Designer must use this instead of questioning the user. Coordinators may escalate to their parent. Cancellation interrupts the wait; the main agent uses ask_user.", json!({"question":string}), &["question"]));
+    }
+    if role == Role::Designer {
+        tools.push(definition("design_brief", "Read or replace your durable design brief. Record accepted answers, direction, assumptions, constraints, selected resource IDs and pending decisions. This survives compaction/restart and is isolated per agent. Omit text to read.", json!({"text":{"type":"string","maxLength":4000}}), &[]));
     }
     if matches!(role, Role::Builder | Role::Designer | Role::Reviewer) {
         tools.push(definition("workflow_check", "Run one supported project validation command, serialized with other checks. The command must exist in this project. Reports actual output, never implies user acceptance. Use path for a nested package.", json!({"check":{"type":"string","enum":["bun_lint","bun_typecheck","bun_test","bun_build","bun_check","cargo_check","cargo_test","cargo_clippy"]},"path":{"type":"string"}}), &["check","path"]));
@@ -27,7 +34,7 @@ pub(super) fn definitions(role: Role) -> Vec<Value> {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Dispatch { role: Role, title: String, prompt: String, acceptance: Vec<String>, scope: Vec<String>, bead_id: Option<String>, dependencies: Vec<String> }
+struct Dispatch { role: Role, #[serde(default)] phase: Phase, title: String, prompt: String, acceptance: Vec<String>, scope: Vec<String>, bead_id: Option<String>, dependencies: Vec<String> }
 
 fn relative(value: &str) -> bool {
     !value.is_empty() && value.len() < 4096 && !Path::new(value).is_absolute()
@@ -51,6 +58,15 @@ pub(super) async fn execute(exec: &Execution, tool: &ToolCall, mut signal: watch
     let schema = definitions(exec.role).into_iter().find(|d| d["name"] == tool.name).ok_or_else(|| invalid("Ferramenta de coordenação indisponível."))?;
     if !jsonschema::validator_for(&schema["parameters"]).map_err(|_| AgentError::internal())?.is_valid(&tool.args) { return Err(invalid("Argumentos inválidos para a coordenação.")); }
     match tool.name.as_str() {
+        "hub_request_guidance" => guidance::request(exec, tool.args["question"].as_str().unwrap(), signal).await,
+        "hub_respond_guidance" => guidance::respond(exec, tool.args["requestId"].as_str().unwrap(), tool.args["answer"].as_str().unwrap()),
+        "design_brief" => exec.hub.mutate(|state| {
+            if let Some(text) = tool.args["text"].as_str() {
+                if text.len() > 16000 { return Err(invalid("Resuma o briefing em até 4 mil caracteres.")); }
+                state.design_briefs.insert(exec.id.clone(), text.into());
+            }
+            Ok(json!({"brief":state.design_briefs.get(&exec.id)}).to_string())
+        }),
         "hub_spawn" => spawn(exec, serde_json::from_value(tool.args.clone()).map_err(|_| invalid("Despacho inválido."))?),
         "hub_list" => {
             let state = exec.hub.manifest.lock().map_err(|_| AgentError::internal())?;
@@ -96,9 +112,10 @@ pub(super) async fn execute(exec: &Execution, tool: &ToolCall, mut signal: watch
 
 fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
     if !exec.role.spawns(exec.flow, input.role) { return Err(invalid("O papel solicitado não pertence às delegações deste agente.")); }
+    validate_phase(exec.flow, exec.role, input.role, input.phase)?;
     if input.title.trim().is_empty() || input.title.len() > 480 || !bounded(&input.prompt) || !strings(&input.acceptance, true) || !strings(&input.scope, true) || input.scope.iter().any(|p| !relative(p)) || input.dependencies.len() > 16 { return Err(invalid("Informe objetivo, aceite e escopo válidos para o agente.")); }
     if input.prompt.len() + input.acceptance.iter().map(String::len).sum::<usize>() + input.scope.iter().map(String::len).sum::<usize>() > 32_000 { return Err(invalid("O despacho precisa ser mais compacto (até 32 KB).")); }
-    if matches!(input.role, Role::Builder | Role::Designer | Role::Reviewer | Role::Orchestrator) && input.bead_id.as_deref().is_none_or(|id| id.trim().is_empty()) { return Err(invalid("Vincule o trabalho a uma tarefa ou épico real do Beads.")); }
+    if input.phase != Phase::Discovery && matches!(input.role, Role::Builder | Role::Designer | Role::Reviewer | Role::Orchestrator) && input.bead_id.as_deref().is_none_or(|id| id.trim().is_empty()) { return Err(invalid("Vincule o trabalho a uma tarefa ou épico real do Beads.")); }
     let id = library::new_id()?;
     let mut options = exec.hub.root.data.lock().map_err(|_| AgentError::internal())?.turns.last().ok_or_else(AgentError::internal)?.turn.options.clone();
     let job = exec.hub.mutate(|state| {
@@ -107,17 +124,24 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
         while let Some(job) = state.jobs.get(parent) { parent = &job.parent_id; depth += 1; if depth >= 4 { return Err(invalid("Limite de profundidade de delegação atingido.")); } }
         if input.dependencies.iter().any(|id| !state.jobs.get(id).is_some_and(|job| job.parent_id == exec.id)) { return Err(invalid("Dependências devem ser agentes já despachados pelo mesmo responsável.")); }
         settings::apply(&mut options, &state.profiles, exec.flow, input.role);
-        let job = Job { id: id.clone(), parent_id: exec.id.clone(), run_id: state.run_id.clone(), role: input.role, title: input.title, prompt: input.prompt, acceptance: input.acceptance, scope: input.scope, bead_id: input.bead_id, dependencies: input.dependencies, status: Status::Queued, created_at: now(), updated_at: now(), attempts: 1, handoff: None, error: None, options };
+        let job = Job { phase: input.phase, id: id.clone(), parent_id: exec.id.clone(), run_id: state.run_id.clone(), role: input.role, title: input.title, prompt: input.prompt, acceptance: input.acceptance, scope: input.scope, bead_id: input.bead_id, dependencies: input.dependencies, status: Status::Queued, created_at: now(), updated_at: now(), attempts: 1, handoff: None, error: None, options };
         state.jobs.insert(id.clone(), job.clone()); Ok(job)
     })?;
     launch(exec.hub.clone(), job, None)?;
     Ok(json!({"id":id,"status":"queued"}).to_string())
+}
+fn validate_phase(flow: Flow, parent: Role, role: Role, phase: Phase) -> Result<(), AgentError> {
+    if (phase == Phase::Discovery && role != Role::Designer) || (flow == Flow::Complete && parent == Role::Planner && role == Role::Designer && phase != Phase::Discovery) {
+        return Err(invalid("O Planejador do fluxo Completo delega ao Designer apenas descoberta. A implementação passa pelo Orquestrador."));
+    }
+    Ok(())
 }
 fn retry(exec: &Execution, id: &str, prompt: &str) -> Result<String, AgentError> {
     if !bounded(prompt) { return Err(invalid("Informe o contexto da retomada.")); }
     let job = exec.hub.mutate(|state| {
         let job = state.jobs.get_mut(id).ok_or_else(|| invalid("Agente não encontrado."))?;
         if job.parent_id != exec.id || !exec.role.spawns(exec.flow, job.role) || job.status.active() || job.attempts >= 3 { return Err(invalid("Retomada indisponível: confira o responsável, o estado e o limite de duas revisões.")); }
+        validate_phase(exec.flow, exec.role, job.role, job.phase)?;
         job.attempts += 1; job.status = Status::Queued; job.handoff = None; job.error = None; job.updated_at = now(); job.run_id = state.run_id.clone();
         job.options = state.options.clone();
         settings::apply(&mut job.options, &state.profiles, exec.flow, job.role);
@@ -147,7 +171,7 @@ fn admitted(state: &Manifest, job: &Job) -> Result<bool, AgentError> {
     }
     let active: Vec<_> = state.jobs.values().filter(|other| other.id != job.id && matches!(other.status, Status::Running | Status::Waiting) && !other.role.coordinator()).collect();
     if !job.role.coordinator() && active.len() >= MAX_ACTIVE { return Ok(false); }
-    if active.iter().any(|other| overlap(&job.scope, &other.scope) && ((job.role.writes() && (other.role.writes() || other.role == Role::Reviewer)) || (job.role == Role::Reviewer && other.role.writes()))) { return Ok(false); }
+    if active.iter().any(|other| overlap(&job.scope, &other.scope) && ((job.writes() && (other.writes() || other.role == Role::Reviewer)) || (job.role == Role::Reviewer && other.writes()))) { return Ok(false); }
     Ok(true)
 }
 async fn await_admission(hub: &Hub, job: &Job, mut signal: watch::Receiver<bool>) -> Result<(), AgentError> {
@@ -183,7 +207,7 @@ async fn check_bead(hub: &Hub, job: &Job, signal: watch::Receiver<bool>) -> Resu
 fn review_dependencies(state: &Manifest, job: &Job) -> Vec<String> {
     if job.role != Role::Reviewer { return vec![]; }
     job.dependencies.iter().filter_map(|id| state.jobs.get(id))
-        .filter(|worker| worker.run_id == state.run_id && worker.status == Status::Completed && matches!(worker.role, Role::Builder | Role::Designer))
+        .filter(|worker| worker.run_id == state.run_id && worker.status == Status::Completed && worker.phase == Phase::Implementation && matches!(worker.role, Role::Builder | Role::Designer))
         .filter_map(|worker| worker.bead_id.as_ref().filter(|id| worker.handoff.as_ref().is_some_and(|handoff| handoff.verdict == Verdict::Completed && handoff.task_ids.contains(id))).cloned())
         .collect()
 }

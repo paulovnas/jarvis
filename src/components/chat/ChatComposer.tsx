@@ -14,7 +14,7 @@ import { MessageContent } from "./MessageContent";
 import { ModelPicker, type ProviderModelGroup, type ModelSelection } from "./ModelPicker";
 export type { ProviderModelGroup } from "./ModelPicker";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
-import { FLOW_LABELS, type Workflow } from "@/core/workflow";
+import { FLOW_LABELS, rootRole, type Workflow } from "@/core/workflow";
 import { mergeDrafts, type ChatDraft, type MessagePart, type QueuedMessage, type TurnOptions } from "@/core/chat";
 
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
@@ -37,6 +37,7 @@ interface ChatComposerProps {
 
 const MODE_OPTIONS = [
   { value: "standard", label: "Padrão" },
+  { value: "designer", label: "Designer" },
   { value: "planned", label: "Planejado" },
   { value: "complete", label: "Completo" },
 ] as const;
@@ -107,7 +108,7 @@ export function ChatComposer({
   };
 
   const availableModels = modelGroups.flatMap((group) => group.models);
-  const profile = agentModels?.data?.[`${workflow}/${workflow === "standard" ? "builder" : "planner"}`];
+  const profile = agentModels?.data?.[`${workflow}/${rootRole(workflow)}`];
   const effectiveSelection = running && initialOptions ? { model: `${initialOptions.account}/${initialOptions.model}`, reasoning: initialOptions.reasoning } : profile ? { model: `${profile.account}/${profile.model}`, reasoning: profile.reasoning } : selection;
   const currentModelDef =
     availableModels.find((availableModel) => availableModel.value === effectiveSelection?.model) ??
@@ -119,7 +120,7 @@ export function ChatComposer({
       ? effectiveSelection.reasoning
       : currentModelDef?.defaultReasoningLevel ?? currentModelDef?.reasoningLevels[0] ?? null;
   const chooseModel = (next: ModelSelection) => {
-    if (agentModels) { void agentModels.save(workflow, workflow === "standard" ? "builder" : "planner", { account: next.model.slice(0, next.model.indexOf("/")), model: next.model.slice(next.model.indexOf("/") + 1), reasoning: next.reasoning }); }
+    if (agentModels) { void agentModels.save(workflow, rootRole(workflow), { account: next.model.slice(0, next.model.indexOf("/")), model: next.model.slice(next.model.indexOf("/") + 1), reasoning: next.reasoning }); }
     else setSelection(next);
   };
 

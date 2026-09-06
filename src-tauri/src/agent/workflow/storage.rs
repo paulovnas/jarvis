@@ -47,7 +47,7 @@ pub(super) fn open(root: Arc<Session>, env: Environment, app: tauri::AppHandle, 
     let options = root.data.lock().map_err(|_| AgentError::internal())?.turns.last().ok_or_else(AgentError::internal)?.turn.options.clone();
     let mut manifest = load(&directory_path, &root.id)?.unwrap_or_else(|| Manifest {
         version: 1, conversation_id: root.id.clone(), run_id: run_id.clone(), flow, root_status: Status::Running,
-        updated_at: now(), revision: now(), options: options.clone(), profiles: profiles.clone(), jobs: BTreeMap::new(), messages: vec![],
+        updated_at: now(), revision: now(), options: options.clone(), profiles: profiles.clone(), jobs: BTreeMap::new(), messages: vec![], design_briefs: BTreeMap::new(), guidance: BTreeMap::new(),
     });
     // Keep recent recovery context without allowing unbounded metadata growth.
     if manifest.jobs.len() > MAX_JOBS / 2 {
@@ -57,6 +57,8 @@ pub(super) fn open(root: Arc<Session>, env: Environment, app: tauri::AppHandle, 
     }
     manifest.run_id = run_id; manifest.flow = flow; manifest.root_status = Status::Running; manifest.options = options;
     manifest.profiles = profiles;
+    manifest.guidance.clear();
+    manifest.design_briefs.retain(|id, _| id == "main" || manifest.jobs.contains_key(id));
     manifest.messages.clear(); manifest.updated_at = now(); manifest.revision += 1;
     save(&directory_path, &manifest)?;
     let (changed, _) = watch::channel(manifest.revision);

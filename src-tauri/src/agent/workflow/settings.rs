@@ -10,7 +10,7 @@ pub(super) fn key(flow: Flow, role: Role) -> String {
     format!("{}/{}", serde_json::to_value(flow).unwrap().as_str().unwrap(), serde_json::to_value(role).unwrap().as_str().unwrap())
 }
 pub(super) fn roster(flow: Flow) -> &'static [Role] { match flow {
-    Flow::Standard => &[Role::Builder], Flow::Planned => &[Role::Planner, Role::Builder, Role::Designer],
+    Flow::Standard => &[Role::Builder], Flow::Designer => &[Role::Designer], Flow::Planned => &[Role::Planner, Role::Builder, Role::Designer],
     Flow::Complete => &[Role::Planner, Role::Investigator, Role::Writer, Role::Orchestrator, Role::Designer, Role::Builder, Role::Reviewer],
 } }
 fn read(home: &Path) -> Result<ModelSettings, AgentError> {
@@ -18,12 +18,12 @@ fn read(home: &Path) -> Result<ModelSettings, AgentError> {
     let meta = match fs::symlink_metadata(&path) { Ok(meta) => meta, Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()), Err(_) => return Err(AgentError::storage()) };
     if !meta.is_file() || meta.is_symlink() || meta.len() > 64 * 1024 { return Err(AgentError::storage()); }
     let settings: ModelSettings = serde_json::from_slice(&fs::read(path).map_err(|_| AgentError::storage())?).map_err(|_| AgentError::storage())?;
-    if settings.len() > 11 || settings.keys().any(|name| ![Flow::Standard, Flow::Planned, Flow::Complete].iter().any(|flow| roster(*flow).iter().any(|role| key(*flow, *role) == *name))) { return Err(invalid("Configuração de agentes inválida.")); }
+    if settings.len() > 12 || settings.keys().any(|name| ![Flow::Standard, Flow::Designer, Flow::Planned, Flow::Complete].iter().any(|flow| roster(*flow).iter().any(|role| key(*flow, *role) == *name))) { return Err(invalid("Configuração de agentes inválida.")); }
     Ok(settings)
 }
 pub(in crate::agent) fn load(state: &AppState, home: &Path) -> Result<ModelSettings, AgentError> { state.with_connection(home, |_| read(home)) }
 pub(in crate::agent) fn validate(flow: Flow, profiles: &ModelSettings) -> Result<(), AgentError> {
-    if flow == Flow::Standard { return Ok(()); }
+    if flow.direct() { return Ok(()); }
     let missing: Vec<_> = roster(flow).iter().filter(|role| !profiles.contains_key(&key(flow, **role))).map(|role| role.label()).collect();
     if missing.is_empty() { Ok(()) } else { Err(invalid(&format!("Escolha os modelos em Configurações > Agentes: {}.", missing.join(", ")))) }
 }

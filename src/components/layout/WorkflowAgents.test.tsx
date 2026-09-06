@@ -4,11 +4,22 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkflowAgents } from "./WorkflowAgents";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
-import type { WorkflowAgent } from "@/core/workflow";
+import { ROLE_COLORS, ROLE_LABELS, type WorkflowAgent } from "@/core/workflow";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const agent: WorkflowAgent = { id:"worker1",parentId:"main",role:"builder",title:"Implementar busca",status:"running",createdAt:1,updatedAt:2,attempts:1,options:{account:"personal",model:"gpt-5.6-terra",reasoning:"high",mode:"build",workflow:"planned",approvalMode:"manual"},beadId:"task1",handoff:null,error:null,activeTurnId:"turn1",pendingApproval:null,pendingQuestion:null };
 beforeEach(() => { vi.mocked(invoke).mockReset(); });
+it("keeps distinct role colors on waiting cards consistent with Settings", () => {
+  const roles = Object.keys(ROLE_COLORS) as WorkflowAgent["role"][];
+  const agents = roles.map(role => ({ ...agent, id: role, role, status: "waiting" as const }));
+  render(<WorkflowAgents conversationId="c1" workflow={{ data: { conversationId: "c1", revision: 1, flow: "complete", agents }, error: null, loading: false, retry: vi.fn() }} />);
+  const colors = roles.map(role => {
+    const card = screen.getByRole("button", { name: `Abrir agente ${ROLE_LABELS[role]}: ${agent.title}` });
+    expect(card).toHaveStyle({ borderColor: `${ROLE_COLORS[role]}80` });
+    return getComputedStyle(card).borderColor;
+  });
+  expect(new Set(colors).size).toBe(roles.length);
+});
 it("shows the account suffix, model and effort and updates execution states with the current roster", () => {
   const current = { ...agent, options: { ...agent.options, account: "openai-codex-paulo" } };
   const workflow = { data: { conversationId: "c1", revision: 1, flow: "planned" as const, agents: [current] }, error: null, loading: false, retry: vi.fn() };

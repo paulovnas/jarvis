@@ -16,6 +16,19 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; over
 .transcript-scroll > [data-slot="scroll-area-viewport"] { overscroll-behavior: none; }
 .chat-footer { overscroll-behavior: none; }
 
+.core-install-progress[data-indeterminate] [data-slot="progress-indicator"] {
+  width: 40%;
+  animation: core-download 1.5s ease-in-out infinite;
+}
+@keyframes core-download {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .core-install-progress[data-indeterminate] [data-slot="progress-indicator"] { animation: none; }
+  .core-install-progress [data-slot="progress-indicator"] { transition: none; }
+}
+
 .epic-completed { animation: epic-complete 2.2s ease-in both; }
 @keyframes epic-complete {
   0% { opacity: 0; transform: translateY(3px); }

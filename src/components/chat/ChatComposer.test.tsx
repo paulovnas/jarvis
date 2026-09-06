@@ -32,6 +32,18 @@ async function openModel(user: ReturnType<typeof userEvent.setup>, name: RegExp)
 }
 
 describe("ChatComposer model reasoning", () => {
+  it("selects Designer with its own model profile and sends the direct design flow", async () => {
+    const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true); const save = vi.fn();
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "designer/designer": { account: "pessoal", model: "flexible", reasoning: "high" }, "planned/planner": { account: "pessoal", model: "compact", reasoning: "medium" } }, error: null, saving: false, save, refresh: vi.fn() }} />);
+    await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Designer" }));
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Flexible · Alto");
+    await user.type(screen.getByRole("textbox"), "Desenhe o painel{Enter}");
+    expect(send).toHaveBeenCalledWith("Desenhe o painel", { account: "pessoal", model: "flexible", reasoning: "high", mode: "build", workflow: "designer", approvalMode: "yolo" });
+    const reasoning = await openModel(user, /Compact/);
+    await user.click(within(reasoning).getByRole("menuitem", { name: "Extra alto" }));
+    expect(save).toHaveBeenCalledWith("designer", "designer", { account: "pessoal", model: "compact", reasoning: "xhigh" });
+  });
   it("mostra somente provedores e permite navegar pelos três níveis com teclado", async () => {
     const user = userEvent.setup();
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={vi.fn()} />);

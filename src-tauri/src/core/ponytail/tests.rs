@@ -32,10 +32,11 @@ fn install_fixture(home: &Path) -> Manifest {
         if id == ComponentId::Ponytail {
             fixture_package(&path, "4.9.0");
         }
+        if id == ComponentId::OpenDesign { crate::core::design::tests::prepare_fixture(&path, &[]).unwrap(); }
         manifest.installations.insert(
             id,
             Installation {
-                version: "4.9.0".into(),
+                version: if id == ComponentId::OpenDesign { "1.2.3" } else { "4.9.0" }.into(),
                 directory,
                 files: vec!["verified".into()],
             },

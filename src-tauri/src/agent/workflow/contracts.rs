@@ -2,14 +2,15 @@ use super::*;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum Flow { #[default] Standard, Planned, Complete }
+pub enum Flow { #[default] Standard, Designer, Planned, Complete }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Role { Planner, Investigator, Writer, Orchestrator, Designer, Builder, Reviewer }
 
 impl Flow {
-    pub(super) fn root(self) -> Role { if self == Self::Standard { Role::Builder } else { Role::Planner } }
+    pub(super) fn root(self) -> Role { match self { Self::Standard => Role::Builder, Self::Designer => Role::Designer, _ => Role::Planner } }
+    pub(super) fn direct(self) -> bool { matches!(self, Self::Standard | Self::Designer) }
 }
 impl Role {
     pub(super) fn coordinator(self) -> bool { matches!(self, Self::Planner | Self::Orchestrator) }
@@ -19,7 +20,7 @@ impl Role {
     } }
     pub(super) fn spawns(self, flow: Flow, role: Self) -> bool { match (flow, self) {
         (Flow::Planned, Self::Planner) => matches!(role, Self::Builder | Self::Designer),
-        (Flow::Complete, Self::Planner) => matches!(role, Self::Investigator | Self::Writer | Self::Orchestrator),
+        (Flow::Complete, Self::Planner) => matches!(role, Self::Investigator | Self::Writer | Self::Orchestrator | Self::Designer),
         (Flow::Complete, Self::Orchestrator) => matches!(role, Self::Builder | Self::Designer | Self::Reviewer | Self::Planner),
         _ => false,
     } }
@@ -32,7 +33,7 @@ impl Role {
                 Self::Builder | Self::Designer => matches!(tool, "beads_claim" | "beads_update"),
                 Self::Writer => tool != "beads_close",
                 Self::Orchestrator => true,
-            } || flow == Flow::Standard;
+            } || flow.direct();
         }
         if tool == "workflow_check" { return matches!(self, Self::Builder | Self::Designer | Self::Reviewer); }
         if matches!(tool, "write" | "edit") { return self.writes(); }
@@ -54,5 +55,11 @@ impl Role {
 }
 
 pub(super) fn prompt(flow: Flow, role: Role, id: &str) -> String {
-    format!("\nJarvis built-in workflow: {flow:?}. Your immutable role is {role:?}; agent ID {id}.\n{}\n{}\n", include_str!("common.md"), role.contract())
+    let mut text = format!("\nJarvis built-in workflow: {flow:?}. Your immutable role is {role:?}; agent ID {id}.\n{}\n{}\n", include_str!("common.md"), role.contract());
+    if role == Role::Designer { text.push_str(crate::core::design::INSTRUCTIONS); }
+    if role.coordinator() {
+        text.push_str("\nDesign-dependent planning: when layout, brand or interaction decisions are prerequisites for a useful plan, dispatch Designer with phase=discovery BEFORE committing dependent implementation tasks. Discovery is read-only and does not require a Beads ID. Complete Planner may dispatch Designer only for discovery; implementation goes through Orchestrator. Use its evidence and brief to establish visual acceptance criteria and dependencies; do not postpone essential design decisions until after building. For implementation use phase=implementation and an assigned Bead. Delegated Designers cannot question the user. Respond promptly to hub_request_guidance deliveries through hub_respond_guidance with that exact requestId. Resolve from known requirements first; if insufficient, use ask_user or request guidance from your parent. Never hub_wait while an unresolved child guidance request requires your response. Relay the actual decision; do not invent user approval. Pass accepted design decisions/resource IDs to subsequent designers and builders.\n");
+    }
+    if flow == Flow::Designer { text.push_str("\nYou are the direct Designer and talk to the user yourself. Deliver the requested design outcome end to end. No dispatch or assigned Bead is required to start. Use ask_user when needed; do not call hub tools.\n"); }
+    text
 }

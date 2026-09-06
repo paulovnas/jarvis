@@ -3,6 +3,7 @@ mod contracts;
 mod dispatch;
 mod storage;
 mod commands;
+mod guidance;
 pub(crate) mod settings;
 #[cfg(test)]
 mod tests;
@@ -38,9 +39,14 @@ struct Handoff {
 #[serde(rename_all = "snake_case")]
 enum Verdict { Completed, Approved, Rework, Blocked }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum Phase { #[default] Implementation, Discovery }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Job {
+    #[serde(default)] phase: Phase,
     id: String, parent_id: String, run_id: String, role: Role, title: String,
     prompt: String, acceptance: Vec<String>, scope: Vec<String>,
     bead_id: Option<String>, dependencies: Vec<String>,
@@ -48,6 +54,7 @@ struct Job {
     attempts: u8, handoff: Option<Handoff>, error: Option<String>,
     options: TurnOptions,
 }
+impl Job { fn writes(&self) -> bool { self.phase != Phase::Discovery && self.role.writes() } }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Message { from: String, to: String, text: String }
@@ -55,6 +62,8 @@ struct Message { from: String, to: String, text: String }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Manifest {
+    #[serde(default)] design_briefs: BTreeMap<String, String>,
+    #[serde(default)] guidance: BTreeMap<String, guidance::Request>,
     version: u8, conversation_id: String, run_id: String, flow: Flow,
     root_status: Status, updated_at: u64, revision: u64,
     options: TurnOptions,
@@ -139,19 +148,30 @@ impl Execution {
     }
     pub(super) fn step_limit(&self) -> usize { if self.flow == Flow::Standard { 32 } else if self.role.coordinator() { 96 } else { 48 } }
     pub(super) fn root(&self) -> &Arc<Session> { &self.hub.root }
-    pub(super) fn role_mode(&self) -> Mode { if self.role.writes() && self.role != Role::Writer { Mode::Build } else { Mode::Plan } }
+    fn discovery(&self) -> bool { self.id != "main" && self.hub.job(&self.id).is_ok_and(|job| job.phase == Phase::Discovery) }
+    pub(super) fn designer(&self) -> bool { self.role == Role::Designer }
+    pub(super) fn role_mode(&self) -> Mode { if !self.discovery() && self.role.writes() && self.role != Role::Writer { Mode::Build } else { Mode::Plan } }
     pub(super) fn instructions(&self) -> Result<String, AgentError> {
         let mut text = contracts::prompt(self.flow, self.role, &self.id);
         let state = self.hub.manifest.lock().map_err(|_| AgentError::internal())?;
         let jobs: Vec<_> = state.jobs.values().map(|job| json!({"id":job.id,"parent":job.parent_id,"role":job.role,"status":job.status,"beadId":job.bead_id,"summary":job.handoff.as_ref().map(|h|h.summary.chars().take(300).collect::<String>()),"error":job.error})).collect();
         text.push_str(&format!("\nExecution checkpoints (historical data; inspect Beads/files before retry): {}\n", json!(jobs)));
+        if let Some(brief) = state.design_briefs.get(&self.id) { text.push_str(&format!("\nSaved design brief (historical decisions; newer user instructions win):\n{brief}\n")); }
+        let requests: Vec<_> = state.guidance.values().filter(|r| r.to == self.id && r.answer.is_none() && r.run_id == state.run_id && state.jobs.get(&r.from).is_some_and(|job| job.status.active())).collect();
+        if !requests.is_empty() { text.push_str(&format!("\nPending child guidance: {}\nResolve these before waiting for children.\n", json!(requests))); }
+        if self.id != "main" && state.jobs.get(&self.id).is_some_and(|job| job.phase == Phase::Discovery) { text.push_str("\nThis dispatch is DESIGN DISCOVERY: read-only investigation and a design brief/handoff. No product edits, shell, MCP mutations, validation commands or Beads mutations. Return accepted decisions, options and unresolved dependencies to your parent.\n"); }
         Ok(text)
     }
     pub(super) fn filter(&self, definitions: &mut Vec<Value>) {
+        if !self.flow.direct() || self.designer() { definitions.extend(dispatch::definitions(self.role)); }
         definitions.retain(|d| d["name"].as_str().is_some_and(|name| self.allowed(name)));
-        if self.flow != Flow::Standard { definitions.extend(dispatch::definitions(self.role)); }
     }
-    fn allowed(&self, name: &str) -> bool { self.role.allows(self.flow, name, self.scope.iter().any(|p| p == ".")) }
+    fn allowed(&self, name: &str) -> bool {
+        if self.flow.direct() && name.starts_with("hub_") { return false; }
+        if name == "ask_user" && self.designer() && self.id != "main" { return false; }
+        if self.discovery() && (matches!(name, "write" | "edit" | "bash" | "workflow_check") || crate::core::beads::needs_approval(name) || crate::core::context::needs_approval(name)) { return false; }
+        self.role.allows(self.flow, name, self.scope.iter().any(|p| p == "."))
+    }
     pub(super) fn preflight(&self, tool: &ToolCall) -> Option<&'static str> {
         if !self.allowed(&tool.name) { return Some("Ferramenta indisponível para o papel deste agente."); }
         if matches!(tool.name.as_str(), "write" | "edit") && !dispatch::path_allowed(&self.hub.root.root, &tool.args, &self.scope, self.role) {
@@ -204,6 +224,19 @@ impl Execution {
     }
     pub(super) fn handoff_text(&self) -> Option<String> { self.hub.job(&self.id).ok()?.handoff.map(|handoff| handoff.summary) }
     pub(super) async fn execute(&self, tool: &ToolCall, signal: watch::Receiver<bool>) -> Result<String, AgentError> { dispatch::execute(self, tool, signal).await }
+}
+
+pub(super) fn compaction_context(home: &Path, id: &str, options: &TurnOptions) -> Result<(String, Vec<Value>), AgentError> {
+    let flow = options.workflow.unwrap_or_default();
+    let role = flow.root();
+    let mut text = contracts::prompt(flow, role, "main");
+    if let Some(state) = storage::load(&storage::path(home, id)?, id)? {
+        if let Some(brief) = state.design_briefs.get("main") { text.push_str(&format!("\nSaved design brief (historical decisions):\n{brief}\n")); }
+    }
+    let mut definitions = dispatch::definitions(role);
+    if flow.direct() { definitions.retain(|d| !d["name"].as_str().is_some_and(|name| name.starts_with("hub_"))); }
+    if role == Role::Designer { definitions.extend(crate::core::design::definitions()); }
+    Ok((text, definitions))
 }
 
 pub(super) async fn run(

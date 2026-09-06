@@ -88,6 +88,10 @@ pub async fn compact_agent_context(
     instructions.push_str(&crate::skills::prompt(&skills));
     hooks.before_agent(&mut instructions);
     let mut definitions = tools::definitions(options.mode);
+    if options.workflow.is_some() {
+        let (workflow_instructions, workflow_tools) = workflow::compaction_context(&skill_home, &session.id, &options)?;
+        instructions.push_str(&workflow_instructions); definitions.extend(workflow_tools);
+    }
     definitions.extend(crate::core::beads::definitions(options.mode == Mode::Plan));
     if !skills.is_empty() { definitions.extend([crate::skills::definition(), crate::skills::search_definition()]); }
     let overhead = compaction::estimate(&json!({"instructions": instructions, "tools": definitions, "beads_snapshot": beads_snapshot}));

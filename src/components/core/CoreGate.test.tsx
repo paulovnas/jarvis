@@ -10,7 +10,7 @@ const invokeMock = vi.mocked(invoke);
 let event: EventCallback<unknown> | undefined;
 beforeEach(() => {
   invokeMock.mockReset(); event = undefined;
-  vi.mocked(listen).mockImplementation(async (_name, callback) => { event = callback; return () => {}; });
+  vi.mocked(listen).mockImplementation(async (name, callback) => { if (name === "core:changed") event = callback; return () => {}; });
 });
 
 it("bloqueia o chat com skeleton até confirmar o Core, inclusive em falhas", async () => {
@@ -24,7 +24,7 @@ it("bloqueia o chat com skeleton até confirmar o Core, inclusive em falhas", as
   expect(screen.queryByText("Chat liberado")).not.toBeInTheDocument();
 });
 
-it("só libera o chat depois da instalação confirmada dos três componentes", async () => {
+it("só libera o chat depois da instalação confirmada dos quatro componentes", async () => {
   let state = coreFixture(false);
   invokeMock.mockImplementation(async (name, args) => {
     if (name === "install_core_component") {
@@ -41,6 +41,7 @@ it("só libera o chat depois da instalação confirmada dos três componentes", 
   fireEvent.click(screen.getByRole("button", { name: "Instalar Core" }));
   expect(await screen.findByText("Chat liberado")).toBeInTheDocument();
   expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "beads" });
+  expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "open-design" });
 });
 
 it("bloqueia novamente se um componente obrigatório deixa de existir", async () => {

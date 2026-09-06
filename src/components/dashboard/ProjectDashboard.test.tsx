@@ -45,7 +45,7 @@ describe("Project Dashboard", () => {
     expect(screen.queryByRole("button", { name: "Épico: Planejar Core" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Tarefa: Validar integração" }));
     const drawer = await screen.findByRole("dialog", { name: "Validar integração" });
-    expect(within(drawer).getByText("Contexto persistido")).toBeInTheDocument();
+    expect(await within(drawer).findByText("Contexto persistido")).toBeInTheDocument();
     expect(within(drawer).queryByRole("button", { name: /Editar|Excluir|Fechar tarefa/ })).not.toBeInTheDocument();
     expect(call).toHaveBeenCalledWith("get_bead_detail", { projectId: "p1", issueId: bead().id });
   });

@@ -22,7 +22,7 @@ export const turnOptionsSchema = z.object({
   model: z.string(),
   reasoning: z.string().nullable(),
   mode: z.enum(["plan", "build"]),
-  workflow: z.enum(["standard", "planned", "complete"]).optional(),
+  workflow: z.enum(["standard", "designer", "planned", "complete"]).optional(),
   approvalMode: z.enum(["manual", "yolo"]),
 });
 const toolSchema = z.object({

@@ -9,14 +9,14 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
     let options = TurnOptions { account: "root-account".into(), model: "root-model".into(), reasoning: Some("high".into()), mode: Mode::Build, workflow: Some(Flow::Complete), approval_mode: ApprovalMode::Manual };
     let signal = root.reserve("Implement the requested outcome".into(), options.clone()).unwrap();
     let directory = fixture.root.join("workflow"); std::fs::create_dir(&directory).unwrap();
-    let manifest = Manifest { version: 1, conversation_id: root.id.clone(), run_id: "run".into(), flow: Flow::Complete, root_status: Status::Running, updated_at: now(), revision: 1, options, profiles: BTreeMap::new(), jobs: BTreeMap::new(), messages: vec![] };
+    let manifest = Manifest { version: 1, conversation_id: root.id.clone(), run_id: "run".into(), flow: Flow::Complete, root_status: Status::Running, updated_at: now(), revision: 1, options, profiles: BTreeMap::new(), jobs: BTreeMap::new(), messages: vec![], design_briefs: BTreeMap::new(), guidance: BTreeMap::new() };
     storage::save(&directory, &manifest).unwrap();
     let (changed, _) = watch::channel(1);
     let hub = Arc::new(Hub { root, env: Environment { state: AppState::default(), oauth: OpenAiCodexState::default(), mcp: crate::mcp::McpState::default(), home: fixture.root.clone() }, directory, manifest: Mutex::new(manifest), live: Mutex::new(HashMap::new()), changed, emit: Arc::new(|_| {}), check_lock: AsyncRwLock::new(()), root_signal: signal });
     (fixture, hub)
 }
 pub(super) fn job(hub: &Hub, role: Role, scope: &str) -> Job {
-    Job { id: library::new_id().unwrap(), parent_id: "main".into(), run_id: "run".into(), role, title: "Assigned task".into(), prompt: "Inspect and implement only the assigned behavior".into(), acceptance: vec!["Observable outcome".into()], scope: vec![scope.into()], bead_id: None, dependencies: vec![], status: Status::Queued, created_at: now(), updated_at: now(), attempts: 1, handoff: None, error: None, options: hub.manifest.lock().unwrap().options.clone() }
+    Job { phase: Phase::Implementation, id: library::new_id().unwrap(), parent_id: "main".into(), run_id: "run".into(), role, title: "Assigned task".into(), prompt: "Inspect and implement only the assigned behavior".into(), acceptance: vec!["Observable outcome".into()], scope: vec![scope.into()], bead_id: None, dependencies: vec![], status: Status::Queued, created_at: now(), updated_at: now(), attempts: 1, handoff: None, error: None, options: hub.manifest.lock().unwrap().options.clone() }
 }
 
 #[test]
@@ -28,6 +28,54 @@ fn fixed_topology_has_no_standard_delegation_and_no_worker_escape() {
     assert!(Role::Planner.spawns(Flow::Complete, Role::Investigator));
     assert!(!Role::Planner.spawns(Flow::Complete, Role::Builder));
     assert!(Role::Orchestrator.spawns(Flow::Complete, Role::Reviewer));
+}
+
+#[test]
+fn direct_designer_has_questions_and_design_tools_but_no_delegation() {
+    let (_fixture, hub) = hub();
+    let direct = Execution { hub, id:"main".into(), role:Role::Designer, flow:Flow::Designer, scope:vec![".".into()] };
+    let mut tools = tools::definitions(Mode::Build); tools.extend(crate::core::design::definitions()); direct.filter(&mut tools);
+    for name in ["ask_user", "write", "design_brief", "design_search", "design_read"] { assert!(tools.iter().any(|tool| tool["name"] == name), "missing {name}"); }
+    assert!(tools.iter().all(|tool| !tool["name"].as_str().unwrap().starts_with("hub_")));
+    for role in [Role::Planner, Role::Builder, Role::Designer] { assert!(!Role::Designer.spawns(Flow::Designer, role)); }
+    assert_eq!(Flow::Designer.root(), Role::Designer);
+    assert!(settings::validate(Flow::Designer, &BTreeMap::new()).is_ok());
+}
+
+#[test]
+fn delegated_design_discovery_enforces_read_only_and_parent_questions_even_with_broad_scope() {
+    let (_fixture, hub) = hub(); let mut child = job(&hub, Role::Designer, "."); child.phase = Phase::Discovery;
+    hub.mutate(|state| { state.jobs.insert(child.id.clone(), child.clone()); Ok(()) }).unwrap();
+    let exec = Execution { hub, id:child.id, role:Role::Designer, flow:Flow::Complete, scope:vec![".".into()] };
+    assert_eq!(exec.role_mode(), Mode::Plan);
+    let mut definitions = tools::definitions(Mode::Build); definitions.extend(crate::core::design::definitions()); exec.filter(&mut definitions);
+    for name in ["ask_user", "write", "edit", "bash", "workflow_check", "beads_claim", "beads_update", "ctx_execute"] {
+        assert!(!definitions.iter().any(|d| d["name"] == name));
+        assert!(exec.preflight(&ToolCall { name:name.into(), id:"call".into(), args:json!({}), status:"pending".into(), output:String::new(), duration_ms:0 }).is_some());
+    }
+    for name in ["design_search", "design_read", "design_brief", "hub_request_guidance", "hub_complete"] { assert!(definitions.iter().any(|d| d["name"] == name), "missing {name}"); }
+}
+
+#[tokio::test]
+async fn design_briefs_survive_reload_and_compaction_without_crossing_agent_boundaries() {
+    let (_fixture, hub) = hub(); let child = job(&hub, Role::Designer, ".");
+    hub.mutate(|state| { state.jobs.insert(child.id.clone(), child.clone()); Ok(()) }).unwrap();
+    let direct = Execution { hub:hub.clone(), id:"main".into(), role:Role::Designer, flow:Flow::Designer, scope:vec![".".into()] };
+    let worker = Execution { hub:hub.clone(), id:child.id.clone(), role:Role::Designer, flow:Flow::Complete, scope:vec![".".into()] };
+    for (exec, brief) in [(&direct,"Accepted: graphite, compact dashboard"), (&worker,"Assigned: blue buttons only")] {
+        exec.execute(&ToolCall { id:"brief".into(), name:"design_brief".into(), args:json!({"text":brief}), status:"pending".into(), output:String::new(), duration_ms:0 }, hub.root_signal.clone()).await.unwrap();
+        assert!(exec.instructions().unwrap().contains(brief));
+    }
+    assert!(!worker.instructions().unwrap().contains("Accepted: graphite"));
+    let loaded = storage::load(&hub.directory, &hub.root.id).unwrap().unwrap();
+    assert_eq!(loaded.design_briefs["main"], "Accepted: graphite, compact dashboard");
+    assert_eq!(loaded.design_briefs[&child.id], "Assigned: blue buttons only");
+    // Legacy manifests did not have design state or phases.
+    let mut legacy = serde_json::to_value(&loaded).unwrap(); legacy.as_object_mut().unwrap().remove("designBriefs"); legacy.as_object_mut().unwrap().remove("guidance");
+    legacy["jobs"][&child.id].as_object_mut().unwrap().remove("phase");
+    let decoded: Manifest = serde_json::from_value(legacy).unwrap();
+    assert_eq!(decoded.jobs[&child.id].phase, Phase::Implementation);
+    assert!(decoded.design_briefs.is_empty());
 }
 
 #[tokio::test]

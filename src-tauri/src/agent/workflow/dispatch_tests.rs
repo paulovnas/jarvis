@@ -2,6 +2,14 @@ use super::*;
 use super::super::tests::{hub, job};
 
 #[test]
+fn complete_planner_can_discover_design_before_beads_but_cannot_bypass_orchestrator() {
+    assert!(validate_phase(Flow::Complete, Role::Planner, Role::Designer, Phase::Discovery).is_ok());
+    assert!(validate_phase(Flow::Complete, Role::Planner, Role::Designer, Phase::Implementation).is_err());
+    assert!(validate_phase(Flow::Complete, Role::Orchestrator, Role::Designer, Phase::Implementation).is_ok());
+    assert!(validate_phase(Flow::Planned, Role::Planner, Role::Builder, Phase::Discovery).is_err());
+}
+
+#[test]
 fn dependent_work_waits_and_failed_dependencies_block_instead_of_running() {
     let (_fixture, hub) = hub();
     let mut dependency = job(&hub, Role::Builder, "src/a"); dependency.status = Status::Running;

@@ -4,6 +4,7 @@ pub mod beads;
 pub mod hooks;
 mod install;
 pub mod ponytail;
+pub mod design;
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -21,14 +22,16 @@ pub enum ComponentId {
     ContextMode,
     Ponytail,
     Beads,
+    OpenDesign,
 }
 impl ComponentId {
-    pub const ALL: [Self; 3] = [Self::ContextMode, Self::Ponytail, Self::Beads];
+    pub const ALL: [Self; 4] = [Self::ContextMode, Self::Ponytail, Self::Beads, Self::OpenDesign];
     pub fn key(self) -> &'static str {
         match self {
             Self::ContextMode => "context-mode",
             Self::Ponytail => "ponytail",
             Self::Beads => "beads",
+            Self::OpenDesign => "open-design",
         }
     }
     fn name(self) -> &'static str {
@@ -36,6 +39,7 @@ impl ComponentId {
             Self::ContextMode => "Context-mode",
             Self::Ponytail => "Ponytail",
             Self::Beads => "Beads",
+            Self::OpenDesign => "Open Design",
         }
     }
     fn repository(self) -> &'static str {
@@ -43,6 +47,7 @@ impl ComponentId {
             Self::ContextMode => "mksglu/context-mode",
             Self::Ponytail => "DietrichGebert/ponytail",
             Self::Beads => "gastownhall/beads",
+            Self::OpenDesign => "nexu-io/open-design",
         }
     }
 }
@@ -118,6 +123,9 @@ impl Installation {
         if id == ComponentId::Ponytail {
             ponytail::Ponytail::at(&path, &self.version)?;
         }
+        if id == ComponentId::OpenDesign {
+            design::Pack::at(&path, &self.version)?;
+        }
         Ok(path)
     }
     pub fn path(&self, home: &Path) -> Result<PathBuf, CoreError> {
@@ -163,6 +171,18 @@ pub fn require_ready(home: &Path) -> Result<(), CoreError> {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DownloadProgress {
+    received_bytes: u64,
+    total_bytes: Option<u64>,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreDownloadEvent {
+    id: ComponentId,
+    download: DownloadProgress,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoreItem {
     id: ComponentId,
     name: String,
@@ -172,6 +192,7 @@ pub struct CoreItem {
     update_available: bool,
     installed: bool,
     stage: Option<String>,
+    download: Option<DownloadProgress>,
     error: Option<String>,
 }
 #[derive(Clone, Serialize)]
@@ -186,6 +207,7 @@ struct StateData {
     latest: BTreeMap<ComponentId, String>,
     errors: BTreeMap<ComponentId, String>,
     stages: BTreeMap<ComponentId, String>,
+    downloads: BTreeMap<ComponentId, DownloadProgress>,
     checking: bool,
 }
 #[derive(Clone, Default)]
@@ -216,6 +238,7 @@ impl CoreState {
                             .zip(latest.as_ref())
                             .is_some_and(|(r, v)| newer(v, &r.version)),
                     stage: data.stages.get(&id).cloned(),
+                    download: data.downloads.get(&id).cloned(),
                     error: data.errors.get(&id).cloned().or_else(|| {
                         validation
                             .as_ref()
@@ -234,8 +257,16 @@ impl CoreState {
     fn stage(&self, app: &tauri::AppHandle, home: &Path, id: ComponentId, stage: &str) {
         if let Ok(mut data) = self.data.lock() {
             data.stages.insert(id, stage.into());
+            data.downloads.remove(&id);
         }
         self.emit(app, home);
+    }
+    fn download(&self, app: &tauri::AppHandle, id: ComponentId, download: DownloadProgress) {
+        if let Ok(mut data) = self.data.lock() {
+            data.downloads.insert(id, download.clone());
+        }
+        // Byte updates must not revalidate every installed resource pack on disk.
+        let _ = app.emit("core:download", CoreDownloadEvent { id, download });
     }
     fn emit(&self, app: &tauri::AppHandle, home: &Path) {
         if let Ok(snapshot) = self.snapshot(home) {
@@ -328,9 +359,15 @@ pub async fn install_core_component(
         data.errors.remove(&id);
     }
     core.stage(&app, &home, id, "Consultando release");
-    let result = install::install(&home, id, |stage| core.stage(&app, &home, id, stage)).await;
+    let result = install::install(
+        &home,
+        id,
+        |stage| core.stage(&app, &home, id, stage),
+        |download| core.download(&app, id, download),
+    ).await;
     if let Ok(mut data) = core.data.lock() {
         data.stages.remove(&id);
+        data.downloads.remove(&id);
         match &result {
             Ok(version) => {
                 data.latest.insert(id, version.clone());

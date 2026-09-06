@@ -8,7 +8,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import ChatMarkdown from "@/components/chat/ChatMarkdown";
+import { LazyChatMarkdown as ChatMarkdown } from "@/components/chat/LazyChatMarkdown";
 import { useDashboardQuery } from "@/hooks/use-dashboard-query";
 import { actorName, commentSchema, dashboardError, date, detailSchema, shortId, statusFor, typeName, type BeadDetail } from "@/core/dashboard";
 
