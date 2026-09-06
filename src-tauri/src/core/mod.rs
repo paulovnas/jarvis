@@ -216,6 +216,7 @@ pub struct CoreState {
     install_lock: Arc<tokio::sync::Mutex<()>>,
 }
 impl CoreState {
+    pub(crate) fn busy_for_update(&self) -> bool { self.install_lock.try_lock().is_err() }
     pub fn snapshot(&self, home: &Path) -> Result<Snapshot, CoreError> {
         let manifest = read_manifest(home)?;
         let data = self.data.lock().map_err(|_| error("Core indisponível."))?;
@@ -338,6 +339,7 @@ pub async fn install_core_component(
     core: tauri::State<'_, CoreState>,
     id: ComponentId,
 ) -> Result<Snapshot, CoreError> {
+    let _activity = crate::updater::begin_activity(&app).map_err(|message| error(&message))?;
     let _lock = core
         .install_lock
         .try_lock()

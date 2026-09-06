@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -66,7 +66,8 @@ describe("App bootstrap and onboarding", () => {
     });
     const user = userEvent.setup();
     const { unmount } = render(<App />);
-    const project = await screen.findByRole("button", {
+    const sidebar = await screen.findByRole("complementary", { name: "Workspace" });
+    const project = await within(sidebar).findByRole("button", {
       name: /Jarvis/,
     });
     const backgroundEvent = new MouseEvent("contextmenu", {

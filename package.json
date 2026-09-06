@@ -1,7 +1,7 @@
 {
   "name": "jarvis",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.8.0-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,7 @@
     "build": "bun run typecheck && vite build",
     "preview": "vite preview",
     "tauri": "bun scripts/tauri.ts",
+    "release": "bun scripts/release.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:macos-keychain": "bun scripts/check-macos-keychain.ts",
@@ -58,6 +59,7 @@
     "@types/node": "^26.4.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@types/semver": "^7.8.0",
     "@vitejs/plugin-react": "^4.6.0",
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
@@ -66,6 +68,7 @@
     "eslint-plugin-react-refresh": "^0.5.6",
     "globals": "^17.12.0",
     "jsdom": "^30.0.1",
+    "semver": "^7.8.5",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.69.0",

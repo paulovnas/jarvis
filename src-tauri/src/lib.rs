@@ -7,6 +7,7 @@ mod mcp;
 mod openai_codex;
 mod persistence;
 mod skills;
+mod updater;
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -22,12 +23,16 @@ pub fn run() {
         .manage(agent::AgentState::default())
         .manage(agent::dashboard::DashboardState::default())
         .manage(mcp::McpState::default())
+        .manage(updater::UpdateState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(desktop::setup)
         .on_window_event(desktop::on_window_event)
         .invoke_handler(tauri::generate_handler![
             greet,
+            updater::check_app_update,
+            updater::install_app_update,
             core::get_core_status,
             core::check_core_updates,
             core::install_core_component,

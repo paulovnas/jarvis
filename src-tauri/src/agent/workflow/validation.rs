@@ -127,6 +127,7 @@ fn reserve(session: &Session, home: &Path, histories: &history::HistoryState, id
 }
 #[tauri::command]
 pub async fn submit_workflow_validation(app: tauri::AppHandle, persistence: tauri::State<'_, AppState>, agent: tauri::State<'_, AgentState>, conversation_id: String, batch_id: String) -> Result<(), AgentError> {
+    let activity = crate::updater::begin_activity(&app).map_err(|message| AgentError::new("app_updating", &message))?;
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?; crate::core::require_ready(&home)?;
     let session = agent.runtime_session(&app, &persistence, &conversation_id).await?;
     let saved = session.clone(); let root = home.clone(); let histories = agent.histories.clone(); let state = persistence.inner().clone();
@@ -136,7 +137,7 @@ pub async fn submit_workflow_validation(app: tauri::AppHandle, persistence: taur
     }).await.map_err(|_| AgentError::internal())??;
     if let Ok(snapshot) = session.snapshot() { (session.emit)(snapshot); }
     let _ = app.emit("workflow:changed", json!({"conversationId":conversation_id}));
-    if let Some(signal) = signal { spawn_run(session, persistence.inner().clone(), app.state::<OpenAiCodexState>().inner().clone(), app.state::<crate::mcp::McpState>().inner().clone(), home, app, signal); }
+    if let Some(signal) = signal { spawn_run(session, persistence.inner().clone(), app.state::<OpenAiCodexState>().inner().clone(), app.state::<crate::mcp::McpState>().inner().clone(), home, app, (signal, activity)); }
     Ok(())
 }
 

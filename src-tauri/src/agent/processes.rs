@@ -32,6 +32,7 @@ async fn drain(mut pipe: impl AsyncRead + Unpin, log: Arc<Mutex<VecDeque<u8>>>) 
     }
 }
 impl ProcessState {
+    pub(crate) fn has_running(&self) -> bool { self.0.lock().map_or(true, |entries| entries.values().any(|entry| entry.info.running())) }
     pub(crate) fn stop_all(&self) { if let Ok(entries) = self.0.lock() { for entry in entries.values().filter(|entry| entry.info.running()) { entry.cancel.send_replace(true); entry.group.stop(); } } }
     pub(crate) fn stop_conversation(&self, conversation: &str) { if let Ok(entries) = self.0.lock() { for entry in entries.values().filter(|entry| entry.info.conversation_id == conversation && entry.info.running()) { entry.cancel.send_replace(true); entry.group.stop(); } } }
     fn list(&self, conversation: &str) -> Result<Vec<ProcessInfo>, AgentError> {

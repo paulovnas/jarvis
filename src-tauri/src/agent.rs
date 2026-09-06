@@ -356,6 +356,10 @@ pub struct AgentState {
     workflows: workflow::Registry,
 }
 impl AgentState {
+    pub(crate) fn busy_for_update(&self) -> bool {
+        self.activity().map_or(true, |items| items.iter().any(|item| item.active_turn_id.is_some() || item.compacting))
+            || self.processes.has_running()
+    }
     pub(crate) fn delete_library_item(
         &self,
         state: &AppState,
@@ -556,6 +560,7 @@ pub async fn start_agent_turn(
     parts: Option<Vec<skill_input::MessagePart>>,
 ) -> Result<ChatSnapshot, AgentError> {
     let content = content.trim().to_owned();
+    let activity = crate::updater::begin_activity(&app).map_err(|message| AgentError::new("app_updating", &message))?;
     if content.is_empty() || content.len() > 100_000 || options.model.len() > 200 {
         return Err(AgentError::new(
             "invalid_message",
@@ -594,7 +599,7 @@ pub async fn start_agent_turn(
     let initial = session.snapshot()?;
     (session.emit)(initial.clone());
     if let Some(signal) = signal {
-        spawn_run(session, run_state, oauth, mcp, run_home, run_app, signal);
+        spawn_run(session, run_state, oauth, mcp, run_home, run_app, (signal, activity));
     }
     Ok(initial)
 }
@@ -606,9 +611,10 @@ fn spawn_run(
     mcp: crate::mcp::McpState,
     home: PathBuf,
     app: tauri::AppHandle,
-    mut signal: watch::Receiver<bool>,
+    (mut signal, activity): (watch::Receiver<bool>, crate::updater::ActivityLease),
 ) {
     tauri::async_runtime::spawn(async move {
+        let _activity = activity;
         loop {
             let _ = library::dashboard::touch_activity(&state, &home, &session.id);
             let _ = app.emit("library:changed", ());
@@ -646,6 +652,7 @@ pub async fn resume_agent_queue(
     agent: tauri::State<'_, AgentState>,
     conversation_id: String,
 ) -> Result<ChatSnapshot, AgentError> {
+    let activity = crate::updater::begin_activity(&app).map_err(|message| AgentError::new("app_updating", &message))?;
     let session = agent.runtime_session(&app, &persistence, &conversation_id).await?;
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     crate::core::require_ready(&home)?;
@@ -662,7 +669,7 @@ pub async fn resume_agent_queue(
             mcp,
             home,
             app,
-            signal,
+            (signal, activity),
         );
     }
     Ok(snapshot)

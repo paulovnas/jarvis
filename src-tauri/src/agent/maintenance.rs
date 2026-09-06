@@ -54,6 +54,7 @@ pub async fn compact_agent_context(
     agent: tauri::State<'_, AgentState>,
     conversation_id: String,
 ) -> Result<ChatSnapshot, AgentError> {
+    let _activity = crate::updater::begin_activity(&app).map_err(|message| AgentError::new("app_updating", &message))?;
     let session = agent.runtime_session(&app, &persistence, &conversation_id).await?;
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     crate::core::require_ready(&home)?;
