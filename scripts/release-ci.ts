@@ -38,8 +38,7 @@ function stage() {
   const app = path.join(bundle, "macos", `${config.productName}.app`);
   command("codesign", ["--verify", "--deep", "--strict", app]);
   // Verify the actual signer, not just that the bundle has any valid signature.
-  const certificate = command("codesign", ["-d", "--extract-certificates", path.join(process.env.RUNNER_TEMP ?? artifactDirectory, "jarvis-cert-"), app], true);
-  void certificate;
+  command("codesign", ["-d", `--extract-certificates=${path.join(process.env.RUNNER_TEMP ?? artifactDirectory, "jarvis-cert-")}`, app], true);
   const certPath = path.join(process.env.RUNNER_TEMP ?? artifactDirectory, "jarvis-cert-0");
   const fingerprint = command("openssl", ["x509", "-inform", "DER", "-in", certPath, "-noout", "-fingerprint", "-sha1"], true).split("=").at(-1)?.replaceAll(":", "").trim();
   if (!process.env.APPLE_SIGNING_IDENTITY || fingerprint?.toLowerCase() !== process.env.APPLE_SIGNING_IDENTITY.toLowerCase()) throw new Error("O build usa outra identidade Apple.");
