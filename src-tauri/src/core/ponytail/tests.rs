@@ -84,6 +84,7 @@ fn code_examples_are_preserved_exactly_even_when_they_look_like_host_sections() 
 fn invalid_or_incompatible_rules_are_rejected_before_enabling_core() {
     let home = tempfile::tempdir().unwrap();
     install_fixture(home.path());
+    fs::write(root(home.path()).join("context7.json"), r#"{"credential_ref":"jarvis-core-context7-test"}"#).unwrap();
     let path = root(home.path()).join("ponytail/test");
     for rules in [
         RULES.replace("name: ponytail", "name: other"),

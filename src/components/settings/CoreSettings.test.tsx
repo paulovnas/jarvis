@@ -14,7 +14,7 @@ beforeEach(() => {
   vi.mocked(listen).mockImplementation(async (name, callback) => { events.set(name, callback); return () => { events.delete(name); }; });
 });
 
-it.each([0, 1, 2, 3])("updates real download progress for Core item %i and resets it between stages", async index => {
+it.each([0, 1, 2, 3, 4])("updates real download progress for Core item %i and resets it between stages", async index => {
   const state = coreFixture(false);
   state.items[index].stage = "Baixando recursos";
   invokeMock.mockResolvedValue(state);
@@ -87,7 +87,7 @@ it("offers Open Design installation alongside the other Core resources", async (
   render(<CoreSettings />);
   fireEvent.click(await screen.findByRole("button", { name: "Instalar Open Design" }));
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "open-design" }));
-  expect(screen.getByText("3/4")).toBeInTheDocument();
+  expect(screen.getByText("4/5")).toBeInTheDocument();
 });
 
 it("mostra versões e só oferece atualização quando há release maior", async () => {
@@ -101,12 +101,34 @@ it("mostra versões e só oferece atualização quando há release maior", async
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "context-mode" }));
 });
 
+it("validates the Context7 key before marking it ready and keeps failed configuration editable", async () => {
+  const state = coreFixture(); state.ready = false; state.items[4].configured = false;
+  let fail = true;
+  invokeMock.mockImplementation(async command => {
+    if (command === "configure_context7") { if (fail) throw { message: "Chave inválida" }; return coreFixture(); }
+    return state;
+  });
+  const user = userEvent.setup(); render(<CoreSettings />);
+  await user.click(await screen.findByRole("button", { name: "Configurar Context7" }));
+  const input = screen.getByLabelText("Chave de API");
+  expect(input).toHaveAttribute("type", "password");
+  expect(screen.getByRole("button", { name: "Salvar e verificar" })).toBeDisabled();
+  await user.type(input, "test-only-key");
+  await user.click(screen.getByRole("button", { name: "Salvar e verificar" }));
+  expect(await screen.findByText("Chave inválida")).toBeVisible();
+  expect(input).toHaveValue("test-only-key");
+  fail = false;
+  await user.click(screen.getByRole("button", { name: "Salvar e verificar" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(invokeMock).toHaveBeenCalledWith("configure_context7", { apiKey: "test-only-key" });
+});
+
 it("mantém a versão instalada quando uma atualização falha e permite nova tentativa", async () => {
   const state = coreFixture(); state.items[0].updateAvailable = true; state.items[0].latestVersion = "1.1.0";
   invokeMock.mockImplementation(async command => { if (command === "install_core_component") { state.items[0].error = "Download interrompido"; throw { message: "Download interrompido" }; } return state; });
   render(<CoreSettings />);
   fireEvent.click(await screen.findByRole("button", { name: "Atualizar Context-mode" }));
   expect(await screen.findByText("Download interrompido")).toBeInTheDocument();
-  expect(screen.getAllByText("v1.0.0")).toHaveLength(4);
+  expect(screen.getAllByText("v1.0.0")).toHaveLength(5);
   await waitFor(() => expect(screen.getByRole("button", { name: "Atualizar Context-mode" })).toBeEnabled());
 });

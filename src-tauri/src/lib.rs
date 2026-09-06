@@ -33,6 +33,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             desktop::setup(app)?;
+            core::health::start_monitor(app.handle());
             system::setup(app.handle())
         })
         .on_window_event(desktop::on_window_event)
@@ -46,6 +47,9 @@ pub fn run() {
             core::get_core_status,
             core::check_core_updates,
             core::install_core_component,
+            core::health::diagnose_core,
+            core::health::repair_core_component,
+            core::context7::configure_context7,
             desktop::get_desktop_layout,
             desktop::save_desktop_layout,
             skills::list_skills,

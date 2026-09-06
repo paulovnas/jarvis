@@ -1,29 +1,16 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  ArrowRight,
-  FolderGit2,
-  KeyRound,
-  ShieldCheck,
-  Sparkles,
-} from "lucide-react";
 import { toast } from "sonner";
 import { TitleBar } from "@/components/layout/TitleBar";
 import { StatusBar } from "@/components/layout/StatusBar";
-import { JarvisLogo } from "@/components/JarvisLogo";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-} from "@/components/ui/card";
 import { Toaster } from "@/components/ui/sonner";
 import { HomeSkeleton } from "@/components/layout/LoadingSkeletons";
 import { DesktopLayoutProvider } from "@/components/layout/DesktopLayoutProvider";
 import { CoreGate } from "@/components/core/CoreGate";
 
 const LazyHome = lazy(() => import("@/components/layout/Home"));
+const Onboarding = lazy(() => import("@/components/onboarding/Onboarding").then(module => ({ default: module.Onboarding })));
 
 type AppConfig = {
   onboardingCompleted: boolean;
@@ -35,29 +22,7 @@ type BootstrapState =
   | { status: "onboarding"; saving: boolean }
   | { status: "home" };
 
-const SETUP_STEPS = [
-  {
-    icon: KeyRound,
-    title: "Provedores de Inteligência",
-    description: "Conecte suas contas OpenAI Codex ou Antigravity.",
-    tag: "Etapa 1",
-    accentClass: "text-[#e5c07b] bg-[#e5c07b]/10 border-[#e5c07b]/20",
-  },
-  {
-    icon: FolderGit2,
-    title: "Workspace & Repositório",
-    description: "Escolha uma pasta e organize suas conversas.",
-    tag: "Etapa 2",
-    accentClass: "text-[#56b6c2] bg-[#56b6c2]/10 border-[#56b6c2]/20",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Permissões & Ferramentas Locais",
-    description: "Decida quando autorizar edições e comandos.",
-    tag: "Etapa 3",
-    accentClass: "text-[#98c379] bg-[#98c379]/10 border-[#98c379]/20",
-  },
-];
+
 
 export function App() {
   useEffect(() => {
@@ -100,7 +65,7 @@ export function App() {
     loadAppConfig();
   }, [loadAppConfig]);
 
-  const handleCompleteOnboarding = async () => {
+  const handleCompleteOnboarding = async (workspaceName: string) => {
     if (
       bootstrap.status !== "onboarding" ||
       bootstrap.saving ||
@@ -113,7 +78,7 @@ export function App() {
     setBootstrap({ status: "onboarding", saving: true });
 
     try {
-      const config = await invoke<AppConfig>("complete_onboarding");
+      const config = await invoke<AppConfig>("complete_onboarding", { workspaceName });
       if (config.onboardingCompleted === true) {
         setBootstrap({ status: "home" });
         return;
@@ -173,36 +138,7 @@ export function App() {
         );
 
       case "onboarding":
-        return (
-          <main className="flex flex-1 flex-col items-center justify-center overflow-auto p-6">
-            <div className="w-full max-w-lg space-y-5">
-              <div className="flex items-center gap-3">
-                <JarvisLogo className="size-9 text-foreground" />
-                <span className="micro-label text-muted-foreground">Seu espaço de desenvolvimento</span>
-              </div>
-              <Card className="instrument-panel gap-0 overflow-hidden py-0">
-                <CardHeader className="gap-3 border-b border-border p-6">
-                  <Badge variant="outline" className="w-fit gap-1.5 border-primary/20 bg-primary/5 text-primary"><Sparkles className="size-3" />Primeiros passos</Badge>
-                  <h1 className="text-2xl font-medium tracking-tight text-foreground">Bem-vindo ao Jarvis</h1>
-                  <p className="text-sm leading-relaxed text-muted-foreground">Seus modelos, projetos e ferramentas. Em um só lugar.</p>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-0 px-6 py-2">
-                  {SETUP_STEPS.map((step) => {
-                    const Icon = step.icon;
-                    return <div key={step.title} className="flex items-start gap-3 border-b border-border py-4 last:border-b-0">
-                      <div className={`flex size-8 shrink-0 items-center justify-center rounded-md border ${step.accentClass}`}><Icon className="size-4" /></div>
-                      <div className="min-w-0 flex-1"><h2 className="text-xs font-medium">{step.title}</h2><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{step.description}</p></div>
-                      <span className="font-mono text-[10px] text-muted-foreground">{step.tag.replace("Etapa ", "0")}</span>
-                    </div>;
-                  })}
-                </CardContent>
-              </Card>
-              <Button type="button" size="lg" onClick={handleCompleteOnboarding} disabled={bootstrap.saving} aria-busy={bootstrap.saving} className="w-full cursor-pointer font-medium">
-                {bootstrap.saving ? "Finalizando..." : "Finalizar"}<ArrowRight className="size-4" />
-              </Button>
-            </div>
-          </main>
-        );
+        return <Suspense fallback={<HomeSkeleton />}><Onboarding saving={bootstrap.saving} onComplete={handleCompleteOnboarding} /></Suspense>;
     }
   })();
 

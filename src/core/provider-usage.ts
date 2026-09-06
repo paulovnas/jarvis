@@ -36,11 +36,16 @@ export function quotaColor(remaining: number | null) {
 }
 export function quotaPercent(remaining: number | null) { return remaining === null ? "—" : `${Math.round(remaining)}%`; }
 
-/** Percentage points above or below a uniform consumption pace for this window. */
-export function quotaReserve(window: UsageWindow, now: number): number | null {
+/** Expected remaining quota at a uniform consumption pace, on the same scale as the bar. */
+export function expectedQuotaRemaining(window: UsageWindow, now: number): number | null {
   const { remainingPercent, durationSeconds, resetsAt } = window;
   if (remainingPercent === null || durationSeconds === null || resetsAt === null) return null;
   const remaining = resetsAt - now, duration = durationSeconds * 1000;
   if (![remainingPercent, remaining, duration].every(Number.isFinite) || duration <= 0 || remaining <= 0 || remaining > duration) return null;
-  return Math.round(remainingPercent - remaining / duration * 100);
+  return remaining / duration * 100;
+}
+
+export function quotaReserve(window: UsageWindow, now: number): number | null {
+  const expected = expectedQuotaRemaining(window, now);
+  return expected === null || window.remainingPercent === null ? null : Math.round(window.remainingPercent - expected);
 }

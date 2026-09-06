@@ -173,6 +173,24 @@ fn wire_name(server: &Server, name: &str) -> String {
     )
 }
 
+// Core subprocesses carry project paths and runtime options in their environment.
+// Redact credentials without erasing legitimate paths from Context-mode results.
+fn redact_core(mut text: String, config: &Config) -> String {
+    if let Config::Local { environment, .. } = config {
+        for (name, value) in environment {
+            if value.len() >= 4 && ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"].iter().any(|part| name.to_ascii_uppercase().contains(part)) {
+                text = text.replace(value, "[redacted]");
+            }
+        }
+    }
+    text
+}
+#[test]
+fn core_output_redacts_keys_but_preserves_project_paths() {
+    let config = Config::Local { command: vec!["node".into()], cwd: None, enabled: true, timeout: 1000,
+        environment: std::collections::BTreeMap::from([("CONTEXT7_API_KEY".into(), "secret-test-key".into()), ("PWD".into(), "/my/project".into())]) };
+    assert_eq!(redact_core("Documentation at /my/project with secret-test-key".into(), &config), "Documentation at /my/project with [redacted]");
+}
 impl Client {
     pub(crate) fn core_definitions(&self) -> Vec<Value> {
         self.tools.iter().map(|tool| {
@@ -183,15 +201,15 @@ impl Client {
     }
     pub(crate) async fn core_call(&self, name: &str, args: &Value, mut signal: watch::Receiver<bool>) -> Result<String, McpError> {
         let tool = self.tools.iter().find(|tool| tool.original == name).ok_or_else(protocol_error)?;
-        if !tool.validator.is_valid(args) || args.to_string().len() > 256 * 1024 { return Err(error("Argumentos inválidos para o Context-mode.")); }
+        if !tool.validator.is_valid(args) || args.to_string().len() > 256 * 1024 { return Err(error("Argumentos inválidos para a ferramenta do Core.")); }
         let request = self.service.call_tool(CallToolRequestParams::new(tool.original.clone()).with_arguments(args.as_object().cloned().ok_or_else(protocol_error)?));
         let response = tokio::select! {
-            _ = cancelled(&mut signal) => { self.service.cancellation_token().cancel(); return Err(error("Context-mode interrompido; confira o resultado antes de repetir a ação.")); },
-            result = tokio::time::timeout(self.config.timeout(), request) => result.map_err(|_| error("Context-mode excedeu o tempo limite; confira o resultado antes de repetir a ação."))?.map_err(|_| protocol_error())?,
+            _ = cancelled(&mut signal) => { self.service.cancellation_token().cancel(); return Err(error("Ferramenta do Core interrompida; confira o resultado antes de repetir a ação.")); },
+            result = tokio::time::timeout(self.config.timeout(), request) => result.map_err(|_| error("A ferramenta do Core excedeu o tempo limite; confira o resultado antes de repetir a ação."))?.map_err(|_| protocol_error())?,
         };
         let value = serde_json::to_value(&response).map_err(|_| protocol_error())?;
         let text = value["content"].as_array().into_iter().flatten().filter_map(|item| item["text"].as_str()).collect::<Vec<_>>().join("\n\n");
-        let text: String = text.chars().take(MAX_OUTPUT).collect();
+        let text: String = redact_core(text, &self.config).chars().take(MAX_OUTPUT).collect();
         if response.is_error == Some(true) { return Err(error(&text)); }
         Ok(text)
     }

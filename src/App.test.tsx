@@ -31,6 +31,15 @@ function deferred<T>() {
 
   return { promise, resolve, reject };
 }
+const connectedAccount = { alias: "openai-codex-test", providerKind: "openai-codex", enabled: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, models: [{ id: "test", name: "Test", reasoningLevels: [], defaultReasoningLevel: null }] };
+async function reachFinish(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: "Avançar" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Avançar" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Avançar" }));
+  return screen.getByRole("button", { name: "Começar" });
+}
 function titleBar() {
   return screen.getAllByRole("banner")[0];
 }
@@ -44,8 +53,9 @@ describe("App bootstrap and onboarding", () => {
     vi.restoreAllMocks();
     invokeMock.mockReset();
     invokeMock.mockImplementation((command) => {
-      if (command === "get_core_status") return Promise.resolve(coreFixture());
-      if (command === "list_provider_accounts") return Promise.resolve([]);
+      if (command === "get_core_status" || command === "check_core_updates") return Promise.resolve(coreFixture());
+      if (command === "list_provider_accounts") return Promise.resolve([connectedAccount]);
+      if (command === "get_web_search_config" || command === "get_vision_config") return Promise.resolve({ accountAlias: null, model: null, inheritChat: true });
       if (command === "get_agent_activity") return Promise.resolve([]);
       if (command === "get_library_snapshot")
         return Promise.resolve(emptyLibrary());
@@ -55,7 +65,7 @@ describe("App bootstrap and onboarding", () => {
 
   it("suppresses the native menu including portals and permits only scoped project menus", async () => {
     invokeMock.mockImplementation((command) => {
-      if (command === "get_core_status") return Promise.resolve(coreFixture());
+      if (command === "get_core_status" || command === "check_core_updates") return Promise.resolve(coreFixture());
       if (command === "get_app_config")
         return Promise.resolve({ onboardingCompleted: true });
       if (command === "get_library_snapshot")
@@ -118,7 +128,7 @@ describe("App bootstrap and onboarding", () => {
     );
   });
 
-  it("leva configuração incompleta ao onboarding com o CTA Finalizar", async () => {
+  it("leva configuração incompleta ao onboarding com o CTA Avançar", async () => {
     invokeMock.mockResolvedValueOnce({ onboardingCompleted: false });
 
     render(<App />);
@@ -127,7 +137,7 @@ describe("App bootstrap and onboarding", () => {
       await screen.findByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).toBeInTheDocument();
     expect(titleBar()).toHaveTextContent(/^Jarvis$/);
-    expect(screen.getByRole("button", { name: "Finalizar" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled();
     expect(screen.queryByTestId("home-shell")).not.toBeInTheDocument();
   });
 
@@ -171,21 +181,18 @@ describe("App bootstrap and onboarding", () => {
 
   it("mantém Finalizar pendente e só mostra Home após conclusão confirmada", async () => {
     const completion = deferred<AppConfig>();
-    invokeMock
-      .mockResolvedValueOnce({ onboardingCompleted: false })
-      .mockReturnValueOnce(completion.promise);
+    const base = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command, args) => command === "complete_onboarding" ? completion.promise : command === "get_app_config" ? Promise.resolve({ onboardingCompleted: false }) : base(command, args));
 
     const user = userEvent.setup();
     render(<App />);
 
-    const finishButton = await screen.findByRole("button", {
-      name: "Finalizar",
-    });
+    const finishButton = await reachFinish(user);
     await user.click(finishButton);
 
-    expect(screen.getByRole("button", { name: /finalizando/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /preparando/i })).toBeDisabled();
     expect(screen.queryByTestId("home-shell")).not.toBeInTheDocument();
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "complete_onboarding");
+    expect(invokeMock).toHaveBeenCalledWith("complete_onboarding", { workspaceName: "" });
 
     completion.resolve({ onboardingCompleted: true });
     expect(
@@ -195,15 +202,14 @@ describe("App bootstrap and onboarding", () => {
   });
 
   it("permanece no onboarding, reabilita Finalizar e mostra erro quando conclusão falha", async () => {
-    invokeMock
-      .mockResolvedValueOnce({ onboardingCompleted: false })
-      .mockRejectedValueOnce(new Error("write failed"));
+    const base = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command, args) => command === "complete_onboarding" ? Promise.reject(new Error("write failed")) : command === "get_app_config" ? Promise.resolve({ onboardingCompleted: false }) : base(command, args));
 
     const toastErrorSpy = vi.spyOn(toast, "error");
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Finalizar" }));
+    await user.click(await reachFinish(user));
 
     await waitFor(() =>
       expect(toastErrorSpy).toHaveBeenCalledWith(
@@ -211,22 +217,21 @@ describe("App bootstrap and onboarding", () => {
         expect.objectContaining({ description: "Tente novamente." }),
       ),
     );
-    expect(screen.getByRole("button", { name: "Finalizar" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Começar" })).toBeEnabled();
     expect(titleBar()).toHaveTextContent(/^Jarvis$/);
     expect(screen.queryByTestId("home-shell")).not.toBeInTheDocument();
   });
 
   it("não considera conclusão confirmada quando o comando retorna false", async () => {
-    invokeMock
-      .mockResolvedValueOnce({ onboardingCompleted: false })
-      .mockResolvedValueOnce({ onboardingCompleted: false });
+    const base = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command, args) => command === "complete_onboarding" || command === "get_app_config" ? Promise.resolve({ onboardingCompleted: false }) : base(command, args));
 
     const user = userEvent.setup();
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Finalizar" }));
+    await user.click(await reachFinish(user));
 
     expect(
-      await screen.findByRole("button", { name: "Finalizar" }),
+      await screen.findByRole("button", { name: "Começar" }),
     ).toBeEnabled();
     expect(screen.queryByTestId("home-shell")).not.toBeInTheDocument();
   });
@@ -237,14 +242,14 @@ describe("App bootstrap and onboarding", () => {
     render(<App />);
 
     expect(
-      await screen.findByText("Provedores de Inteligência"),
+      await screen.findByText("Seus modelos"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Workspace & Repositório")).toBeInTheDocument();
+    expect(screen.getByText("Tudo organizado")).toBeInTheDocument();
     expect(
-      screen.getByText("Permissões & Ferramentas Locais"),
+      screen.getByText("Do plano ao código"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Conecte suas contas OpenAI Codex ou Antigravity.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Finalizar" })).toBeEnabled();
+    expect(screen.getByText("Conecte provedores e escolha o modelo ideal para cada agente.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled();
     expect(screen.queryByText(/docs\/metis/)).not.toBeInTheDocument();
   });
 });

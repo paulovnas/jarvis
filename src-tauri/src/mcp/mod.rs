@@ -56,12 +56,12 @@ pub struct Check {
     pub error: Option<String>,
 }
 
-trait Secrets: Send + Sync {
+pub(crate) trait Secrets: Send + Sync {
     fn load(&self, key: &str) -> Result<String, McpError>;
     fn store(&self, key: &str, value: &str) -> Result<(), McpError>;
     fn delete(&self, key: &str) -> Result<(), McpError>;
 }
-struct Keychain;
+pub(crate) struct Keychain;
 #[cfg(target_os = "macos")]
 impl Secrets for Keychain {
     fn load(&self, key: &str) -> Result<String, McpError> {

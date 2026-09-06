@@ -20,7 +20,7 @@ struct Index {
 }
 pub struct Pack { directory: PathBuf, index: Index }
 
-fn invalid() -> CoreError { error("Recursos do Open Design inválidos. Reinstale em Configurações → Geral → Core.") }
+fn invalid() -> CoreError { error("Recursos do Open Design inválidos. Reinstale em Configurações → Ferramentas → Core.") }
 fn text(path: &Path, limit: u64) -> Result<String, CoreError> {
     let file = fs::File::open(path)?;
     if !file.metadata()?.is_file() || file.metadata()?.len() > limit { return Err(invalid()); }

@@ -8,14 +8,18 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProviderUsage } from "@/hooks/use-provider-usage";
 import type { ProviderAccount } from "@/core/provider-accounts";
-import { aliasSuffix, planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, type UsageWindow } from "@/core/provider-usage";
+import { aliasSuffix, planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, expectedQuotaRemaining, type UsageWindow } from "@/core/provider-usage";
 
 function WindowBar({ window, now, stale }: { window: UsageWindow; now: number; stale: boolean }) {
   const reset = remainingTime(window.resetsAt, now);
   const reserve = stale ? null : quotaReserve(window, now);
+  const expected = stale ? null : expectedQuotaRemaining(window, now);
   return <div className="space-y-2">
     <div className="flex items-center justify-between gap-5 font-mono text-[11px] tabular-nums"><span>{window.label}</span><span style={{ color: quotaColor(window.remainingPercent) }}>{quotaPercent(window.remainingPercent)}</span></div>
-    {window.remainingPercent !== null && <Progress aria-label={`${window.group} ${window.label} restante`} value={window.remainingPercent} style={{ "--quota-color": quotaColor(window.remainingPercent) } as CSSProperties} className="[&_[data-slot=progress-indicator]]:bg-[var(--quota-color)]" />}
+    {window.remainingPercent !== null && <div className="relative">
+      <Progress aria-label={`${window.group} ${window.label} restante`} value={window.remainingPercent} style={{ "--quota-color": quotaColor(window.remainingPercent) } as CSSProperties} className="[&_[data-slot=progress-indicator]]:bg-[var(--quota-color)]" />
+      {expected !== null && <span role="img" aria-label={`Restante esperado: ${Math.round(expected)}%`} title={`Restante esperado neste momento: ${Math.round(expected)}%`} style={{ left: `${expected}%` }} className="absolute -top-1 h-3 w-0.5 -translate-x-1/2 rounded-full bg-foreground shadow-[0_0_0_1px_var(--color-card)]" />}
+    </div>}
     {reset && <p title={window.resetsAt ? new Date(window.resetsAt).toLocaleString("pt-BR") : undefined} className="text-[10px] text-muted-foreground">{reset === "agora" ? "Reset previsto agora" : `Renova em ${reset}`}</p>}
     {reserve !== null && <p title="Percentual da cota total acima ou abaixo do consumo esperado para este momento da janela." className={`font-mono text-[10px] ${reserve < 0 ? "text-onedark-red" : reserve > 0 ? "text-onedark-green" : "text-muted-foreground"}`}>{reserve === 0 ? "No ritmo da janela" : `${Math.abs(reserve)}% ${reserve > 0 ? "em reserva" : "em déficit"}`}</p>}
   </div>;

@@ -17,6 +17,24 @@ const invokeMock = vi.mocked(invoke);
 const accountsMock = vi.fn<() => Promise<ProviderAccount[]>>();
 
 describe("Home shell", () => {
+  it("offers only adding a project while the selected workspace is empty and unlocks after success", async () => {
+    const user = userEvent.setup();
+    const snapshot = populatedLibrary(); snapshot.projects = []; snapshot.conversations = []; snapshot.selection.projectId = null; snapshot.selection.conversationId = null;
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "get_library_snapshot") return snapshot;
+      if (command === "add_project") return populatedLibrary();
+      if (command === "get_chat") return emptyChat();
+      return [];
+    });
+    render(<Home />);
+    const add = await screen.findByRole("button", { name: "Adicionar projeto" });
+    expect(screen.getAllByRole("button")).toEqual([add]);
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(add);
+    expect(invokeMock).toHaveBeenCalledWith("add_project", { workspaceId: "w1" });
+    expect(await screen.findByRole("button", { name: "Configurações" })).toBeEnabled();
+    expect(screen.getByRole("complementary", { name: "Workspace" })).toBeVisible();
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
     invokeMock.mockReset();

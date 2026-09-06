@@ -29,6 +29,7 @@ impl Release {
         self.tag_name
             .strip_prefix("bun-v")
             .or_else(|| self.tag_name.strip_prefix("open-design-v"))
+            .or_else(|| self.tag_name.strip_prefix("@upstash/context7-mcp@"))
             .unwrap_or_else(|| self.tag_name.trim_start_matches('v'))
             .into()
     }
@@ -137,6 +138,18 @@ pub(super) async fn release(repository: &str) -> Result<Release, CoreError> {
         return Err(error("Nenhuma release estável disponível."));
     }
     Ok(release)
+}
+fn context7_release(releases: Vec<Release>) -> Result<Release, CoreError> {
+    releases.into_iter().filter(|r| !r.draft && !r.prerelease && r.tag_name.starts_with("@upstash/context7-mcp@"))
+        .filter_map(|r| semver::Version::parse(&r.version()).ok().filter(|v| v.pre.is_empty()).map(|v| (v, r)))
+        .max_by(|a, b| a.0.cmp(&b.0)).map(|(_, r)| r)
+        .ok_or_else(|| error("Nenhuma release estável do Context7 MCP disponível."))
+}
+pub(super) async fn component_release(id: ComponentId) -> Result<Release, CoreError> {
+    if id != ComponentId::Context7 { return release(id.repository()).await; }
+    let releases = serde_json::from_value(json("https://api.github.com/repos/upstash/context7/releases?per_page=100").await?)
+        .map_err(|_| error("O GitHub não retornou releases válidas do Context7."))?;
+    context7_release(releases)
 }
 fn platform() -> Result<(&'static str, &'static str), CoreError> {
     let os = match std::env::consts::OS {
@@ -475,7 +488,7 @@ pub(super) async fn install(
     stage: impl Fn(&str) + Sync,
     progress: impl Fn(DownloadProgress) + Sync,
 ) -> Result<String, CoreError> {
-    let release = release(id.repository()).await?;
+    let release = component_release(id).await?;
     let version = release.version();
     let base = root(home).join(id.key());
     fs::create_dir_all(&base)?;
@@ -485,6 +498,27 @@ pub(super) async fn install(
     let destination = staging.path();
     let mut required = Vec::<String>::new();
     match id {
+        ComponentId::Context7 => {
+            stage("Baixando runtime Node");
+            install_node(destination, &stage, &progress).await?;
+            stage("Baixando Context7");
+            let bytes = registry_package("@upstash/context7-mcp", &version, &progress).await?;
+            fs::write(destination.join("context7.tgz"), bytes)?;
+            fs::write(destination.join("package.json"), br#"{"name":"jarvis-core-context7","private":true,"dependencies":{"@upstash/context7-mcp":"file:context7.tgz"}}"#)?;
+            fs::write(destination.join("empty.npmrc"), b"")?;
+            stage("Instalando dependências");
+            let mut cmd = tokio::process::Command::new(node_path(destination));
+            cmd.arg(npm_path(destination))
+                .args(["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund", "--package-lock=true", "--global=false", "--workspaces=false", "--registry=https://registry.npmjs.org"])
+                .arg("--prefix").arg(destination).current_dir(destination)
+                .env("NODE_OPTIONS", "").env("npm_config_cache", root(home).join("cache/npm"))
+                .env("npm_config_userconfig", destination.join("empty.npmrc"));
+            command(cmd, 240).await?;
+            required.extend(["node_modules/@upstash/context7-mcp/dist/index.js", "node_modules/@upstash/context7-mcp/package.json"].map(String::from));
+            required.push(node_path(destination).strip_prefix(destination).unwrap().to_string_lossy().into());
+            stage("Validando ferramentas");
+            context7::verify(destination).await?;
+        }
         ComponentId::OpenDesign => {
             stage("Baixando recursos de design");
             let commit = json(&format!("https://api.github.com/repos/{}/commits/{}", id.repository(), release.tag_name)).await?;
@@ -648,6 +682,7 @@ pub(super) async fn install(
         files: required,
     };
     let mut manifest = read_manifest(home)?;
+    super::health::save_receipt(home, id, &record)?;
     manifest.installations.insert(id, record);
     save_manifest(home, &manifest)?;
     // Previous generations stay usable by running conversations until a later maintenance pass.
@@ -751,6 +786,28 @@ mod tests {
     fn open_design_release_prefix_has_a_semantic_version() {
         let release = Release { tag_name:"open-design-v0.21.1".into(), assets:vec![], draft:false, prerelease:false };
         assert_eq!(release.version(), "0.21.1");
+    }
+    #[test]
+    fn context7_updates_ignore_other_packages_and_prereleases() {
+        let releases = serde_json::from_value(serde_json::json!([
+            {"tag_name":"@upstash/context7-sdk@99.0.0","assets":[],"draft":false,"prerelease":false},
+            {"tag_name":"@upstash/context7-mcp@4.0.5","assets":[],"draft":false,"prerelease":false},
+            {"tag_name":"@upstash/context7-mcp@5.0.0-beta.1","assets":[],"draft":false,"prerelease":true},
+            {"tag_name":"@upstash/context7-mcp@4.0.4","assets":[],"draft":false,"prerelease":false}
+        ])).unwrap();
+        assert_eq!(context7_release(releases).unwrap().version(), "4.0.5");
+        assert!(context7_release(vec![]).is_err());
+    }
+    #[tokio::test]
+    #[ignore = "Downloads and verifies the official Context7 MCP package with its private Node runtime"]
+    async fn official_context7_install() {
+        let home = tempfile::tempdir().unwrap();
+        let version = install(home.path(), ComponentId::Context7, |stage| eprintln!("{stage}"), |_| {}).await.unwrap();
+        let record = installed(home.path(), ComponentId::Context7).unwrap();
+        assert_eq!(record.version, version);
+        assert!(node_path(&record.path(home.path()).unwrap()).is_file());
+        assert!(!context7::configured(home.path()));
+        eprintln!("Context7 {version}: official package and documentation tools verified");
     }
     #[test]
     fn rejects_archive_traversal_and_bad_checksums() {

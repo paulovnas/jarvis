@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { WebSearchSettings } from "./WebSearchSettings";
 import { McpSettings } from "./McpSettings";
@@ -90,6 +90,8 @@ type SettingsDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onAccountsChange?: (accounts: ProviderAccount[]) => void;
+  embeddedProviders?: boolean;
+  onBusyChange?: (busy: boolean) => void;
 };
 
 function validateAliasSuffix(value: string): string | null {
@@ -110,10 +112,15 @@ function safeErrorMessage(error: unknown, fallback: string): string {
 }
 
 
-export function SettingsDialog({ open, onOpenChange, onAccountsChange }: SettingsDialogProps) {
+function SettingsSurface({ embedded, open, onOpenChange, children }: { embedded: boolean; open: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {
+  if (embedded) return <div className="min-w-0">{children}</div>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent showCloseButton className="settings-panel dark flex max-h-[min(740px,85dvh)] w-[calc(100vw-3rem)] sm:max-w-[860px] flex-col gap-0 border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden motion-reduce:transition-none">{children}</DialogContent></Dialog>;
+}
+
+export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedProviders = false, onBusyChange }: SettingsDialogProps) {
   const { layout, updateLayout } = useDesktopLayout();
   const activeTab = layout.settingsTab;
-  const setActiveTab = (value: string) => { if (value === "general" || value === "providers" || value === "agents" || value === "skills" || value === "mcps") updateLayout({ settingsTab: value }); };
+  const setActiveTab = (value: string) => { if (value === "general" || value === "tools" || value === "providers" || value === "agents" || value === "skills" || value === "mcps") updateLayout({ settingsTab: value }); };
   const [mcpCount, setMcpCount] = useState<number | null>(null);
   const [skillCount, setSkillCount] = useState<number | null>(null);
   const skillCountVersion = useRef(0);
@@ -149,6 +156,19 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
   const cancellingRef = useRef(false);
   const closeRequestedRef = useRef(false);
   const closingRef = useRef(false);
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [visionBusy, setVisionBusy] = useState(false);
+  useEffect(() => { onBusyChange?.(view !== "list" || editingCustom !== null || listState !== "ready" || toggling || disconnecting !== null || searchBusy || visionBusy); }, [view, editingCustom, listState, toggling, disconnecting, searchBusy, visionBusy, onBusyChange]);
+  useEffect(() => {
+    closeRequestedRef.current = false;
+    return () => {
+      listRequestRef.current += 1;
+      closeRequestedRef.current = true;
+      const connection = activeConnectionRef.current;
+      activeConnectionRef.current = null;
+      if (connection) void invoke("cancel_openai_codex_connection", { flowId: connection.flowId }).catch(() => {});
+    };
+  }, []);
 
   const updateAccounts = useCallback(
     (result: ProviderAccount[] | undefined) => {
@@ -190,24 +210,24 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
   }, [open, updateAccounts]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || embeddedProviders) return;
     let active = true;
     const version = mcpCountVersion.current;
     void invoke<unknown>("list_mcp_servers").then((value) => {
       if (active && version === mcpCountVersion.current) setMcpCount(mcpServersSchema.parse(value).length);
     }).catch(() => { if (active && version === mcpCountVersion.current) setMcpCount(null); });
     return () => { active = false; };
-  }, [open]);
+  }, [open, embeddedProviders]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || embeddedProviders) return;
     let active = true;
     const version = skillCountVersion.current;
     void invoke("list_skills").then(value => {
       if (active && version === skillCountVersion.current) setSkillCount(skillsSnapshotSchema.parse(value).skills.length);
     }).catch(() => { if (active && version === skillCountVersion.current) setSkillCount(null); });
     return () => { active = false; };
-  }, [open]);
+  }, [open, embeddedProviders]);
 
   const openAddView = () => {
     if (startingRef.current || cancellingRef.current) return;
@@ -527,7 +547,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
             ))}
           </div>
         )}
-        <section className="space-y-3" aria-label="Ferramentas"><h3 className="micro-label text-muted-foreground">Ferramentas</h3><div className="grid gap-3 sm:grid-cols-2"><WebSearchSettings accounts={accounts} /><WebSearchSettings accounts={accounts} kind="vision" /></div></section>
+        {(!embeddedProviders || accounts.some(account => account.enabled && account.modelsAvailable && account.models.length > 0)) && <section className="space-y-3" aria-label="Ferramentas"><h3 className="micro-label text-muted-foreground">Ferramentas</h3><div className="grid gap-3 sm:grid-cols-2"><WebSearchSettings accounts={accounts} onBusyChange={embeddedProviders ? setSearchBusy : undefined} /><WebSearchSettings accounts={accounts} kind="vision" onBusyChange={embeddedProviders ? setVisionBusy : undefined} /></div></section>}
       </div>
     );
   };
@@ -666,12 +686,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(nextOpen) => handleDialogOpenChange(nextOpen)}>
-        <DialogContent
-          showCloseButton
-          className="settings-panel dark flex max-h-[min(740px,85dvh)] w-[calc(100vw-3rem)] sm:max-w-[860px] flex-col gap-0 border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden motion-reduce:transition-none"
-        >
-          <DialogHeader className="shrink-0 border-b border-border bg-sidebar px-6 py-5">
+      <SettingsSurface embedded={embeddedProviders} open={open} onOpenChange={(nextOpen) => handleDialogOpenChange(nextOpen)}>
+          {embeddedProviders ? renderList() : <><DialogHeader className="shrink-0 border-b border-border bg-sidebar px-6 py-5">
             <DialogTitle className="flex items-center gap-3 text-base font-heading font-medium text-foreground"><Settings aria-hidden="true" className="size-4 text-muted-foreground" />Configurações</DialogTitle>
             <DialogDescription className="sr-only">Painel de configurações do Jarvis</DialogDescription>
           </DialogHeader>
@@ -680,6 +696,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
             <div className="settings-navigation shrink-0 overflow-x-auto border-b border-border bg-sidebar px-6 py-2.5">
               <TabsList aria-label="Configurações" className="w-max gap-1 rounded-md bg-transparent p-0">
                 <TabsTrigger value="general" className="cursor-pointer gap-2 px-2 text-xs"><Settings aria-hidden="true" className="size-3.5" />Geral</TabsTrigger>
+                <TabsTrigger value="tools" className="cursor-pointer gap-2 px-2 text-xs"><Plug aria-hidden="true" className="size-3.5" />Ferramentas</TabsTrigger>
                 <TabsTrigger value="agents" className="cursor-pointer gap-2 px-2 text-xs"><Users aria-hidden="true" className="size-3.5" />Agentes</TabsTrigger>
                 <TabsTrigger
                   value="providers"
@@ -698,7 +715,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               </TabsList>
             </div>
 
-            <TabsContent value="general" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "general" && <><CoreSettings /><SystemSettings /><ChatCleanupSettings /></>}</TabsContent>
+            <TabsContent value="general" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "general" && <><SystemSettings /><ChatCleanupSettings /></>}</TabsContent>
+            <TabsContent value="tools" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "tools" && <CoreSettings />}</TabsContent>
             <TabsContent value="agents" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "agents" && <AgentSettings accounts={accounts} />}</TabsContent>
             <TabsContent value="skills" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</TabsContent>
             <TabsContent value="providers" className="flex-1 min-h-0 m-0 overflow-y-auto p-0">
@@ -709,15 +727,14 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
             <TabsContent value="mcps" className="flex-1 min-h-0 m-0 overflow-y-auto p-0">
               <div className="px-6 py-5">{activeTab === "mcps" && <McpSettings onCountChange={updateMcpCount} />}</div>
             </TabsContent>
-          </Tabs>
+          </Tabs></>}
           <Dialog open={open && view !== "list"} onOpenChange={(nextOpen) => { if (!nextOpen && !savingCustom) handleDialogOpenChange(false, false); }}>
             <DialogContent className={`dark max-h-[85vh] overflow-y-auto ${provider === "custom" ? "sm:max-w-2xl" : "sm:max-w-xl"}`}>
               {view === "waiting" ? renderWaiting() : renderAdd()}
             </DialogContent>
           </Dialog>
           <Dialog open={open && editingCustom !== null} onOpenChange={next => { if (!next && !savingCustom) setEditingCustom(null); }}><DialogContent className="dark max-h-[85vh] overflow-y-auto sm:max-w-2xl" aria-describedby={undefined}><DialogHeader><DialogTitle>Editar provedor Custom</DialogTitle></DialogHeader>{editingCustom && <CustomProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} />}</DialogContent></Dialog>
-        </DialogContent>
-      </Dialog>
+      </SettingsSurface>
 
       <AlertDialog
         open={disconnectAlias !== null}

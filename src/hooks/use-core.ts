@@ -54,10 +54,28 @@ export function useCore() {
     busy.current = true; setInstalling(true);
     try {
       for (const id of ids) accept(await invoke("install_core_component", { id }));
-      toast.success(ids.length > 1 ? "Core instalado" : "Componente pronto");
+      toast.success(ids.length > 1 ? "Core instalado" : "Componente instalado");
     } catch (cause) { toast.error(coreError(cause)); await refresh(); }
     finally { busy.current = false; if (mounted.current) setInstalling(false); }
   }, [accept, refresh]);
-  return { snapshot, error, refresh, check, install, busy: installing || snapshot?.items.some(item => item.stage !== null) === true };
+  const diagnose = useCallback(async () => {
+    if (busy.current) return;
+    busy.current = true; setInstalling(true);
+    try { accept(await invoke("diagnose_core")); }
+    catch (cause) { toast.error(coreError(cause)); await refresh(); }
+    finally { busy.current = false; if (mounted.current) setInstalling(false); }
+  }, [accept, refresh]);
+  const repair = useCallback(async (id: CoreId, reinstall: boolean) => {
+    if (busy.current) return;
+    busy.current = true; setInstalling(true);
+    try {
+      const next = accept(await invoke("repair_core_component", { id, reinstall }));
+      const item = next.items.find(item => item.id === id);
+      if (item?.installed && item.configured && !item.healthError) toast.success(`${item.name} pronto para uso`);
+      else toast.error(item?.healthError ?? "O componente ainda precisa de configuração.");
+    } catch (cause) { toast.error(coreError(cause)); await refresh(); }
+    finally { busy.current = false; if (mounted.current) setInstalling(false); }
+  }, [accept, refresh]);
+  return { snapshot, error, refresh, check, install, diagnose, repair, busy: installing || snapshot?.items.some(item => item.stage !== null) === true };
 }
 export type CoreController = ReturnType<typeof useCore>;

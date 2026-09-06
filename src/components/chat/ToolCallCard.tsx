@@ -18,6 +18,8 @@ const tools = {
   read_attachment: { label: "Leitura de anexo", icon: FileText },
   vision: { label: "Análise de imagem", icon: Eye },
   read_skill: { label: "Leitura de skill", icon: BookOpen },
+  context7_resolve_library_id: { label: "Bibliotecas · Context7", icon: Search },
+  context7_query_docs: { label: "Documentação · Context7", icon: BookOpen },
   find_skills: { label: "Busca de skills", icon: BookOpen },
   design_search: { label: "Referências de design", icon: Search },
   design_read: { label: "Recurso de design", icon: BookOpen },

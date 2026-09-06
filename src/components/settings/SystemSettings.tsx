@@ -52,7 +52,7 @@ export function SystemSettings() {
     finally { lock.current = false; setBusy(false); }
   };
   const problem = error ?? snapshot?.sleepError ?? snapshot?.notificationError;
-  return <section aria-labelledby="system-settings-title" className="mt-7 space-y-3 border-t border-border pt-6">
+  return <section aria-labelledby="system-settings-title" className="space-y-3">
     <h2 id="system-settings-title" className="micro-label flex items-center gap-2 text-muted-foreground"><Monitor className="size-3.5" />Sistema</h2>
     {!snapshot ? error ? <div className="space-y-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button size="sm" variant="outline" className="cursor-pointer" onClick={() => { setError(null); setAttempt(n => n + 1); }}>Tentar novamente</Button></div> : <div role="status" aria-label="Carregando preferências do sistema" className="grid gap-3 sm:grid-cols-2">{[0, 1].map(key => <Card key={key} className="gap-3 p-4"><Skeleton className="h-4 w-32" /><Skeleton className="h-9 w-full" /></Card>)}</div> : <>
       <div className="grid gap-3 sm:grid-cols-2">

@@ -42,6 +42,7 @@ pub enum InspectorTab {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum SettingsTab {
+    Tools,
     #[default]
     General,
     Providers,
@@ -376,7 +377,7 @@ mod tests {
             fullscreen: false,
         };
         store.preferences.layout.inspector_tab = InspectorTab::Details;
-        store.preferences.layout.settings_tab = SettingsTab::Skills;
+        store.preferences.layout.settings_tab = SettingsTab::Tools;
         store.preferences.layout.sidebar_collapsed = true;
         store.preferences.layout.inspector_collapsed = true;
         store

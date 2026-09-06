@@ -7,6 +7,13 @@ import { ToolCallCard } from "./ToolCallCard";
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 
 describe("ToolCallCard Web Search", () => {
+  it("shows native Context7 queries compactly and expands their documentation", async () => {
+    const user = userEvent.setup();
+    render(<ToolCallCard tool={{ id: "docs", name: "context7_query_docs", status: "completed", args: { libraryId: "/websites/react_dev", query: "useState" }, output: "Documentação encontrada" }} />);
+    expect(screen.queryByText("Documentação encontrada")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Documentação · Context7.*useState/ }));
+    expect(await screen.findByText("Documentação encontrada")).toBeVisible();
+  });
   it("expande a análise de imagem com o modelo exclusivo de Vision", async () => {
     const user = userEvent.setup();
     render(<ToolCallCard tool={{ id: "vision1", name: "vision", status: "completed", args: { question: "Qual a cor?" }, output: JSON.stringify({ accountAlias: "antigravity-pessoal", model: "gemini-3.8-flash", analysis: "O botão é azul." }) }} />);

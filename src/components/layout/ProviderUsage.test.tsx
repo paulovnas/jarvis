@@ -49,8 +49,15 @@ it.each([
   await waitFor(() => expect(button).toHaveTextContent(`${remaining}%`));
   await user.hover(button);
   await screen.findByRole("dialog", { name: `Limites de ${account.alias}` });
-  if (expected) expect(screen.getByText(expected)).toBeVisible();
-  else expect(screen.queryByText(/% em (reserva|déficit)/)).not.toBeInTheDocument();
+  if (expected) {
+    expect(screen.getByText(expected)).toBeVisible();
+    const marker = screen.getByRole("img", { name: `Restante esperado: ${Math.round(days / 7 * 100)}%` });
+    expect(marker).toBeVisible();
+    expect(parseFloat(marker.style.left)).toBeCloseTo(days / 7 * 100, 2);
+  } else {
+    expect(screen.queryByText(/% em (reserva|déficit)/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /Restante esperado/ })).not.toBeInTheDocument();
+  }
 });
 
 it("hides disabled accounts and third-party limits by default, then reflects the preference", async () => {

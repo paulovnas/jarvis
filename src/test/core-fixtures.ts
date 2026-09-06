@@ -5,5 +5,6 @@ export function coreFixture(installed = true): CoreSnapshot {
     { id: "ponytail", name: "Ponytail", repository: "https://github.com/DietrichGebert/ponytail" },
     { id: "beads", name: "Beads", repository: "https://github.com/gastownhall/beads" },
     { id: "open-design", name: "Open Design", repository: "https://github.com/nexu-io/open-design" },
-  ].map(item => ({ ...item, id: item.id as CoreSnapshot["items"][number]["id"], installed, installedVersion: installed ? "1.0.0" : null, latestVersion: "1.0.0", updateAvailable: false, stage: null, download: null, error: null })) };
+    { id: "context7", name: "Context7", repository: "https://github.com/upstash/context7" },
+  ].map(item => ({ ...item, id: item.id as CoreSnapshot["items"][number]["id"], installed, configured: installed, installedVersion: installed ? "1.0.0" : null, latestVersion: "1.0.0", updateAvailable: false, stage: null, download: null, error: null, healthError: null, diagnostics: [] })) };
 }

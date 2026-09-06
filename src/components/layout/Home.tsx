@@ -21,6 +21,7 @@ import { useAgentModels } from "@/hooks/use-agent-models";
 import { useAgentActivity } from "@/hooks/use-agent-activity";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
+import { EmptyWorkspace } from "./EmptyWorkspace";
 
 const SettingsDialog = lazy(() => import("@/components/settings/SettingsDialog").then(module => ({ default: module.SettingsDialog })));
 const ProjectDashboard = lazy(() => import("@/components/dashboard/ProjectDashboard").then(module => ({ default: module.ProjectDashboard })));
@@ -96,6 +97,11 @@ export function Home() {
         defaultReasoningLevel: model.defaultReasoningLevel,
       })),
     }));
+
+  const workspace = library.snapshot?.workspaces.find(item => item.id === library.snapshot?.selection.workspaceId);
+  if (workspace && !library.snapshot?.projects.some(project => project.workspaceId === workspace.id)) {
+    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground"><EmptyWorkspace workspace={workspace} library={library} /><StatusBar passive /></div>;
+  }
 
   return (
     <div

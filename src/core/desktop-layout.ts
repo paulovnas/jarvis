@@ -3,7 +3,7 @@ import { createContext } from "react";
 export type DesktopLayout = {
   panels: Record<string, number>;
   inspectorTab: "details" | "activities";
-  settingsTab: "general" | "providers" | "agents" | "skills" | "mcps";
+  settingsTab: "general" | "tools" | "providers" | "agents" | "skills" | "mcps";
   expandedProjects: Record<string, boolean>;
   activitySections: Record<string, boolean>;
   sidebarCollapsed: boolean;

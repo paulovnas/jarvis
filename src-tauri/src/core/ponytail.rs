@@ -50,7 +50,7 @@ impl Ponytail {
 }
 
 fn invalid() -> CoreError {
-    error("As regras do Ponytail estão incompletas ou incompatíveis. Reinstale em Configurações → Geral → Core.")
+    error("As regras do Ponytail estão incompletas ou incompatíveis. Reinstale em Configurações → Ferramentas → Core.")
 }
 
 fn read(package: &Path, relative: &str) -> Result<String, CoreError> {

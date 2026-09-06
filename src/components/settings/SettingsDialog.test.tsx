@@ -71,7 +71,12 @@ describe("SettingsDialog provider accounts", () => {
     expect(skills).toHaveAttribute("aria-selected", "true");
     expect(providers).not.toHaveAttribute("data-active");
     expect(navigation).toBeVisible();
-    expect(screen.getAllByRole("tab")).toHaveLength(5);
+    expect(screen.getAllByRole("tab")).toHaveLength(6);
+    await user.click(screen.getByRole("tab", { name: "Geral" }));
+    expect(screen.queryByRole("region", { name: "Core" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Ferramentas" }));
+    expect(await screen.findByRole("region", { name: "Core" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Ferramentas" })).toHaveAttribute("aria-selected", "true");
   });
   it("persiste a visibilidade dos limites sem desativar a conta e preserva a preferência se o salvamento falhar", async () => {
     const user = userEvent.setup();
@@ -129,14 +134,16 @@ describe("SettingsDialog provider accounts", () => {
     openUrlMock.mockResolvedValue(undefined);
   });
 
-  it("ordena as abas, apresenta Core em Geral e mantém Skills disponível", async () => {
+  it("ordena as abas, apresenta Core em Ferramentas e mantém Skills disponível", async () => {
     invokeMock.mockResolvedValueOnce([account("openai-codex-pessoal")]);
     const user = userEvent.setup();
     render(<SettingsDialog open onOpenChange={vi.fn()} />);
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Agentes", "Provedores", "Skills", "MCPs"]);
+    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Ferramentas", "Agentes", "Provedores", "Skills", "MCPs"]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
-    expect(await within(screen.getByRole("tabpanel", { name: "Geral" })).findByRole("heading", { name: "Core" })).toBeInTheDocument();
+    expect(within(screen.getByRole("tabpanel", { name: "Geral" })).queryByRole("heading", { name: "Core" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Ferramentas" }));
+    expect(await within(screen.getByRole("tabpanel", { name: "Ferramentas" })).findByRole("heading", { name: "Core" })).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: /Skills/ }));
     expect(await screen.findByRole("button", { name: "Marketplace" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("tab", { name: /Skills/ })).toHaveTextContent("0"));

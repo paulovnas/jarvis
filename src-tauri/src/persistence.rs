@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
@@ -61,6 +61,7 @@ const MIGRATIONS: &[Migration] = &[
         version: 13,
         sql: include_str!("../../drizzle/0012_sudden_nehzno.sql"),
     },
+    Migration { version: 14, sql: include_str!("../../drizzle/0013_context7_core.sql") },
 ];
 
 #[test]
@@ -334,8 +335,26 @@ pub(crate) fn require_enabled_account(
     }
 }
 
-fn complete_app_config(connection: &mut Connection) -> Result<AppConfig, PersistenceError> {
+fn complete_app_config(connection: &mut Connection, workspace_name: &str) -> Result<AppConfig, PersistenceError> {
     let transaction = connection.transaction()?;
+    let existing = read_app_config(&transaction)?;
+    if existing.onboarding_completed { return Ok(existing); }
+    let name = workspace_name.trim();
+    let name = if name.is_empty() { "Pessoal" } else { name };
+    if name.chars().count() > 120 || name.chars().any(char::is_control) { return Err(PersistenceError::new("Informe um nome de até 120 caracteres, sem quebras de linha.")); }
+    if !transaction.query_row("SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE enabled = 1)", [], |row| row.get::<_, bool>(0))? {
+        return Err(PersistenceError::new("Conecte um provedor antes de começar."));
+    }
+    let workspace: Option<String> = transaction.query_row("SELECT id FROM workspaces WHERE name = ?1", [name], |row| row.get(0)).optional()?;
+    let workspace = match workspace {
+        Some(id) => id,
+        None => {
+            let id = crate::library::new_id().map_err(|_| PersistenceError::new("Não foi possível criar o workspace."))?;
+            transaction.execute("INSERT INTO workspaces(id, name) VALUES (?1, ?2)", params![id, name])?;
+            id
+        }
+    };
+    transaction.execute("INSERT INTO navigation_selection(id, workspace_id, project_id, conversation_id) VALUES (1, ?1, NULL, NULL) ON CONFLICT(id) DO UPDATE SET workspace_id = excluded.workspace_id, project_id = NULL, conversation_id = NULL", [&workspace])?;
     let updated = transaction.execute(
         "UPDATE app_config SET onboarding_completed = 1 WHERE id = ?1",
         params![1_i64],
@@ -376,8 +395,9 @@ impl AppState {
         self.with_connection(home_dir, |connection| read_app_config(connection))
     }
 
-    fn complete_onboarding(&self, home_dir: &Path) -> Result<AppConfig, PersistenceError> {
-        self.with_connection(home_dir, complete_app_config)
+    fn complete_onboarding(&self, home_dir: &Path, workspace_name: &str) -> Result<AppConfig, PersistenceError> {
+        crate::core::require_ready(home_dir).map_err(|cause| PersistenceError::new(cause.message))?;
+        self.with_connection(home_dir, |connection| complete_app_config(connection, workspace_name))
     }
 
     pub(crate) fn list_provider_accounts(
@@ -407,13 +427,19 @@ pub async fn get_app_config(
 pub async fn complete_onboarding(
     app: AppHandle,
     state: State<'_, AppState>,
+    workspace_name: String,
 ) -> Result<AppConfig, PersistenceError> {
     let home_dir = app.path().home_dir().map_err(|error| {
         PersistenceError::new(format!("Unable to resolve home directory: {error}"))
     })?;
     let state = state.inner().clone();
-
-    tauri::async_runtime::spawn_blocking(move || state.complete_onboarding(&home_dir))
+    if state.get_app_config(&home_dir)?.onboarding_completed { return state.get_app_config(&home_dir); }
+    let accounts = crate::openai_codex::list_provider_accounts(app.clone(), app.state(), app.state()).await
+        .map_err(|_| PersistenceError::new("Não foi possível verificar os provedores. Tente novamente."))?;
+    if !accounts.iter().any(|account| account.enabled && account.models_available && !account.models.is_empty()) {
+        return Err(PersistenceError::new("Conecte um provedor com modelos disponíveis antes de começar."));
+    }
+    tauri::async_runtime::spawn_blocking(move || state.complete_onboarding(&home_dir, &workspace_name))
         .await
         .map_err(|error| PersistenceError::new(format!("Database task failed: {error}")))?
 }
@@ -480,7 +506,7 @@ fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -502,16 +528,17 @@ fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
     #[test]
     fn completion_is_idempotent_and_reinitialization_preserves_true() {
         let mut connection = in_memory_database();
+        connection.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('test','openai-codex','test')", []).unwrap();
 
         assert_eq!(
-            complete_app_config(&mut connection).expect("first completion"),
+            complete_app_config(&mut connection, "  Meu espaço  ").expect("first completion"),
             AppConfig {
                 onboarding_completed: true,
             }
         );
         initialize_database(&mut connection).expect("idempotent migration check");
         assert_eq!(
-            complete_app_config(&mut connection).expect("second completion"),
+            complete_app_config(&mut connection, "Different name").expect("second completion"),
             AppConfig {
                 onboarding_completed: true,
             }
@@ -522,6 +549,33 @@ fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
                 onboarding_completed: true,
             }
         );
+        assert_eq!(connection.query_row("SELECT count(*) FROM workspaces", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(connection.query_row("SELECT name FROM workspaces JOIN navigation_selection ON workspaces.id = navigation_selection.workspace_id", [], |row| row.get::<_, String>(0)).unwrap(), "Meu espaço");
+    }
+
+    #[test]
+    fn onboarding_requires_provider_and_invalid_names_leave_no_partial_workspace() {
+        let mut connection = in_memory_database();
+        assert!(complete_app_config(&mut connection, "").is_err());
+        connection.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('test','openai-codex','test')", []).unwrap();
+        assert!(complete_app_config(&mut connection, "bad\nname").is_err());
+        assert!(!read_app_config(&connection).unwrap().onboarding_completed);
+        assert_eq!(connection.query_row("SELECT count(*) FROM workspaces", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        complete_app_config(&mut connection, " ").unwrap();
+        assert_eq!(connection.query_row("SELECT name FROM workspaces", [], |row| row.get::<_, String>(0)).unwrap(), "Pessoal");
+    }
+
+    #[test]
+    fn context7_migration_removes_only_unconfigured_seed() {
+        for configured in [false, true] {
+            let mut db = Connection::open_in_memory().unwrap();
+            for migration in MIGRATIONS.iter().take(13) { db.execute_batch(migration.sql).unwrap(); }
+            db.pragma_update(None, "user_version", 13).unwrap();
+            db.execute("UPDATE mcp_servers SET configured = ?1 WHERE id = 'builtin-context7'", [configured]).unwrap();
+            initialize_database(&mut db).unwrap();
+            let count = db.query_row("SELECT count(*) FROM mcp_servers WHERE id = 'builtin-context7'", [], |row| row.get::<_, i64>(0)).unwrap();
+            assert_eq!(count, i64::from(configured));
+        }
     }
 
     #[test]
@@ -545,7 +599,7 @@ fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {

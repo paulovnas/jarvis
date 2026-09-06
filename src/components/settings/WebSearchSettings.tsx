@@ -12,7 +12,7 @@ import { webSearchConfigSchema } from "@/core/web-search";
 interface Config { accountAlias: string | null; model: string | null; inheritChat: boolean }
 const OFF = "off";
 const INHERIT = "inherit";
-export function WebSearchSettings({ accounts, kind = "web_search" }: { accounts: ProviderAccount[]; kind?: "web_search" | "vision" }) {
+export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange }: { accounts: ProviderAccount[]; kind?: "web_search" | "vision"; onBusyChange?: (busy: boolean) => void }) {
   const title = kind === "vision" ? "Vision" : "Web Search";
   const [config, setConfig] = useState<Config>({ accountAlias: null, model: null, inheritChat: true });
   const [loading, setLoading] = useState(true);
@@ -21,6 +21,7 @@ export function WebSearchSettings({ accounts, kind = "web_search" }: { accounts:
   const [retry, setRetry] = useState(0);
   const lock = useRef(false);
   const mounted = useRef(false);
+  useEffect(() => { onBusyChange?.(loading || saving || error); }, [loading, saving, error, onBusyChange]);
   useEffect(() => {
     let active = true; mounted.current = true;
     void invoke(`get_${kind}_config`).then(value => {

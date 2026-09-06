@@ -128,15 +128,12 @@ async fn discovery_names_survive_restart_and_stale_checks_do_not_overwrite_new_c
 }
 
 #[test]
-fn seeded_template_never_connects_and_deleting_it_is_persistent() {
+fn context7_core_does_not_create_a_user_mcp_registration() {
     let f = Fixture::new();
     let servers = f.mcp.list(&f.state, &f.home).unwrap();
-    assert_eq!(servers.len(), 1);
-    assert!(servers[0].enabled);
-    assert!(!servers[0].configured);
+    assert!(servers.is_empty());
     assert!(f.mcp.active_configs(&f.state, &f.home).unwrap().is_empty());
     assert!(f.secrets.values.lock().unwrap().is_empty());
-    f.mcp.remove(&f.state, &f.home, &servers[0].id).unwrap();
     let new_state = AppState::default();
     assert!(f.mcp.list(&new_state, &f.home).unwrap().is_empty());
 }

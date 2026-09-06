@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 
 export function TitleBar() {
   const [isMaximized, setIsMaximized] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const isMac = /Mac/.test(navigator.platform);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -14,12 +16,14 @@ export function TitleBar() {
     async function syncWindowState() {
       try {
         const appWindow = getCurrentWindow();
-        const maximized = await appWindow.isMaximized();
-        if (active) setIsMaximized(maximized);
-        unlisten = await appWindow.onResized(async () => {
-          const next = await appWindow.isMaximized();
-          if (active) setIsMaximized(next);
-        });
+        const refresh = async () => {
+          try {
+            const [maximized, fullscreen] = await Promise.all([appWindow.isMaximized(), isMac ? appWindow.isFullscreen() : false]);
+            if (active) { setIsMaximized(maximized); setIsFullscreen(fullscreen); }
+          } catch { /* The window may close while its resize event is pending. */ }
+        };
+        await refresh();
+        unlisten = await appWindow.onResized(() => { void refresh(); });
         if (!active) unlisten();
       } catch {
         // Ignored when running outside Tauri native runtime
@@ -32,7 +36,7 @@ export function TitleBar() {
       active = false;
       if (unlisten) unlisten();
     };
-  }, []);
+  }, [isMac]);
 
   const handleMinimize = async () => {
     try {
@@ -60,6 +64,18 @@ export function TitleBar() {
     }
   };
 
+  const handleGreen = async () => {
+    if (!isMac) { await handleToggleMaximize(); return; }
+    try {
+      const appWindow = getCurrentWindow();
+      const next = !(await appWindow.isFullscreen());
+      await appWindow.setFullscreen(next);
+      setIsFullscreen(next);
+    } catch { /* Not available outside the native runtime. */ }
+  };
+  const expanded = isMac ? isFullscreen : isMaximized;
+  const greenLabel = isMac ? (isFullscreen ? "Sair da tela cheia" : "Entrar em tela cheia") : (isMaximized ? "Restaurar janela" : "Maximizar janela");
+
   return (
     <header
       data-tauri-drag-region
@@ -73,8 +89,8 @@ export function TitleBar() {
         <Button variant="ghost" type="button" aria-label="Minimizar janela" title="Minimizar" onClick={handleMinimize} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
           <span className="flex size-3 shrink-0 items-center justify-center rounded-full border border-black/10 bg-[#febc2e]"><Minus className="size-2.5 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" /></span>
         </Button>
-        <Button variant="ghost" type="button" aria-label={isMaximized ? "Restaurar janela" : "Maximizar janela"} title={isMaximized ? "Restaurar" : "Maximizar"} onClick={handleToggleMaximize} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
-          <span className="flex size-3 shrink-0 items-center justify-center rounded-full border border-black/10 bg-[#28c840]">{isMaximized ? <Minimize2 className="size-2 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" /> : <Maximize2 className="size-2 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" />}</span>
+        <Button variant="ghost" type="button" aria-label={greenLabel} title={greenLabel} onClick={handleGreen} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
+          <span className="flex size-3 shrink-0 items-center justify-center rounded-full border border-black/10 bg-[#28c840]">{expanded ? <Minimize2 className="size-2 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" /> : <Maximize2 className="size-2 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" />}</span>
         </Button>
       </div>
       <div data-tauri-drag-region className="h-full flex-1" />

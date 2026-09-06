@@ -54,7 +54,7 @@ A execução de ferramentas é automática, dentro das permissões de cada papel
 
 ## Core
 
-O Core integra quatro ferramentas ao funcionamento do Jarvis. A instalação inicial é obrigatória e acontece pelo próprio aplicativo, em **Configurações → Geral → Core**. Os componentes ficam em `~/.jarvis`, com versão instalada, progresso de instalação e indicação de atualizações.
+O Core integra cinco ferramentas ao funcionamento do Jarvis. A instalação e a configuração iniciais são obrigatórias e guiadas pelo aplicativo. Depois, os componentes podem ser gerenciados em **Configurações → Ferramentas → Core**. Tudo fica em `~/.jarvis`, com versão instalada, progresso de instalação e indicação de atualizações.
 
 | Componente | Papel no Jarvis |
 | --- | --- |
@@ -62,13 +62,14 @@ O Core integra quatro ferramentas ao funcionamento do Jarvis. A instalação ini
 | [Ponytail](https://github.com/DietrichGebert/ponytail) | Orientações de execução para os agentes, integradas às regras do fluxo de trabalho. |
 | [Beads](https://github.com/gastownhall/beads) | Acompanhamento de épicos, tarefas, dependências e comentários, com visualização no Kanban e nos planos do projeto. |
 | [Open Design](https://github.com/nexu-io/open-design) | Recursos de design, como referências, templates, sistemas de design e skills, usados pelo Designer. |
+| [Context7](https://github.com/upstash/context7) | Documentação e exemplos atualizados de bibliotecas, consultados pelos agentes quando necessário. Pacote instalado via npm com Node próprio; chave validada e armazenada no Keychain. |
 
 ## Primeiros passos
 
 1. Baixe o `.dmg` em [Releases](https://github.com/paulovnas/jarvis/releases), abra-o e copie o Jarvis para **Aplicativos**.
-2. Abra a cópia instalada e conclua a preparação do Core. O download dos recursos de design pode levar alguns minutos.
-3. Pelo botão de configurações no rodapé, conecte um provedor e escolha os modelos que deseja usar.
-4. Crie um workspace para agrupar os projetos e adicione um projeto selecionando sua pasta local.
+2. Siga as boas-vindas, instale os cinco componentes e configure a chave do Context7. O download dos recursos de design pode levar alguns minutos.
+3. Conecte um provedor e configure Web Search e Vision; ambos podem herdar o modelo do chat.
+4. Defina o nome do workspace padrão e clique em **Começar**. Adicione o primeiro projeto selecionando sua pasta local.
 5. Inicie uma conversa, escolha o fluxo e descreva o que deseja fazer.
 
 Esta primeira beta tem assinatura do aplicativo e das atualizações, mas **ainda não possui notarização Apple**. O macOS pode pedir uma autorização adicional para abri-la; consulte **Ajustes do Sistema → Privacidade e Segurança** se isso acontecer.
@@ -91,7 +92,7 @@ Na statusbar, acompanhe os limites das contas compatíveis, o tempo até a renov
 
 Em **Configurações → Provedores → Ferramentas**, **Web Search** e **Vision** podem herdar o provedor e o modelo do chat ou usar uma seleção própria. Assim, uma ferramenta pode usar um modelo diferente daquele que conduz a conversa. A disponibilidade depende das capacidades do provedor e do modelo; pesquisa hospedada não é presumida para endpoints Custom.
 
-Na aba **MCPs**, adicione servidores locais ou remotos, confira as ferramentas descobertas e ative ou desative cada integração. O modelo Context7 vem preparado para receber sua chave de API. Servidores executados com `npx` precisam de Node.js e npm disponíveis no computador.
+Na aba **MCPs**, adicione servidores locais ou remotos, confira as ferramentas descobertas e ative ou desative cada integração. O Context7 já faz parte do Core e dispensa cadastro nessa aba. Outros servidores executados com `npx` precisam de Node.js e npm disponíveis no computador.
 
 Na aba **Skills**, consulte os detalhes, instale pelo Marketplace, atualize, desative ou exclua skills. O Jarvis lê sua pasta de skills em `~/.jarvis` e pode incluir `.agents/skills` global e do projeto, inclusive pastas vinculadas por atalhos simbólicos. As skills ativas ficam disponíveis para descoberta pelos agentes e podem ser selecionadas explicitamente com `/` no chat.
 

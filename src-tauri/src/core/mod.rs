@@ -5,6 +5,8 @@ pub mod hooks;
 mod install;
 pub mod ponytail;
 pub mod design;
+pub mod context7;
+pub mod health;
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -23,15 +25,17 @@ pub enum ComponentId {
     Ponytail,
     Beads,
     OpenDesign,
+    Context7,
 }
 impl ComponentId {
-    pub const ALL: [Self; 4] = [Self::ContextMode, Self::Ponytail, Self::Beads, Self::OpenDesign];
+    pub const ALL: [Self; 5] = [Self::ContextMode, Self::Ponytail, Self::Beads, Self::OpenDesign, Self::Context7];
     pub fn key(self) -> &'static str {
         match self {
             Self::ContextMode => "context-mode",
             Self::Ponytail => "ponytail",
             Self::Beads => "beads",
             Self::OpenDesign => "open-design",
+            Self::Context7 => "context7",
         }
     }
     fn name(self) -> &'static str {
@@ -40,6 +44,7 @@ impl ComponentId {
             Self::Ponytail => "Ponytail",
             Self::Beads => "Beads",
             Self::OpenDesign => "Open Design",
+            Self::Context7 => "Context7",
         }
     }
     fn repository(self) -> &'static str {
@@ -48,6 +53,7 @@ impl ComponentId {
             Self::Ponytail => "DietrichGebert/ponytail",
             Self::Beads => "gastownhall/beads",
             Self::OpenDesign => "nexu-io/open-design",
+            Self::Context7 => "upstash/context7",
         }
     }
 }
@@ -155,7 +161,7 @@ pub fn installed(home: &Path, id: ComponentId) -> Result<Installation, CoreError
         .remove(&id)
         .ok_or_else(|| {
             error(format!(
-                "Instale {} em Configurações → Geral → Core.",
+                "Instale {} em Configurações → Ferramentas → Core.",
                 id.name()
             ))
         })?;
@@ -166,6 +172,7 @@ pub fn require_ready(home: &Path) -> Result<(), CoreError> {
     for id in ComponentId::ALL {
         installed(home, id)?;
     }
+    if !context7::configured(home) { return Err(error("Configure a chave do Context7 em Ferramentas → Core.")); }
     Ok(())
 }
 
@@ -191,9 +198,12 @@ pub struct CoreItem {
     latest_version: Option<String>,
     update_available: bool,
     installed: bool,
+    configured: bool,
     stage: Option<String>,
     download: Option<DownloadProgress>,
     error: Option<String>,
+    health_error: Option<String>,
+    diagnostics: Vec<health::Check>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -209,6 +219,7 @@ struct StateData {
     stages: BTreeMap<ComponentId, String>,
     downloads: BTreeMap<ComponentId, DownloadProgress>,
     checking: bool,
+    diagnostics: BTreeMap<ComponentId, Vec<health::Check>>,
 }
 #[derive(Clone, Default)]
 pub struct CoreState {
@@ -217,8 +228,15 @@ pub struct CoreState {
 }
 impl CoreState {
     pub(crate) fn busy_for_update(&self) -> bool { self.install_lock.try_lock().is_err() }
+    pub fn require_ready(&self, home: &Path) -> Result<(), CoreError> {
+        require_ready(home)?;
+        if self.snapshot(home)?.ready { Ok(()) }
+        else { Err(error("O Core precisa de atenção. Abra Diagnóstico e Reparo.")) }
+    }
     pub fn snapshot(&self, home: &Path) -> Result<Snapshot, CoreError> {
-        let manifest = read_manifest(home)?;
+        let manifest_result = read_manifest(home);
+        let manifest_error = manifest_result.as_ref().err().map(|e| e.message.clone());
+        let manifest = manifest_result.unwrap_or_default();
         let data = self.data.lock().map_err(|_| error("Core indisponível."))?;
         let items: Vec<_> = ComponentId::ALL
             .into_iter()
@@ -227,6 +245,8 @@ impl CoreState {
                 let validation = record.map(|r| r.validate(home, id));
                 let valid = validation.as_ref().is_some_and(|result| result.is_ok());
                 let latest = data.latest.get(&id).cloned();
+                let diagnostics = data.diagnostics.get(&id).cloned().unwrap_or_default();
+                let health_error = manifest_error.clone().or_else(|| diagnostics.iter().find(|c| !c.passed).map(|c| c.message.clone()));
                 CoreItem {
                     id,
                     name: id.name().into(),
@@ -234,12 +254,15 @@ impl CoreState {
                     installed_version: record.map(|r| r.version.clone()),
                     latest_version: latest.clone(),
                     installed: valid,
+                    configured: valid && (id != ComponentId::Context7 || context7::configured(home)),
                     update_available: valid
                         && record
                             .zip(latest.as_ref())
                             .is_some_and(|(r, v)| newer(v, &r.version)),
                     stage: data.stages.get(&id).cloned(),
                     download: data.downloads.get(&id).cloned(),
+                    health_error,
+                    diagnostics,
                     error: data.errors.get(&id).cloned().or_else(|| {
                         validation
                             .as_ref()
@@ -250,7 +273,7 @@ impl CoreState {
             })
             .collect();
         Ok(Snapshot {
-            ready: items.iter().all(|i| i.installed),
+            ready: items.iter().all(|i| i.installed && i.configured && i.health_error.is_none()),
             items,
             checking: data.checking,
         })
@@ -314,7 +337,7 @@ pub async fn check_core_updates(
     }
     core.emit(&app, &home);
     for id in ComponentId::ALL {
-        let result = install::release(id.repository()).await;
+        let result = install::component_release(id).await;
         if let Ok(mut data) = core.data.lock() {
             match result {
                 Ok(release) => {
@@ -373,6 +396,7 @@ pub async fn install_core_component(
         match &result {
             Ok(version) => {
                 data.latest.insert(id, version.clone());
+                data.diagnostics.remove(&id);
             }
             Err(cause) => {
                 data.errors.insert(id, cause.message.clone());

@@ -23,8 +23,11 @@ fn requires_every_component_and_never_treats_newer_release_as_missing() {
             },
         );
         save_manifest(home.path(), &manifest).unwrap();
-        assert_eq!(require_ready(home.path()).is_ok(), id == ComponentId::OpenDesign);
+        assert!(require_ready(home.path()).is_err());
     }
+    assert!(!CoreState::default().snapshot(home.path()).unwrap().ready);
+    fs::write(root(home.path()).join("context7.json"), r#"{"credential_ref":"jarvis-core-context7-test"}"#).unwrap();
+    assert!(require_ready(home.path()).is_ok());
     let state = CoreState::default();
     state
         .data
@@ -47,7 +50,9 @@ fn version_comparison_is_semantic_and_invalid_manifests_fail_closed() {
     let home = tempfile::tempdir().unwrap();
     fs::create_dir_all(root(home.path())).unwrap();
     fs::write(root(home.path()).join("manifest.json"), "{").unwrap();
-    assert!(CoreState::default().snapshot(home.path()).is_err());
+    let snapshot = CoreState::default().snapshot(home.path()).unwrap();
+    assert!(!snapshot.ready);
+    assert!(snapshot.items.iter().all(|item| item.health_error.is_some()));
     let install = Installation {
         version: "1.0.0".into(),
         directory: "../escape".into(),
@@ -76,5 +81,6 @@ async fn official_installation_smoke() {
             .unwrap();
         assert!(!version.is_empty());
     }
-    require_ready(home.path()).unwrap();
+    assert!(!CoreState::default().snapshot(home.path()).unwrap().ready);
+    assert!(CoreState::default().snapshot(home.path()).unwrap().items.iter().all(|item| item.installed));
 }
