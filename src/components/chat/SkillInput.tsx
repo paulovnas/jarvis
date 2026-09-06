@@ -75,7 +75,7 @@ function slashQuery(editor: Editor): Query | null {
 }
 const origins = { jarvis: "Jarvis", agents: ".agents", project: "Projeto" };
 const editorProps = {
-  attributes: (state: Editor["state"]) => ({ role: "textbox", "aria-label": "Mensagem", "aria-multiline": "true", "data-empty": String(state.doc.childCount === 1 && state.doc.firstChild?.content.size === 0), "data-placeholder": "Mensagem… / para skills", class: "skill-editor min-h-[84px] max-h-64 w-full overflow-y-auto px-5 pt-4 pb-2 text-[14.5px] leading-relaxed text-foreground outline-none" }),
+  attributes: (state: Editor["state"]) => ({ role: "textbox", "aria-label": "Mensagem", "aria-multiline": "true", spellcheck: "true", autocorrect: "on", autocapitalize: "sentences", "data-empty": String(state.doc.childCount === 1 && state.doc.firstChild?.content.size === 0), "data-placeholder": "Mensagem… / para skills", class: "skill-editor min-h-[84px] max-h-64 w-full overflow-y-auto px-5 pt-4 pb-2 text-[14.5px] leading-relaxed text-foreground outline-none" }),
   handlePaste: (view: Editor["view"], event: ClipboardEvent) => {
     const text = event.clipboardData?.getData("text/plain");
     if (text === undefined) return false;

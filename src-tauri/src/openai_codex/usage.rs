@@ -227,7 +227,12 @@ impl OpenAiCodexState {
             .list_provider_accounts(home)
             .map_err(|_| ProviderError::database())?
             .into_iter()
-            .find(|record| record.alias == alias && record.enabled && record.show_usage)
+            .find(|record| {
+                record.alias == alias
+                    && record.enabled
+                    && record.show_usage
+                    && record.provider_kind != "custom"
+            })
             .ok_or_else(unavailable)?;
         let entry = self.manager.usage_cache.entry(&record)?;
         // Single-flight only this account; other accounts and inference can proceed.

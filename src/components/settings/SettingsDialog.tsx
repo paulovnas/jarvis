@@ -52,13 +52,15 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "@/components/ui/input-group";
+import { InputGroup, InputGroupAddon, InputGroupText } from "@/components/ui/input-group";
+import { InputGroupInput } from "@/components/TextInput";
 import { Label } from "@/components/ui/label";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { accountList, type ProviderAccount } from "@/core/provider-accounts";
 import { ProviderAccountCard } from "./ProviderAccountCard";
+import { CustomProviderForm } from "./CustomProviderForm";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 
 
@@ -126,6 +128,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
   const [listError, setListError] = useState<string | null>(null);
   const [suffix, setSuffix] = useState("");
   const [provider, setProvider] = useState("openai-codex");
+  const [editingCustom, setEditingCustom] = useState<ProviderAccount | null>(null);
+  const [savingCustom, setSavingCustom] = useState(false);
   const aliasPrefix = `${provider}-`;
   const connectionLabel = provider === "antigravity" ? "Antigravity" : "ChatGPT";
   const [suffixError, setSuffixError] = useState<string | null>(null);
@@ -347,6 +351,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
   );
 
   const handleDialogOpenChange = (nextOpen: boolean, closeSettings = true) => {
+    if (savingCustom && !nextOpen) return;
     if (nextOpen) {
       onOpenChange(true);
       return;
@@ -510,6 +515,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
                 key={account.alias}
                 account={account}
                 saving={toggling}
+                onEdit={setEditingCustom}
                 onUsageChange={(alias, showUsage, showThirdPartyUsage) => { void handleUsageChange(alias, showUsage, showThirdPartyUsage); }}
                 onEnabledChange={(alias, enabled) => { void handleEnabledChange(alias, enabled); }}
                 onDisconnect={(alias) => {
@@ -525,8 +531,16 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
     );
   };
 
+  const customSaved = (account: ProviderAccount) => {
+    ++listRequestRef.current;
+    updateAccounts(accounts.some(item => item.alias === account.alias) ? accounts.map(item => item.alias === account.alias ? account : item) : [...accounts, account]);
+    setView("list"); setEditingCustom(null);
+  };
+
   const renderAdd = () => {
     const computedAlias = `${aliasPrefix}${suffix}`;
+    const providerSelect = <div className="space-y-2"><Label htmlFor="account-provider">Provedor</Label><Select value={provider} onValueChange={value => { if (value) { setProvider(value); setConnectionError(null); } }} disabled={starting || savingCustom}><SelectTrigger id="account-provider" className="w-full cursor-pointer"><SelectValue>{provider === "custom" ? "Custom" : provider === "antigravity" ? "Antigravity" : "OpenAI Codex"}</SelectValue></SelectTrigger><SelectContent><SelectItem value="openai-codex" className="cursor-pointer">OpenAI Codex</SelectItem><SelectItem value="antigravity" className="cursor-pointer">Antigravity</SelectItem><SelectItem value="custom" className="cursor-pointer">Custom</SelectItem></SelectContent></Select></div>;
+    if (provider === "custom") return <><DialogHeader><DialogTitle>Adicionar conta</DialogTitle><DialogDescription>Configure seu endpoint e os limites informados pelo provedor.</DialogDescription></DialogHeader>{providerSelect}<CustomProviderForm onBusyChange={setSavingCustom} onCancel={() => setView("list")} onSaved={customSaved} /></>;
     return (
       <>
         <DialogHeader>
@@ -537,18 +551,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
         </DialogHeader>
         <form onSubmit={handleConnect}>
           <div className="space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="account-provider">Provedor</Label>
-              <Select value={provider} onValueChange={(value) => { if (value) { setProvider(value); setConnectionError(null); } }} disabled={starting}>
-                <SelectTrigger id="account-provider" className="w-full cursor-pointer">
-                  <SelectValue>{provider === "antigravity" ? "Antigravity" : "OpenAI Codex"}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="openai-codex" className="cursor-pointer">OpenAI Codex</SelectItem>
-                  <SelectItem value="antigravity" className="cursor-pointer">Antigravity</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {providerSelect}
             <div className="space-y-2">
               <Label htmlFor="provider-alias-suffix" className="text-xs text-foreground">
                 Sufixo do alias
@@ -706,11 +709,12 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               <div className="px-6 py-5">{activeTab === "mcps" && <McpSettings onCountChange={updateMcpCount} />}</div>
             </TabsContent>
           </Tabs>
-          <Dialog open={open && view !== "list"} onOpenChange={(nextOpen) => { if (!nextOpen) handleDialogOpenChange(false, false); }}>
-            <DialogContent className="dark max-h-[85vh] overflow-y-auto sm:max-w-xl">
+          <Dialog open={open && view !== "list"} onOpenChange={(nextOpen) => { if (!nextOpen && !savingCustom) handleDialogOpenChange(false, false); }}>
+            <DialogContent className={`dark max-h-[85vh] overflow-y-auto ${provider === "custom" ? "sm:max-w-2xl" : "sm:max-w-xl"}`}>
               {view === "waiting" ? renderWaiting() : renderAdd()}
             </DialogContent>
           </Dialog>
+          <Dialog open={open && editingCustom !== null} onOpenChange={next => { if (!next && !savingCustom) setEditingCustom(null); }}><DialogContent className="dark max-h-[85vh] overflow-y-auto sm:max-w-2xl" aria-describedby={undefined}><DialogHeader><DialogTitle>Editar provedor Custom</DialogTitle></DialogHeader>{editingCustom && <CustomProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} />}</DialogContent></Dialog>
         </DialogContent>
       </Dialog>
 

@@ -2,6 +2,19 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderAccount } from "@/core/provider-accounts";
+import { customAccountFixture } from "@/test/custom-provider-fixtures";
+
+it("mostra configuração Custom sem simular conexão ou cotas e permite editar", async () => {
+  const account = customAccountFixture(); const edit = vi.fn(); const user = userEvent.setup();
+  render(<ProviderAccountCard account={account} onEdit={edit} onDisconnect={vi.fn()} onEnabledChange={vi.fn()} />);
+  expect(screen.getByText("Configurada")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: `Detalhes de ${account.alias}` }));
+  expect(screen.getByText(account.custom!.baseUrl)).toBeVisible();
+  expect(screen.queryByRole("switch", { name: /Limites/ })).not.toBeInTheDocument();
+  expect(screen.queryByText("E-mail")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Editar" }));
+  expect(edit).toHaveBeenCalledWith(account);
+});
 import { ProviderAccountCard } from "./ProviderAccountCard";
 
 const account: ProviderAccount = {

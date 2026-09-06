@@ -256,6 +256,11 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; over
 }
 
 /* Application design layer; registry primitives remain untouched. */
+/* Base UI omits nested backdrops. Dim only covered popups; child portals stay sharp. */
+:is([data-slot="dialog-content"], [data-slot="alert-dialog-content"], [data-slot="sheet-content"])[data-nested-dialog-open] {
+  filter: blur(3px) brightness(0.65);
+}
+
 .dark [data-slot="card"], .dark [data-slot="dialog-content"],
 .dark [data-slot="select-content"], .dark [data-slot="dropdown-menu-content"] {
   --tw-inset-shadow: var(--edge-highlight);

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Bug, Check, Circle, Filter, Layers, MessageSquare, Search, SlidersHorizontal, UserRound } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input } from "@/components/TextInput";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { type Bead, actorName, date, shortId, statuses, statusFor, typeName } from "@/core/dashboard";

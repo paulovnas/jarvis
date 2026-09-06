@@ -74,7 +74,11 @@ fn visible(value: &Value) -> Value {
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
-                .filter(|(key, _)| key.as_str() != "encrypted_content" && !key.starts_with("_antigravity"))
+                .filter(|(key, _)| {
+                    key.as_str() != "encrypted_content"
+                        && key.as_str() != "_custom"
+                        && !key.starts_with("_antigravity")
+                })
                 .map(|(key, value)| (key.clone(), visible(value)))
                 .collect(),
         ),
@@ -202,6 +206,14 @@ pub(super) async fn ensure(
     signal: watch::Receiver<bool>,
     hooks: Option<&crate::core::hooks::Hooks>,
 ) -> Result<bool, AgentError> {
+    // Custom output limits are explicit and can exceed the catalog reserve.
+    let overhead = overhead.saturating_add(
+        credential
+            .custom
+            .as_ref()
+            .and_then(|config| config.models.iter().find(|model| model.id == options.model))
+            .map_or(0, |model| model.max_output_tokens),
+    );
     let mut summary_options = options.clone();
     summary_options.reasoning = None;
     let summary_signal = signal.clone();

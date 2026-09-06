@@ -53,6 +53,9 @@ describe("Project Dashboard", () => {
     const user = userEvent.setup(); const changed = vi.fn(async () => {});
     render(<BeadDrawer projectId="p1" issueId={bead().id} onClose={vi.fn()} onSelect={vi.fn()} onChanged={changed} />);
     const input = await screen.findByRole("textbox", { name: "Adicionar comentário" });
+    expect(input).toHaveAttribute("spellcheck", "true");
+    expect(input).toHaveAttribute("autocorrect", "on");
+    expect(input).toHaveAttribute("autocapitalize", "sentences");
     await user.type(input, "Validado no projeto");
     call.mockRejectedValueOnce({ message: "Banco ocupado" });
     await user.click(screen.getByRole("button", { name: "Comentar" }));

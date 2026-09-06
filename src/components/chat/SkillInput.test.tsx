@@ -26,6 +26,9 @@ describe("Explicit skill input", () => {
     const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} />);
     const field = screen.getByRole("textbox", { name: "Mensagem" });
+    expect(field).toHaveAttribute("spellcheck", "true");
+    expect(field).toHaveAttribute("autocorrect", "on");
+    expect(field).toHaveAttribute("autocapitalize", "sentences");
     await user.type(field, "/");
     expect(await screen.findByRole("option", { name: /react-expert/ })).toBeVisible();
     expect(screen.getByRole("option", { name: /review/ })).toBeVisible();

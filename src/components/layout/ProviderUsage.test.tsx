@@ -37,8 +37,8 @@ it("shows remaining percentages and details on hover or keyboard without inventi
 });
 
 it.each([
-  { remaining: 78, days: 3.5, stale: false, expected: "28 p.p. em reserva" },
-  { remaining: 76, days: 6.5, stale: false, expected: "17 p.p. em déficit" },
+  { remaining: 78, days: 3.5, stale: false, expected: "28% em reserva" },
+  { remaining: 76, days: 6.5, stale: false, expected: "17% em déficit" },
   { remaining: 78, days: 3.5, stale: true, expected: null },
 ])("mostra o ritmo da janela apenas para dados atuais: $expected", async ({ remaining, days, stale, expected }) => {
   const data = report(account.alias);
@@ -50,7 +50,7 @@ it.each([
   await user.hover(button);
   await screen.findByRole("dialog", { name: `Limites de ${account.alias}` });
   if (expected) expect(screen.getByText(expected)).toBeVisible();
-  else expect(screen.queryByText(/p\.p\. em/)).not.toBeInTheDocument();
+  else expect(screen.queryByText(/% em (reserva|déficit)/)).not.toBeInTheDocument();
 });
 
 it("hides disabled accounts and third-party limits by default, then reflects the preference", async () => {

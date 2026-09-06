@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::persistence::{self, PersistenceError, ProviderAccountRecord};
 
 pub(crate) mod antigravity;
+pub(crate) mod custom;
 pub(crate) mod usage;
 
 pub(crate) const OPENAI_CODEX_ALIAS_PREFIX: &str = "openai-codex-";
@@ -49,6 +50,8 @@ pub(crate) struct ProviderAccount {
     pub(crate) models: Vec<ProviderModel>,
     #[serde(rename = "modelsAvailable")]
     pub(crate) models_available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) custom: Option<custom::Config>,
 }
 
 impl ProviderAccount {
@@ -71,6 +74,7 @@ impl ProviderAccount {
                 .map_or(ProviderAccountType::Unknown, classify_account_type),
             models,
             models_available,
+            custom: None,
         }
     }
 }
@@ -93,6 +97,8 @@ pub(crate) struct CodexCredential {
     pub(crate) antigravity_models: std::collections::BTreeMap<String, serde_json::Value>,
     #[serde(skip)]
     pub(crate) antigravity_endpoint: Option<String>,
+    #[serde(skip)]
+    pub(crate) custom: Option<custom::Config>,
 }
 
 impl CodexCredential {
@@ -115,6 +121,7 @@ impl CodexCredential {
             project_id: None,
             antigravity_models: Default::default(),
             antigravity_endpoint: None,
+            custom: None,
         }
     }
 }
@@ -272,7 +279,8 @@ pub(crate) fn disconnect_provider_account(
     secret_store: &dyn SecretStore,
     alias: &str,
 ) -> Result<(), ProviderAccountError> {
-    validate_provider_alias(alias).map_err(ProviderAccountError::InvalidAlias)?;
+    custom::validate_alias(alias)
+        .map_err(|_| ProviderAccountError::InvalidAlias(AliasValidationError::InvalidAlias))?;
     secret_store.remove(alias)?;
     persistence::delete_provider_account(connection, alias).map_err(Into::into)
 }
@@ -595,6 +603,7 @@ mod tests {
             account_type: ProviderAccountType::Personal,
             models: Vec::new(),
             models_available: false,
+            custom: None,
         };
         let value = serde_json::to_value(account).expect("metadata JSON");
         assert!(value.get("accountId").is_none());
@@ -803,10 +812,9 @@ impl ProviderError {
                 "malformed_token",
                 "A conta do provedor não foi identificada.",
             ),
-            ProviderAccountError::DuplicateAccount => Self::new(
-                "duplicate_account",
-                "Esta conta já está conectada.",
-            ),
+            ProviderAccountError::DuplicateAccount => {
+                Self::new("duplicate_account", "Esta conta já está conectada.")
+            }
             #[cfg(not(target_os = "macos"))]
             ProviderAccountError::SecretStore(SecretStoreError::Unavailable) => Self::new(
                 "secret_store",
@@ -964,12 +972,20 @@ impl OAuthManager {
         let records = app_state
             .list_provider_accounts(home_dir)
             .map_err(|_| ProviderError::database())?;
-        Ok(records
+        records
             .into_iter()
             .map(|record| {
-                account_details(record, self.secret_store.as_ref(), &self.endpoints, client)
+                if record.provider_kind == "custom" {
+                    return custom::account(app_state, home_dir, record);
+                }
+                Ok(account_details(
+                    record,
+                    self.secret_store.as_ref(),
+                    &self.endpoints,
+                    client,
+                ))
             })
-            .collect())
+            .collect()
     }
 
     fn disconnect_account(
@@ -1207,7 +1223,7 @@ impl OpenAiCodexState {
         home: &std::path::Path,
         alias: &str,
     ) -> Result<(CodexCredential, Vec<ProviderModel>), ProviderError> {
-        validate_provider_alias(alias).map_err(|_| ProviderError::invalid_alias())?;
+        custom::validate_alias(alias)?;
         let _guard = self
             .manager
             .credentials_guard
@@ -1231,10 +1247,28 @@ impl OpenAiCodexState {
         let mut credential = self.manager.secret_store.load(alias).map_err(|_| {
             ProviderError::new(
                 "credential_missing",
-                "Reconecte a conta nas configurações para enviar mensagens.",
+                if record.provider_kind == "custom" {
+                    "Edite o provedor Custom e informe sua chave de API."
+                } else {
+                    "Reconecte a conta nas configurações para enviar mensagens."
+                },
             )
         })?;
-        if credential.account_id != record.account_id || (record.provider_kind == "antigravity") != credential.project_id.is_some() {
+        if record.provider_kind == "custom" {
+            if credential.account_id != record.account_id || credential.project_id.is_some() {
+                return Err(ProviderError::new(
+                    "account_mismatch",
+                    "Revise a chave do provedor Custom.",
+                ));
+            }
+            let config = custom::load(state, home, alias)?;
+            let models = config.catalog();
+            credential.custom = Some(config);
+            return Ok((credential, models));
+        }
+        if credential.account_id != record.account_id
+            || (record.provider_kind == "antigravity") != credential.project_id.is_some()
+        {
             return Err(ProviderError::new(
                 "account_mismatch",
                 "Reconecte a conta selecionada nas configurações.",

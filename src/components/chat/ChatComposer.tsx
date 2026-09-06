@@ -1,7 +1,7 @@
 import { lazy, Suspense, useRef, useState } from "react";
 import { ArrowUp, Plus, Square, ListOrdered, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input } from "@/components/TextInput";
 import { ProcessPopover } from "./ProcessPopover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { invoke } from "@tauri-apps/api/core";

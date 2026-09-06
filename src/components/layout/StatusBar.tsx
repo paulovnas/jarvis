@@ -24,7 +24,7 @@ export function StatusBar({ accounts = [], onOpenSettings }: { accounts?: Provid
     <Separator />
     <div className="flex h-7 min-w-0 items-center gap-2 px-2">
       {onOpenSettings && <Button variant="ghost" size="icon-sm" className="h-6 w-7 shrink-0 cursor-pointer rounded-sm text-muted-foreground" aria-label="Configurações" title="Configurações" onClick={onOpenSettings}><Settings className="size-3.5" /></Button>}
-      <div aria-label="Limites dos provedores" className="ml-auto flex min-w-0 flex-row-reverse items-center overflow-x-auto">{accounts.filter(account => account.enabled && account.showUsage !== false).map(account => <Suspense key={`${account.alias}/${account.createdAt}`} fallback={<Skeleton aria-label={`Carregando limites de ${account.alias}`} className="mx-2 h-3 w-44 shrink-0" />}><ProviderUsage account={account} now={now.getTime()} /></Suspense>)}</div>
+      <div aria-label="Limites dos provedores" className="ml-auto flex min-w-0 flex-row-reverse items-center overflow-x-auto">{accounts.filter(account => account.enabled && account.providerKind !== "custom" && account.showUsage !== false).map(account => <Suspense key={`${account.alias}/${account.createdAt}`} fallback={<Skeleton aria-label={`Carregando limites de ${account.alias}`} className="mx-2 h-3 w-44 shrink-0" />}><ProviderUsage account={account} now={now.getTime()} /></Suspense>)}</div>
       <time aria-label="Hora atual" dateTime={now.toISOString()} title={now.toLocaleDateString("pt-BR", { dateStyle: "full" })} className="shrink-0 border-l border-border px-2 font-mono text-[10px] tabular-nums text-muted-foreground">
         {now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
       </time>

@@ -8,6 +8,7 @@ use std::{
 use tokio::sync::watch;
 
 mod antigravity;
+mod custom;
 
 pub(super) use antigravity::grounded_search;
 const MAX_EVENT: usize = 4 * 1024 * 1024;
@@ -27,6 +28,7 @@ pub(super) struct Response {
 struct Sse {
     pending: Vec<u8>,
     data: Vec<u8>,
+    done: bool,
 }
 
 #[derive(Default)]
@@ -87,6 +89,8 @@ impl Sse {
             if line.is_empty() && !self.data.is_empty() {
                 if self.data != b"[DONE]\n" {
                     events.push(serde_json::from_slice(&self.data).map_err(|_| protocol_error())?);
+                } else {
+                    self.done = true;
                 }
                 self.data.clear();
             } else if let Some(data) = line.strip_prefix(b"data:") {
@@ -134,6 +138,8 @@ fn context_overflow(value: &Value) -> bool {
     ) || message.contains("maximum context length")
         || message.contains("exceeds the context window")
         || message.contains("context window exceeded")
+        || message.contains("prompt is too long")
+        || message.contains("input is too long")
 }
 fn overflow_error() -> AgentError {
     AgentError::new(
@@ -148,11 +154,20 @@ fn request_body(
     tools: Vec<Value>,
     session_id: &str,
 ) -> Value {
-    let input: Vec<Value> = input.into_iter().filter_map(|mut item| {
-        if item["type"] == "reasoning" && !item["encrypted_content"].is_string() { return None; }
-        if let Some(map) = item.as_object_mut() { map.retain(|key, _| !key.starts_with("_antigravity")); }
-        Some(item)
-    }).collect();
+    let input: Vec<Value> = input
+        .into_iter()
+        .filter_map(|mut item| {
+            if item["type"] == "reasoning"
+                && (!item["encrypted_content"].is_string() || item.get("_custom").is_some())
+            {
+                return None;
+            }
+            if let Some(map) = item.as_object_mut() {
+                map.retain(|key, _| !key.starts_with("_antigravity") && key != "_custom");
+            }
+            Some(item)
+        })
+        .collect();
     let mut body = json!({
         "model":options.model, "instructions":instructions, "input":input,
         "tools":tools, "tool_choice":"auto", "parallel_tool_calls":false,
@@ -177,6 +192,19 @@ pub(super) async fn stream(
     signal: watch::Receiver<bool>,
     on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
+    if let Some(config) = &credential.custom {
+        return custom::stream(
+            credential,
+            config,
+            options,
+            instructions,
+            input,
+            tools,
+            signal,
+            on_delta,
+        )
+        .await;
+    }
     if credential.project_id.is_some() {
         return antigravity::stream(credential, session_id, options, instructions, input, tools, signal, on_delta).await;
     }

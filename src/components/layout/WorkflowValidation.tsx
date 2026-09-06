@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Textarea } from "@/components/ui/textarea";
+import { Textarea } from "@/components/TextInput";
 import { Label } from "@/components/ui/label";
 import { libraryError } from "@/core/library";
 import type { ValidationBatch, ValidationItem } from "@/core/workflow";

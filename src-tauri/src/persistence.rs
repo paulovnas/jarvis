@@ -49,9 +49,55 @@ const MIGRATIONS: &[Migration] = &[
         version: 10,
         sql: include_str!("../../drizzle/0009_provider_usage.sql"),
     },
-    Migration { version: 11, sql: include_str!("../../drizzle/0010_tool_models.sql") },
-    Migration { version: 12, sql: include_str!("../../drizzle/0011_tricky_spiral.sql") },
+    Migration {
+        version: 11,
+        sql: include_str!("../../drizzle/0010_tool_models.sql"),
+    },
+    Migration {
+        version: 12,
+        sql: include_str!("../../drizzle/0011_tricky_spiral.sql"),
+    },
+    Migration {
+        version: 13,
+        sql: include_str!("../../drizzle/0012_sudden_nehzno.sql"),
+    },
 ];
+
+#[test]
+fn custom_migration_preserves_oauth_accounts_and_both_tool_selections() {
+    let mut db = Connection::open_in_memory().unwrap();
+    for migration in MIGRATIONS.iter().take(12) {
+        db.execute_batch(migration.sql).unwrap();
+    }
+    db.execute_batch("INSERT INTO provider_accounts(alias,provider_kind,account_id,enabled,show_usage) VALUES ('openai-codex-old','openai-codex','old',0,0); INSERT INTO web_search_config(id,account_alias,model,inherit_chat) VALUES (1,'openai-codex-old','chosen',0); INSERT INTO vision_config(id,account_alias,model,inherit_chat) VALUES (1,'openai-codex-old','vision',0); PRAGMA user_version=12;").unwrap();
+    initialize_database(&mut db).unwrap();
+    for table in ["web_search_config", "vision_config"] {
+        assert_eq!(
+            db.query_row(&format!("SELECT account_alias FROM {table}"), [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            "openai-codex-old"
+        );
+    }
+    assert_eq!(
+        db.query_row(
+            "SELECT enabled + show_usage FROM provider_accounts",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
+            .get::<_, i64>(
+            0
+        ))
+        .unwrap(),
+        0
+    );
+}
 
 #[derive(Debug)]
 struct Migration {
@@ -434,7 +480,7 @@ fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -499,7 +545,7 @@ fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {

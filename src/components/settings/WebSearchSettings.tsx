@@ -28,8 +28,8 @@ export function WebSearchSettings({ accounts, kind = "web_search" }: { accounts:
     }).catch(() => { if (active) setError(true); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; mounted.current = false; };
   }, [kind, retry]);
-  const supports = (provider: ProviderAccount, model: string) => kind === "vision" ? /^(gpt-|gemini-|claude|o3|o4)/.test(model) : provider.providerKind === "openai-codex" || model.startsWith("gemini-");
-  const compatible = accounts.filter(account => account.enabled && ["openai-codex", "antigravity"].includes(account.providerKind) && account.models.some(model => supports(account, model.id)));
+  const supports = (provider: ProviderAccount, model: string) => provider.providerKind === "custom" ? kind === "vision" && provider.custom?.models.some(item => item.id === model && item.supportsImages) : kind === "vision" ? /^(gpt-|gemini-|claude|o3|o4)/.test(model) : provider.providerKind === "openai-codex" || model.startsWith("gemini-");
+  const compatible = accounts.filter(account => account.enabled && account.models.some(model => supports(account, model.id)));
   const selected = compatible.find(account => account.alias === config.accountAlias);
   const models = (selected?.models ?? []).filter(model => selected && supports(selected, model.id));
   const unavailable = config.accountAlias !== null && !selected;

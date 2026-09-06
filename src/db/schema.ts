@@ -28,10 +28,15 @@ export const providerAccounts = sqliteTable(
   (table) => [
     check(
       "provider_accounts_provider_kind_check",
-      sql`${table.providerKind} IN ('openai-codex', 'antigravity')`,
+      sql`${table.providerKind} IN ('openai-codex', 'antigravity', 'custom')`,
     ),
   ],
 );
+
+export const customProviderConfigs = sqliteTable("custom_provider_configs", {
+  alias: text("alias").primaryKey().references(() => providerAccounts.alias, { onDelete: "cascade" }),
+  config: text("config").notNull(),
+});
 
 export const mcpServers = sqliteTable("mcp_servers", {
   id: text("id").primaryKey(),

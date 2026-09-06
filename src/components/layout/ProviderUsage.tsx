@@ -17,7 +17,7 @@ function WindowBar({ window, now, stale }: { window: UsageWindow; now: number; s
     <div className="flex items-center justify-between gap-5 font-mono text-[11px] tabular-nums"><span>{window.label}</span><span style={{ color: quotaColor(window.remainingPercent) }}>{quotaPercent(window.remainingPercent)}</span></div>
     {window.remainingPercent !== null && <Progress aria-label={`${window.group} ${window.label} restante`} value={window.remainingPercent} style={{ "--quota-color": quotaColor(window.remainingPercent) } as CSSProperties} className="[&_[data-slot=progress-indicator]]:bg-[var(--quota-color)]" />}
     {reset && <p title={window.resetsAt ? new Date(window.resetsAt).toLocaleString("pt-BR") : undefined} className="text-[10px] text-muted-foreground">{reset === "agora" ? "Reset previsto agora" : `Renova em ${reset}`}</p>}
-    {reserve !== null && <p title="Saldo em pontos percentuais comparado ao consumo uniforme ao longo da janela." className={`font-mono text-[10px] ${reserve < 0 ? "text-onedark-red" : reserve > 0 ? "text-onedark-green" : "text-muted-foreground"}`}>{reserve === 0 ? "No ritmo da janela" : `${Math.abs(reserve)} p.p. ${reserve > 0 ? "em reserva" : "em déficit"}`}</p>}
+    {reserve !== null && <p title="Percentual da cota total acima ou abaixo do consumo esperado para este momento da janela." className={`font-mono text-[10px] ${reserve < 0 ? "text-onedark-red" : reserve > 0 ? "text-onedark-green" : "text-muted-foreground"}`}>{reserve === 0 ? "No ritmo da janela" : `${Math.abs(reserve)}% ${reserve > 0 ? "em reserva" : "em déficit"}`}</p>}
   </div>;
 }
 

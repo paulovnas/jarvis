@@ -1,7 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod agent;
-mod desktop;
 mod core;
+mod desktop;
 mod library;
 mod mcp;
 mod openai_codex;
@@ -96,6 +96,8 @@ pub fn run() {
             agent::approve_agent_tool,
             agent::questions::answer_agent_question,
             openai_codex::list_provider_accounts,
+            openai_codex::custom::save_custom_provider,
+            openai_codex::custom::discovery::lookup_custom_model,
             openai_codex::set_provider_enabled,
             openai_codex::usage::get_provider_usage,
             openai_codex::usage::set_provider_usage_visibility,

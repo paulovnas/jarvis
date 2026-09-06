@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Field, FieldLabel } from "@/components/ui/field";
-import { Textarea } from "@/components/ui/textarea";
+import { Textarea } from "@/components/TextInput";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LazyChatMarkdown as ChatMarkdown } from "@/components/chat/LazyChatMarkdown";
@@ -48,7 +48,7 @@ export function BeadDrawer({ projectId, projectName, issueId, onClose, onSelect,
           <section className="border-t border-border pt-5"><h3 className="micro-label mb-4 flex items-center gap-2 text-muted-foreground"><MessageSquare className="size-3.5" />Comentários<span className="font-mono">{comments.length}</span></h3><div className="space-y-4">{comments.map(comment => <article key={comment.id} className="rounded-md border border-border bg-card/55 p-4"><div className="mb-3 flex items-center gap-3"><span className="min-w-0 flex-1 truncate text-xs font-medium">{actorName(comment.author)}</span><span className="font-mono text-[10px] text-muted-foreground">{date(comment.created_at, true)}</span></div><div className="bead-prose"><ChatMarkdown content={comment.text} /></div></article>)}{!comments.length && <p className="text-xs text-muted-foreground">Nenhum comentário</p>}</div></section>
         </div>}
       </div>
-      {issue && <form className="shrink-0 space-y-3 border-t border-border bg-card/60 p-4" onSubmit={event => { event.preventDefault(); void send(); }}><Field><FieldLabel htmlFor="bead-comment" className="text-xs">Adicionar comentário</FieldLabel><Textarea id="bead-comment" value={text} maxLength={10_000} disabled={sending} onChange={event => setText(event.target.value)} placeholder="Escreva um comentário…" className="max-h-36 min-h-20 resize-y text-sm" /></Field>{sendError && <p role="alert" className="text-xs text-destructive">{sendError}</p>}<div className="flex items-center justify-between"><span className="font-mono text-[10px] text-muted-foreground">{text.length > 0 ? `${text.length.toLocaleString("pt-BR")} / 10.000` : ""}</span><Button type="submit" size="sm" className="cursor-pointer" disabled={sending || !text.trim()}><Send className="size-3.5" />{sending ? "Enviando…" : "Comentar"}</Button></div></form>}
+      {issue && <form className="shrink-0 space-y-3 border-t border-border bg-card/60 p-4" onSubmit={event => { event.preventDefault(); void send(); }}><Field><FieldLabel htmlFor="bead-comment" className="text-xs">Adicionar comentário</FieldLabel><Textarea id="bead-comment" spellCheck autoCorrect="on" autoCapitalize="sentences" value={text} maxLength={10_000} disabled={sending} onChange={event => setText(event.target.value)} placeholder="Escreva um comentário…" className="max-h-36 min-h-20 resize-y text-sm" /></Field>{sendError && <p role="alert" className="text-xs text-destructive">{sendError}</p>}<div className="flex items-center justify-between"><span className="font-mono text-[10px] text-muted-foreground">{text.length > 0 ? `${text.length.toLocaleString("pt-BR")} / 10.000` : ""}</span><Button type="submit" size="sm" className="cursor-pointer" disabled={sending || !text.trim()}><Send className="size-3.5" />{sending ? "Enviando…" : "Comentar"}</Button></div></form>}
     </SheetContent>
   </Sheet>;
 }

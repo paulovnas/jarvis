@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { WebSearchSettings } from "./WebSearchSettings";
+import { customAccountFixture } from "@/test/custom-provider-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -14,6 +15,18 @@ const account = (alias: string, providerKind = "openai-codex"): ProviderAccount 
 });
 
 describe("WebSearchSettings", () => {
+  it("disponibiliza Vision Custom pela capacidade declarada, sem presumir pelo nome", async () => {
+    const custom = customAccountFixture(); const user = userEvent.setup();
+    invokeMock.mockResolvedValue({ accountAlias: null, model: null, inheritChat: true });
+    const view = render(<WebSearchSettings accounts={[custom]} kind="vision" />);
+    await user.click(await screen.findByRole("combobox", { name: "Provedor de Vision" }));
+    expect(await screen.findByRole("option", { name: custom.alias })).toBeVisible();
+    await user.keyboard("{Escape}");
+    view.rerender(<WebSearchSettings accounts={[{ ...custom, custom: { ...custom.custom!, models: custom.custom!.models.map(model => ({ ...model, supportsImages: false })) } }]} kind="vision" />);
+    await user.click(screen.getByRole("combobox", { name: "Provedor de Vision" }));
+    await screen.findByRole("option", { name: "Herdar do chat" });
+    expect(screen.queryByRole("option", { name: custom.alias })).not.toBeInTheDocument();
+  });
   it.each(["web_search", "vision"] as const)("herda chat e permite restaurar herança em %s", async kind => {
     const title = kind === "vision" ? "Vision" : "Web Search";
     invokeMock.mockImplementation(async (command, args) => command.startsWith("get_") ? { accountAlias: null, model: null, inheritChat: true } : args);

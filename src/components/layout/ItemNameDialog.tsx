@@ -14,7 +14,7 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Input } from "@/components/TextInput";
 import { Spinner } from "@/components/ui/spinner";
 
 interface ItemNameDialogProps {

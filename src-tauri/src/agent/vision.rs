@@ -19,6 +19,24 @@ fn supports(model: &str) -> bool {
         .iter()
         .any(|prefix| model.starts_with(prefix))
 }
+fn supports_account(state: &AppState, home: &Path, alias: &str, model: &str) -> bool {
+    state.list_provider_accounts(home).is_ok_and(|accounts| {
+        accounts.iter().any(|account| {
+            account.alias == alias
+                && account.enabled
+                && if account.provider_kind == "custom" {
+                    crate::openai_codex::custom::load(state, home, alias).is_ok_and(|config| {
+                        config
+                            .models
+                            .iter()
+                            .any(|item| item.id == model && item.supports_images)
+                    })
+                } else {
+                    supports(model)
+                }
+        })
+    })
+}
 pub(super) fn load(state: &AppState, home: &Path) -> Result<Config, AgentError> {
     state.with_connection(home, |connection| {
         connection
@@ -47,16 +65,17 @@ pub(super) fn load(state: &AppState, home: &Path) -> Result<Config, AgentError> 
 pub(super) fn enabled(state: &AppState, home: &Path, options: &TurnOptions) -> bool {
     load(state, home).is_ok_and(|config| {
         let config = config.resolve(options);
-        config.model.as_deref().is_some_and(supports)
-            && config.account_alias.as_deref().is_some_and(|alias| {
-                crate::persistence::require_enabled_account(state, home, alias).is_ok()
-            })
+        config
+            .model
+            .as_deref()
+            .zip(config.account_alias.as_deref())
+            .is_some_and(|(model, alias)| supports_account(state, home, alias, model))
     })
 }
 fn save(state: &AppState, home: &Path, config: Config) -> Result<Config, AgentError> {
     state.with_connection(home, |connection| {
         if let Some(alias) = &config.account_alias {
-            let enabled: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1 AND enabled = 1 AND provider_kind IN ('openai-codex', 'antigravity'))", [alias], |row| row.get(0)).map_err(|_| AgentError::storage())?;
+            let enabled: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1 AND enabled = 1 AND provider_kind IN ('openai-codex', 'antigravity', 'custom'))", [alias], |row| row.get(0)).map_err(|_| AgentError::storage())?;
             if !enabled { return Err(invalid("Selecione uma conta ativa compatível com Vision.")); }
         }
         connection.execute("INSERT INTO vision_config (id, account_alias, model, inherit_chat) VALUES (1, ?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET account_alias = excluded.account_alias, model = excluded.model, inherit_chat = excluded.inherit_chat", params![config.account_alias, config.model, config.inherit_chat]).map_err(|_| AgentError::storage())?;
@@ -89,7 +108,7 @@ pub async fn set_vision_config(
         let account_alias = if inherit_chat { None } else { account_alias };
         let model = if let Some(alias) = &account_alias {
             let model = model
-                .filter(|model| supports(model))
+                .filter(|model| supports_account(&state, &home, alias, model))
                 .ok_or_else(|| invalid("Selecione um modelo compatível com imagens."))?;
             oauth.inference_model(&state, &home, alias, &model, None)?;
             Some(model)
@@ -163,7 +182,7 @@ pub(super) async fn execute(
         let model = config
             .model
             .clone()
-            .filter(|m| supports(m))
+            .filter(|m| supports_account(state, home, &alias, m))
             .ok_or_else(|| invalid("Selecione o modelo de Vision."))?;
         let (auth_state, auth_oauth, auth_home, auth_alias, auth_model) = (
             state.clone(),
@@ -204,6 +223,45 @@ pub(super) async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn custom_vision_uses_declared_capability_not_model_name() {
+        let home = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        let mut config = json!({"baseUrl":"https://gateway.example/v1","protocol":"openai-completions","authMode":"bearer","tokenField":"max_tokens","models":[{"id":"vendor/visual-model","name":"Visual","contextWindow":64000,"maxOutputTokens":4000,"supportsImages":true,"supportsTools":true,"reasoning":"none","reasoningLevels":[],"defaultReasoningLevel":null,"thinkingBudget":null}]});
+        state.with_connection(home.path(), |db| {
+            db.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('custom','custom','custom:1')", []).map_err(|_| AgentError::storage())?;
+            db.execute("INSERT INTO custom_provider_configs(alias,config) VALUES ('custom',?1)", [config.to_string()]).map_err(|_| AgentError::storage())?;
+            Ok::<_, AgentError>(())
+        }).unwrap();
+        assert!(supports_account(
+            &state,
+            home.path(),
+            "custom",
+            "vendor/visual-model"
+        ));
+        assert!(!supports_account(
+            &state,
+            home.path(),
+            "custom",
+            "gpt-guessed"
+        ));
+        config["models"][0]["supportsImages"] = json!(false);
+        state
+            .with_connection(home.path(), |db| {
+                db.execute(
+                    "UPDATE custom_provider_configs SET config=?1",
+                    [config.to_string()],
+                )
+                .map_err(|_| AgentError::storage())
+            })
+            .unwrap();
+        assert!(!supports_account(
+            &state,
+            home.path(),
+            "custom",
+            "vendor/visual-model"
+        ));
+    }
     #[tokio::test]
     async fn disabled_vision_never_resolves_credentials() {
         let home = tempfile::tempdir().unwrap();

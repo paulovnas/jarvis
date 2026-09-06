@@ -9,7 +9,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Label } from "@/components/ui/label";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/ui/textarea";
+import { Textarea } from "@/components/TextInput";
 import { MCP_TEMPLATE, mcpCheckSchema, mcpServersSchema, validateMcpJson, type McpServer } from "@/core/mcp";
 import { McpServerCard } from "./McpServerCard";
 

@@ -1,3 +1,5 @@
+import { customConfigSchema, type CustomConfig } from "./custom-provider";
+
 export type ProviderModel = {
   id: string;
   name: string;
@@ -17,6 +19,7 @@ export type ProviderAccount = {
   accountType: "personal" | "enterprise" | "unknown";
   models: ProviderModel[];
   modelsAvailable: boolean;
+  custom?: CustomConfig;
 };
 
 function isProviderModel(value: unknown): value is ProviderModel {
@@ -42,6 +45,7 @@ function isProviderAccount(value: unknown): value is ProviderAccount {
   return (
     typeof account.alias === "string" &&
     typeof account.providerKind === "string" &&
+    (account.custom === undefined || customConfigSchema.safeParse(account.custom).success) &&
     typeof account.enabled === "boolean" &&
     (account.showUsage === undefined || typeof account.showUsage === "boolean") &&
     (account.showThirdPartyUsage === undefined || typeof account.showThirdPartyUsage === "boolean") &&
