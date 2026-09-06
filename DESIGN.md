@@ -48,6 +48,43 @@ authorization and execution state are not desktop preferences.
 
 ## Verification
 
+### Project Dashboard
+
+The Dashboard extends the industrial instrument language into a project control
+surface. Its primary material is real data, not imagery: a compact metric rail,
+30-day activity plot, model ranking, Core usage and recent conversations. No hero
+copy, decorative gradients, synthetic savings or sample metrics.
+
+Reference read: Linear Board Layout and Insights (linear.app/docs/board-layout,
+linear.app/docs/insights), plus shadcn Area Charts (ui.shadcn.com/charts/area).
+Adopt status lanes, sparse card metadata and progressive detail disclosure. Keep
+Jarvis typography, inset highlights, semantic One Dark accents and 6–8px corners.
+The existing Metis desktop Sidebar/Inspector informed selection and detail
+navigation, without copying its light theme or implementation.
+
+Density is high, expressiveness restrained, motion low. The board uses horizontal
+lanes with independently scrollable task lists; keyboard-accessible cards open a
+right Sheet. Only comments are editable. Search, type filters and optional empty
+lanes support large trackers. Loading mirrors the destination geometry. Missing
+data is shown explicitly instead of converted into a misleading zero.
+
+Dashboard replaces the chat and its inspector for the selected project, preserving
+the chat's saved panel proportions. Project selection already persists in SQLite.
+
+Chat header edge controls collapse each sidebar, with short sliding motion and
+reduced-motion support. Desktop preferences store collapsed flags separately from
+expanded proportions. Settings use a centered medium dialog, sized to content up
+to 85dvh. Its tab navigation stays fixed above the scrolling content, with a blue
+surface, border and label marking the active tab. The status bar owns the settings
+action. Inspector plans summarize unfinished project Beads epics and their child
+tasks, with a compact dialog linking directly to the project Kanban. Its file list
+shows only session-owned changes that remain uncommitted, refreshed from the
+working tree after edits and external commits.
+The global status bar uses a quiet local HH:mm clock. Completed compactions appear
+as compact timeline separators with time and estimated token reduction, persisted
+atomically with their replay checkpoint. The model menu follows provider alias,
+model, then only the reasoning levels reported by that model.
+
 Review the native application at default, narrow and wide sizes: sidebar truncation,
 composer controls, expanded tool rows, questions, settings cards and diff viewer. Verify
 real resize/restart restoration and maximization separately from the user's acceptance test.
