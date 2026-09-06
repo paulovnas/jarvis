@@ -1,5 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod agent;
+#[cfg(target_os = "macos")]
+mod app_menu;
 mod core;
 mod desktop;
 mod library;

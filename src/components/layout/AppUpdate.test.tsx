@@ -1,13 +1,74 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AppUpdate } from "./AppUpdate";
 import { APP_VERSION, checkAppUpdate, displayVersion, installAppUpdate, type UpdateInfo, type UpdateProgress } from "@/core/app-update";
 
 vi.mock("@/core/app-update", async original => ({ ...await original<typeof import("@/core/app-update")>(), nativeUpdaterAvailable: () => true, checkAppUpdate: vi.fn(), installAppUpdate: vi.fn() }));
 const update: UpdateInfo = { currentVersion: APP_VERSION, installable: true, available: { version: "0.8.0-beta.2", notes: "Melhorias no Jarvis.", publishedAt: null } };
-beforeEach(() => { vi.mocked(checkAppUpdate).mockReset().mockResolvedValue(update); vi.mocked(installAppUpdate).mockReset(); });
+let aboutListener: EventCallback<unknown> | undefined;
+const stopListening = vi.fn();
+beforeEach(() => {
+  vi.mocked(checkAppUpdate).mockReset().mockResolvedValue(update);
+  vi.mocked(installAppUpdate).mockReset();
+  aboutListener = undefined;
+  stopListening.mockReset();
+  vi.mocked(listen).mockImplementation(async (name, callback) => {
+    if (name === "app:about") aboutListener = callback;
+    return stopListening;
+  });
+});
 afterEach(() => vi.useRealTimers());
+
+it("confirma em verde uma verificação manual sem atualização e remove a confirmação ao tentar novamente", async () => {
+  vi.mocked(checkAppUpdate).mockResolvedValue({ ...update, available: null });
+  const user = userEvent.setup(); render(<AppUpdate />);
+  await user.click(screen.getByRole("button", { name: /Sobre o Jarvis/ }));
+  expect(screen.queryByText("A versão mais recente já está instalada.")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
+  const success = await screen.findByRole("status");
+  expect(success).toHaveTextContent("A versão mais recente já está instalada.");
+  expect(success).toHaveClass("text-onedark-green");
+  let failCheck!: (cause: string) => void;
+  vi.mocked(checkAppUpdate).mockImplementationOnce(() => new Promise((_, reject) => { failCheck = reject; }));
+  await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
+  expect(screen.queryByText("A versão mais recente já está instalada.")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Verificar atualizações" })).toBeDisabled();
+  await act(async () => failCheck("GitHub indisponível."));
+  expect(screen.getByRole("alert")).toHaveTextContent("GitHub indisponível.");
+  expect(screen.queryByText("A versão mais recente já está instalada.")).not.toBeInTheDocument();
+});
+
+it("mantém a consulta automática silenciosa quando o aplicativo está atualizado", async () => {
+  vi.useFakeTimers();
+  vi.mocked(checkAppUpdate).mockResolvedValue({ ...update, available: null });
+  const { unmount } = render(<AppUpdate />);
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  expect(checkAppUpdate).toHaveBeenCalledTimes(1);
+  await act(async () => aboutListener?.({ event: "app:about", id: 1, payload: null }));
+  expect(screen.getByRole("dialog")).toBeVisible();
+  expect(screen.queryByText("A versão mais recente já está instalada.")).not.toBeInTheDocument();
+  unmount();
+});
+
+it("abre a mesma modal pelo menu nativo e preserva os detalhes da atualização", async () => {
+  const user = userEvent.setup();
+  const { unmount } = render(<AppUpdate />);
+  await waitFor(() => expect(listen).toHaveBeenCalledWith("app:about", expect.any(Function)));
+  await act(async () => aboutListener?.({ event: "app:about", id: 1, payload: null }));
+  expect(screen.getByText("Paulo Vitor Nascimento")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
+  expect(await screen.findByText("Melhorias no Jarvis.")).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  await act(async () => aboutListener?.({ event: "app:about", id: 2, payload: null }));
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(screen.getByText("Melhorias no Jarvis.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Atualizar e reiniciar" })).toBeEnabled();
+  unmount();
+  expect(stopListening).toHaveBeenCalledTimes(1);
+});
 
 it("mostra versão e autoria, consulta ao iniciar e não verifica continuamente ao focar", async () => {
   vi.useFakeTimers();

@@ -9,8 +9,8 @@ it("aceita a primeira publicação e versões posteriores sem permitir downgrade
 });
 
 it("gera manifestos assinados para cada arquitetura de um app universal", () => {
-  const result = releaseManifest("0.8.0-beta.2", "universal-apple-darwin", "jarvis.app.tar.gz", " signature\n", "Notas", new Date("2026-09-06T12:00:00Z"));
-  expect(result.platforms["darwin-aarch64"]).toEqual({ signature: "signature", url: "https://github.com/paulovnas/jarvis/releases/download/v0.8.0-beta.2/jarvis.app.tar.gz" });
+  const result = releaseManifest("0.8.1-beta.1", "universal-apple-darwin", "Jarvis.app.tar.gz", " signature\n", "Notas", new Date("2026-09-06T12:00:00Z"));
+  expect(result.platforms["darwin-aarch64"]).toEqual({ signature: "signature", url: "https://github.com/paulovnas/jarvis/releases/download/v0.8.1-beta.1/Jarvis.app.tar.gz" });
   expect(result.platforms["darwin-x86_64"]).toEqual(result.platforms["darwin-aarch64"]);
   expect(result.notes).toBe("Notas");
   expect(() => releaseManifest("0.8.0", "aarch64-apple-darwin", "file", "", "")).toThrow();

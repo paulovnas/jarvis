@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { ArrowUpToLine, CircleAlert, ExternalLink, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowUpToLine, CircleAlert, CircleCheck, ExternalLink, RefreshCw } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { JarvisLogo } from "@/components/JarvisLogo";
@@ -10,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { displayVersion, PROJECT_URL } from "@/core/app-update";
+import { displayVersion, nativeUpdaterAvailable, PROJECT_URL } from "@/core/app-update";
 import { useAppUpdate } from "@/hooks/use-app-update";
 import { cn } from "@/lib/utils";
 
@@ -18,7 +19,17 @@ function megabytes(bytes: number): string { return `${(bytes / 1024 / 1024).toLo
 
 export function AppUpdate() {
   const [open, setOpen] = useState(false);
-  const { info, checking, busy, progress, error, check, install } = useAppUpdate();
+  const { info, checking, busy, progress, error, upToDate, check, install } = useAppUpdate();
+  useEffect(() => {
+    if (!nativeUpdaterAvailable()) return;
+    let active = true;
+    let dispose: (() => void) | undefined;
+    void listen("app:about", () => { if (active) setOpen(true); }).then(unlisten => {
+      if (active) dispose = unlisten;
+      else unlisten();
+    }).catch(() => {});
+    return () => { active = false; dispose?.(); };
+  }, []);
   const release = info.available;
   const downloaded = progress?.stage === "downloading" ? progress.downloaded : 0;
   const total = progress?.stage === "downloading" ? progress.total : null;
@@ -50,11 +61,12 @@ export function AppUpdate() {
           {progress.stage === "downloading" && total && <p className="font-mono text-[10px] text-muted-foreground">{megabytes(downloaded)} / {megabytes(total)}</p>}
         </div>}
         {error && <Alert variant="destructive"><CircleAlert /><AlertDescription>{error}</AlertDescription></Alert>}
+        {upToDate && <Alert role="status" className="border-onedark-green/25 bg-onedark-green/5 text-onedark-green"><CircleCheck /><AlertDescription className="text-onedark-green">A versão mais recente já está instalada.</AlertDescription></Alert>}
       </div>
       <DialogFooter className="shrink-0">
         {release ? <Button disabled={busy || checking || !info.installable} onClick={() => void install()}><ArrowUpToLine data-icon="inline-start" />{busy ? stage : installed ? "Reabrir Jarvis" : "Atualizar e reiniciar"}</Button> : <>
           <Button variant="ghost" onClick={() => { void openUrl(PROJECT_URL).catch(() => toast.error("Não foi possível abrir o projeto.")); }}><ExternalLink data-icon="inline-start" />GitHub</Button>
-          <Button variant="outline" disabled={checking} onClick={() => void check()}><RefreshCw data-icon="inline-start" />Verificar atualizações</Button>
+          <Button variant="outline" disabled={checking} onClick={() => void check(true)}><RefreshCw data-icon="inline-start" />Verificar atualizações</Button>
         </>}
       </DialogFooter>
     </DialogContent>

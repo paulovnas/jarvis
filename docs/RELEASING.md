@@ -1,6 +1,6 @@
 # Publicação e atualizações do Jarvis
 
-A primeira versão é `0.8.0-beta.1`, exibida como **0.8.0 Beta**. O aplicativo consulta os [Releases do GitHub](https://github.com/paulovnas/jarvis/releases) após iniciar, a cada seis horas e ao retornar à janela quando a última consulta estiver vencida. O botão da versão no rodapé também permite verificar manualmente.
+A versão atual é `0.8.1-beta.1`, exibida como **0.8.1 Beta**. O aplicativo consulta os [Releases do GitHub](https://github.com/paulovnas/jarvis/releases) após iniciar, a cada seis horas e ao retornar à janela quando a última consulta estiver vencida. O botão da versão no rodapé também permite verificar manualmente. No macOS, **Jarvis → Sobre o Jarvis** abre a mesma modal.
 
 Instalações beta aceitam novas prévias e versões estáveis. Instalações estáveis recebem apenas versões estáveis. A comparação usa SemVer e exige um manifesto compatível com a arquitetura do computador. Rascunhos e versões sem os arquivos necessários são ignorados. Falhas de consulta permitem nova tentativa e não são tratadas como confirmação de que o aplicativo está atualizado.
 
@@ -10,16 +10,13 @@ Execute no macOS, na branch `main`, com as alterações já commitadas e sincron
 
 ```sh
 # Conferir o plano sem alterar arquivos, compilar ou publicar.
-bun run release 0.8.0-beta.1 --dry-run
-
-# Publicar a primeira versão.
-bun run release 0.8.0-beta.1
+bun run release 0.8.1-beta.2 --dry-run
 
 # Publicar a próxima beta com notas próprias em pt-BR.
-bun run release 0.8.0-beta.2 --notes-file /caminho/notas-da-versao.md
+bun run release 0.8.1-beta.2 --notes-file /caminho/notas-da-versao.md
 
 # Publicar a versão estável, quando estiver pronta.
-bun run release 0.8.0
+bun run release 0.8.1
 ```
 
 O comando sincroniza a versão em `package.json`, Tauri e Cargo; executa lint, checagem de tipos, testes e compilação da interface, além de Clippy e testes Rust; gera e assina o aplicativo, o DMG e o pacote de atualização; cria o commit da versão e a tag; envia ambos ao GitHub; anexa os arquivos a um release em rascunho e só então o publica. Sem `--notes-file`, o GitHub gera as notas automaticamente a partir do histórico.
@@ -34,7 +31,7 @@ O padrão é a arquitetura do Mac usado para compilar. A primeira beta é distri
 
 ```sh
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
-bun run release 0.8.0-beta.2 --target universal-apple-darwin
+bun run release 0.8.1-beta.2 --target universal-apple-darwin
 ```
 
 O comando de publicação atualmente gera apenas pacotes macOS. Escolha a opção universal antes de publicar quando precisar atender às duas arquiteturas; o comando não acrescenta uma segunda arquitetura a uma versão já publicada.

@@ -197,6 +197,8 @@ fn fit_bounds(
 }
 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "macos")]
+    crate::app_menu::install(app)?;
     let state = app.state::<DesktopState>();
     let path = app.path().home_dir()?.join(".jarvis/desktop.json");
     let window = app

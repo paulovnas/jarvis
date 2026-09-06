@@ -10,17 +10,18 @@ export function useAppUpdate() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [upToDate, setUpToDate] = useState(false);
   const operation = useRef(false);
   const relaunchPending = useRef(false);
   const checkedAt = useRef(0);
   const mounted = useRef(true);
 
-  const check = useCallback(async () => {
+  const check = useCallback(async (manual = false) => {
     if (!nativeUpdaterAvailable() || operation.current || relaunchPending.current) return;
-    operation.current = true; setChecking(true); setError(null);
+    operation.current = true; setChecking(true); setError(null); setUpToDate(false);
     try {
       const next = await checkAppUpdate();
-      if (mounted.current) { setInfo(next); setProgress(null); }
+      if (mounted.current) { setInfo(next); setProgress(null); setUpToDate(manual && next.available === null); }
     } catch (cause) { if (mounted.current) setError(failureMessage(cause)); }
     finally {
       checkedAt.current = Date.now(); operation.current = false;
@@ -46,5 +47,5 @@ export function useAppUpdate() {
     window.addEventListener("focus", focus);
     return () => { mounted.current = false; clearTimeout(timer); clearInterval(interval); window.removeEventListener("focus", focus); };
   }, [check]);
-  return { info, checking, busy, progress, error, check, install };
+  return { info, checking, busy, progress, error, upToDate, check, install };
 }

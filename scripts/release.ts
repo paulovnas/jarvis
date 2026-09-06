@@ -26,7 +26,7 @@ function optionalRelease(tag: string): { isDraft: boolean } | null {
 
 async function main() {
   if (!args.length || args.includes("--help")) {
-    console.info("Uso: bun run release 0.8.0-beta.2 [--notes-file arquivo.md] [--target universal-apple-darwin] [--dry-run]\nValida, compila, assina, cria o commit/tag da versão e publica o release no GitHub. Execute com o código já commitado e a árvore limpa."); return;
+    console.info("Uso: bun run release 0.8.1-beta.2 [--notes-file arquivo.md] [--target universal-apple-darwin] [--dry-run]\nValida, compila, assina, cria o commit/tag da versão e publica o release no GitHub. Execute com o código já commitado e a árvore limpa."); return;
   }
   for (let i = 1; i < args.length; i++) {
     if (args[i] === "--dry-run") continue;
@@ -34,7 +34,7 @@ async function main() {
     throw new Error(`Opção desconhecida: ${args[i]}. Use --help.`);
   }
   const packageJson = JSON.parse(read("package.json")) as { version: string };
-  const config = JSON.parse(read("src-tauri/tauri.conf.json")) as { version: string; plugins: { updater: { pubkey: string } } };
+  const config = JSON.parse(read("src-tauri/tauri.conf.json")) as { productName: string; version: string; plugins: { updater: { pubkey: string } } };
   for (const file of versions.slice(2)) {
     if (replaceCargoVersion(read(file), packageJson.version, file.endsWith(".lock")) !== read(file)) throw new Error(`A versão em ${file} difere de package.json.`);
   }
@@ -74,9 +74,10 @@ async function main() {
   command("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml"]);
   command("bun", ["run", "tauri", "build", "--target", target, "--bundles", "app,dmg", "--config", path.join(root, "src-tauri/tauri.release.conf.json")], false, env);
   const bundle = path.join(root, "src-tauri/target", target, "release/bundle");
-  const archiveSource = path.join(bundle, "macos/jarvis.app.tar.gz");
+  const appBundle = path.join(bundle, "macos", `${config.productName}.app`);
+  const archiveSource = `${appBundle}.tar.gz`;
   const signature = readFileSync(`${archiveSource}.sig`, "utf8").trim();
-  command("codesign", ["--verify", "--deep", "--strict", path.join(bundle, "macos/jarvis.app")]);
+  command("codesign", ["--verify", "--deep", "--strict", appBundle]);
   const dmgs = readdirSync(path.join(bundle, "dmg")).filter(file => file.endsWith(".dmg") && file.includes(`_${version}_`));
   if (dmgs.length !== 1) throw new Error("Não foi possível identificar o instalador DMG desta versão.");
   if (command("git", ["rev-parse", "HEAD"], true) !== sourceCommit || command("git", ["branch", "--show-current"], true) !== "main") throw new Error("O checkout mudou durante o build. Revise antes de publicar.");
@@ -93,10 +94,10 @@ async function main() {
   command("git", ["push", "--atomic", "origin", "main", `refs/tags/${tag}`]);
   const temp = mkdtempSync(path.join(tmpdir(), "jarvis-release-"));
   try {
-    const archive = `jarvis_${version}_${target}.app.tar.gz`;
+    const archive = `${config.productName}_${version}_${target}.app.tar.gz`;
     copyFileSync(archiveSource, path.join(temp, archive));
     copyFileSync(`${archiveSource}.sig`, path.join(temp, `${archive}.sig`));
-    const dmg = `jarvis_${version}_${target}.dmg`;
+    const dmg = `${config.productName}_${version}_${target}.dmg`;
     copyFileSync(path.join(bundle, "dmg", dmgs[0]), path.join(temp, dmg));
     if (!existing) command("gh", ["release", "create", tag, "--repo", RELEASE_REPOSITORY, "--verify-tag", "--draft", "--title", `Jarvis ${version}`, ...(beta ? ["--prerelease"] : []), ...(notes ? ["--notes-file", path.resolve(notes)] : ["--generate-notes"])]);
     const { body, isDraft } = JSON.parse(command("gh", ["release", "view", tag, "--repo", RELEASE_REPOSITORY, "--json", "body,isDraft"], true)) as { body: string; isDraft: boolean };

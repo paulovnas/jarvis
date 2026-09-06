@@ -27,7 +27,7 @@ O Jarvis reúne conversas com IA, arquivos do projeto, planejamento e acompanham
 
 Os agentes podem ler e editar arquivos, executar comandos e realizar verificações como testes unitários, lint, checagem de tipos e compilação. A validação final da experiência fica com você: nos fluxos Planejado e Completo, o aplicativo apresenta os itens para testar, registra sua aprovação ou reprovação e encaminha o resultado aos agentes.
 
-**Versão atual: 0.8.0 Beta.** A primeira distribuição é para **macOS com Apple Silicon**. O aplicativo está em evolução; problemas podem ser relatados nas [issues do projeto](https://github.com/paulovnas/jarvis/issues).
+**Versão atual: 0.8.1 Beta.** Disponível para **macOS com Apple Silicon**. O aplicativo está em evolução; problemas podem ser relatados nas [issues do projeto](https://github.com/paulovnas/jarvis/issues).
 
 ## O que você encontra
 
@@ -149,10 +149,10 @@ Com as alterações commitadas e a branch `main` sincronizada com o GitHub:
 
 ```bash
 # Simular sem alterar arquivos nem publicar.
-bun run release 0.8.0-beta.2 --dry-run
+bun run release 0.8.1-beta.2 --dry-run
 
 # Compilar, assinar e publicar a próxima beta.
-bun run release 0.8.0-beta.2 --notes-file /caminho/notas-da-versao.md
+bun run release 0.8.1-beta.2 --notes-file /caminho/notas-da-versao.md
 ```
 
 O comando executa as verificações, gera os instaladores e arquivos de atualização, cria a tag e publica a versão no GitHub. Consulte o [guia de publicação](docs/RELEASING.md) para configurar as chaves, escolher a arquitetura e manter as assinaturas entre versões.
