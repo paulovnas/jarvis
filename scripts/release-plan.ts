@@ -45,7 +45,7 @@ export function releaseManifest(version: string, target: string, archive: string
   return { version, notes, pub_date: date.toISOString(), platforms: Object.fromEntries(targetPlatforms(target).map(platform => [platform, { signature: signature.trim(), url }])) };
 }
 export function replaceCargoVersion(contents: string, version: string, lock = false): string {
-  const pattern = lock ? /(\[\[package\]\]\nname = "jarvis"\nversion = ")[^"]+("\n)/ : /(\[package\]\nname = "jarvis"\nversion = ")[^"]+("\n)/;
+  const pattern = lock ? /(\[\[package\]\]\r?\nname = "jarvis"\r?\nversion = ")[^"]+("\r?\n)/ : /(\[package\]\r?\nname = "jarvis"\r?\nversion = ")[^"]+("\r?\n)/;
   if (!pattern.test(contents)) throw new Error("Não foi possível localizar a versão Rust do Jarvis.");
   return contents.replace(pattern, `$1${version}$2`);
 }

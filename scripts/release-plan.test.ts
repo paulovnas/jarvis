@@ -37,6 +37,10 @@ it("altera somente a versão do pacote Jarvis no Cargo e mantém dependências i
   const contents = '[package]\nname = "jarvis"\nversion = "0.1.0"\n\n[dependencies]\nserde = "1"\n';
   expect(replaceCargoVersion(contents, "0.8.0-beta.1")).toContain('version = "0.8.0-beta.1"');
   expect(replaceCargoVersion(contents, "0.8.0-beta.1")).toContain('serde = "1"');
+  const windowsContents = contents.replaceAll("\n", "\r\n");
+  expect(replaceCargoVersion(windowsContents, "0.8.0-beta.1")).toBe(windowsContents.replace('version = "0.1.0"', 'version = "0.8.0-beta.1"'));
   const lock = '[[package]]\nname = "other"\nversion = "0.1.0"\n\n[[package]]\nname = "jarvis"\nversion = "0.1.0"\n';
   expect(replaceCargoVersion(lock, "0.8.0-beta.1", true)).toBe('[[package]]\nname = "other"\nversion = "0.1.0"\n\n[[package]]\nname = "jarvis"\nversion = "0.8.0-beta.1"\n');
+  const windowsLock = lock.replaceAll("\n", "\r\n");
+  expect(replaceCargoVersion(windowsLock, "0.8.0-beta.1", true)).toBe(windowsLock.replace('name = "jarvis"\r\nversion = "0.1.0"', 'name = "jarvis"\r\nversion = "0.8.0-beta.1"'));
 });
