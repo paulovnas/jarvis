@@ -169,18 +169,21 @@ async fn process_cancellation_reaps_child_and_oversized_output_is_an_error() {
         .arg(&pid_file);
     let (cancel, signal) = watch::channel(false);
     let running = tokio::spawn(process::run(command, signal));
-    tokio::time::timeout(std::time::Duration::from_secs(3), async {
-        while !pid_file.exists() {
+    let pid = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            // File creation precedes echo writing its PID; wait for the complete
+            // readiness signal instead of racing an empty file under load.
+            if let Some(pid) = fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|contents| contents.trim().parse::<i32>().ok())
+            {
+                break pid;
+            }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     })
     .await
     .unwrap();
-    let pid: i32 = fs::read_to_string(pid_file)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
     cancel.send(true).unwrap();
     assert!(
         tokio::time::timeout(std::time::Duration::from_secs(3), running)

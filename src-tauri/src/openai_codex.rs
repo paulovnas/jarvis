@@ -3005,8 +3005,8 @@ mod oauth_tests {
         let secrets = Arc::new(InMemorySecretStore::default());
         let manager = new_manager(
             "http://127.0.0.1:9/oauth/token".to_owned(),
-            Duration::from_millis(60),
-            secrets,
+            Duration::from_secs(5),
+            secrets.clone(),
             vec![free_port(), free_port(), free_port()],
         );
         let first = begin(&manager, &app_state, &home, "openai-codex-first");
@@ -3033,15 +3033,23 @@ mod oauth_tests {
         );
         assert!(manager.flow(&first.flow_id).is_err());
 
-        let timeout_flow = begin(&manager, &app_state, &home, "openai-codex-timeout");
-        let timeout_error = manager
+        // Only the expiry scenario should race a short deadline. Cancellation and
+        // denial must test their outcomes even on a loaded CI runner.
+        let timeout_manager = new_manager(
+            "http://127.0.0.1:9/oauth/token".to_owned(),
+            Duration::from_millis(60),
+            secrets,
+            vec![free_port()],
+        );
+        let timeout_flow = begin(&timeout_manager, &app_state, &home, "openai-codex-timeout");
+        let timeout_error = timeout_manager
             .wait(&timeout_flow.flow_id)
             .expect_err("timeout result");
         assert_eq!(timeout_error.code, "timeout");
-        manager
+        timeout_manager
             .cancel(&timeout_flow.flow_id)
             .expect("cancel settled flow");
-        manager
+        timeout_manager
             .cancel(&timeout_flow.flow_id)
             .expect("repeat cancel settled flow");
         let denial_flow = begin(&manager, &app_state, &home, "openai-codex-denial");
