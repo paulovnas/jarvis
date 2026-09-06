@@ -14,6 +14,8 @@ import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { useSessionFiles } from "@/hooks/use-session-files";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EpicPlans } from "./EpicPlans";
+import { WorkflowAgents } from "./WorkflowAgents";
+import type { WorkflowController } from "@/hooks/use-workflow";
 
 function ActivitySection({ title, icon, count, children }: { title: string; icon: ReactNode; count?: number; children: ReactNode }) {
   const { layout, updateLayout } = useDesktopLayout();
@@ -25,7 +27,7 @@ function ActivitySection({ title, icon, count, children }: { title: string; icon
   </Collapsible>;
 }
 
-export function Inspector({ library, chat, accounts = [], onCompact, onOpenKanban, compacting = false, pending = false }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; onOpenKanban?: (projectId: string) => void; compacting?: boolean; pending?: boolean }) {
+export function Inspector({ library, chat, workflow, accounts = [], onCompact, onOpenKanban, compacting = false, pending = false }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; workflow?: WorkflowController; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; onOpenKanban?: (projectId: string) => void; compacting?: boolean; pending?: boolean }) {
   const selectedChat = chat?.conversationId === library?.selection.conversationId ? chat : null;
   const turns = selectedChat?.turns ?? [];
   const tools = turns.flatMap(turn => turn.steps.flatMap(step => step.tools));
@@ -43,7 +45,7 @@ export function Inspector({ library, chat, accounts = [], onCompact, onOpenKanba
             {tools.some(tool => tool.name === "bash" || tool.name.startsWith("mcp_")) && <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">Alterações feitas pelo terminal ou por MCPs ainda não entram nesta lista.</p>}
           </ActivitySection>
           <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-[#e5c07b]" />}>
-            <p className="text-xs text-muted-foreground">Nenhum subagente.</p>
+            <WorkflowAgents workflow={workflow} conversationId={selectedChat?.conversationId} />
           </ActivitySection>
         </div></ScrollArea>
     </div>

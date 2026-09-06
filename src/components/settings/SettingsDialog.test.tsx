@@ -71,7 +71,7 @@ describe("SettingsDialog provider accounts", () => {
     expect(skills).toHaveAttribute("aria-selected", "true");
     expect(providers).not.toHaveAttribute("data-active");
     expect(navigation).toBeVisible();
-    expect(screen.getAllByRole("tab")).toHaveLength(4);
+    expect(screen.getAllByRole("tab")).toHaveLength(5);
   });
   it("persiste a visibilidade dos limites sem desativar a conta e preserva a preferência se o salvamento falhar", async () => {
     const user = userEvent.setup();
@@ -134,10 +134,10 @@ describe("SettingsDialog provider accounts", () => {
     const user = userEvent.setup();
     render(<SettingsDialog open onOpenChange={vi.fn()} />);
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Provedores", "Skills", "MCPs"]);
+    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Agentes", "Provedores", "Skills", "MCPs"]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
     expect(await within(screen.getByRole("tabpanel", { name: "Geral" })).findByRole("heading", { name: "Core" })).toBeInTheDocument();
-    await user.click(tabs[2]);
+    await user.click(screen.getByRole("tab", { name: /Skills/ }));
     expect(await screen.findByRole("button", { name: "Marketplace" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("tab", { name: /Skills/ })).toHaveTextContent("0"));
     await waitFor(() => expect(screen.getByRole("tab", { name: /MCPs/ })).toHaveTextContent("0"));

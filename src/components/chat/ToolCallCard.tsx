@@ -1,4 +1,4 @@
-import { AlertCircle, BookOpen, Check, ChevronRight, FilePenLine, FileText, FolderSearch, Globe, Search, Terminal, Wrench } from "lucide-react";
+import { AlertCircle, BookOpen, Bot, Check, ChevronRight, FilePenLine, FileText, FolderSearch, Globe, Search, Terminal, Wrench } from "lucide-react";
 import { readWebSearchResult } from "@/core/web-search";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
@@ -22,12 +22,20 @@ const tools = {
   write: { label: "Escrita de arquivo", icon: FilePenLine },
   edit: { label: "Edição de arquivo", icon: FilePenLine },
   bash: { label: "Execução no terminal", icon: Terminal },
+  hub_spawn: { label: "Delegar tarefa", icon: Bot },
+  hub_list: { label: "Consultar agentes", icon: Bot },
+  hub_wait: { label: "Aguardar agentes", icon: Bot },
+  hub_send: { label: "Enviar orientação", icon: Bot },
+  hub_retry: { label: "Retomar agente", icon: Bot },
+  hub_cancel: { label: "Interromper agente", icon: Bot },
+  hub_complete: { label: "Entregar resultado", icon: Check },
+  workflow_check: { label: "Validar projeto", icon: Terminal },
 };
 
 export function ToolCallCard({ tool }: { tool: ToolCallItem }) {
   if (tool.name === "ask_user") return <QuestionHistory tool={tool} />;
   const { label, icon: Icon } = tools[tool.name as keyof typeof tools] ?? { label: tool.name, icon: Wrench };
-  const detail = tool.name === "read_skill" ? tool.output?.match(/^Skill: (.+)/)?.[1] ?? tool.args?.path : tool.args?.path ?? tool.args?.command ?? tool.args?.query;
+  const detail = tool.name === "read_skill" ? tool.output?.match(/^Skill: (.+)/)?.[1] ?? tool.args?.path : tool.args?.title ?? tool.args?.path ?? tool.args?.command ?? tool.args?.query;
   const searchResult = tool.name === "web_search" && tool.output ? readWebSearchResult(tool.output) : null;
   const status = { pending: "Aguardando autorização", running: "Executando", completed: "Concluída", error: "Não concluída" }[tool.status];
   return (

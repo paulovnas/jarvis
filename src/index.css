@@ -10,6 +10,22 @@
 
 @source not "../docs";
 
+/* The window is fixed; only explicit content viewports may scroll. In WKWebView
+   contain momentum at the boundary instead of chaining into the composer/root. */
+html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; overscroll-behavior: none; }
+.transcript-scroll > [data-slot="scroll-area-viewport"] { overscroll-behavior: none; }
+.chat-footer { overscroll-behavior: none; }
+
+.epic-completed { animation: epic-complete 2.2s ease-in both; }
+@keyframes epic-complete {
+  0% { opacity: 0; transform: translateY(3px); }
+  12%, 72% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-5px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .epic-completed { animation: none; }
+}
+
 /* Settings navigation stays outside the panel scrollport. */
 .settings-navigation [data-slot="tabs-trigger"] {
   height: 34px;
@@ -103,7 +119,9 @@
 }
 
 .chat-composer[data-working="true"]::before,
-.chat-composer[data-working="true"]::after {
+.chat-composer[data-working="true"]::after,
+.agent-execution[data-status="running"]::before,
+.agent-execution[data-status="running"]::after {
   content: "";
   position: absolute;
   inset: -1px;
@@ -122,7 +140,8 @@
   animation: chat-glow-turn 5s linear infinite;
 }
 
-.chat-composer[data-working="true"]::before {
+.chat-composer[data-working="true"]::before,
+.agent-execution[data-status="running"]::before {
   opacity: 0.55;
   filter: blur(4px);
 }
@@ -144,6 +163,8 @@
 @media (prefers-reduced-motion: reduce) {
   .chat-composer[data-working="true"]::before,
   .chat-composer[data-working="true"]::after,
+  .agent-execution[data-status="running"]::before,
+  .agent-execution[data-status="running"]::after,
   .context-meter[data-compacting="true"] [data-slot="progress-track"],
   [data-slot="spinner"] {
     animation: none;
@@ -290,7 +311,6 @@
   .composer-controls { flex-wrap: wrap; row-gap: 4px; }
   .composer-options { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
   .composer-model { min-width: 0; max-width: 230px; }
-  .titlebar-control { border-radius: 0; }
 }
 
 @layer base {

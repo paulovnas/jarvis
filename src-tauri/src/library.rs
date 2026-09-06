@@ -15,6 +15,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use crate::persistence::{AppState, PersistenceError};
 
 pub(crate) mod deletion;
+pub(crate) mod cleanup;
 pub(crate) mod dashboard;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

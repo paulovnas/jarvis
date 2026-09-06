@@ -150,7 +150,7 @@ pub fn answer_agent_question(
     let session = agent.existing(&conversation_id)?;
     answer(&session, &turn_id, &tool_id, response)
 }
-fn answer(session: &Session, turn_id: &str, tool_id: &str, response: Response) -> Result<ChatSnapshot, AgentError> {
+pub(super) fn answer(session: &Session, turn_id: &str, tool_id: &str, response: Response) -> Result<ChatSnapshot, AgentError> {
     let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
     if data.storage_failed { return Err(AgentError::storage()); }
     let pending = data.active.as_ref()

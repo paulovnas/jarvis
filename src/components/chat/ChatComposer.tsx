@@ -7,20 +7,20 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ComposerSkeleton } from "@/components/layout/LoadingSkeletons";
 import { MessageContent } from "./MessageContent";
-import type { ProviderModel } from "@/core/provider-accounts";
-import type { CollaborationMode } from "./types";
+import { ModelPicker, type ProviderModelGroup, type ModelSelection } from "./ModelPicker";
+export type { ProviderModelGroup } from "./ModelPicker";
+import type { AgentModelsController } from "@/hooks/use-agent-models";
+import { FLOW_LABELS, type Workflow } from "@/core/workflow";
 import { mergeDrafts, type ChatDraft, type MessagePart, type QueuedMessage, type TurnOptions } from "@/core/chat";
 
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
 interface ChatComposerProps {
+  agentModels?: AgentModelsController;
   onSendMessage: (content: string, options: TurnOptions, parts?: MessagePart[]) => Promise<boolean>;
   onStop?: () => Promise<void>;
   running?: boolean;
@@ -35,46 +35,16 @@ interface ChatComposerProps {
   onResumeQueue?: () => Promise<void>;
 }
 
-const REASONING_LABELS: Record<string, string> = {
-  none: "Desativado",
-  off: "Desativado",
-  minimal: "Mínimo",
-  low: "Baixo",
-  medium: "Médio",
-  high: "Alto",
-  xhigh: "Extra alto",
-  max: "Máximo",
-  ultra: "Ultra",
-};
-
-function reasoningLabel(level: string): string {
-  return Object.prototype.hasOwnProperty.call(REASONING_LABELS, level)
-    ? REASONING_LABELS[level]
-    : level;
-}
-
-interface ModelOptionDef extends Pick<ProviderModel, "reasoningLevels" | "defaultReasoningLevel"> {
-  value: string;
-  label: string;
-}
-
-export interface ProviderModelGroup {
-  provider: string;
-  models: ModelOptionDef[];
-}
-
 const MODE_OPTIONS = [
-  { value: "build", label: "Build (Escrita & Execução)" },
-  { value: "plan", label: "Plan (Somente Leitura)" },
+  { value: "standard", label: "Padrão" },
+  { value: "planned", label: "Planejado" },
+  { value: "complete", label: "Completo" },
 ] as const;
 
 
-const MODE_LABELS: Record<CollaborationMode, string> = {
-  build: "Build",
-  plan: "Plan",
-};
 
 export function ChatComposer({
+  agentModels,
   onSendMessage,
   modelGroups,
   disabled = false,
@@ -118,19 +88,18 @@ export function ChatComposer({
     model: string;
     reasoning: string | null;
   } | null>(initialOptions ? { model: `${initialOptions.account}/${initialOptions.model}`, reasoning: initialOptions.reasoning } : null);
-  const [mode, setMode] = useState<CollaborationMode>(initialOptions?.mode ?? "build");
-  const [approvalMode, setApprovalMode] = useState<TurnOptions["approvalMode"]>(initialOptions?.approvalMode ?? "yolo");
+  const [workflow, setWorkflow] = useState<Workflow>(initialOptions?.workflow ?? "standard");
 
   const handleSend = async () => {
     const submitted = draftRef.current;
     const trimmed = submitted.content.trim();
-    if (!trimmed || disabled || compacting || sendLock.current || !currentModelDef) return;
+    if (!trimmed || disabled || compacting || agentModels?.saving || sendLock.current || !currentModelDef) return;
     const separator = currentModelDef.value.indexOf("/");
     if (separator < 1) return;
     sendLock.current = true;
     setSending(true);
     try {
-      const options = running && initialOptions ? initialOptions : { account: currentModelDef.value.slice(0, separator), model: currentModelDef.value.slice(separator + 1), reasoning, mode, approvalMode };
+      const options: TurnOptions = running && initialOptions ? { ...initialOptions, approvalMode: "yolo" } : { account: currentModelDef.value.slice(0, separator), model: currentModelDef.value.slice(separator + 1), reasoning, mode: "build", workflow, approvalMode: "yolo" };
       const accepted = submitted.parts?.length ? await onSendMessage(trimmed, options, submitted.parts) : await onSendMessage(trimmed, options);
       const current = draftKey && drafts ? drafts.get(draftKey) ?? { content: "" } : draftRef.current;
       if (accepted && JSON.stringify(current) === JSON.stringify(submitted)) setDraft({ content: "" });
@@ -138,20 +107,21 @@ export function ChatComposer({
   };
 
   const availableModels = modelGroups.flatMap((group) => group.models);
+  const profile = agentModels?.data?.[`${workflow}/${workflow === "standard" ? "builder" : "planner"}`];
+  const effectiveSelection = running && initialOptions ? { model: `${initialOptions.account}/${initialOptions.model}`, reasoning: initialOptions.reasoning } : profile ? { model: `${profile.account}/${profile.model}`, reasoning: profile.reasoning } : selection;
   const currentModelDef =
-    availableModels.find((availableModel) => availableModel.value === selection?.model) ??
-    availableModels[0];
+    availableModels.find((availableModel) => availableModel.value === effectiveSelection?.model) ??
+    (profile ? undefined : availableModels[0]);
   const reasoning =
-    currentModelDef?.value === selection?.model &&
-    selection?.reasoning &&
-    currentModelDef?.reasoningLevels.includes(selection.reasoning)
-      ? selection.reasoning
+    currentModelDef?.value === effectiveSelection?.model &&
+    effectiveSelection?.reasoning &&
+    currentModelDef?.reasoningLevels.includes(effectiveSelection.reasoning)
+      ? effectiveSelection.reasoning
       : currentModelDef?.defaultReasoningLevel ?? currentModelDef?.reasoningLevels[0] ?? null;
-  const displayModelLabel = currentModelDef
-    ? reasoning
-      ? `${currentModelDef.label} · ${reasoningLabel(reasoning)}`
-      : currentModelDef.label
-    : "Nenhum modelo conectado";
+  const chooseModel = (next: ModelSelection) => {
+    if (agentModels) { void agentModels.save(workflow, workflow === "standard" ? "builder" : "planner", { account: next.model.slice(0, next.model.indexOf("/")), model: next.model.slice(next.model.indexOf("/") + 1), reasoning: next.reasoning }); }
+    else setSelection(next);
+  };
 
   return (
     <div className="w-full">
@@ -183,29 +153,14 @@ export function ChatComposer({
 
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}
           <div className="composer-options flex flex-1 items-center gap-0.5">
-            <DropdownMenu>
-              <DropdownMenuTrigger disabled={running || sending || compacting} aria-label="Selecionar autorização de ferramentas" className="flex h-7.5 cursor-pointer items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-accent">
-                {approvalMode === "manual" ? "Manual" : "YOLO"}<ChevronDown className="size-3" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" side="top" className="max-w-80">
-                <DropdownMenuGroup>
-                  <DropdownMenuItem className="cursor-pointer" onClick={() => setApprovalMode("manual")}>
-                    Manual {approvalMode === "manual" && <Check className="size-3" />}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem className="cursor-pointer" onClick={() => setApprovalMode("yolo")}>
-                    YOLO {approvalMode === "yolo" && <Check className="size-3" />}
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
             {/* Seletor do Agente/Modo (mesmo padrão DropdownMenu do seletor de modelo) */}
             <DropdownMenu>
               <DropdownMenuTrigger
-                aria-label="Selecionar modo de execução"
+                aria-label="Selecionar fluxo"
                 disabled={running || sending || compacting}
                 className="flex h-7.5 cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 text-xs font-medium text-foreground shadow-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
               >
-                <span className="truncate">{MODE_LABELS[mode]}</span>
+                <span className="truncate">{FLOW_LABELS[workflow]}</span>
                 <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
               </DropdownMenuTrigger>
 
@@ -217,14 +172,14 @@ export function ChatComposer({
               >
                 <DropdownMenuGroup>
                   <DropdownMenuLabel className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#e5c07b]">
-                    Modo do Agente
+                    Fluxo
                   </DropdownMenuLabel>
                   {MODE_OPTIONS.map((opt) => {
-                    const isSelected = opt.value === mode;
+                    const isSelected = opt.value === workflow;
                     return (
                       <DropdownMenuItem
                         key={opt.value}
-                        onClick={() => setMode(opt.value)}
+                        onClick={() => setWorkflow(opt.value)}
                         className={`flex cursor-pointer items-center justify-between py-1.5 pl-3 pr-2 text-xs hover:bg-secondary ${
                           isSelected
                             ? "font-medium text-[#61afef]"
@@ -242,108 +197,7 @@ export function ChatComposer({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {/* Seletor de Modelo com submenu de raciocínio no hover (padrão Metis) */}
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                aria-label="Selecionar modelo de IA"
-                disabled={running || sending || compacting}
-                className="composer-model flex h-7.5 cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 font-mono text-[10px] font-medium text-foreground shadow-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                <span className="truncate">{displayModelLabel}</span>
-                <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-              </DropdownMenuTrigger>
-
-              <DropdownMenuContent
-                align="end"
-                side="top"
-                sideOffset={8}
-                className="min-w-[220px] border-border bg-card p-1.5 text-foreground"
-              >
-                {modelGroups.length === 0 ? (
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel className="px-2.5 py-2 text-xs font-normal text-muted-foreground">
-                      Conecte um provedor em Configurações.
-                    </DropdownMenuLabel>
-                  </DropdownMenuGroup>
-                ) : (
-                  modelGroups.map((group) => (
-                    <DropdownMenuSub key={group.provider}>
-                        <DropdownMenuSubTrigger className="cursor-pointer gap-3 py-2 font-mono text-xs text-[#56b6c2]">
-                          {group.provider}
-                        </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent className="max-h-[min(480px,70vh)] min-w-[220px] overflow-y-auto border-border bg-card p-1.5 text-foreground">
-                        {group.models.map((option) => {
-                          const isSelected = option.value === currentModelDef?.value;
-
-                          if (option.reasoningLevels.length > 0) {
-                            return (
-                              <DropdownMenuSub key={option.value}>
-                                <DropdownMenuSubTrigger
-                                  className={`cursor-pointer py-1.5 pl-3 pr-2 text-xs hover:bg-secondary ${
-                                    isSelected
-                                      ? "font-medium text-[#61afef]"
-                                      : "text-foreground"
-                                  }`}
-                                >
-                                  <span className="flex-1 truncate">{option.label}</span>
-                                  {isSelected && reasoning && (
-                                    <span className="mr-1 text-[10px] text-muted-foreground">
-                                      {reasoningLabel(reasoning)}
-                                    </span>
-                                  )}
-                                </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent className="min-w-[130px] border-border bg-card p-1 text-foreground">
-                                  <DropdownMenuGroup>
-                                    <DropdownMenuLabel className="px-2 py-1 text-[10px] font-medium text-muted-foreground">
-                                      Raciocínio
-                                    </DropdownMenuLabel>
-                                    {option.reasoningLevels.map((level) => (
-                                      <DropdownMenuItem
-                                        key={level}
-                                        onClick={() => {
-                                          setSelection({ model: option.value, reasoning: level });
-                                        }}
-                                        className={`flex cursor-pointer items-center justify-between px-2.5 py-1.5 text-xs hover:bg-secondary ${
-                                          isSelected && reasoning === level
-                                            ? "bg-secondary/50 font-medium text-[#61afef]"
-                                            : "text-foreground"
-                                        }`}
-                                      >
-                                        <span>{reasoningLabel(level)}</span>
-                                        {isSelected && reasoning === level && (
-                                          <Check className="size-3 text-[#61afef]" />
-                                        )}
-                                      </DropdownMenuItem>
-                                    ))}
-                                  </DropdownMenuGroup>
-                                </DropdownMenuSubContent>
-                              </DropdownMenuSub>
-                            );
-                          }
-
-                          return (
-                            <DropdownMenuItem
-                              key={option.value}
-                              onClick={() => {
-                                setSelection({ model: option.value, reasoning: null });
-                              }}
-                              className={`flex cursor-pointer items-center justify-between py-1.5 pl-3 pr-2 text-xs hover:bg-secondary ${
-                                isSelected
-                                  ? "font-medium text-[#61afef]"
-                                  : "text-foreground"
-                              }`}
-                            >
-                              <span>{option.label}</span>
-                              {isSelected && <Check className="size-3 text-[#61afef]" />}
-                            </DropdownMenuItem>
-                          );
-                        })}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  ))
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <ModelPicker modelGroups={modelGroups} selection={currentModelDef ? { model: currentModelDef.value, reasoning } : null} onSelect={chooseModel} disabled={running || sending || compacting || agentModels?.saving} />
 
             {/* Botão redondo com seta pra cima no canto inferior direito */}
             {running && !compacting && <Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button>}

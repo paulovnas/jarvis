@@ -141,11 +141,12 @@ pub(super) fn recover(connection: &Connection, home: &Path) -> Result<(), Librar
 // The database commit is the authority: a crash before commit retains memory,
 // and a crash after commit leaves an orphan that the next recovery removes.
 fn cleanup_context_memory(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
+    let workers = cleanup_workflows(connection, home)?;
     let directory = home.join(".jarvis/context-mode");
     if !is_directory(&directory)? {
         return Ok(());
     }
-    let live: std::collections::HashSet<_> = connection
+    let mut live: std::collections::HashSet<_> = connection
         .prepare("SELECT id FROM conversations")?
         .query_map([], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?
@@ -157,6 +158,9 @@ fn cleanup_context_memory(connection: &Connection, home: &Path) -> Result<(), Li
                 .to_os_string()
         })
         .collect();
+    for id in workers {
+        if let Some(name) = crate::core::context::storage(home, &id).file_name() { live.insert(name.to_os_string()); }
+    }
     for entry in fs::read_dir(&directory).map_err(|_| deletion_error())? {
         let entry = entry.map_err(|_| deletion_error())?;
         let name = entry.file_name();
@@ -170,6 +174,29 @@ fn cleanup_context_memory(connection: &Connection, home: &Path) -> Result<(), Li
         }
     }
     sync_directory(&directory)
+}
+
+// Workflow artifacts belong to their conversation, never to the source checkout.
+// Retain worker Context-mode stores while the owning conversation still exists.
+fn cleanup_workflows(connection: &Connection, home: &Path) -> Result<Vec<String>, LibraryError> {
+    let root = home.join(".jarvis/workflows");
+    if !is_directory(&root)? { return Ok(vec![]); }
+    let live: std::collections::HashSet<String> = connection.prepare("SELECT id FROM conversations")?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
+    let mut workers = vec![];
+    for entry in fs::read_dir(&root).map_err(|_| deletion_error())? {
+        let entry = entry.map_err(|_| deletion_error())?;
+        let id = entry.file_name().to_string_lossy().into_owned();
+        if !valid_id(&id) { continue; }
+        if !is_directory(&entry.path())? { continue; }
+        if !live.contains(&id) { fs::remove_dir_all(entry.path()).map_err(|_| deletion_error())?; continue; }
+        for artifact in fs::read_dir(entry.path()).map_err(|_| deletion_error())? {
+            let artifact = artifact.map_err(|_| deletion_error())?;
+            let name = artifact.file_name().to_string_lossy().into_owned();
+            if let Some(worker) = name.strip_suffix(".jsonl").filter(|id| valid_id(id)) { workers.push(worker.to_owned()); }
+        }
+    }
+    sync_directory(&root)?;
+    Ok(workers)
 }
 
 fn cleanup_beads_projects(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
@@ -213,7 +240,7 @@ pub(crate) fn conversation_ids(
         .collect::<Result<_, _>>()?)
 }
 
-fn files_to_delete(
+pub(super) fn files_to_delete(
     home: &Path,
     project_id: &str,
     conversation_id: Option<&str>,

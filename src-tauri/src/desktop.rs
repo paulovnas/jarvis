@@ -45,6 +45,7 @@ pub enum SettingsTab {
     #[default]
     General,
     Providers,
+    Agents,
     Skills,
     Mcps,
 }

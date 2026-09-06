@@ -1,16 +1,10 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, Minus, Square, X } from "lucide-react";
+import { Maximize2, Minimize2, Minus, X } from "lucide-react";
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { Button } from "@/components/ui/button";
 
-export type TitleBarContext = "Iniciando" | "Onboarding" | "Início";
-
-type TitleBarProps = {
-  context?: TitleBarContext;
-};
-
-export function TitleBar({ context = "Onboarding" }: TitleBarProps) {
+export function TitleBar() {
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
@@ -69,56 +63,26 @@ export function TitleBar({ context = "Onboarding" }: TitleBarProps) {
   return (
     <header
       data-tauri-drag-region
-      onDoubleClick={handleToggleMaximize}
+      onDoubleClick={event => { if (!(event.target instanceof Element) || !event.target.closest("button")) void handleToggleMaximize(); }}
       className="flex h-9 w-full shrink-0 select-none items-center justify-between border-b border-border bg-sidebar px-3 text-xs font-medium text-muted-foreground shadow-[inset_0_1px_0_#ffffff08]"
     >
-      {/* Left: Branding & Context */}
+      <div aria-label="Controles da janela" className="group flex items-center gap-0.5" onDoubleClick={event => event.stopPropagation()}>
+        <Button variant="ghost" type="button" aria-label="Fechar janela" title="Fechar" onClick={handleClose} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
+          <span className="flex size-3 shrink-0 items-center justify-center rounded-full border border-black/10 bg-[#ff5f57]"><X className="size-2.5 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" /></span>
+        </Button>
+        <Button variant="ghost" type="button" aria-label="Minimizar janela" title="Minimizar" onClick={handleMinimize} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
+          <span className="flex size-3 shrink-0 items-center justify-center rounded-full border border-black/10 bg-[#febc2e]"><Minus className="size-2.5 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" /></span>
+        </Button>
+        <Button variant="ghost" type="button" aria-label={isMaximized ? "Restaurar janela" : "Maximizar janela"} title={isMaximized ? "Restaurar" : "Maximizar"} onClick={handleToggleMaximize} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
+          <span className="flex size-3 shrink-0 items-center justify-center rounded-full border border-black/10 bg-[#28c840]">{isMaximized ? <Minimize2 className="size-2 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" /> : <Maximize2 className="size-2 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" />}</span>
+        </Button>
+      </div>
+      <div data-tauri-drag-region className="h-full flex-1" />
       <div data-tauri-drag-region className="flex items-center gap-2 min-w-0">
         <JarvisLogo className="size-4 shrink-0" />
         <span className="font-semibold uppercase text-foreground tracking-[.2em] text-[11px]">
           Jarvis
         </span>
-        <span className="mx-1 h-3 border-l border-border" />
-        <span className="font-mono text-[10px] text-muted-foreground truncate">
-          {context}
-        </span>
-      </div>
-
-      {/* Center: Draggable Spacer */}
-      <div data-tauri-drag-region className="flex-1 h-full" />
-
-      {/* Right: Window Controls */}
-      <div className="flex items-center -mr-3 h-full">
-        <Button variant="ghost"
-          type="button"
-          aria-label="Minimizar janela"
-          onClick={handleMinimize}
-          className="titlebar-control flex h-full w-10 items-center justify-center text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer"
-        >
-          <Minus className="size-3.5" />
-        </Button>
-
-        <Button variant="ghost"
-          type="button"
-          aria-label={isMaximized ? "Restaurar janela" : "Maximizar janela"}
-          onClick={handleToggleMaximize}
-          className="titlebar-control flex h-full w-10 items-center justify-center text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer"
-        >
-          {isMaximized ? (
-            <Copy className="size-3 rotate-180" />
-          ) : (
-            <Square className="size-3" />
-          )}
-        </Button>
-
-        <Button variant="ghost"
-          type="button"
-          aria-label="Fechar janela"
-          onClick={handleClose}
-          className="titlebar-control flex h-full w-10 items-center justify-center text-muted-foreground hover:bg-destructive hover:text-white transition-colors cursor-pointer"
-        >
-          <X className="size-3.5" />
-        </Button>
       </div>
     </header>
   );

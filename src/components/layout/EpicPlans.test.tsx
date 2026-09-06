@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { bead } from "@/test/dashboard-fixtures";
 import { EpicPlans } from "./EpicPlans";
@@ -11,6 +11,7 @@ const epic = bead({ id: "epic", issue_type: "epic", title: "Integrar autenticaç
 
 describe("Epic plans", () => {
   beforeEach(() => call.mockReset());
+  afterEach(() => vi.useRealTimers());
   it("shows unfinished epics, summarizes all child relations and opens the project Kanban", async () => {
     call.mockResolvedValue([
       epic,
@@ -45,13 +46,42 @@ describe("Epic plans", () => {
     fireEvent.click(await screen.findByRole("button", { name: `Plano: ${epic.title}` }));
     await screen.findByRole("dialog", { name: epic.title });
     call.mockResolvedValue([{ ...epic, status: "closed" }]);
-    fireEvent(window, new Event("focus"));
-    await screen.findByText("Nenhum plano em aberto.");
+    vi.useFakeTimers();
+    await act(async () => { fireEvent(window, new Event("focus")); });
+    expect(screen.getByText("FINALIZADO")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await act(async () => { vi.advanceTimersByTime(1000); fireEvent(window, new Event("focus")); });
+    await act(async () => { vi.advanceTimersByTime(1200); });
+    expect(screen.getByText("Nenhum plano em aberto.")).toBeInTheDocument();
+    await act(async () => { fireEvent(window, new Event("focus")); });
+    expect(screen.queryByText("FINALIZADO")).not.toBeInTheDocument();
+    vi.useRealTimers();
     call.mockResolvedValue([epic]);
     fireEvent(window, new Event("focus"));
     await screen.findByRole("button", { name: `Plano: ${epic.title}` });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("does not celebrate missing or initially closed epics and cancels the animation when reopened", async () => {
+    call.mockResolvedValue([epic, { ...epic, id: "old", title: "Antigo", status: "closed" }]);
+    render(<EpicPlans projectId="p1" />);
+    await screen.findByRole("button", { name: `Plano: ${epic.title}` });
+    expect(screen.queryByText("FINALIZADO")).not.toBeInTheDocument();
+    call.mockResolvedValue([]);
+    fireEvent(window, new Event("focus"));
+    await screen.findByText("Nenhum plano em aberto.");
+    expect(screen.queryByText("FINALIZADO")).not.toBeInTheDocument();
+    call.mockResolvedValue([epic]);
+    fireEvent(window, new Event("focus"));
+    await screen.findByRole("button", { name: `Plano: ${epic.title}` });
+    vi.useFakeTimers();
+    call.mockResolvedValue([{ ...epic, status: "closed" }]);
+    await act(async () => { fireEvent(window, new Event("focus")); });
+    expect(screen.getByText("FINALIZADO")).toBeInTheDocument();
+    call.mockResolvedValue([epic]);
+    await act(async () => { fireEvent(window, new Event("focus")); });
+    await act(async () => { vi.advanceTimersByTime(2500); });
+    expect(screen.queryByText("FINALIZADO")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `Plano: ${epic.title}` })).toBeInTheDocument();
   });
   it("does not leak a late response from another project", async () => {
     let resolve!: (value: unknown) => void;

@@ -431,7 +431,7 @@ mod tests {
             account,
             model: "gpt-5.6-luna".into(),
             reasoning: Some("low".into()),
-            mode: Mode::Plan,
+            mode: Mode::Plan, workflow: None,
             approval_mode: ApprovalMode::Manual,
         };
         let auth_options = options.clone();
@@ -492,7 +492,7 @@ mod tests {
             account: "a".into(),
             model: "chosen-model".into(),
             reasoning: Some("high".into()),
-            mode: Mode::Plan,
+            mode: Mode::Plan, workflow: None,
             approval_mode: ApprovalMode::Manual,
         };
         let body = request_body(

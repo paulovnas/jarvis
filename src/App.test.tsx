@@ -107,7 +107,7 @@ describe("App bootstrap and onboarding", () => {
     expect(
       screen.queryByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).not.toBeInTheDocument();
-    expect(titleBar()).toHaveTextContent("Iniciando");
+    expect(titleBar()).toHaveTextContent(/^Jarvis$/);
 
     config.resolve({ onboardingCompleted: false });
     await waitFor(() =>
@@ -125,7 +125,7 @@ describe("App bootstrap and onboarding", () => {
     expect(
       await screen.findByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).toBeInTheDocument();
-    expect(titleBar()).toHaveTextContent("Onboarding");
+    expect(titleBar()).toHaveTextContent(/^Jarvis$/);
     expect(screen.getByRole("button", { name: "Finalizar" })).toBeEnabled();
     expect(screen.queryByTestId("home-shell")).not.toBeInTheDocument();
   });
@@ -138,7 +138,7 @@ describe("App bootstrap and onboarding", () => {
     expect(
       await screen.findByTestId("home-shell", {}, { timeout: 5_000 }),
     ).toBeInTheDocument();
-    expect(titleBar()).toHaveTextContent("Início");
+    expect(titleBar()).toHaveTextContent(/^Jarvis$/);
     expect(
       screen.queryByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).not.toBeInTheDocument();
@@ -154,7 +154,7 @@ describe("App bootstrap and onboarding", () => {
     render(<App />);
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(titleBar()).toHaveTextContent("Iniciando");
+    expect(titleBar()).toHaveTextContent(/^Jarvis$/);
     expect(
       screen.queryByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).not.toBeInTheDocument();
@@ -190,7 +190,7 @@ describe("App bootstrap and onboarding", () => {
     expect(
       await screen.findByTestId("home-shell", {}, { timeout: 5_000 }),
     ).toBeInTheDocument();
-    expect(titleBar()).toHaveTextContent("Início");
+    expect(titleBar()).toHaveTextContent(/^Jarvis$/);
   });
 
   it("permanece no onboarding, reabilita Finalizar e mostra erro quando conclusão falha", async () => {
@@ -211,7 +211,7 @@ describe("App bootstrap and onboarding", () => {
       ),
     );
     expect(screen.getByRole("button", { name: "Finalizar" })).toBeEnabled();
-    expect(titleBar()).toHaveTextContent("Onboarding");
+    expect(titleBar()).toHaveTextContent(/^Jarvis$/);
     expect(screen.queryByTestId("home-shell")).not.toBeInTheDocument();
   });
 

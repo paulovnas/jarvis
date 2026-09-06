@@ -16,6 +16,8 @@ import { Inspector } from "./Inspector";
 import { AppSidebar } from "./Sidebar";
 import { useLibrary } from "@/hooks/use-library";
 import { useChat } from "@/hooks/use-chat";
+import { useWorkflow } from "@/hooks/use-workflow";
+import { useAgentModels } from "@/hooks/use-agent-models";
 import { useAgentActivity } from "@/hooks/use-agent-activity";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
@@ -37,6 +39,8 @@ export function Home() {
     void library.select({ kind: "project", id: projectId }).then(selected => { if (!selected) setKanbanProjectId(null); });
   };
   const chat = useChat(library.snapshot?.selection.conversationId ?? null);
+  const workflow = useWorkflow(library.snapshot?.selection.conversationId ?? null);
+  const agentModels = useAgentModels();
   const runningConversationIds = useAgentActivity();
   const dashboardProject = !library.snapshot?.selection.conversationId
     ? library.snapshot?.projects.find(project => project.id === library.snapshot?.selection.projectId)
@@ -133,7 +137,7 @@ export function Home() {
           minSize="360px"
           className="h-full min-h-0 min-w-0"
         >
-          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} library={library.snapshot} chat={chat} />}
+          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} />}
         </ResizablePanel>
 
         {!dashboardProject && <><ResizableHandle
@@ -151,7 +155,7 @@ export function Home() {
           maxSize="550px"
           className="h-full min-h-0 min-w-0"
         >
-          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector library={library.snapshot} chat={chat.snapshot} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} /></div>
+          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} /></div>
         </ResizablePanel></>}
       </ResizablePanelGroup>
       <StatusBar accounts={accounts} onOpenSettings={() => setSettingsOpen(true)} />

@@ -54,7 +54,7 @@ pub async fn compact_agent_context(
     agent: tauri::State<'_, AgentState>,
     conversation_id: String,
 ) -> Result<ChatSnapshot, AgentError> {
-    let session = agent.existing(&conversation_id)?;
+    let session = agent.runtime_session(&app, &persistence, &conversation_id).await?;
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     crate::core::require_ready(&home)?;
     let hooks = crate::core::hooks::Hooks::new(&home, &session.root, &session.id)?;
@@ -104,7 +104,9 @@ pub async fn compact_agent_context(
     })?;
     drop(lease);
     result?;
-    session.snapshot()
+    let snapshot = session.snapshot();
+    agent.release_idle(&session);
+    snapshot
 }
 
 #[cfg(test)]
@@ -118,7 +120,7 @@ mod tests {
             account: "test".into(),
             model: "model".into(),
             reasoning: None,
-            mode: Mode::Plan,
+            mode: Mode::Plan, workflow: None,
             approval_mode: ApprovalMode::Manual,
         };
         assert!(begin(session.clone()).is_err());

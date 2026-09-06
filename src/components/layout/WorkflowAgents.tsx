@@ -1,0 +1,80 @@
+import { useEffect, useRef, useState } from "react";
+import { Bot, ChevronRight } from "lucide-react";
+import { AGENT_ICONS } from "@/components/agents/agent-presentation";
+import { aliasSuffix } from "@/core/provider-usage";
+import { reasoningLabel } from "@/core/reasoning";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import { activeAgent, ROLE_COLORS, ROLE_LABELS, STATUS_LABELS, type WorkflowAgent } from "@/core/workflow";
+import { useWorkflowTranscript, type WorkflowController } from "@/hooks/use-workflow";
+import { TurnBody } from "@/components/chat/Transcript";
+import { UserMessageBubble } from "@/components/chat/UserMessageBubble";
+import { CompactionMarker } from "@/components/chat/CompactionMarker";
+
+function ModelDetails({ agent }: { agent: WorkflowAgent }) {
+  return <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-[9px] text-muted-foreground" title={`${agent.options.account} / ${agent.options.model}`}>
+    <span className="max-w-24 truncate text-foreground/75">{aliasSuffix(agent.options.account)}</span><span aria-hidden="true" className="text-border">/</span><span className="truncate">{agent.options.model}</span>
+    {agent.options.reasoning && <><span aria-hidden="true">·</span><span>{reasoningLabel(agent.options.reasoning)}</span></>}
+  </span>;
+}
+function StatusBadge({ agent }: { agent: WorkflowAgent }) {
+  const color = agent.status === "completed" ? "#98c379" : ["failed", "blocked"].includes(agent.status) ? "#e06c75" : activeAgent(agent) ? ROLE_COLORS[agent.role] : "#abb2bf";
+  return <Badge variant="outline" className="text-[9px]" style={{ color, borderColor: `${color}40`, backgroundColor: `${color}10` }}>{STATUS_LABELS[agent.status]}</Badge>;
+}
+function AgentHistory({ conversationId, agent }: { conversationId: string; agent: WorkflowAgent }) {
+  const transcript = useWorkflowTranscript(conversationId, agent.id);
+  const root = useRef<HTMLDivElement>(null);
+  const follow = useRef(true);
+  useEffect(() => {
+    const viewport = root.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (viewport && follow.current) viewport.scrollTop = viewport.scrollHeight;
+  }, [transcript.data]);
+  return <div ref={root} className="flex min-h-0 flex-1 flex-col">
+    {transcript.error ? <div role="alert" className="space-y-3 p-5 text-xs"><p className="text-destructive">{transcript.error}</p><Button variant="outline" size="sm" className="cursor-pointer" onClick={transcript.retry}>Tentar novamente</Button></div>
+      : !transcript.data ? <div role="status" aria-label="Carregando histórico do agente" className="space-y-5 p-6"><Skeleton className="ml-auto h-16 w-2/3" /><Skeleton className="h-6 w-1/3" /><Skeleton className="h-32 w-full" /></div>
+      : <ScrollArea className="min-h-0 flex-1" onScrollCapture={event => { const view = event.target; if (view instanceof HTMLElement && view.dataset.slot === "scroll-area-viewport") follow.current = view.scrollHeight - view.scrollTop - view.clientHeight < 100; }}>
+        <div aria-label="Histórico do agente" className="px-5 pb-5">{transcript.data.turns.map(turn => <div key={turn.id}>
+          <UserMessageBubble message={{ id: turn.id, role: "user", content: turn.user, timestamp: new Date(turn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />
+          {transcript.data?.compactions?.filter(event => event.turnId === turn.id && !event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
+          <TurnBody turn={turn} />
+          {transcript.data?.compactions?.filter(event => event.turnId === turn.id && event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
+        </div>)}</div>
+      </ScrollArea>}
+  </div>;
+}
+export function WorkflowAgents({ workflow, conversationId }: { workflow?: WorkflowController; conversationId?: string }) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const agents = workflow?.data?.agents ?? [];
+  const selectedAgent = agents.find(agent => agent.id === selected);
+  const ordered = [...agents].sort((a, b) => Number(activeAgent(b)) - Number(activeAgent(a)) || a.createdAt - b.createdAt);
+  const visible = expanded ? ordered : ordered.slice(0, 8);
+  return <>
+    {workflow?.error ? <div role="alert" className="space-y-2 text-xs"><p className="text-destructive">{workflow.error}</p><Button variant="ghost" size="sm" className="cursor-pointer" onClick={workflow.retry}>Tentar novamente</Button></div>
+      : workflow?.loading ? <div role="status" aria-label="Carregando agentes" className="space-y-2"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div>
+      : !agents.length ? <p className="text-xs text-muted-foreground">Nenhum agente em execução.</p>
+      : <div className="space-y-2">{visible.map(agent => {
+        const Icon = AGENT_ICONS[agent.role];
+        return <Button key={agent.id} variant="ghost" data-status={agent.status} style={agent.status === "waiting" || agent.status === "queued" ? { borderColor: `${ROLE_COLORS[agent.role]}80` } : undefined} onClick={() => setSelected(agent.id)} aria-label={`Abrir agente ${ROLE_LABELS[agent.role]}: ${agent.title}`} className="agent-execution relative isolate h-auto w-full cursor-pointer flex-col items-stretch gap-2 rounded-md border border-border bg-card/60 p-3 text-left whitespace-normal shadow-[inset_0_1px_0_#ffffff0a] hover:border-primary/40">
+          <span className="flex items-center gap-2"><Icon aria-hidden="true" className="size-3.5 shrink-0" style={{ color: ROLE_COLORS[agent.role] }} /><span className="flex-1 text-xs font-medium">{ROLE_LABELS[agent.role]}</span>{agent.status === "running" && <span aria-label="Em execução" className="size-1.5 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />}<ChevronRight className="size-3 text-muted-foreground" /></span>
+          {agent.title !== ROLE_LABELS[agent.role] && <span className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{agent.title}</span>}
+          <span className="flex items-center gap-2"><StatusBadge agent={agent} /></span>
+          <ModelDetails agent={agent} />
+        </Button>;
+      })}{ordered.length > 8 && <Button variant="ghost" size="sm" className="w-full cursor-pointer text-xs" onClick={() => setExpanded(value => !value)}>{expanded ? "Ver menos" : `Ver todos (${ordered.length})`}</Button>}</div>}
+    <Dialog open={!!selectedAgent} onOpenChange={open => { if (!open) setSelected(null); }}>
+      {selectedAgent && conversationId && <DialogContent className="dark flex h-[min(760px,85dvh)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+        <DialogHeader className="shrink-0 border-b border-border bg-sidebar p-5 pr-12">
+          <DialogDescription className="micro-label flex items-center gap-2" style={{ color: ROLE_COLORS[selectedAgent.role] }}><Bot className="size-3.5" />{ROLE_LABELS[selectedAgent.role]}<StatusBadge agent={selectedAgent} /></DialogDescription>
+          <DialogTitle className="text-sm">{selectedAgent.title}</DialogTitle>
+          <ModelDetails agent={selectedAgent} />
+          {selectedAgent.attempts > 1 && <span className="font-mono text-[10px] text-muted-foreground">Rodada {selectedAgent.attempts}</span>}
+        </DialogHeader>
+        <AgentHistory key={`${conversationId}/${selectedAgent.id}`} conversationId={conversationId} agent={selectedAgent} />
+      </DialogContent>}
+    </Dialog>
+  </>;
+}

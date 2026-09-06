@@ -7,6 +7,14 @@ import { ToolCallCard } from "./ToolCallCard";
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 
 describe("ToolCallCard Web Search", () => {
+  it("identifica a delegação pelo título e mantém o despacho recolhido", async () => {
+    const user = userEvent.setup();
+    render(<ToolCallCard tool={{ id: "worker1", name: "hub_spawn", status: "completed", args: { title: "Revisar autenticação", prompt: "Inspecionar os critérios" }, output: "Agente iniciado" }} />);
+    const trigger = screen.getByRole("button", { name: /Delegar tarefa.*Revisar autenticação/ });
+    expect(screen.queryByText("Agente iniciado")).not.toBeInTheDocument();
+    await user.click(trigger);
+    expect(screen.getByText("Agente iniciado")).toBeVisible();
+  });
   it("mantém o resultado do Beads recolhido e permite consultar a tarefa salva", async () => {
     const user = userEvent.setup();
     const output = JSON.stringify({ id: "project-task", title: "Corrigir seleção", status: "open" });

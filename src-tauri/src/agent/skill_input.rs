@@ -71,7 +71,7 @@ mod tests {
         let parts = vec![MessagePart::Skill { id: available[0].id.clone(), name: "spoofed-name".into() }, MessagePart::Text { text: " Verifique 🦀".into() }];
         let (content, parts) = normalize(&fixture.root, &fixture.root, "ignored".into(), parts).unwrap();
         assert_eq!(content, "/manual Verifique 🦀");
-        let options = TurnOptions { account: "test".into(), model: "test".into(), reasoning: None, mode: Mode::Plan, approval_mode: ApprovalMode::Manual };
+        let options = TurnOptions { account: "test".into(), model: "test".into(), reasoning: None, mode: Mode::Plan, workflow: None, approval_mode: ApprovalMode::Manual };
         session.submit_message("first".into(), options.clone(), vec![]).unwrap();
         session.submit_message(content.clone(), options, parts).unwrap();
         let (_, extras) = journal::load_all(&session.journal).unwrap();

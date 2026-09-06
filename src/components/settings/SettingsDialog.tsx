@@ -4,10 +4,13 @@ import { WebSearchSettings } from "./WebSearchSettings";
 import { McpSettings } from "./McpSettings";
 import { SkillsSettings } from "./SkillsSettings";
 import { CoreSettings } from "./CoreSettings";
+import { ChatCleanupSettings } from "./ChatCleanupSettings";
+import { AgentSettings } from "./AgentSettings";
 import { skillsSnapshotSchema } from "@/core/skills";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
+  Users,
   BookOpen,
   ExternalLink,
   Link2,
@@ -107,7 +110,7 @@ function safeErrorMessage(error: unknown, fallback: string): string {
 export function SettingsDialog({ open, onOpenChange, onAccountsChange }: SettingsDialogProps) {
   const { layout, updateLayout } = useDesktopLayout();
   const activeTab = layout.settingsTab;
-  const setActiveTab = (value: string) => { if (value === "general" || value === "providers" || value === "skills" || value === "mcps") updateLayout({ settingsTab: value }); };
+  const setActiveTab = (value: string) => { if (value === "general" || value === "providers" || value === "agents" || value === "skills" || value === "mcps") updateLayout({ settingsTab: value }); };
   const [mcpCount, setMcpCount] = useState<number | null>(null);
   const [skillCount, setSkillCount] = useState<number | null>(null);
   const skillCountVersion = useRef(0);
@@ -432,7 +435,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
   const renderList = () => {
     if (listState === "loading") {
       return (
-        <CardsSkeleton label="Carregando contas conectadas" />
+        <CardsSkeleton label="Carregando contas conectadas" columns />
       );
     }
 
@@ -501,7 +504,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
             </EmptyContent>
           </Empty>
         ) : (
-          <div className="flex flex-col gap-3">
+          <div className="grid items-start gap-3 sm:grid-cols-2">
             {accounts.map((account) => (
               <ProviderAccountCard
                 key={account.alias}
@@ -673,6 +676,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
             <div className="settings-navigation shrink-0 overflow-x-auto border-b border-border bg-sidebar px-6 py-2.5">
               <TabsList aria-label="Configurações" className="w-max gap-1 rounded-md bg-transparent p-0">
                 <TabsTrigger value="general" className="cursor-pointer gap-2 px-2 text-xs"><Settings aria-hidden="true" className="size-3.5" />Geral</TabsTrigger>
+                <TabsTrigger value="agents" className="cursor-pointer gap-2 px-2 text-xs"><Users aria-hidden="true" className="size-3.5" />Agentes</TabsTrigger>
                 <TabsTrigger
                   value="providers"
                   className="cursor-pointer gap-2 px-2 text-xs"
@@ -690,7 +694,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               </TabsList>
             </div>
 
-            <TabsContent value="general" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "general" && <CoreSettings />}</TabsContent>
+            <TabsContent value="general" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "general" && <><CoreSettings /><ChatCleanupSettings /></>}</TabsContent>
+            <TabsContent value="agents" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "agents" && <AgentSettings accounts={accounts} />}</TabsContent>
             <TabsContent value="skills" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</TabsContent>
             <TabsContent value="providers" className="flex-1 min-h-0 m-0 overflow-y-auto p-0">
               <div className="px-6 py-5">

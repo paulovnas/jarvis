@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { queuedMessageSchema, readChat, type ChatDraft, type MessagePart, type ChatSnapshot, type TurnOptions } from "@/core/chat";
+import { historyPageSchema, queuedMessageSchema, readChat, type ChatDraft, type MessagePart, type ChatSnapshot, type TurnOptions } from "@/core/chat";
+import { historyWindow, mergeChat, mergeHistory, type HistoryDirection } from "@/core/chat-history";
 import { libraryError } from "@/core/library";
 import type { PendingQuestion, QuestionResponse } from "@/core/questions";
 
@@ -11,6 +12,10 @@ export function useChat(conversationId: string | null) {
   const [error, setError] = useState<{ id: string; message: string } | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [historyPending, setHistoryPending] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<{ id: string; message: string } | null>(null);
+  const historyRequest = useRef(0);
+  const historyLock = useRef<string | null>(null);
   const generation = useRef(0);
   const sending = useRef(false);
   const compactLocks = useRef(new Set<string>());
@@ -19,7 +24,7 @@ export function useChat(conversationId: string | null) {
 
   const accept = useCallback((value: unknown, id: string) => {
     const next = readChat(value, id);
-    setLoaded(current => current?.conversationId === id && current.revision > next.revision ? current : next);
+    setLoaded(current => mergeChat(current, next));
   }, []);
 
   useEffect(() => {
@@ -46,6 +51,24 @@ export function useChat(conversationId: string | null) {
     });
     return () => { active = false; dispose?.(); if (generation.current === request) generation.current += 1; };
   }, [conversationId, attempt, accept]);
+
+  const loadHistory = async (direction: HistoryDirection): Promise<boolean> => {
+    if (!conversationId || !snapshot || historyLock.current === conversationId) return false;
+    const id = conversationId; const request = generation.current; const sequence = ++historyRequest.current;
+    const window = historyWindow(snapshot);
+    const cursor = typeof direction === "number" ? { around: direction } : direction === "older" ? { before: window.start } : direction === "newer" ? { after: window.start + snapshot.turns.length } : {};
+    historyLock.current = id; setHistoryPending(id); setHistoryError(null);
+    try {
+      const page = historyPageSchema.parse(await invoke<unknown>("get_chat_history", { conversationId: id, ...cursor }));
+      if (page.conversationId !== id) throw new Error("Mismatched history");
+      if (generation.current !== request || sequence !== historyRequest.current) return false;
+      setLoaded(current => current?.conversationId === id ? mergeHistory(current, page, direction) : current);
+      return true;
+    } catch (cause) {
+      if (generation.current === request) setHistoryError({ id, message: libraryError(cause, "Não foi possível carregar este trecho.") });
+      return false;
+    } finally { if (sequence === historyRequest.current) { historyLock.current = null; setHistoryPending(null); } }
+  };
 
   const send = async (content: string, options: TurnOptions, parts?: MessagePart[]): Promise<boolean> => {
     if (!conversationId || !snapshot || sending.current || compactLocks.current.has(conversationId) || snapshot.context?.compacting) return false;
@@ -112,6 +135,6 @@ export function useChat(conversationId: string | null) {
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível compactar o contexto.")); return false; }
     finally { compactLocks.current.delete(id); setCompactingIds(new Set(compactLocks.current)); }
   };
-  return { snapshot, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, send, stop, approve, answerQuestion, removeQueued, resumeQueue, compact, retry: () => setAttempt(value => value + 1) };
+  return { snapshot, loadHistory, historyLoading: historyPending === conversationId && conversationId !== null, historyError: historyError?.id === conversationId ? historyError.message : null, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, send, stop, approve, answerQuestion, removeQueued, resumeQueue, compact, retry: () => setAttempt(value => value + 1) };
 }
 export type ChatController = ReturnType<typeof useChat>;

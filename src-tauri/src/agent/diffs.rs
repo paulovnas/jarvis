@@ -75,7 +75,7 @@ impl FileRevision {
     fn changed(&self) -> bool {
         self.base == "unknown" || self.before != self.after
     }
-    fn summary(&self) -> FileSummary {
+    pub(super) fn summary(&self) -> FileSummary {
         FileSummary {
             path: self.path.clone(),
             additions: self.additions,
@@ -293,20 +293,28 @@ pub(super) fn load_legacy(
 
 #[tauri::command]
 pub async fn get_agent_file_changes(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
     agent: tauri::State<'_, AgentState>,
     conversation_id: String,
 ) -> Result<Vec<FileSummary>, AgentError> {
-    let session = agent.existing(&conversation_id)?;
+    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let state = persistence.inner().clone(); let agent = agent.inner().clone();
+    let session = tauri::async_runtime::spawn_blocking(move || agent.file_session(&state, &home, &conversation_id)).await.map_err(|_| AgentError::internal())??;
     Ok(working::files(&session, None).await?.iter().map(FileRevision::summary).collect())
 }
 
 #[tauri::command]
 pub async fn get_agent_file_diff(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
     agent: tauri::State<'_, AgentState>,
     conversation_id: String,
     path: String,
 ) -> Result<FileDiff, AgentError> {
-    let session = agent.existing(&conversation_id)?;
+    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let state = persistence.inner().clone(); let agent = agent.inner().clone();
+    let session = tauri::async_runtime::spawn_blocking(move || agent.file_session(&state, &home, &conversation_id)).await.map_err(|_| AgentError::internal())??;
     let file = working::files(&session, Some(&path)).await?.pop()
         .ok_or_else(|| {
             AgentError::new(

@@ -4,21 +4,19 @@ import { describe, expect, it } from "vitest";
 import { TitleBar } from "./TitleBar";
 
 describe("TitleBar Component", () => {
-  it("renderiza branding do Jarvis e indicador de contexto", () => {
-    render(<TitleBar context="Onboarding" />);
-
-    expect(screen.getByText("Jarvis")).toBeInTheDocument();
-    expect(screen.getByText("Onboarding")).toBeInTheDocument();
+  it("shows window controls in macOS order before the branding without a page label", () => {
+    render(<TitleBar />);
+    const buttons = screen.getAllByRole("button");
+    expect(buttons.map(button => button.getAttribute("aria-label"))).toEqual(["Fechar janela", "Minimizar janela", "Maximizar janela"]);
+    expect(screen.getByRole("banner")).toHaveTextContent(/^Jarvis$/);
+    expect(buttons[2].compareDocumentPosition(screen.getByText("Jarvis")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it.each(["Iniciando", "Onboarding", "Início"] as const)(
-    "renderiza o contexto %s",
-    (context) => {
-      render(<TitleBar context={context} />);
-
-      expect(screen.getByRole("banner")).toHaveTextContent(context);
-    },
-  );
+  it("does not maximize when double clicking the minimize control", async () => {
+    const user = userEvent.setup(); render(<TitleBar />);
+    await user.dblClick(screen.getByRole("button", { name: "Minimizar janela" }));
+    expect(screen.getByRole("button", { name: "Maximizar janela" })).toBeInTheDocument();
+  });
 
   it("renderiza os botões de controle de janela com acessibilidade e cursor-pointer", () => {
     render(<TitleBar />);

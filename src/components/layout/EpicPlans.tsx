@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ArrowUpRight, ChevronRight, Layers3 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { ArrowUpRight, ChevronRight, Layers3, Trophy } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -21,8 +21,31 @@ function Status({ issue }: { issue: Bead }) {
 }
 
 export function EpicPlans({ projectId, onOpenKanban }: { projectId: string; onOpenKanban?: (projectId: string) => void }) {
+  return <ProjectPlans key={projectId} projectId={projectId} onOpenKanban={onOpenKanban} />;
+}
+
+function CompletedPlan({ issue, onFinish }: { issue: Bead; onFinish: (id: string) => void }) {
+  useEffect(() => {
+    const timer = window.setTimeout(() => onFinish(issue.id), 2200);
+    return () => window.clearTimeout(timer);
+  }, [issue.id, onFinish]);
+  return <div role="status" aria-label={`Plano finalizado: ${issue.title}`} className="epic-completed relative overflow-hidden rounded-md border border-onedark-green/40 bg-onedark-green/10 p-3 shadow-[inset_0_1px_0_#ffffff0a]">
+    <div className="flex items-center gap-2 text-onedark-green"><Trophy aria-hidden="true" className="size-4" /><span className="font-mono text-[11px] font-semibold tracking-[0.18em]">FINALIZADO</span></div>
+    <p className="mt-2 line-clamp-2 text-xs leading-5 text-foreground">{issue.title}</p>
+  </div>;
+}
+
+function ProjectPlans({ projectId, onOpenKanban }: { projectId: string; onOpenKanban?: (projectId: string) => void }) {
   const board = useDashboardQuery("get_project_beads", projectId, boardSchema);
   const [selected, setSelected] = useState<string | null>(null);
+  const [display, setDisplay] = useState<{ source: Bead[] | null; items: Bead[] }>({ source: null, items: [] });
+  if (board.data && !board.error && display.source !== board.data) {
+    // Only an observed open -> closed transition earns a completion animation.
+    setDisplay({ source: board.data, items: board.data.filter(issue => issue.issue_type === "epic" && (issue.status !== "closed" || display.items.some(item => item.id === issue.id))) });
+  }
+  const finishCompletion = useCallback((id: string) => {
+    setDisplay(current => ({ ...current, items: current.items.filter(item => item.id !== id || item.status !== "closed") }));
+  }, []);
   const epics = (board.data ?? []).filter(issue => issue.issue_type === "epic" && issue.status !== "closed");
   const epic = epics.find(issue => issue.id === selected);
   if (selected && ((board.data && !epic) || board.error)) setSelected(null);
@@ -31,8 +54,9 @@ export function EpicPlans({ projectId, onOpenKanban }: { projectId: string; onOp
   return <>
     {board.error ? <div role="alert" className="space-y-2 text-xs"><p className="text-destructive">{board.error}</p><Button variant="ghost" size="sm" className="cursor-pointer" onClick={() => void board.refresh()}>Tentar novamente</Button></div>
       : !board.data ? <div role="status" aria-label="Carregando planos" className="space-y-2"><Skeleton className="h-20 w-full rounded-md" /><Skeleton className="h-20 w-full rounded-md" /></div>
-      : !epics.length ? <p className="text-xs text-muted-foreground">Nenhum plano em aberto.</p>
-      : <div className="space-y-2">{epics.map(item => {
+      : !display.items.length ? <p className="text-xs text-muted-foreground">Nenhum plano em aberto.</p>
+      : <div className="space-y-2">{display.items.map(item => {
+        if (item.status === "closed") return <CompletedPlan key={item.id} issue={item} onFinish={finishCompletion} />;
         const children = childrenOf(item, board.data ?? []);
         const done = children.filter(child => child.status === "closed").length;
         return <Button key={item.id} variant="ghost" aria-label={`Plano: ${item.title}`} onClick={() => setSelected(item.id)} className="group h-auto w-full cursor-pointer flex-col items-stretch gap-2.5 rounded-md border border-border bg-card/60 p-3 text-left whitespace-normal shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] hover:border-[#c678dd]/40 hover:bg-[#c678dd]/5">

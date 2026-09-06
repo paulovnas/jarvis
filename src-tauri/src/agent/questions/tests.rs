@@ -17,7 +17,7 @@ fn response() -> Response {
 fn prepare(fixture: &Fixture) -> (Arc<Session>, ToolCall, watch::Receiver<bool>) {
     let session = session(fixture);
     let signal = session.reserve("Ajude a escolher".into(), TurnOptions {
-        account:"account".into(), model:"model".into(), reasoning:None, mode:Mode::Build, approval_mode:ApprovalMode::Manual,
+        account:"account".into(), model:"model".into(), reasoning:None, mode:Mode::Build, workflow:None, approval_mode:ApprovalMode::Manual,
     }).unwrap();
     let tool = ToolCall { id:"ask-1".into(), name:"ask_user".into(), args:request(), status:"running".into(), output:String::new(), duration_ms:0 };
     session.update(true, |data| {
@@ -137,7 +137,7 @@ async fn available_in_plan_build_manual_yolo_without_an_approval_prompt() {
     for mode in [Mode::Plan, Mode::Build] {
         assert!(tools::definitions(mode).iter().any(|definition| definition["name"] == "ask_user"));
         for approval_mode in [ApprovalMode::Manual, ApprovalMode::Yolo] {
-            let options = TurnOptions { account:"account".into(), model:"model".into(), reasoning:None, mode, approval_mode };
+            let options = TurnOptions { account:"account".into(), model:"model".into(), reasoning:None, mode, workflow: None, approval_mode };
             assert!(authorize(&session, &tool, &options, signal.clone()).await.unwrap());
             assert!(session.snapshot().unwrap().pending_approval.is_none());
         }

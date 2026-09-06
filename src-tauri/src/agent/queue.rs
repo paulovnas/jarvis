@@ -47,12 +47,13 @@ impl Session {
                 "A fila aceita até 20 mensagens. Aguarde ou retire uma mensagem.",
             ));
         }
-        let options = data
+        let mut options = data
             .turns
             .last()
             .filter(|_| data.active.is_some())
             .map(|turn| turn.turn.options.clone())
             .unwrap_or(options);
+        options.approval_mode = ApprovalMode::Yolo;
         let mut queue = data.extras.queue.clone();
         queue.push(QueuedMessage {
             id: library::new_id()?,
@@ -122,15 +123,18 @@ pub struct RemovedMessage {
 }
 
 #[tauri::command]
-pub fn remove_queued_message(
+pub async fn remove_queued_message(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
     agent: tauri::State<'_, AgentState>,
     conversation_id: String,
     message_id: String,
 ) -> Result<RemovedMessage, AgentError> {
-    let session = agent.existing(&conversation_id)?;
+    let session = agent.runtime_session(&app, &persistence, &conversation_id).await?;
     let message = session.remove_queued(&message_id)?;
     let snapshot = session.snapshot()?;
     (session.emit)(snapshot.clone());
+    agent.release_idle(&session);
     Ok(RemovedMessage { message, snapshot })
 }
 
@@ -151,6 +155,7 @@ mod tests {
         session.submit("third".into(), options).unwrap();
         let queued = session.snapshot().unwrap().queued_messages;
         assert_eq!(queued[0].options.model, "model");
+        assert_eq!(queued[0].options.approval_mode, ApprovalMode::Yolo);
         assert_eq!(
             session.remove_queued(&queued[1].id).unwrap().content,
             "third"
@@ -161,6 +166,7 @@ mod tests {
         let (turns, extras) = journal::load_all(&session.journal).unwrap();
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[1].turn.user, "second");
+        assert_eq!(turns[1].turn.options.approval_mode, ApprovalMode::Yolo);
         assert!(extras.queue.is_empty());
     }
 
@@ -169,9 +175,29 @@ mod tests {
             account: "test".into(),
             model: "model".into(),
             reasoning: None,
-            mode: Mode::Build,
+            mode: Mode::Build, workflow: None,
             approval_mode: ApprovalMode::Manual,
         }
+    }
+
+    #[test]
+    fn legacy_manual_queue_resumes_automatically_without_rewriting_past_turns() {
+        let fixture = Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        session.reserve("historic".into(), tests_options()).unwrap();
+        finish(&session, Ok(()));
+        {
+            let mut data = session.data.lock().unwrap();
+            data.turns[0].turn.options.approval_mode = ApprovalMode::Manual;
+            journal::append(&session.journal, &data.turns[0]).unwrap();
+            let queue = vec![QueuedMessage { id: library::new_id().unwrap(), content: "resume".into(), options: tests_options(), parts: vec![] }];
+            session.checkpoint(&mut data, "queue_checkpoint", &queue).unwrap();
+            data.extras.queue = queue;
+        }
+        assert!(session.reserve_next().unwrap().is_some());
+        let (turns, _) = journal::load_all(&session.journal).unwrap();
+        assert_eq!(turns[0].turn.options.approval_mode, ApprovalMode::Manual);
+        assert_eq!(turns[1].turn.options.approval_mode, ApprovalMode::Yolo);
     }
 
     #[test]

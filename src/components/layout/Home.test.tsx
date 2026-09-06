@@ -21,7 +21,13 @@ describe("Home shell", () => {
     vi.restoreAllMocks();
     invokeMock.mockReset();
     accountsMock.mockReset().mockResolvedValue([]);
-    invokeMock.mockImplementation((command) => {
+    invokeMock.mockImplementation((command, args) => {
+      if (command === "get_agent_models") return Promise.resolve({});
+      if (command === "get_workflow") return Promise.resolve(null);
+      if (command === "set_agent_model") {
+        const selection = args as { flow: string; role: string; choice: { account: string; model: string; reasoning: string | null } };
+        return Promise.resolve({ [`${selection.flow}/${selection.role}`]: selection.choice });
+      }
       if (command === "get_library_snapshot") return Promise.resolve(populatedLibrary());
       if (command === "get_chat") return Promise.resolve(emptyChat());
       if (command === "get_agent_activity") return Promise.resolve([]);
@@ -111,7 +117,7 @@ describe("Home shell", () => {
     screen.getByRole("menuitem", { name: /GPT-5.6 Luna/ }).focus();
     await user.keyboard("{ArrowRight}");
     await user.click(await screen.findByRole("menuitem", { name: "Extra alto" }));
-    expect(modelButton).toHaveTextContent("GPT-5.6 Luna · Extra alto");
+    await waitFor(() => expect(modelButton).toHaveTextContent("GPT-5.6 Luna · Extra alto"));
   });
 
   it("abre Configurações pela statusbar em uma modal central", async () => {

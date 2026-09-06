@@ -2,6 +2,24 @@ use super::*;
 use crate::library::deletion::{delete, recover, DeleteTarget};
 
 #[test]
+fn workflow_and_worker_memory_follow_the_owning_conversation_without_touching_source() {
+    let home = TestHome::new(); let mut db = database();
+    let project = setup_project(&mut db, &home);
+    let conversation = insert_conversation(&mut db, &home.0, &project.id, "Workflow").unwrap().conversations[0].clone();
+    let worker = new_id().unwrap();
+    let directory = home.0.join(".jarvis/workflows").join(&conversation.id);
+    fs::create_dir_all(&directory).unwrap(); fs::write(directory.join(format!("{worker}.jsonl")), "worker history").unwrap();
+    let context = crate::core::context::storage(&home.0, &worker);
+    fs::create_dir_all(&context).unwrap(); fs::write(context.join("memory"), "worker context").unwrap();
+    let source = Path::new(&project.path).join("source.txt"); fs::write(&source, "source stays").unwrap();
+    recover(&db, &home.0).unwrap();
+    assert!(directory.exists()); assert!(context.exists());
+    delete(&mut db, &home.0, &DeleteTarget::Conversation(conversation.id)).unwrap();
+    assert!(!directory.exists()); assert!(!context.exists());
+    assert_eq!(fs::read_to_string(source).unwrap(), "source stays");
+}
+
+#[test]
 fn beads_survives_conversation_deletion_and_project_removal_preserves_external_tracker() {
     let home = TestHome::new();
     let mut db = database();

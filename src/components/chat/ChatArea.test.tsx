@@ -145,7 +145,7 @@ describe("Persistent live conversation", () => {
     await screen.findByRole("textbox");
     await user.type(screen.getByRole("textbox"), "Leia o README");
     await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
-    expect(call).toHaveBeenCalledWith("start_agent_turn", { conversationId: "c1", content: "Leia o README", options: { account: "openai-codex-pessoal", model: "model", reasoning: "medium", mode: "build", approvalMode: "yolo" } });
+    expect(call).toHaveBeenCalledWith("start_agent_turn", { conversationId: "c1", content: "Leia o README", options: { account: "openai-codex-pessoal", model: "model", reasoning: "medium", mode: "build", workflow: "standard", approvalMode: "yolo" } });
     await screen.findByRole("button", { name: "Interromper execução" });
     expect(screen.getByRole("group", { name: "Mensagem e opções de envio" })).toHaveAttribute("data-working", "true");
     expect(screen.getByRole("main", { name: "Conversa" })).not.toHaveAttribute("data-working");

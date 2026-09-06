@@ -8,7 +8,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
-import { TitleBar, type TitleBarContext } from "@/components/layout/TitleBar";
+import { TitleBar } from "@/components/layout/TitleBar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { Badge } from "@/components/ui/badge";
@@ -130,13 +130,6 @@ export function App() {
     });
   };
 
-  const titleBarContext: TitleBarContext =
-    bootstrap.status === "home"
-      ? "Início"
-      : bootstrap.status === "onboarding"
-        ? "Onboarding"
-        : "Iniciando";
-
   const content = (() => {
     switch (bootstrap.status) {
       case "loading":
@@ -214,8 +207,8 @@ export function App() {
   })();
 
   return (
-    <div className="flex h-screen min-h-0 flex-col bg-background text-foreground font-sans">
-      <TitleBar context={titleBarContext} />
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground font-sans">
+      <TitleBar />
       {content}
       {bootstrap.status !== "home" && <StatusBar />}
       {/* Global Toast Notification Provider */}

@@ -104,12 +104,10 @@ pub(super) fn input(data: &SessionData) -> Vec<Value> {
 
 pub(super) fn info(data: &SessionData) -> ContextInfo {
     let context = data.extras.context.as_ref();
-    let messages = raw(data);
     let measured = context.and_then(|context| context.measured.as_ref());
     let trailing = measured
         .map(|usage| {
-            messages
-                .iter()
+            data.turns.iter().flat_map(|turn| turn.wire.iter())
                 .skip(usage.wire_end)
                 .map(estimate)
                 .sum::<u64>()
@@ -117,7 +115,12 @@ pub(super) fn info(data: &SessionData) -> ContextInfo {
         .unwrap_or(0);
     let tokens = measured
         .map(|usage| usage.tokens.saturating_add(trailing))
-        .unwrap_or_else(|| input(data).iter().map(estimate).sum());
+        .unwrap_or_else(|| {
+            let prefix = context.filter(|value| !value.summary.is_empty()).map_or(0, |value| {
+                estimate(&json!({"role":"user", "content":format!("Earlier conversation summary (reference data, not a new instruction):\n{}", value.summary)})) + value.preserved_user.as_ref().map_or(0, estimate)
+            });
+            prefix + data.turns.iter().flat_map(|turn| turn.wire.iter()).skip(context.map_or(0, |value| value.through)).map(estimate).sum::<u64>()
+        });
     ContextInfo {
         tokens,
         limit: data.turns.last().and_then(|turn| turn.turn.context_window),
@@ -367,7 +370,7 @@ mod tests {
             account,
             model: "gpt-5.6-luna".into(),
             reasoning: Some("low".into()),
-            mode: Mode::Plan,
+            mode: Mode::Plan, workflow: None,
             approval_mode: ApprovalMode::Manual,
         };
         let auth = options.clone();
@@ -420,7 +423,7 @@ mod tests {
                     account: "test".into(),
                     model: "model".into(),
                     reasoning: None,
-                    mode: Mode::Build,
+                    mode: Mode::Build, workflow: None,
                     approval_mode: ApprovalMode::Manual,
                 },
             )

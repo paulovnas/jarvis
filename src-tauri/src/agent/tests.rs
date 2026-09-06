@@ -25,7 +25,7 @@ fn options(approval_mode: ApprovalMode) -> TurnOptions {
         account: "account".into(),
         model: "model".into(),
         reasoning: None,
-        mode: Mode::Build,
+        mode: Mode::Build, workflow: None,
         approval_mode,
     }
 }
@@ -344,7 +344,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                         account: "account-alias".into(),
                         model: "model".into(),
                         reasoning: None,
-                        mode: Mode::Build,
+                        mode: Mode::Build, workflow: None,
                         approval_mode: ApprovalMode::Manual,
                     },
                     status: TurnStatus::Running,

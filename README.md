@@ -30,6 +30,14 @@ O **Jarvis** é uma interface desktop gráfica moderna, leve e autônoma projeta
 
 ---
 
+## Native agent workflows
+
+The chat **Fluxo** selector offers **Padrão** (Construtor), **Planejado** (Planejador, Construtor and Designer) and **Completo** (Planejador, Investigador, Redator, Orquestrador, Designer, Construtor and Revisor). Names, instructions and role permissions are built into Jarvis.
+
+Choose each role's account, model and reasoning in **Configurações > Agentes**. Planned and Complete require their role choices before running. Settings persist in `~/.jarvis/agents.json`; changes apply to the next run. The chat model picker changes the main role's profile. All agents execute tools automatically (YOLO), within their fixed role capabilities and assigned scope.
+
+The inspector shows live execution cards and opens isolated, read-only transcripts. Native hub tools coordinate dependencies, waiting, cancellation and bounded recovery. Beads stores tasks and acceptance criteria; Complete requires independent approval for the exact tasks before closure. See [native workflow architecture](docs/architecture/native-workflows.md) for contracts and storage behavior.
+
 ## 🎨 Design System & Interface
 
 O Jarvis possui um design system coeso e minimalista:
@@ -176,7 +184,7 @@ The Rust adapter makes a separate ChatGPT Responses request using the selected s
 
 The Rust MCP SDK connects configured, enabled servers for each agent turn, discovers and namespaces their tools, and closes owned connections at the end. Server failures are isolated. Tool list change notifications refresh the registry between model requests. Config changes and activation are rechecked before dispatch. Tools are available when useful without forced invocation; server-provided instructions are not appended to the agent prompt.
 
-**Manual** requires approval for every MCP call; **YOLO** runs calls automatically. **Plan** exposes only tools annotated by the configured server as read-only and not destructive. These annotations are server claims, not a sandbox. JSON Schema validates arguments before dispatch. Text, embedded resource text and structured results enter the existing compact activity view; sampling, elicitation, standalone resources/prompts and image/audio results are outside this first implementation. Timeouts and cancellation never retry an uncertain action automatically.
+MCP calls execute automatically (YOLO). **Plan** exposes only tools annotated by the configured server as read-only and not destructive. These annotations are server claims, not a sandbox. JSON Schema validates arguments before dispatch. Text, embedded resource text and structured results enter the existing compact activity view; sampling, elicitation, standalone resources/prompts and image/audio results are outside this first implementation. Timeouts and cancellation never retry an uncertain action automatically.
 
 Deterministic stdio and local HTTP fixtures verify protocol initialization, discovery, execution, redaction, cancellation/process cleanup, disabled/stale configuration, and failure isolation. Live Context7 validation requires a user-supplied key and separate user authorization.
 
@@ -206,17 +214,24 @@ The center panel opens the selected saved conversation, and the inspector shows 
 
 The Rust core sends turns to the connected Codex account using the selected model and its reported reasoning effort. Responses use SSE, with live text and provider-supplied reasoning summaries. Only completed provider output and matching tool results are replayed; encrypted reasoning replay data stays in the private journal and never crosses IPC. Credentials remain in Keychain/Rust. Markdown renders without raw HTML or automatic remote images.
 
-Each user turn has a single assistant response and a compact, initially collapsed activity row showing total duration and tool count. Expanding it reveals individual tool rows and provider summaries; each row opens its own details. Intermediate agent commentary remains available there. Responses have no copy-action footer. A thin rotating rainbow border around the rounded composer card (text input and selectors) indicates active execution, and sidebar spinners track active conversations and their projects even while viewing another conversation. Reduced-motion preferences keep these indicators static. Activity stops on completion, cancellation or failure; pending Manual approvals remain active.
+Each user turn has a single assistant response and a compact, initially collapsed activity row showing total duration and tool count. Expanding it reveals individual tool rows and provider summaries; each row opens its own details. Intermediate agent commentary remains available there. Responses have no copy-action footer. A thin rotating rainbow border around the rounded composer card (text input and selectors) indicates active execution, and sidebar spinners track active conversations and their projects even while viewing another conversation. Reduced-motion preferences keep these indicators static. Activity stops on completion, cancellation or failure.
 
 - **Plan** exposes `read`, `list`, literal project `search`, and `web_search` when enabled. The backend rejects mutation tools even if requested by the model.
 - **Build** also exposes atomic `write`, unique exact-match `edit`, and `bash`.
-- **Manual** displays the exact arguments and waits for a one-time authorization for each edit/write/command. Reads run automatically. Refusing a tool returns a denial to the agent.
-- **YOLO** executes tools automatically. Commands start in the project directory with the host user's permissions; the working directory is not an operating-system sandbox. File tools reject paths outside the project, parent traversal and symlinks.
+- **Automatic execution (YOLO)** is fixed for all new and resumed turns, including older conversations. The UI has no approval-mode selector. It executes tools automatically. Commands start in the project directory with the host user's permissions; the working directory is not an operating-system sandbox. File tools reject paths outside the project, parent traversal and symlinks.
 - **Interromper execução** cancels the provider request or pending approval and terminates the shell process group. Atomic file operations finish before releasing the turn. Navigation does not cancel a conversation's active work.
 
 Each accepted message and each completed response/tool has a synced, versioned `turn_checkpoint` appended to the existing JSONL session. A conversation permits one active turn. On restart, unfinished turns become interrupted and unresolved tool calls receive explicit unknown-result records; tools are never automatically executed again. An incomplete final line is backed up to a separate recovery file before repair; malformed complete records are preserved and rejected. A journal failure stops further turns until the session is reopened after fixing storage.
 
-Initial limits: 32 provider steps per turn; 1 MiB per text file; bounded 32 KB tool output; 120 seconds per shell command; 8 MiB serialized replay context and 64 MiB per journal. These limits return explicit errors rather than silently dropping history. Automatic context compaction, attachments, subagents and persistent background terminals are not implemented. The inspector reports provider token counts and confirmed file-tool writes; commands may change additional files.
+Initial limits: 32 provider steps per turn; 1 MiB per text file; bounded 32 KB tool output; 120 seconds per shell command; 8 MiB serialized replay context and 10 MiB per journal record. These limits return explicit errors rather than silently dropping history. Automatic and manual context compaction preserve the visible transcript. Attachments, subagents and persistent background terminals are not implemented. The inspector reports context usage and session-owned changes that remain uncommitted.
+
+### Large conversation history and cleanup
+
+Opening a conversation reads its latest page (up to 20 turns, with a 1 MiB page budget; one larger turn is allowed). Scrolling toward either end fetches adjacent pages. The left excerpt rail samples up to 48 positions across the session and seeks directly to a selected turn; **Voltar ao presente** returns to the newest page. The frontend retains at most 60 turns, also constrained by a 4 MiB serialized-text budget, preserves scroll anchors when evicting distant pages, and keeps live approvals, questions, queue and context independent of the viewed page. Streaming updates transfer only the latest turn rather than the entire transcript.
+
+Rust builds a disposable offset index by scanning bounded JSONL records. The first visit scans an existing journal; later visits incrementally scan appended records and seek only the requested final checkpoints. The metadata cache is limited to four sessions and a 16 MiB accounted budget. There is no 64 MiB journal cap, and read-only chat navigation does not load agent replay. Full replay is still loaded when executing or compacting a conversation; idle runtime sessions are released. This separates transcript browsing from inference without changing durable compaction offsets or deleting context.
+
+**Configurações > Geral > Limpeza** previews sessions inactive for 7 days by default (14, 30 or 90 days are also available). Each batch contains up to 500 candidates with dates and estimated recoverable space. Confirmation deletes only the reviewed IDs whose activity still matches, always retaining the latest conversation per project and protecting active, compacting or queued conversations. Journals, their recovery copies and private context memory are removed through the existing staged-deletion recovery flow; project source and project Beads data remain intact. Partial failures and sessions preserved by revalidation are reported separately.
 
 ### Persistência e migrações
 

@@ -22,6 +22,7 @@ export const turnOptionsSchema = z.object({
   model: z.string(),
   reasoning: z.string().nullable(),
   mode: z.enum(["plan", "build"]),
+  workflow: z.enum(["standard", "planned", "complete"]).optional(),
   approvalMode: z.enum(["manual", "yolo"]),
 });
 const toolSchema = z.object({
@@ -62,6 +63,11 @@ const compactionEventSchema = z.object({
   tokensBefore: z.number().nonnegative(), tokensAfter: z.number().nonnegative(),
 });
 export type CompactionEvent = z.infer<typeof compactionEventSchema>;
+export const historyWindowSchema = z.object({ start: z.number().int().nonnegative(), total: z.number().int().nonnegative() });
+export const historyExcerptSchema = z.object({ id: z.string(), index: z.number().int().nonnegative(), createdAt: z.number().nonnegative(), user: z.string(), assistant: z.string() });
+export type HistoryExcerpt = z.infer<typeof historyExcerptSchema>;
+export const historyPageSchema = z.object({ conversationId: z.string(), turns: z.array(turnSchema), compactions: z.array(compactionEventSchema), history: historyWindowSchema, navigation: z.array(historyExcerptSchema) });
+export type HistoryPage = z.infer<typeof historyPageSchema>;
 const snapshotSchema = z.object({
   conversationId: z.string(), revision: z.number().int().nonnegative(),
   turns: z.array(turnSchema), activeTurnId: z.string().nullable(), pendingApproval: toolSchema.nullable(),
@@ -69,6 +75,8 @@ const snapshotSchema = z.object({
   compacting: z.boolean().optional(),
   compactions: z.array(compactionEventSchema).optional(),
   pendingQuestion: pendingQuestionSchema.nullable().optional(),
+  history: historyWindowSchema.optional(), navigation: z.array(historyExcerptSchema).optional(),
+  latestOptions: turnOptionsSchema.optional(),
 });
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>;
 export type FileChange = z.infer<typeof fileChangeSchema>;

@@ -6,18 +6,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     fs::{File, OpenOptions},
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::Path,
 };
 
-const MAX_JOURNAL: u64 = 64 * 1024 * 1024;
 const MAX_RECORD: usize = 10 * 1024 * 1024;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Record {
-    r#type: String,
-    version: u8,
-    data: serde_json::Value,
+pub(super) struct Record {
+    pub r#type: String,
+    pub version: u8,
+    pub data: serde_json::Value,
 }
 
 #[derive(Default)]
@@ -38,7 +37,7 @@ fn open(path: &Path, write: bool) -> Result<File, AgentError> {
     }
     let file = options.open(path).map_err(|_| AgentError::storage())?;
     let meta = file.metadata().map_err(|_| AgentError::storage())?;
-    if !meta.is_file() || meta.len() > MAX_JOURNAL {
+    if !meta.is_file() {
         return Err(AgentError::storage());
     }
     Ok(file)
@@ -67,13 +66,39 @@ pub(super) fn append_event(
         ));
     }
     let mut file = open(path, true)?;
-    if file.metadata().map_err(|_| AgentError::storage())?.len() + bytes.len() as u64 > MAX_JOURNAL
-    {
-        return Err(AgentError::storage());
-    }
     file.write_all(&bytes)
         .and_then(|()| file.sync_all())
         .map_err(|_| AgentError::storage())
+}
+
+// Scan one bounded record at a time. The journal itself can grow beyond memory.
+pub(super) fn scan(path: &Path, start: u64, mut visit: impl FnMut(u64, usize, Record) -> Result<(), AgentError>) -> Result<u64, AgentError> {
+    let mut file = open(path, false)?;
+    file.seek(SeekFrom::Start(start)).map_err(|_| AgentError::storage())?;
+    let mut reader = BufReader::new(file);
+    let mut offset = start;
+    loop {
+        let mut line = Vec::new();
+        (&mut reader).take(MAX_RECORD as u64 + 1).read_until(b'\n', &mut line).map_err(|_| AgentError::storage())?;
+        if line.len() > MAX_RECORD { return Err(AgentError::storage()); }
+        if !line.ends_with(b"\n") { break; }
+        if offset > 0 {
+            let record: Record = serde_json::from_slice(&line).map_err(|_| AgentError::new("invalid_history", "O histórico contém um registro inválido. O arquivo original foi preservado."))?;
+            if record.version != 1 { return Err(AgentError::storage()); }
+            visit(offset, line.len(), record)?;
+        }
+        offset += line.len() as u64;
+    }
+    Ok(offset)
+}
+
+pub(super) fn record_at(path: &Path, offset: u64, length: usize) -> Result<Record, AgentError> {
+    if length > MAX_RECORD { return Err(AgentError::storage()); }
+    let mut file = open(path, false)?;
+    file.seek(SeekFrom::Start(offset)).map_err(|_| AgentError::storage())?;
+    let mut bytes = vec![0; length];
+    file.read_exact(&mut bytes).map_err(|_| AgentError::storage())?;
+    serde_json::from_slice(&bytes).map_err(|_| AgentError::storage())
 }
 
 pub(super) fn load_all(path: &Path) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
@@ -85,59 +110,32 @@ pub(super) fn read_only(path: &Path) -> Result<(Vec<StoredTurn>, Extras), AgentE
 }
 
 fn read(path: &Path, repair: bool) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
-    let mut bytes = vec![];
-    open(path, false)?
-        .take(MAX_JOURNAL + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| AgentError::storage())?;
-    if bytes.len() as u64 > MAX_JOURNAL {
-        return Err(AgentError::storage());
-    }
     let mut turns: Vec<StoredTurn> = vec![];
     let mut extras = Extras::default();
-    let mut valid_end = 0;
-    for (index, line) in bytes.split_inclusive(|byte| *byte == b'\n').enumerate() {
-        if !line.ends_with(b"\n") {
-            break;
-        }
-        valid_end += line.len();
-        if index == 0 {
-            continue;
-        } // The immutable header is verified by library::agent_location.
-        if line.len() > MAX_RECORD {
-            return Err(AgentError::storage());
-        }
-        let record: Record = serde_json::from_slice(line).map_err(|_| {
-            AgentError::new(
-                "invalid_history",
-                "O histórico contém um registro inválido. O arquivo original foi preservado.",
-            )
-        })?;
-        if record.version != 1 {
-            return Err(AgentError::storage());
-        }
+    let mut ids = std::collections::HashSet::new();
+    let valid_end = scan(path, 0, |_, _, record| {
         match record.r#type.as_str() {
             "compaction_completed" => {
                 let completed: CompletedCompaction = serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
                 extras.context = Some(completed.context);
                 extras.compactions.push(completed.event);
-                continue;
+                return Ok(());
             }
             "queue_checkpoint" => {
                 extras.queue =
                     serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
-                continue;
+                return Ok(());
             }
             "context_checkpoint" => {
                 extras.context =
                     Some(serde_json::from_value(record.data).map_err(|_| AgentError::storage())?);
-                continue;
+                return Ok(());
             }
             "file_checkpoint" => {
                 let file: FileRevision =
                     serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
                 extras.files.insert(file.path.clone(), file);
-                continue;
+                return Ok(());
             }
             "turn_checkpoint" => {}
             _ => return Err(AgentError::storage()),
@@ -150,16 +148,14 @@ fn read(path: &Path, repair: bool) -> Result<(Vec<StoredTurn>, Extras), AgentErr
         {
             *turns.last_mut().unwrap() = turn;
         } else {
-            if turns
-                .iter()
-                .any(|previous| previous.turn.id == turn.turn.id)
-            {
+            if !ids.insert(turn.turn.id.clone()) {
                 return Err(AgentError::storage());
             }
             turns.push(turn);
         }
-    }
-    if repair && valid_end < bytes.len() {
+        Ok(())
+    })?;
+    if repair && valid_end < open(path, false)?.metadata().map_err(|_| AgentError::storage())?.len() {
         // Preserve crash debris before repairing only an incomplete final line.
         let backup = path.with_extension(format!("recovery-{}.jsonl", crate::library::new_id()?));
         let mut options = OpenOptions::new();
@@ -170,15 +166,15 @@ fn read(path: &Path, repair: bool) -> Result<(Vec<StoredTurn>, Extras), AgentErr
             options.mode(0o600);
         }
         let mut copy = options.open(&backup).map_err(|_| AgentError::storage())?;
-        copy.write_all(&bytes)
-            .and_then(|()| copy.sync_all())
+        std::io::copy(&mut open(path, false)?, &mut copy)
+            .and_then(|_| copy.sync_all())
             .map_err(|_| AgentError::storage())?;
         #[cfg(unix)]
         File::open(path.parent().ok_or_else(AgentError::storage)?)
             .and_then(|directory| directory.sync_all())
             .map_err(|_| AgentError::storage())?;
         let file = open(path, true)?;
-        file.set_len(valid_end as u64)
+        file.set_len(valid_end)
             .and_then(|()| file.sync_all())
             .map_err(|_| AgentError::storage())?;
     }
@@ -245,7 +241,7 @@ mod tests {
                     account: "test".into(),
                     model: "model".into(),
                     reasoning: None,
-                    mode: Mode::Build,
+                    mode: Mode::Build, workflow: None,
                     approval_mode: ApprovalMode::Manual,
                 },
                 status: TurnStatus::Running,

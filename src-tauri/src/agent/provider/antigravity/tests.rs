@@ -5,6 +5,7 @@ fn options(model: &str) -> TurnOptions {
         model: model.into(),
         reasoning: Some("low".into()),
         mode: crate::agent::Mode::Build,
+        workflow: None,
         approval_mode: crate::agent::ApprovalMode::Manual,
     }
 }

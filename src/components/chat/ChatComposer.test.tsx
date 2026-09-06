@@ -45,13 +45,10 @@ describe("ChatComposer model reasoning", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
     expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Flexible · Alto");
   });
-  it("shows only the policy names and blocks the draft during compaction", async () => {
+  it("has no approval selector and blocks the draft during compaction", async () => {
     const user = userEvent.setup(); const send = vi.fn();
     const { rerender } = await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} />);
-    screen.getByRole("button", { name: "Selecionar autorização de ferramentas" }).focus();
-    await user.keyboard("{Enter}");
-    expect((await screen.findAllByRole("menuitem")).map(item => item.textContent?.trim())).toEqual(["Manual", "YOLO"]);
-    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("button", { name: "Selecionar autorização de ferramentas" })).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox"), "Rascunho");
     rerender(<ChatComposer modelGroups={models} onSendMessage={send} compacting />);
     expect(screen.getByRole("textbox")).toHaveAttribute("contenteditable", "false");
@@ -64,11 +61,11 @@ describe("ChatComposer model reasoning", () => {
   });
   it("allows typing and queueing during a run while locking all selectors", async () => {
     const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
-    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} running initialOptions={chatOptions} />);
-    for (const name of ["Selecionar modelo de IA", "Selecionar modo de execução", "Selecionar autorização de ferramentas"]) expect(screen.getByRole("button", { name })).toBeDisabled();
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} running initialOptions={{ ...chatOptions, approvalMode: "manual" }} />);
+    for (const name of ["Selecionar modelo de IA", "Selecionar fluxo"]) expect(screen.getByRole("button", { name })).toBeDisabled();
     expect(screen.getByRole("textbox")).toHaveAttribute("contenteditable", "true");
     await user.type(screen.getByRole("textbox"), "Depois verifique os testes{Enter}");
-    expect(send).toHaveBeenCalledWith("Depois verifique os testes", chatOptions);
+    expect(send).toHaveBeenCalledWith("Depois verifique os testes", { ...chatOptions, approvalMode: "yolo" });
     expect(screen.getByRole("textbox").textContent).toBe("");
     expect(screen.getByRole("button", { name: "Interromper execução" })).toBeEnabled();
   });
@@ -111,18 +108,15 @@ describe("ChatComposer model reasoning", () => {
     rerender(<ChatComposer key="first" draftKey="first" drafts={drafts} modelGroups={models} onSendMessage={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole("textbox")).toHaveTextContent("Pedido"));
   });
-  it("sends the selected Manual policy and Plan mode and keeps rejected drafts", async () => {
+  it("uses YOLO for legacy Manual conversations and keeps rejected drafts", async () => {
     const user = userEvent.setup();
     const send = vi.fn().mockResolvedValue(false);
-    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} />);
-    screen.getByRole("button", { name: "Selecionar autorização de ferramentas" }).focus();
-    await user.keyboard("{Enter}");
-    await user.click(await screen.findByRole("menuitem", { name: /Manual/ }));
-    screen.getByRole("button", { name: "Selecionar modo de execução" }).focus();
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} initialOptions={{ ...chatOptions, account: "pessoal", model: "compact", reasoning: "medium", approvalMode: "manual" }} />);
+    screen.getByRole("button", { name: "Selecionar fluxo" }).focus();
     await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("menuitem", { name: /Plan/ }));
     await user.type(screen.getByRole("textbox"), "Analise o projeto{Enter}");
-    expect(send).toHaveBeenCalledWith("Analise o projeto", { account: "pessoal", model: "compact", reasoning: "medium", mode: "plan", approvalMode: "manual" });
+    expect(send).toHaveBeenCalledWith("Analise o projeto", { account: "pessoal", model: "compact", reasoning: "medium", mode: "build", workflow: "planned", approvalMode: "yolo" });
     expect(screen.getByRole("textbox")).toHaveTextContent("Analise o projeto");
   });
   it("uses the provider default and offers only this model's levels", async () => {

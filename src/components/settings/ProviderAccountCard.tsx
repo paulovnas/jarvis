@@ -39,7 +39,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
     <Collapsible
       render={<Card size="sm" />}
       data-testid={`provider-account-${account.alias}`}
-      className="gap-0 py-0"
+      className="min-w-0 gap-0 py-0"
     >
       <CollapsibleTrigger
         render={<CardHeader />}
@@ -53,16 +53,16 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             <Bot aria-hidden="true" className="size-4" />
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <CardTitle className="min-w-0 truncate font-mono text-xs!" title={account.alias}>{account.alias}</CardTitle>
+            <CardTitle className="min-w-0 truncate font-mono text-xs!" title={account.alias}>{account.alias}</CardTitle>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Badge variant="outline" className={`shrink-0 ${!account.enabled ? "text-muted-foreground" : !account.modelsAvailable ? "border-[#e5c07b]/30 bg-[#e5c07b]/10 text-[#e5c07b]" : "border-[#98c379]/30 bg-[#98c379]/10 text-[#98c379]"}`}>
                 <CheckCircle2 aria-hidden="true" data-icon="inline-start" />
                 {!account.enabled ? "Desativada" : account.modelsAvailable ? "Conectada" : "Indisponível"}
               </Badge>
-            </div>
             <CardDescription id={summaryId} className="text-xs">
               {account.providerKind === "antigravity" ? "Antigravity" : "OpenAI Codex"} · {modelSummary}
             </CardDescription>
+            </div>
           </div>
           <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
         </div>
@@ -104,7 +104,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             )}
           </div>
         </CardContent>
-        <CardFooter className="justify-between gap-3">
+        <CardFooter className="flex-wrap justify-between gap-3">
           <label className="flex cursor-pointer items-center gap-2 text-xs">
             <Switch aria-label={`Ativar ${account.alias}`} checked={account.enabled} onCheckedChange={(enabled) => onEnabledChange(account.alias, enabled)} disabled={saving} className="cursor-pointer" />
             <span aria-hidden="true">{account.enabled ? "Ativada" : "Desativada"}</span>
