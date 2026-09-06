@@ -25,7 +25,7 @@ describe("ProviderAccountCard", () => {
     expect(onEnabledChange).toHaveBeenLastCalledWith(account.alias, true);
     expect(onDisconnect).not.toHaveBeenCalled();
   });
-  it("começa compacto e permite expandir e recolher pelo teclado", async () => {
+  it("abre os detalhes em uma modal pelo teclado e restaura o foco ao fechar", async () => {
     const user = userEvent.setup();
     const onDisconnect = vi.fn();
     render(<ProviderAccountCard account={account} onDisconnect={onDisconnect} onEnabledChange={vi.fn()} />);
@@ -41,7 +41,8 @@ describe("ProviderAccountCard", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(account.email!)).toBeVisible();
     expect(screen.getByText("Modelo de teste")).toBeVisible();
-    await user.keyboard(" ");
+    expect(screen.getByRole("dialog", { name: account.alias })).toBeVisible();
+    await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("button", { name: "Desconectar" })).not.toBeInTheDocument());
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(trigger).toHaveFocus();

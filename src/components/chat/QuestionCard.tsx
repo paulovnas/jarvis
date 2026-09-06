@@ -7,6 +7,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/questions";
+import { ExpandQuestionVisual, QuestionVisual } from "./QuestionVisual";
 
 export function QuestionCard({ request, drafts, draftKey, onAnswer }: {
   request: PendingQuestion;
@@ -56,17 +57,17 @@ export function QuestionCard({ request, drafts, draftKey, onAnswer }: {
         if (last) { if (ready) void submit(false); else navigate(request.questions.findIndex(item => !draft.answers[item.id]?.value.trim())); }
         else navigate(draft.index + 1);
       }}>
-        {question.options.length > 0 && <ToggleGroup orientation="vertical" aria-labelledby={titleId} className="w-full" disabled={pending}
+        {question.options.length > 0 && <ToggleGroup orientation="vertical" aria-labelledby={titleId} className={`max-h-[42vh] w-full overflow-y-auto ${question.options.some(option => option.preview) ? "grid grid-cols-1 items-start gap-2 sm:grid-cols-2" : ""}`} disabled={pending}
           value={answer?.selectedLabel ? [answer.selectedLabel] : []}
           onValueChange={values => {
             const label = values[0];
             if (typeof label === "string") update({ ...draft, answers: { ...draft.answers, [question.id]: { id: question.id, value: label, selectedLabel: label } } });
           }}>
-          {question.options.map((option, index) => <ToggleGroupItem key={`${question.id}-${index}`} value={option.label} className="h-auto min-h-10 w-full cursor-pointer justify-start gap-3 px-3 py-2 text-left whitespace-normal">
+          {question.options.map((option, index) => <div key={`${question.id}-${index}`} className="flex w-full min-w-0 flex-col"><ToggleGroupItem value={option.label} className="h-auto min-h-10 w-full cursor-pointer justify-start gap-3 px-3 py-2 text-left whitespace-normal">
             <Badge variant="outline" className="size-6 shrink-0 justify-center rounded-full p-0" aria-hidden="true">{index + 1}</Badge>
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5 break-words"><span>{option.label}</span>{option.description && <span className="text-xs font-normal text-muted-foreground">{option.description}</span>}</span>
+            <span className="flex min-w-0 flex-1 flex-col gap-1.5 break-words"><span>{option.label}</span>{option.preview && <span className="block w-full max-w-72"><QuestionVisual preview={option.preview} label={option.label} /></span>}{option.description && <span className="text-xs font-normal text-muted-foreground">{option.description}</span>}</span>
             {answer?.selectedLabel === option.label && <Check aria-hidden="true" data-icon="inline-end" />}
-          </ToggleGroupItem>)}
+          </ToggleGroupItem>{option.preview && <ExpandQuestionVisual preview={option.preview} label={option.label} />}</div>)}
         </ToggleGroup>}
         <div className="flex items-center gap-2">
           <PencilLine aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />

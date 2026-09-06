@@ -142,6 +142,7 @@ pub struct Page {
 #[derive(Clone, Default)]
 pub(super) struct HistoryState(Arc<Mutex<VecDeque<(PathBuf, Index)>>>);
 impl HistoryState {
+    pub(super) fn has_turn(&self, path: &Path, id: &str) -> Result<bool, AgentError> { self.with(path, |index| Ok(index.ids.contains(id))) }
     pub(super) fn worker_snapshot(&self, path: &Path, id: &str) -> Result<ChatSnapshot, AgentError> {
         self.with(path, |index| {
             let page = index.page(path, id, None, None, None)?;

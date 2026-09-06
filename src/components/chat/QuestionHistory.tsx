@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { questionRequestSchema, readQuestionResponse } from "@/core/questions";
 import type { ToolCallItem } from "./types";
+import { ExpandQuestionVisual, QuestionVisual } from "./QuestionVisual";
 
 export function QuestionHistory({ tool }: { tool: ToolCallItem }) {
   const request = questionRequestSchema.safeParse(tool.args);
@@ -19,6 +20,7 @@ export function QuestionHistory({ tool }: { tool: ToolCallItem }) {
       {questions.map(question => <div key={question.id} className="flex flex-col gap-1 break-words">
         <p className="text-foreground">{question.question}</p>
         <p className="whitespace-pre-wrap">{response?.answers.find(answer => answer.id === question.id)?.value ?? (response?.cancelled ? "Não respondida" : waiting ? "Aguardando resposta" : "Não respondida")}</p>
+        {question.options.filter(option => option.preview && option.label === response?.answers.find(answer => answer.id === question.id)?.selectedLabel).map(option => option.preview && <div key={option.label} className="flex max-w-72 flex-col"><QuestionVisual preview={option.preview} label={option.label} /><ExpandQuestionVisual preview={option.preview} label={option.label} /></div>)}
       </div>)}
       {tool.status === "error" && !response && <p>Não foi possível concluir estas perguntas.</p>}
     </CollapsibleContent>

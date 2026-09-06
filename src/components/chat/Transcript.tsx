@@ -25,12 +25,12 @@ export const TurnBody = memo(function TurnBody({ turn }: { turn: AgentTurn }) {
 });
 
 function HistoryRail({ entries, total, active, disabled, jump }: { entries: HistoryExcerpt[]; total: number; active: number; disabled: boolean; jump: (index: number) => void }) {
-  if (total < 2) return null;
+  if (entries.length < 10) return null;
   const selected = [...entries].reverse().find(entry => entry.index <= active)?.id;
-  return <nav aria-label="Navegar pela conversa" className="absolute inset-y-4 left-0 z-10 flex w-7 flex-col items-center justify-center overflow-y-auto py-2">
+  return <nav aria-label="Navegar pela conversa" style={{ maxHeight: `min(calc(100% - 32px), ${entries.length * Math.max(8, 18 - entries.length / 4)}px)` }} className="group/rail absolute top-1/2 left-0 z-10 flex w-3.5 -translate-y-1/2 flex-col items-center overflow-y-auto transition-[width] hover:w-7 focus-within:w-7 motion-reduce:transition-none">
     <TooltipProvider delay={150}>{entries.map(entry => <Tooltip key={entry.id}>
-      <TooltipTrigger render={<Button variant="ghost" size="icon" />} disabled={disabled} aria-label={`Ir para interação ${entry.index + 1}: ${entry.user}`} aria-current={selected === entry.id ? "location" : undefined} onClick={() => jump(entry.index)} className="group h-auto min-h-2 max-h-7 w-7 flex-1 cursor-pointer rounded-sm px-1.5 py-1 hover:bg-primary/10 focus-visible:bg-primary/10">
-        <span aria-hidden="true" className={`block h-px rounded-full transition-[width,background-color] motion-reduce:transition-none ${selected === entry.id ? "w-4 bg-primary shadow-[0_0_6px_#61afef66]" : "w-2 bg-muted-foreground/45 group-hover:w-4 group-hover:bg-foreground"}`} />
+      <TooltipTrigger render={<Button variant="ghost" size="icon" />} disabled={disabled} aria-label={`Ir para interação ${entry.index + 1}: ${entry.user}`} aria-current={selected === entry.id ? "location" : undefined} onClick={() => jump(entry.index)} className="group h-4 min-h-2 w-full shrink cursor-pointer rounded-sm px-0 py-1 hover:bg-primary/10 focus-visible:bg-primary/10">
+        <span aria-hidden="true" className={`block h-px rounded-full transition-[width,background-color] group-hover/rail:w-3 group-focus-within/rail:w-3 group-hover:w-5! group-focus-visible:w-5! motion-reduce:transition-none ${selected === entry.id ? "w-2 bg-primary shadow-[0_0_6px_#61afef66]" : "w-1 bg-muted-foreground/45 group-hover:bg-foreground"}`} />
       </TooltipTrigger>
       <TooltipContent side="right" sideOffset={8} className="block w-72 max-w-[min(288px,70vw)] space-y-2 border border-border bg-card p-3 text-foreground shadow-xl">
         <p className="font-mono text-[10px] tabular-nums text-muted-foreground">{entry.index + 1} / {total} <span className="float-right">{new Date(entry.createdAt).toLocaleDateString("pt-BR")}</span></p>

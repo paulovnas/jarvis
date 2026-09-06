@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ChevronRight, ListChecks, Files, Users } from "lucide-react";
+import { ChevronRight, ListChecks, Files, Users, ClipboardCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -15,6 +15,8 @@ import { useSessionFiles } from "@/hooks/use-session-files";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EpicPlans } from "./EpicPlans";
 import { WorkflowAgents } from "./WorkflowAgents";
+import { WorkflowValidation } from "./WorkflowValidation";
+import { activeAgent } from "@/core/workflow";
 import type { WorkflowController } from "@/hooks/use-workflow";
 
 function ActivitySection({ title, icon, count, children }: { title: string; icon: ReactNode; count?: number; children: ReactNode }) {
@@ -47,6 +49,9 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
           <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-[#e5c07b]" />}>
             <WorkflowAgents workflow={workflow} conversationId={selectedChat?.conversationId} />
           </ActivitySection>
+          {selectedChat && workflow?.data?.conversationId === selectedChat.conversationId && ["planned", "complete"].includes(workflow.data.flow) && <ActivitySection title="Validação" icon={<ClipboardCheck aria-hidden="true" className="size-4 text-onedark-green" />} count={workflow.data.validation?.items.length}>
+            <WorkflowValidation key={`${selectedChat.conversationId}/${workflow.data.validation?.id ?? "empty"}`} conversationId={selectedChat.conversationId} batch={workflow.data.validation} busy={!!selectedChat.activeTurnId || compacting || pending || (selectedChat.queuedMessages?.length ?? 0) > 0 || workflow.data.agents.some(activeAgent)} onRefresh={workflow.retry} />
+          </ActivitySection>}
         </div></ScrollArea>
     </div>
     <ContextUsage key={selectedChat?.conversationId ?? "empty"} context={conversationContext(turns, accounts)} live={selectedChat?.context} onCompact={onCompact} compacting={compacting} disabled={!selectedChat || turns.length === 0 || !!selectedChat.activeTurnId || pending} />

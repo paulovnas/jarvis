@@ -13,6 +13,45 @@ fn skill(dir: &Path, name: &str, body: &str) {
     fs::write(dir.join("references/guide.md"), "Reference instructions").unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn shared_discovery_reads_two_links_deduplicates_cycles_and_ignores_other_roots() {
+    use std::os::unix::fs::symlink;
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path();
+    let agents = home.join(".agents/skills");
+    fs::create_dir_all(&agents).unwrap();
+    for name in ["nextjs-developer", "nextjs-best-practices"] {
+        let target = home.join("managed").join(name);
+        skill(&target, name, "Linked instructions");
+        symlink(target, agents.join(name)).unwrap();
+    }
+    symlink(home.join("managed/nextjs-developer"), agents.join("duplicate")).unwrap();
+    symlink(&agents, agents.join("cycle")).unwrap();
+    symlink(home.join("missing"), agents.join("broken")).unwrap();
+    skill(&home.join(".codex/skills/excluded"), "excluded", "Do not discover");
+    skill(&home.join(".skills-manager/skills/unlinked"), "unlinked", "Do not discover");
+    assert!(snapshot(home, None).unwrap().skills.is_empty());
+    write_config(home, &Config { include_agents: true, ..Config::default() }).unwrap();
+    let found = snapshot(home, None).unwrap().skills;
+    assert_eq!(found.len(), 2);
+    assert!(found.iter().all(|skill| skill.linked && skill.origin == "agents"));
+    assert!(found.iter().all(|skill| catalog::resource(skill, "SKILL.md").unwrap().contains("Linked instructions")));
+}
+
+#[test]
+#[ignore = "Read-only check of user-provided links in the host .agents/skills"]
+fn live_shared_skill_links() {
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let config = Config { include_agents: true, ..Config::default() };
+    let (found, _) = catalog::discover(&home, None, &config).unwrap();
+    for name in ["nextjs-developer", "nextjs-best-practices"] {
+        let entry = found.iter().find(|skill| skill.name == name && skill.origin == "agents").expect("Expected user-provided global link");
+        assert!(entry.linked);
+        assert!(!catalog::resource(entry, "SKILL.md").unwrap().is_empty());
+    }
+}
+
 #[test]
 fn deletion_removes_only_selected_skill_and_preserves_neighbors() {
     let temp = tempfile::tempdir().unwrap();

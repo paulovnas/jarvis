@@ -28,7 +28,7 @@ impl Role {
         if tool.starts_with("hub_") { return tool != "hub_spawn" || self.coordinator(); }
         if tool.starts_with("beads_") {
             return !crate::core::beads::needs_approval(tool) || match self {
-                Self::Planner => flow == Flow::Planned,
+                Self::Planner => flow == Flow::Planned || tool == "beads_close",
                 Self::Investigator | Self::Reviewer => tool == "beads_update",
                 Self::Builder | Self::Designer => matches!(tool, "beads_claim" | "beads_update"),
                 Self::Writer => tool != "beads_close",
@@ -37,7 +37,7 @@ impl Role {
         }
         if tool == "workflow_check" { return matches!(self, Self::Builder | Self::Designer | Self::Reviewer); }
         if matches!(tool, "write" | "edit") { return self.writes(); }
-        if tool == "bash" { return broad && matches!(self, Self::Builder | Self::Designer); }
+        if matches!(tool, "bash" | "process_start") { return broad && matches!(self, Self::Builder | Self::Designer); }
         if tool.starts_with("ctx_") && crate::core::context::needs_approval(tool) { return broad && matches!(self, Self::Builder | Self::Designer); }
         // Read-only MCP filtering additionally uses server annotations in run_turn.
         if tool.starts_with("mcp_") { return broad || !self.writes(); }

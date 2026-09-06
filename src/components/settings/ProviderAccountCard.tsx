@@ -1,9 +1,10 @@
 import { useId } from "react";
-import { Bot, CheckCircle2, ChevronRight, Unplug } from "lucide-react";
+import { CheckCircle2, ChevronRight, Unplug } from "lucide-react";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import type { ProviderAccount } from "@/core/provider-accounts";
@@ -36,12 +37,11 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
       : `${account.models.length} ${account.models.length === 1 ? "modelo" : "modelos"}`;
 
   return (
-    <Collapsible
-      render={<Card size="sm" />}
+    <Dialog><Card size="sm"
       data-testid={`provider-account-${account.alias}`}
       className="min-w-0 gap-0 py-0"
     >
-      <CollapsibleTrigger
+      <DialogTrigger
         render={<CardHeader />}
         nativeButton={false}
         aria-label={`Detalhes de ${account.alias}`}
@@ -50,7 +50,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
       >
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <Bot aria-hidden="true" className="size-4" />
+            <ProviderIcon kind={account.providerKind} className="size-4" />
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <CardTitle className="min-w-0 truncate font-mono text-xs!" title={account.alias}>{account.alias}</CardTitle>
@@ -66,8 +66,9 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
           </div>
           <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
         </div>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="flex flex-col gap-4 border-t border-border/70 pt-4">
+      </DialogTrigger>
+      </Card><DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-xl" aria-describedby={undefined}>
+        <DialogHeader><DialogTitle className="flex min-w-0 items-center gap-2 pr-6 text-sm"><ProviderIcon kind={account.providerKind} /><span className="truncate">{account.alias}</span></DialogTitle></DialogHeader>
         <CardContent className="flex flex-col gap-3 pb-1">
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
             <dt className="text-muted-foreground">E-mail</dt>
@@ -114,7 +115,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             Desconectar
           </Button>
         </CardFooter>
-      </CollapsibleContent>
-    </Collapsible>
+      </DialogContent>
+    </Dialog>
   );
 }

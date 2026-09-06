@@ -1,84 +1,72 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Globe } from "lucide-react";
+import { Eye, Globe } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { webSearchConfigSchema } from "@/core/web-search";
 
+interface Config { accountAlias: string | null; model: string | null; inheritChat: boolean }
 const OFF = "off";
-
-export function WebSearchSettings({ accounts }: { accounts: ProviderAccount[] }) {
-  const [selected, setSelected] = useState<string | null>(null);
+const INHERIT = "inherit";
+export function WebSearchSettings({ accounts, kind = "web_search" }: { accounts: ProviderAccount[]; kind?: "web_search" | "vision" }) {
+  const title = kind === "vision" ? "Vision" : "Web Search";
+  const [config, setConfig] = useState<Config>({ accountAlias: null, model: null, inheritChat: true });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
-  const savingRef = useRef(false);
-  const mountedRef = useRef(false);
-
+  const lock = useRef(false);
+  const mounted = useRef(false);
   useEffect(() => {
-    let active = true;
-    mountedRef.current = true;
-    void invoke<unknown>("get_web_search_config").then((value) => {
-      if (!active) return;
-      const config = webSearchConfigSchema.parse(value);
-      setSelected(config.accountAlias);
-      setError(null);
-    }).catch(() => {
-      if (active) setError("Não foi possível carregar a configuração de Web Search.");
-    }).finally(() => {
-      if (active) setLoading(false);
-    });
-    return () => { active = false; mountedRef.current = false; };
-  }, [retry]);
-
-  const compatible = accounts.filter((account) => account.enabled && account.providerKind === "openai-codex");
-  const unavailable = selected !== null && !compatible.some((account) => account.alias === selected);
-  const items = [
-    { value: OFF, label: "Desligado" },
-    ...compatible.map((account) => ({ value: account.alias, label: account.alias })),
-    ...(unavailable ? [{ value: selected, label: `${selected} · Indisponível` }] : []),
-  ];
-
-  async function save(value: string | null) {
-    if (value === null || savingRef.current) return;
-    const accountAlias = value === OFF ? null : value;
-    if (accountAlias === selected) return;
-    savingRef.current = true;
-    setSaving(true);
+    let active = true; mounted.current = true;
+    void invoke(`get_${kind}_config`).then(value => {
+      if (active) { setConfig(webSearchConfigSchema.parse(value)); setError(false); }
+    }).catch(() => { if (active) setError(true); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; mounted.current = false; };
+  }, [kind, retry]);
+  const supports = (provider: ProviderAccount, model: string) => kind === "vision" ? /^(gpt-|gemini-|claude|o3|o4)/.test(model) : provider.providerKind === "openai-codex" || model.startsWith("gemini-");
+  const compatible = accounts.filter(account => account.enabled && ["openai-codex", "antigravity"].includes(account.providerKind) && account.models.some(model => supports(account, model.id)));
+  const selected = compatible.find(account => account.alias === config.accountAlias);
+  const models = (selected?.models ?? []).filter(model => selected && supports(selected, model.id));
+  const unavailable = config.accountAlias !== null && !selected;
+  const accountItems = [{ value: INHERIT, label: "Herdar do chat" }, { value: OFF, label: "Desligado" }, ...compatible.map(account => ({ value: account.alias, label: account.alias })), ...(unavailable ? [{ value: config.accountAlias!, label: `${config.accountAlias} · Indisponível` }] : [])];
+  const modelItems = models.map(model => ({ value: model.id, label: model.name }));
+  if (config.model && !models.some(model => model.id === config.model)) modelItems.push({ value: config.model, label: `${config.model} · Indisponível` });
+  async function save(next: Config) {
+    if (lock.current || JSON.stringify(next) === JSON.stringify(config)) return;
+    lock.current = true; setSaving(true);
     try {
-      const config = webSearchConfigSchema.parse(await invoke<unknown>("set_web_search_config", { accountAlias }));
-      if (mountedRef.current) setSelected(config.accountAlias);
-      toast.success(config.accountAlias ? "Conta de Web Search atualizada" : "Web Search desligado");
-    } catch {
-      toast.error("Não foi possível salvar o Web Search. A seleção anterior foi mantida.");
-    } finally {
-      savingRef.current = false;
-      if (mountedRef.current) setSaving(false);
-    }
+      const saved = webSearchConfigSchema.parse(await invoke(`set_${kind}_config`, { ...next }));
+      if (mounted.current) setConfig(saved);
+      toast.success(next.inheritChat || next.accountAlias ? `${title} atualizado` : `${title} desligado`);
+    } catch { toast.error(`Não foi possível salvar ${title}. A seleção anterior foi mantida.`); }
+    finally { lock.current = false; if (mounted.current) setSaving(false); }
   }
-
-  return <Card className="gap-3 py-4">
-    <CardHeader className="gap-1 px-4">
-      <CardTitle className="flex items-center gap-2 text-sm"><Globe aria-hidden="true" className="size-4 text-primary" />Web Search</CardTitle>
-    </CardHeader>
+  return <Card className="min-w-0 gap-3 py-4">
+    <CardHeader className="px-4"><CardTitle className="flex items-center gap-2 text-sm">{kind === "vision" ? <Eye className="size-4 text-[#c678dd]" /> : <Globe className="size-4 text-primary" />}{title}</CardTitle></CardHeader>
     <CardContent className="px-4">
-      {loading ? <Skeleton className="h-8 w-full" role="status" aria-label="Carregando Web Search" /> : error ?
-        <div className="flex flex-col gap-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button variant="outline" size="sm" className="cursor-pointer self-start" onClick={() => { setLoading(true); setRetry((value) => value + 1); }}>Recarregar Web Search</Button></div> :
-        <Field>
-          <FieldLabel htmlFor="web-search-account" className="sr-only">Conta para pesquisa</FieldLabel>
-          <Select items={items} value={selected ?? OFF} onValueChange={(value) => { void save(value); }} disabled={saving}>
-            <SelectTrigger id="web-search-account" className="w-full cursor-pointer font-mono text-xs" aria-describedby="web-search-status"><SelectValue />{saving && <Spinner aria-hidden="true" />}</SelectTrigger>
-            <SelectContent><SelectGroup>{items.map((item) => <SelectItem key={item.value} value={item.value} disabled={unavailable && item.value === selected} className="cursor-pointer">{item.label}</SelectItem>)}</SelectGroup></SelectContent>
-          </Select>
-          <p id="web-search-status" className="text-xs text-muted-foreground empty:hidden" role="status">{saving ? "Salvando…" : unavailable ? "Conta indisponível. Escolha outra ou desligue a pesquisa." : compatible.length === 0 ? "Conecte uma conta compatível." : null}</p>
-        </Field>}
+      {loading ? <Skeleton className="h-8 w-full" role="status" aria-label={`Carregando ${title}`} /> : error ? <div className="flex gap-2"><p role="alert" className="text-xs text-destructive">Não foi possível carregar {title}.</p><Button variant="outline" size="sm" onClick={() => { setLoading(true); setRetry(value => value + 1); }}>Recarregar {title}</Button></div> : <div className="grid min-w-0 gap-3" aria-busy={saving}>
+        <Select items={accountItems} value={config.inheritChat ? INHERIT : config.accountAlias ?? OFF} disabled={saving} onValueChange={value => {
+          if (!value) return;
+          if (value === OFF || value === INHERIT) { void save({ accountAlias: null, model: null, inheritChat: value === INHERIT }); return; }
+          const account = compatible.find(item => item.alias === value);
+          const model = account?.models.find(item => supports(account, item.id));
+          if (!model) { toast.error("Nenhum modelo disponível nesta conta."); return; }
+          void save({ accountAlias: value, model: model.id, inheritChat: false });
+        }}>
+          <SelectTrigger className="w-full cursor-pointer text-xs" aria-label={`Provedor de ${title}`}><SelectValue /></SelectTrigger>
+          <SelectContent>{accountItems.map(item => <SelectItem key={item.value} value={item.value} disabled={unavailable && item.value === config.accountAlias} className="cursor-pointer">{item.label}</SelectItem>)}</SelectContent>
+        </Select>
+        <Select items={modelItems} value={config.model} disabled={saving || config.inheritChat || !selected || !models.length} onValueChange={model => { if (model) void save({ ...config, model }); }}>
+          <SelectTrigger className="w-full cursor-pointer text-xs" aria-label={`Modelo de ${title}`}><SelectValue placeholder={config.inheritChat ? "Modelo do chat" : "Modelo"} /></SelectTrigger>
+          <SelectContent>{modelItems.map(item => <SelectItem key={item.value} value={item.value} disabled={!models.some(model => model.id === item.value)} className="cursor-pointer">{item.label}</SelectItem>)}</SelectContent>
+        </Select>
+        {unavailable && <p role="status" className="text-xs text-muted-foreground">Conta indisponível. Escolha outra ou desligue.</p>}
+      </div>}
     </CardContent>
   </Card>;
 }

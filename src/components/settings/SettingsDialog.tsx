@@ -520,7 +520,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
             ))}
           </div>
         )}
-        <WebSearchSettings accounts={accounts} />
+        <section className="space-y-3" aria-label="Ferramentas"><h3 className="micro-label text-muted-foreground">Ferramentas</h3><div className="grid gap-3 sm:grid-cols-2"><WebSearchSettings accounts={accounts} /><WebSearchSettings accounts={accounts} kind="vision" /></div></section>
       </div>
     );
   };

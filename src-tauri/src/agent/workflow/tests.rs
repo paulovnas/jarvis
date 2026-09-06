@@ -9,10 +9,10 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
     let options = TurnOptions { account: "root-account".into(), model: "root-model".into(), reasoning: Some("high".into()), mode: Mode::Build, workflow: Some(Flow::Complete), approval_mode: ApprovalMode::Manual };
     let signal = root.reserve("Implement the requested outcome".into(), options.clone()).unwrap();
     let directory = fixture.root.join("workflow"); std::fs::create_dir(&directory).unwrap();
-    let manifest = Manifest { version: 1, conversation_id: root.id.clone(), run_id: "run".into(), flow: Flow::Complete, root_status: Status::Running, updated_at: now(), revision: 1, options, profiles: BTreeMap::new(), jobs: BTreeMap::new(), messages: vec![], design_briefs: BTreeMap::new(), guidance: BTreeMap::new() };
+    let manifest = Manifest { validation: None, version: 1, conversation_id: root.id.clone(), run_id: "run".into(), flow: Flow::Complete, root_status: Status::Running, updated_at: now(), revision: 1, options, profiles: BTreeMap::new(), jobs: BTreeMap::new(), messages: vec![], design_briefs: BTreeMap::new(), guidance: BTreeMap::new() };
     storage::save(&directory, &manifest).unwrap();
     let (changed, _) = watch::channel(1);
-    let hub = Arc::new(Hub { root, env: Environment { state: AppState::default(), oauth: OpenAiCodexState::default(), mcp: crate::mcp::McpState::default(), home: fixture.root.clone() }, directory, manifest: Mutex::new(manifest), live: Mutex::new(HashMap::new()), changed, emit: Arc::new(|_| {}), check_lock: AsyncRwLock::new(()), root_signal: signal });
+    let hub = Arc::new(Hub { root, env: Environment { processes: processes::ProcessState::default(), process_changed: Arc::new(|_| {}), state: AppState::default(), oauth: OpenAiCodexState::default(), mcp: crate::mcp::McpState::default(), home: fixture.root.clone() }, directory, manifest: Mutex::new(manifest), live: Mutex::new(HashMap::new()), changed, emit: Arc::new(|_| {}), check_lock: AsyncRwLock::new(()), root_signal: signal });
     (fixture, hub)
 }
 pub(super) fn job(hub: &Hub, role: Role, scope: &str) -> Job {

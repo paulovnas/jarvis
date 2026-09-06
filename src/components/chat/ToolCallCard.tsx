@@ -1,5 +1,6 @@
-import { AlertCircle, BookOpen, Bot, Check, ChevronRight, FilePenLine, FileText, FolderSearch, Globe, Search, Terminal, Wrench } from "lucide-react";
+import { AlertCircle, BookOpen, Bot, Check, ChevronRight, Eye, FilePenLine, FileText, FolderSearch, Globe, Search, Terminal, Wrench } from "lucide-react";
 import { readWebSearchResult } from "@/core/web-search";
+import { readVisionResult } from "@/core/attachments";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { lazy, Suspense } from "react";
@@ -14,6 +15,8 @@ const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
 
 const tools = {
   read: { label: "Leitura de arquivo", icon: FileText },
+  read_attachment: { label: "Leitura de anexo", icon: FileText },
+  vision: { label: "Análise de imagem", icon: Eye },
   read_skill: { label: "Leitura de skill", icon: BookOpen },
   find_skills: { label: "Busca de skills", icon: BookOpen },
   design_search: { label: "Referências de design", icon: Search },
@@ -27,6 +30,10 @@ const tools = {
   write: { label: "Escrita de arquivo", icon: FilePenLine },
   edit: { label: "Edição de arquivo", icon: FilePenLine },
   bash: { label: "Execução no terminal", icon: Terminal },
+  process_start: { label: "Iniciar processo", icon: Terminal },
+  process_list: { label: "Consultar processos", icon: Terminal },
+  process_output: { label: "Saída do processo", icon: Terminal },
+  validation_publish: { label: "Validação manual", icon: Check },
   hub_spawn: { label: "Delegar tarefa", icon: Bot },
   hub_list: { label: "Consultar agentes", icon: Bot },
   hub_wait: { label: "Aguardar agentes", icon: Bot },
@@ -40,8 +47,9 @@ const tools = {
 export function ToolCallCard({ tool }: { tool: ToolCallItem }) {
   if (tool.name === "ask_user") return <QuestionHistory tool={tool} />;
   const { label, icon: Icon } = tools[tool.name as keyof typeof tools] ?? { label: tool.name, icon: Wrench };
-  const detail = tool.name === "read_skill" ? tool.output?.match(/^Skill: (.+)/)?.[1] ?? tool.args?.path : tool.args?.title ?? tool.args?.path ?? tool.args?.command ?? tool.args?.query;
+  const detail = tool.name === "read_skill" ? tool.output?.match(/^Skill: (.+)/)?.[1] ?? tool.args?.path : tool.args?.title ?? tool.args?.path ?? tool.args?.command ?? tool.args?.query ?? tool.args?.question;
   const searchResult = tool.name === "web_search" && tool.output ? readWebSearchResult(tool.output) : null;
+  const visionResult = tool.name === "vision" && tool.output ? readVisionResult(tool.output) : null;
   const status = { pending: "Aguardando autorização", running: "Executando", completed: "Concluída", error: "Não concluída" }[tool.status];
   return (
     <Collapsible data-testid={`tool-call-${tool.id}`} className="tool-slot min-w-0">
@@ -62,7 +70,7 @@ export function ToolCallCard({ tool }: { tool: ToolCallItem }) {
           <Suspense fallback={<Skeleton className="h-8 w-full" />}><ChatMarkdown content={searchResult.answer} /></Suspense>
           <p className="font-medium">Fontes</p>
           {searchResult.sources.map((source) => <Button key={source.url} variant="link" className="h-auto cursor-pointer justify-start whitespace-normal px-0 text-left text-xs" onClick={() => { void openUrl(source.url).catch(() => toast.error("Não foi possível abrir o link")); }}>{source.title}</Button>)}
-        </div> : tool.output && <div><p className="mb-1">Resultado</p><pre className="max-h-64 overflow-auto rounded-md bg-muted p-3 text-foreground">{tool.output}</pre></div>}
+        </div> : visionResult ? <div className="flex max-h-80 flex-col gap-3 overflow-auto rounded-md bg-muted p-3 text-foreground"><p className="font-mono text-[10px] text-muted-foreground">{visionResult.accountAlias} · {visionResult.model}</p><Suspense fallback={<Skeleton className="h-8 w-full" />}><ChatMarkdown content={visionResult.analysis} /></Suspense></div> : tool.output && <div><p className="mb-1">Resultado</p><pre className="max-h-64 overflow-auto rounded-md bg-muted p-3 text-foreground">{tool.output}</pre></div>}
         {tool.error && <p role="alert" className="whitespace-pre-wrap text-destructive">{tool.error}</p>}
       </CollapsibleContent>
     </Collapsible>

@@ -93,18 +93,7 @@ pub async fn connect(
                     .current_dir(directory)
                     .envs(environment)
                     .kill_on_drop(true);
-                // Finder-launched macOS apps do not inherit the user's shell PATH.
-                if !environment.contains_key("PATH") {
-                    let mut paths: Vec<_> =
-                        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-                            .collect();
-                    paths.extend(
-                        ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].map(Into::into),
-                    );
-                    if let Ok(path) = std::env::join_paths(paths) {
-                        cmd.env("PATH", path);
-                    }
-                }
+                super::executable::configure(&mut cmd, environment.contains_key("PATH"));
                 let mut wrapped = process_wrap::tokio::CommandWrap::from(cmd);
                 #[cfg(unix)]
                 wrapped.wrap(process_wrap::tokio::ProcessGroup::leader());

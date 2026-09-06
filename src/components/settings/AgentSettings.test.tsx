@@ -28,6 +28,14 @@ it("groups the twelve immutable agents by flow and offers useful role-specific m
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
 });
 
+it("identifica o provedor escolhido pelo sufixo ao lado do modelo", () => {
+  vi.mocked(useAgentModels).mockReturnValue({ data: { "planned/planner": { account: "openai-codex-personal", model: "gpt-5.6-sol", reasoning: "high" } }, error: null, saving: false, save, refresh: vi.fn() });
+  render(<AgentSettings accounts={accounts} />);
+  const group = screen.getByRole("region", { name: "Agentes do fluxo Planejado" });
+  expect(within(group).getByTitle("openai-codex-personal")).toHaveTextContent("personal");
+  expect(within(group).getByRole("button", { name: "Modelo de Planejador no fluxo Planejado" })).toHaveTextContent("GPT 5.6 Sol");
+});
+
 it("saves the selected provider, model and supported effort only for the chosen agent and flow", async () => {
   const user = userEvent.setup(); render(<AgentSettings accounts={accounts} />);
   screen.getByRole("button",{name:"Modelo de Revisor no fluxo Completo"}).focus(); await user.keyboard("{Enter}");

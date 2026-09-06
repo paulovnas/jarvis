@@ -9,6 +9,7 @@ use tokio::sync::watch;
 
 mod antigravity;
 
+pub(super) use antigravity::grounded_search;
 const MAX_EVENT: usize = 4 * 1024 * 1024;
 const MAX_STREAM: usize = 16 * 1024 * 1024;
 pub(super) enum Delta {

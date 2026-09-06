@@ -44,6 +44,9 @@ flate2 = "1"
 tar = "0.4"
 zip = { version = "4", default-features = false, features = ["deflate"] }
 fs2 = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+pdf-extract = "0.12"
+quick-xml = "0.42"
 time = { version = "0.3.55", default-features = false, features = ["parsing"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "3.7", default-features = false }

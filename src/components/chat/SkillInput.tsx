@@ -39,7 +39,7 @@ function inputDocument(draft: ChatDraft): JSONContent {
   const content: JSONContent[] = [];
   for (const part of parts) {
     if (part.type === "skill") content.push({ type: "skill", attrs: { id: part.id, name: part.name } });
-    else part.text.split("\n").forEach((text, index) => {
+    else if (part.type === "text") part.text.split("\n").forEach((text, index) => {
       if (index) content.push({ type: "hardBreak" });
       if (text) content.push({ type: "text", text });
     });
@@ -92,10 +92,12 @@ interface Props {
   compacting: boolean;
   working: boolean;
   children: ReactNode;
+  attachments?: ReactNode;
+  onFiles?: (files: File[]) => void;
   ref?: Ref<{ focus: () => void }>;
 }
 
-export function SkillInput({ draft, onChange, onSend, disabled, compacting, working, children, ref }: Props) {
+export function SkillInput({ draft, onChange, onSend, disabled, compacting, working, children, attachments, onFiles, ref }: Props) {
   const [query, setQuery] = useState<Query | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<{ skills?: Skill[]; error?: string } | null>(null);
@@ -116,7 +118,7 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
     content: initialDocument,
     editable: !disabled,
     editorProps,
-    onUpdate: ({ editor }) => { current.current = readDraft(editor); emittedDrafts.current.add(current.current); onChange(current.current); refreshQuery(editor); },
+    onUpdate: ({ editor }) => { const next = readDraft(editor); const files = current.current.parts?.filter(part => part.type === "attachment") ?? []; current.current = files.length ? { ...next, parts: [...(next.parts ?? [{ type: "text", text: next.content }]), ...files] } : next; emittedDrafts.current.add(current.current); onChange(current.current); refreshQuery(editor); },
     onSelectionUpdate: ({ editor }) => refreshQuery(editor),
     onBlur: () => { setQuery(null); setCatalog(null); },
     onFocus: ({ editor }) => refreshQuery(editor),
@@ -124,7 +126,9 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
   useImperativeHandle(ref, () => ({ focus: () => { if (editor && !editor.isDestroyed) { editor.commands.setTextSelection(editor.state.doc.content.size - 1); editor.view.focus(); } } }), [editor]);
   useEffect(() => {
     if (editor && !editor.isDestroyed && !emittedDrafts.current.has(draft) && JSON.stringify(draft) !== JSON.stringify(current.current)) {
+      const unchanged = JSON.stringify(inputDocument(draft)) === JSON.stringify(inputDocument(current.current));
       current.current = draft;
+      if (unchanged) return;
       editor.commands.setContent(inputDocument(draft), { emitUpdate: false });
       editor.commands.setTextSelection(editor.state.doc.content.size - 1);
       setQuery(null);
@@ -160,7 +164,10 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
     if (open && activeSkill) editor.view.dom.setAttribute("aria-activedescendant", `${listId}-${activeSkill.id}`);
     else editor.view.dom.removeAttribute("aria-activedescendant");
   }, [editor, open, activeSkill, listId]);
-  return <div onKeyDownCapture={event => {
+  return <div onPasteCapture={event => {
+    const files = Array.from(event.clipboardData.files);
+    if (files.length) { event.preventDefault(); event.stopPropagation(); if (!disabled) onFiles?.(files); }
+  }} onKeyDownCapture={event => {
     if (event.nativeEvent.isComposing || editor?.view.composing || disabled) return;
     if (open) {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setDismissed(queryKey); setCatalog(null); return; }
@@ -185,6 +192,7 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
       </CommandList>
     </Command>}
     <InputGroup aria-label="Mensagem e opções de envio" aria-busy={compacting} data-working={working || undefined} className="chat-composer relative isolate h-auto w-full flex-col items-stretch rounded-[22px] border-border bg-card shadow-2xl shadow-black/30 focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/30 dark:bg-card has-disabled:opacity-100 has-disabled:bg-card dark:has-disabled:bg-card">
+      {attachments}
       <EditorContent editor={editor} className="min-w-0 w-full" />
       <InputGroupAddon align="block-end" className="p-0 font-normal select-auto">{children}</InputGroupAddon>
     </InputGroup>

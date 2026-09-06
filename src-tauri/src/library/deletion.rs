@@ -141,6 +141,7 @@ pub(super) fn recover(connection: &Connection, home: &Path) -> Result<(), Librar
 // The database commit is the authority: a crash before commit retains memory,
 // and a crash after commit leaves an orphan that the next recovery removes.
 fn cleanup_context_memory(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
+    cleanup_attachments(connection, home)?;
     let workers = cleanup_workflows(connection, home)?;
     let directory = home.join(".jarvis/context-mode");
     if !is_directory(&directory)? {
@@ -178,6 +179,18 @@ fn cleanup_context_memory(connection: &Connection, home: &Path) -> Result<(), Li
 
 // Workflow artifacts belong to their conversation, never to the source checkout.
 // Retain worker Context-mode stores while the owning conversation still exists.
+fn cleanup_attachments(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
+    let root = home.join(".jarvis/attachments");
+    if !is_directory(&root)? { return Ok(()); }
+    let live: std::collections::HashSet<String> = connection.prepare("SELECT id FROM conversations")?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
+    for entry in fs::read_dir(&root).map_err(|_| deletion_error())? {
+        let entry = entry.map_err(|_| deletion_error())?;
+        let id = entry.file_name().to_string_lossy().into_owned();
+        if valid_id(&id) && !live.contains(&id) && is_directory(&entry.path())? { fs::remove_dir_all(entry.path()).map_err(|_| deletion_error())?; }
+    }
+    sync_directory(&root)
+}
+
 fn cleanup_workflows(connection: &Connection, home: &Path) -> Result<Vec<String>, LibraryError> {
     let root = home.join(".jarvis/workflows");
     if !is_directory(&root)? { return Ok(vec![]); }

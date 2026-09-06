@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { aliasSuffix, planLabel, remainingTime, quotaColor, quotaPercent } from "./provider-usage";
+import { aliasSuffix, planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve } from "./provider-usage";
 import { shortId } from "./dashboard";
 
 it("keeps the complete alias suffix and formats only available quota data", () => {
@@ -20,4 +20,15 @@ it("keeps the complete alias suffix and formats only available quota data", () =
 it("shows readable project references while preserving native beads IDs and child suffixes", () => {
   expect(shortId("jarvis-0ht.3", "Jarvis")).toBe("jarvis-0ht.3");
   expect(shortId(`j${"a".repeat(32)}-1234567890abcdef.3`, "Lindoya Verão")).toBe("lindoya-verao-123456….3");
+});
+
+it("calcula reserva e deficit relativos ao tempo restante sem inventar janelas", () => {
+  const window = { id: "weekly", label: "7d", group: "Codex", thirdParty: false, durationSeconds: 7 * 86400, remainingPercent: 78, resetsAt: 3.5 * 86400_000 };
+  expect(quotaReserve(window, 0)).toBe(28);
+  expect(quotaReserve({ ...window, remainingPercent: 76, resetsAt: 6.5 * 86400_000 }, 0)).toBe(-17);
+  expect(quotaReserve({ ...window, remainingPercent: null }, 0)).toBeNull();
+  expect(quotaReserve({ ...window, durationSeconds: null }, 0)).toBeNull();
+  expect(quotaReserve({ ...window, resetsAt: null }, 0)).toBeNull();
+  expect(quotaReserve(window, window.resetsAt)).toBeNull();
+  expect(quotaReserve({ ...window, resetsAt: 8 * 86400_000 }, 0)).toBeNull();
 });

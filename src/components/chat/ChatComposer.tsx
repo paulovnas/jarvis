@@ -1,20 +1,20 @@
 import { lazy, Suspense, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronDown, Plus, Square, ListOrdered, X } from "lucide-react";
+import { ArrowUp, Plus, Square, ListOrdered, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { ProcessPopover } from "./ProcessPopover";
+import { Skeleton } from "@/components/ui/skeleton";
+import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
+import { attachmentSchema, uploadFile } from "@/core/attachments";
+import { AttachmentPreview } from "./AttachmentPreview";
+import { FlowPicker } from "./FlowPicker";
 import { ComposerSkeleton } from "@/components/layout/LoadingSkeletons";
 import { MessageContent } from "./MessageContent";
 import { ModelPicker, type ProviderModelGroup, type ModelSelection } from "./ModelPicker";
 export type { ProviderModelGroup } from "./ModelPicker";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
-import { FLOW_LABELS, rootRole, type Workflow } from "@/core/workflow";
+import { rootRole, type Workflow } from "@/core/workflow";
 import { mergeDrafts, type ChatDraft, type MessagePart, type QueuedMessage, type TurnOptions } from "@/core/chat";
 
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
@@ -35,15 +35,6 @@ interface ChatComposerProps {
   onResumeQueue?: () => Promise<void>;
 }
 
-const MODE_OPTIONS = [
-  { value: "standard", label: "Padrão" },
-  { value: "designer", label: "Designer" },
-  { value: "planned", label: "Planejado" },
-  { value: "complete", label: "Completo" },
-] as const;
-
-
-
 export function ChatComposer({
   agentModels,
   onSendMessage,
@@ -63,14 +54,31 @@ export function ChatComposer({
   const text = draft.content;
   const draftRef = useRef(draft);
   const input = useRef<{ focus: () => void }>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const importing = useRef(false);
+  const [uploading, setUploading] = useState(false);
+  const attachments = draft.parts?.filter(part => part.type === "attachment") ?? [];
   const [removing, setRemoving] = useState<string[]>([]);
   const removeLocks = useRef(new Set<string>());
   const [resuming, setResuming] = useState(false);
   const setDraft = (value: ChatDraft) => {
     draftRef.current = value;
-    if (draftKey) { if (value.content) drafts?.set(draftKey, value); else drafts?.delete(draftKey); }
+    if (draftKey) { if (value.content || value.parts?.length) drafts?.set(draftKey, value); else drafts?.delete(draftKey); }
     updateDraft(value);
   };
+  async function addFiles(files: File[]) {
+    if (!draftKey || disabled || compacting || importing.current || !files.length) return;
+    const existing = draftRef.current.parts?.filter(part => part.type === "attachment") ?? [];
+    if (files.length + existing.length > 8 || files.reduce((sum, file) => sum + file.size, existing.reduce((sum, part) => sum + part.attachment.size, 0)) > 50 * 1024 * 1024) { toast.error("Anexe até 8 arquivos, somando no máximo 50 MB."); return; }
+    importing.current = true; setUploading(true);
+    try {
+      const uploads = await Promise.all(files.map(uploadFile));
+      const imported = attachmentSchema.array().parse(await invoke("import_chat_attachments", { conversationId: draftKey, uploads }));
+      const current = drafts?.get(draftKey) ?? draftRef.current;
+      setDraft({ ...current, parts: [...(current.parts ?? [{ type: "text", text: current.content }]), ...imported.map(attachment => ({ type: "attachment" as const, attachment }))] });
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : typeof cause === "object" && cause && "message" in cause ? String(cause.message) : "Não foi possível anexar os arquivos."); }
+    finally { importing.current = false; setUploading(false); }
+  }
   const removeQueued = async (id: string) => {
     if (!onRemoveQueued || removeLocks.current.has(id)) return;
     removeLocks.current.add(id); setRemoving([...removeLocks.current]);
@@ -93,8 +101,8 @@ export function ChatComposer({
 
   const handleSend = async () => {
     const submitted = draftRef.current;
-    const trimmed = submitted.content.trim();
-    if (!trimmed || disabled || compacting || agentModels?.saving || sendLock.current || !currentModelDef) return;
+    const trimmed = submitted.content.trim() || (submitted.parts?.some(part => part.type === "attachment") ? "Analise os anexos." : "");
+    if (!trimmed || disabled || compacting || importing.current || agentModels?.saving || sendLock.current || !currentModelDef) return;
     const separator = currentModelDef.value.indexOf("/");
     if (separator < 1) return;
     sendLock.current = true;
@@ -135,7 +143,7 @@ export function ChatComposer({
           <Button variant="ghost" size="icon" className="size-6 shrink-0 cursor-pointer text-muted-foreground" aria-label={`Retirar mensagem ${index + 1} e editar`} title="Cancelar envio e devolver ao campo de texto" disabled={compacting || removing.includes(message.id)} onClick={() => { void removeQueued(message.id); }}><X className="size-3.5" /></Button>
         </div>)}</div>
       </section>}
-      <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} onSend={() => { void handleSend(); }} disabled={disabled || compacting} compacting={compacting} working={running || compacting}>
+      <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} onFiles={files => { void addFiles(files); }} attachments={(attachments.length > 0 || uploading) && <div className="flex flex-wrap gap-1 px-5 pt-4" aria-label="Anexos da mensagem">{attachments.map(part => <AttachmentPreview key={part.attachment.id} attachment={part.attachment} disabled={disabled || compacting || sending} onRemove={() => { const current = draftRef.current; setDraft({ ...current, parts: current.parts?.filter(item => item.type !== "attachment" || item.attachment.id !== part.attachment.id) }); }} />)}{uploading && <Skeleton className="mb-2 size-20 rounded-lg" role="status" aria-label="Preparando anexos" />}</div>} onSend={() => { void handleSend(); }} disabled={disabled || compacting} compacting={compacting} working={running || compacting}>
 
         {/* Linha de controles inferior no padrão Metis */}
         <div className="composer-controls flex w-full items-center justify-between gap-1 px-3 pb-3 pt-1">
@@ -144,59 +152,20 @@ export function ChatComposer({
             type="button"
             variant="ghost"
             size="icon"
-            disabled
-            title="Anexos ainda não disponíveis"
+            disabled={disabled || compacting || uploading || !draftKey}
+            onClick={() => fileInput.current?.click()}
+            title="Anexar imagens ou documentos"
             aria-label="Adicionar anexo"
             className="size-7.5 cursor-pointer rounded-full bg-secondary text-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <Plus className="size-3.5 stroke-[2.2]" />
           </Button>
+          {draftKey && <ProcessPopover key={draftKey} conversationId={draftKey} />}
+          <Input ref={fileInput} type="file" multiple className="hidden" aria-label="Selecionar anexos" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.pdf,.docx,.odt,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.ts,.tsx,.js,.css,.html,.rs,.py" onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void addFiles(files); }} />
 
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}
           <div className="composer-options flex flex-1 items-center gap-0.5">
-            {/* Seletor do Agente/Modo (mesmo padrão DropdownMenu do seletor de modelo) */}
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                aria-label="Selecionar fluxo"
-                disabled={running || sending || compacting}
-                className="flex h-7.5 cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 text-xs font-medium text-foreground shadow-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                <span className="truncate">{FLOW_LABELS[workflow]}</span>
-                <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-              </DropdownMenuTrigger>
-
-              <DropdownMenuContent
-                align="end"
-                side="top"
-                sideOffset={8}
-                className="min-w-[190px] border-border bg-card p-1.5 text-foreground"
-              >
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#e5c07b]">
-                    Fluxo
-                  </DropdownMenuLabel>
-                  {MODE_OPTIONS.map((opt) => {
-                    const isSelected = opt.value === workflow;
-                    return (
-                      <DropdownMenuItem
-                        key={opt.value}
-                        onClick={() => setWorkflow(opt.value)}
-                        className={`flex cursor-pointer items-center justify-between py-1.5 pl-3 pr-2 text-xs hover:bg-secondary ${
-                          isSelected
-                            ? "font-medium text-[#61afef]"
-                            : "text-foreground"
-                        }`}
-                      >
-                        <span>{opt.label}</span>
-                        {isSelected && (
-                          <Check className="size-3 text-[#61afef]" />
-                        )}
-                      </DropdownMenuItem>
-                    );
-                  })}
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <FlowPicker value={workflow} onChange={setWorkflow} disabled={running || sending || compacting} />
 
             <ModelPicker modelGroups={modelGroups} selection={currentModelDef ? { model: currentModelDef.value, reasoning } : null} onSelect={chooseModel} disabled={running || sending || compacting || agentModels?.saving} />
 
@@ -206,10 +175,10 @@ export function ChatComposer({
               type="button"
               size="icon"
               onClick={() => { void handleSend(); }}
-              disabled={!text.trim() || disabled || compacting || sending || !currentModelDef}
+              disabled={(!text.trim() && !attachments.length) || disabled || compacting || sending || uploading || !currentModelDef}
               aria-label={running ? "Agendar mensagem" : "Enviar mensagem"}
               className={`size-7.5 cursor-pointer rounded-full transition-all ${
-                text.trim()
+                text.trim() || attachments.length
                   ? "bg-[#61afef] text-primary-foreground shadow-sm shadow-[#61afef]/30 hover:bg-[#61afef]/90 active:scale-95"
                   : "cursor-not-allowed bg-secondary text-muted-foreground"
               }`}

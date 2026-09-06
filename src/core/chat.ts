@@ -1,20 +1,24 @@
 import { z } from "zod";
 import { pendingQuestionSchema } from "./questions";
+import { attachmentSchema } from "./attachments";
 
 export const messagePartSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({ type: z.literal("skill"), id: z.string(), name: z.string() }),
+  z.object({ type: z.literal("attachment"), attachment: attachmentSchema }),
 ]);
 export type MessagePart = z.infer<typeof messagePartSchema>;
 export interface ChatDraft { content: string; parts?: MessagePart[] }
 export function draftText(parts: MessagePart[]): string {
-  return parts.map(part => part.type === "text" ? part.text : `/${part.name}`).join("");
+  return parts.map(part => part.type === "text" ? part.text : part.type === "skill" ? `/${part.name}` : "").join("");
 }
 export function mergeDrafts(current: ChatDraft, restored: ChatDraft): ChatDraft {
   const parts = [...(current.parts ?? (current.content ? [{ type: "text" as const, text: current.content }] : [])),
     ...(current.content ? [{ type: "text" as const, text: "\n\n" }] : []),
     ...(restored.parts ?? [{ type: "text" as const, text: restored.content }])];
-  return { content: draftText(parts), parts };
+  const seen = new Set<string>();
+  const unique = parts.filter(part => { if (part.type !== "attachment") return true; if (seen.has(part.attachment.id)) return false; seen.add(part.attachment.id); return true; });
+  return { content: draftText(unique), parts: unique };
 }
 
 export const turnOptionsSchema = z.object({

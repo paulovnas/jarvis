@@ -46,12 +46,15 @@ pub(super) fn open(root: Arc<Session>, env: Environment, app: tauri::AppHandle, 
     let run_id = root.data.lock().map_err(|_| AgentError::internal())?.active.as_ref().ok_or_else(AgentError::cancelled)?.id.clone();
     let options = root.data.lock().map_err(|_| AgentError::internal())?.turns.last().ok_or_else(AgentError::internal)?.turn.options.clone();
     let mut manifest = load(&directory_path, &root.id)?.unwrap_or_else(|| Manifest {
-        version: 1, conversation_id: root.id.clone(), run_id: run_id.clone(), flow, root_status: Status::Running,
+        validation: None, version: 1, conversation_id: root.id.clone(), run_id: run_id.clone(), flow, root_status: Status::Running,
         updated_at: now(), revision: now(), options: options.clone(), profiles: profiles.clone(), jobs: BTreeMap::new(), messages: vec![], design_briefs: BTreeMap::new(), guidance: BTreeMap::new(),
     });
     // Keep recent recovery context without allowing unbounded metadata growth.
+    if let Some(batch) = &mut manifest.validation {
+        if run_id == batch.id { batch.submitted = true; } else { batch.stale = true; }
+    }
     if manifest.jobs.len() > MAX_JOBS / 2 {
-        let mut ids: Vec<_> = manifest.jobs.values().filter(|job| job.status == Status::Completed).map(|job| (job.updated_at, job.id.clone())).collect();
+        let mut ids: Vec<_> = manifest.jobs.values().filter(|job| job.status == Status::Completed && !manifest.validation.as_ref().is_some_and(|batch| !batch.stale && batch.run_id == job.run_id)).map(|job| (job.updated_at, job.id.clone())).collect();
         ids.sort();
         for (_, id) in ids { if manifest.jobs.len() <= MAX_JOBS / 2 { break; } manifest.jobs.remove(&id); }
     }

@@ -9,6 +9,22 @@ fn options(model: &str) -> TurnOptions {
         approval_mode: crate::agent::ApprovalMode::Manual,
     }
 }
+
+#[test]
+fn grounding_uses_selected_gemini_and_only_verified_source_metadata() {
+    let body = grounded_body(&credential(), "session", "gemini-3.8-flash", "Tauri docs").unwrap();
+    assert_eq!(body["model"], "gemini-3.8-flash");
+    assert_eq!(body["request"]["tools"], json!([{"googleSearch":{}}]));
+    assert!(grounded_body(&credential(), "session", "claude-opus", "Tauri docs").is_err());
+    let mut output = Output::default();
+    output.event(&json!({"response":{"candidates":[{"content":{"parts":[{"text":"Documentação"}]},"groundingMetadata":{"groundingChunks":[{"web":{"uri":"https://v2.tauri.app/","title":"Tauri"}}]},"finishReason":"STOP"}]}}), &mut |_| Ok(())).unwrap();
+    let response = output.finish("gemini-3.8-flash").unwrap();
+    assert_eq!(response.output[0]["type"], "web_search_call");
+    assert_eq!(response.output[0]["action"]["sources"][0]["url"], "https://v2.tauri.app/");
+    let mut plain = Output::default();
+    plain.event(&json!({"candidates":[{"content":{"parts":[{"text":"Sem pesquisa"}]},"finishReason":"STOP"}]}), &mut |_| Ok(())).unwrap();
+    assert!(!plain.finish("gemini").unwrap().output.iter().any(|item| item["type"] == "web_search_call"));
+}
 fn credential() -> CodexCredential {
     let mut c = CodexCredential::new("test", "test", 0, "google:1", None, None);
     c.project_id = Some("project".into());

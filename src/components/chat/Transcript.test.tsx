@@ -12,7 +12,7 @@ import type { HistoryPage } from "@/core/chat";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
 function page(start: number, id = "c1"): HistoryPage {
-  return { conversationId: id, history: { start, total: 100 }, compactions: [], navigation: [0, 50, 99].map(index => ({ id: `t${index}`, index, createdAt: 1, user: `Pedido ${index}`, assistant: `Resumo ${index}` })), turns: Array.from({ length: 20 }, (_, i) => ({ ...savedTurn(), id: `t${start + i}`, user: `Pedido ${start + i}`, steps: [{ ...savedTurn().steps[0], text: `Resposta ${start + i}`, summary: "", tools: [] }] })) };
+  return { conversationId: id, history: { start, total: 100 }, compactions: [], navigation: [0, 10, 20, 30, 40, 50, 60, 70, 80, 99].map(index => ({ id: `t${index}`, index, createdAt: 1, user: `Pedido ${index}`, assistant: `Resumo ${index}` })), turns: Array.from({ length: 20 }, (_, i) => ({ ...savedTurn(), id: `t${start + i}`, user: `Pedido ${start + i}`, steps: [{ ...savedTurn().steps[0], text: `Resposta ${start + i}`, summary: "", tools: [] }] })) };
 }
 function Harness({ id = "c1" }: { id?: string }) {
   const library = populatedLibrary(); library.conversations[0].id = id; library.selection.conversationId = id;
@@ -20,6 +20,12 @@ function Harness({ id = "c1" }: { id?: string }) {
 }
 describe("lazy transcript navigation", () => {
   beforeEach(() => { call.mockReset(); vi.mocked(listen).mockResolvedValue(() => {}); });
+  it("oculta a navegação com menos de dez trechos", async () => {
+    call.mockResolvedValue({ ...emptyChat(), ...page(80), navigation: page(80).navigation.slice(0, 9) });
+    render(<Harness />);
+    await screen.findByText("Resposta 99");
+    expect(screen.queryByRole("navigation", { name: "Navegar pela conversa" })).not.toBeInTheDocument();
+  });
   it("ignores elastic overscroll but loads older messages on a real upward scroll", async () => {
     call.mockImplementation(async command => command === "get_chat_history" ? page(60) : { ...emptyChat(), ...page(80) });
     const { container } = render(<Harness />);

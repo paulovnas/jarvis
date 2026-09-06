@@ -2,6 +2,26 @@ use super::*;
 use crate::openai_codex::CodexCredential;
 use std::io::{Read, Write};
 
+fn options(account: &str, model: &str) -> TurnOptions {
+    TurnOptions { account: account.into(), model: model.into(), reasoning: None, mode: super::super::Mode::Plan, workflow: None, approval_mode: super::super::ApprovalMode::Yolo }
+}
+
+#[test]
+fn inheritance_uses_each_executing_agents_model_and_explicit_choices_stay_fixed() {
+    let config = Config::default();
+    let root = options("openai-codex-chat", "gpt-5.6-sol");
+    let child = options("antigravity-designer", "gemini-3.8-flash");
+    assert_eq!(config.resolve(&root).model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(config.resolve(&child).account_alias.as_deref(), Some("antigravity-designer"));
+    assert_eq!(config.resolve(&child).model.as_deref(), Some("gemini-3.8-flash"));
+    let explicit = Config { inherit_chat: false, account_alias: Some("search".into()), model: Some("gpt-5.6-luna".into()) };
+    assert_eq!(explicit.resolve(&root), explicit.resolve(&child));
+    assert_eq!(Config { inherit_chat: false, account_alias: None, model: None }.resolve(&child).account_alias, None);
+    assert!(supports("antigravity", "gemini-3.8-flash"));
+    assert!(!supports("antigravity", "claude-opus"));
+}
+
+
 fn database() -> Connection {
     let mut connection = Connection::open_in_memory().unwrap();
     crate::persistence::initialize_database(&mut connection).unwrap();
@@ -12,10 +32,10 @@ fn database() -> Connection {
 }
 
 #[test]
-fn default_off_selection_and_disconnect_are_persistent() {
+fn default_inherited_selection_and_disconnect_are_persistent() {
     let mut db = database();
     assert_eq!(read_config(&db).unwrap(), Config::default());
-    save_config(&mut db, Some("openai-codex-search".into())).unwrap();
+    save_config(&mut db, Some("openai-codex-search".into()), Some("gpt-5.6-luna".into()), false).unwrap();
     crate::persistence::initialize_database(&mut db).unwrap();
     assert_eq!(
         read_config(&db).unwrap().account_alias.as_deref(),
@@ -35,24 +55,24 @@ fn default_off_selection_and_disconnect_are_persistent() {
         [],
     )
     .unwrap();
-    assert_eq!(read_config(&db).unwrap(), Config::default());
+    assert_eq!(read_config(&db).unwrap(), Config { inherit_chat: false, account_alias: None, model: None });
 }
 
 #[test]
 fn invalid_accounts_do_not_replace_selection_and_off_is_explicit() {
     let mut db = database();
-    save_config(&mut db, Some("openai-codex-search".into())).unwrap();
-    assert!(save_config(&mut db, Some("missing' OR 1 = 1 --".into())).is_err());
+    save_config(&mut db, Some("openai-codex-search".into()), Some("gpt-5.6-luna".into()), false).unwrap();
+    assert!(save_config(&mut db, Some("missing' OR 1 = 1 --".into()), Some("gpt-5.6-luna".into()), false).is_err());
     assert_eq!(
         read_config(&db).unwrap().account_alias.as_deref(),
         Some("openai-codex-search")
     );
-    save_config(&mut db, None).unwrap();
-    assert_eq!(read_config(&db).unwrap(), Config::default());
+    save_config(&mut db, None, None, false).unwrap();
+    assert_eq!(read_config(&db).unwrap(), Config { inherit_chat: false, account_alias: None, model: None });
 }
 
 #[test]
-fn migration_preserves_existing_accounts_and_defaults_search_to_off() {
+fn migration_preserves_existing_accounts_and_defaults_search_to_inherit() {
     let mut db = Connection::open_in_memory().unwrap();
     for sql in [
         include_str!("../../../../drizzle/0000_heavy_tomas.sql"),
@@ -98,11 +118,15 @@ async fn disabled_search_never_resolves_credentials_or_uses_the_chat_account() {
         "jarvis-search-{}",
         crate::library::new_id().unwrap()
     ));
+    let state = AppState::default();
+    state.with_connection(&home, |db| save_config(db, None, None, false)).unwrap();
+    let options = options("chat", "gpt-5.6-sol");
     let (_send, signal) = watch::channel(false);
     let result = execute(
         &AppState::default(),
         &OpenAiCodexState::default(),
         &home,
+        &options,
         &json!({"query":"Tauri"}),
         signal,
     )
@@ -127,7 +151,7 @@ fn sources_are_merged_sanitized_bounded_and_include_the_search_account() {
         usage: None,
     };
     let result: Value =
-        serde_json::from_str(&format_result(&response, "openai-codex-search", 1).unwrap()).unwrap();
+        serde_json::from_str(&format_result(&response, "openai-codex-search", "gpt-5.6-luna", 1).unwrap()).unwrap();
     assert_eq!(result["accountAlias"], "openai-codex-search");
     assert_eq!(result["model"], "gpt-5.6-luna");
     assert_eq!(
@@ -147,20 +171,20 @@ fn plain_completions_failed_searches_and_missing_sources_are_not_search_results(
         usage: None,
     };
     assert_eq!(
-        format_result(&response, "a", 8).unwrap_err().code,
+        format_result(&response, "a", "gpt-5.6-luna", 8).unwrap_err().code,
         "web_search_not_invoked"
     );
     response.output = vec![json!({"type":"web_search_call", "status":"failed"})];
-    assert!(format_result(&response, "a", 8).is_err());
+    assert!(format_result(&response, "a", "gpt-5.6-luna", 8).is_err());
     response.output[0]["status"] = json!("completed");
     assert_eq!(
-        format_result(&response, "a", 8).unwrap_err().code,
+        format_result(&response, "a", "gpt-5.6-luna", 8).unwrap_err().code,
         "web_search_no_sources"
     );
 }
 
 #[test]
-fn search_always_requests_luna_even_when_other_models_are_available() {
+fn search_requests_the_configured_model_independently_of_the_chat() {
     let catalog = ["gpt-5.5", "gpt-5.6-luna"].map(|id| ProviderModel {
         id: id.into(),
         name: id.into(),
@@ -168,9 +192,9 @@ fn search_always_requests_luna_even_when_other_models_are_available() {
         reasoning_levels: vec![],
         default_reasoning_level: None,
     });
-    require_search_model(&catalog).unwrap();
-    let body = search_body("Tauri docs");
-    assert_eq!(body["model"], "gpt-5.6-luna");
+    require_search_model(&catalog, "gpt-5.5").unwrap();
+    let body = search_body("Tauri docs", "gpt-5.5");
+    assert_eq!(body["model"], "gpt-5.5");
     assert_eq!(body["input"].as_array().unwrap().len(), 1);
     assert_eq!(body["input"][0]["content"][0]["text"], "Tauri docs");
     assert_eq!(body["tool_choice"], json!({"type":"web_search"}));
@@ -178,7 +202,7 @@ fn search_always_requests_luna_even_when_other_models_are_available() {
 }
 
 #[test]
-fn missing_luna_is_an_explicit_error_instead_of_selecting_another_model() {
+fn missing_selected_model_is_an_error_instead_of_silent_fallback() {
     let catalog = [ProviderModel {
         id: "gpt-5.5".into(),
         name: "GPT-5.5".into(),
@@ -186,10 +210,10 @@ fn missing_luna_is_an_explicit_error_instead_of_selecting_another_model() {
         reasoning_levels: vec![],
         default_reasoning_level: None,
     }];
-    let error = require_search_model(&catalog).unwrap_err();
+    let error = require_search_model(&catalog, "gpt-5.6-luna").unwrap_err();
     assert_eq!(error.code, "web_search_model");
-    assert!(error.message.contains("GPT-5.6 Luna"));
-    assert!(require_search_model(&[]).is_err());
+    assert!(error.message.contains("modelo selecionado"));
+    assert!(require_search_model(&[], "gpt-5.6-luna").is_err());
 }
 
 fn mock_request(
@@ -243,7 +267,7 @@ fn mock_request(
     let mut request = provider::authenticated_request(
         &credential,
         "search-session",
-        &search_body("Tauri docs"),
+        &search_body("Tauri docs", "gpt-5.6-luna"),
         TIMEOUT,
     )
     .unwrap()
@@ -267,7 +291,7 @@ async fn hosted_search_sse_uses_its_own_auth_and_preserves_sources_with_lean_com
     let response = provider::receive(request, signal, |_| Ok(()))
         .await
         .unwrap();
-    let result = format_result(&response, "openai-codex-search", 8).unwrap();
+    let result = format_result(&response, "openai-codex-search", "gpt-5.6-luna", 8).unwrap();
     assert!(result.contains("https://v2.tauri.app/"));
     let wire = server.join().unwrap();
     assert!(wire.contains("authorization: Bearer search-fake-token\r\n"));

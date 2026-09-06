@@ -1,4 +1,5 @@
 pub mod config;
+mod executable;
 pub mod runtime;
 
 use crate::persistence::{AppState, PersistenceError};

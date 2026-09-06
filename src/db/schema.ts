@@ -46,8 +46,17 @@ export const mcpServers = sqliteTable("mcp_servers", {
 
 export const webSearchConfig = sqliteTable("web_search_config", {
   id: integer("id").primaryKey(),
+  inheritChat: integer("inherit_chat", { mode: "boolean" }).notNull().default(true),
+  model: text("model").default("gpt-5.6-luna"),
   accountAlias: text("account_alias").references(() => providerAccounts.alias, { onDelete: "set null" }),
 }, (table) => [check("web_search_config_singleton", sql`${table.id} = 1`)]);
+
+export const visionConfig = sqliteTable("vision_config", {
+  id: integer("id").primaryKey(),
+  inheritChat: integer("inherit_chat", { mode: "boolean" }).notNull().default(true),
+  accountAlias: text("account_alias").references(() => providerAccounts.alias, { onDelete: "set null" }),
+  model: text("model"),
+}, (table) => [check("vision_config_singleton", sql`${table.id} = 1`)]);
 
 export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(),

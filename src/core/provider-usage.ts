@@ -35,3 +35,12 @@ export function quotaColor(remaining: number | null) {
   return remaining === null ? "var(--muted-foreground)" : remaining <= 10 ? "#e06c75" : remaining <= 30 ? "#e5c07b" : "#98c379";
 }
 export function quotaPercent(remaining: number | null) { return remaining === null ? "—" : `${Math.round(remaining)}%`; }
+
+/** Percentage points above or below a uniform consumption pace for this window. */
+export function quotaReserve(window: UsageWindow, now: number): number | null {
+  const { remainingPercent, durationSeconds, resetsAt } = window;
+  if (remainingPercent === null || durationSeconds === null || resetsAt === null) return null;
+  const remaining = resetsAt - now, duration = durationSeconds * 1000;
+  if (![remainingPercent, remaining, duration].every(Number.isFinite) || duration <= 0 || remaining <= 0 || remaining > duration) return null;
+  return Math.round(remainingPercent - remaining / duration * 100);
+}

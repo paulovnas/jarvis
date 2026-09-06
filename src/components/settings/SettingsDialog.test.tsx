@@ -9,7 +9,7 @@ import { coreFixture } from "@/test/core-fixtures";
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (command: string, args?: unknown) => command === "get_web_search_config"
+  invoke: (command: string, args?: unknown) => command === "get_web_search_config" || command === "get_vision_config"
     ? Promise.resolve({ accountAlias: null })
     : command === "list_mcp_servers" ? Promise.resolve([])
     : command === "list_skills" ? Promise.resolve({ includeAgents: false, directory: "/home/.jarvis/skills", skills: [], warnings: [] })
@@ -169,10 +169,10 @@ describe("SettingsDialog provider accounts", () => {
 
     expect(await screen.findByText("Nenhuma conta conectada")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Adicionar conta" })).toBeInTheDocument();
-    expect(await screen.findByRole("combobox", { name: "Conta para pesquisa" })).toHaveTextContent("Desligado");
+    expect(await screen.findByRole("combobox", { name: "Provedor de Web Search" })).toHaveTextContent("Desligado");
   });
 
-  it("mostra os dados da assinatura e os modelos ao expandir o card", async () => {
+  it("mostra os dados da assinatura e os modelos ao abrir a modal do card", async () => {
     const user = userEvent.setup();
     const connected = account("openai-codex-empresa", {
       email: "dev@empresa.com",
@@ -191,10 +191,11 @@ describe("SettingsDialog provider accounts", () => {
     expect(within(card).queryByText("dev@empresa.com")).not.toBeInTheDocument();
     expect(within(card).queryByText("GPT-5.6 Luna")).not.toBeInTheDocument();
     await user.click(within(card).getByRole("button", { name: `Detalhes de ${connected.alias}` }));
-    expect(within(card).getByText("dev@empresa.com")).toBeInTheDocument();
-    expect(within(card).getByText("Enterprise")).toBeInTheDocument();
-    expect(within(card).getByText("GPT-5.6 Luna")).toBeInTheDocument();
-    expect(within(card).getByText("GPT-5.6 Sol")).toBeInTheDocument();
+    const details = screen.getByRole("dialog", { name: connected.alias });
+    expect(within(details).getByText("dev@empresa.com")).toBeInTheDocument();
+    expect(within(details).getByText("Enterprise")).toBeInTheDocument();
+    expect(within(details).getByText("GPT-5.6 Luna")).toBeInTheDocument();
+    expect(within(details).getByText("GPT-5.6 Sol")).toBeInTheDocument();
   });
 
   it("permite tentar novamente após falha ao carregar contas", async () => {
@@ -467,12 +468,12 @@ describe("SettingsDialog provider accounts", () => {
 
     const firstRow = screen.getByTestId(`provider-account-${first.alias}`);
     await user.click(within(firstRow).getByRole("button", { name: `Detalhes de ${first.alias}` }));
-    expect(screen.getByRole("button", { name: `Detalhes de ${second.alias}` })).toHaveAttribute("aria-expanded", "false");
-    await user.click(within(firstRow).getByRole("button", { name: "Desconectar" }));
+    const details = screen.getByRole("dialog", { name: first.alias });
+    await user.click(within(details).getByRole("button", { name: "Desconectar" }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent(first.alias);
     expect(invokeMock).not.toHaveBeenCalledWith("disconnect_provider_account", expect.anything());
 
-    await user.click(screen.getByRole("button", { name: "Desconectar" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Desconectar" }));
     await waitFor(() => expect(successSpy).toHaveBeenCalledWith("Conta desconectada"));
     expect(invokeMock).toHaveBeenCalledWith("disconnect_provider_account", {
       alias: first.alias,

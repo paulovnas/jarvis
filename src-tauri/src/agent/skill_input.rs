@@ -5,6 +5,7 @@ use super::*;
 pub enum MessagePart {
     Text { text: String },
     Skill { id: String, name: String },
+    Attachment { attachment: attachments::Attachment },
 }
 
 pub(super) fn normalize(
@@ -22,6 +23,7 @@ pub(super) fn normalize(
     let mut rendered = String::new();
     for part in &mut parts {
         match part {
+            MessagePart::Attachment { .. } => {},
             MessagePart::Text { text } => rendered.push_str(text),
             MessagePart::Skill { id, name } => {
                 *name = skills.iter().find(|s| s.id == *id).ok_or_else(AgentError::internal)?.name.clone();
@@ -29,6 +31,7 @@ pub(super) fn normalize(
             }
         }
     }
+    if rendered.trim().is_empty() && parts.iter().any(|p| matches!(p, MessagePart::Attachment { .. })) { rendered = "Analise os anexos.".into(); }
     if rendered.trim().is_empty() || rendered.len() > 100_000 {
         return Err(AgentError::new("invalid_message", "Mensagem vazia ou muito longa."));
     }
@@ -46,11 +49,12 @@ pub(super) async fn load(session: &Session, home: &std::path::Path) -> Result<()
         (turn.user.clone(), turn.parts.clone())
     };
     let ids = ids(&parts);
-    if ids.is_empty() { return Ok(()); }
-    let expanded = crate::skills::explicit(home, &session.root, ids).await
-        .map_err(|cause| AgentError::new("skill_error", &cause.message))?;
+    let attached = attachments::prompt(&parts);
+    if ids.is_empty() && attached.is_empty() { return Ok(()); }
+    let expanded = if ids.is_empty() { String::new() } else { crate::skills::explicit(home, &session.root, ids).await
+        .map_err(|cause| AgentError::new("skill_error", &cause.message))? };
     session.update(true, |data| {
-        data.turns.last_mut().unwrap().wire[0] = json!({"role":"user", "content": format!("{content}{expanded}")});
+        data.turns.last_mut().unwrap().wire[0] = json!({"role":"user", "content": format!("{content}{expanded}{attached}")});
     })
 }
 

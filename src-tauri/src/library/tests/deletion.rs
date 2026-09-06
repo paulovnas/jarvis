@@ -12,10 +12,14 @@ fn workflow_and_worker_memory_follow_the_owning_conversation_without_touching_so
     let context = crate::core::context::storage(&home.0, &worker);
     fs::create_dir_all(&context).unwrap(); fs::write(context.join("memory"), "worker context").unwrap();
     let source = Path::new(&project.path).join("source.txt"); fs::write(&source, "source stays").unwrap();
+    let attachments = home.0.join(".jarvis/attachments").join(&conversation.id);
+    fs::create_dir_all(&attachments).unwrap(); fs::write(attachments.join("source"), "attachment data").unwrap();
     recover(&db, &home.0).unwrap();
     assert!(directory.exists()); assert!(context.exists());
+    assert!(attachments.exists());
     delete(&mut db, &home.0, &DeleteTarget::Conversation(conversation.id)).unwrap();
     assert!(!directory.exists()); assert!(!context.exists());
+    assert!(!attachments.exists());
     assert_eq!(fs::read_to_string(source).unwrap(), "source stays");
 }
 

@@ -7,6 +7,14 @@ import { ToolCallCard } from "./ToolCallCard";
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 
 describe("ToolCallCard Web Search", () => {
+  it("expande a análise de imagem com o modelo exclusivo de Vision", async () => {
+    const user = userEvent.setup();
+    render(<ToolCallCard tool={{ id: "vision1", name: "vision", status: "completed", args: { question: "Qual a cor?" }, output: JSON.stringify({ accountAlias: "antigravity-pessoal", model: "gemini-3.8-flash", analysis: "O botão é azul." }) }} />);
+    expect(screen.queryByText("O botão é azul.")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Análise de imagem/ }));
+    expect(await screen.findByText("O botão é azul.")).toBeVisible();
+    expect(screen.getByText("antigravity-pessoal · gemini-3.8-flash")).toBeVisible();
+  });
   it("identifica a delegação pelo título e mantém o despacho recolhido", async () => {
     const user = userEvent.setup();
     render(<ToolCallCard tool={{ id: "worker1", name: "hub_spawn", status: "completed", args: { title: "Revisar autenticação", prompt: "Inspecionar os critérios" }, output: "Agente iniciado" }} />);

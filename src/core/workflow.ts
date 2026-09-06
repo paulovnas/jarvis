@@ -17,7 +17,11 @@ export const agentCardSchema = z.object({
   pendingApproval: z.object({ id: z.string(), name: z.string(), args: z.record(z.string(), z.unknown()), status: z.enum(["pending", "running", "completed", "error"]), output: z.string(), durationMs: z.number() }).nullable() satisfies z.ZodType<AgentTool | null>,
   pendingQuestion: pendingQuestionSchema.nullable(),
 });
-export const workflowSchema = z.object({ conversationId: z.string(), revision: z.number(), flow: z.enum(["standard", "designer", "planned", "complete"]), agents: z.array(agentCardSchema) });
+export const validationItemSchema = z.object({ id: z.string(), title: z.string(), steps: z.array(z.string()), expected: z.string(), decision: z.enum(["pending", "approved", "rejected"]), reason: z.string().nullable() });
+export const validationSchema = z.object({ id: z.string(), flow: z.enum(["planned", "complete"]), runId: z.string(), epicIds: z.array(z.string()), items: z.array(validationItemSchema), submitted: z.boolean(), stale: z.boolean(), createdAt: z.number() });
+export type ValidationBatch = z.infer<typeof validationSchema>;
+export type ValidationItem = z.infer<typeof validationItemSchema>;
+export const workflowSchema = z.object({ conversationId: z.string(), revision: z.number(), flow: z.enum(["standard", "designer", "planned", "complete"]), agents: z.array(agentCardSchema), validation: validationSchema.nullable().optional() });
 export type WorkflowAgent = z.infer<typeof agentCardSchema>;
 export type WorkflowSnapshot = z.infer<typeof workflowSchema>;
 export const activeAgent = (agent: WorkflowAgent) => ["queued", "running", "waiting"].includes(agent.status);

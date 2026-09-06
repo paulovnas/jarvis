@@ -14,7 +14,7 @@ pub struct AgentCard {
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Snapshot { conversation_id: String, revision: u64, flow: Flow, agents: Vec<AgentCard> }
+pub struct Snapshot { conversation_id: String, revision: u64, flow: Flow, agents: Vec<AgentCard>, validation: Option<validation::Batch> }
 
 fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError> {
     let mut agents = vec![AgentCard {
@@ -46,7 +46,7 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
         agents.push(card);
     }
     agents[1..].sort_by_key(|card| card.created_at);
-    Ok(Snapshot { conversation_id: state.conversation_id.clone(), revision: state.revision, flow: state.flow, agents })
+    Ok(Snapshot { conversation_id: state.conversation_id.clone(), revision: state.revision, flow: state.flow, agents, validation: state.validation.clone().filter(|batch| !state.flow.direct() && batch.flow == state.flow) })
 }
 fn active_hub(agent: &AgentState, id: &str) -> Result<Arc<Hub>, AgentError> {
     agent.workflows.0.lock().map_err(|_| AgentError::internal())?.get(id).cloned().ok_or_else(AgentError::cancelled)
@@ -59,13 +59,18 @@ pub async fn get_workflow(app: tauri::AppHandle, persistence: tauri::State<'_, A
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     let state = persistence.inner().clone(); let agent = agent.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        library::agent_location(&state, &home, &conversation_id)?;
+        let (journal, _) = library::agent_location(&state, &home, &conversation_id)?;
         if let Ok(hub) = active_hub(&agent, &conversation_id) {
             let state = hub.manifest.lock().map_err(|_| AgentError::internal())?.clone();
             return snapshot(&state, Some(&hub)).map(Some);
         }
         let directory = storage::path(&home, &conversation_id)?;
-        storage::load(&directory, &conversation_id)?.map(|state| snapshot(&state, None)).transpose()
+        storage::load(&directory, &conversation_id)?.map(|mut state| {
+            if let Some(batch) = &mut state.validation {
+                batch.submitted |= agent.histories.has_turn(&journal, &batch.id)?;
+            }
+            snapshot(&state, None)
+        }).transpose()
     }).await.map_err(|_| AgentError::internal())?
 }
 #[tauri::command]

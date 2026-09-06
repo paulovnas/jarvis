@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use tokio::sync::{oneshot, watch};
+mod visual;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -10,6 +11,8 @@ pub struct QuestionOption {
     label: String,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    preview: Option<visual::Preview>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -70,6 +73,7 @@ fn parse_request(args: &Value) -> Result<Request, AgentError> {
         }
         let mut labels = HashSet::new();
         for option in &question.options {
+            if option.preview.as_ref().is_some_and(|preview| !preview.valid()) { return Err(invalid("Prévia visual inválida. Verifique os limites e o formato.")); }
             if !bounded(&option.label, 200) || !labels.insert(option.label.trim())
                 || option.description.as_ref().is_some_and(|text| text.chars().count() > 500) {
                 return Err(invalid("As opções devem ser curtas e distintas."));
@@ -113,7 +117,7 @@ pub(super) fn definition() -> Value {
                         "question": {"type": "string", "minLength": 1, "maxLength": 1000},
                         "options": {"type": "array", "maxItems": 6, "items": {
                             "type": "object", "additionalProperties": false, "required": ["label"],
-                            "properties": {"label": {"type": "string", "minLength": 1, "maxLength": 200}, "description": {"type": "string", "maxLength": 500}}
+                            "properties": {"label": {"type": "string", "minLength": 1, "maxLength": 200}, "description": {"type": "string", "maxLength": 500}, "preview": visual::schema()}
                         }}
                     }
                 }

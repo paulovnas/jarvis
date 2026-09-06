@@ -171,7 +171,7 @@ fn version_two_upgrade_preserves_onboarding_and_provider_accounts_without_seeds(
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        10
+        12
     );
 }
 

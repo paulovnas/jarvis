@@ -14,14 +14,14 @@ export function UserMessageBubble({ message }: UserMessageBubbleProps) {
     >
       <div className="flex min-w-0 max-w-[90%] flex-col items-end gap-2">
         {message.attachments && message.attachments.length > 0 && (
-          <div className="flex flex-wrap justify-end gap-1.5">
+          <div className="flex min-w-0 max-w-full flex-wrap justify-end gap-1.5">
             {message.attachments.map((att) => (
               <div
                 key={att.id}
-                className="flex items-center gap-2 rounded-lg border border-border bg-card px-3.5 py-2 text-xs text-foreground shadow-sm"
+                className="flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-border bg-card px-3.5 py-2 text-xs text-foreground shadow-sm"
               >
-                <FileCode2 className="size-3.5 text-[#61afef]" />
-                <span className="font-mono text-[11px] text-foreground">
+                <FileCode2 className="size-3.5 shrink-0 text-[#61afef]" />
+                <span className="min-w-0 truncate font-mono text-[11px] text-foreground" title={att.name}>
                   {att.name}
                 </span>
                 {att.size && (
@@ -32,7 +32,7 @@ export function UserMessageBubble({ message }: UserMessageBubbleProps) {
           </div>
         )}
 
-        <div className="instrument-panel group relative max-w-full border-primary/15 bg-secondary/60 px-4 py-3 text-sm leading-relaxed text-foreground">
+        <div className="instrument-panel group relative min-w-0 max-w-full border-primary/15 bg-secondary/60 px-4 py-3 text-sm leading-relaxed text-foreground">
           <p className="whitespace-pre-wrap break-words"><MessageContent content={message.content} parts={message.parts} /></p>
           <div className="mt-2 flex items-center justify-end gap-1.5 font-mono text-[10px] tabular-nums text-muted-foreground">
             <span>{message.timestamp}</span>

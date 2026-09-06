@@ -57,6 +57,7 @@ impl AgentState {
                 let deletion = library::deletion::delete(connection, home, &library::deletion::DeleteTarget::Conversation(item.id.clone()));
                 let exists: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)", [&item.id], |row| row.get(0))?;
                 if !exists {
+                    self.processes.stop_conversation(&item.id);
                     if let Some(index) = cached { locked[index].storage_failed = true; }
                     sessions.remove(&item.id); self.histories.forget(&path);
                     result.deleted += 1;

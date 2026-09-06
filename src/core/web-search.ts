@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const webSearchConfigSchema = z.object({ accountAlias: z.string().nullable() });
+export const webSearchConfigSchema = z.object({ accountAlias: z.string().nullable(), model: z.string().nullable().default(null), inheritChat: z.boolean().default(false) });
 
 const sourceSchema = z.object({
   title: z.string(),

@@ -52,6 +52,10 @@ pub fn run() {
             persistence::get_app_config,
             persistence::complete_onboarding,
             agent::web_search::get_web_search_config,
+            agent::vision::get_vision_config,
+            agent::vision::set_vision_config,
+            agent::attachments::import_chat_attachments,
+            agent::attachments::get_chat_attachment_image,
             agent::web_search::set_web_search_config,
             library::get_library_snapshot,
             library::create_workspace,
@@ -67,7 +71,12 @@ pub fn run() {
             core::beads::dashboard::get_bead_detail,
             core::beads::dashboard::add_bead_comment,
             agent::get_chat,
+            agent::processes::list_chat_processes,
+            agent::processes::read_chat_process,
+            agent::processes::stop_chat_process,
             agent::workflow::get_workflow,
+            agent::workflow::validation::decide_workflow_validation,
+            agent::workflow::validation::submit_workflow_validation,
             agent::workflow::settings::get_agent_models,
             agent::workflow::settings::set_agent_model,
             agent::workflow::get_workflow_transcript,
@@ -100,6 +109,8 @@ pub fn run() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 desktop::flush(app);
+                use tauri::Manager;
+                app.state::<agent::AgentState>().processes.stop_all();
             }
         });
 }

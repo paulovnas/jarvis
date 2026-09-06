@@ -66,7 +66,7 @@ describe("Persistent live conversation", () => {
     rerender(<TestChat />);
     await screen.findByRole("heading", { name: "Primeira conversa" });
     expect(await screen.findByRole("textbox")).toHaveAttribute("contenteditable", "true");
-    expect(screen.getByRole("button", { name: "Adicionar anexo" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Adicionar anexo" })).toBeEnabled();
     expect(call).toHaveBeenCalledWith("get_chat", { conversationId: "c1" });
   });
   it("restores messages, provider summary and real tool results", async () => {
@@ -268,6 +268,6 @@ describe("Persistent live conversation", () => {
     const { rerender } = render(<TestChat />); await screen.findByRole("textbox");
     const library = populatedLibrary(); library.projects[0].name = "Meu projeto"; library.conversations[0].title = "Título editado";
     rerender(<TestChat library={library} />);
-    expect(screen.getByRole("heading", { name:"Título editado" })).toBeInTheDocument(); expect(screen.getByTitle("/projects/jarvis")).toHaveTextContent("Pessoal / Meu projeto"); expect(call).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("heading", { name:"Título editado" })).toBeInTheDocument(); expect(screen.getByTitle("/projects/jarvis")).toHaveTextContent("Pessoal / Meu projeto"); expect(call.mock.calls.filter(([command]) => command === "get_chat")).toHaveLength(1);
   });
 });

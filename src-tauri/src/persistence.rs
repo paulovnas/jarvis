@@ -49,6 +49,8 @@ const MIGRATIONS: &[Migration] = &[
         version: 10,
         sql: include_str!("../../drizzle/0009_provider_usage.sql"),
     },
+    Migration { version: 11, sql: include_str!("../../drizzle/0010_tool_models.sql") },
+    Migration { version: 12, sql: include_str!("../../drizzle/0011_tricky_spiral.sql") },
 ];
 
 #[derive(Debug)]
@@ -372,6 +374,20 @@ pub async fn complete_onboarding(
 
 #[cfg(test)]
 mod tests {
+#[test]
+fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
+    let mut db = Connection::open_in_memory().unwrap();
+    for migration in super::MIGRATIONS.iter().take(11) { db.execute_batch(migration.sql).unwrap(); }
+    db.pragma_update(None, "user_version", 11).unwrap();
+    db.execute("INSERT INTO web_search_config (id, account_alias) VALUES (1, NULL)", []).unwrap();
+    db.execute("INSERT INTO provider_accounts (alias, provider_kind, account_id) VALUES ('antigravity-personal', 'antigravity', 'account')", []).unwrap();
+    db.execute("INSERT INTO vision_config (id, account_alias, model) VALUES (1, 'antigravity-personal', 'gemini-3.8-flash')", []).unwrap();
+    crate::persistence::initialize_database(&mut db).unwrap();
+    assert!(db.query_row("SELECT inherit_chat FROM web_search_config WHERE id = 1", [], |row| row.get::<_, bool>(0)).unwrap());
+    let preserved: (bool, String) = db.query_row("SELECT inherit_chat, model FROM vision_config", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    assert_eq!(preserved, (false, "gemini-3.8-flash".into()));
+}
+
     #[test]
     fn antigravity_migration_preserves_codex_accounts_and_search_selection() {
         let mut connection = rusqlite::Connection::open_in_memory().unwrap();
@@ -418,7 +434,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 10);
+        assert_eq!(version, 12);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -483,7 +499,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 10);
+        assert_eq!(version, 12);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {
