@@ -10,6 +10,8 @@ export type ProviderAccount = {
   alias: string;
   providerKind: string;
   enabled: boolean;
+  showUsage?: boolean;
+  showThirdPartyUsage?: boolean;
   createdAt: number;
   email: string | null;
   accountType: "personal" | "enterprise" | "unknown";
@@ -41,6 +43,8 @@ function isProviderAccount(value: unknown): value is ProviderAccount {
     typeof account.alias === "string" &&
     typeof account.providerKind === "string" &&
     typeof account.enabled === "boolean" &&
+    (account.showUsage === undefined || typeof account.showUsage === "boolean") &&
+    (account.showThirdPartyUsage === undefined || typeof account.showThirdPartyUsage === "boolean") &&
     typeof account.createdAt === "number" &&
     (typeof account.email === "string" || account.email === null) &&
     (account.accountType === "personal" ||

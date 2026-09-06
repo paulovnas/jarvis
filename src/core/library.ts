@@ -14,6 +14,7 @@ export interface Conversation {
   projectId: string;
   title: string;
   createdAt: number;
+  lastActivityAt?: number;
 }
 
 export interface LibrarySelection {
@@ -92,6 +93,7 @@ function conversation(value: unknown): Conversation {
     projectId: text(item.projectId),
     title: text(item.title),
     createdAt: timestamp(item.createdAt),
+    lastActivityAt: timestamp(item.lastActivityAt ?? item.createdAt),
   };
 }
 

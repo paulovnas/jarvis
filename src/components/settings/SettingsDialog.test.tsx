@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import SettingsDialog from "./SettingsDialog";
+import { coreFixture } from "@/test/core-fixtures";
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -12,6 +13,7 @@ vi.mock("@tauri-apps/api/core", () => ({
     ? Promise.resolve({ accountAlias: null })
     : command === "list_mcp_servers" ? Promise.resolve([])
     : command === "list_skills" ? Promise.resolve({ includeAgents: false, directory: "/home/.jarvis/skills", skills: [], warnings: [] })
+    : command === "get_core_status" || command === "check_core_updates" ? Promise.resolve(coreFixture())
     : args === undefined ? invokeMock(command) : invokeMock(command, args),
 }));
 
@@ -55,6 +57,42 @@ function renderSettings(onOpenChange = vi.fn()) {
 }
 
 describe("SettingsDialog provider accounts", () => {
+  it("identifica a aba ativa e mantém a navegação disponível ao trocar o conteúdo", async () => {
+    const user = userEvent.setup();
+    invokeMock.mockResolvedValue([]);
+    renderSettings();
+    const navigation = screen.getByRole("tablist", { name: "Configurações" });
+    const providers = within(navigation).getByRole("tab", { name: /Provedores/ });
+    expect(providers).toHaveAttribute("aria-selected", "true");
+    expect(providers).toHaveAttribute("data-active");
+    const skills = within(navigation).getByRole("tab", { name: /Skills/ });
+    await user.click(skills);
+    expect(skills).toHaveAttribute("data-active");
+    expect(skills).toHaveAttribute("aria-selected", "true");
+    expect(providers).not.toHaveAttribute("data-active");
+    expect(navigation).toBeVisible();
+    expect(screen.getAllByRole("tab")).toHaveLength(4);
+  });
+  it("persiste a visibilidade dos limites sem desativar a conta e preserva a preferência se o salvamento falhar", async () => {
+    const user = userEvent.setup();
+    const errorToast = vi.spyOn(toast, "error");
+    const google = account("antigravity-pessoal", { providerKind: "antigravity" });
+    invokeMock.mockImplementation((command: string) => Promise.resolve(command === "list_provider_accounts" ? [google] : undefined));
+    const changed = vi.fn();
+    render(<SettingsDialog open onOpenChange={vi.fn()} onAccountsChange={changed} />);
+    await user.click(screen.getByRole("tab", { name: /Provedores/ }));
+    await user.click(await screen.findByRole("button", { name: `Detalhes de ${google.alias}` }));
+    const usage = screen.getByRole("switch", { name: `Limites de ${google.alias} na statusbar` });
+    expect(usage).toBeChecked();
+    await user.click(usage);
+    await waitFor(() => expect(usage).not.toBeChecked());
+    expect(invokeMock).toHaveBeenCalledWith("set_provider_usage_visibility", { alias: google.alias, showUsage: false, showThirdPartyUsage: false });
+    expect(changed).toHaveBeenLastCalledWith([expect.objectContaining({ enabled: true, showUsage: false })]);
+    invokeMock.mockRejectedValueOnce(new Error("storage unavailable"));
+    await user.click(screen.getByRole("switch", { name: `Incluir modelos de terceiros de ${google.alias}` }));
+    await waitFor(() => expect(errorToast).toHaveBeenCalledWith("Não foi possível salvar a visualização dos limites."));
+    expect(screen.getByRole("switch", { name: `Incluir modelos de terceiros de ${google.alias}` })).not.toBeChecked();
+  });
   it("conecta Antigravity pelo navegador e mostra seus modelos no mesmo card", async () => {
     const user = userEvent.setup();
     const google = account("antigravity-pessoal", { providerKind: "antigravity", email: "google@example.com", models: [{ id: "gemini-pro", name: "Gemini Pro", reasoningLevels: ["low", "high"], defaultReasoningLevel: "high" }] });
@@ -91,14 +129,14 @@ describe("SettingsDialog provider accounts", () => {
     openUrlMock.mockResolvedValue(undefined);
   });
 
-  it("ordena as abas, abre Geral vazia e mantém Skills disponível", async () => {
+  it("ordena as abas, apresenta Core em Geral e mantém Skills disponível", async () => {
     invokeMock.mockResolvedValueOnce([account("openai-codex-pessoal")]);
     const user = userEvent.setup();
     render(<SettingsDialog open onOpenChange={vi.fn()} />);
     const tabs = screen.getAllByRole("tab");
     expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Provedores", "Skills", "MCPs"]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel", { name: "Geral" })).toBeEmptyDOMElement();
+    expect(await within(screen.getByRole("tabpanel", { name: "Geral" })).findByRole("heading", { name: "Core" })).toBeInTheDocument();
     await user.click(tabs[2]);
     expect(await screen.findByRole("button", { name: "Marketplace" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("tab", { name: /Skills/ })).toHaveTextContent("0"));

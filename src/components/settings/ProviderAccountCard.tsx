@@ -21,10 +21,11 @@ function formatConnectionDate(timestamp: number): string {
   });
 }
 
-export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, saving = false }: {
+export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, onUsageChange, saving = false }: {
   account: ProviderAccount;
   onDisconnect: (alias: string) => void;
   onEnabledChange: (alias: string, enabled: boolean) => void;
+  onUsageChange?: (alias: string, showUsage: boolean, showThirdPartyUsage: boolean) => void;
   saving?: boolean;
 }) {
   const summaryId = useId();
@@ -77,6 +78,17 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, sa
             <dd className="text-right">{formatConnectionDate(account.createdAt)}</dd>
           </dl>
           <Separator />
+          <div className="space-y-3">
+            <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
+              <span aria-hidden="true">Limites na statusbar</span>
+              <Switch aria-label={`Limites de ${account.alias} na statusbar`} checked={account.showUsage !== false} disabled={saving} onCheckedChange={show => onUsageChange?.(account.alias, show, account.showThirdPartyUsage === true)} className="cursor-pointer" />
+            </label>
+            {account.providerKind === "antigravity" && <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
+              <span aria-hidden="true">Incluir modelos de terceiros</span>
+              <Switch aria-label={`Incluir modelos de terceiros de ${account.alias}`} checked={account.showThirdPartyUsage === true} disabled={saving} onCheckedChange={show => onUsageChange?.(account.alias, account.showUsage !== false, show)} className="cursor-pointer" />
+            </label>}
+          </div>
+          <Separator />
           <div className="flex flex-col gap-2">
             <span className="font-medium">Modelos disponíveis</span>
             {!account.enabled ? <p className="text-muted-foreground">Ative a conta para disponibilizar seus modelos.</p> : !account.modelsAvailable ? (
@@ -95,7 +107,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, sa
         <CardFooter className="justify-between gap-3">
           <label className="flex cursor-pointer items-center gap-2 text-xs">
             <Switch aria-label={`Ativar ${account.alias}`} checked={account.enabled} onCheckedChange={(enabled) => onEnabledChange(account.alias, enabled)} disabled={saving} className="cursor-pointer" />
-            {account.enabled ? "Ativada" : "Desativada"}
+            <span aria-hidden="true">{account.enabled ? "Ativada" : "Desativada"}</span>
           </label>
           <Button type="button" variant="destructive" size="sm" disabled={saving} onClick={() => onDisconnect(account.alias)} className="cursor-pointer">
             <Unplug aria-hidden="true" data-icon="inline-start" />

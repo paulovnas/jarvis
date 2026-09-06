@@ -56,11 +56,18 @@ const contextInfoSchema = z.object({
   tokens: z.number().nonnegative(), limit: z.number().positive().nullable(),
   estimated: z.boolean(), compacting: z.boolean(), compactions: z.number().int().nonnegative(),
 });
+const compactionEventSchema = z.object({
+  id: z.string(), createdAt: z.number().nonnegative(), turnId: z.string(),
+  afterTurn: z.boolean(), automatic: z.boolean(),
+  tokensBefore: z.number().nonnegative(), tokensAfter: z.number().nonnegative(),
+});
+export type CompactionEvent = z.infer<typeof compactionEventSchema>;
 const snapshotSchema = z.object({
   conversationId: z.string(), revision: z.number().int().nonnegative(),
   turns: z.array(turnSchema), activeTurnId: z.string().nullable(), pendingApproval: toolSchema.nullable(),
   queuedMessages: z.array(queuedMessageSchema).optional(), context: contextInfoSchema.optional(), fileChanges: z.array(fileChangeSchema).optional(),
   compacting: z.boolean().optional(),
+  compactions: z.array(compactionEventSchema).optional(),
   pendingQuestion: pendingQuestionSchema.nullable().optional(),
 });
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>;

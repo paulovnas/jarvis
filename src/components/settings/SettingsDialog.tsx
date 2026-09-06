@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { WebSearchSettings } from "./WebSearchSettings";
 import { McpSettings } from "./McpSettings";
 import { SkillsSettings } from "./SkillsSettings";
+import { CoreSettings } from "./CoreSettings";
 import { skillsSnapshotSchema } from "@/core/skills";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -39,13 +40,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Empty,
@@ -57,7 +51,6 @@ import {
 } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -426,6 +419,16 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
     }
   };
 
+  const handleUsageChange = async (alias: string, showUsage: boolean, showThirdPartyUsage: boolean) => {
+    if (togglingRef.current) return;
+    togglingRef.current = true; setToggling(true);
+    try {
+      await invoke("set_provider_usage_visibility", { alias, showUsage, showThirdPartyUsage });
+      updateAccounts(accounts.map(account => account.alias === alias ? { ...account, showUsage, showThirdPartyUsage } : account));
+    } catch { toast.error("Não foi possível salvar a visualização dos limites."); }
+    finally { togglingRef.current = false; setToggling(false); }
+  };
+
   const renderList = () => {
     if (listState === "loading") {
       return (
@@ -504,6 +507,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
                 key={account.alias}
                 account={account}
                 saving={toggling}
+                onUsageChange={(alias, showUsage, showThirdPartyUsage) => { void handleUsageChange(alias, showUsage, showThirdPartyUsage); }}
                 onEnabledChange={(alias, enabled) => { void handleEnabledChange(alias, enabled); }}
                 onDisconnect={(alias) => {
                   setDisconnectAlias(alias);
@@ -655,26 +659,25 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
 
   return (
     <>
-      <Sheet open={open} onOpenChange={(nextOpen) => handleDialogOpenChange(nextOpen)}>
-        <SheetContent
-          side="left"
+      <Dialog open={open} onOpenChange={(nextOpen) => handleDialogOpenChange(nextOpen)}>
+        <DialogContent
           showCloseButton
-          className="settings-panel dark flex h-full w-[min(960px,85vw)] flex-col gap-0 data-[side=left]:w-[min(960px,85vw)] data-[side=left]:sm:max-w-none border-r border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden"
+          className="settings-panel dark flex max-h-[min(740px,85dvh)] w-[calc(100vw-3rem)] sm:max-w-[860px] flex-col gap-0 border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden motion-reduce:transition-none"
         >
-          <SheetHeader className="border-b border-border bg-sidebar px-6 py-5">
-            <SheetTitle className="flex items-center gap-3 text-base font-heading font-medium text-foreground"><Settings aria-hidden="true" className="size-4 text-muted-foreground" />Configurações</SheetTitle>
-            <SheetDescription className="sr-only">Painel de configurações do Jarvis</SheetDescription>
-          </SheetHeader>
+          <DialogHeader className="shrink-0 border-b border-border bg-sidebar px-6 py-5">
+            <DialogTitle className="flex items-center gap-3 text-base font-heading font-medium text-foreground"><Settings aria-hidden="true" className="size-4 text-muted-foreground" />Configurações</DialogTitle>
+            <DialogDescription className="sr-only">Painel de configurações do Jarvis</DialogDescription>
+          </DialogHeader>
 
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 min-h-0">
-            <div className="overflow-x-auto border-b border-border bg-card/60 px-6">
-              <TabsList variant="line" className="h-12 w-max gap-5 border-b-0 p-0">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 min-h-0 gap-0 overflow-hidden">
+            <div className="settings-navigation shrink-0 overflow-x-auto border-b border-border bg-sidebar px-6 py-2.5">
+              <TabsList aria-label="Configurações" className="w-max gap-1 rounded-md bg-transparent p-0">
                 <TabsTrigger value="general" className="cursor-pointer gap-2 px-2 text-xs"><Settings aria-hidden="true" className="size-3.5" />Geral</TabsTrigger>
                 <TabsTrigger
                   value="providers"
-                  className="cursor-pointer gap-2 border-b-2 border-transparent px-2 py-2.5 text-xs font-medium text-foreground data-[state=active]:border-[#61afef] data-[state=active]:text-[#61afef] transition-colors"
+                  className="cursor-pointer gap-2 px-2 text-xs"
                 >
-                  <Sparkles className="size-3.5 text-[#61afef]" />
+                  <Sparkles aria-hidden="true" className="size-3.5" />
                   <span>Provedores</span>
                   {listState === "ready" && (
                     <Badge className="border-[#61afef]/30 bg-[#61afef]/10 text-[10px] text-[#61afef] px-1.5 py-0">
@@ -687,15 +690,15 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               </TabsList>
             </div>
 
-            <TabsContent value="general" className="m-0 min-h-0 flex-1" />
-            <TabsContent value="skills" className="m-0 min-h-0 flex-1"><ScrollArea className="h-full px-6 py-6">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</ScrollArea></TabsContent>
-            <TabsContent value="providers" className="flex-1 min-h-0 m-0 p-0">
-              <ScrollArea className="h-full px-6 py-6">
+            <TabsContent value="general" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "general" && <CoreSettings />}</TabsContent>
+            <TabsContent value="skills" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</TabsContent>
+            <TabsContent value="providers" className="flex-1 min-h-0 m-0 overflow-y-auto p-0">
+              <div className="px-6 py-5">
                 {renderList()}
-              </ScrollArea>
+              </div>
             </TabsContent>
-            <TabsContent value="mcps" className="flex-1 min-h-0 m-0 p-0">
-              <ScrollArea className="h-full px-6 py-6">{activeTab === "mcps" && <McpSettings onCountChange={updateMcpCount} />}</ScrollArea>
+            <TabsContent value="mcps" className="flex-1 min-h-0 m-0 overflow-y-auto p-0">
+              <div className="px-6 py-5">{activeTab === "mcps" && <McpSettings onCountChange={updateMcpCount} />}</div>
             </TabsContent>
           </Tabs>
           <Dialog open={open && view !== "list"} onOpenChange={(nextOpen) => { if (!nextOpen) handleDialogOpenChange(false, false); }}>
@@ -703,8 +706,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               {view === "waiting" ? renderWaiting() : renderAdd()}
             </DialogContent>
           </Dialog>
-        </SheetContent>
-      </Sheet>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog
         open={disconnectAlias !== null}

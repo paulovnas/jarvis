@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { TitleBar, type TitleBarContext } from "@/components/layout/TitleBar";
+import { StatusBar } from "@/components/layout/StatusBar";
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ import {
 import { Toaster } from "@/components/ui/sonner";
 import { HomeSkeleton } from "@/components/layout/LoadingSkeletons";
 import { DesktopLayoutProvider } from "@/components/layout/DesktopLayoutProvider";
+import { CoreGate } from "@/components/core/CoreGate";
 
 const LazyHome = lazy(() => import("@/components/layout/Home"));
 
@@ -172,7 +174,7 @@ export function App() {
         return (
           <main className="flex min-h-0 flex-1">
             <Suspense fallback={<HomeSkeleton />}>
-              <DesktopLayoutProvider><LazyHome /></DesktopLayoutProvider>
+              <CoreGate><DesktopLayoutProvider><LazyHome /></DesktopLayoutProvider></CoreGate>
             </Suspense>
           </main>
         );
@@ -215,6 +217,7 @@ export function App() {
     <div className="flex h-screen min-h-0 flex-col bg-background text-foreground font-sans">
       <TitleBar context={titleBarContext} />
       {content}
+      {bootstrap.status !== "home" && <StatusBar />}
       {/* Global Toast Notification Provider */}
       <Toaster position="bottom-right" richColors />
     </div>

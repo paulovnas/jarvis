@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { FolderGit2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -13,6 +13,7 @@ import { AssistantMessageTurn } from "./AssistantMessageTurn";
 import { UserMessageBubble } from "./UserMessageBubble";
 import { ToolApproval } from "./ToolApproval";
 import { QuestionCard } from "./QuestionCard";
+import { CompactionMarker } from "./CompactionMarker";
 
 function ConversationView({ context, modelGroups, chat, drafts, questionDrafts }: { context: ConversationDetails; modelGroups: ProviderModelGroup[]; chat: ChatController; drafts: Map<string, ChatDraft>; questionDrafts: Map<string, QuestionDraft> }) {
   const bottom = useRef<HTMLDivElement>(null);
@@ -33,13 +34,6 @@ function ConversationView({ context, modelGroups, chat, drafts, questionDrafts }
   if (!snapshot) return <ConversationSkeleton />;
   const last = snapshot.turns[snapshot.turns.length - 1];
   return <>
-    <header className="flex h-[72px] shrink-0 items-center gap-3 border-b border-border px-5">
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-card text-primary shadow-[inset_0_1px_0_#ffffff0d]"><FolderGit2 aria-hidden="true" className="size-4" /></div>
-      <div className="min-w-0 flex-1">
-        <p className="mb-1 truncate font-mono text-[10px] text-muted-foreground" title={context.project.path}>{context.workspace.name} <span className="px-1 text-muted-foreground/50">/</span> {context.project.name}</p>
-        <h1 className="truncate text-sm font-medium">{context.conversation.title}</h1>
-      </div>
-    </header>
     <ScrollArea className="min-h-0 flex-1" onScrollCapture={event => {
       const target = event.target;
       if (target instanceof HTMLElement) follow.current = target.scrollHeight - target.scrollTop - target.clientHeight < 80;
@@ -49,6 +43,7 @@ function ConversationView({ context, modelGroups, chat, drafts, questionDrafts }
           const timestamp = new Date(turn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
           return <Fragment key={turn.id}>
             <UserMessageBubble message={{ id: turn.id, role: "user", content: turn.user, parts: turn.parts, timestamp }} />
+            {snapshot.compactions?.filter(event => event.turnId === turn.id && !event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
             <AssistantMessageTurn message={{
               id: turn.id, role: "assistant", content: turn.steps[turn.steps.length - 1]?.text ?? "", timestamp,
               model: `${turn.options.account} / ${turn.options.model}`,
@@ -59,12 +54,13 @@ function ConversationView({ context, modelGroups, chat, drafts, questionDrafts }
               } : undefined,
               error: turn.error ? { title: turn.status === "cancelled" || turn.status === "interrupted" ? "Execução interrompida" : "Falha na execução", message: turn.error.message } : undefined,
             }} />
+            {snapshot.compactions?.filter(event => event.turnId === turn.id && event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
           </Fragment>;
         })}
       </div>}
       <div ref={bottom} />
     </ScrollArea>
-    <footer ref={footer} className="max-h-[65%] overflow-auto px-5 pb-4 pt-3">
+    <footer ref={footer} className="mx-auto w-full max-w-4xl min-w-0 max-h-[65%] overflow-auto px-5 pb-4 pt-3">
       {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.id} tool={snapshot.pendingApproval} projectPath={context.project.path} onAnswer={chat.approve} />}
       {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} />}
       <ChatComposer compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} initialOptions={last?.options} />
@@ -73,7 +69,7 @@ function ConversationView({ context, modelGroups, chat, drafts, questionDrafts }
   </>;
 }
 
-export function ChatArea({ modelGroups = [], library, chat }: { modelGroups?: ProviderModelGroup[]; library: LibrarySnapshot | null; chat: ChatController }) {
+export function ChatArea({ modelGroups = [], library, chat, leftToggle, rightToggle }: { modelGroups?: ProviderModelGroup[]; library: LibrarySnapshot | null; chat: ChatController; leftToggle?: ReactNode; rightToggle?: ReactNode }) {
   const [drafts] = useState(() => new Map<string, ChatDraft>());
   const [questionDrafts] = useState(() => new Map<string, QuestionDraft>());
   const id = library?.selection.conversationId;
@@ -81,6 +77,15 @@ export function ChatArea({ modelGroups = [], library, chat }: { modelGroups?: Pr
   const workspace = library?.workspaces.find(item => item.id === project?.workspaceId);
   const conversation = library?.conversations.find(item => item.id === id);
   return <main aria-label="Conversa" className="flex h-full min-h-0 min-w-0 flex-col bg-background">
+    <header className="flex h-[72px] shrink-0 items-center gap-3 border-b border-border px-3">
+      {leftToggle}
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-card text-primary shadow-[inset_0_1px_0_#ffffff0d]"><FolderGit2 aria-hidden="true" className="size-4" /></div>
+      <div className="min-w-0 flex-1">
+        <p className="mb-1 truncate font-mono text-[10px] text-muted-foreground" title={project?.path}>{workspace?.name ?? "Jarvis"}{project && <> <span className="px-1 text-muted-foreground/50">/</span> {project.name}</>}</p>
+        {conversation && <h1 className="truncate text-sm font-medium">{conversation.title}</h1>}
+      </div>
+      {rightToggle}
+    </header>
     {!library ? <ConversationSkeleton /> : id && project && workspace && conversation ? <ConversationView key={id} drafts={drafts} questionDrafts={questionDrafts} context={{ workspace, project, conversation }} modelGroups={modelGroups} chat={chat} /> : <Empty className="flex-1"><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>{project ? "Inicie uma conversa" : "Seu próximo projeto começa aqui"}</EmptyTitle><EmptyDescription>{project ? `Crie ou selecione uma conversa em ${project.name} pela barra lateral.` : "Selecione um projeto na barra lateral ou crie um workspace para organizar seu trabalho."}</EmptyDescription></EmptyHeader></Empty>}
   </main>;
 }

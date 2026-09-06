@@ -185,6 +185,27 @@ fn wire_name(server: &Server, name: &str) -> String {
 }
 
 impl Client {
+    pub(crate) fn core_definitions(&self) -> Vec<Value> {
+        self.tools.iter().map(|tool| {
+            let mut definition = tool.definition.clone();
+            definition["name"] = json!(tool.original);
+            definition
+        }).collect()
+    }
+    pub(crate) async fn core_call(&self, name: &str, args: &Value, mut signal: watch::Receiver<bool>) -> Result<String, McpError> {
+        let tool = self.tools.iter().find(|tool| tool.original == name).ok_or_else(protocol_error)?;
+        if !tool.validator.is_valid(args) || args.to_string().len() > 256 * 1024 { return Err(error("Argumentos inválidos para o Context-mode.")); }
+        let request = self.service.call_tool(CallToolRequestParams::new(tool.original.clone()).with_arguments(args.as_object().cloned().ok_or_else(protocol_error)?));
+        let response = tokio::select! {
+            _ = cancelled(&mut signal) => { self.service.cancellation_token().cancel(); return Err(error("Context-mode interrompido; confira o resultado antes de repetir a ação.")); },
+            result = tokio::time::timeout(self.config.timeout(), request) => result.map_err(|_| error("Context-mode excedeu o tempo limite; confira o resultado antes de repetir a ação."))?.map_err(|_| protocol_error())?,
+        };
+        let value = serde_json::to_value(&response).map_err(|_| protocol_error())?;
+        let text = value["content"].as_array().into_iter().flatten().filter_map(|item| item["text"].as_str()).collect::<Vec<_>>().join("\n\n");
+        let text: String = text.chars().take(MAX_OUTPUT).collect();
+        if response.is_error == Some(true) { return Err(error(&text)); }
+        Ok(text)
+    }
     async fn refresh(&mut self) -> Result<(), McpError> {
         self.service
             .service()

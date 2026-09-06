@@ -16,6 +16,7 @@ function Controls() {
   return <><p>{layout.inspectorTab} / {layout.settingsTab} / {layout.panels["home-sidebar-panel"]}</p>
     <Button onClick={() => updateLayout({ inspectorTab: "details" })}>Detalhes</Button>
     <Button onClick={() => updateLayout({ settingsTab: "skills" })}>Skills</Button>
+    <Button aria-pressed={layout.sidebarCollapsed && layout.inspectorCollapsed} onClick={() => updateLayout({ sidebarCollapsed: true, inspectorCollapsed: true })}>Foco</Button>
   </>;
 }
 beforeEach(() => vi.clearAllMocks());
@@ -34,9 +35,12 @@ it("restores layout before showing controls and keeps sequential changes across 
   await user.click(screen.getByRole("button", { name: "Skills" }));
   await waitFor(() => expect(saved.settingsTab).toBe("skills"));
   expect(saved.inspectorTab).toBe("details");
+  await user.click(screen.getByRole("button", { name: "Foco" }));
+  await waitFor(() => expect(saved.sidebarCollapsed && saved.inspectorCollapsed).toBe(true));
   first.unmount();
   render(<DesktopLayoutProvider><Controls /></DesktopLayoutProvider>);
   expect(await screen.findByText("details / skills / 23")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Foco" })).toHaveAttribute("aria-pressed", "true");
 });
 
 it("does not overwrite unavailable preferences and still permits using the interface", async () => {

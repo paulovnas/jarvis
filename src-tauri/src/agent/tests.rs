@@ -207,6 +207,75 @@ async fn manual_waits_for_matching_approval_and_yolo_does_not_prompt() {
 }
 
 #[tokio::test]
+async fn beads_mutations_require_manual_approval_but_queries_do_not() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let signal = session
+        .reserve("Track work".into(), options(ApprovalMode::Manual))
+        .unwrap();
+    for name in [
+        "beads_create",
+        "beads_update",
+        "beads_claim",
+        "beads_close",
+        "beads_dependency",
+    ] {
+        let tool = ToolCall {
+            id: name.into(),
+            name: name.into(),
+            args: json!({}),
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        let (s, t, cancel) = (session.clone(), tool.clone(), signal.clone());
+        let pending =
+            tokio::spawn(
+                async move { authorize(&s, &t, &options(ApprovalMode::Manual), cancel).await },
+            );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while session.snapshot().unwrap().pending_approval.is_none() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!pending.is_finished());
+        let turn = session.snapshot().unwrap().active_turn_id.unwrap();
+        answer_approval(&session, &turn, &tool.id, false).unwrap();
+        assert!(!pending.await.unwrap().unwrap());
+        assert!(authorize(
+            &session,
+            &tool,
+            &options(ApprovalMode::Yolo),
+            signal.clone()
+        )
+        .await
+        .unwrap());
+        assert!(session.snapshot().unwrap().pending_approval.is_none());
+    }
+    for name in ["beads_list", "beads_ready", "beads_show"] {
+        let tool = ToolCall {
+            id: name.into(),
+            name: name.into(),
+            args: json!({}),
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        assert!(authorize(
+            &session,
+            &tool,
+            &options(ApprovalMode::Manual),
+            signal.clone()
+        )
+        .await
+        .unwrap());
+        assert!(session.snapshot().unwrap().pending_approval.is_none());
+    }
+}
+
+#[tokio::test]
 async fn mcp_calls_require_manual_approval_even_in_plan() {
     let fixture = Fixture::new();
     let session = session(&fixture);

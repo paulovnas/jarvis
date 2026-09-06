@@ -84,6 +84,8 @@ fn restore(staged: &[(PathBuf, PathBuf)]) -> Result<(), LibraryError> {
 
 /// SQLite decides whether an interrupted staged deletion must be restored or completed.
 pub(super) fn recover(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
+    cleanup_context_memory(connection, home)?;
+    cleanup_beads_projects(connection, home)?;
     let Some(root) = history_root(home)? else {
         return Ok(());
     };
@@ -131,6 +133,64 @@ pub(super) fn recover(connection: &Connection, home: &Path) -> Result<(), Librar
                 fs::remove_file(entry.path()).map_err(|_| deletion_error())?;
                 sync_directory(&directory)?;
             }
+        }
+    }
+    Ok(())
+}
+
+// The database commit is the authority: a crash before commit retains memory,
+// and a crash after commit leaves an orphan that the next recovery removes.
+fn cleanup_context_memory(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
+    let directory = home.join(".jarvis/context-mode");
+    if !is_directory(&directory)? {
+        return Ok(());
+    }
+    let live: std::collections::HashSet<_> = connection
+        .prepare("SELECT id FROM conversations")?
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .map(|id| {
+            crate::core::context::storage(home, id)
+                .file_name()
+                .unwrap()
+                .to_os_string()
+        })
+        .collect();
+    for entry in fs::read_dir(&directory).map_err(|_| deletion_error())? {
+        let entry = entry.map_err(|_| deletion_error())?;
+        let name = entry.file_name();
+        let text = name.to_string_lossy();
+        if text.len() != 64 || !text.bytes().all(|c| c.is_ascii_hexdigit()) || live.contains(&name)
+        {
+            continue;
+        }
+        if is_directory(&entry.path())? {
+            fs::remove_dir_all(entry.path()).map_err(|_| deletion_error())?;
+        }
+    }
+    sync_directory(&directory)
+}
+
+fn cleanup_beads_projects(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
+    let base = home.join(".jarvis/beads");
+    if !is_directory(&base)? {
+        return Ok(());
+    }
+    let directory = base.join("projects");
+    if !is_directory(&directory)? {
+        return Ok(());
+    }
+    let live: std::collections::HashSet<String> = connection
+        .prepare("SELECT id FROM projects")?
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    for entry in fs::read_dir(&directory).map_err(|_| deletion_error())? {
+        let entry = entry.map_err(|_| deletion_error())?;
+        let id = entry.file_name().to_string_lossy().into_owned();
+        if valid_id(&id) && !live.contains(&id) {
+            crate::core::beads::cleanup_project(home, &id)
+                .map_err(|_| LibraryError::new("delete_history", "O Beads ainda está concluindo uma operação ou seu armazenamento está indisponível. Tente novamente."))?;
         }
     }
     Ok(())
@@ -274,5 +334,7 @@ pub(crate) fn delete(
         // Remove an empty history directory only; unknown files and project source are never traversed.
         let _ = fs::remove_dir(home.join(".jarvis").join("sessions").join(project_id));
     }
+    cleanup_context_memory(connection, home)?;
+    cleanup_beads_projects(connection, home)?;
     Ok(result)
 }

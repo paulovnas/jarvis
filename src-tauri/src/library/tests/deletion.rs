@@ -2,6 +2,61 @@ use super::*;
 use crate::library::deletion::{delete, recover, DeleteTarget};
 
 #[test]
+fn beads_survives_conversation_deletion_and_project_removal_preserves_external_tracker() {
+    let home = TestHome::new();
+    let mut db = database();
+    let project = setup_project(&mut db, &home);
+    let conversation = insert_conversation(&mut db, &home.0, &project.id, "Synthetic")
+        .unwrap()
+        .conversations[0]
+        .clone();
+    let private = crate::core::beads::storage(&home.0, &project.id);
+    fs::create_dir_all(&private).unwrap();
+    fs::write(private.join("tasks.db"), "private tasks").unwrap();
+    let external = Path::new(&project.path).join(".beads");
+    fs::create_dir_all(&external).unwrap();
+    fs::write(external.join("tasks.db"), "external tasks").unwrap();
+    delete(
+        &mut db,
+        &home.0,
+        &DeleteTarget::Conversation(conversation.id),
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(private.join("tasks.db")).unwrap(),
+        "private tasks"
+    );
+    delete(&mut db, &home.0, &DeleteTarget::Project(project.id)).unwrap();
+    assert!(!private.exists());
+    assert_eq!(
+        fs::read_to_string(external.join("tasks.db")).unwrap(),
+        "external tasks"
+    );
+}
+
+#[test]
+fn beads_busy_cleanup_recovers_after_committed_project_deletion() {
+    use fs2::FileExt;
+    let home = TestHome::new();
+    let mut db = database();
+    let project = setup_project(&mut db, &home);
+    let private = crate::core::beads::storage(&home.0, &project.id);
+    fs::create_dir_all(&private).unwrap();
+    fs::write(private.join("tasks.db"), "private tasks").unwrap();
+    let locks = home.0.join(".jarvis/beads/locks");
+    fs::create_dir_all(&locks).unwrap();
+    let lock = fs::File::create(locks.join(format!("{}.lock", project.id))).unwrap();
+    FileExt::lock_exclusive(&lock).unwrap();
+    assert!(delete(&mut db, &home.0, &DeleteTarget::Project(project.id.clone())).is_err());
+    assert!(snapshot(&db).unwrap().projects.is_empty());
+    assert!(private.exists());
+    drop(lock);
+    recover(&db, &home.0).unwrap();
+    assert!(!private.exists());
+    assert!(Path::new(&project.path).is_dir());
+}
+
+#[test]
 fn removes_only_selected_conversation_and_its_recovery_copies() {
     let home = TestHome::new();
     let mut db = database();
@@ -17,6 +72,12 @@ fn removes_only_selected_conversation_and_its_recovery_copies() {
     let path = session_path(&home.0, &project.id, &second.id, false).unwrap();
     let backup = path.with_extension(format!("recovery-{}.jsonl", new_id().unwrap()));
     fs::write(&backup, "private recovery").unwrap();
+    let context_memory = crate::core::context::storage(&home.0, &second.id);
+    let retained_memory = crate::core::context::storage(&home.0, &first.id);
+    for path in [&context_memory, &retained_memory] {
+        fs::create_dir_all(path).unwrap();
+        fs::write(path.join("private.db"), "indexed private history").unwrap();
+    }
     fs::write(Path::new(&project.path).join("source.txt"), "keep source").unwrap();
     let result = delete(
         &mut db,
@@ -32,6 +93,8 @@ fn removes_only_selected_conversation_and_its_recovery_copies() {
     assert!(result.selection.conversation_id.is_none());
     assert!(!path.exists());
     assert!(!backup.exists());
+    assert!(!context_memory.exists());
+    assert!(retained_memory.join("private.db").exists());
     assert!(read_conversation(&db, &home.0, &first.id).is_ok());
     assert_eq!(
         fs::read_to_string(Path::new(&project.path).join("source.txt")).unwrap(),

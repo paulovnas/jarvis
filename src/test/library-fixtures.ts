@@ -32,12 +32,13 @@ export function populatedLibrary(): LibrarySnapshot {
       },
     ],
     conversations: [
-      { id: "c1", projectId: "p1", title: "Primeira conversa", createdAt: 1 },
+      { id: "c1", projectId: "p1", title: "Primeira conversa", createdAt: 1, lastActivityAt: 1 },
       {
         id: "c2",
         projectId: "p2",
         title: "Conversa do trabalho",
         createdAt: 2,
+        lastActivityAt: 2,
       },
     ],
     selection: { workspaceId: "w1", projectId: "p1", conversationId: "c1" },

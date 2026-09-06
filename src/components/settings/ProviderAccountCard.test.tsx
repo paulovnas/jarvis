@@ -17,11 +17,11 @@ describe("ProviderAccountCard", () => {
     const onDisconnect = vi.fn();
     const view = render(<ProviderAccountCard account={account} onDisconnect={onDisconnect} onEnabledChange={onEnabledChange} />);
     await user.click(screen.getByRole("button", { name: `Detalhes de ${account.alias}` }));
-    await user.click(screen.getByRole("switch"));
+    await user.click(screen.getByRole("switch", { name: `Ativar ${account.alias}` }));
     expect(onEnabledChange).toHaveBeenCalledWith(account.alias, false);
     view.rerender(<ProviderAccountCard account={{ ...account, enabled: false }} onDisconnect={onDisconnect} onEnabledChange={onEnabledChange} />);
     expect(screen.getByText("Ative a conta para disponibilizar seus modelos.")).toBeVisible();
-    await user.click(screen.getByRole("switch"));
+    await user.click(screen.getByRole("switch", { name: `Ativar ${account.alias}` }));
     expect(onEnabledChange).toHaveBeenLastCalledWith(account.alias, true);
     expect(onDisconnect).not.toHaveBeenCalled();
   });

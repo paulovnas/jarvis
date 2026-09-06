@@ -1,13 +1,13 @@
 import { useState, type CSSProperties } from "react";
 import {
   Folder,
+  LayoutDashboard,
   ChevronRight,
   Layers,
   FolderPlus,
   MessageSquare,
   MessageSquarePlus,
   Plus,
-  Settings,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,6 @@ import {
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -59,14 +58,13 @@ const sidebarStyle = {
 
 export function AppSidebar({
   library,
-  onOpenSettings,
   runningConversationIds,
 }: {
   library: LibraryController;
-  onOpenSettings: () => void;
   runningConversationIds?: ReadonlySet<string>;
 }) {
   const [dialog, setDialog] = useState<NameDialog | null>(null);
+  const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const { layout, updateLayout } = useDesktopLayout();
   const expanded = layout.expandedProjects;
   const setExpanded = (update: (values: Record<string, boolean>) => Record<string, boolean>) => updateLayout(current => ({ expandedProjects: update(current.expandedProjects) }));
@@ -222,7 +220,9 @@ export function AppSidebar({
                       )}
                       <SidebarMenu aria-label="Projetos do workspace">
                         {projects.map((item) => {
-                          const conversations = snapshot.conversations.filter(entry => entry.projectId === item.id);
+                          const conversations = snapshot.conversations.filter(entry => entry.projectId === item.id)
+                            .sort((a, b) => (b.lastActivityAt ?? b.createdAt) - (a.lastActivityAt ?? a.createdAt) || b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+                          const visibleCount = visibleCounts[item.id] ?? 3;
                           const isOpen = expanded[item.id] ?? item.id === project?.id;
                           return (
                           <SidebarMenuItem key={item.id}>
@@ -260,13 +260,18 @@ export function AppSidebar({
                               </CollapsibleTrigger>
                             </LibraryItemMenu>
                               <CollapsibleContent className="my-1 ml-3 border-l border-border pl-2">
-                                {conversations.length ? (
-                                  conversationList(conversations)
-                                ) : (
-                                  <p className="p-2 text-xs text-muted-foreground">
-                                    Use Novo → Nova conversa para começar.
-                                  </p>
-                                )}
+                                <SidebarMenu className="mb-1">
+                                  <SidebarMenuItem>
+                                    <SidebarMenuButton className="cursor-pointer" disabled={busy}
+                                      isActive={selected?.projectId === item.id && !selected.conversationId}
+                                      aria-current={selected?.projectId === item.id && !selected.conversationId ? "page" : undefined}
+                                      onClick={() => { void library.select({ kind: "project", id: item.id }); }}>
+                                      <LayoutDashboard className="text-onedark-cyan" /><span>Dashboard</span>
+                                    </SidebarMenuButton>
+                                  </SidebarMenuItem>
+                                </SidebarMenu>
+                                {conversationList(conversations.slice(0, visibleCount))}
+                                {conversations.length > visibleCount && <Button variant="ghost" size="sm" className="mt-1 h-7 w-full cursor-pointer justify-start pl-8 text-xs text-muted-foreground" onClick={() => setVisibleCounts(counts => ({ ...counts, [item.id]: visibleCount + 10 }))}>Ver mais<span className="ml-auto font-mono text-[10px]">+{Math.min(10, conversations.length - visibleCount)}</span></Button>}
                               </CollapsibleContent>
                             </Collapsible>
                           </SidebarMenuItem>
@@ -277,16 +282,6 @@ export function AppSidebar({
               </div>
             )}
           </SidebarContent>
-          <SidebarFooter className="border-t border-border px-3 py-2">
-            <Button
-              variant="ghost"
-              className="h-9 w-full cursor-pointer justify-start text-xs text-muted-foreground"
-              onClick={onOpenSettings}
-            >
-              <Settings />
-              Configurações
-            </Button>
-          </SidebarFooter>
         </Sidebar>
       </SidebarProvider>
       {dialog && (

@@ -23,6 +23,8 @@ const models: ProviderModelGroup[] = [{
 async function openModel(user: ReturnType<typeof userEvent.setup>, name: RegExp) {
   screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus();
   await user.keyboard("{Enter}");
+  (await screen.findAllByRole("menuitem"))[0].focus();
+  await user.keyboard("{ArrowRight}");
   const item = await screen.findByRole("menuitem", { name });
   item.focus();
   await user.keyboard("{ArrowRight}");
@@ -30,6 +32,19 @@ async function openModel(user: ReturnType<typeof userEvent.setup>, name: RegExp)
 }
 
 describe("ChatComposer model reasoning", () => {
+  it("mostra somente provedores e permite navegar pelos três níveis com teclado", async () => {
+    const user = userEvent.setup();
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+    expect((await screen.findAllByRole("menuitem")).map(item => item.textContent)).toEqual([models[0].provider]);
+    screen.getByRole("menuitem", { name: models[0].provider }).focus();
+    await user.keyboard("{ArrowRight}");
+    const model = await screen.findByRole("menuitem", { name: /Flexible/ });
+    model.focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Flexible · Alto");
+  });
   it("shows only the policy names and blocks the draft during compaction", async () => {
     const user = userEvent.setup(); const send = vi.fn();
     const { rerender } = await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} />);
@@ -136,6 +151,8 @@ describe("ChatComposer model reasoning", () => {
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={vi.fn()} />);
     screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus();
     await user.keyboard("{Enter}");
+    (await screen.findAllByRole("menuitem"))[0].focus();
+    await user.keyboard("{ArrowRight}");
     const plain = await screen.findByRole("menuitem", { name: "Plain" });
     expect(plain).not.toHaveAttribute("aria-haspopup");
     await user.click(plain);

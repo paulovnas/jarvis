@@ -1,0 +1,15 @@
+.dashboard-project-mark { display: grid; place-items: center; width: 42px; height: 42px; flex-shrink: 0; color: var(--primary); border: 1px solid color-mix(in srgb, var(--primary) 24%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--primary) 6%, transparent); box-shadow: inset 0 1px 0 #ffffff0d; }
+.dashboard-metric-rail { overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: inset 0 1px 0 #ffffff0d; }
+.dashboard-metric + .dashboard-metric { border-left: 1px solid var(--border); }
+.dashboard-card { min-width: 0; border-radius: 8px; border-color: var(--border); box-shadow: inset 0 1px 0 #ffffff0d; background: color-mix(in srgb, var(--card) 80%, transparent); padding-block: 18px; }
+.dashboard-card [data-slot=card-header], .dashboard-card [data-slot=card-content] { padding-inline: 18px; }
+.bead-card { box-shadow: inset 0 1px 0 #ffffff0b, 0 2px 3px #00000016; transition: background-color 120ms, border-color 120ms; }
+.bead-card:hover { border-color: #ffffff28; background: color-mix(in srgb, var(--card) 85%, white); }
+.bead-prose { overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; }
+.bead-prose p + p, .bead-prose ul, .bead-prose ol, .bead-prose pre { margin-top: 10px; }
+.bead-prose ul { list-style: disc; padding-left: 20px; }
+.bead-prose ol { list-style: decimal; padding-left: 20px; }
+.bead-prose pre { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; padding: 12px; background: var(--background); }
+.bead-prose code { font-family: var(--font-mono); font-size: 11px; }
+.bead-prose h1, .bead-prose h2, .bead-prose h3 { margin-block: 12px 6px; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .bead-card { transition: none; } }

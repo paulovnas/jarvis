@@ -7,6 +7,14 @@ import { ToolCallCard } from "./ToolCallCard";
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 
 describe("ToolCallCard Web Search", () => {
+  it("mantém o resultado do Beads recolhido e permite consultar a tarefa salva", async () => {
+    const user = userEvent.setup();
+    const output = JSON.stringify({ id: "project-task", title: "Corrigir seleção", status: "open" });
+    render(<ToolCallCard tool={{ id: "beads1", name: "beads_create", status: "completed", args: { title: "Corrigir seleção" }, output }} />);
+    expect(screen.queryByText(output)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /beads_create.*Concluída/ }));
+    expect(screen.getByText(output)).toBeVisible();
+  });
   it("mostra a skill pelo nome e mantém as instruções recolhidas", async () => {
     const user = userEvent.setup();
     render(<ToolCallCard tool={{ id: "skill1", name: "read_skill", status: "completed", args: { id: "opaque-id" }, output: "Skill: react-expert\nRead components first" }} />);

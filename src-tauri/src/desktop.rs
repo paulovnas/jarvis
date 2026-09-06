@@ -27,6 +27,8 @@ pub struct LayoutPreferences {
     pub settings_tab: SettingsTab,
     pub expanded_projects: BTreeMap<String, bool>,
     pub activity_sections: BTreeMap<String, bool>,
+    pub sidebar_collapsed: bool,
+    pub inspector_collapsed: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -371,6 +373,8 @@ mod tests {
         };
         store.preferences.layout.inspector_tab = InspectorTab::Details;
         store.preferences.layout.settings_tab = SettingsTab::Skills;
+        store.preferences.layout.sidebar_collapsed = true;
+        store.preferences.layout.inspector_collapsed = true;
         store
             .preferences
             .layout

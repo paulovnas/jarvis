@@ -105,4 +105,20 @@ describe("Explicit skill input", () => {
     await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
     expect(send).toHaveBeenCalledWith("ação opção português\nsegunda linha", expect.any(Object));
   });
+  it("oculta o placeholder na mesma transação de colar e restaura ao apagar ou enviar", async () => {
+    const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} />);
+    const field = screen.getByRole("textbox", { name: "Mensagem" });
+    expect(field).toHaveAttribute("data-empty", "true");
+    await user.click(field);
+    await user.paste("Texto colado\n");
+    expect(field).toHaveTextContent("Texto colado");
+    expect(field).toHaveAttribute("data-empty", "false");
+    await user.keyboard("{Control>}a{/Control}{Backspace}");
+    expect(field).toHaveAttribute("data-empty", "true");
+    await user.paste("Outra mensagem");
+    expect(field).toHaveAttribute("data-empty", "false");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(field).toHaveAttribute("data-empty", "true"));
+  });
 });

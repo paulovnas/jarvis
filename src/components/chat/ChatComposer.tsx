@@ -7,7 +7,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -123,14 +122,14 @@ export function ChatComposer({
   const [approvalMode, setApprovalMode] = useState<TurnOptions["approvalMode"]>(initialOptions?.approvalMode ?? "yolo");
 
   const handleSend = async () => {
-    const trimmed = text.trim();
+    const submitted = draftRef.current;
+    const trimmed = submitted.content.trim();
     if (!trimmed || disabled || compacting || sendLock.current || !currentModelDef) return;
     const separator = currentModelDef.value.indexOf("/");
     if (separator < 1) return;
     sendLock.current = true;
     setSending(true);
     try {
-      const submitted = draftRef.current;
       const options = running && initialOptions ? initialOptions : { account: currentModelDef.value.slice(0, separator), model: currentModelDef.value.slice(separator + 1), reasoning, mode, approvalMode };
       const accepted = submitted.parts?.length ? await onSendMessage(trimmed, options, submitted.parts) : await onSendMessage(trimmed, options);
       const current = draftKey && drafts ? drafts.get(draftKey) ?? { content: "" } : draftRef.current;
@@ -267,15 +266,12 @@ export function ChatComposer({
                     </DropdownMenuLabel>
                   </DropdownMenuGroup>
                 ) : (
-                  modelGroups.map((group, groupIndex) => (
-                    <div key={group.provider}>
-                      {groupIndex > 0 && (
-                        <DropdownMenuSeparator className="my-1.5 bg-accent" />
-                      )}
-                      <DropdownMenuGroup>
-                        <DropdownMenuLabel className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#56b6c2]">
+                  modelGroups.map((group) => (
+                    <DropdownMenuSub key={group.provider}>
+                        <DropdownMenuSubTrigger className="cursor-pointer gap-3 py-2 font-mono text-xs text-[#56b6c2]">
                           {group.provider}
-                        </DropdownMenuLabel>
+                        </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="max-h-[min(480px,70vh)] min-w-[220px] overflow-y-auto border-border bg-card p-1.5 text-foreground">
                         {group.models.map((option) => {
                           const isSelected = option.value === currentModelDef?.value;
 
@@ -342,8 +338,8 @@ export function ChatComposer({
                             </DropdownMenuItem>
                           );
                         })}
-                      </DropdownMenuGroup>
-                    </div>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
                   ))
                 )}
               </DropdownMenuContent>

@@ -81,6 +81,25 @@ fn setup_project(connection: &mut Connection, home: &TestHome) -> Project {
 }
 
 #[test]
+fn dashboard_selection_and_activity_survive_without_touching_source_or_history() {
+    let home = TestHome::new();
+    let mut connection = database();
+    let project = setup_project(&mut connection, &home);
+    let first = insert_conversation(&mut connection, &home.0, &project.id, "First").unwrap().selection.conversation_id.unwrap();
+    let second = insert_conversation(&mut connection, &home.0, &project.id, "Second").unwrap().selection.conversation_id.unwrap();
+    dashboard::backfill_activity(&connection, &home.0).unwrap();
+    connection.execute("UPDATE conversations SET last_activity_at = 9999999999 WHERE id = ?1", [&first]).unwrap();
+    let result = select_item(&mut connection, &home.0, LibraryTarget::Project(project.id.clone())).unwrap();
+    assert_eq!(result.selection.project_id, Some(project.id));
+    assert_eq!(result.selection.conversation_id, None);
+    assert_eq!(result.conversations[0].id, first);
+    assert_eq!(result.conversations[1].id, second);
+    dashboard::backfill_activity(&connection, &home.0).unwrap();
+    assert_eq!(snapshot(&connection).unwrap(), result);
+    assert_eq!(fs::read_dir(project.path).unwrap().count(), 0);
+}
+
+#[test]
 fn fresh_library_is_empty_and_workspaces_are_only_named_groups() {
     let mut connection = database();
     assert_eq!(
@@ -152,7 +171,7 @@ fn version_two_upgrade_preserves_onboarding_and_provider_accounts_without_seeds(
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        8
+        10
     );
 }
 

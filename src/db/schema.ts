@@ -21,6 +21,8 @@ export const providerAccounts = sqliteTable(
     providerKind: text("provider_kind").notNull(),
     accountId: text("account_id").notNull().unique(),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    showUsage: integer("show_usage", { mode: "boolean" }).notNull().default(true),
+    showThirdPartyUsage: integer("show_third_party_usage", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
   },
   (table) => [
@@ -67,6 +69,7 @@ export const conversations = sqliteTable("conversations", {
   title: text("title").notNull(),
   displayTitle: text("display_title"),
   titleSource: text("title_source").notNull().default("manual"),
+  lastActivityAt: integer("last_activity_at"),
   createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
 }, (table) => [
   index("conversations_project_idx").on(table.projectId),

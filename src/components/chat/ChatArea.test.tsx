@@ -56,7 +56,7 @@ describe("Persistent live conversation", () => {
     expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeDisabled();
     await update({ ...emptyChat(), revision: 3, context: { ...context, tokens: 100, compacting: false, compactions: 1 } });
     expect(screen.getByRole("textbox")).toHaveTextContent("Rascunho preservado");
-    expect(screen.getByRole("textbox")).toHaveAttribute("contenteditable", "true");
+    expect(await screen.findByRole("textbox")).toHaveAttribute("contenteditable", "true");
   });
 
   it("starts without demo messages and opens a real selected conversation", async () => {
@@ -65,7 +65,7 @@ describe("Persistent live conversation", () => {
     expect(call).not.toHaveBeenCalled();
     rerender(<TestChat />);
     await screen.findByRole("heading", { name: "Primeira conversa" });
-    expect(screen.getByRole("textbox")).toHaveAttribute("contenteditable", "true");
+    expect(await screen.findByRole("textbox")).toHaveAttribute("contenteditable", "true");
     expect(screen.getByRole("button", { name: "Adicionar anexo" })).toBeDisabled();
     expect(call).toHaveBeenCalledWith("get_chat", { conversationId: "c1" });
   });
@@ -81,6 +81,27 @@ describe("Persistent live conversation", () => {
     await user.click(screen.getByRole("button", { name: /Leitura de arquivo/ }));
     expect(screen.getByText("# Jarvis")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copiar" })).not.toBeInTheDocument();
+  });
+  it("restaura os registros de compactação na posição da conversa e não os duplica nos updates", async () => {
+    const turn = savedTurn();
+    const events = [
+      { id: "auto", createdAt: turn.createdAt + 1000, turnId: turn.id, afterTurn: false, automatic: true, tokensBefore: 25000, tokensAfter: 2000 },
+      { id: "manual", createdAt: turn.createdAt + 10000, turnId: turn.id, afterTurn: true, automatic: false, tokensBefore: 9000, tokensAfter: 1000 },
+    ];
+    const snapshot = { ...emptyChat(), turns: [turn], compactions: events };
+    call.mockResolvedValue(snapshot);
+    const first = render(<TestChat />);
+    const manual = await screen.findByRole("note", { name: "Compactação manual concluída" });
+    const automatic = screen.getByRole("note", { name: "Compactação automática concluída" });
+    const assistant = screen.getByTestId("assistant-message-turn1");
+    expect(automatic.compareDocumentPosition(assistant) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(assistant.compareDocumentPosition(manual) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await update({ ...snapshot, revision: 2 });
+    expect(screen.getAllByRole("note")).toHaveLength(2);
+    first.unmount();
+    render(<TestChat />);
+    expect(await screen.findByRole("note", { name: "Compactação manual concluída" })).toBeVisible();
+    expect(screen.getAllByRole("note")).toHaveLength(2);
   });
   it("restaura skills explícitas como badges no histórico", async () => {
     call.mockResolvedValue({ ...emptyChat(), turns: [{ ...savedTurn(), user: "/review Confira o README", parts: [{ type: "skill", id: "review-id", name: "review" }, { type: "text", text: " Confira o README" }] }] });
@@ -143,6 +164,16 @@ describe("Persistent live conversation", () => {
     call.mockResolvedValue({ ...emptyChat(), activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running" }], pendingApproval: tool });
     render(<TestChat />);
     expect(await screen.findByText("before")).toBeInTheDocument(); expect(screen.getByText("after")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Recusar" }));
+    expect(call).toHaveBeenCalledWith("approve_agent_tool", { conversationId: "c1", turnId: "turn1", toolId: "tool1", approved: false });
+  });
+  it("identifies a Beads mutation as a task change and asks for approval", async () => {
+    const user = userEvent.setup();
+    const tool = { ...savedTurn().steps[0].tools[0], name: "beads_update", args: { id: "project-task", title: "Novo título" }, status: "pending" as const };
+    call.mockResolvedValue({ ...emptyChat(), activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running" }], pendingApproval: tool });
+    render(<TestChat />);
+    expect(await screen.findByText("Autorizar alteração de tarefa?")).toBeInTheDocument();
+    expect(screen.getByText("Novo título")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Recusar" }));
     expect(call).toHaveBeenCalledWith("approve_agent_tool", { conversationId: "c1", turnId: "turn1", toolId: "tool1", approved: false });
   });

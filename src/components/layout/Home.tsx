@@ -1,4 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useGroupRef } from "react-resizable-panels";
+import { visiblePanels, rememberPanelResize } from "@/core/desktop-layout";
+import { PanelToggle } from "./PanelToggle";
+import { StatusBar } from "./StatusBar";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ResizableHandle,
@@ -14,14 +18,45 @@ import { useLibrary } from "@/hooks/use-library";
 import { useChat } from "@/hooks/use-chat";
 import { useAgentActivity } from "@/hooks/use-agent-activity";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
+import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
 
 const SettingsDialog = lazy(() => import("@/components/settings/SettingsDialog").then(module => ({ default: module.SettingsDialog })));
+const ProjectDashboard = lazy(() => import("@/components/dashboard/ProjectDashboard").then(module => ({ default: module.ProjectDashboard })));
 
 export function Home() {
   const { layout, updateLayout } = useDesktopLayout();
   const library = useLibrary();
+  const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(null);
+  const sidebarLibrary = { ...library, select: (target: Parameters<typeof library.select>[0]) => {
+    setKanbanProjectId(null);
+    return library.select(target);
+  } };
+  const openKanban = (projectId: string) => {
+    if (library.snapshot?.selection.projectId !== projectId) return;
+    setKanbanProjectId(projectId);
+    void library.select({ kind: "project", id: projectId }).then(selected => { if (!selected) setKanbanProjectId(null); });
+  };
   const chat = useChat(library.snapshot?.selection.conversationId ?? null);
   const runningConversationIds = useAgentActivity();
+  const dashboardProject = !library.snapshot?.selection.conversationId
+    ? library.snapshot?.projects.find(project => project.id === library.snapshot?.selection.projectId)
+    : undefined;
+  const panelLayout = visiblePanels(layout, Boolean(dashboardProject));
+  const groupRef = useGroupRef();
+  const [animating, setAnimating] = useState(false);
+  const layoutKey = JSON.stringify(panelLayout);
+  useLayoutEffect(() => { groupRef.current?.setLayout(JSON.parse(layoutKey) as Record<string, number>); }, [groupRef, layoutKey]);
+  useEffect(() => {
+    if (!animating) return;
+    const timer = setTimeout(() => setAnimating(false), 240);
+    return () => clearTimeout(timer);
+  }, [animating, layout.sidebarCollapsed, layout.inspectorCollapsed]);
+  const toggle = (side: "left" | "right") => {
+    setAnimating(true);
+    updateLayout(side === "left" ? { sidebarCollapsed: !layout.sidebarCollapsed } : { inspectorCollapsed: !layout.inspectorCollapsed });
+  };
+  const leftToggle = <PanelToggle side="left" collapsed={layout.sidebarCollapsed} onToggle={() => toggle("left")} />;
+  const rightToggle = <PanelToggle side="right" collapsed={layout.inspectorCollapsed} onToggle={() => toggle("right")} />;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
   const accountsVersion = useRef(0);
@@ -61,57 +96,65 @@ export function Home() {
   return (
     <div
       data-testid="home-shell"
-      className="desktop-shell dark flex h-full min-h-0 w-full min-w-[1024px] overflow-hidden bg-background font-sans text-foreground"
+      className="desktop-shell dark flex h-full min-h-0 w-full min-w-[1024px] flex-col overflow-hidden bg-background font-sans text-foreground"
     >
       <ResizablePanelGroup
+        key={dashboardProject ? "dashboard" : "chat"}
         id="home-shell-panels"
         orientation="horizontal"
-        defaultLayout={Object.keys(layout.panels).length ? layout.panels : undefined}
-        onLayoutChanged={(panels) => {
-          // Native resizing also changes the constrained proportions. Persist what is visible.
-          if (Object.keys(panels).some(id => Math.abs(panels[id] - (layout.panels[id] ?? -1)) > 0.001)) updateLayout({ panels });
-        }}
-        className="h-full min-h-0 w-full flex-1"
+        defaultLayout={panelLayout}
+        groupRef={groupRef}
+        onLayoutChanged={(panels, meta) => { if (meta.isUserInteraction) updateLayout(rememberPanelResize(layout, panels, Boolean(dashboardProject))); }}
+        className={`h-full min-h-0 w-full flex-1 ${animating ? "panels-animating" : ""}`}
       >
         <ResizablePanel
           id="home-sidebar-panel"
+          collapsible
           defaultSize="20%"
           minSize="220px"
           maxSize="500px"
           className="h-full min-h-0 min-w-0"
         >
-          <AppSidebar library={library} runningConversationIds={runningConversationIds} onOpenSettings={() => setSettingsOpen(true)} />
+          <div id="workspace-panel-content" inert={layout.sidebarCollapsed} aria-hidden={layout.sidebarCollapsed} className={`h-full min-w-[220px] transition-transform duration-200 motion-reduce:transition-none ${layout.sidebarCollapsed ? "-translate-x-full" : ""}`}><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} /></div>
         </ResizablePanel>
 
+        {/* Keep each separator in geometric order: display:none breaks the panel
+            library's adjacency map when a collapsed layout is restored. */}
         <ResizableHandle
           aria-label="Redimensionar barra lateral"
-          className="panel-separator cursor-col-resize bg-border hover:bg-primary/50"
+          aria-hidden={layout.sidebarCollapsed}
+          inert={layout.sidebarCollapsed}
+          className={`panel-separator cursor-col-resize bg-border hover:bg-primary/50 ${layout.sidebarCollapsed ? "invisible w-0 pointer-events-none" : ""}`}
         />
 
         <ResizablePanel
           id="home-main-panel"
-          defaultSize="56%"
+          defaultSize={dashboardProject ? "80%" : "56%"}
           minSize="360px"
           className="h-full min-h-0 min-w-0"
         >
-          <ChatArea modelGroups={modelGroups} library={library.snapshot} chat={chat} />
+          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} library={library.snapshot} chat={chat} />}
         </ResizablePanel>
 
-        <ResizableHandle
+        {!dashboardProject && <><ResizableHandle
           aria-label="Redimensionar inspector"
-          className="panel-separator cursor-col-resize bg-border hover:bg-primary/50"
+          aria-hidden={layout.inspectorCollapsed}
+          inert={layout.inspectorCollapsed}
+          className={`panel-separator cursor-col-resize bg-border hover:bg-primary/50 ${layout.inspectorCollapsed ? "invisible w-0 pointer-events-none" : ""}`}
         />
 
         <ResizablePanel
           id="home-inspector-panel"
+          collapsible
           defaultSize="24%"
           minSize="280px"
           maxSize="550px"
           className="h-full min-h-0 min-w-0"
         >
-          <Inspector library={library.snapshot} chat={chat.snapshot} accounts={accounts} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} />
-        </ResizablePanel>
+          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector library={library.snapshot} chat={chat.snapshot} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} /></div>
+        </ResizablePanel></>}
       </ResizablePanelGroup>
+      <StatusBar accounts={accounts} onOpenSettings={() => setSettingsOpen(true)} />
 
       <Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog
         open={settingsOpen}

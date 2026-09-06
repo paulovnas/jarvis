@@ -56,6 +56,8 @@ pub async fn compact_agent_context(
 ) -> Result<ChatSnapshot, AgentError> {
     let session = agent.existing(&conversation_id)?;
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    crate::core::require_ready(&home)?;
+    let hooks = crate::core::hooks::Hooks::new(&home, &session.root, &session.id)?;
     library::agent_location(&persistence, &home, &conversation_id)?;
     let (lease, options) = begin(session.clone())?;
     let state = persistence.inner().clone();
@@ -77,15 +79,21 @@ pub async fn compact_agent_context(
         data.turns.last_mut().unwrap().turn.context_window = model.context_window;
     })?;
     let (_cancel, signal) = watch::channel(false);
+    let beads = crate::core::beads::Beads::new(&skill_home, session.project_id()?, &session.id, options.mode == Mode::Plan)?;
+    let beads_snapshot = beads.resume(signal.clone(), || library::agent_location(&persistence, &skill_home, &session.id).map(|_| ()).map_err(|_| crate::core::error("Projeto ou conversa indisponível."))).await?;
     let skills = crate::skills::active(&skill_home, &session.root).await.map_err(|cause| AgentError::new("skill_error", &cause.message))?;
     let mut instructions = tools::instructions(&session.root, options.mode);
+    instructions.push_str(crate::core::context::INSTRUCTIONS);
+    instructions.push_str(crate::core::beads::INSTRUCTIONS);
     instructions.push_str(&crate::skills::prompt(&skills));
+    hooks.before_agent(&mut instructions);
     let mut definitions = tools::definitions(options.mode);
+    definitions.extend(crate::core::beads::definitions(options.mode == Mode::Plan));
     if !skills.is_empty() { definitions.extend([crate::skills::definition(), crate::skills::search_definition()]); }
-    let overhead = compaction::estimate(&json!({"instructions": instructions, "tools": definitions}));
+    let overhead = compaction::estimate(&json!({"instructions": instructions, "tools": definitions, "beads_snapshot": beads_snapshot}));
     let result = tokio::time::timeout(
         Duration::from_secs(600),
-        compaction::ensure(&session, &credential, &options, overhead, true, signal),
+        compaction::ensure(&session, &credential, &options, overhead, true, signal, Some(&hooks)),
     )
     .await
     .map_err(|_| {

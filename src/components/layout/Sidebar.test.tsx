@@ -16,15 +16,35 @@ import { AppSidebar } from "./Sidebar";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
-const settings = vi.fn();
 function Harness({ runningIds }: { runningIds?: ReadonlySet<string> }) {
-  return <AppSidebar library={useLibrary()} runningConversationIds={runningIds} onOpenSettings={settings} />;
+  return <AppSidebar library={useLibrary()} runningConversationIds={runningIds} />;
 }
 
 describe("Persistent sidebar", () => {
+  it("opens the Dashboard first and reveals recent sessions three then ten at a time", async () => {
+    const user = userEvent.setup();
+    const stored = populatedLibrary();
+    stored.conversations = Array.from({ length: 25 }, (_, index) => ({ id: `chat${index}`, projectId: "p1", title: `Sessão ${index}`, createdAt: index, lastActivityAt: index === 0 ? 100 : index }));
+    stored.selection.conversationId = "chat0";
+    call.mockResolvedValue(stored);
+    render(<Harness />);
+    const dashboard = await screen.findByRole("button", { name: "Dashboard" });
+    const menu = screen.getByRole("list", { name: "Conversas do projeto" });
+    expect(within(menu).getAllByRole("button").map(button => button.textContent)).toEqual(["Sessão 0", "Sessão 24", "Sessão 23"]);
+    await user.click(screen.getByRole("button", { name: /Ver mais/ }));
+    expect(within(menu).getAllByRole("button")).toHaveLength(13);
+    await user.click(screen.getByRole("button", { name: /Ver mais/ }));
+    expect(within(menu).getAllByRole("button")).toHaveLength(23);
+    await user.click(screen.getByRole("button", { name: /Ver mais/ }));
+    expect(within(menu).getAllByRole("button")).toHaveLength(25);
+    expect(screen.queryByRole("button", { name: /Ver mais/ })).not.toBeInTheDocument();
+    call.mockResolvedValue({ ...stored, selection: { ...stored.selection, conversationId: null } });
+    await user.click(dashboard);
+    expect(call).toHaveBeenLastCalledWith("select_library_item", { target: { kind: "project", id: "p1" } });
+    await waitFor(() => expect(dashboard).toHaveAttribute("aria-current", "page"));
+  });
   beforeEach(() => {
     call.mockReset();
-    settings.mockReset();
     call.mockResolvedValue(emptyLibrary());
   });
 
@@ -377,7 +397,6 @@ describe("Persistent sidebar", () => {
     expect(
       await screen.findByText("Organize seus projetos"),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Configurações" }));
-    expect(settings).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Configurações" })).not.toBeInTheDocument();
   });
 });

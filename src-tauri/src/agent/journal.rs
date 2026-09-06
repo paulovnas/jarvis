@@ -1,5 +1,5 @@
 use super::{
-    compaction::Checkpoint, diffs::FileRevision, queue::QueuedMessage, AgentError, StoredTurn,
+    compaction::{Checkpoint, CompactionEvent, CompletedCompaction}, diffs::FileRevision, queue::QueuedMessage, AgentError, StoredTurn,
     TurnStatus,
 };
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,7 @@ struct Record {
 pub(super) struct Extras {
     pub queue: Vec<QueuedMessage>,
     pub context: Option<Checkpoint>,
+    pub compactions: Vec<CompactionEvent>,
     pub files: std::collections::BTreeMap<String, FileRevision>,
 }
 
@@ -76,6 +77,14 @@ pub(super) fn append_event(
 }
 
 pub(super) fn load_all(path: &Path) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
+    read(path, true)
+}
+
+pub(super) fn read_only(path: &Path) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
+    read(path, false)
+}
+
+fn read(path: &Path, repair: bool) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
     let mut bytes = vec![];
     open(path, false)?
         .take(MAX_JOURNAL + 1)
@@ -108,6 +117,12 @@ pub(super) fn load_all(path: &Path) -> Result<(Vec<StoredTurn>, Extras), AgentEr
             return Err(AgentError::storage());
         }
         match record.r#type.as_str() {
+            "compaction_completed" => {
+                let completed: CompletedCompaction = serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+                extras.context = Some(completed.context);
+                extras.compactions.push(completed.event);
+                continue;
+            }
             "queue_checkpoint" => {
                 extras.queue =
                     serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
@@ -144,7 +159,7 @@ pub(super) fn load_all(path: &Path) -> Result<(Vec<StoredTurn>, Extras), AgentEr
             turns.push(turn);
         }
     }
-    if valid_end < bytes.len() {
+    if repair && valid_end < bytes.len() {
         // Preserve crash debris before repairing only an incomplete final line.
         let backup = path.with_extension(format!("recovery-{}.jsonl", crate::library::new_id()?));
         let mut options = OpenOptions::new();
@@ -168,7 +183,7 @@ pub(super) fn load_all(path: &Path) -> Result<(Vec<StoredTurn>, Extras), AgentEr
             .map_err(|_| AgentError::storage())?;
     }
     for turn in &mut turns {
-        if turn.turn.status == TurnStatus::Running {
+        if repair && turn.turn.status == TurnStatus::Running {
             interrupt_tools(turn);
             turn.turn.status = TurnStatus::Interrupted;
             turn.turn.error = Some(AgentError::new("interrupted", "O Jarvis foi encerrado durante esta execução. Revise os arquivos antes de continuar; ferramentas não foram repetidas."));

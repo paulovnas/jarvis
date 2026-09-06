@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::persistence::{self, PersistenceError, ProviderAccountRecord};
 
 pub(crate) mod antigravity;
+pub(crate) mod usage;
 
 pub(crate) const OPENAI_CODEX_ALIAS_PREFIX: &str = "openai-codex-";
 pub(crate) const KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.openai-codex";
@@ -34,6 +35,10 @@ pub(crate) enum ProviderAccountType {
 pub(crate) struct ProviderAccount {
     pub(crate) alias: String,
     pub(crate) enabled: bool,
+    #[serde(rename = "showUsage")]
+    pub(crate) show_usage: bool,
+    #[serde(rename = "showThirdPartyUsage")]
+    pub(crate) show_third_party_usage: bool,
     #[serde(rename = "providerKind")]
     pub(crate) provider_kind: String,
     #[serde(rename = "createdAt")]
@@ -56,6 +61,8 @@ impl ProviderAccount {
         Self {
             alias: record.alias,
             enabled: record.enabled,
+            show_usage: record.show_usage,
+            show_third_party_usage: record.show_third_party_usage,
             provider_kind: record.provider_kind,
             created_at: record.created_at,
             email: credential.and_then(|value| value.email.clone()),
@@ -580,6 +587,8 @@ mod tests {
         let account = ProviderAccount {
             alias: "openai-codex-one".to_owned(),
             enabled: true,
+            show_usage: true,
+            show_third_party_usage: false,
             provider_kind: "openai-codex".to_owned(),
             created_at: 1_735_689_600,
             email: Some("person@example.com".to_owned()),
@@ -903,6 +912,7 @@ impl OAuthFlow {
 }
 
 struct OAuthManager {
+    usage_cache: usage::UsageCache,
     credentials_guard: std::sync::Mutex<()>,
     active_flow: std::sync::Mutex<Option<String>>,
     flows: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<OAuthFlow>>>,
@@ -921,6 +931,7 @@ impl OAuthManager {
     ) -> Self {
         Self {
             credentials_guard: std::sync::Mutex::new(()),
+            usage_cache: Default::default(),
             active_flow: std::sync::Mutex::new(None),
             flows: std::sync::Mutex::new(std::collections::HashMap::new()),
             endpoints,

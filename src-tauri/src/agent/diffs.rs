@@ -1,4 +1,5 @@
 use super::*;
+mod working;
 use similar::{ChangeTag, TextDiff};
 use std::{
     io::Read,
@@ -19,7 +20,7 @@ pub(super) struct FileRevision {
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct FileSummary {
+pub struct FileSummary {
     pub path: String,
     pub additions: Option<u64>,
     pub deletions: Option<u64>,
@@ -147,20 +148,27 @@ pub(super) fn summaries(data: &SessionData) -> Vec<FileSummary> {
         .collect()
 }
 
-pub(super) fn record(session: &Session, revision: FileRevision) -> Result<(), AgentError> {
+pub(super) async fn record(session: &Session, revision: FileRevision) -> Result<(), AgentError> {
+    let previous = session.data.lock().map_err(|_| AgentError::internal())?.extras.files.get(&revision.path).cloned();
+    let mut baseline = revision.before.clone();
+    if let Some(previous) = previous.as_ref().filter(|file| file.base != "unknown") {
+        // Rebase ownership after full/partial commits before recording another
+        // edit. Preserve the journal baseline if Git is temporarily unavailable.
+        baseline = previous.before.clone();
+        if let Ok(repository) = working::Repository::open(&session.root).await {
+            let head = if let Some(repo) = repository { repo.contents(&session.root, &revision.path).await } else { Ok(previous.before.clone()) };
+            if let Ok(head) = head {
+                baseline = working::pending(previous, head.as_deref(), revision.before.as_deref()).before;
+            }
+        }
+    }
     let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
-    let (before, base) = data
-        .extras
-        .files
-        .get(&revision.path)
-        .map(|file| (file.before.clone(), file.base.as_str()))
-        .unwrap_or((revision.before.clone(), "conversation"));
     let version = data
         .extras
         .files
         .get(&revision.path)
         .map_or(1, |file| file.revision + 1);
-    let mut revision = FileRevision::new(revision.path, before, revision.after, base);
+    let mut revision = FileRevision::new(revision.path, baseline, revision.after, "conversation");
     revision.revision = version;
     session.checkpoint(&mut data, "file_checkpoint", &revision)?;
     data.extras.files.insert(revision.path.clone(), revision);
@@ -230,12 +238,8 @@ pub(super) fn load_legacy(
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|value| PathBuf::from(value.trim()));
     for (path, after) in contents {
-        let after = after.or_else(|| {
-            std::fs::metadata(root.join(&path))
-                .ok()
-                .filter(|meta| meta.is_file() && meta.len() <= 1024 * 1024)
-                .and_then(|_| std::fs::read_to_string(root.join(&path)).ok())
-        });
+        // Live disk content cannot establish ownership for an old edit whose
+        // resulting contents were never recorded in the journal.
         let mut base = "unknown";
         let mut before = None;
         if let Some(git_root) = &git_root {
@@ -288,20 +292,22 @@ pub(super) fn load_legacy(
 }
 
 #[tauri::command]
+pub async fn get_agent_file_changes(
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+) -> Result<Vec<FileSummary>, AgentError> {
+    let session = agent.existing(&conversation_id)?;
+    Ok(working::files(&session, None).await?.iter().map(FileRevision::summary).collect())
+}
+
+#[tauri::command]
 pub async fn get_agent_file_diff(
     agent: tauri::State<'_, AgentState>,
     conversation_id: String,
     path: String,
 ) -> Result<FileDiff, AgentError> {
     let session = agent.existing(&conversation_id)?;
-    let file = session
-        .data
-        .lock()
-        .map_err(|_| AgentError::internal())?
-        .extras
-        .files
-        .get(&path)
-        .cloned()
+    let file = working::files(&session, Some(&path)).await?.pop()
         .ok_or_else(|| {
             AgentError::new(
                 "diff_missing",
@@ -334,7 +340,7 @@ mod tests {
             tools::execute_with_revision(&fixture.root, &tool, Mode::Build, signal.clone())
                 .await
                 .unwrap();
-        record(&session, revision.unwrap()).unwrap();
+        record(&session, revision.unwrap()).await.unwrap();
         let summary = session.snapshot().unwrap().file_changes;
         assert_eq!(
             (summary[0].additions, summary[0].deletions),
@@ -350,7 +356,7 @@ mod tests {
             tools::execute_with_revision(&fixture.root, &restored, Mode::Build, signal.clone())
                 .await
                 .unwrap();
-        record(&session, revision.unwrap()).unwrap();
+        record(&session, revision.unwrap()).await.unwrap();
         assert!(session.snapshot().unwrap().file_changes.is_empty());
         assert!(
             tools::execute_with_revision(&fixture.root, &restored, Mode::Plan, signal)

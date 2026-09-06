@@ -36,7 +36,7 @@ function DiffView({ conversationId, file, revision }: { conversationId: string; 
   return <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={`Diff de ${file.path}`}>
     <div className="flex min-w-0 items-center gap-3 border-b border-border px-4 py-3"><p className="min-w-0 flex-1 truncate font-mono text-xs" title={file.path}>{file.path}</p><Counts {...file} /></div>
     {!result ? <DiffSkeleton /> : result.error ? <div className="space-y-3 p-4"><p role="alert" className="text-xs text-destructive">{result.error}</p><Button variant="outline" size="sm" className="cursor-pointer" onClick={() => { setResult(null); setAttempt(value => value + 1); }}>Tentar novamente</Button></div> : result.diff && <>
-      <p className="border-b border-border/50 px-4 py-2 text-[11px] text-muted-foreground">{result.diff.base === "conversation" ? "Comparação com o início das alterações nesta conversa." : result.diff.base === "git" ? "Histórico anterior: comparação com o último commit (HEAD)." : "O histórico anterior não contém uma versão original para comparação."}</p>
+      <p className="border-b border-border/50 px-4 py-2 text-[11px] text-muted-foreground">Alterações da sessão ainda não commitadas.</p>
       <div className="min-h-0 flex-1 overflow-auto" tabIndex={0} aria-label="Linhas do diff">
         <table className="w-full border-collapse font-mono text-[11px] leading-5"><thead className="sr-only"><tr><th>Linha anterior</th><th>Linha atual</th><th>Alteração</th><th>Conteúdo</th></tr></thead><tbody>
           {result.diff.rows.map((row, index) => row.kind === "gap" ? <tr key={index} className="bg-primary/5 text-muted-foreground"><td colSpan={4} className="px-4 py-1 text-center">··· {row.text} ···</td></tr> : <tr key={index} className={row.kind === "added" ? "bg-[#98c379]/10 text-[#b6d7a2]" : row.kind === "removed" ? "bg-destructive/10 text-[#e8a0a7]" : "text-foreground/80"}>
@@ -66,7 +66,7 @@ export function ChangedFiles({ files, conversationId }: { files: FileChange[]; c
         <DialogClose render={<Button variant="ghost" size="icon" className="absolute right-3 top-3 cursor-pointer" aria-label="Fechar alterações" />}><X className="size-4" /></DialogClose>
         <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
           <nav aria-label="Arquivos para revisar" className="max-h-36 shrink-0 overflow-y-auto border-b border-border bg-sidebar p-2 sm:max-h-none sm:w-64 sm:border-r sm:border-b-0 lg:w-72">{files.map(item => <FileButton key={item.path} file={item} selected={file?.path === item.path} onClick={() => setSelected(item.path)} />)}</nav>
-          {file && selected !== null && <DiffView key={`${conversationId}/${file.path}`} conversationId={conversationId} file={file} revision={file.revision ?? 0} />}
+          {file && selected !== null && <DiffView key={`${conversationId}/${file.path}/${file.revision ?? 0}`} conversationId={conversationId} file={file} revision={file.revision ?? 0} />}
         </div>
       </DialogContent>
     </Dialog>

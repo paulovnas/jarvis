@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod agent;
 mod desktop;
+mod core;
 mod library;
 mod mcp;
 mod openai_codex;
@@ -15,9 +16,11 @@ fn greet(name: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .manage(desktop::DesktopState::default())
+        .manage(core::CoreState::default())
         .manage(persistence::AppState::default())
         .manage(openai_codex::OpenAiCodexState::default())
         .manage(agent::AgentState::default())
+        .manage(agent::dashboard::DashboardState::default())
         .manage(mcp::McpState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -25,6 +28,9 @@ pub fn run() {
         .on_window_event(desktop::on_window_event)
         .invoke_handler(tauri::generate_handler![
             greet,
+            core::get_core_status,
+            core::check_core_updates,
+            core::install_core_component,
             desktop::get_desktop_layout,
             desktop::save_desktop_layout,
             skills::list_skills,
@@ -56,6 +62,10 @@ pub fn run() {
             library::delete_library_item,
             library::select_library_item,
             library::get_conversation,
+            agent::dashboard::get_project_metrics,
+            core::beads::dashboard::get_project_beads,
+            core::beads::dashboard::get_bead_detail,
+            core::beads::dashboard::add_bead_comment,
             agent::get_chat,
             agent::get_agent_activity,
             agent::start_agent_turn,
@@ -63,11 +73,14 @@ pub fn run() {
             agent::maintenance::compact_agent_context,
             agent::queue::remove_queued_message,
             agent::diffs::get_agent_file_diff,
+            agent::diffs::get_agent_file_changes,
             agent::cancel_agent_turn,
             agent::approve_agent_tool,
             agent::questions::answer_agent_question,
             openai_codex::list_provider_accounts,
             openai_codex::set_provider_enabled,
+            openai_codex::usage::get_provider_usage,
+            openai_codex::usage::set_provider_usage_visibility,
             openai_codex::begin_openai_codex_connection,
             openai_codex::wait_openai_codex_connection,
             openai_codex::cancel_openai_codex_connection,

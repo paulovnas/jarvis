@@ -41,6 +41,14 @@ const MIGRATIONS: &[Migration] = &[
         version: 8,
         sql: include_str!("../../drizzle/0007_antigravity_provider.sql"),
     },
+    Migration {
+        version: 9,
+        sql: include_str!("../../drizzle/0008_slim_sabra.sql"),
+    },
+    Migration {
+        version: 10,
+        sql: include_str!("../../drizzle/0009_provider_usage.sql"),
+    },
 ];
 
 #[derive(Debug)]
@@ -175,6 +183,8 @@ pub(crate) struct ProviderAccountRecord {
     pub(crate) account_id: String,
     pub(crate) created_at: i64,
     pub(crate) enabled: bool,
+    pub(crate) show_usage: bool,
+    pub(crate) show_third_party_usage: bool,
 }
 
 fn provider_account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderAccountRecord> {
@@ -184,6 +194,8 @@ fn provider_account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provid
         account_id: row.get(2)?,
         created_at: row.get(3)?,
         enabled: row.get(4)?,
+        show_usage: row.get(5)?,
+        show_third_party_usage: row.get(6)?,
     })
 }
 
@@ -191,7 +203,7 @@ pub(crate) fn list_provider_accounts(
     connection: &Connection,
 ) -> Result<Vec<ProviderAccountRecord>, PersistenceError> {
     let mut statement = connection.prepare(
-        "SELECT alias, provider_kind, account_id, created_at, enabled
+        "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage
          FROM provider_accounts
          ORDER BY created_at, alias",
     )?;
@@ -229,7 +241,7 @@ pub(crate) fn insert_provider_account(
     )?;
     connection
         .query_row(
-            "SELECT alias, provider_kind, account_id, created_at, enabled
+            "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage
              FROM provider_accounts
              WHERE alias = ?1",
             params![alias],
@@ -366,7 +378,7 @@ mod tests {
         connection.pragma_update(None, "foreign_keys", true).unwrap();
         for migration in super::MIGRATIONS.iter().take(7) { connection.execute_batch(migration.sql).unwrap(); }
         connection.pragma_update(None, "user_version", 7).unwrap();
-        super::insert_provider_account(&connection, "openai-codex-old", "account-old").unwrap();
+        connection.execute("INSERT INTO provider_accounts(alias, provider_kind, account_id) VALUES ('openai-codex-old','openai-codex','account-old')", []).unwrap();
         connection.execute("UPDATE provider_accounts SET enabled=0", []).unwrap();
         connection.execute("INSERT INTO web_search_config (id,account_alias) VALUES (1,'openai-codex-old')", []).unwrap();
         super::initialize_database(&mut connection).unwrap();
@@ -406,7 +418,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 8);
+        assert_eq!(version, 10);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -471,7 +483,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 8);
+        assert_eq!(version, 10);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {
@@ -540,7 +552,9 @@ mod tests {
                 "provider_kind",
                 "account_id",
                 "created_at",
-                "enabled"
+                "enabled",
+                "show_usage",
+                "show_third_party_usage"
             ]
         );
         assert_eq!(

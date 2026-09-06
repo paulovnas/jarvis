@@ -9,6 +9,7 @@ import {
   populatedLibrary,
 } from "@/test/library-fixtures";
 import { emptyChat } from "@/test/chat-fixtures";
+import { coreFixture } from "@/test/core-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -43,6 +44,7 @@ describe("App bootstrap and onboarding", () => {
     vi.restoreAllMocks();
     invokeMock.mockReset();
     invokeMock.mockImplementation((command) => {
+      if (command === "get_core_status") return Promise.resolve(coreFixture());
       if (command === "list_provider_accounts") return Promise.resolve([]);
       if (command === "get_agent_activity") return Promise.resolve([]);
       if (command === "get_library_snapshot")
@@ -53,6 +55,7 @@ describe("App bootstrap and onboarding", () => {
 
   it("suppresses the native menu including portals and permits only scoped project menus", async () => {
     invokeMock.mockImplementation((command) => {
+      if (command === "get_core_status") return Promise.resolve(coreFixture());
       if (command === "get_app_config")
         return Promise.resolve({ onboardingCompleted: true });
       if (command === "get_library_snapshot")

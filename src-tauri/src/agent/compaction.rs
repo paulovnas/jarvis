@@ -17,6 +17,25 @@ pub(super) struct Checkpoint {
     pub measured: Option<Measurement>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct CompactionEvent {
+    pub id: String,
+    pub created_at: u64,
+    pub turn_id: String,
+    pub after_turn: bool,
+    pub automatic: bool,
+    pub tokens_before: u64,
+    pub tokens_after: u64,
+}
+
+// One durable record commits both the new replay context and its visible marker.
+#[derive(Serialize, Deserialize)]
+pub(super) struct CompletedCompaction {
+    pub context: Checkpoint,
+    pub event: CompactionEvent,
+}
+
 impl Checkpoint {
     pub fn validate(&self, turns: &[StoredTurn]) -> Result<(), AgentError> {
         let count: usize = turns.iter().map(|turn| turn.wire.len()).sum();
@@ -178,14 +197,19 @@ pub(super) async fn ensure(
     overhead: u64,
     force: bool,
     signal: watch::Receiver<bool>,
+    hooks: Option<&crate::core::hooks::Hooks>,
 ) -> Result<bool, AgentError> {
     let mut summary_options = options.clone();
     summary_options.reasoning = None;
     let summary_signal = signal.clone();
-    ensure_with(session, overhead, force, signal, |prompt| {
+    let mut first = true;
+    let result = ensure_with(session, overhead, force, signal, |prompt| {
         let signal = summary_signal.clone();
         let options = &summary_options;
+        let prepare = first;
+        first = false;
         async move {
+            if prepare { if let Some(hooks) = hooks { hooks.run(crate::core::hooks::Event::PreCompact, json!({}), signal.clone()).await?; } }
             let response = provider::stream(
                 credential,
                 &session.id,
@@ -200,7 +224,12 @@ pub(super) async fn ensure(
             Ok(response.text)
         }
     })
-    .await
+    .await?;
+    if result { if let Some(hooks) = hooks {
+        let summary = session.data.lock().map_err(|_| AgentError::internal())?.extras.context.as_ref().map(|c| c.summary.clone()).unwrap_or_default();
+        hooks.run(crate::core::hooks::Event::PostCompact, json!({"text":summary}), summary_signal).await?;
+    } }
+    Ok(result)
 }
 
 async fn ensure_with<F, Fut>(
@@ -241,7 +270,11 @@ where
         let previous = data.extras.context.clone().unwrap_or_default();
         let raw = raw(&data);
         let active = &raw[previous.through..];
-        let Some(cut) = cut_point(active, (window / 5).min(20_000)) else {
+        // An explicit compaction should summarize the full safe history, even
+        // when it fits the usual tail budget. Otherwise a tiny first tool result
+        // can be selected alone and its summary grows instead of freeing space.
+        let keep = if force { 0 } else { (window / 5).min(20_000) };
+        let Some(cut) = cut_point(active, keep) else {
             if force || projected >= threshold(window) {
                 return Err(AgentError::new("context_too_large", "A mensagem atual é grande demais para compactar com segurança. Reduza o texto ou selecione um modelo com uma janela maior."));
             }
@@ -299,8 +332,18 @@ where
         if reduced + overhead >= threshold(window) || reduced >= input(&data).iter().map(estimate).sum::<u64>() {
             return Err(AgentError::new("compaction_failed", "O resumo não liberou espaço suficiente. O histórico foi preservado; reduza a próxima mensagem ou use um modelo com janela maior."));
         }
-        session.checkpoint(&mut data, "context_checkpoint", &context)?;
+        let event = CompactionEvent {
+            id: crate::library::new_id()?,
+            created_at: now(),
+            turn_id: data.turns.last().ok_or_else(AgentError::internal)?.turn.id.clone(),
+            after_turn: data.active.is_none(),
+            automatic: !data.manual_compaction,
+            tokens_before: input(&data).iter().map(estimate).sum(),
+            tokens_after: reduced,
+        };
+        session.checkpoint(&mut data, "compaction_completed", &CompletedCompaction { context: context.clone(), event: event.clone() })?;
         data.extras.context = Some(context);
+        data.extras.compactions.push(event);
         Ok(true)
     }.await;
     session.update(false, |data| {
@@ -350,7 +393,7 @@ mod tests {
         let original = session.input().unwrap();
         assert!(tokio::time::timeout(
             Duration::from_secs(90),
-            ensure(&session, &credential, &options, 100, true, signal.clone())
+            ensure(&session, &credential, &options, 100, true, signal.clone(), None)
         )
         .await
         .unwrap()
@@ -418,6 +461,10 @@ mod tests {
         assert!(compacted.context.tokens < 1000);
         assert!(compacted.context.estimated);
         assert_eq!(compacted.context.compactions, 1);
+        assert_eq!(compacted.compactions.len(), 1);
+        assert!(compacted.compactions[0].automatic);
+        assert!(!compacted.compactions[0].after_turn);
+        assert!(compacted.compactions[0].tokens_before > compacted.compactions[0].tokens_after);
         let replay = session.input().unwrap();
         assert_eq!(replay.len(), 2);
         assert_eq!(replay[1]["content"], "Preserve this request");
@@ -425,11 +472,37 @@ mod tests {
             .iter()
             .any(|message| message["type"] == "function_call_output"));
         let (turns, extras) = journal::load_all(&session.journal).unwrap();
+        assert_eq!(extras.compactions, compacted.compactions);
         assert_eq!(turns[0].wire.len(), 3);
         let mut data = session.data.lock().unwrap();
         data.turns = turns;
         data.extras = extras;
         assert_eq!(input(&data), replay);
+    }
+
+    #[tokio::test]
+    async fn forced_compaction_includes_later_tasks_in_a_short_tool_history() {
+        let fixture = Fixture::new();
+        let session = long_session(&fixture);
+        session.update(true, |data| {
+            let wire = &mut data.turns.last_mut().unwrap().wire;
+            wire[2]["output"] = json!("Empty list");
+            wire.extend([
+                json!({"type":"function_call","call_id":"task","name":"beads_show","arguments":"{}"}),
+                json!({"type":"function_call_output","call_id":"task","output":format!("latest durable status: {}", "Synthetic task details. ".repeat(100))}),
+            ]);
+        }).unwrap();
+        let original = session.input().unwrap();
+        let (_cancel, signal) = watch::channel(false);
+        assert!(ensure_with(&session, 100, true, signal, |prompt| {
+            assert!(prompt.contains("Empty list"));
+            assert!(prompt.contains("latest durable status"));
+            async { Ok("Synthetic task remains pending.".into()) }
+        }).await.unwrap());
+        assert_eq!(session.data.lock().unwrap().turns[0].wire, original);
+        let replay = session.input().unwrap();
+        assert_eq!(replay.len(), 2);
+        assert_eq!(replay[1]["content"], "Preserve this request");
     }
 
     #[tokio::test]
@@ -454,11 +527,39 @@ mod tests {
         assert_eq!(failure.code, "cancelled");
         assert_eq!(session.input().unwrap(), original);
         assert!(!session.snapshot().unwrap().context.compacting);
+        assert!(session.snapshot().unwrap().compactions.is_empty());
+        assert!(journal::load_all(&session.journal).unwrap().1.compactions.is_empty());
         assert!(journal::load_all(&session.journal)
             .unwrap()
             .1
             .context
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn manual_marker_survives_usage_checkpoints_and_read_only_replay() {
+        let fixture = Fixture::new();
+        let session = long_session(&fixture);
+        session.update(true, |data| {
+            data.active = None;
+            data.manual_compaction = true;
+            data.turns.last_mut().unwrap().turn.status = TurnStatus::Completed;
+        }).unwrap();
+        let (_cancel, signal) = watch::channel(false);
+        ensure_with(&session, 100, true, signal, |_| async { Ok("Leitura concluída; preservar a solicitação.".into()) }).await.unwrap();
+        let markers = session.snapshot().unwrap().compactions;
+        assert_eq!(markers.len(), 1);
+        assert!(!markers[0].automatic);
+        assert!(markers[0].after_turn);
+        assert_eq!(markers[0].turn_id, session.snapshot().unwrap().turns[0].id);
+        for _ in 0..2 {
+            record_usage(&session, Some(&Usage { input_tokens: 500, output_tokens: 100 })).unwrap();
+        }
+        let (turns, extras) = journal::read_only(&session.journal).unwrap();
+        assert_eq!(extras.compactions, markers);
+        assert_eq!(extras.context.unwrap().count, 1);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(journal::load_all(&session.journal).unwrap().1.compactions, markers);
     }
 
     #[tokio::test]

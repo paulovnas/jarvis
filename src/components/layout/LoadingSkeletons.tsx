@@ -1,6 +1,6 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card } from "@/components/ui/card";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 function Lines({ count = 3 }: { count?: number }) {
   return <div aria-hidden="true" className="flex flex-col gap-2.5">{Array.from({ length: count }, (_, i) => <Skeleton key={i} className={`h-3 ${i === count - 1 ? "w-2/3" : "w-full"}`} />)}</div>;
@@ -45,5 +45,5 @@ export function HomeSkeleton() {
 }
 
 export function SettingsSkeleton({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  return <Sheet open={open} onOpenChange={onOpenChange}><SheetContent side="left" className="flex h-full w-[min(960px,85vw)] flex-col gap-0 p-0 data-[side=left]:w-[min(960px,85vw)] data-[side=left]:sm:max-w-none"><SheetHeader className="border-b bg-card px-6 py-4.5"><SheetTitle className="text-base">Configurações</SheetTitle><SheetDescription className="sr-only">Carregando configurações</SheetDescription></SheetHeader><div role="status" aria-label="Carregando configurações" className="flex min-h-0 flex-1 flex-col gap-6"><div aria-hidden="true" className="flex h-12 shrink-0 items-center gap-5 border-b px-6">{[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-5 w-20" />)}</div><div aria-hidden="true" className="px-6"><CardsSkeleton label="Carregando opções" /></div></div></SheetContent></Sheet>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="flex max-h-[min(740px,85dvh)] w-[calc(100vw-3rem)] sm:max-w-[860px] flex-col gap-0 p-0 motion-reduce:transition-none"><DialogHeader className="border-b bg-card px-6 py-5"><DialogTitle className="text-base">Configurações</DialogTitle><DialogDescription className="sr-only">Carregando configurações</DialogDescription></DialogHeader><div role="status" aria-label="Carregando configurações" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto"><div aria-hidden="true" className="flex h-12 shrink-0 items-center gap-5 border-b px-6">{[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-5 w-20" />)}</div><div aria-hidden="true" className="px-6 pb-5"><CardsSkeleton label="Carregando opções" /></div></div></DialogContent></Dialog>;
 }

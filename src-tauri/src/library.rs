@@ -15,6 +15,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use crate::persistence::{AppState, PersistenceError};
 
 pub(crate) mod deletion;
+pub(crate) mod dashboard;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +42,7 @@ pub struct Conversation {
     project_id: String,
     title: String,
     created_at: i64,
+    last_activity_at: i64,
     // The JSONL header remains immutable when the display title changes.
     #[serde(skip)]
     initial_title: String,
@@ -177,6 +179,7 @@ fn conversation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Conversation> {
         title: row.get(2)?,
         created_at: row.get(3)?,
         initial_title: row.get(4)?,
+        last_activity_at: row.get(5)?,
     })
 }
 
@@ -205,7 +208,7 @@ fn project(connection: &Connection, id: &str) -> Result<Project, LibraryError> {
 fn conversation(connection: &Connection, id: &str) -> Result<Conversation, LibraryError> {
     connection
         .query_row(
-            "SELECT id, project_id, COALESCE(display_title, title), created_at, title FROM conversations WHERE id = ?1",
+            "SELECT id, project_id, COALESCE(display_title, title), created_at, title, COALESCE(last_activity_at, created_at) FROM conversations WHERE id = ?1",
             [id],
             conversation_row,
         )
@@ -220,7 +223,7 @@ fn snapshot(connection: &Connection) -> Result<LibrarySnapshot, LibraryError> {
         .collect::<Result<Vec<_>, _>>()?;
     let projects = connection.prepare("SELECT id, workspace_id, name, path, created_at FROM projects ORDER BY created_at, rowid")?
         .query_map([], project_row)?.collect::<Result<Vec<_>, _>>()?;
-    let conversations = connection.prepare("SELECT id, project_id, COALESCE(display_title, title), created_at, title FROM conversations ORDER BY created_at DESC, rowid DESC")?
+    let conversations = connection.prepare("SELECT id, project_id, COALESCE(display_title, title), created_at, title, COALESCE(last_activity_at, created_at) FROM conversations ORDER BY COALESCE(last_activity_at, created_at) DESC, rowid DESC")?
         .query_map([], conversation_row)?.collect::<Result<Vec<_>, _>>()?;
     let selection = connection.query_row(
         "SELECT workspace_id, project_id, conversation_id FROM navigation_selection WHERE id = 1", [],
@@ -654,6 +657,7 @@ pub async fn get_library_snapshot(
 ) -> Result<LibrarySnapshot, LibraryError> {
     run(app, state.inner().clone(), |connection, home| {
         deletion::recover(connection, home)?;
+        dashboard::backfill_activity(connection, home)?;
         let tx = connection.transaction()?;
         let result = snapshot(&tx)?;
         tx.commit()?;
