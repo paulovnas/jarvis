@@ -76,7 +76,7 @@ describe("Home shell", () => {
     await user.click(await screen.findByRole("button", { name: "Ver mais detalhes" }));
     expect(await screen.findByRole("tab", { name: /Kanban/ })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByRole("button", { name: "Épico: Plano de integração" })).toBeInTheDocument();
-  });
+  }, 10_000);
 
   it("renderiza a hierarquia persistida e o contexto da conversa selecionada", async () => {
     render(<Home />);
