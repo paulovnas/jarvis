@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "tauri": "bun scripts/tauri.ts",
     "release": "bun scripts/release.ts",
+    "release:setup": "bun scripts/release-secrets.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:macos-keychain": "bun scripts/check-macos-keychain.ts",

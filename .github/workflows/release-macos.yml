@@ -1,0 +1,127 @@
+name: Release macOS
+run-name: ${{ inputs.publish && 'Publicar' || 'Validar' }} Jarvis ${{ inputs.tag || 'main' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag existente (v0.8.3-beta.1); vazio valida a main
+        type: string
+        default: ''
+      publish:
+        description: Publicar a release após verificar os instaladores
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jarvis-release-macos
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag }}
+  RELEASE_PUBLISH: ${{ inputs.publish }}
+
+jobs:
+  build:
+    if: github.repository == 'paulovnas/jarvis' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment: macos-release
+    outputs:
+      sha: ${{ steps.prepare.outputs.sha }}
+      version: ${{ steps.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - name: Instalar dependências do launcher
+        run: bun install --frozen-lockfile
+      - name: Validar origem, tag e versão
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/release-ci.ts prepare
+      - name: Instalar dependências da versão
+        run: bun install --frozen-lockfile
+      - name: Preparar Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustup target add aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: false
+      - name: Lint, tipos, testes e build
+        run: bun run check
+      - name: Clippy
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Testes Rust
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Importar assinaturas no Keychain temporário
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: bash scripts/ci-macos-signing.sh
+      - name: Compilar e assinar aplicativo e DMG
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_BUNDLER_DMG_IGNORE_CI: 'false'
+        run: bun run tauri build --target aarch64-apple-darwin --bundles app,dmg --config src-tauri/tauri.release.conf.json -- --locked
+      - name: Verificar e preparar artefatos
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          RELEASE_SHA: ${{ steps.prepare.outputs.sha }}
+        run: bun scripts/release-ci.ts stage
+      - name: Remover chaves temporárias
+        if: always()
+        run: bash scripts/ci-macos-signing-cleanup.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: jarvis-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Resumo
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: |
+          printf '### Jarvis %s — macOS Apple Silicon\n\nApp e DMG assinados; pacote do atualizador verificado.\n' "$VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    if: inputs.publish
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: jarvis-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-artifacts
+      - name: Publicar pacote e manifestos
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.build.outputs.sha }}
+        run: bun scripts/release-ci.ts publish

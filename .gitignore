@@ -12,6 +12,11 @@ node_modules
 dist
 dist-ssr
 *.local
+release-artifacts/
+.release-secrets/
+*.p12
+*.pfx
+updater.key
 
 # Editor & workspace directories
 .vscode/

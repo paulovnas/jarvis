@@ -158,13 +158,13 @@ Com as alterações commitadas e a branch `main` sincronizada com o GitHub:
 
 ```bash
 # Simular sem alterar arquivos nem publicar.
-bun run release 0.8.1-beta.2 --dry-run
+bun run release 0.8.3-beta.1 --dry-run
 
-# Compilar, assinar e publicar a próxima beta.
-bun run release 0.8.1-beta.2 --notes-file /caminho/notas-da-versao.md
+# Iniciar a compilação assinada e publicação no GitHub Actions.
+bun run release 0.8.3-beta.1 --notes-file /caminho/notas-da-versao.md
 ```
 
-O comando executa as verificações, gera os instaladores e arquivos de atualização, cria a tag e publica a versão no GitHub. Consulte o [guia de publicação](docs/RELEASING.md) para configurar as chaves, escolher a arquitetura e manter as assinaturas entre versões.
+O comando prepara o commit e a tag e dispara o GitHub Actions, que executa as verificações, compila e assina o app/DMG para macOS Apple Silicon e publica a release. Pode ser iniciado no macOS, Windows ou Linux, com Bun, Git e GitHub CLI autenticado; as chaves ficam nos secrets do CI. Consulte o [guia de publicação](docs/RELEASING.md) para acompanhar a execução, validar sem publicar e configurar as assinaturas.
 
 ## Autoria
 

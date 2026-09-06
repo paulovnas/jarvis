@@ -1,5 +1,21 @@
 import { expect, it } from "vitest";
-import { releaseManifest, releaseVersion, replaceCargoVersion, targetPlatforms } from "./release-plan";
+import { notesFromTag, parseReleaseArguments, releaseManifest, releaseVersion, replaceCargoVersion, targetPlatforms, validateCIRequest } from "./release-plan";
+
+it("keeps publication restricted to the official main and explicit version tags", () => {
+  expect(() => validateCIRequest("paulovnas/jarvis", "refs/heads/main", "", false)).not.toThrow();
+  expect(() => validateCIRequest("paulovnas/jarvis", "refs/heads/main", "v0.8.3-beta.1", true)).not.toThrow();
+  for (const ref of ["refs/heads/feature", "refs/pull/1/merge", "refs/tags/v0.8.3", undefined]) expect(() => validateCIRequest("paulovnas/jarvis", ref, "v0.8.3", true)).toThrow();
+  expect(() => validateCIRequest("fork/jarvis", "refs/heads/main", "v0.8.3", true)).toThrow();
+  for (const tag of ["", "main", "v../main", "v0.8.3\ninjected", "v0.8.3+build", "--help"]) expect(() => validateCIRequest("paulovnas/jarvis", "refs/heads/main", tag, true)).toThrow();
+});
+
+it("parses launcher options without allowing ambiguous or unsupported release targets", () => {
+  expect(parseReleaseArguments(["0.8.3-beta.1", "--notes-file", "/a path/notes.md", "--dry-run"])).toEqual({ version: "0.8.3-beta.1", notesFile: "/a path/notes.md", dryRun: true });
+  for (const options of [["--notes-file"], ["--notes-file", "--dry-run"], ["--target", "universal-apple-darwin"], ["--dry-run", "--dry-run"], ["--force"]]) expect(() => parseReleaseArguments(["0.8.3", ...options])).toThrow();
+  expect(notesFromTag("Jarvis 0.8.3\n\nNotas em português.\n", "0.8.3")).toBe("Notas em português.");
+  expect(notesFromTag("Jarvis 0.8.3\n", "0.8.3")).toBe("");
+  expect(() => notesFromTag("Jarvis 0.8.2\nNotas", "0.8.3")).toThrow();
+});
 
 it("aceita a primeira publicação e versões posteriores sem permitir downgrade ou tags ambíguas", () => {
   expect(releaseVersion("0.8.0-beta.1", "0.8.0-beta.1")).toBe("0.8.0-beta.1");
