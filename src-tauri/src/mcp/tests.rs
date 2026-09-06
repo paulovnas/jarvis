@@ -172,7 +172,7 @@ fn secure_configuration_survives_toggle_and_restart_and_is_removed_on_delete() {
 }
 
 #[test]
-fn duplicate_names_and_keychain_failures_preserve_existing_configuration() {
+fn duplicate_names_and_failed_secret_updates_preserve_existing_configuration() {
     let f = Fixture::new();
     let server = f.local("docs");
     let original = f.mcp.edit(&f.state, &f.home, &server.id).unwrap();
@@ -187,7 +187,6 @@ fn duplicate_names_and_keychain_failures_preserve_existing_configuration() {
             &original.replace("docs", "new_name")
         )
         .is_err());
-    assert!(f.mcp.remove(&f.state, &f.home, &server.id).is_err());
     assert_eq!(f.mcp.edit(&f.state, &f.home, &server.id).unwrap(), original);
     f.secrets.fail.store(false, Ordering::Relaxed);
     let updated = f
@@ -202,6 +201,19 @@ fn duplicate_names_and_keychain_failures_preserve_existing_configuration() {
     assert!(updated
         .iter()
         .any(|s| s.id == server.id && s.name == "renamed" && s.revision == 2));
+    assert_eq!(f.secrets.values.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn keychain_cleanup_failure_does_not_block_mcp_removal() {
+    let f = Fixture::new();
+    let server = f.local("context7");
+    f.secrets.fail.store(true, Ordering::Relaxed);
+
+    assert!(f.mcp.remove(&f.state, &f.home, &server.id).is_ok());
+    assert!(f.mcp.list(&f.state, &f.home).unwrap().is_empty());
+    // The inaccessible old Keychain item can remain orphaned, but it no longer
+    // has a database registration and therefore cannot be loaded or executed.
     assert_eq!(f.secrets.values.lock().unwrap().len(), 1);
 }
 

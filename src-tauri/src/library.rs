@@ -422,6 +422,46 @@ fn persist_header(path: &Path, header: &SessionHeader) -> Result<(), LibraryErro
     Ok(())
 }
 
+fn is_empty_conversation(home: &Path, conversation: &Conversation) -> Result<bool, LibraryError> {
+    let path = session_path(home, &conversation.project_id, &conversation.id, false)?;
+    let metadata = fs::symlink_metadata(&path).map_err(|_| LibraryError::invalid_session())?;
+    if metadata.is_symlink() || !metadata.is_file() {
+        return Err(LibraryError::invalid_session());
+    }
+    let file = File::open(path).map_err(|_| LibraryError::storage())?;
+    let mut reader = BufReader::new(file);
+    let mut header = Vec::new();
+    {
+        let mut bounded = reader.by_ref().take(65_537);
+        bounded.read_until(b'\n', &mut header).map_err(|_| LibraryError::storage())?;
+    }
+    if header.len() > 65_536 || !header.ends_with(b"\n") {
+        return Err(LibraryError::invalid_session());
+    }
+    reader.fill_buf().map(|remaining| remaining.is_empty()).map_err(|_| LibraryError::storage())
+}
+
+fn latest_empty_conversation(
+    connection: &Connection,
+    home: &Path,
+    project_id: &str,
+    title: &str,
+) -> Result<Option<Conversation>, LibraryError> {
+    let latest = connection.query_row(
+        "SELECT id, project_id, COALESCE(display_title, title), created_at, title, COALESCE(last_activity_at, created_at) FROM conversations WHERE project_id = ?1 ORDER BY COALESCE(last_activity_at, created_at) DESC, rowid DESC LIMIT 1",
+        [project_id],
+        conversation_row,
+    ).optional()?;
+    let Some(latest) = latest else {
+        return Ok(None);
+    };
+    if latest.initial_title != title {
+        return Ok(None);
+    }
+    read_conversation(connection, home, &latest.id)?;
+    if is_empty_conversation(home, &latest)? { Ok(Some(latest)) } else { Ok(None) }
+}
+
 fn insert_conversation(
     connection: &mut Connection,
     home: &Path,
@@ -436,6 +476,19 @@ fn insert_conversation(
             "project_directory",
             "A pasta do projeto mudou. Verifique o caminho antes de criar a conversa.",
         ));
+    }
+    if let Some(existing) = latest_empty_conversation(&tx, home, project_id, title)? {
+        let result = (|| {
+            save_selection(&tx, &Selection {
+                workspace_id: Some(project.workspace_id),
+                project_id: Some(project_id.to_owned()),
+                conversation_id: Some(existing.id),
+            })?;
+            let snapshot = snapshot(&tx)?;
+            tx.commit()?;
+            Ok(snapshot)
+        })();
+        return result;
     }
     let id = new_id()?;
     tx.execute(

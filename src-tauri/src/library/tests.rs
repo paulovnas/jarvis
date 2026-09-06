@@ -279,6 +279,31 @@ fn conversation_header_and_selection_survive_database_reopening() {
 }
 
 #[test]
+fn creating_a_conversation_reuses_the_latest_empty_session() {
+    let home = TestHome::new();
+    let mut connection = database();
+    let project = setup_project(&mut connection, &home);
+    let first = insert_conversation(&mut connection, &home.0, &project.id, "Nova Conversa").unwrap();
+    let first_id = first.selection.conversation_id.unwrap();
+
+    let reused = insert_conversation(&mut connection, &home.0, &project.id, "Nova Conversa").unwrap();
+    assert_eq!(reused.selection.conversation_id.as_deref(), Some(first_id.as_str()));
+    assert_eq!(reused.conversations.iter().filter(|conversation| conversation.project_id == project.id).count(), 1);
+
+    let first_path = session_path(&home.0, &project.id, &first_id, false).unwrap();
+    let mut history = fs::read(&first_path).unwrap();
+    history.extend_from_slice(b"{\"type\":\"turn_checkpoint\",\"version\":1,\"data\":{}}\n");
+    fs::write(first_path, history).unwrap();
+
+    let next = insert_conversation(&mut connection, &home.0, &project.id, "Nova Conversa").unwrap();
+    let next_id = next.selection.conversation_id.unwrap();
+    assert_ne!(next_id, first_id);
+    let repeated = insert_conversation(&mut connection, &home.0, &project.id, "Nova Conversa").unwrap();
+    assert_eq!(repeated.selection.conversation_id.as_deref(), Some(next_id.as_str()));
+    assert_eq!(repeated.conversations.iter().filter(|conversation| conversation.project_id == project.id).count(), 2);
+}
+
+#[test]
 fn selection_resolves_ancestors_and_clears_descendants() {
     let home = TestHome::new();
     let mut connection = database();

@@ -148,7 +148,7 @@ export function App() {
       {content}
       {bootstrap.status !== "home" && <StatusBar />}
       {/* Global Toast Notification Provider */}
-      <Toaster position="bottom-right" richColors />
+      <Toaster position="top-center" richColors />
     </div>
   );
 }

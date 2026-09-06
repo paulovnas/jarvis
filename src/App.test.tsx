@@ -14,6 +14,11 @@ import { coreFixture } from "@/test/core-fixtures";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
+vi.mock("@/components/ui/sonner", () => ({
+  Toaster: ({ position }: { position?: string }) => (
+    <div data-testid="toaster" data-position={position} />
+  ),
+}));
 
 type AppConfig = {
   onboardingCompleted: boolean;
@@ -126,6 +131,14 @@ describe("App bootstrap and onboarding", () => {
         screen.getByRole("heading", { name: /bem-vindo ao jarvis/i }),
       ).toBeInTheDocument(),
     );
+  });
+
+  it("posiciona os toasts no topo central da janela", () => {
+    invokeMock.mockResolvedValueOnce({ onboardingCompleted: false });
+
+    render(<App />);
+
+    expect(screen.getByTestId("toaster")).toHaveAttribute("data-position", "top-center");
   });
 
   it("leva configuração incompleta ao onboarding com o CTA Avançar", async () => {

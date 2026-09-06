@@ -76,6 +76,8 @@ export function TitleBar() {
   const expanded = isMac ? isFullscreen : isMaximized;
   const greenLabel = isMac ? (isFullscreen ? "Sair da tela cheia" : "Entrar em tela cheia") : (isMaximized ? "Restaurar janela" : "Maximizar janela");
 
+  if (isMac && isFullscreen) return null;
+
   return (
     <header
       data-tauri-drag-region

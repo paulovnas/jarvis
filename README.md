@@ -27,7 +27,7 @@ O Jarvis reúne conversas com IA, arquivos do projeto, planejamento e acompanham
 
 Os agentes podem ler e editar arquivos, executar comandos e realizar verificações como testes unitários, lint, checagem de tipos e compilação. A validação final da experiência fica com você: nos fluxos Planejado e Completo, o aplicativo apresenta os itens para testar, registra sua aprovação ou reprovação e encaminha o resultado aos agentes.
 
-**Versão atual: 0.8.1 Beta.** Disponível para **macOS com Apple Silicon**. O aplicativo está em evolução; problemas podem ser relatados nas [issues do projeto](https://github.com/paulovnas/jarvis/issues).
+**Versão atual: 0.8.2 Beta.** Disponível para **macOS com Apple Silicon**. O aplicativo está em evolução; problemas podem ser relatados nas [issues do projeto](https://github.com/paulovnas/jarvis/issues).
 
 ## O que você encontra
 

@@ -224,26 +224,20 @@ impl McpState {
     }
     fn remove(&self, state: &AppState, home: &Path, id: &str) -> Result<Vec<Server>, McpError> {
         let _guard = self.0.guard.lock().map_err(|_| storage_error())?;
-        state.with_connection(home, |connection| {
+        let server = state.with_connection(home, |connection| {
             let transaction = connection.transaction()?;
             let server = find(&transaction, id)?;
-            let backup = if server.revision > 0 {
-                Some(self.0.secrets.load(&key(&server))?)
-            } else {
-                None
-            };
             transaction.execute("DELETE FROM mcp_servers WHERE id = ?1", [id])?;
-            if backup.is_some() {
-                self.0.secrets.delete(&key(&server))?;
-            }
-            if let Err(err) = transaction.commit() {
-                if let Some(backup) = backup {
-                    self.0.secrets.store(&key(&server), &backup)?;
-                }
-                return Err(err.into());
-            }
-            Ok::<_, McpError>(())
+            transaction.commit()?;
+            Ok::<_, McpError>(server)
         })?;
+        // SQLite owns the MCP registration. A stale credential cannot be used
+        // after its record is gone, so Keychain cleanup must not block removal.
+        // This also lets users remove legacy Context7 MCP registrations whose
+        // old Keychain item is no longer accessible to the current build.
+        if server.revision > 0 {
+            let _ = self.0.secrets.delete(&key(&server));
+        }
         self.list(state, home)
     }
     pub fn active_configs(

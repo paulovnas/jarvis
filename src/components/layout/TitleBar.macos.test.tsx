@@ -15,15 +15,18 @@ beforeEach(() => {
   native.onResized.mockResolvedValue(() => {});
 });
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
-it("toggles macOS fullscreen with the green button and preserves titlebar double-click maximize", async () => {
+it("toggles macOS fullscreen with the green button and hides the custom titlebar", async () => {
   const user = userEvent.setup(); render(<TitleBar />);
   await waitFor(() => expect(native.onResized).toHaveBeenCalled());
-  await user.click(screen.getByRole("button", { name: "Entrar em tela cheia" }));
-  expect(native.setFullscreen).toHaveBeenLastCalledWith(true);
-  await user.click(screen.getByRole("button", { name: "Sair da tela cheia" }));
-  expect(native.setFullscreen).toHaveBeenLastCalledWith(false);
-  expect(native.toggleMaximize).not.toHaveBeenCalled();
   await user.dblClick(screen.getByRole("banner"));
   expect(native.toggleMaximize).toHaveBeenCalledOnce();
-  expect(native.setFullscreen).toHaveBeenCalledTimes(2);
+  await user.click(screen.getByRole("button", { name: "Entrar em tela cheia" }));
+  expect(native.setFullscreen).toHaveBeenLastCalledWith(true);
+  await waitFor(() => expect(screen.queryByRole("banner")).not.toBeInTheDocument());
+});
+
+it("keeps the custom titlebar hidden when macOS already starts fullscreen", async () => {
+  native.isFullscreen.mockResolvedValue(true);
+  render(<TitleBar />);
+  await waitFor(() => expect(screen.queryByRole("banner")).not.toBeInTheDocument());
 });
