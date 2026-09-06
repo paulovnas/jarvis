@@ -10,3 +10,12 @@
 [submodule "docs/open-design"]
 	path = docs/open-design
 	url = https://github.com/nexu-io/open-design.git
+[submodule "docs/context-mode"]
+	path = docs/context-mode
+	url = https://github.com/mksglu/context-mode.git
+[submodule "docs/ponytail"]
+	path = docs/ponytail
+	url = https://github.com/DietrichGebert/ponytail.git
+[submodule "docs/beads"]
+	path = docs/beads
+	url = https://github.com/gastownhall/beads
