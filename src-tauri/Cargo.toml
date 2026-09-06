@@ -41,6 +41,7 @@ serde_yaml_ng = "0.10"
 regex = "1"
 tempfile = "3"
 semver = "1"
+keepawake = "0.6.1"
 flate2 = "1"
 tar = "0.4"
 zip = { version = "4", default-features = false, features = ["deflate"] }
@@ -51,3 +52,10 @@ quick-xml = "0.42"
 time = { version = "0.3.55", default-features = false, features = ["parsing"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "3.7", default-features = false }
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-user-notifications = "0.3"
+block2 = "0.6"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+notify-rust = "4"

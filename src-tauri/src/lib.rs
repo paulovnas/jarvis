@@ -9,6 +9,7 @@ mod mcp;
 mod openai_codex;
 mod persistence;
 mod skills;
+mod system;
 mod updater;
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -26,13 +27,20 @@ pub fn run() {
         .manage(agent::dashboard::DashboardState::default())
         .manage(mcp::McpState::default())
         .manage(updater::UpdateState::default())
+        .manage(system::SystemState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .setup(desktop::setup)
+        .setup(|app| {
+            desktop::setup(app)?;
+            system::setup(app.handle())
+        })
         .on_window_event(desktop::on_window_event)
         .invoke_handler(tauri::generate_handler![
             greet,
+            system::get_system_preferences,
+            system::save_system_preferences,
+            system::test_system_notification,
             updater::check_app_update,
             updater::install_app_update,
             core::get_core_status,
@@ -119,6 +127,7 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 desktop::flush(app);
                 use tauri::Manager;
+                app.state::<system::SystemState>().shutdown();
                 app.state::<agent::AgentState>().processes.stop_all();
             }
         });

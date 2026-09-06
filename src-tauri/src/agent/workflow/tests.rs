@@ -12,7 +12,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
     let manifest = Manifest { validation: None, version: 1, conversation_id: root.id.clone(), run_id: "run".into(), flow: Flow::Complete, root_status: Status::Running, updated_at: now(), revision: 1, options, profiles: BTreeMap::new(), jobs: BTreeMap::new(), messages: vec![], design_briefs: BTreeMap::new(), guidance: BTreeMap::new() };
     storage::save(&directory, &manifest).unwrap();
     let (changed, _) = watch::channel(1);
-    let hub = Arc::new(Hub { root, env: Environment { processes: processes::ProcessState::default(), process_changed: Arc::new(|_| {}), state: AppState::default(), oauth: OpenAiCodexState::default(), mcp: crate::mcp::McpState::default(), home: fixture.root.clone() }, directory, manifest: Mutex::new(manifest), live: Mutex::new(HashMap::new()), changed, emit: Arc::new(|_| {}), check_lock: AsyncRwLock::new(()), root_signal: signal });
+    let hub = Arc::new(Hub { root, env: Environment { processes: processes::ProcessState::default(), process_changed: Arc::new(|_| {}), state: AppState::default(), oauth: OpenAiCodexState::default(), mcp: crate::mcp::McpState::default(), home: fixture.root.clone() }, directory, manifest: Mutex::new(manifest), live: Mutex::new(HashMap::new()), changed, emit: Arc::new(|_| {}), attention: Arc::new(|_| {}), check_lock: AsyncRwLock::new(()), root_signal: signal });
     (fixture, hub)
 }
 pub(super) fn job(hub: &Hub, role: Role, scope: &str) -> Job {
@@ -28,6 +28,28 @@ fn fixed_topology_has_no_standard_delegation_and_no_worker_escape() {
     assert!(Role::Planner.spawns(Flow::Complete, Role::Investigator));
     assert!(!Role::Planner.spawns(Flow::Complete, Role::Builder));
     assert!(Role::Orchestrator.spawns(Flow::Complete, Role::Reviewer));
+}
+
+#[test]
+fn validation_notifications_only_include_the_current_pending_flow_round() {
+    let (fixture, hub) = hub();
+    let directory = storage::path(&fixture.root, &hub.root.id).unwrap();
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut manifest = hub.manifest.lock().unwrap().clone();
+    manifest.validation = Some(validation::Batch { id: "batch".into(), flow: Flow::Complete, run_id: "run".into(), epic_ids: vec![], items: vec![], submitted: false, stale: false, created_at: now() });
+    storage::save(&directory, &manifest).unwrap();
+    assert!(awaiting_validation(&fixture.root, &hub.root.id, "run"));
+    assert!(!awaiting_validation(&fixture.root, &hub.root.id, "other-run"));
+    for flow in [Flow::Standard, Flow::Designer] {
+        manifest.flow = flow; storage::save(&directory, &manifest).unwrap();
+        assert!(!awaiting_validation(&fixture.root, &hub.root.id, "run"));
+    }
+    manifest.flow = Flow::Planned;
+    for (submitted, stale) in [(true, false), (false, true)] {
+        let batch = manifest.validation.as_mut().unwrap(); batch.submitted = submitted; batch.stale = stale;
+        storage::save(&directory, &manifest).unwrap();
+        assert!(!awaiting_validation(&fixture.root, &hub.root.id, "run"));
+    }
 }
 
 #[test]

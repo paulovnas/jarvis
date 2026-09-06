@@ -1,4 +1,5 @@
 mod compaction;
+mod desktop_events;
 pub(crate) mod processes;
 pub(crate) mod attachments;
 pub(crate) mod vision;
@@ -356,6 +357,9 @@ pub struct AgentState {
     workflows: workflow::Registry,
 }
 impl AgentState {
+    pub(crate) fn has_active_chats(&self) -> bool {
+        self.activity().map(|items| items.iter().any(|item| item.active_turn_id.is_some() || item.compacting)).unwrap_or(true)
+    }
     pub(crate) fn busy_for_update(&self) -> bool {
         self.activity().map_or(true, |items| items.iter().any(|item| item.active_turn_id.is_some() || item.compacting))
             || self.processes.has_running()
@@ -466,6 +470,7 @@ impl AgentState {
                 manual_compaction: false,
             }),
             emit: Arc::new(move |snapshot| {
+                desktop_events::attention(&handle, &snapshot.conversation_id, &snapshot);
                 let _ = handle.emit("agent:updated", snapshot);
             }),
         });
@@ -636,9 +641,18 @@ fn spawn_run(
                         (session.emit)(snapshot);
                     }
                 }
-                _ => break,
+                Ok(None) => break,
+                Err(_) => {
+                    if let Ok(data) = session.data.lock() {
+                        if let Some(turn) = data.turns.last() {
+                            crate::system::notify(&app, &session.id, &turn.turn.id, crate::system::Notice::Failed);
+                        }
+                    }
+                    break;
+                }
             }
         }
+        desktop_events::finished(&app, &session, &home);
         generate_title(&session, &state, &oauth, &home, &app).await;
         app.state::<AgentState>().release_idle(&session);
     });

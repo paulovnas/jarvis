@@ -73,7 +73,7 @@ describe("Home shell", () => {
     expect(screen.getByRole("heading", { name: "Primeira conversa" })).toBeInTheDocument();
     expect(screen.getByText("Arquivos alterados")).toBeInTheDocument();
     expect(screen.getByText("Plano")).toBeInTheDocument();
-    expect(screen.getByText("Subagentes")).toBeInTheDocument();
+    expect(screen.queryByText("Subagentes")).not.toBeInTheDocument();
     expect(screen.getByText("Contexto")).toBeInTheDocument();
   });
 

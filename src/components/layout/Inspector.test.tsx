@@ -9,19 +9,23 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => { vi.mocked(invoke).mockResolvedValue([]); });
 
 describe("Inspector", () => {
-  it("offers manual validation only in the selected Planned and Complete workflows", async () => {
+  it("shows subagents and manual validation only in the selected Planned and Complete workflows", async () => {
     const chat = emptyChat(); const library = populatedLibrary();
     const workflow = { data: { conversationId: chat.conversationId, revision: 1, flow: "planned" as const, agents: [], validation: null }, error: null, loading: false, retry: vi.fn() };
     const view = render(<Inspector library={library} chat={chat} workflow={workflow} />);
     expect(screen.getByRole("button", { name: "Validação" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Subagentes" })).toBeVisible();
     view.rerender(<Inspector library={library} chat={chat} workflow={{ ...workflow, data: { ...workflow.data, flow: "complete" } }} />);
     expect(screen.getByRole("button", { name: "Validação" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Subagentes" })).toBeVisible();
     for (const flow of ["standard", "designer"] as const) {
       view.rerender(<Inspector library={library} chat={chat} workflow={{ ...workflow, data: { ...workflow.data, flow } }} />);
       expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Subagentes" })).not.toBeInTheDocument();
     }
     view.rerender(<Inspector library={library} chat={chat} workflow={{ ...workflow, data: { ...workflow.data, conversationId: "other" } }} />);
     expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Subagentes" })).not.toBeInTheDocument();
   });
   it("uses the compacted backend context instead of stale pre-compaction usage", async () => {
     render(<Inspector library={populatedLibrary()} chat={{ ...emptyChat(), turns: [savedTurn()], context: { tokens: 40, limit: 1000, estimated: true, compacting: false, compactions: 1 } }} />);

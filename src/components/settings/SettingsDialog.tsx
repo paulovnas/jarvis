@@ -5,6 +5,7 @@ import { McpSettings } from "./McpSettings";
 import { SkillsSettings } from "./SkillsSettings";
 import { CoreSettings } from "./CoreSettings";
 import { ChatCleanupSettings } from "./ChatCleanupSettings";
+import { SystemSettings } from "./SystemSettings";
 import { AgentSettings } from "./AgentSettings";
 import { skillsSnapshotSchema } from "@/core/skills";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -697,7 +698,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange }: Setting
               </TabsList>
             </div>
 
-            <TabsContent value="general" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "general" && <><CoreSettings /><ChatCleanupSettings /></>}</TabsContent>
+            <TabsContent value="general" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "general" && <><CoreSettings /><SystemSettings /><ChatCleanupSettings /></>}</TabsContent>
             <TabsContent value="agents" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "agents" && <AgentSettings accounts={accounts} />}</TabsContent>
             <TabsContent value="skills" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</TabsContent>
             <TabsContent value="providers" className="flex-1 min-h-0 m-0 overflow-y-auto p-0">

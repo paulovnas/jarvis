@@ -83,6 +83,7 @@ struct Hub {
     root: Arc<Session>, env: Environment, directory: PathBuf,
     manifest: Mutex<Manifest>, live: Mutex<HashMap<String, Arc<Session>>>,
     changed: watch::Sender<u64>, emit: Arc<dyn Fn(&str) + Send + Sync>,
+    attention: Arc<dyn Fn(&ChatSnapshot) + Send + Sync>,
     check_lock: AsyncRwLock<()>, root_signal: watch::Receiver<bool>,
 }
 #[derive(Clone)]
@@ -283,4 +284,10 @@ pub(super) async fn run(
     let saved = hub.mutate(|state| { state.root_status = status; Ok(()) });
     app.state::<AgentState>().workflows.0.lock().map_err(|_| AgentError::internal())?.remove(&session.id);
     result.and(saved)
+}
+
+pub(super) fn awaiting_validation(home: &Path, id: &str, turn: &str) -> bool {
+    storage::path(home, id).and_then(|path| storage::load(&path, id)).ok().flatten().is_some_and(|state| {
+        !state.flow.direct() && state.run_id == turn && state.validation.as_ref().is_some_and(|batch| !batch.submitted && !batch.stale && batch.run_id == turn)
+    })
 }

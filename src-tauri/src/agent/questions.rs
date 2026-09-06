@@ -30,9 +30,9 @@ struct Request {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingQuestion {
-    turn_id: String,
-    tool_id: String,
-    questions: Vec<Question>,
+    pub(super) turn_id: String,
+    pub(super) tool_id: String,
+    pub(super) questions: Vec<Question>,
 }
 pub(super) struct Pending {
     pub request: PendingQuestion,

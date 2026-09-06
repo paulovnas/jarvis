@@ -534,6 +534,15 @@ pub(crate) fn agent_location(
     })
 }
 
+pub(crate) fn notification_names(state: &AppState, home: &Path, id: &str) -> Result<(String, String), LibraryError> {
+    state.with_connection(home, |connection| {
+        Ok(connection.query_row(
+            "SELECT p.name, COALESCE(c.display_title, c.title) FROM conversations c JOIN projects p ON p.id = c.project_id WHERE c.id = ?1",
+            [id], |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
+    })
+}
+
 pub(crate) fn needs_generated_title(
     state: &AppState,
     home: &Path,

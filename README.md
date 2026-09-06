@@ -95,6 +95,14 @@ Na aba **MCPs**, adicione servidores locais ou remotos, confira as ferramentas d
 
 Na aba **Skills**, consulte os detalhes, instale pelo Marketplace, atualize, desative ou exclua skills. O Jarvis lê sua pasta de skills em `~/.jarvis` e pode incluir `.agents/skills` global e do projeto, inclusive pastas vinculadas por atalhos simbólicos. As skills ativas ficam disponíveis para descoberta pelos agentes e podem ser selecionadas explicitamente com `/` no chat.
 
+### Repouso e notificações
+
+Em **Configurações → Geral → Sistema**, escolha se o Jarvis deve impedir o repouso automático durante chats ativos ou enquanto estiver aberto. A tela continua podendo apagar normalmente.
+
+Ative as **notificações do sistema** para receber avisos com o projeto e a conversa ao concluir um trabalho, precisar de uma resposta ou parar por erro. Nos fluxos Planejado e Completo, a conclusão é avisada pelo fluxo inteiro; subagentes só notificam quando precisam da sua resposta. A validação manual também gera um aviso. O botão **Testar** envia uma notificação de exemplo.
+
+As duas opções começam desligadas e ficam salvas em `~/.jarvis/system.json`. No macOS, a permissão é solicitada ao ativar as notificações; os testes de entrega devem ser feitos pelo aplicativo `.app`, com a permissão habilitada em **Ajustes do Sistema → Notificações → Jarvis**.
+
 ## Dados e privacidade
 
 Configurações, histórico e dados locais ficam em `~/.jarvis`. As credenciais dos provedores são protegidas pelo **Acesso às Chaves do macOS (Keychain)**. A comunicação com os modelos usa as contas que você configurou; prompts, anexos e conteúdo necessário das ferramentas são enviados aos serviços utilizados na conversa.

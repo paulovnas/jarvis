@@ -65,7 +65,10 @@ pub(super) fn open(root: Arc<Session>, env: Environment, app: tauri::AppHandle, 
     manifest.messages.clear(); manifest.updated_at = now(); manifest.revision += 1;
     save(&directory_path, &manifest)?;
     let (changed, _) = watch::channel(manifest.revision);
-    let hub = Arc::new(Hub { root, env, directory: directory_path, manifest: Mutex::new(manifest), live: Mutex::new(HashMap::new()), changed, emit: Arc::new(move |id| { let _ = app.emit("workflow:changed", json!({"conversationId":id})); }), check_lock: AsyncRwLock::new(()), root_signal: signal });
+    let notification_app = app.clone();
+    let conversation = root.id.clone();
+    let attention = Arc::new(move |snapshot: &ChatSnapshot| { super::super::desktop_events::attention(&notification_app, &conversation, snapshot); });
+    let hub = Arc::new(Hub { root, env, directory: directory_path, manifest: Mutex::new(manifest), live: Mutex::new(HashMap::new()), changed, emit: Arc::new(move |id| { let _ = app.emit("workflow:changed", json!({"conversationId":id})); }), attention, check_lock: AsyncRwLock::new(()), root_signal: signal });
     (hub.emit)(&hub.root.id);
     Ok(hub)
 }
@@ -82,7 +85,7 @@ pub(super) fn worker(hub: &Arc<Hub>, job: &Job, resume: Option<String>) -> Resul
     let session = Arc::new(Session {
         id: job.id.clone(), journal: path, root: hub.root.root.clone(),
         data: Mutex::new(SessionData { turns, extras, active: None, revision: now(), storage_failed: false, last_emit: std::time::Instant::now(), compacting: false, manual_compaction: false }),
-        emit: Arc::new(move |_| { if let Some(hub) = weak.upgrade() { (hub.emit)(&hub.root.id); } }),
+        emit: Arc::new(move |snapshot| { if let Some(hub) = weak.upgrade() { (hub.attention)(&snapshot); (hub.emit)(&hub.root.id); } }),
     });
     let content = resume.unwrap_or_else(|| job.prompt.clone());
     let original = hub.root.data.lock().map_err(|_| AgentError::internal())?.turns.last().ok_or_else(AgentError::internal)?.turn.user.clone();

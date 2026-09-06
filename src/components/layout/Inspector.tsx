@@ -46,9 +46,9 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
             {changes.loading ? <div role="status" aria-label="Conferindo alterações" className="space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-4/5" /></div> : changes.error ? <p role="alert" className="text-xs text-destructive">{changes.error}</p> : files.length && selectedChat ? <ChangedFiles key={selectedChat.conversationId} files={files} conversationId={selectedChat.conversationId} /> : <p className="text-xs text-muted-foreground">Nenhuma alteração pendente.</p>}
             {tools.some(tool => tool.name === "bash" || tool.name.startsWith("mcp_")) && <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">Alterações feitas pelo terminal ou por MCPs ainda não entram nesta lista.</p>}
           </ActivitySection>
-          <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-[#e5c07b]" />}>
+          {selectedChat && workflow?.data?.conversationId === selectedChat.conversationId && ["planned", "complete"].includes(workflow.data.flow) && <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-[#e5c07b]" />}>
             <WorkflowAgents workflow={workflow} conversationId={selectedChat?.conversationId} />
-          </ActivitySection>
+          </ActivitySection>}
           {selectedChat && workflow?.data?.conversationId === selectedChat.conversationId && ["planned", "complete"].includes(workflow.data.flow) && <ActivitySection title="Validação" icon={<ClipboardCheck aria-hidden="true" className="size-4 text-onedark-green" />} count={workflow.data.validation?.items.length}>
             <WorkflowValidation key={`${selectedChat.conversationId}/${workflow.data.validation?.id ?? "empty"}`} conversationId={selectedChat.conversationId} batch={workflow.data.validation} busy={!!selectedChat.activeTurnId || compacting || pending || (selectedChat.queuedMessages?.length ?? 0) > 0 || workflow.data.agents.some(activeAgent)} onRefresh={workflow.retry} />
           </ActivitySection>}
