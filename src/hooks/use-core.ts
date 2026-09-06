@@ -42,8 +42,12 @@ export function useCore() {
     return () => { disposed = true; mounted.current = false; revision.current += 1; stops.forEach(stop => stop()); };
   }, [accept, refresh]);
   const check = useCallback(async () => {
-    try { accept(await invoke("check_core_updates")); }
-    catch (cause) { if (mounted.current) toast.error(coreError(cause)); }
+    const version = ++revision.current;
+    try {
+      const value = await invoke("check_core_updates");
+      if (version === revision.current) accept(value);
+    }
+    catch (cause) { if (mounted.current && version === revision.current) toast.error(coreError(cause)); }
   }, [accept]);
   const install = useCallback(async (ids: CoreId[]) => {
     if (busy.current) return;

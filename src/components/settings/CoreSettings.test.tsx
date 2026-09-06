@@ -20,6 +20,7 @@ it.each([0, 1, 2, 3])("updates real download progress for Core item %i and reset
   invokeMock.mockResolvedValue(state);
   render(<CoreSettings />);
   const bar = await screen.findByRole("progressbar", { name: `Instalação de ${state.items[index].name}` });
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
   expect(bar).not.toHaveAttribute("aria-valuenow");
   expect(bar).toHaveAttribute("data-indeterminate");
   await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: state.items[index].id, download: { receivedBytes: 1048576, totalBytes: 4194304 } } }));
@@ -47,11 +48,30 @@ it("restores an ongoing download without inventing a percentage when the server 
   invokeMock.mockResolvedValue(state);
   render(<CoreSettings />);
   const bar = await screen.findByRole("progressbar", { name: "Instalação de Open Design" });
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
   expect(bar).not.toHaveAttribute("aria-valuenow");
   expect(bar).toHaveAttribute("data-indeterminate");
   expect(screen.getByText("12 MB")).toBeInTheDocument();
   await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: "open-design", download: { receivedBytes: 16777216, totalBytes: null } } }));
   expect(screen.getByText("16 MB")).toBeInTheDocument();
+});
+
+it("preserves newer download progress when an earlier update check finishes", async () => {
+  const state = coreFixture(false);
+  state.items[3].stage = "Baixando recursos de design";
+  state.items[3].download = { receivedBytes: 12582912, totalBytes: null };
+  let finishCheck!: (value: unknown) => void;
+  invokeMock.mockImplementation(async command => command === "check_core_updates"
+    ? new Promise(resolve => { finishCheck = resolve; })
+    : state);
+  render(<CoreSettings />);
+  await screen.findByText("12 MB");
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
+  await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: "open-design", download: { receivedBytes: 16777216, totalBytes: null } } }));
+  expect(screen.getByText("16 MB")).toBeInTheDocument();
+  await act(async () => finishCheck(state));
+  expect(screen.getByText("16 MB")).toBeInTheDocument();
+  expect(screen.queryByText("12 MB")).not.toBeInTheDocument();
 });
 
 it("explains the longer Open Design installation through its help tooltip", async () => {
