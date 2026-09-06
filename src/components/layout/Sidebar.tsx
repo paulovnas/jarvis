@@ -6,10 +6,8 @@ import {
   Layers,
   FolderPlus,
   MessageSquare,
-  MessageSquarePlus,
   Plus,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -30,6 +28,7 @@ import {
   SidebarContent,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -37,7 +36,7 @@ import {
 import { SidebarSkeleton } from "./LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { Conversation, Project } from "@/core/library";
 import type { LibraryController } from "@/hooks/use-library";
 import { ItemNameDialog } from "./ItemNameDialog";
@@ -163,11 +162,6 @@ export function AppSidebar({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-64">
                 <DropdownMenuGroup>
-                  <DropdownMenuLabel className="truncate">{project ? project.name : "Selecione um projeto"}</DropdownMenuLabel>
-                  <DropdownMenuItem className="cursor-pointer" disabled={!project || busy} onClick={() => { if (project) { setExpanded(values => ({ ...values, [project.id]: true })); void library.createConversation(project.id); } }}><MessageSquarePlus />Nova conversa</DropdownMenuItem>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
                   <DropdownMenuItem className="cursor-pointer" disabled={!workspace || busy} onClick={() => { if (workspace) void library.addProject(workspace.id); }}><FolderPlus />Novo projeto</DropdownMenuItem>
                   <DropdownMenuItem className="cursor-pointer" disabled={busy} onClick={() => openDialog({ kind: "workspace" })}><Layers />Novo workspace</DropdownMenuItem>
                 </DropdownMenuGroup>
@@ -254,11 +248,21 @@ export function AppSidebar({
                                     {item.name}
                                   </span>
                                 </span>
-                                <Badge variant="secondary" className="border border-border bg-transparent font-mono text-muted-foreground">
-                                  {conversations.length}
-                                </Badge>
                               </CollapsibleTrigger>
                             </LibraryItemMenu>
+                              <SidebarMenuAction
+                                type="button"
+                                aria-label={`Nova conversa em ${item.name}`}
+                                title="Nova conversa"
+                                className="cursor-pointer text-muted-foreground peer-data-[size=lg]/menu-button:top-2 disabled:pointer-events-none disabled:opacity-50"
+                                disabled={busy}
+                                onClick={() => {
+                                  setExpanded(values => ({ ...values, [item.id]: true }));
+                                  void library.createConversation(item.id);
+                                }}
+                              >
+                                <Plus aria-hidden="true" />
+                              </SidebarMenuAction>
                               <CollapsibleContent className="my-1 ml-3 border-l border-border pl-2">
                                 <SidebarMenu className="mb-1">
                                   <SidebarMenuItem>

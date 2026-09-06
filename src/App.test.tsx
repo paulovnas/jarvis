@@ -68,7 +68,7 @@ describe("App bootstrap and onboarding", () => {
     const { unmount } = render(<App />);
     const sidebar = await screen.findByRole("complementary", { name: "Workspace" });
     const project = await within(sidebar).findByRole("button", {
-      name: /Jarvis/,
+      name: "Jarvis",
     });
     const backgroundEvent = new MouseEvent("contextmenu", {
       bubbles: true,

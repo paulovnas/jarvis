@@ -56,7 +56,7 @@ describe("Persistent sidebar", () => {
     const { rerender } = render(<Harness runningIds={new Set(["c1", "c3"])} />);
     const selected = await screen.findByRole("button", { name: /Primeira conversa/ });
     expect(within(selected).getByRole("status", { name: "Conversa em execução" })).toBeInTheDocument();
-    const folded = screen.getByRole("button", { name: /Website/ });
+    const folded = screen.getByTitle("/projects/website");
     expect(within(folded).getByRole("status", { name: "Projeto com conversa em execução" })).toBeInTheDocument();
     expect(screen.queryByText("Conversa em segundo plano")).not.toBeInTheDocument();
     rerender(<Harness runningIds={new Set()} />);
@@ -93,8 +93,7 @@ describe("Persistent sidebar", () => {
     expect(call).toHaveBeenLastCalledWith("delete_library_item", { target: { kind: "conversation", id: "c1" }, confirmed: true });
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Primeira conversa" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Novo" }));
-    expect(await screen.findByRole("menuitem", { name: "Nova conversa" })).not.toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Nova conversa em Jarvis" })).toBeEnabled();
   });
 
   it("confirms deletion of the right-clicked project, preserves other selection and allows retry", async () => {
@@ -104,7 +103,7 @@ describe("Persistent sidebar", () => {
     initial.conversations.push({ id: "c3", projectId: "p3", title: "Site", createdAt: 3 });
     call.mockResolvedValueOnce(initial);
     render(<Harness />);
-    fireEvent.contextMenu(await screen.findByRole("button", { name: /Website/ }));
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "Website" }));
     await user.click(await screen.findByRole("menuitem", { name: "Excluir" }));
     const dialog = screen.getByRole("alertdialog", { name: "Excluir projeto?" });
     expect(dialog).toHaveTextContent("Website");
@@ -125,7 +124,8 @@ describe("Persistent sidebar", () => {
     result.conversations = result.conversations.filter(item => item.projectId !== "p3");
     await act(async () => finish(result));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: /Website/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Website" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Nova conversa em Website" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Primeira conversa" })).toHaveAttribute("aria-current", "page");
     expect(call).not.toHaveBeenCalledWith("select_library_item", expect.anything());
     expect(call).toHaveBeenLastCalledWith("delete_library_item", { target: { kind: "project", id: "p3" }, confirmed: true });
@@ -143,8 +143,8 @@ describe("Persistent sidebar", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Jarvis")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Novo" }));
-    expect(await screen.findByRole("menuitem", { name: "Nova conversa" })).toHaveAttribute("aria-disabled", "true");
     expect(await screen.findByRole("menuitem", { name: "Novo projeto" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("menuitem", { name: "Nova conversa" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("menuitem", { name: "Novo workspace" }));
     const dialog = screen.getByRole("dialog", { name: "Novo workspace" });
     await user.type(
@@ -189,9 +189,8 @@ describe("Persistent sidebar", () => {
     });
     await user.click(screen.getByRole("button", { name: "Novo" }));
     await user.click(await screen.findByRole("menuitem", { name: "Novo projeto" }));
-    expect(await screen.findByRole("button", { name: /Jarvis/ })).toHaveAttribute("title", "/projects/jarvis");
-    await user.click(screen.getByRole("button", { name: "Novo" }));
-    expect(await screen.findByRole("menuitem", { name: "Nova conversa" })).not.toHaveAttribute("aria-disabled", "true");
+    expect(await screen.findByRole("button", { name: "Jarvis" })).toHaveAttribute("title", "/projects/jarvis");
+    expect(screen.getByRole("button", { name: "Nova conversa em Jarvis" })).toBeEnabled();
   });
 
   it("creates a conversation immediately without a title prompt and prevents duplicate submissions", async () => {
@@ -206,12 +205,13 @@ describe("Persistent sidebar", () => {
           finish = resolve;
         }),
     );
-    await user.click(screen.getByRole("button", { name: "Novo" }));
-    await user.dblClick(await screen.findByRole("menuitem", { name: "Nova conversa" }));
+    const create = screen.getByRole("button", { name: "Nova conversa em Jarvis" });
+    await user.dblClick(create);
     expect(
       call.mock.calls.filter(([command]) => command === "create_conversation"),
     ).toHaveLength(1);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(create).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Novo" }),
     ).toBeDisabled();
@@ -226,14 +226,46 @@ describe("Persistent sidebar", () => {
     });
     created.selection.conversationId = "c3";
     call.mockResolvedValueOnce(created);
-    await user.click(screen.getByRole("button", { name: "Novo" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Nova conversa" }));
+    expect(create).toBeEnabled();
+    await user.click(create);
     expect(call).toHaveBeenLastCalledWith("create_conversation", {
       projectId: "p1",
     });
     expect(
       await screen.findByRole("button", { name: "Nova Conversa" }),
     ).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Jarvis" })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it.each(["pointer", "keyboard"])("creates a conversation in the collapsed, unselected project using the %s", async (interaction) => {
+    const user = userEvent.setup();
+    const stored = populatedLibrary();
+    stored.projects.push({ id: "p3", workspaceId: "w1", name: "Website", path: "/projects/website", createdAt: 3 });
+    stored.conversations.push({ id: "c3", projectId: "p3", title: "Conversa anterior", createdAt: 3 });
+    call.mockResolvedValueOnce(stored);
+    render(<Harness />);
+    const project = await screen.findByRole("button", { name: "Website" });
+    expect(project).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Conversa anterior" })).not.toBeInTheDocument();
+    const created = structuredClone(stored);
+    created.conversations.push({ id: "c4", projectId: "p3", title: "Nova Conversa", createdAt: 4 });
+    created.selection = { workspaceId: "w1", projectId: "p3", conversationId: "c4" };
+    call.mockResolvedValueOnce(created);
+    const create = screen.getByRole("button", { name: "Nova conversa em Website" });
+    if (interaction === "keyboard") {
+      project.focus();
+      await user.tab();
+      expect(create).toHaveFocus();
+      await user.keyboard("{Enter}");
+    } else {
+      await user.click(create);
+    }
+    expect(call).toHaveBeenLastCalledWith("create_conversation", { projectId: "p3" });
+    expect(call).not.toHaveBeenCalledWith("select_library_item", expect.anything());
+    expect(await screen.findByRole("button", { name: "Nova Conversa" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Website" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Conversa anterior" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("edits the right-clicked project without changing its folder or selecting it", async () => {
@@ -249,7 +281,7 @@ describe("Persistent sidebar", () => {
     call.mockResolvedValueOnce(stored);
     render(<Harness />);
     const target = await screen.findByRole("button", {
-      name: /Website/,
+      name: "Website",
     });
     fireEvent.contextMenu(target);
     await user.click(await screen.findByRole("menuitem", { name: "Editar" }));
@@ -277,7 +309,7 @@ describe("Persistent sidebar", () => {
     });
     expect(
       await screen.findByRole("button", {
-        name: /Meu site/,
+        name: "Meu site",
       }),
     ).toBeInTheDocument();
     expect(
@@ -354,7 +386,7 @@ describe("Persistent sidebar", () => {
       conversationId: null,
     };
     call.mockResolvedValueOnce(next);
-    await user.click(screen.getByRole("button", { name: /Outro projeto/ }));
+    await user.click(screen.getByRole("button", { name: "Outro projeto" }));
     expect(
       await screen.findByRole("button", { name: "Conversa do trabalho" }),
     ).toBeInTheDocument();
@@ -369,21 +401,22 @@ describe("Persistent sidebar", () => {
     expect(screen.getByRole("button", { name: "Conversa do trabalho" })).toHaveAttribute("aria-current", "page");
   });
 
-  it("offers one creation menu and collapses projects without clearing the selected conversation", async () => {
+  it("limits the global menu to workspace and project creation and preserves selection when collapsing projects", async () => {
     const user = userEvent.setup();
     call.mockResolvedValue(populatedLibrary());
     render(<Harness />);
     await screen.findByText("Primeira conversa");
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Novo" })).toHaveLength(1);
-    const project = screen.getByRole("button", { name: /Jarvis/ });
+    const project = screen.getByRole("button", { name: "Jarvis" });
+    expect(project).toHaveTextContent(/^Jarvis$/);
     await user.click(project);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Primeira conversa" })).not.toBeInTheDocument());
     expect(call).not.toHaveBeenCalledWith("select_library_item", expect.anything());
     await user.click(project);
     expect(await screen.findByRole("button", { name: "Primeira conversa" })).toHaveAttribute("aria-current", "page");
     await user.click(screen.getByRole("button", { name: "Novo" }));
-    expect((await screen.findAllByRole("menuitem")).map(item => item.textContent)).toEqual(["Nova conversa", "Novo projeto", "Novo workspace"]);
+    expect((await screen.findAllByRole("menuitem")).map(item => item.textContent)).toEqual(["Novo projeto", "Novo workspace"]);
   });
 
   it("offers retry after loading fails and keeps Settings available", async () => {
