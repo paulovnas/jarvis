@@ -18,6 +18,7 @@ export const TurnBody = memo(function TurnBody({ turn }: { turn: AgentTurn }) {
     id: turn.id, role: "assistant", content: turn.steps[turn.steps.length - 1]?.text ?? "", timestamp,
     model: `${turn.options.account} / ${turn.options.model}`, streaming: turn.status === "running",
     work: turn.status === "running" || turn.steps.some((step, index) => step.summary || step.tools.length || (step.text && index < turn.steps.length - 1)) ? {
+      retry: turn.status === "running" ? turn.steps[turn.steps.length - 1]?.retry : undefined,
       durationSeconds: Math.round(turn.durationMs / 1000), steps: turn.steps.map((step, index) => ({ thinking: step.summary, tools: step.tools, commentary: index < turn.steps.length - 1 ? step.text : "" })),
     } : undefined,
     error: turn.error ? { title: turn.status === "cancelled" || turn.status === "interrupted" ? "Execução interrompida" : "Falha na execução", message: turn.error.message } : undefined,

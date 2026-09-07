@@ -1,5 +1,5 @@
 use super::{
-    cancelled, context_overflow, failure, overflow_error, protocol_error, AgentError,
+    cancelled, context_overflow, http_failure, overflow_error, protocol_error, AgentError,
     CodexCredential, Delta, Response, Sse, TurnOptions, Usage, MAX_STREAM,
 };
 use crate::openai_codex::custom::{AuthMode, Config, Model, Protocol};
@@ -14,14 +14,7 @@ mod request;
 mod tests;
 
 fn failed(event: &Value) -> AgentError {
-    if context_overflow(event) {
-        overflow_error()
-    } else {
-        AgentError::new(
-            "provider_failed",
-            "O endpoint Custom não concluiu a resposta. Verifique o modelo e sua configuração.",
-        )
-    }
+    super::event_failure(event)
 }
 fn output(
     text: String,
@@ -181,7 +174,7 @@ async fn receive(
         if matches!(status, 401 | 403) {
             return Err(AgentError::new("provider_auth", "O endpoint recusou o acesso. Verifique a chave e o tipo de autenticação do provedor Custom."));
         }
-        return Err(failure(status));
+        return Err(http_failure(&response));
     }
     let mut parser = Sse::default();
     let mut completions = completions::Stream::default();
@@ -194,7 +187,7 @@ async fn receive(
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
             value = tokio::time::timeout(Duration::from_secs(idle), response.chunk()) => match value {
                 Err(_) if completions.finished() => return completions.finish(scope),
-                Err(_) => return Err(AgentError::new("provider_timeout", "O endpoint ficou sem responder. A execução foi interrompida.")),
+                Err(_) => return Err(AgentError::new("provider_timeout", "O endpoint ficou sem responder.")),
                 Ok(value) => value.map_err(|_| protocol_error())?,
             },
         };

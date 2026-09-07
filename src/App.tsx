@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { HomeSkeleton } from "@/components/layout/LoadingSkeletons";
 import { DesktopLayoutProvider } from "@/components/layout/DesktopLayoutProvider";
 import { CoreGate } from "@/components/core/CoreGate";
+import { useNotificationFeedback } from "@/hooks/use-notification-feedback";
 
 const LazyHome = lazy(() => import("@/components/layout/Home"));
 const Onboarding = lazy(() => import("@/components/onboarding/Onboarding").then(module => ({ default: module.Onboarding })));
@@ -25,6 +26,7 @@ type BootstrapState =
 
 
 export function App() {
+  useNotificationFeedback();
   useEffect(() => {
     // Suppress the WebView menu without stopping our scoped context-menu triggers.
     const preventNativeMenu = (event: MouseEvent) => event.preventDefault();

@@ -9,6 +9,7 @@ use tokio::sync::watch;
 
 mod antigravity;
 mod custom;
+pub(super) mod retry;
 
 pub(super) use antigravity::grounded_search;
 const MAX_EVENT: usize = 4 * 1024 * 1024;
@@ -16,6 +17,8 @@ const MAX_STREAM: usize = 16 * 1024 * 1024;
 pub(super) enum Delta {
     Text(String),
     Summary(String),
+    Retry(Option<retry::Status>),
+    Reset,
 }
 pub(super) struct Response {
     pub output: Vec<Value>,
@@ -121,8 +124,18 @@ fn failure(status: u16) -> AgentError {
         401 | 403 => AgentError::new("provider_auth", "O provedor recusou o acesso. Verifique a assinatura e reconecte esta conta nas configurações."),
         429 => AgentError::new("provider_limit", "O limite da conta foi atingido. Aguarde a renovação ou selecione outra conta."),
         400 => AgentError::new("provider_request", "O provedor recusou a solicitação. Verifique o modelo e o nível de raciocínio selecionados."),
-        _ => AgentError::new("provider_unavailable", "O provedor está indisponível no momento. Tente novamente em instantes."),
+        408 | 425 | 500..=599 => AgentError::new("provider_unavailable", &format!("HTTP {status} — {}. O provedor está temporariamente indisponível.", reqwest::StatusCode::from_u16(status).ok().and_then(|code| code.canonical_reason()).unwrap_or("Falha no servidor"))),
+        _ => AgentError::new("provider_request", &format!("O provedor recusou a solicitação (HTTP {status}). Verifique o endpoint e a configuração do modelo.")),
     }
+}
+fn http_failure(response: &reqwest::Response) -> AgentError {
+    let mut error = failure(response.status().as_u16());
+    error.retry_after = response.headers().get("retry-after")
+        .and_then(|header| header.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds <= 86_400)
+        .map(Duration::from_secs);
+    error
 }
 fn context_overflow(value: &Value) -> bool {
     let error = value
@@ -149,6 +162,21 @@ fn overflow_error() -> AgentError {
         "context_overflow",
         "A janela de contexto do modelo foi excedida.",
     )
+}
+fn event_failure(value: &Value) -> AgentError {
+    if context_overflow(value) { return overflow_error(); }
+    let error = value.get("error").or_else(|| value.get("response").and_then(|response| response.get("error"))).unwrap_or(value);
+    if let Some(status) = error["code"].as_u64().and_then(|code| u16::try_from(code).ok()) {
+        return failure(status);
+    }
+    match error["code"].as_str().or_else(|| error["type"].as_str()).unwrap_or_default() {
+        "invalid_request" | "invalid_request_error" | "invalid_argument" => failure(400),
+        "authentication_error" | "invalid_api_key" => failure(401),
+        "permission_error" | "permission_denied" => failure(403),
+        "rate_limit_error" | "rate_limit_exceeded" => failure(429),
+        "overloaded_error" | "server_error" | "internal_error" => failure(503),
+        _ => AgentError::new("provider_failed", "O provedor não conseguiu concluir esta resposta. O progresso foi preservado."),
+    }
 }
 fn request_body(
     options: &TurnOptions,
@@ -186,6 +214,20 @@ fn request_body(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn stream(
+    credential: &CodexCredential,
+    session_id: &str,
+    options: &TurnOptions,
+    instructions: &str,
+    input: Vec<Value>,
+    tools: Vec<Value>,
+    signal: watch::Receiver<bool>,
+    on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
+) -> Result<Response, AgentError> {
+    retry::Request { credential, session_id, options, instructions, input, tools }.run(signal, on_delta, Duration::from_secs(2)).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn stream_once(
     credential: &CodexCredential,
     session_id: &str,
     options: &TurnOptions,
@@ -291,7 +333,7 @@ pub(super) async fn receive(
                 ));
             }
         }
-        return Err(failure(response.status().as_u16()));
+        return Err(http_failure(&response));
     }
     let mut parser = Sse::default();
     let mut output = StreamOutput::default();
@@ -299,7 +341,7 @@ pub(super) async fn receive(
     loop {
         let chunk = tokio::select! {
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-            result = tokio::time::timeout(Duration::from_secs(120), response.chunk()) => result.map_err(|_| AgentError::new("provider_timeout", "O provedor ficou sem responder. A execução foi interrompida."))?.map_err(|_| protocol_error())?,
+            result = tokio::time::timeout(Duration::from_secs(120), response.chunk()) => result.map_err(|_| AgentError::new("provider_timeout", "O provedor ficou sem responder."))?.map_err(|_| protocol_error())?,
         };
         let Some(chunk) = chunk else {
             return Err(protocol_error());
@@ -340,13 +382,7 @@ pub(super) async fn receive(
                 Some("response.completed" | "response.done") => {
                     return output.finish(event["response"].clone())
                 }
-                Some("response.failed" | "error") if context_overflow(&event) => {
-                    return Err(overflow_error())
-                }
-                Some("response.failed" | "error") => return Err(AgentError::new(
-                    "provider_failed",
-                    "O provedor não conseguiu concluir esta resposta. O progresso foi preservado.",
-                )),
+                Some("response.failed" | "error") => return Err(event_failure(&event)),
                 Some("response.incomplete") => return Err(protocol_error()),
                 _ => {}
             }
@@ -546,9 +582,9 @@ mod tests {
             (400, r#"{"error":{"code":"context_length_exceeded","message":"private"}}"#, "context_overflow"),
             (413, r#"{"error":{"message":"Maximum context length exceeded"}}"#, "context_overflow"),
             (400, r#"{"error":{"code":"invalid_request","message":"invalid tool"}}"#, "provider_request"),
-            (413, r#"{"error":{"message":"request too large"}}"#, "provider_unavailable"),
+            (413, r#"{"error":{"message":"request too large"}}"#, "provider_request"),
             (200, "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"context_window_exceeded\"}}}\n\n", "context_overflow"),
-            (200, "data: {\"type\":\"error\",\"code\":\"invalid_request\"}\n\n", "provider_failed"),
+            (200, "data: {\"type\":\"error\",\"code\":\"invalid_request\"}\n\n", "provider_request"),
         ] {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let request = reqwest::Client::new().get(format!("http://{}", listener.local_addr().unwrap()));

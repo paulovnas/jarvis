@@ -155,7 +155,6 @@ impl Execution {
         }
         tokio::select! { _ = cancelled(&mut signal) => Err(AgentError::cancelled()), lock = self.hub.check_lock.read() => Ok(Some(lock)) }
     }
-    pub(super) fn step_limit(&self) -> usize { if self.flow == Flow::Standard { 32 } else if self.role.coordinator() { 96 } else { 48 } }
     pub(super) fn root(&self) -> &Arc<Session> { &self.hub.root }
     fn discovery(&self) -> bool { self.id != "main" && self.hub.job(&self.id).is_ok_and(|job| job.phase == Phase::Discovery) }
     pub(super) fn designer(&self) -> bool { self.role == Role::Designer }

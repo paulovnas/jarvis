@@ -34,6 +34,11 @@ const toolSchema = z.object({
   status: z.enum(["pending", "running", "completed", "error"]),
   output: z.string(), durationMs: z.number().nonnegative(),
 });
+const retryStatusSchema = z.object({
+  attempt: z.number().int().min(1).max(5), maxAttempts: z.literal(5),
+  retryAt: z.number().nonnegative(), message: z.string(),
+});
+export type RetryStatus = z.infer<typeof retryStatusSchema>;
 const turnSchema = z.object({
   id: z.string(), createdAt: z.number().nonnegative(), durationMs: z.number().nonnegative(),
   user: z.string(), options: turnOptionsSchema,
@@ -43,6 +48,7 @@ const turnSchema = z.object({
   steps: z.array(z.object({
     durationMs: z.number().nonnegative(),
     text: z.string(), summary: z.string(), tools: z.array(toolSchema),
+    retry: retryStatusSchema.nullable().optional(),
     usage: z.object({ inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative() }).nullable(),
   })),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),

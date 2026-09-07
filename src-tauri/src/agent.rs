@@ -35,12 +35,15 @@ use tokio::sync::{oneshot, watch};
 pub struct AgentError {
     code: String,
     message: String,
+    #[serde(skip)]
+    retry_after: Option<Duration>,
 }
 impl AgentError {
     fn new(code: &str, message: &str) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
+            retry_after: None,
         }
     }
     fn storage() -> Self {
@@ -71,6 +74,7 @@ impl From<crate::openai_codex::ProviderError> for AgentError {
         Self {
             code: value.code,
             message: value.message,
+            retry_after: None,
         }
     }
 }
@@ -129,6 +133,8 @@ struct Usage {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Step {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry: Option<provider::retry::Status>,
     #[serde(default)]
     duration_ms: u64,
     text: String,
@@ -850,8 +856,7 @@ fn run_turn<'a>(
     context.hooks.run(Event::UserPrompt, json!({"text":user}), signal.clone()).await?;
     let mut overflow_retried = false;
     let mut handoff_reminded = false;
-    let step_limit = execution.as_ref().map_or(32, |exec| exec.step_limit());
-    for _ in 0..step_limit {
+    loop {
         if let Some(exec) = &execution { exec.deliver(session)?; }
         crate::persistence::require_enabled_account(state, home, &options.account)?;
         let step_started = std::time::Instant::now();
@@ -934,7 +939,8 @@ fn run_turn<'a>(
             definitions,
             signal.clone(),
             |delta| {
-                session.update(false, |data| {
+                let durable = matches!(delta, provider::Delta::Retry(_) | provider::Delta::Reset);
+                session.update(durable, |data| {
                     let step = data
                         .turns
                         .last_mut()
@@ -946,6 +952,8 @@ fn run_turn<'a>(
                     match delta {
                         provider::Delta::Text(text) => step.text.push_str(&text),
                         provider::Delta::Summary(text) => step.summary.push_str(&text),
+                        provider::Delta::Retry(status) => step.retry = status,
+                        provider::Delta::Reset => { step.text.clear(); step.summary.clear(); }
                     }
                 })
             },
@@ -1148,7 +1156,6 @@ fn run_turn<'a>(
             }
         }
     }
-    Err(AgentError::new("turn_limit", &format!("O agente atingiu o limite de {step_limit} etapas nesta interação. Revise o progresso e envie uma nova instrução para continuar.")))
     })
 }
 

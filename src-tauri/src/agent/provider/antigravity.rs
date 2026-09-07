@@ -572,7 +572,6 @@ async fn receive(
         return Err(AgentError::cancelled());
     }
     if !response.status().is_success() {
-        let status = response.status().as_u16();
         let mut bytes = vec![];
         loop {
             let chunk = tokio::select! { _=cancelled(&mut signal)=>return Err(AgentError::cancelled()), result=tokio::time::timeout(Duration::from_secs(5),response.chunk())=>result.ok().and_then(Result::ok).flatten() };
@@ -585,7 +584,7 @@ async fn receive(
         if serde_json::from_slice::<Value>(&bytes).is_ok_and(|value| overflow(&value)) {
             return Err(overflow_error());
         }
-        return Err(failure(status));
+        return Err(super::http_failure(&response));
     }
     let mut parser = Sse::default();
     let mut output = Output::default();

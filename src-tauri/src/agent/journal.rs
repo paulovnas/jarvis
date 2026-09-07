@@ -204,6 +204,7 @@ fn load(path: &Path) -> Result<Vec<StoredTurn>, AgentError> {
 
 pub(super) fn interrupt_tools(turn: &mut StoredTurn) {
     for step in &mut turn.turn.steps {
+        step.retry = None;
         for tool in &mut step.tools {
             if !turn
                 .wire
