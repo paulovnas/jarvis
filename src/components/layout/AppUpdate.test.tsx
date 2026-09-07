@@ -88,7 +88,7 @@ it("distingue falha de consulta e apresenta os dados do projeto", async () => {
   const user = userEvent.setup(); render(<AppUpdate />);
   await user.click(screen.getByRole("button", { name: /Sobre o Jarvis/ }));
   expect(screen.getByText("Paulo Vitor Nascimento")).toBeVisible();
-  expect(screen.getByText(APP_VERSION)).toBeVisible();
+  expect(screen.getByRole("dialog")).toHaveTextContent(APP_VERSION);
   await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("GitHub indisponível.");
   expect(screen.queryByText("Atualização Disponível")).not.toBeInTheDocument();
