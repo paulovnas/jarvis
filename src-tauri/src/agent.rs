@@ -3,6 +3,7 @@ mod desktop_events;
 pub(crate) mod processes;
 pub(crate) mod attachments;
 pub(crate) mod vision;
+pub(crate) mod image_generation;
 pub(crate) mod diffs;
 mod journal;
 pub(crate) mod history;
@@ -893,6 +894,10 @@ fn run_turn<'a>(
         if search_enabled {
             definitions.push(web_search::definition());
         }
+        if image_generation::enabled(state, home) {
+            definitions.push(image_generation::definition());
+            instructions.push_str(" Use generate_image for requested image creation. It uses the independently configured Antigravity account. The resulting images are displayed directly in chat and stored as conversation attachments; do not embed base64 or repeat their preview in Markdown. Never claim an image was created without a successful tool result.");
+        }
         if let Some(exec) = &execution { exec.filter(&mut definitions); }
         context.hooks.before_agent(&mut instructions);
         let overhead =
@@ -1071,6 +1076,8 @@ fn run_turn<'a>(
                     attachments::read_tool(home, &owner.id, &tool.args)
                 } else if tool.name == "vision" {
                     vision::execute(state, oauth, home, &owner.id, &options, &tool.args, signal.clone()).await
+                } else if tool.name == "generate_image" {
+                    image_generation::execute(state, oauth, home, &owner.id, &tool.args, signal.clone()).await
                 } else if tool.name == "read_skill" {
                     tokio::select! {
                         _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),

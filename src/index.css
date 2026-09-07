@@ -377,3 +377,27 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; over
     cursor: not-allowed;
   }
 }
+
+/* Code is a compact hardware slot; horizontal overflow stays inside the block. */
+.chat-code-block .code-content {
+  margin: 0;
+  padding: 1rem;
+  border: 0;
+  border-radius: 0;
+  overflow-x: auto;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.chat-code-block .hljs { padding: 0; background: transparent; }
+.reasoning-shimmer {
+  color: transparent;
+  background: linear-gradient(100deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%);
+  background-size: 250% 100%;
+  background-clip: text;
+  animation: reasoning-shimmer 2.5s linear infinite;
+}
+@keyframes reasoning-shimmer { from { background-position: 150% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .reasoning-shimmer { animation: none; background: none; color: var(--muted-foreground); }
+}

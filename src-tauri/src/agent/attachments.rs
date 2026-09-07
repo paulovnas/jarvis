@@ -421,3 +421,20 @@ pub async fn get_chat_attachment_image(
     .await
     .map_err(|_| AgentError::internal())?
 }
+
+#[tauri::command]
+pub async fn save_chat_image(app: tauri::AppHandle, state: tauri::State<'_, AppState>, conversation_id: String, id: String) -> Result<bool, AgentError> {
+    use tauri_plugin_dialog::DialogExt;
+    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        library::agent_location(&state, &home, &conversation_id)?;
+        let item = metadata(&home, &conversation_id, &id)?;
+        if item.kind != "image" { return Err(invalid("Este anexo não é uma imagem.")); }
+        let bytes = bounded_read(&location(&home, &conversation_id, &id)?.join("source"), MAX_BYTES)?;
+        let Some(file) = app.dialog().file().set_title("Salvar imagem").set_file_name(&item.name).blocking_save_file() else { return Ok(false); };
+        let path = file.into_path().map_err(|_| invalid("Selecione um caminho local."))?;
+        fs::write(path, bytes).map_err(|_| invalid("Não foi possível salvar a imagem."))?;
+        Ok(true)
+    }).await.map_err(|_| AgentError::internal())?
+}

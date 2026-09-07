@@ -99,6 +99,13 @@
       "when": 1788725400000,
       "tag": "0013_context7_core",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1788738000000,
+      "tag": "0014_image_generation",
+      "breakpoints": true
     }
   ]
 }

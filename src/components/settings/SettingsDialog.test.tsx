@@ -9,7 +9,7 @@ import { coreFixture } from "@/test/core-fixtures";
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (command: string, args?: unknown) => command === "get_web_search_config" || command === "get_vision_config"
+  invoke: (command: string, args?: unknown) => command === "get_web_search_config" || command === "get_vision_config" || command === "get_image_generation_config"
     ? Promise.resolve({ accountAlias: null })
     : command === "list_mcp_servers" ? Promise.resolve([])
     : command === "list_skills" ? Promise.resolve({ includeAgents: false, directory: "/home/.jarvis/skills", skills: [], warnings: [] })

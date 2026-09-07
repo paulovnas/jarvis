@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Attachment } from "@/core/attachments";
 
-function StoredImage({ attachment, full = false }: { attachment: Attachment; full?: boolean }) {
+export function StoredImage({ attachment, full = false }: { attachment: Attachment; full?: boolean }) {
   const [source, setSource] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);

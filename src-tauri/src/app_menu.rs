@@ -4,6 +4,7 @@ use tauri::{
 };
 
 const ABOUT_ID: &str = "jarvis.about";
+const SETTINGS_ID: &str = "jarvis.settings";
 
 pub(crate) fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Keep the native editing shortcuts, Services and window-management roles.
@@ -21,14 +22,21 @@ pub(crate) fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
     // Tauri's first application item is its native About panel.
     application.remove_at(0)?;
     application.insert(&about, 0)?;
+    let settings = MenuItem::with_id(app, SETTINGS_ID, "Configurações…", true, Some("CmdOrCtrl+,"))?;
+    application.insert(&settings, 1)?;
     app.set_menu(menu)?;
     app.on_menu_event(|app, event| {
-        if event.id().as_ref() == ABOUT_ID {
+        let target = match event.id().as_ref() {
+            ABOUT_ID => Some("app:about"),
+            SETTINGS_ID => Some("app:settings"),
+            _ => None,
+        };
+        if let Some(target) = target {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
-                let _ = window.emit("app:about", ());
+                let _ = window.emit(target, ());
             }
         }
     });

@@ -15,6 +15,26 @@ const account = (alias: string, providerKind = "openai-codex"): ProviderAccount 
 });
 
 describe("WebSearchSettings", () => {
+  it("oferece geração desligada ou Antigravity, com modelo fixo e sem herdar", async () => {
+    invokeMock.mockImplementation(async (command, args) => command === "set_image_generation_config" ? args : { accountAlias: null, model: null, inheritChat: false });
+    const user = userEvent.setup();
+    render(<WebSearchSettings kind="image_generation" accounts={[account("google", "antigravity"), account("codex"), { ...account("inativa", "antigravity"), enabled: false }]} />);
+    const select = await screen.findByRole("combobox", { name: "Provedor de Gerar imagens" });
+    expect(select).toHaveTextContent("Desligado");
+    expect(screen.getByRole("combobox", { name: "Modelo de Gerar imagens" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Modelo de Gerar imagens" })).toHaveTextContent("Gemini 3.1 Flash Image");
+    await user.click(select);
+    expect(screen.queryByRole("option", { name: "Herdar do chat" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "codex" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "inativa" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("option", { name: "google" }));
+    await waitFor(() => expect(select).toHaveTextContent("google"));
+    expect(invokeMock).toHaveBeenCalledWith("set_image_generation_config", { accountAlias: "google", model: "gemini-3.1-flash-image", inheritChat: false });
+    await waitFor(() => expect(select).toBeEnabled());
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "Desligado" }));
+    await waitFor(() => expect(select).toHaveTextContent("Desligado"));
+  });
   it("disponibiliza Vision Custom pela capacidade declarada, sem presumir pelo nome", async () => {
     const custom = customAccountFixture(); const user = userEvent.setup();
     invokeMock.mockResolvedValue({ accountAlias: null, model: null, inheritChat: true });

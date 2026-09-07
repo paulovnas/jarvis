@@ -25,7 +25,7 @@ pub(super) struct Response {
 }
 
 #[derive(Default)]
-struct Sse {
+pub(super) struct Sse {
     pending: Vec<u8>,
     data: Vec<u8>,
     done: bool,
@@ -75,6 +75,9 @@ impl StreamOutput {
 }
 impl Sse {
     fn push(&mut self, bytes: &[u8]) -> Result<Vec<Value>, AgentError> {
+        self.push_bounded(bytes, MAX_EVENT)
+    }
+    pub(super) fn push_bounded(&mut self, bytes: &[u8], limit: usize) -> Result<Vec<Value>, AgentError> {
         self.pending.extend_from_slice(bytes);
         let mut consumed = 0;
         let mut events = vec![];
@@ -98,13 +101,13 @@ impl Sse {
                     .extend_from_slice(data.strip_prefix(b" ").unwrap_or(data));
                 self.data.push(b'\n');
             }
-            if self.data.len() > MAX_EVENT {
+            if self.data.len() > limit {
                 return Err(protocol_error());
             }
             consumed = end + 1;
         }
         self.pending.drain(..consumed);
-        if self.pending.len() > MAX_EVENT {
+        if self.pending.len() > limit {
             return Err(protocol_error());
         }
         Ok(events)

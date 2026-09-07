@@ -1,4 +1,4 @@
-import { AlertCircle, BookOpen, Bot, Check, ChevronRight, Eye, FilePenLine, FileText, FolderSearch, Globe, Search, Terminal, Wrench } from "lucide-react";
+import { AlertCircle, BookOpen, Bot, Check, ChevronRight, Eye, FilePenLine, FileText, FolderSearch, Globe, ImagePlus, Search, Terminal, Wrench } from "lucide-react";
 import { readWebSearchResult } from "@/core/web-search";
 import { readVisionResult } from "@/core/attachments";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -17,6 +17,7 @@ const tools = {
   read: { label: "Leitura de arquivo", icon: FileText },
   read_attachment: { label: "Leitura de anexo", icon: FileText },
   vision: { label: "Análise de imagem", icon: Eye },
+  generate_image: { label: "Geração de imagem", icon: ImagePlus },
   read_skill: { label: "Leitura de skill", icon: BookOpen },
   context7_resolve_library_id: { label: "Bibliotecas · Context7", icon: Search },
   context7_query_docs: { label: "Documentação · Context7", icon: BookOpen },

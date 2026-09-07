@@ -63,6 +63,11 @@ export const visionConfig = sqliteTable("vision_config", {
   model: text("model"),
 }, (table) => [check("vision_config_singleton", sql`${table.id} = 1`)]);
 
+export const imageGenerationConfig = sqliteTable("image_generation_config", {
+  id: integer("id").primaryKey(),
+  accountAlias: text("account_alias").references(() => providerAccounts.alias, { onDelete: "set null" }),
+}, (table) => [check("image_generation_config_singleton", sql`${table.id} = 1`)]);
+
 export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(),
   name: text("name").notNull().unique(),

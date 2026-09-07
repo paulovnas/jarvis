@@ -22,6 +22,7 @@ import { useAgentActivity } from "@/hooks/use-agent-activity";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
 import { EmptyWorkspace } from "./EmptyWorkspace";
+import { useSettingsMenu } from "@/hooks/use-settings-menu";
 
 const SettingsDialog = lazy(() => import("@/components/settings/SettingsDialog").then(module => ({ default: module.SettingsDialog })));
 const ProjectDashboard = lazy(() => import("@/components/dashboard/ProjectDashboard").then(module => ({ default: module.ProjectDashboard })));
@@ -63,6 +64,7 @@ export function Home() {
   const leftToggle = <PanelToggle side="left" collapsed={layout.sidebarCollapsed} onToggle={() => toggle("left")} />;
   const rightToggle = <PanelToggle side="right" collapsed={layout.inspectorCollapsed} onToggle={() => toggle("right")} />;
   const [settingsOpen, setSettingsOpen] = useState(false);
+  useSettingsMenu(setSettingsOpen);
   const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
   const accountsVersion = useRef(0);
   const updateAccounts = useCallback((updated: ProviderAccount[]) => {

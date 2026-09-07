@@ -76,8 +76,8 @@ describe("Persistent live conversation", () => {
     expect(await screen.findByText("Tauri")).toBeInTheDocument();
     expect(screen.queryByText("Gemini 2.5 Pro")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Trabalhou por/ }));
-    await user.click(screen.getByRole("button", { name: /Raciocínio/ }));
-    expect(screen.getByText("Verificando o projeto.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Verificando o projeto/ }));
+    expect(screen.getByText("Verificando o projeto.", { selector: "p" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: /Leitura de arquivo/ }));
     expect(screen.getByText("# Jarvis")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copiar" })).not.toBeInTheDocument();

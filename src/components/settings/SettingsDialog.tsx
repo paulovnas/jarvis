@@ -547,7 +547,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
             ))}
           </div>
         )}
-        {(!embeddedProviders || accounts.some(account => account.enabled && account.modelsAvailable && account.models.length > 0)) && <section className="space-y-3" aria-label="Ferramentas"><h3 className="micro-label text-muted-foreground">Ferramentas</h3><div className="grid gap-3 sm:grid-cols-2"><WebSearchSettings accounts={accounts} onBusyChange={embeddedProviders ? setSearchBusy : undefined} /><WebSearchSettings accounts={accounts} kind="vision" onBusyChange={embeddedProviders ? setVisionBusy : undefined} /></div></section>}
+        {(!embeddedProviders || accounts.some(account => account.enabled && account.modelsAvailable && account.models.length > 0)) && <section className="space-y-3" aria-label="Ferramentas"><h3 className="micro-label text-muted-foreground">Ferramentas</h3><div className="grid gap-3 sm:grid-cols-3"><WebSearchSettings accounts={accounts} onBusyChange={embeddedProviders ? setSearchBusy : undefined} /><WebSearchSettings accounts={accounts} kind="vision" onBusyChange={embeddedProviders ? setVisionBusy : undefined} /><WebSearchSettings accounts={accounts} kind="image_generation" /></div></section>}
       </div>
     );
   };
