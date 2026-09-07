@@ -28,7 +28,7 @@ between restrained chrome and the live rainbow perimeter of the composer.
   comfortable line height. Uppercase is for navigation labels, never long text.
 - Panels/cards: 6–8px corners. Menus and dialogs: 8px. Composer: 22px capsule.
   Tool rows resemble slots: fine perimeter, inset edge, small semantic icon and mono detail.
-- Use the geometric cut-corner J mark at small sizes. Avoid decorative gradients elsewhere.
+- Use the supplied PNG identity: `logo_icon.png` for compact marks, `logo_horizontal.png` in the title bar, and `logo_vertical.png` in About. The wordmark variants already include the Jarvis name. Generate native application icons from `public/logo_icon_background.png` with `bunx tauri icon public/logo_icon_background.png`. Avoid decorative gradients elsewhere.
 
 ## Interaction and persistence
 

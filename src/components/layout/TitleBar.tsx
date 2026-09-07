@@ -97,10 +97,7 @@ export function TitleBar() {
       </div>
       <div data-tauri-drag-region className="h-full flex-1" />
       <div data-tauri-drag-region className="flex items-center gap-2 min-w-0">
-        <JarvisLogo className="size-4 shrink-0" />
-        <span className="font-semibold uppercase text-foreground tracking-[.2em] text-[11px]">
-          Jarvis
-        </span>
+        <JarvisLogo variant="horizontal" alt="Jarvis" className="pointer-events-none h-7 w-auto shrink-0" />
       </div>
     </header>
   );

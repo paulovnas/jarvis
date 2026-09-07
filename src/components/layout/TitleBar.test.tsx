@@ -8,8 +8,11 @@ describe("TitleBar Component", () => {
     render(<TitleBar />);
     const buttons = screen.getAllByRole("button");
     expect(buttons.map(button => button.getAttribute("aria-label"))).toEqual(["Fechar janela", "Minimizar janela", "Maximizar janela"]);
-    expect(screen.getByRole("banner")).toHaveTextContent(/^Jarvis$/);
-    expect(buttons[2].compareDocumentPosition(screen.getByText("Jarvis")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const logo = screen.getByRole("img", { name: "Jarvis" });
+    expect(logo).toHaveAttribute("src", "/logo_horizontal.png");
+    expect(logo).toHaveAttribute("draggable", "false");
+    expect(screen.queryByText("Jarvis")).not.toBeInTheDocument();
+    expect(buttons[2].compareDocumentPosition(logo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("does not maximize when double clicking the minimize control", async () => {

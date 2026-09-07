@@ -41,8 +41,10 @@ export function AppUpdate() {
       {release ? "Atualização Disponível" : displayVersion(info.currentVersion)}
     </DialogTrigger>
     <DialogContent className="dark flex max-h-[80vh] flex-col overflow-hidden sm:max-w-lg" showCloseButton={!busy} aria-describedby={undefined}>
-      <DialogHeader className="shrink-0">
-        <DialogTitle className="flex items-center gap-3"><JarvisLogo className="size-10 shrink-0" /><span>{release ? "Atualizar Jarvis" : "Jarvis"}</span><Badge variant="outline">{displayVersion(release?.version ?? info.currentVersion)}</Badge></DialogTitle>
+      <DialogHeader className="shrink-0 items-center gap-1 text-center">
+        <JarvisLogo variant="vertical" className="size-40 shrink-0" />
+        <DialogTitle className={release ? "text-base" : "sr-only"}>{release ? "Atualizar Jarvis" : "Sobre o Jarvis"}</DialogTitle>
+        <Badge variant="outline" className="font-mono text-[10px]">{displayVersion(release?.version ?? info.currentVersion)}</Badge>
       </DialogHeader>
       <div className="flex min-h-0 flex-col gap-4 overflow-y-auto">
         {release ? <>

@@ -58,6 +58,8 @@ it("abre a mesma modal pelo menu nativo e preserva os detalhes da atualização"
   await waitFor(() => expect(listen).toHaveBeenCalledWith("app:about", expect.any(Function)));
   await act(async () => aboutListener?.({ event: "app:about", id: 1, payload: null }));
   expect(screen.getByText("Paulo Vitor Nascimento")).toBeVisible();
+  expect(screen.getByRole("dialog").querySelector("img")).toHaveAttribute("src", "/logo_vertical.png");
+  expect(screen.getByRole("heading", { name: "Sobre o Jarvis" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
   expect(await screen.findByText("Melhorias no Jarvis.")).toBeVisible();
   await user.keyboard("{Escape}");

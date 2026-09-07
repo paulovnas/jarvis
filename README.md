@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="public/jarvis-icon.svg" width="120" height="120" alt="Logo do Jarvis" />
+  <img src="public/readme-banner.svg" width="640" alt="Jarvis" />
 </p>
-
-<h1 align="center">Jarvis</h1>
 
 <p align="center">
   <strong>Seus projetos, modelos e agentes em um só lugar.</strong><br />

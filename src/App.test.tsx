@@ -123,7 +123,7 @@ describe("App bootstrap and onboarding", () => {
     expect(
       screen.queryByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).not.toBeInTheDocument();
-    expect(titleBar()).toHaveTextContent(/^Jarvis$/);
+    expect(within(titleBar()).getByRole("img", { name: "Jarvis" })).toHaveAttribute("src", "/logo_horizontal.png");
 
     config.resolve({ onboardingCompleted: false });
     await waitFor(() =>
@@ -149,7 +149,7 @@ describe("App bootstrap and onboarding", () => {
     expect(
       await screen.findByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).toBeInTheDocument();
-    expect(titleBar()).toHaveTextContent(/^Jarvis$/);
+    expect(within(titleBar()).getByRole("img", { name: "Jarvis" })).toHaveAttribute("src", "/logo_horizontal.png");
     expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled();
     expect(screen.queryByTestId("home-shell")).not.toBeInTheDocument();
   });
@@ -162,7 +162,7 @@ describe("App bootstrap and onboarding", () => {
     expect(
       await screen.findByTestId("home-shell", {}, { timeout: 5_000 }),
     ).toBeInTheDocument();
-    expect(titleBar()).toHaveTextContent(/^Jarvis$/);
+    expect(within(titleBar()).getByRole("img", { name: "Jarvis" })).toHaveAttribute("src", "/logo_horizontal.png");
     expect(
       screen.queryByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).not.toBeInTheDocument();
@@ -178,7 +178,7 @@ describe("App bootstrap and onboarding", () => {
     render(<App />);
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(titleBar()).toHaveTextContent(/^Jarvis$/);
+    expect(within(titleBar()).getByRole("img", { name: "Jarvis" })).toHaveAttribute("src", "/logo_horizontal.png");
     expect(
       screen.queryByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).not.toBeInTheDocument();
@@ -211,7 +211,7 @@ describe("App bootstrap and onboarding", () => {
     expect(
       await screen.findByTestId("home-shell", {}, { timeout: 5_000 }),
     ).toBeInTheDocument();
-    expect(titleBar()).toHaveTextContent(/^Jarvis$/);
+    expect(within(titleBar()).getByRole("img", { name: "Jarvis" })).toHaveAttribute("src", "/logo_horizontal.png");
   });
 
   it("permanece no onboarding, reabilita Finalizar e mostra erro quando conclusão falha", async () => {
@@ -231,7 +231,7 @@ describe("App bootstrap and onboarding", () => {
       ),
     );
     expect(screen.getByRole("button", { name: "Começar" })).toBeEnabled();
-    expect(titleBar()).toHaveTextContent(/^Jarvis$/);
+    expect(within(titleBar()).getByRole("img", { name: "Jarvis" })).toHaveAttribute("src", "/logo_horizontal.png");
     expect(screen.queryByTestId("home-shell")).not.toBeInTheDocument();
   });
 
