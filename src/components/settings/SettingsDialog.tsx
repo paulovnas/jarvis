@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
 import { invoke } from "@tauri-apps/api/core";
 import { WebSearchSettings } from "./WebSearchSettings";
 import { McpSettings } from "./McpSettings";
@@ -26,7 +27,6 @@ import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
-  AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,

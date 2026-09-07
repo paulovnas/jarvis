@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel } from "@/components/ui/alert-dialog";
+import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
 import { Skeleton } from "@/components/ui/skeleton";
 import { processSchema, processRunning, PROCESS_LABELS, type ChatProcess } from "@/core/processes";
 import { libraryError } from "@/core/library";
@@ -85,7 +86,7 @@ export function ProcessPopover({ conversationId }: { conversationId: string }) {
       </PopoverContent>
     </Popover>
     <AlertDialog open={!!selected} onOpenChange={value => { if (!value && !stopping) setSelected(null); }}>
-      <AlertDialogContent className="dark"><AlertDialogHeader><AlertDialogTitle>Parar {selected?.title}?</AlertDialogTitle><AlertDialogDescription>O processo e seus subprocessos serão encerrados.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={stopping}>Cancelar</AlertDialogCancel><Button variant="destructive" disabled={stopping} onClick={() => void stop()}>Parar processo</Button></AlertDialogFooter></AlertDialogContent>
+      <AlertDialogContent className="dark"><AlertDialogHeader><AlertDialogTitle>Parar {selected?.title}?</AlertDialogTitle><AlertDialogDescription>O processo e seus subprocessos serão encerrados.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={stopping}>Cancelar</AlertDialogCancel><Button data-confirm-action variant="destructive" disabled={stopping} onClick={() => void stop()}>Parar processo</Button></AlertDialogFooter></AlertDialogContent>
     </AlertDialog>
   </>;
 }

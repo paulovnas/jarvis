@@ -8,7 +8,8 @@ import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
 import { libraryError } from "@/core/library";
 
 const previewSchema = z.object({ days: z.number(), bytes: z.number().nonnegative(), protected: z.number().int().nonnegative(), conversations: z.array(z.object({ id: z.string(), title: z.string(), projectName: z.string(), projectId: z.string(), activity: z.number(), bytes: z.number().nonnegative() })) });

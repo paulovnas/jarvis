@@ -13,8 +13,10 @@ export function AssistantMessageTurn({ message }: { message: ChatMessage }) {
     <article data-testid={`assistant-message-${message.id}`} className="my-5 flex min-w-0 flex-col gap-2">
       <header className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <JarvisLogo className="size-5 shrink-0 text-foreground" />
-          <span className="micro-label text-foreground">Jarvis</span>
+          <span role="img" aria-label="Jarvis" className="inline-flex shrink-0 items-center gap-0.5">
+            <span aria-hidden="true" className="relative h-5 w-3.5 overflow-hidden"><JarvisLogo className="absolute -left-[7px] -top-1 size-7 max-w-none" /></span>
+            <span aria-hidden="true" className="text-xs font-semibold tracking-wide text-foreground">arvis</span>
+          </span>
           {message.model && <Badge variant="outline" title={message.model} className="max-w-56 truncate border-0 bg-transparent px-1 font-mono text-[10px] text-muted-foreground">{message.model.split(" / ").pop()}</Badge>}
         </div>
         <time className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{message.timestamp}</time>

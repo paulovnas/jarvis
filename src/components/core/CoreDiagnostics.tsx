@@ -4,7 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Context7Configuration, InstallProgress } from "@/components/settings/CoreSettings";
 import { CORE_DETAILS } from "@/core/core-presentation";
@@ -49,6 +50,6 @@ export default function CoreDiagnostics({ core, onClose }: { core: CoreControlle
       </DialogContent>
     </Dialog>
     <Context7Configuration open={configuring} onOpenChange={setConfiguring} onSaved={core.refresh} />
-    <AlertDialog open={reinstall !== null} onOpenChange={open => { if (!open) setReinstall(null); }}><AlertDialogContent className="dark"><AlertDialogHeader><AlertDialogTitle>Reinstalar {target?.name}?</AlertDialogTitle><AlertDialogDescription>O pacote atual será removido após baixar e verificar a nova instalação. Projetos, conversas e chaves serão preservados.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><Button variant="outline" onClick={() => setReinstall(null)}>Cancelar</Button><Button variant="destructive" onClick={() => { if (reinstall) void repair(reinstall, true); setReinstall(null); }}>Confirmar reinstalação</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog open={reinstall !== null} onOpenChange={open => { if (!open) setReinstall(null); }}><AlertDialogContent className="dark"><AlertDialogHeader><AlertDialogTitle>Reinstalar {target?.name}?</AlertDialogTitle><AlertDialogDescription>O pacote atual será removido após baixar e verificar a nova instalação. Projetos, conversas e chaves serão preservados.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><Button variant="outline" onClick={() => setReinstall(null)}>Cancelar</Button><Button data-confirm-action variant="destructive" onClick={() => { if (reinstall) void repair(reinstall, true); setReinstall(null); }}>Confirmar reinstalação</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </>;
 }

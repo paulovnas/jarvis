@@ -1,6 +1,7 @@
 import { useRef } from "react";
+import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Spinner } from "@/components/ui/spinner";
@@ -14,7 +15,6 @@ export function DeleteItemDialog({ kind, name, conversationCount, pending, error
   onClose: () => void;
   onConfirm: () => Promise<boolean>;
 }) {
-  const cancel = useRef<HTMLButtonElement>(null);
   const submitting = useRef(false);
   const confirm = async () => {
     if (pending || submitting.current) return;
@@ -23,7 +23,7 @@ export function DeleteItemDialog({ kind, name, conversationCount, pending, error
     finally { submitting.current = false; }
   };
   return <AlertDialog open onOpenChange={open => { if (!open && !pending && !submitting.current) onClose(); }}>
-    <AlertDialogContent initialFocus={cancel}>
+    <AlertDialogContent>
       <AlertDialogHeader>
         <AlertDialogTitle>{kind === "project" ? "Excluir projeto?" : "Excluir conversa?"}</AlertDialogTitle>
         <AlertDialogDescription>
@@ -35,7 +35,7 @@ export function DeleteItemDialog({ kind, name, conversationCount, pending, error
       </AlertDialogHeader>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <AlertDialogFooter>
-        <AlertDialogCancel ref={cancel} disabled={pending} className="cursor-pointer">Cancelar</AlertDialogCancel>
+        <AlertDialogCancel disabled={pending} className="cursor-pointer">Cancelar</AlertDialogCancel>
         <AlertDialogAction variant="destructive" disabled={pending} className="cursor-pointer" onClick={() => { void confirm(); }}>
           {pending && <Spinner aria-label="Excluindo" />}
           {pending ? "Excluindo…" : kind === "project" ? "Excluir projeto" : "Excluir conversa"}

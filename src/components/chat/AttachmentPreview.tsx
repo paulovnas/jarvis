@@ -6,10 +6,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Attachment } from "@/core/attachments";
 
-export function StoredImage({ attachment, full = false }: { attachment: Attachment; full?: boolean }) {
+export function StoredImage({ attachment, full = false, showMetadata = false }: { attachment: Attachment; full?: boolean; showMetadata?: boolean }) {
   const [source, setSource] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
     let active = true;
     void invoke<string>("get_chat_attachment_image", { conversationId: attachment.conversationId, id: attachment.id, full }).then(value => { if (active) setSource(value); }).catch(() => { if (active) setFailed(true); });
@@ -18,8 +19,16 @@ export function StoredImage({ attachment, full = false }: { attachment: Attachme
   return <span className={full ? "relative block w-full" : "relative block size-full"}>
     {failed ? <ImageOff aria-label="Imagem indisponível" className="m-auto size-5 text-muted-foreground" /> : <>
       {!loaded && <Skeleton role="status" aria-label="Carregando imagem" className={full ? "h-80 w-full" : "absolute inset-0 size-full"} />}
-      {source && <img src={source} alt={attachment.name} onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={`${full ? "max-h-[70vh] w-full object-contain" : "size-full object-cover"} ${loaded ? "" : "absolute inset-0 opacity-0"}`} />}
+      {source && <img src={source} alt={attachment.name} onLoad={event => {
+        setLoaded(true);
+        const { naturalWidth: width, naturalHeight: height } = event.currentTarget;
+        if (width > 0 && height > 0) setDimensions({ width, height });
+      }} onError={() => setFailed(true)} className={`${full ? "max-h-[70vh] w-full object-contain" : "size-full object-cover"} ${loaded ? "" : "absolute inset-0 opacity-0"}`} />}
     </>}
+    {showMetadata && <span className="mt-3 flex items-center justify-center gap-2 font-mono text-xs tabular-nums text-muted-foreground">
+      {dimensions && !failed && <><span>{dimensions.width} × {dimensions.height} px</span><span aria-hidden="true">·</span></>}
+      <span>{new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(attachment.size / (attachment.size >= 1024 * 1024 ? 1024 * 1024 : attachment.size >= 1024 ? 1024 : 1))} {attachment.size >= 1024 * 1024 ? "MB" : attachment.size >= 1024 ? "KB" : "B"}</span>
+    </span>}
   </span>;
 }
 export function AttachmentPreview({ attachment, onRemove, disabled }: { attachment: Attachment; onRemove?: () => void; disabled?: boolean }) {

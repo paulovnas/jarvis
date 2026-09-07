@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { conversationContext } from "@/core/inspector";
@@ -28,7 +28,8 @@ describe("Context meter", () => {
     await user.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(compact).not.toHaveBeenCalled();
     await user.click(button);
-    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Compactar" }));
+    await waitFor(() => expect(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Compactar" })).toHaveFocus());
+    await user.keyboard("{Enter}");
     expect(compact).toHaveBeenCalledTimes(1);
     expect(button).toBeDisabled();
     expect(screen.getByRole("contentinfo")).toHaveAttribute("data-compacting", "true");

@@ -78,8 +78,10 @@ describe("Persistent sidebar", () => {
     expect(dialog).toHaveTextContent("exclusão é definitiva");
     expect(dialog).toHaveTextContent("arquivos do projeto permanecerão intactos");
     expect(call).not.toHaveBeenCalledWith("delete_library_item", expect.anything());
-    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancelar" })).toHaveFocus());
-    await user.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Excluir conversa" })).toHaveFocus());
+    await user.tab({ shift: true });
+    expect(within(dialog).getByRole("button", { name: "Cancelar" })).toHaveFocus();
+    await user.keyboard("{Enter}");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: "Primeira conversa" })).toBeInTheDocument();
     fireEvent.contextMenu(within(panel).getByRole("button", { name: "Primeira conversa" }));
@@ -89,7 +91,8 @@ describe("Persistent sidebar", () => {
     result.conversations = result.conversations.filter(item => item.id !== "c1");
     result.selection.conversationId = null;
     call.mockResolvedValueOnce(result);
-    await user.click(within(dialog).getByRole("button", { name: "Excluir conversa" }));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Excluir conversa" })).toHaveFocus());
+    await user.keyboard("{Enter}");
     expect(call).toHaveBeenLastCalledWith("delete_library_item", { target: { kind: "conversation", id: "c1" }, confirmed: true });
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Primeira conversa" })).not.toBeInTheDocument();

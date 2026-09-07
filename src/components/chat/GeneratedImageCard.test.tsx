@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { AssistantMessageTurn } from "./AssistantMessageTurn";
@@ -22,9 +22,22 @@ it("shows a skeleton without opening activity, then the persisted image and expo
   const img = await screen.findByRole("img", { name: image.name });
   fireEvent.load(img);
   await user.click(screen.getByRole("button", { name: `Ampliar ${image.name}` }));
-  expect(await screen.findByRole("dialog")).toBeVisible();
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toBeVisible();
+  expect(within(dialog).getByText("1,2 KB")).toBeVisible();
+  const fullImage = await within(dialog).findByRole("img", { name: image.name });
+  Object.defineProperties(fullImage, { naturalWidth: { value: 1536 }, naturalHeight: { value: 1024 } });
+  fireEvent.load(fullImage);
+  expect(within(dialog).getByText("1536 × 1024 px")).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Salvar imagem" }).parentElement).toHaveClass("justify-center");
   await user.click(screen.getByRole("button", { name: "Salvar imagem" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_chat_image", { conversationId: "chat1", id: "a1" }));
+});
+it("uses the logo as the J of the wordmark and announces the full brand name", () => {
+  render(<AssistantMessageTurn message={message({ id: "t1", name: "read_file", status: "completed" })} />);
+  const brand = screen.getByRole("img", { name: "Jarvis" });
+  expect(within(brand).getByText("arvis")).toBeVisible();
+  expect(screen.queryByText("Jarvis")).not.toBeInTheDocument();
 });
 it("replaces the skeleton with the failed generation message", () => {
   render(<AssistantMessageTurn message={message({ id: "t1", name: "generate_image", status: "error", output: "O limite de geração de imagens foi atingido." })} />);

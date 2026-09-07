@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/readme-banner.svg" width="640" alt="Jarvis" />
+  <img src="public/logo_horizontal_background.png" width="640" alt="Jarvis" />
 </p>
 
 <p align="center">

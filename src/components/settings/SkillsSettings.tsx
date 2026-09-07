@@ -9,7 +9,8 @@ import { Input } from "@/components/TextInput";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
-import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
 import { Spinner } from "@/components/ui/spinner";
 import { skillsSnapshotSchema, skillUpdateSchema, skillError, type Skill, type SkillSnapshot } from "@/core/skills";
 import { SkillDetailsDialog, type SkillSelection } from "./SkillDetailsDialog";
@@ -94,7 +95,7 @@ export function SkillsSettings({ onCountChange }: { onCountChange?: (count: numb
     <AlertDialog open={deleting !== null} onOpenChange={open => { if (!open && !pending.current) setDeleting(null); }}>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir {deleting?.name}?</AlertDialogTitle><AlertDialogDescription>{deleting?.linked ? "O vínculo será removido. A pasta de destino será preservada." : deleting?.origin === "jarvis" ? "A pasta da skill e seus arquivos serão excluídos definitivamente." : "A pasta compartilhada será excluída definitivamente, afetando também outros agentes que a utilizam."}</AlertDialogDescription></AlertDialogHeader>
         <p className="break-all font-mono text-xs text-muted-foreground">{deleting?.removalPath ?? deleting?.path}</p>
-        <AlertDialogFooter><Button variant="ghost" className="cursor-pointer" disabled={!!busy} onClick={() => setDeleting(null)}>Cancelar</Button><Button variant="destructive" className="cursor-pointer" disabled={!!busy} onClick={() => { if (deleting) void perform("delete", async () => { update(await invoke("delete_skill", { id: deleting.id })); setDeleting(null); toast.success("Skill excluída"); }); }}>{busy === "delete" && <Spinner />}Excluir skill</Button></AlertDialogFooter>
+        <AlertDialogFooter><Button variant="ghost" className="cursor-pointer" disabled={!!busy} onClick={() => setDeleting(null)}>Cancelar</Button><Button data-confirm-action variant="destructive" className="cursor-pointer" disabled={!!busy} onClick={() => { if (deleting) void perform("delete", async () => { update(await invoke("delete_skill", { id: deleting.id })); setDeleting(null); toast.success("Skill excluída"); }); }}>{busy === "delete" && <Spinner />}Excluir skill</Button></AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
   </div>;

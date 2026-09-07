@@ -27,6 +27,12 @@ export function GeneratedImageCard({ tool }: { tool: ToolCallItem }) {
       <div className={`grid gap-2 ${result.images.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>{result.images.map(attachment => <Button key={attachment.id} variant="ghost" className="h-auto w-full cursor-pointer overflow-hidden rounded-lg border border-white/10 p-0" aria-label={`Ampliar ${attachment.name}`} onClick={() => setSelected(attachment)}><StoredImage attachment={attachment} full /></Button>)}</div>
       <p className="mt-2 truncate font-mono text-[10px] text-muted-foreground">Gemini 3.1 Flash Image</p>
     </> : <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">{tool.error || (tool.status === "error" ? tool.output : null) || "Imagem indisponível"}</p>}
-    <Dialog open={selected !== null} onOpenChange={open => { if (!open) setSelected(null); }}><DialogContent className="sm:max-w-4xl" aria-describedby={undefined}><DialogHeader><DialogTitle className="truncate pr-6 text-sm">{selected?.name}</DialogTitle></DialogHeader>{selected && <StoredImage key={selected.id} attachment={selected} full />}<Button variant="outline" className="w-fit cursor-pointer" disabled={saving} onClick={() => void save()}><Download className="size-4" />Salvar imagem</Button></DialogContent></Dialog>
+    <Dialog open={selected !== null} onOpenChange={open => { if (!open) setSelected(null); }}>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-4xl" aria-describedby={undefined}>
+        <DialogHeader><DialogTitle className="truncate pr-6 text-sm">{selected?.name}</DialogTitle></DialogHeader>
+        {selected && <StoredImage key={selected.id} attachment={selected} full showMetadata />}
+        <div className="flex justify-center"><Button variant="outline" className="cursor-pointer" disabled={saving} onClick={() => void save()}><Download data-icon="inline-start" />Salvar imagem</Button></div>
+      </DialogContent>
+    </Dialog>
   </section>;
 }
