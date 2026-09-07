@@ -40,6 +40,7 @@ pub(super) fn session(fixture: &Fixture) -> Arc<Session> {
         data: Mutex::new(SessionData {
             turns: vec![],
             active: None,
+            recovery: None,
             revision: 1,
             storage_failed: false,
             last_emit: std::time::Instant::now(),
@@ -73,6 +74,76 @@ fn activity_tracks_loaded_sessions_without_exposing_history() {
     let ended = state.activity().unwrap();
     assert!(ended[0].active_turn_id.is_none());
     assert!(ended[0].revision > revision);
+}
+
+#[test]
+fn direct_recovery_resumes_only_durable_tool_results_and_preserves_new_messages() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let mut direct = options(ApprovalMode::Yolo);
+    direct.workflow = Some(workflow::Flow::Designer);
+    let recovered = StoredTurn {
+        turn: Turn {
+            id: "recovered-turn".into(),
+            created_at: 1,
+            duration_ms: 0,
+            user: "Ajuste o layout".into(),
+            parts: vec![],
+            options: direct,
+            context_window: Some(128_000),
+            status: TurnStatus::Running,
+            steps: vec![Step {
+                tools: vec![ToolCall {
+                    id: "read-1".into(),
+                    name: "read".into(),
+                    args: json!({"path":"README.md"}),
+                    status: "completed".into(),
+                    output: "# Jarvis".into(),
+                    duration_ms: 1,
+                }],
+                ..Step::default()
+            }],
+            error: None,
+        },
+        wire: vec![
+            json!({"role":"user","content":"Ajuste o layout"}),
+            json!({"type":"function_call","call_id":"read-1","name":"read","arguments":"{\"path\":\"README.md\"}"}),
+            json!({"type":"function_call_output","call_id":"read-1","output":"# Jarvis"}),
+        ],
+    };
+    assert!(resumable_direct_turn(&recovered));
+    let mut missing_output = recovered.clone();
+    missing_output.wire.pop();
+    assert!(!resumable_direct_turn(&missing_output));
+    journal::mark_interrupted(&mut missing_output);
+    assert!(!resumable_direct_turn(&missing_output));
+    let mut planned = recovered.clone();
+    planned.turn.options.workflow = Some(workflow::Flow::Planned);
+    assert!(!resumable_direct_turn(&planned));
+    let mut prior_runtime = recovered;
+    journal::mark_interrupted(&mut prior_runtime);
+    assert!(resumable_direct_turn(&prior_runtime));
+
+    {
+        let mut data = session.data.lock().unwrap();
+        data.turns.push(prior_runtime);
+        data.recovery = Some("recovered-turn".into());
+    }
+    assert!(session.resume_recovered_turn().unwrap().is_some());
+    let snapshot = session.snapshot().unwrap();
+    assert_eq!(snapshot.active_turn_id.as_deref(), Some("recovered-turn"));
+    assert_eq!(snapshot.turns[0].status, TurnStatus::Running);
+    assert!(session
+        .submit("Continue depois".into(), options(ApprovalMode::Yolo))
+        .unwrap()
+        .is_none());
+    assert_eq!(session.snapshot().unwrap().queued_messages.len(), 1);
+
+    let (persisted, _) = journal::read_only(&session.journal).unwrap();
+    assert!(persisted[0]
+        .wire
+        .iter()
+        .any(|item| item["content"].as_str().is_some_and(|text| text.contains("runtime restarted"))));
 }
 
 #[test]
@@ -326,6 +397,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                 approval: None,
                 question: None,
             }),
+            recovery: None,
             storage_failed: false,
             last_emit: std::time::Instant::now(),
             extras: journal::Extras::default(),

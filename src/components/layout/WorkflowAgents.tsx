@@ -47,16 +47,23 @@ function AgentHistory({ conversationId, agent }: { conversationId: string; agent
 }
 export function WorkflowAgents({ workflow, conversationId }: { workflow?: WorkflowController; conversationId?: string }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
   const agents = workflow?.data?.agents ?? [];
-  const selectedAgent = agents.find(agent => agent.id === selected);
-  const ordered = [...agents].sort((a, b) => Number(activeAgent(b)) - Number(activeAgent(a)) || a.createdAt - b.createdAt);
-  const visible = expanded ? ordered : ordered.slice(0, 8);
+  const latestByRole = new Map<WorkflowAgent["role"], WorkflowAgent>();
+  const currentAgents = agents.filter(agent => {
+    if (agent.id === "main") return true;
+    const current = latestByRole.get(agent.role);
+    if (!current || agent.createdAt > current.createdAt || agent.createdAt === current.createdAt && (agent.updatedAt > current.updatedAt || agent.updatedAt === current.updatedAt && agent.id > current.id)) {
+      latestByRole.set(agent.role, agent);
+    }
+    return false;
+  }).concat([...latestByRole.values()]);
+  const selectedAgent = currentAgents.find(agent => agent.id === selected);
+  const ordered = [...currentAgents].sort((a, b) => Number(activeAgent(b)) - Number(activeAgent(a)) || a.createdAt - b.createdAt || a.updatedAt - b.updatedAt || a.id.localeCompare(b.id));
   return <>
     {workflow?.error ? <div role="alert" className="space-y-2 text-xs"><p className="text-destructive">{workflow.error}</p><Button variant="ghost" size="sm" className="cursor-pointer" onClick={workflow.retry}>Tentar novamente</Button></div>
       : workflow?.loading ? <div role="status" aria-label="Carregando agentes" className="space-y-2"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div>
-      : !agents.length ? <p className="text-xs text-muted-foreground">Nenhum agente em execução.</p>
-      : <div className="space-y-2">{visible.map(agent => {
+      : !currentAgents.length ? <p className="text-xs text-muted-foreground">Nenhum agente em execução.</p>
+      : <div className="space-y-2">{ordered.map(agent => {
         const Icon = AGENT_ICONS[agent.role];
         return <Button key={agent.id} variant="ghost" data-status={agent.status} style={agent.status === "waiting" || agent.status === "queued" ? { borderColor: `${ROLE_COLORS[agent.role]}80` } : undefined} onClick={() => setSelected(agent.id)} aria-label={`Abrir agente ${ROLE_LABELS[agent.role]}: ${agent.title}`} className="agent-execution relative isolate h-auto w-full cursor-pointer flex-col items-stretch gap-2 rounded-md border border-border bg-card/60 p-3 text-left whitespace-normal shadow-[inset_0_1px_0_#ffffff0a] hover:border-primary/40">
           <span className="flex items-center gap-2"><Icon aria-hidden="true" className="size-3.5 shrink-0" style={{ color: ROLE_COLORS[agent.role] }} /><span className="flex-1 text-xs font-medium">{ROLE_LABELS[agent.role]}</span>{agent.status === "running" && <span aria-label="Em execução" className="size-1.5 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />}<ChevronRight className="size-3 text-muted-foreground" /></span>
@@ -64,7 +71,7 @@ export function WorkflowAgents({ workflow, conversationId }: { workflow?: Workfl
           <span className="flex items-center gap-2"><StatusBadge agent={agent} /></span>
           <ModelDetails agent={agent} />
         </Button>;
-      })}{ordered.length > 8 && <Button variant="ghost" size="sm" className="w-full cursor-pointer text-xs" onClick={() => setExpanded(value => !value)}>{expanded ? "Ver menos" : `Ver todos (${ordered.length})`}</Button>}</div>}
+      })}</div>}
     <Dialog open={!!selectedAgent} onOpenChange={open => { if (!open) setSelected(null); }}>
       {selectedAgent && conversationId && <DialogContent className="dark flex h-[min(760px,85dvh)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
         <DialogHeader className="shrink-0 border-b border-border bg-sidebar p-5 pr-12">

@@ -22,7 +22,7 @@ pub(super) fn excerpt(turn: &Turn, index: usize) -> Excerpt {
     Excerpt { id: turn.id.clone(), index, created_at: turn.created_at, user: snippet(&turn.user), assistant: snippet(turn.steps.last().map_or("", |step| &step.text)) }
 }
 
-struct Entry { offset: u64, length: usize, excerpt: Excerpt, tokens: Vec<u64>, limit: Option<u64>, edited_paths: Vec<String> }
+struct Entry { offset: u64, length: usize, excerpt: Excerpt, status: TurnStatus, resumable: bool, tokens: Vec<u64>, limit: Option<u64>, edited_paths: Vec<String> }
 #[derive(Default)]
 struct Index {
     end: u64, length: u64, modified: Option<SystemTime>,
@@ -46,7 +46,7 @@ impl Index {
                     if replacing { self.entries.pop(); }
                     else if !self.ids.insert(turn.turn.id.clone()) { return Err(AgentError::storage()); }
                     let edited_paths = turn.turn.steps.iter().flat_map(|step| &step.tools).filter(|tool| tool.status == "completed" && matches!(tool.name.as_str(), "write" | "edit")).filter_map(|tool| tool.args["path"].as_str().map(str::to_owned)).collect();
-                    let entry = Entry { offset, length, excerpt: excerpt(&turn.turn, self.entries.len()), tokens: turn.wire.iter().map(compaction::estimate).collect(), limit: turn.turn.context_window, edited_paths };
+                    let entry = Entry { offset, length, excerpt: excerpt(&turn.turn, self.entries.len()), status: turn.turn.status.clone(), resumable: resumable_direct_turn(&turn), tokens: turn.wire.iter().map(compaction::estimate).collect(), limit: turn.turn.context_window, edited_paths };
                     self.entries.push(entry);
                 }
                 "queue_checkpoint" => self.queue = serde_json::from_value(record.data).map_err(|_| AgentError::storage())?,
@@ -142,6 +142,11 @@ pub struct Page {
 #[derive(Clone, Default)]
 pub(super) struct HistoryState(Arc<Mutex<VecDeque<(PathBuf, Index)>>>);
 impl HistoryState {
+    pub(super) fn has_recovery_tail(&self, path: &Path) -> Result<bool, AgentError> {
+        self.with(path, |index| {
+            Ok(index.entries.last().is_some_and(|entry| entry.status == TurnStatus::Running || entry.resumable))
+        })
+    }
     pub(super) fn has_turn(&self, path: &Path, id: &str) -> Result<bool, AgentError> { self.with(path, |index| Ok(index.ids.contains(id))) }
     pub(super) fn worker_snapshot(&self, path: &Path, id: &str) -> Result<ChatSnapshot, AgentError> {
         self.with(path, |index| {
@@ -186,7 +191,7 @@ impl AgentState {
             diffs::load_legacy(&root, &legacy, &mut extras.files);
             Ok(extras)
         })?;
-        Ok(Arc::new(Session { id: id.into(), journal: path, root, emit: Arc::new(|_| {}), data: Mutex::new(SessionData { turns: vec![], active: None, revision: 0, storage_failed: false, last_emit: std::time::Instant::now(), extras, compacting: false, manual_compaction: false }) }))
+        Ok(Arc::new(Session { id: id.into(), journal: path, root, emit: Arc::new(|_| {}), data: Mutex::new(SessionData { turns: vec![], active: None, recovery: None, revision: 0, storage_failed: false, last_emit: std::time::Instant::now(), extras, compacting: false, manual_compaction: false }) }))
     }
 
     fn history_page(&self, state: &AppState, home: &Path, id: &str, before: Option<usize>, after: Option<usize>, around: Option<usize>) -> Result<Page, AgentError> {
@@ -278,6 +283,35 @@ mod tests {
         assert_eq!(index.entries.len(), 121);
         let mut restarted = Index::default(); restarted.refresh(&path).unwrap();
         assert_eq!(restarted.context().tokens, index.context().tokens);
+    }
+
+    #[test]
+    fn safe_direct_interruption_is_loaded_for_automatic_recovery() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("history.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        let mut turn = stored(0);
+        turn.turn.options.workflow = Some(workflow::Flow::Designer);
+        turn.turn.status = TurnStatus::Interrupted;
+        turn.turn.error = Some(AgentError::new(
+            "interrupted",
+            "O Jarvis foi encerrado durante esta execução.",
+        ));
+        turn.turn.steps[0].tools.push(ToolCall {
+            id: "read-1".into(),
+            name: "read".into(),
+            args: json!({"path":"README.md"}),
+            status: "completed".into(),
+            output: "# Jarvis".into(),
+            duration_ms: 1,
+        });
+        turn.wire.extend([
+            json!({"type":"function_call","call_id":"read-1","name":"read","arguments":"{\"path\":\"README.md\"}"}),
+            json!({"type":"function_call_output","call_id":"read-1","output":"# Jarvis"}),
+        ]);
+        journal::append(&path, &turn).unwrap();
+
+        assert!(HistoryState::default().has_recovery_tail(&path).unwrap());
     }
 
     #[test]

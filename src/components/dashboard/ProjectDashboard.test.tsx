@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { bead, projectMetrics } from "@/test/dashboard-fixtures";
 import { ProjectDashboard } from "./ProjectDashboard";
 import { BeadsBoard } from "./BeadsBoard";
@@ -9,12 +10,15 @@ import { BeadDrawer } from "./BeadDrawer";
 import { coreFixture } from "@/test/core-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openPath: vi.fn() }));
 const call = vi.mocked(invoke);
+const open = vi.mocked(openPath);
 const project = { id: "p1", workspaceId: "w1", name: "Jarvis", path: "/projects/jarvis", createdAt: 1 };
 
 describe("Project Dashboard", () => {
   beforeEach(() => {
     call.mockReset();
+    open.mockReset().mockResolvedValue();
     call.mockImplementation(async command => {
       if (command === "get_project_metrics") return projectMetrics();
       if (command === "get_project_beads") return [bead()];
@@ -34,6 +38,12 @@ describe("Project Dashboard", () => {
     expect(select).toHaveBeenCalledWith("c1");
     await user.click(screen.getByRole("button", { name: /Ver quadro/ }));
     expect(await screen.findByRole("button", { name: "Tarefa: Validar integração" })).toBeInTheDocument();
+  });
+  it("opens the selected project's folder from its path", async () => {
+    const user = userEvent.setup();
+    render(<ProjectDashboard project={project} onSelectSession={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Abrir pasta do projeto Jarvis" }));
+    expect(open).toHaveBeenCalledWith("/projects/jarvis");
   });
   it("shows all statuses on demand, filters cards and opens readonly details", async () => {
     const user = userEvent.setup();

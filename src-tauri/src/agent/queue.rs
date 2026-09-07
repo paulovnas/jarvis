@@ -36,7 +36,7 @@ impl Session {
                 "Aguarde a compactação terminar.",
             ));
         }
-        if data.active.is_none() && data.extras.queue.is_empty() {
+        if data.active.is_none() && data.recovery.is_none() && data.extras.queue.is_empty() {
             return self
                 .reserve_locked(&mut data, content, options, None, parts)
                 .map(Some);
@@ -50,7 +50,7 @@ impl Session {
         let mut options = data
             .turns
             .last()
-            .filter(|_| data.active.is_some())
+            .filter(|_| data.active.is_some() || data.recovery.is_some())
             .map(|turn| turn.turn.options.clone())
             .unwrap_or(options);
         options.approval_mode = ApprovalMode::Yolo;
@@ -69,7 +69,7 @@ impl Session {
 
     pub(super) fn reserve_next(&self) -> Result<Option<watch::Receiver<bool>>, AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
-        if data.active.is_some() || data.storage_failed || data.compacting || data.manual_compaction
+        if data.active.is_some() || data.recovery.is_some() || data.storage_failed || data.compacting || data.manual_compaction
         {
             return Ok(None);
         }

@@ -11,6 +11,8 @@ use std::{
 };
 
 const MAX_RECORD: usize = 10 * 1024 * 1024;
+const UNKNOWN_TOOL_OUTPUT: &str =
+    "Execução interrompida; resultado desconhecido. Verifique o estado atual antes de repetir a operação.";
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Record {
@@ -102,14 +104,25 @@ pub(super) fn record_at(path: &Path, offset: u64, length: usize) -> Result<Recor
 }
 
 pub(super) fn load_all(path: &Path) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
-    read(path, true)
+    read(path, true, true)
 }
 
 pub(super) fn read_only(path: &Path) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
-    read(path, false)
+    read(path, false, false)
 }
 
-fn read(path: &Path, repair: bool) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
+// Root conversations can inspect a repaired journal before deciding whether a
+// direct turn has enough durable state to continue. Worker journals and all
+// ordinary history readers keep the conservative interrupted repair below.
+pub(super) fn load_for_recovery(path: &Path) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
+    read(path, true, false)
+}
+
+fn read(
+    path: &Path,
+    repair: bool,
+    interrupt_running: bool,
+) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
     let mut turns: Vec<StoredTurn> = vec![];
     let mut extras = Extras::default();
     let mut ids = std::collections::HashSet::new();
@@ -179,10 +192,8 @@ fn read(path: &Path, repair: bool) -> Result<(Vec<StoredTurn>, Extras), AgentErr
             .map_err(|_| AgentError::storage())?;
     }
     for turn in &mut turns {
-        if repair && turn.turn.status == TurnStatus::Running {
-            interrupt_tools(turn);
-            turn.turn.status = TurnStatus::Interrupted;
-            turn.turn.error = Some(AgentError::new("interrupted", "O Jarvis foi encerrado durante esta execução. Revise os arquivos antes de continuar; ferramentas não foram repetidas."));
+        if repair && interrupt_running && turn.turn.status == TurnStatus::Running {
+            mark_interrupted(turn);
             append(path, turn)?;
         }
     }
@@ -212,7 +223,7 @@ pub(super) fn interrupt_tools(turn: &mut StoredTurn) {
                 .any(|item| item["type"] == "function_call_output" && item["call_id"] == tool.id)
             {
                 tool.status = "error".into();
-                tool.output = "Execução interrompida; resultado desconhecido. Verifique o estado atual antes de repetir a operação.".into();
+                tool.output = UNKNOWN_TOOL_OUTPUT.into();
                 if tool.name == "ask_user" {
                     tool.output = super::questions::cancelled_output();
                 }
@@ -222,6 +233,56 @@ pub(super) fn interrupt_tools(turn: &mut StoredTurn) {
             }
         }
     }
+}
+
+pub(super) fn all_tool_results_durable(turn: &StoredTurn) -> bool {
+    let mut calls = std::collections::HashSet::new();
+    let mut outputs = std::collections::HashSet::new();
+    for item in &turn.wire {
+        match item["type"].as_str() {
+            Some("function_call") => {
+                let Some(id) = item["call_id"].as_str() else {
+                    return false;
+                };
+                calls.insert(id);
+            }
+            Some("function_call_output") => {
+                let Some(id) = item["call_id"].as_str() else {
+                    return false;
+                };
+                outputs.insert(id);
+            }
+            _ => {}
+        }
+    }
+    calls.iter().all(|id| outputs.contains(id))
+        && turn
+            .turn
+            .steps
+            .iter()
+            .flat_map(|step| &step.tools)
+            .all(|tool| outputs.contains(tool.id.as_str()))
+}
+
+pub(super) fn safe_to_resume(turn: &StoredTurn) -> bool {
+    all_tool_results_durable(turn)
+        && !turn.turn.steps.iter().flat_map(|step| &step.tools).any(|tool| {
+            tool.output == UNKNOWN_TOOL_OUTPUT
+                || (tool.name == "ask_user" && tool.output == super::questions::cancelled_output())
+        })
+        && !turn.wire.iter().any(|item| {
+            item["type"].as_str() == Some("function_call_output")
+                && item["output"].as_str() == Some(UNKNOWN_TOOL_OUTPUT)
+        })
+}
+
+pub(super) fn mark_interrupted(turn: &mut StoredTurn) {
+    interrupt_tools(turn);
+    turn.turn.status = TurnStatus::Interrupted;
+    turn.turn.error = Some(AgentError::new(
+        "interrupted",
+        "O Jarvis foi encerrado durante esta execução. Revise os arquivos antes de continuar; ferramentas não foram repetidas.",
+    ));
 }
 
 #[cfg(test)]
@@ -282,6 +343,36 @@ mod tests {
         assert_eq!(loaded[0].wire[2]["call_id"], "call-1");
         let twice = load(&path).unwrap();
         assert_eq!(twice[0].wire.len(), 3);
+    }
+
+    #[test]
+    fn recovery_loader_keeps_a_running_turn_for_the_runtime_to_assess() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("session.jsonl");
+        fs::write(&path, "{\"type\":\"session\"}\n").unwrap();
+        let mut item = turn();
+        item.turn.steps.push(Step {
+            tools: vec![ToolCall {
+                id: "call-1".into(),
+                name: "read".into(),
+                args: json!({}),
+                status: "completed".into(),
+                output: "README".into(),
+                duration_ms: 1,
+            }],
+            ..Step::default()
+        });
+        item.wire.extend([
+            json!({"type":"function_call", "call_id":"call-1", "name":"read", "arguments":"{}"}),
+            json!({"type":"function_call_output", "call_id":"call-1", "output":"README"}),
+        ]);
+        append(&path, &item).unwrap();
+
+        let (recovery, _) = load_for_recovery(&path).unwrap();
+        assert_eq!(recovery[0].turn.status, TurnStatus::Running);
+        assert!(all_tool_results_durable(&recovery[0]));
+
+        assert_eq!(load(&path).unwrap()[0].turn.status, TurnStatus::Interrupted);
     }
     #[test]
     fn legacy_turn_without_context_window_remains_readable() {

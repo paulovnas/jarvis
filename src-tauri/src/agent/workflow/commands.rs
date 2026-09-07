@@ -29,7 +29,18 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
         }
     }
     let live = hub.map(|hub| hub.live.lock().map_err(|_| AgentError::internal())).transpose()?;
+    let mut current_jobs: Vec<&Job> = vec![];
     for job in state.jobs.values().filter(|job| job.run_id == state.run_id) {
+        if let Some(index) = current_jobs.iter().position(|current| current.role == job.role) {
+            let current = current_jobs[index];
+            if (job.created_at, job.updated_at, job.id.as_str()) > (current.created_at, current.updated_at, current.id.as_str()) {
+                current_jobs[index] = job;
+            }
+        } else {
+            current_jobs.push(job);
+        }
+    }
+    for job in current_jobs {
         let mut card = AgentCard { id: job.id.clone(), parent_id: Some(job.parent_id.clone()), role: job.role, title: job.title.clone(), status: job.status,
             created_at: job.created_at, updated_at: job.updated_at, options: job.options.clone(), bead_id: job.bead_id.clone(), handoff: job.handoff.as_ref().map(|handoff| HandoffSummary { verdict: handoff.verdict.clone(), summary: handoff.summary.chars().take(300).collect() }), error: job.error.clone(), attempts: job.attempts,
             pending_approval: None, pending_question: None, active_turn_id: None,
@@ -45,7 +56,7 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
         }
         agents.push(card);
     }
-    agents[1..].sort_by_key(|card| card.created_at);
+    agents[1..].sort_by(|left, right| (left.created_at, left.updated_at, left.id.as_str()).cmp(&(right.created_at, right.updated_at, right.id.as_str())));
     Ok(Snapshot { conversation_id: state.conversation_id.clone(), revision: state.revision, flow: state.flow, agents, validation: state.validation.clone().filter(|batch| !state.flow.direct() && batch.flow == state.flow) })
 }
 fn active_hub(agent: &AgentState, id: &str) -> Result<Arc<Hub>, AgentError> {
@@ -126,6 +137,22 @@ mod tests {
         state.run_id = "next".into();
         assert_eq!(snapshot(&state, None).unwrap().agents.len(), 1);
         assert_eq!(state.jobs.len(), 2);
+    }
+    #[test]
+    fn inspector_snapshots_keep_only_the_latest_card_for_each_role() {
+        let (_fixture, hub) = super::super::tests::hub();
+        let mut first = super::super::tests::job(&hub, Role::Designer, ".");
+        first.created_at = 10; first.updated_at = 20;
+        let mut latest = super::super::tests::job(&hub, Role::Designer, ".");
+        latest.created_at = 30; latest.updated_at = 30;
+        let first_id = first.id.clone(); let latest_id = latest.id.clone();
+        let mut state = hub.manifest.lock().unwrap();
+        state.jobs.insert(first_id.clone(), first);
+        state.jobs.insert(latest_id.clone(), latest);
+        let cards = snapshot(&state, None).unwrap().agents;
+        assert_eq!(cards.len(), 2);
+        assert_eq!(cards[1].id, latest_id);
+        assert!(state.jobs.contains_key(&first_id));
     }
     #[test]
     fn inspector_snapshots_omit_full_handoff_evidence_until_transcript_is_opened() {

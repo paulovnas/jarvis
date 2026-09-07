@@ -84,7 +84,7 @@ pub(super) fn worker(hub: &Arc<Hub>, job: &Job, resume: Option<String>) -> Resul
     let weak = Arc::downgrade(hub);
     let session = Arc::new(Session {
         id: job.id.clone(), journal: path, root: hub.root.root.clone(),
-        data: Mutex::new(SessionData { turns, extras, active: None, revision: next_revision(), storage_failed: false, last_emit: std::time::Instant::now(), compacting: false, manual_compaction: false }),
+        data: Mutex::new(SessionData { turns, extras, active: None, recovery: None, revision: next_revision(), storage_failed: false, last_emit: std::time::Instant::now(), compacting: false, manual_compaction: false }),
         emit: Arc::new(move |snapshot| { if let Some(hub) = weak.upgrade() { (hub.attention)(&snapshot); (hub.emit)(&hub.root.id); } }),
     });
     let content = resume.unwrap_or_else(|| job.prompt.clone());

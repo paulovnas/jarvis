@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,12 +7,14 @@ import type { FileChange } from "@/core/chat";
 import { ChangedFiles } from "./ChangedFiles";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openPath: vi.fn() }));
 const call = vi.mocked(invoke);
+const open = vi.mocked(openPath);
 const files: FileChange[] = Array.from({ length: 8 }, (_, index) => ({ path: `src/file-${index}.ts`, additions: index + 1, deletions: 1, base: "conversation" }));
 const diff = (path: string) => ({ path, base: "conversation", truncated: false, rows: [{ kind: "removed", oldLine: 1, newLine: null, text: "const before = 1;" }, { kind: "added", oldLine: null, newLine: 1, text: `const after = '${path}';` }] });
 
 describe("Changed file review", () => {
-  beforeEach(() => { call.mockReset().mockImplementation(async (_command, args) => diff((args as { path: string }).path)); });
+  beforeEach(() => { call.mockReset().mockImplementation(async (_command, args) => diff((args as { path: string }).path)); open.mockReset().mockResolvedValue(); });
 
   it("limits preview to five, shows totals and opens the clicked file in the diff dialog", async () => {
     const user = userEvent.setup(); render(<ChangedFiles conversationId="c1" files={files} />);
@@ -52,5 +55,15 @@ describe("Changed file review", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Arquivo indisponível");
     await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
     expect(await screen.findByText("const before = 1;")).toBeInTheDocument();
+  });
+
+  it("opens the project folder and selected file with the system defaults", async () => {
+    const user = userEvent.setup(); render(<ChangedFiles conversationId="c1" projectPath="/projects/jarvis" files={files} />);
+    await user.click(screen.getByRole("button", { name: "Alterações em src/file-2.ts" }));
+    const dialog = await screen.findByRole("dialog", { name: "Arquivos alterados" });
+    await user.click(within(dialog).getByRole("button", { name: "Abrir pasta do projeto" }));
+    expect(open).toHaveBeenCalledWith("/projects/jarvis");
+    await user.click(within(dialog).getByRole("button", { name: "Abrir src/file-2.ts no editor padrão" }));
+    expect(open).toHaveBeenCalledWith("/projects/jarvis/src/file-2.ts");
   });
 });

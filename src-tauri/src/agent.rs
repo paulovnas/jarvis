@@ -194,6 +194,7 @@ struct Active {
 struct SessionData {
     turns: Vec<StoredTurn>,
     active: Option<Active>,
+    recovery: Option<String>,
     revision: u64,
     storage_failed: bool,
     last_emit: std::time::Instant,
@@ -283,6 +284,48 @@ impl Session {
         data.turns.push(turn);
         data.revision = next_revision();
         Ok(signal)
+    }
+    fn resume_recovered_turn(&self) -> Result<Option<watch::Receiver<bool>>, AgentError> {
+        const NOTICE: &str = "The Jarvis runtime restarted during this direct execution. All persisted tool results are valid and already applied. Continue from those results without repeating prior tool calls. Inspect the current project state before any new mutation.";
+        let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
+        if data.active.is_some() || data.storage_failed {
+            return Ok(None);
+        }
+        let Some(id) = data.recovery.clone() else {
+            return Ok(None);
+        };
+        let current = data
+            .turns
+            .last_mut()
+            .filter(|turn| turn.turn.id == id)
+            .ok_or_else(AgentError::internal)?;
+        if !resumable_direct_turn(current) {
+            return Ok(None);
+        }
+        if current.turn.status == TurnStatus::Interrupted {
+            current.turn.status = TurnStatus::Running;
+            current.turn.error = None;
+        }
+        let recorded = current.wire.iter().any(|item| {
+            item["role"].as_str() == Some("user") && item["content"].as_str() == Some(NOTICE)
+        });
+        if !recorded {
+            current.wire.push(json!({"role":"user","content":NOTICE}));
+            if journal::append(&self.journal, current).is_err() {
+                data.storage_failed = true;
+                return Err(AgentError::storage());
+            }
+        }
+        let (cancel, signal) = watch::channel(false);
+        data.active = Some(Active {
+            id,
+            cancel,
+            approval: None,
+            question: None,
+        });
+        data.recovery = None;
+        data.revision = next_revision();
+        Ok(Some(signal))
     }
     fn snapshot_data(&self, data: &SessionData) -> ChatSnapshot {
         ChatSnapshot {
@@ -461,7 +504,19 @@ impl AgentState {
         // Completed runtime replay is not a permanent history cache.
         Self::prune_idle(&mut sessions);
         let (path, root) = library::agent_location(state, home, id)?;
-        let (turns, mut extras) = journal::load_all(&path)?;
+        let (mut turns, mut extras) = journal::load_for_recovery(&path)?;
+        let recovery = turns
+            .last()
+            .filter(|turn| resumable_direct_turn(turn))
+            .map(|turn| turn.turn.id.clone());
+        for turn in &mut turns {
+            if turn.turn.status == TurnStatus::Running
+                && recovery.as_deref() != Some(turn.turn.id.as_str())
+            {
+                journal::mark_interrupted(turn);
+                journal::append(&path, turn)?;
+            }
+        }
         let recorded_files: std::collections::HashSet<_> = extras.files.keys().cloned().collect();
         diffs::load_legacy(&root, &turns, &mut extras.files);
         for file in extras
@@ -479,6 +534,7 @@ impl AgentState {
             data: Mutex::new(SessionData {
                 turns,
                 active: None,
+                recovery,
                 revision: next_revision(),
                 storage_failed: false,
                 last_emit: std::time::Instant::now(),
@@ -520,6 +576,16 @@ impl AgentState {
         let agent = self.clone(); let app = app.clone(); let state = state.clone(); let id = id.to_owned();
         tauri::async_runtime::spawn_blocking(move || agent.session(&app, &state, &home, &id)).await.map_err(|_| AgentError::internal())?
     }
+
+    fn has_recovery_tail(
+        &self,
+        state: &AppState,
+        home: &std::path::Path,
+        id: &str,
+    ) -> Result<bool, AgentError> {
+        let (path, _) = library::agent_location(state, home, id)?;
+        self.histories.has_recovery_tail(&path)
+    }
 }
 // Runtime updates and disk snapshots share one sequence. Evicting an idle
 // session must never make its final persisted response look older to the UI.
@@ -534,6 +600,18 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn resumable_direct_turn(turn: &StoredTurn) -> bool {
+    let direct = match turn.turn.options.workflow {
+        Some(workflow::Flow::Standard | workflow::Flow::Designer) => true,
+        Some(workflow::Flow::Planned | workflow::Flow::Complete) => false,
+        None => turn.turn.options.mode == Mode::Build,
+    };
+    let recoverable_status = turn.turn.status == TurnStatus::Running
+        || (turn.turn.status == TurnStatus::Interrupted
+            && turn.turn.error.as_ref().is_some_and(|error| error.code == "interrupted"));
+    recoverable_status && direct && journal::safe_to_resume(turn)
 }
 async fn cancelled(signal: &mut watch::Receiver<bool>) {
     loop {
@@ -567,16 +645,58 @@ pub async fn get_chat(
     app: tauri::AppHandle,
     persistence: tauri::State<'_, AppState>,
     agent: tauri::State<'_, AgentState>,
+    oauth: tauri::State<'_, OpenAiCodexState>,
     conversation_id: String,
 ) -> Result<ChatSnapshot, AgentError> {
     let state = persistence.inner().clone();
     let agent = agent.inner().clone();
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
-    tauri::async_runtime::spawn_blocking(move || {
-        agent.read_chat(&state, &home, &conversation_id)
+    let recovery_check = agent.clone();
+    let recovery_state = state.clone();
+    let recovery_home = home.clone();
+    let recovery_id = conversation_id.clone();
+    let running = tauri::async_runtime::spawn_blocking(move || {
+        recovery_check.has_recovery_tail(&recovery_state, &recovery_home, &recovery_id)
     })
     .await
-    .map_err(|_| AgentError::internal())?
+    .map_err(|_| AgentError::internal())??;
+    if !running {
+        return tauri::async_runtime::spawn_blocking(move || {
+            agent.read_chat(&state, &home, &conversation_id)
+        })
+        .await
+        .map_err(|_| AgentError::internal())?;
+    }
+
+    let activity = crate::updater::begin_activity(&app)
+        .map_err(|message| AgentError::new("app_updating", &message))?;
+    let session = agent.runtime_session(&app, &persistence, &conversation_id).await?;
+    let signal = session.resume_recovered_turn()?;
+    let snapshot_agent = agent.clone();
+    let snapshot_state = state.clone();
+    let snapshot_home = home.clone();
+    let snapshot_id = conversation_id.clone();
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        snapshot_agent.read_chat(&snapshot_state, &snapshot_home, &snapshot_id)
+    })
+    .await
+    .map_err(|_| AgentError::internal())??;
+    if let Some(signal) = signal {
+        (session.emit)(snapshot.clone());
+        let mcp = app.state::<crate::mcp::McpState>().inner().clone();
+        spawn_run(
+            session,
+            state,
+            oauth.inner().clone(),
+            mcp,
+            home,
+            app,
+            (signal, activity),
+        );
+    } else {
+        agent.release_idle(&session);
+    }
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -616,11 +736,11 @@ pub async fn start_agent_turn(
         let mut parts = parts.unwrap_or_default();
         attachments::validate_parts(&home, &conversation_id, &mut parts)?;
         let (content, parts) = skill_input::normalize(&home, &session.root, content, parts)?;
-        let signal = session.submit_message(content, options, parts)?;
-        let signal = if signal.is_some() {
-            signal
-        } else {
-            session.reserve_next()?
+        let submitted = session.submit_message(content, options, parts)?;
+        let recovery = session.resume_recovered_turn()?;
+        let signal = match recovery {
+            Some(signal) => Some(signal),
+            None => submitted.or(session.reserve_next()?),
         };
         Ok::<_, AgentError>((session, signal))
     })
@@ -696,7 +816,10 @@ pub async fn resume_agent_queue(
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     app.state::<crate::core::CoreState>().require_ready(&home)?;
     library::agent_location(&persistence, &home, &conversation_id)?;
-    let signal = session.reserve_next()?;
+    let signal = match session.resume_recovered_turn()? {
+        Some(signal) => Some(signal),
+        None => session.reserve_next()?,
+    };
     let snapshot = session.snapshot()?;
     (session.emit)(snapshot.clone());
     if let Some(signal) = signal {

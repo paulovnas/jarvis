@@ -47,6 +47,13 @@ describe("Manual workflow validation", () => {
     view.rerender(<WorkflowValidation conversationId="chat" batch={batch} busy onRefresh={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Aprovar" })).toBeDisabled();
   });
+  it("keeps the decision footer inside the dialog with comfortable spacing", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowValidation conversationId="chat" batch={batch} busy={false} onRefresh={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Abrir projeto: pendente" }));
+    const footer = screen.getByRole("button", { name: "Aprovar" }).parentElement;
+    expect(footer).toHaveClass("mx-0", "mb-0", "px-5", "pb-6");
+  });
   it("restores recorded decisions and prevents resubmitting stale or submitted rounds", async () => {
     const reviewed = { ...batch, items: batch.items.map(item => ({ ...item, decision: "approved" as const })) };
     const view = render(<WorkflowValidation conversationId="chat" batch={reviewed} busy={false} onRefresh={vi.fn()} />);

@@ -35,6 +35,13 @@ it("shows the account suffix, model and effort and updates execution states with
   view.rerender(<WorkflowAgents conversationId="c1" workflow={{ ...workflow, data: { ...workflow.data, agents: [] } }} />);
   expect(screen.queryByRole("button", { name: /Abrir agente/ })).not.toBeInTheDocument();
 });
+it("keeps only the latest card when a role runs more than once", () => {
+  const first = { ...agent, id: "designer-first", role: "designer" as const, title: "Primeira análise", createdAt: 10, updatedAt: 20, status: "completed" as const };
+  const latest = { ...agent, id: "designer-latest", role: "designer" as const, title: "Nova análise", createdAt: 30, updatedAt: 30, status: "running" as const };
+  render(<WorkflowAgents conversationId="c1" workflow={{ data: { conversationId: "c1", revision: 1, flow: "planned", agents: [first, latest] }, error: null, loading: false, retry: vi.fn() }} />);
+  expect(screen.queryByRole("button", { name: "Abrir agente Designer: Primeira análise" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Abrir agente Designer: Nova análise" })).toBeInTheDocument();
+});
 it("loads a read-only transcript only after clicking an agent card", async () => {
   const user = userEvent.setup(); const turn = savedTurn(); turn.user = "Implementar busca"; turn.steps[0].text = "Busca implementada com validação.";
   vi.mocked(invoke).mockResolvedValue({ ...emptyChat(),conversationId:"worker1",turns:[turn] });
