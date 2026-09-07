@@ -54,12 +54,30 @@ impl Role {
     } }
 }
 
+#[derive(Serialize)]
+pub struct InstructionSection { pub title: &'static str, pub content: &'static str }
+
+fn supplemental_instructions(flow: Flow, role: Role) -> Vec<InstructionSection> {
+    let mut sections = vec![];
+    if role == Role::Designer { sections.push(InstructionSection { title: "Open Design", content: crate::core::design::INSTRUCTIONS }); }
+    if role.coordinator() {
+        sections.push(InstructionSection { title: "Coordenação de design", content: "\nDesign-dependent planning: when layout, brand or interaction decisions are prerequisites for a useful plan, dispatch Designer with phase=discovery BEFORE committing dependent implementation tasks. Discovery is read-only and does not require a Beads ID. Complete Planner may dispatch Designer only for discovery; implementation goes through Orchestrator. Use its evidence and brief to establish visual acceptance criteria and dependencies; do not postpone essential design decisions until after building. For implementation use phase=implementation and an assigned Bead. Delegated Designers cannot question the user. Respond promptly to hub_request_guidance deliveries through hub_respond_guidance with that exact requestId. Resolve from known requirements first; if insufficient, use ask_user or request guidance from your parent. Never hub_wait while an unresolved child guidance request requires your response. Relay the actual decision; do not invent user approval. Pass accepted design decisions/resource IDs to subsequent designers and builders.\n" });
+    }
+    if flow == Flow::Designer { sections.push(InstructionSection { title: "Designer direto", content: "\nYou are the direct Designer and talk to the user yourself. Deliver the requested design outcome end to end. No dispatch or assigned Bead is required to start. Use ask_user when needed; do not call hub tools.\n" }); }
+    sections
+}
+
+pub(super) fn instruction_sections(flow: Flow, role: Role) -> Vec<InstructionSection> {
+    let mut sections = vec![
+        InstructionSection { title: "Papel do agente", content: role.contract() },
+        InstructionSection { title: "Diretrizes comuns", content: include_str!("common.md") },
+    ];
+    sections.extend(supplemental_instructions(flow, role));
+    sections
+}
+
 pub(super) fn prompt(flow: Flow, role: Role, id: &str) -> String {
     let mut text = format!("\nJarvis built-in workflow: {flow:?}. Your immutable role is {role:?}; agent ID {id}.\n{}\n{}\n", include_str!("common.md"), role.contract());
-    if role == Role::Designer { text.push_str(crate::core::design::INSTRUCTIONS); }
-    if role.coordinator() {
-        text.push_str("\nDesign-dependent planning: when layout, brand or interaction decisions are prerequisites for a useful plan, dispatch Designer with phase=discovery BEFORE committing dependent implementation tasks. Discovery is read-only and does not require a Beads ID. Complete Planner may dispatch Designer only for discovery; implementation goes through Orchestrator. Use its evidence and brief to establish visual acceptance criteria and dependencies; do not postpone essential design decisions until after building. For implementation use phase=implementation and an assigned Bead. Delegated Designers cannot question the user. Respond promptly to hub_request_guidance deliveries through hub_respond_guidance with that exact requestId. Resolve from known requirements first; if insufficient, use ask_user or request guidance from your parent. Never hub_wait while an unresolved child guidance request requires your response. Relay the actual decision; do not invent user approval. Pass accepted design decisions/resource IDs to subsequent designers and builders.\n");
-    }
-    if flow == Flow::Designer { text.push_str("\nYou are the direct Designer and talk to the user yourself. Deliver the requested design outcome end to end. No dispatch or assigned Bead is required to start. Use ask_user when needed; do not call hub tools.\n"); }
+    for section in supplemental_instructions(flow, role) { text.push_str(section.content); }
     text
 }

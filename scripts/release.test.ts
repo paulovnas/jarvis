@@ -12,7 +12,7 @@ vi.mock("./release-common", () => ({
   versionFiles: ["package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"],
   releaseTarget: "aarch64-apple-darwin", releaseWorkflow: "release-macos.yml", releaseEnvironment: "macos-release",
   requiredSecrets: ["KEY"], command: state.command, optionalRelease: state.optionalRelease,
-  configuration: () => ({ pkg: JSON.parse(readFileSync(path.join(state.root, "package.json"), "utf8")) as { version: string }, config: { version: "0.8.2-beta.1" } }),
+  configuration: () => ({ pkg: JSON.parse(readFileSync(path.join(state.root, "package.json"), "utf8")) as { version: string }, config: { version: "0.8.3-beta.1" } }),
   read: (name: string) => readFileSync(path.join(state.root, name), "utf8"),
 }));
 
@@ -22,9 +22,9 @@ beforeEach(() => {
   vi.resetModules();
   state.root = mkdtempSync(path.join(tmpdir(), "jarvis-launcher-test-"));
   mkdirSync(path.join(state.root, "src-tauri"));
-  writeFileSync(path.join(state.root, "package.json"), JSON.stringify({ version: "0.8.2-beta.1", scripts: { untouched: "value" } }));
-  writeFileSync(path.join(state.root, "src-tauri/Cargo.toml"), '[package]\nname = "jarvis"\nversion = "0.8.2-beta.1"\n');
-  writeFileSync(path.join(state.root, "src-tauri/Cargo.lock"), '[[package]]\nname = "jarvis"\nversion = "0.8.2-beta.1"\n');
+  writeFileSync(path.join(state.root, "package.json"), JSON.stringify({ version: "0.8.3-beta.1", scripts: { untouched: "value" } }));
+  writeFileSync(path.join(state.root, "src-tauri/Cargo.toml"), '[package]\nname = "jarvis"\nversion = "0.8.3-beta.1"\n');
+  writeFileSync(path.join(state.root, "src-tauri/Cargo.lock"), '[[package]]\nname = "jarvis"\nversion = "0.8.3-beta.1"\n');
   state.optionalRelease.mockReset().mockReturnValue(null);
   state.command.mockReset().mockImplementation((program, input) => {
     const args = input as string[];
@@ -38,7 +38,7 @@ beforeEach(() => {
   vi.spyOn(console, "info").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   process.exitCode = 0;
-  process.argv = ["bun", "scripts/release.ts", "0.8.3-beta.1"];
+  process.argv = ["bun", "scripts/release.ts", "0.8.4-beta"];
 });
 afterEach(() => {
   process.argv = originalArgv; process.exitCode = originalExit;
@@ -48,9 +48,9 @@ afterEach(() => {
 it("prepares a version and dispatches signed remote builds without local Rust or signing secrets", async () => {
   await import("./release");
   expect(process.exitCode).toBe(0);
-  expect(JSON.parse(readFileSync(path.join(state.root, "package.json"), "utf8"))).toEqual({ version: "0.8.3-beta.1", scripts: { untouched: "value" } });
-  expect(state.command).toHaveBeenCalledWith("git", ["push", "--atomic", "origin", "main", "refs/tags/v0.8.3-beta.1"]);
-  expect(state.command).toHaveBeenCalledWith("gh", ["workflow", "run", "release-macos.yml", "--repo", "paulovnas/jarvis", "--ref", "main", "-f", "tag=v0.8.3-beta.1", "-f", "publish=true"]);
+  expect(JSON.parse(readFileSync(path.join(state.root, "package.json"), "utf8"))).toEqual({ version: "0.8.4-beta", scripts: { untouched: "value" } });
+  expect(state.command).toHaveBeenCalledWith("git", ["push", "--atomic", "origin", "main", "refs/tags/v0.8.4-beta"]);
+  expect(state.command).toHaveBeenCalledWith("gh", ["workflow", "run", "release-macos.yml", "--repo", "paulovnas/jarvis", "--ref", "main", "-f", "tag=v0.8.4-beta", "-f", "publish=true"]);
   expect(state.command.mock.calls.some(([program]) => ["cargo", "security", "codesign", "bun"].includes(String(program)))).toBe(false);
 });
 it("keeps dry-run entirely local and read-only", async () => {
@@ -58,14 +58,14 @@ it("keeps dry-run entirely local and read-only", async () => {
   await import("./release");
   expect(process.exitCode).toBe(0);
   expect(state.command).not.toHaveBeenCalled();
-  expect(readFileSync(path.join(state.root, "package.json"), "utf8")).toContain("0.8.2-beta.1");
+  expect(readFileSync(path.join(state.root, "package.json"), "utf8")).toContain("0.8.3-beta.1");
 });
 it("does not mutate version files or dispatch when a version is already public", async () => {
   state.optionalRelease.mockReturnValue({ isDraft: false });
   await import("./release");
   expect(process.exitCode).toBe(1);
   expect(state.command.mock.calls.some(([, args]) => (args as string[]).includes("push"))).toBe(false);
-  expect(readFileSync(path.join(state.root, "package.json"), "utf8")).toContain("0.8.2-beta.1");
+  expect(readFileSync(path.join(state.root, "package.json"), "utf8")).toContain("0.8.3-beta.1");
 });
 it("stops before version changes when signing secrets are not configured", async () => {
   const original = state.command.getMockImplementation()!;
@@ -73,5 +73,5 @@ it("stops before version changes when signing secrets are not configured", async
   await import("./release");
   expect(process.exitCode).toBe(1);
   expect(state.command.mock.calls.some(([, args]) => (args as string[]).includes("push"))).toBe(false);
-  expect(readFileSync(path.join(state.root, "package.json"), "utf8")).toContain("0.8.2-beta.1");
+  expect(readFileSync(path.join(state.root, "package.json"), "utf8")).toContain("0.8.3-beta.1");
 });

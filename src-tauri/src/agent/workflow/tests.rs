@@ -57,7 +57,7 @@ fn direct_designer_has_questions_and_design_tools_but_no_delegation() {
     let (_fixture, hub) = hub();
     let direct = Execution { hub, id:"main".into(), role:Role::Designer, flow:Flow::Designer, scope:vec![".".into()] };
     let mut tools = tools::definitions(Mode::Build); tools.extend(crate::core::design::definitions()); direct.filter(&mut tools);
-    for name in ["ask_user", "write", "design_brief", "design_search", "design_read"] { assert!(tools.iter().any(|tool| tool["name"] == name), "missing {name}"); }
+    for name in ["ask_user", "write", "design_brief", "design_search", "design_read", "process_check_port", "process_start"] { assert!(tools.iter().any(|tool| tool["name"] == name), "missing {name}"); }
     assert!(tools.iter().all(|tool| !tool["name"].as_str().unwrap().starts_with("hub_")));
     for role in [Role::Planner, Role::Builder, Role::Designer] { assert!(!Role::Designer.spawns(Flow::Designer, role)); }
     assert_eq!(Flow::Designer.root(), Role::Designer);
@@ -71,11 +71,26 @@ fn delegated_design_discovery_enforces_read_only_and_parent_questions_even_with_
     let exec = Execution { hub, id:child.id, role:Role::Designer, flow:Flow::Complete, scope:vec![".".into()] };
     assert_eq!(exec.role_mode(), Mode::Plan);
     let mut definitions = tools::definitions(Mode::Build); definitions.extend(crate::core::design::definitions()); exec.filter(&mut definitions);
-    for name in ["ask_user", "write", "edit", "bash", "workflow_check", "beads_claim", "beads_update", "ctx_execute"] {
+    for name in ["ask_user", "write", "edit", "bash", "workflow_check", "beads_claim", "beads_update", "ctx_execute", "process_start"] {
         assert!(!definitions.iter().any(|d| d["name"] == name));
         assert!(exec.preflight(&ToolCall { name:name.into(), id:"call".into(), args:json!({}), status:"pending".into(), output:String::new(), duration_ms:0 }).is_some());
     }
-    for name in ["design_search", "design_read", "design_brief", "hub_request_guidance", "hub_complete"] { assert!(definitions.iter().any(|d| d["name"] == name), "missing {name}"); }
+    for name in ["design_search", "design_read", "design_brief", "hub_request_guidance", "hub_complete", "process_check_port"] { assert!(definitions.iter().any(|d| d["name"] == name), "missing {name}"); }
+}
+
+#[tokio::test]
+async fn planner_can_check_a_port_without_starting_a_process() {
+    let (_fixture, hub) = hub();
+    let exec = Execution { hub:hub.clone(), id:"main".into(), role:Role::Planner, flow:Flow::Complete, scope:vec![".".into()] };
+    let mut definitions = tools::definitions(Mode::Plan); exec.filter(&mut definitions);
+    assert!(definitions.iter().any(|d| d["name"] == "process_check_port"));
+    assert!(!definitions.iter().any(|d| d["name"] == "process_start"));
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let call = ToolCall { id:"port".into(), name:"process_check_port".into(), args:json!({"port":listener.local_addr().unwrap().port()}), status:"pending".into(), output:String::new(), duration_ms:0 };
+    assert!(exec.preflight(&call).is_none());
+    let result = exec.execute(&call, hub.root_signal.clone()).await.unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&result).unwrap()["available"], false);
+    assert!(!hub.env.processes.has_running());
 }
 
 #[tokio::test]

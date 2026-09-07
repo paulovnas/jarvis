@@ -29,7 +29,7 @@ export function notesFromTag(contents: string, version: string): string {
 }
 export function releaseVersion(input: string, current: string): string {
   const version = valid(input);
-  if (!version || input !== version || parse(version)!.build.length) throw new Error("Use uma versão SemVer sem v, como 0.8.0-beta.2 ou 0.8.0.");
+  if (!version || input !== version || parse(version)!.build.length) throw new Error("Use uma versão SemVer sem v, como 0.8.4-beta ou 0.8.4.");
   if (compare(version, current) < 0) throw new Error("A versão não pode ser menor que a atual.");
   return version;
 }

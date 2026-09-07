@@ -7,7 +7,7 @@ import { parseReleaseArguments, releaseVersion, RELEASE_REPOSITORY, replaceCargo
 function main() {
   const args = process.argv.slice(2).filter(arg => arg !== "--");
   if (!args.length || args.includes("--help")) {
-    console.info("Uso: bun run release 0.8.3-beta.1 [--notes-file arquivo.md] [--dry-run]\nPrepara o commit/tag e inicia a validação, compilação assinada e publicação no GitHub Actions. Funciona em macOS, Windows e Linux; não requer chaves locais nem Rust.");
+    console.info("Uso: bun run release 0.8.4-beta [--notes-file arquivo.md] [--dry-run]\nPrepara o commit/tag e inicia a validação, compilação assinada e publicação no GitHub Actions. Funciona em macOS, Windows e Linux; não requer chaves locais nem Rust.");
     return;
   }
   const options = parseReleaseArguments(args);

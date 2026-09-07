@@ -6,6 +6,7 @@ import { historyPageSchema, queuedMessageSchema, readChat, type ChatDraft, type 
 import { historyWindow, mergeChat, mergeHistory, type HistoryDirection } from "@/core/chat-history";
 import { libraryError } from "@/core/library";
 import type { PendingQuestion, QuestionResponse } from "@/core/questions";
+import { onDesktopResume } from "@/core/desktop-resume";
 
 export function useChat(conversationId: string | null) {
   const [loaded, setLoaded] = useState<ChatSnapshot | null>(null);
@@ -31,7 +32,24 @@ export function useChat(conversationId: string | null) {
     const request = ++generation.current;
     if (!conversationId) return;
     let dispose: (() => void) | undefined;
+    let stopResume: (() => void) | undefined;
     let active = true;
+    let refreshing = false;
+    let refreshAgain = false;
+    const refresh = async () => {
+      if (!active) return;
+      if (refreshing) { refreshAgain = true; return; }
+      refreshing = true;
+      try {
+        const value = await invoke<unknown>("get_chat", { conversationId });
+        if (active) { accept(value, conversationId); setError(null); }
+      } catch (cause) {
+        if (active) setError({ id: conversationId, message: libraryError(cause, "Não foi possível sincronizar esta conversa.") });
+      } finally {
+        refreshing = false;
+        if (refreshAgain && active) { refreshAgain = false; void refresh(); }
+      }
+    };
     // Subscribe before loading so an update cannot fall between snapshot and listener.
     void listen<unknown>("agent:updated", event => {
       if (!active) return;
@@ -43,13 +61,12 @@ export function useChat(conversationId: string | null) {
     }).then(unlisten => {
       if (!active) { unlisten(); return; }
       dispose = unlisten;
-      return invoke<unknown>("get_chat", { conversationId }).then(value => {
-        if (active) { accept(value, conversationId); setError(null); }
-      });
+      stopResume = onDesktopResume(() => { void refresh(); });
+      return refresh();
     }).catch((cause: unknown) => {
       if (active) setError({ id: conversationId, message: libraryError(cause, "Não foi possível abrir o histórico desta conversa.") });
     });
-    return () => { active = false; dispose?.(); if (generation.current === request) generation.current += 1; };
+    return () => { active = false; dispose?.(); stopResume?.(); if (generation.current === request) generation.current += 1; };
   }, [conversationId, attempt, accept]);
 
   const loadHistory = async (direction: HistoryDirection): Promise<boolean> => {

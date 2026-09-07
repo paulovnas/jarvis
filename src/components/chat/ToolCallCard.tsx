@@ -36,6 +36,7 @@ const tools = {
   process_start: { label: "Iniciar processo", icon: Terminal },
   process_list: { label: "Consultar processos", icon: Terminal },
   process_output: { label: "Saída do processo", icon: Terminal },
+  process_check_port: { label: "Verificar porta", icon: Terminal },
   validation_publish: { label: "Validação manual", icon: Check },
   hub_spawn: { label: "Delegar tarefa", icon: Bot },
   hub_list: { label: "Consultar agentes", icon: Bot },

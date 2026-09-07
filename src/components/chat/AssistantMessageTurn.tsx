@@ -13,7 +13,7 @@ export function AssistantMessageTurn({ message }: { message: ChatMessage }) {
     <article data-testid={`assistant-message-${message.id}`} className="my-5 flex min-w-0 flex-col gap-2">
       <header className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span role="img" aria-label="Jarvis" className="inline-flex shrink-0 items-center gap-0.5">
+        <span role="img" aria-label="Jarvis" className="inline-flex shrink-0 items-center gap-1.5">
             <span aria-hidden="true" className="relative h-5 w-3.5 overflow-hidden"><JarvisLogo className="absolute -left-[7px] -top-1 size-7 max-w-none" /></span>
             <span aria-hidden="true" className="text-xs font-semibold tracking-wide text-foreground">arvis</span>
           </span>

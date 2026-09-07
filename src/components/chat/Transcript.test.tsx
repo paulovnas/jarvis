@@ -8,18 +8,45 @@ import { populatedLibrary } from "@/test/library-fixtures";
 import { useChat } from "@/hooks/use-chat";
 import { ChatArea } from "./ChatArea";
 import type { HistoryPage } from "@/core/chat";
+import type { LatestVisibility } from "./Transcript";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
 function page(start: number, id = "c1"): HistoryPage {
   return { conversationId: id, history: { start, total: 100 }, compactions: [], navigation: [0, 10, 20, 30, 40, 50, 60, 70, 80, 99].map(index => ({ id: `t${index}`, index, createdAt: 1, user: `Pedido ${index}`, assistant: `Resumo ${index}` })), turns: Array.from({ length: 20 }, (_, i) => ({ ...savedTurn(), id: `t${start + i}`, user: `Pedido ${start + i}`, steps: [{ ...savedTurn().steps[0], text: `Resposta ${start + i}`, summary: "", tools: [] }] })) };
 }
-function Harness({ id = "c1" }: { id?: string }) {
+function Harness({ id = "c1", onLatestVisibility }: { id?: string; onLatestVisibility?: LatestVisibility }) {
   const library = populatedLibrary(); library.conversations[0].id = id; library.selection.conversationId = id;
-  return <ChatArea library={library} chat={useChat(id)} modelGroups={[{ provider: "Codex", models: [{ value: "openai-codex-pessoal/model", label: "Modelo", reasoningLevels: ["medium"], defaultReasoningLevel: "medium" }] }]} />;
+  return <ChatArea onLatestVisibility={onLatestVisibility} library={library} chat={useChat(id)} modelGroups={[{ provider: "Codex", models: [{ value: "openai-codex-pessoal/model", label: "Modelo", reasoningLevels: ["medium"], defaultReasoningLevel: "medium" }] }]} />;
 }
 describe("lazy transcript navigation", () => {
   beforeEach(() => { call.mockReset(); vi.mocked(listen).mockResolvedValue(() => {}); });
+  it("reports reading only at the latest messages and clears visibility when leaving", async () => {
+    call.mockResolvedValue({ ...emptyChat(), ...page(80) });
+    const onLatestVisibility = vi.fn<LatestVisibility>();
+    const view = render(<Harness onLatestVisibility={onLatestVisibility} />);
+    await screen.findByText("Resposta 99");
+    const viewport = view.container.querySelector<HTMLElement>('.transcript-scroll [data-slot="scroll-area-viewport"]')!;
+    Object.defineProperties(viewport, { scrollHeight: { configurable:true, value:1600 }, clientHeight: { configurable:true, value:600 } });
+    viewport.scrollTop = 1000; fireEvent.scroll(viewport);
+    expect(onLatestVisibility).toHaveBeenLastCalledWith("c1", true);
+    viewport.scrollTop = 400; fireEvent.scroll(viewport);
+    expect(onLatestVisibility).toHaveBeenLastCalledWith("c1", false);
+    viewport.scrollTop = 1000; fireEvent.scroll(viewport);
+    expect(onLatestVisibility).toHaveBeenLastCalledWith("c1", true);
+    view.unmount();
+    expect(onLatestVisibility).toHaveBeenLastCalledWith("c1", false);
+  });
+  it("never treats the end of an older history page as the latest message", async () => {
+    call.mockResolvedValue({ ...emptyChat(), ...page(0) });
+    const onLatestVisibility = vi.fn<LatestVisibility>();
+    const view = render(<Harness onLatestVisibility={onLatestVisibility} />);
+    await screen.findByText("Resposta 19");
+    const viewport = view.container.querySelector<HTMLElement>('.transcript-scroll [data-slot="scroll-area-viewport"]')!;
+    Object.defineProperties(viewport, { scrollHeight: { configurable:true, value:1600 }, clientHeight: { configurable:true, value:600 } });
+    viewport.scrollTop = 1000; fireEvent.scroll(viewport);
+    expect(onLatestVisibility).not.toHaveBeenCalledWith("c1", true);
+  });
   it("oculta a navegação com menos de dez trechos", async () => {
     call.mockResolvedValue({ ...emptyChat(), ...page(80), navigation: page(80).navigation.slice(0, 9) });
     render(<Harness />);

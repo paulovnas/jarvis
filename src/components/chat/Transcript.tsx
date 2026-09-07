@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDown, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -42,7 +42,9 @@ function HistoryRail({ entries, total, active, disabled, jump }: { entries: Hist
   </nav>;
 }
 
-export function Transcript({ snapshot, chat }: { snapshot: ChatSnapshot; chat: ChatController }) {
+export type LatestVisibility = (conversationId: string, visible: boolean) => void;
+
+export function Transcript({ snapshot, chat, onLatestVisibility }: { snapshot: ChatSnapshot; chat: ChatController; onLatestVisibility?: LatestVisibility }) {
   const root = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const inFlight = useRef(false);
@@ -55,6 +57,12 @@ export function Transcript({ snapshot, chat }: { snapshot: ChatSnapshot; chat: C
   const hasOlder = window.start > 0;
   const hasNewer = window.start + snapshot.turns.length < window.total;
   const viewport = () => root.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+  const reportLatest = useCallback(() => {
+    const view = root.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    onLatestVisibility?.(snapshot.conversationId, Boolean(view && view.clientHeight > 0 && !hasNewer && !chat.historyLoading && !anchor.current
+      && view.scrollHeight - view.scrollTop - view.clientHeight < 80));
+  }, [onLatestVisibility, snapshot.conversationId, hasNewer, chat.historyLoading]);
+  useLayoutEffect(() => () => onLatestVisibility?.(snapshot.conversationId, false), [onLatestVisibility, snapshot.conversationId]);
   const rows = () => Array.from(root.current?.querySelectorAll<HTMLElement>('[data-turn-id]') ?? []);
   const navigate = async (direction: HistoryDirection) => {
     if (inFlight.current) return;
@@ -63,6 +71,7 @@ export function Transcript({ snapshot, chat }: { snapshot: ChatSnapshot; chat: C
     const row = rows().find(row => row.getBoundingClientRect().bottom > top);
     anchor.current = { id: row?.dataset.turnId, offset: (row?.getBoundingClientRect().top ?? top) - top, target: typeof direction === "number" ? direction : undefined, latest: direction === "latest", ready: false };
     follow.current = false; inFlight.current = true;
+    onLatestVisibility?.(snapshot.conversationId, false);
     const ok = await chat.loadHistory(direction);
     inFlight.current = false;
     if (ok && anchor.current) { anchor.current.ready = true; setRestoreVersion(version => version + 1); }
@@ -82,19 +91,22 @@ export function Transcript({ snapshot, chat }: { snapshot: ChatSnapshot; chat: C
         restoring.current = false;
         if (saved.latest) setVisible(window.total - 1);
         else if (saved.target !== undefined) setVisible(saved.target);
+        reportLatest();
       });
     } else if (follow.current && !hasNewer) { view.scrollTop = view.scrollHeight; lastScroll.current = view.scrollTop; }
-  }, [snapshot.turns, hasNewer, restoreVersion, window.total]);
+    reportLatest();
+  }, [snapshot.turns, hasNewer, restoreVersion, window.total, reportLatest]);
   useLayoutEffect(() => {
     const view = viewport();
     const content = root.current?.querySelector<HTMLElement>('[aria-label="Histórico de mensagens"]');
     if (!view || !content) return;
     const observer = new ResizeObserver(() => {
       if (follow.current && !hasNewer) { view.scrollTop = view.scrollHeight; lastScroll.current = view.scrollTop; }
+      reportLatest();
     });
     observer.observe(view); observer.observe(content);
     return () => observer.disconnect();
-  }, [hasNewer]);
+  }, [hasNewer, reportLatest]);
 
   return <div ref={root} className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
     <HistoryRail entries={snapshot.navigation ?? []} total={window.total} active={visible ?? window.total - 1} disabled={chat.historyLoading} jump={index => { void navigate(index); }} />
@@ -110,6 +122,7 @@ export function Transcript({ snapshot, chat }: { snapshot: ChatSnapshot; chat: C
       const top = target.getBoundingClientRect().top;
       const row = rows().find(row => row.getBoundingClientRect().bottom > top + 20);
       if (row) setVisible(Number(row.dataset.turnIndex));
+      reportLatest();
       if (chat.historyLoading || chat.historyError) return;
       if (hasOlder && target.scrollTop < 160 && target.scrollTop < previous) void navigate("older");
       else if (hasNewer && remaining < 160 && target.scrollTop > previous) void navigate("newer");

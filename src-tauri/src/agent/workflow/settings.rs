@@ -33,6 +33,12 @@ pub(super) fn apply(options: &mut TurnOptions, profiles: &ModelSettings, flow: F
     }
 }
 #[tauri::command]
+pub fn get_agent_instructions(flow: Flow, role: Role) -> Result<Vec<contracts::InstructionSection>, AgentError> {
+    if !roster(flow).contains(&role) { return Err(invalid("Este agente não pertence ao fluxo.")); }
+    Ok(contracts::instruction_sections(flow, role))
+}
+
+#[tauri::command]
 pub async fn get_agent_models(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<ModelSettings, AgentError> {
     let state = state.inner().clone(); let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     tauri::async_runtime::spawn_blocking(move || load(&state, &home)).await.map_err(|_| AgentError::internal())?
@@ -55,4 +61,37 @@ pub async fn set_agent_model(app: tauri::AppHandle, state: tauri::State<'_, AppS
         })
     }).await.map_err(|_| AgentError::internal())??;
     let _ = app.emit("agent-models:changed", ()); Ok(result)
+}
+
+#[cfg(test)]
+mod instruction_tests {
+    use super::*;
+
+    #[test]
+    fn all_visible_instructions_are_the_actual_fixed_runtime_contracts() {
+        for flow in [Flow::Standard, Flow::Designer, Flow::Planned, Flow::Complete] {
+            for role in roster(flow) {
+                let sections = get_agent_instructions(flow, *role).unwrap();
+                let runtime = contracts::prompt(flow, *role, "runtime-agent-id");
+                assert_eq!(sections[0].content, role.contract());
+                assert!(sections.iter().any(|section| section.content == include_str!("common.md")));
+                for section in &sections {
+                    assert!(!section.title.is_empty());
+                    assert!(!section.content.is_empty());
+                    assert!(runtime.contains(section.content));
+                    assert!(!section.content.contains("runtime-agent-id"));
+                }
+                assert_eq!(sections.iter().any(|section| section.title == "Open Design"), *role == Role::Designer);
+                assert_eq!(sections.iter().any(|section| section.title == "Designer direto"), flow == Flow::Designer);
+                assert_eq!(sections.iter().any(|section| section.title == "Coordenação de design"), role.coordinator());
+            }
+        }
+    }
+
+    #[test]
+    fn instructions_reject_agents_outside_the_selected_flow() {
+        assert!(get_agent_instructions(Flow::Standard, Role::Reviewer).is_err());
+        assert!(get_agent_instructions(Flow::Planned, Role::Orchestrator).is_err());
+        assert!(get_agent_instructions(Flow::Designer, Role::Builder).is_err());
+    }
 }

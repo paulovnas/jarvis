@@ -15,7 +15,10 @@ try {
     // Scope the certificate to this invocation, including Tauri's bundler and Cargo children.
     process.env.APPLE_SIGNING_IDENTITY = identity.hash;
     process.env.JARVIS_SIGNING_IDENTIFIER = projectIdentifier(projectRoot);
-    if (command === "dev") args = signedDevArguments(args, projectRoot);
+    if (command === "dev") {
+      process.env.JARVIS_DEV_APP_BUNDLE = "1";
+      args = signedDevArguments(args, projectRoot);
+    }
     console.info("Jarvis: assinatura macOS estável ativada.");
   }
   // Native addons do not reliably observe Bun's process.env mutations. Launch a fresh

@@ -16,11 +16,46 @@ import { AppSidebar } from "./Sidebar";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
-function Harness({ runningIds }: { runningIds?: ReadonlySet<string> }) {
-  return <AppSidebar library={useLibrary()} runningConversationIds={runningIds} />;
+function Harness({ runningIds, unreadIds }: { runningIds?: ReadonlySet<string>; unreadIds?: ReadonlySet<string> }) {
+  return <AppSidebar library={useLibrary()} runningConversationIds={runningIds} unreadConversationIds={unreadIds} />;
 }
 
 describe("Persistent sidebar", () => {
+  it("keeps the project group current on chat and dashboard, then moves it to the selected project", async () => {
+    const user = userEvent.setup();
+    const stored = populatedLibrary();
+    stored.projects.push({ id: "p3", workspaceId: "w1", name: "Website", path: "/projects/website", createdAt: 3 });
+    call.mockResolvedValue(stored);
+    render(<Harness />);
+    const jarvis = await screen.findByRole("group", { name: "Projeto Jarvis" });
+    const website = screen.getByRole("group", { name: "Projeto Website" });
+    expect(jarvis).toHaveAttribute("aria-current", "true");
+    expect(website).not.toHaveAttribute("aria-current");
+    expect(within(jarvis).getByRole("button", { name: "Primeira conversa" })).toHaveAttribute("aria-current", "page");
+    call.mockResolvedValue({ ...stored, selection: { ...stored.selection, conversationId: null } });
+    await user.click(within(jarvis).getByRole("button", { name: "Dashboard" }));
+    await waitFor(() => expect(within(jarvis).getByRole("button", { name: "Dashboard" })).toHaveAttribute("aria-current", "page"));
+    expect(jarvis).toHaveAttribute("aria-current", "true");
+    call.mockResolvedValue({ ...stored, selection: { ...stored.selection, projectId: "p3", conversationId: null } });
+    await user.click(within(website).getByRole("button", { name: "Website" }));
+    await waitFor(() => expect(website).toHaveAttribute("aria-current", "true"));
+    expect(jarvis).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks unread conversations and folded projects without hiding the running indicator", async () => {
+    const stored = populatedLibrary();
+    stored.projects.push({ id:"p3", workspaceId:"w1", name:"Website", path:"/projects/website", createdAt:3 });
+    stored.conversations.push({ id:"c3", projectId:"p3", title:"Background chat", createdAt:3 });
+    call.mockResolvedValue(stored);
+    const view = render(<Harness runningIds={new Set(["c1"])} unreadIds={new Set(["c1", "c3"])} />);
+    const selected = await screen.findByRole("button", { name:/Primeira conversa/ });
+    expect(within(selected).getByRole("img", { name:"Mensagem não lida" })).toBeVisible();
+    expect(within(selected).getByRole("status", { name:"Conversa em execução" })).toBeVisible();
+    expect(within(screen.getByTitle("/projects/website")).getByRole("img", { name:"Projeto com mensagens não lidas" })).toBeVisible();
+    view.rerender(<Harness unreadIds={new Set(["c3"])} />);
+    expect(within(selected).queryByRole("img", { name:"Mensagem não lida" })).not.toBeInTheDocument();
+    expect(within(screen.getByTitle("/projects/website")).getByRole("img", { name:"Projeto com mensagens não lidas" })).toBeVisible();
+  });
   it("opens the Dashboard first and reveals recent sessions three then ten at a time", async () => {
     const user = userEvent.setup();
     const stored = populatedLibrary();

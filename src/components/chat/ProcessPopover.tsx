@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Terminal, Square, ChevronDown } from "lucide-react";
+import { Terminal, Square, ChevronDown, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,11 +31,16 @@ function Output({ process }: { process: ChatProcess }) {
 }
 
 export function ProcessPopover({ conversationId }: { conversationId: string }) {
+  return <SessionProcessPopover key={conversationId} conversationId={conversationId} />;
+}
+
+function SessionProcessPopover({ conversationId }: { conversationId: string }) {
   const [items, setItems] = useState<ChatProcess[]>([]);
   const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState<string | null>(null);
   const [selected, setSelected] = useState<ChatProcess | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const lock = useRef(false);
   const refreshRef = useRef<() => Promise<void>>(async () => {});
@@ -48,7 +53,11 @@ export function ProcessPopover({ conversationId }: { conversationId: string }) {
       running = true;
       try {
         const result = processSchema.array().parse(await invoke("list_chat_processes", { conversationId }));
-        if (active) { setItems(result.filter(item => item.conversationId === conversationId)); setError(null); }
+        if (active) {
+          const scoped = result.filter(item => item.conversationId === conversationId);
+          setItems(scoped); setError(null);
+          if (!scoped.length) { setOpen(false); setLogs(null); }
+        }
       } catch (cause) { if (active) setError(libraryError(cause, "Não foi possível consultar os processos.")); }
       finally { running = false; if (active && dirty) { dirty = false; void refresh(); } }
     };
@@ -57,6 +66,18 @@ export function ProcessPopover({ conversationId }: { conversationId: string }) {
     return () => { active = false; stops.forEach(stop => stop()); };
   }, [conversationId]);
   const count = items.filter(processRunning).length;
+  const finished = items.filter(item => item.status === "failed" || item.status === "exited").length;
+  const hasFailure = items.some(item => item.status === "failed");
+  async function remove(process: ChatProcess) {
+    if (processRunning(process) || lock.current) return;
+    lock.current = true; setRemoving(process.id);
+    try {
+      await invoke("remove_chat_process", { conversationId, id: process.id });
+      setLogs(value => value === process.id ? null : value);
+      await refreshRef.current();
+    } catch (cause) { toast.error(libraryError(cause, "Não foi possível remover o processo.")); }
+    finally { lock.current = false; setRemoving(null); }
+  }
   async function stop() {
     if (!selected || lock.current) return;
     lock.current = true; setStopping(true);
@@ -64,14 +85,14 @@ export function ProcessPopover({ conversationId }: { conversationId: string }) {
     catch (cause) { toast.error(libraryError(cause, "Não foi possível parar o processo.")); }
     finally { lock.current = false; setStopping(false); }
   }
-  if (!count && !open && !selected && !error) return null;
+  if (!count && !finished && !open && !selected && !error) return null;
   return <>
     <Popover open={open} onOpenChange={value => { setOpen(value); if (value) void refreshRef.current(); else setLogs(null); }}>
-      <PopoverTrigger render={<Button variant="ghost" size="sm" />} aria-label={error ? "Consultar processos" : `${count} processos em execução`} className="h-7 cursor-pointer gap-1.5 px-2 font-mono text-[11px] text-onedark-green">
-        <Terminal aria-hidden="true" className="size-3.5" /><span>{error ? "!" : count}</span>
+      <PopoverTrigger render={<Button variant="ghost" size="sm" />} aria-label={error ? "Consultar processos" : count ? `${count} processos em execução` : `${finished} processos encerrados`} className={`h-7 cursor-pointer gap-1.5 px-2 font-mono text-[11px] ${hasFailure || error ? "text-destructive" : count ? "text-onedark-green" : "text-muted-foreground"}`}>
+        <Terminal aria-hidden="true" className="size-3.5" /><span>{error ? "!" : count || finished}</span>
       </PopoverTrigger>
       <PopoverContent side="top" align="start" sideOffset={12} className="dark instrument-panel max-h-[65vh] w-[380px] max-w-[90vw] gap-3 overflow-y-auto bg-card p-3 text-foreground">
-        <div className="micro-label flex items-center gap-2 text-muted-foreground"><Terminal className="size-3.5" aria-hidden="true" />Processos<Badge variant="secondary" className="ml-auto font-mono text-[10px]">{count}</Badge></div>
+        <div className="micro-label flex items-center gap-2 text-muted-foreground"><Terminal className="size-3.5" aria-hidden="true" />Processos<Badge variant="secondary" className="ml-auto font-mono text-[10px]">{items.length}</Badge></div>
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         {items.map(process => <Collapsible key={process.id} open={logs === process.id} onOpenChange={value => setLogs(value ? process.id : null)} className="rounded-md border border-border bg-background/40 p-3 shadow-[inset_0_1px_0_#ffffff08]">
           <div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-xs font-medium">{process.title}</span><Badge variant="outline" className={`text-[9px] ${process.status === "failed" ? "text-destructive" : processRunning(process) ? "text-onedark-green" : "text-muted-foreground"}`}>{PROCESS_LABELS[process.status]}</Badge></div>
@@ -80,6 +101,7 @@ export function ProcessPopover({ conversationId }: { conversationId: string }) {
           <div className="mt-2 flex items-center gap-2"><span className="font-mono text-[9px] text-muted-foreground">PID {process.pid} · {new Date(process.startedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}{process.exitCode !== null ? ` · saída ${process.exitCode}` : ""}</span>
             <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="ml-auto h-6 cursor-pointer gap-1 px-1.5 text-[10px]">Saída<ChevronDown className="size-3" /></CollapsibleTrigger>
             {processRunning(process) && <Button variant="ghost" size="sm" disabled={process.status === "stopping"} className="h-6 cursor-pointer gap-1 px-1.5 text-[10px] text-destructive" aria-label={`Parar ${process.title}`} onClick={() => setSelected(process)}><Square className="size-3" />Parar</Button>}
+            {!processRunning(process) && <Button variant="ghost" size="sm" disabled={removing !== null || stopping} className="h-6 cursor-pointer gap-1 px-1.5 text-[10px] text-muted-foreground" aria-label={`Remover ${process.title}`} onClick={() => void remove(process)}><Trash2 className="size-3" />Remover</Button>}
           </div>
           <CollapsibleContent>{open && logs === process.id && <Output process={process} />}</CollapsibleContent>
         </Collapsible>)}

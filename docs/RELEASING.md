@@ -7,7 +7,7 @@ O Jarvis recebe versões assinadas pelos [Releases do GitHub](https://github.com
 Na branch `main`, com o código commitado e sincronizado, execute:
 
 ```sh
-bun run release 0.8.3-beta.1
+bun run release 0.8.4-beta
 ```
 
 O comando funciona no **macOS, Windows e Linux** com Bun, Git e GitHub CLI autenticado (`gh auth login`). A máquina que inicia o release não precisa de Rust, Xcode, certificado Apple ou da chave privada do atualizador. Isso permite iniciar uma publicação macOS mesmo trabalhando no Windows; o build Windows ainda não está habilitado.
@@ -16,17 +16,17 @@ O launcher atualiza a versão em package.json, Tauri e Cargo, cria um commit e u
 
 ```sh
 # Simular sem alterar arquivos nem acessar o GitHub.
-bun run release 0.8.3-beta.1 --dry-run
+bun run release 0.8.4-beta --dry-run
 
 # Usar notas próprias em pt-BR, preservadas na anotação da tag.
-bun run release 0.8.3-beta.1 --notes-file /caminho/notas-da-versao.md
+bun run release 0.8.4-beta --notes-file /caminho/notas-da-versao.md
 
 # Acompanhar as execuções e depois uma execução específica.
 gh run list --workflow release-macos.yml
 gh run watch ID_DA_EXECUCAO --exit-status
 ```
 
-Sem notas próprias, o GitHub gera as notas pelo histórico. Use sempre uma versão SemVer sem o prefixo `v` no comando; por exemplo, `0.8.3-beta.1` para beta e `0.8.3` para estável.
+Sem notas próprias, o GitHub gera as notas pelo histórico. Use sempre uma versão SemVer sem o prefixo `v` no comando; por exemplo, `0.8.4-beta` para beta e `0.8.4` para estável. O padrão das próximas prévias é `-beta`, sem sufixo numérico: para publicar outra, avance a versão, como `0.8.5-beta`. A release `0.8.3-beta.1` permanece com seu nome original.
 
 ## O que executa no CI
 

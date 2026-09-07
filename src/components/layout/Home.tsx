@@ -23,6 +23,7 @@ import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
 import { EmptyWorkspace } from "./EmptyWorkspace";
 import { useSettingsMenu } from "@/hooks/use-settings-menu";
+import { useUnreadConversations } from "@/hooks/use-unread-conversations";
 
 const SettingsDialog = lazy(() => import("@/components/settings/SettingsDialog").then(module => ({ default: module.SettingsDialog })));
 const ProjectDashboard = lazy(() => import("@/components/dashboard/ProjectDashboard").then(module => ({ default: module.ProjectDashboard })));
@@ -64,6 +65,12 @@ export function Home() {
   const leftToggle = <PanelToggle side="left" collapsed={layout.sidebarCollapsed} onToggle={() => toggle("left")} />;
   const rightToggle = <PanelToggle side="right" collapsed={layout.inspectorCollapsed} onToggle={() => toggle("right")} />;
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [latestVisibleId, setLatestVisibleId] = useState<string | null>(null);
+  const onLatestVisibility = useCallback((id: string, visible: boolean) => {
+    setLatestVisibleId(current => visible ? id : current === id ? null : current);
+  }, []);
+  const selectedId = library.snapshot?.selection.conversationId;
+  const unreadConversationIds = useUnreadConversations(!settingsOpen && !chat.error && chat.snapshot && latestVisibleId === selectedId ? latestVisibleId : null);
   useSettingsMenu(setSettingsOpen);
   const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
   const accountsVersion = useRef(0);
@@ -127,7 +134,7 @@ export function Home() {
           maxSize="500px"
           className="h-full min-h-0 min-w-0"
         >
-          <div id="workspace-panel-content" inert={layout.sidebarCollapsed} aria-hidden={layout.sidebarCollapsed} className={`h-full min-w-[220px] transition-transform duration-200 motion-reduce:transition-none ${layout.sidebarCollapsed ? "-translate-x-full" : ""}`}><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} /></div>
+          <div id="workspace-panel-content" inert={layout.sidebarCollapsed} aria-hidden={layout.sidebarCollapsed} className={`h-full min-w-[220px] transition-transform duration-200 motion-reduce:transition-none ${layout.sidebarCollapsed ? "-translate-x-full" : ""}`}><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} /></div>
         </ResizablePanel>
 
         {/* Keep each separator in geometric order: display:none breaks the panel
@@ -145,7 +152,7 @@ export function Home() {
           minSize="360px"
           className="h-full min-h-0 min-w-0"
         >
-          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} />}
+          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} />}
         </ResizablePanel>
 
         {!dashboardProject && <><ResizableHandle

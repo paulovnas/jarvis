@@ -47,3 +47,20 @@ it("does not let a delayed startup snapshot overwrite newer lifecycle events", a
   ]));
   expect([...result.current]).toEqual(["c1"]);
 });
+
+it("clears evicted sessions on resume without erasing a new execution during the refresh", async () => {
+  call.mockResolvedValue([
+    { conversationId: "c1", revision: 2, activeTurnId: "t1" },
+    { conversationId: "c2", revision: 2, activeTurnId: "t2" },
+  ]);
+  const { result } = renderHook(useAgentActivity);
+  await waitFor(() => expect(result.current.size).toBe(2));
+  let resolve!: (value: unknown) => void;
+  call.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
+  await emit("c2", 5, "new-turn");
+  await act(async () => resolve([]));
+  expect([...result.current]).toEqual(["c2"]);
+  await emit("c1", 2, "t1");
+  expect([...result.current]).toEqual(["c2"]);
+});

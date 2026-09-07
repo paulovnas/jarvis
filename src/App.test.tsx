@@ -170,9 +170,15 @@ describe("App bootstrap and onboarding", () => {
 
   it("bloqueia em erro de carga e permite tentar novamente", async () => {
     const retryConfig = deferred<AppConfig>();
-    invokeMock
-      .mockRejectedValueOnce(new Error("database unavailable"))
-      .mockReturnValueOnce(retryConfig.promise);
+    const fallback = invokeMock.getMockImplementation()!;
+    let configReads = 0;
+    invokeMock.mockImplementation((command, args, options) => {
+      if (command === "get_app_config") {
+        configReads += 1;
+        return configReads === 1 ? Promise.reject(new Error("database unavailable")) : retryConfig.promise;
+      }
+      return fallback(command, args, options);
+    });
 
     const user = userEvent.setup();
     render(<App />);
@@ -189,7 +195,7 @@ describe("App bootstrap and onboarding", () => {
     expect(
       await screen.findByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).toBeInTheDocument();
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "get_app_config");
+    expect(invokeMock.mock.calls.filter(([command]) => command === "get_app_config")).toHaveLength(2);
   });
 
   it("mantém Finalizar pendente e só mostra Home após conclusão confirmada", async () => {

@@ -39,7 +39,7 @@ fn begin(session: Arc<Session>) -> Result<(CompactionLease, TurnOptions), AgentE
         ));
     }
     data.manual_compaction = true;
-    data.revision += 1;
+            data.revision = next_revision();
     let snapshot = session.snapshot_data(&data);
     drop(data);
     (session.emit)(snapshot);

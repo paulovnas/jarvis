@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Tag existente (v0.8.3-beta.1); vazio valida a main
+        description: Tag existente (v0.8.4-beta); vazio valida a main
         type: string
         default: ''
       publish:

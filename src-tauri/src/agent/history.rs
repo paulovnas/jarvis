@@ -146,7 +146,7 @@ impl HistoryState {
     pub(super) fn worker_snapshot(&self, path: &Path, id: &str) -> Result<ChatSnapshot, AgentError> {
         self.with(path, |index| {
             let page = index.page(path, id, None, None, None)?;
-            Ok(ChatSnapshot { conversation_id: id.into(), compacting: false, revision: now(), turns: page.turns, history: page.history,
+            Ok(ChatSnapshot { conversation_id: id.into(), compacting: false, revision: next_revision(), turns: page.turns, history: page.history,
                 navigation: Some(page.navigation), active_turn_id: None, pending_approval: None, pending_question: None,
                 queued_messages: vec![], context: index.context(), compactions: page.compactions, file_changes: vec![],
             })
@@ -228,7 +228,7 @@ impl AgentState {
         let (path, _) = library::agent_location(state, home, id)?;
         self.histories.with(&path, |index| {
             let page = index.page(&path, id, None, None, None)?;
-            Ok(ChatSnapshot { conversation_id: id.into(), compacting: false, revision: 0,
+            Ok(ChatSnapshot { conversation_id: id.into(), compacting: false, revision: next_revision(),
                 turns: page.turns, history: page.history, navigation: Some(page.navigation),
                 active_turn_id: None, pending_approval: None, pending_question: None,
                 queued_messages: index.queue.clone(), context: index.context(), compactions: page.compactions,
@@ -325,5 +325,23 @@ mod tests {
         assert!(agent.sessions.lock().unwrap().is_empty());
         let page = agent.history_page(&state, &fixture.root, &id, None, None, Some(3)).unwrap();
         assert_eq!(page.history.start, 0); assert_eq!(page.turns[3].id, "t3");
+
+        // A completed runtime is evicted. Its durable history must supersede the
+        // last running snapshot, even if the final event never reached the UI.
+        let mut runtime = Arc::try_unwrap(crate::agent::tests::session(&fixture)).ok().unwrap();
+        runtime.id = id.clone(); runtime.journal = path.clone();
+        let session = Arc::new(runtime);
+        agent.sessions.lock().unwrap().insert(id.clone(), session.clone());
+        let _signal = session.reserve("Oi".into(), stored(0).turn.options).unwrap();
+        let running = agent.read_chat(&state, &fixture.root, &id).unwrap();
+        session.update(true, |data| data.turns.last_mut().unwrap().turn.steps.push(Step { text: "Olá!".into(), ..Step::default() })).unwrap();
+        finish(&session, Ok(()));
+        agent.release_idle(&session);
+        assert!(agent.sessions.lock().unwrap().is_empty());
+        let restored = agent.read_chat(&state, &fixture.root, &id).unwrap();
+        assert!(restored.revision > running.revision, "durable completion must supersede live state");
+        assert!(restored.active_turn_id.is_none());
+        assert_eq!(restored.turns.last().unwrap().status, TurnStatus::Completed);
+        assert_eq!(restored.turns.last().unwrap().steps.last().unwrap().text, "Olá!");
     }
 }

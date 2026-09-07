@@ -23,7 +23,7 @@ pub(super) fn search_path(inherited: &OsStr, home: &Path, prefixes: &[&Path]) ->
     std::env::join_paths(paths).unwrap_or_else(|_| inherited.to_owned())
 }
 
-pub(super) fn configure(command: &mut tokio::process::Command, explicit_path: bool) {
+pub(crate) fn configure(command: &mut tokio::process::Command, explicit_path: bool) {
     if explicit_path { return; }
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
     command.env("PATH", search_path(&std::env::var_os("PATH").unwrap_or_default(), &home, &[Path::new("/opt/homebrew"), Path::new("/usr/local")]));

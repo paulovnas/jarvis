@@ -1,7 +1,9 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { projectIdentifier, selectSigningIdentity, signedDevArguments, signingCommand } from "./macos-signing";
+import { localSigningIdentity, projectIdentifier, selectSigningIdentity, signedDevArguments, signingCommand } from "./macos-signing";
 
 const firstHash = "A".repeat(40);
 const secondHash = "B".repeat(40);
@@ -67,6 +69,20 @@ describe("macOS signing setup", () => {
 
   it("uses the application's configured identifier", () => {
     expect(projectIdentifier(process.cwd())).toBe("com.foxtag.jarvis");
+  });
+
+  it.skipIf(process.platform !== "darwin" || process.env.JARVIS_TEST_MACOS_BUNDLE !== "1")("runs signed development inside a native notification-capable bundle", () => {
+    const temporary = mkdtempSync(path.join(tmpdir(), "Jarvis bundle probe "));
+    try {
+      const binary = path.join(temporary, "probe");
+      execFileSync("/usr/bin/clang", ["-Wall", "-Wextra", "-Werror", "-fobjc-arc", "scripts/fixtures/notification-bundle.m", "-framework", "Foundation", "-framework", "UserNotifications", "-o", binary]);
+      const result = spawnSync("/bin/sh", [path.resolve("scripts/run-signed-macos.sh"), binary, "argument with spaces"], {
+        env: { ...process.env, APPLE_SIGNING_IDENTITY: localSigningIdentity().hash, JARVIS_SIGNING_IDENTIFIER: projectIdentifier(process.cwd()), JARVIS_DEV_APP_BUNDLE: "1" }, encoding: "utf8",
+      });
+      expect(result.stderr, "native runner failed").not.toMatch(/error:/i);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim().split("\n")).toEqual(["com.foxtag.jarvis", "Jarvis", "argument with spaces"]);
+    } finally { rmSync(temporary, { recursive: true, force: true }); }
   });
 
   it.skipIf(process.platform === "win32")("uses a valid shell runner", () => {

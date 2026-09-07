@@ -1,5 +1,6 @@
 //! Native preferences and OS services, independent of the visible conversation.
 mod notifications;
+pub(crate) mod unread;
 #[cfg(test)]
 mod tests;
 
@@ -139,6 +140,7 @@ impl<T> Power<T> {
 
 #[derive(Default)]
 pub struct SystemState {
+    unread: unread::UnreadState,
     store: Mutex<Option<Result<Store, String>>>,
     sleep: Mutex<(bool, Option<String>)>,
     notification_error: Mutex<Option<String>>,
@@ -208,6 +210,7 @@ pub fn setup(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         app.path().home_dir()?.join(".jarvis/system.json"),
     ));
     notifications::setup();
+    unread::setup(app);
     let (send, receive) = mpsc::channel();
     let handle = app.clone();
     let worker = std::thread::Builder::new()
@@ -278,17 +281,21 @@ pub(crate) fn notify(
     notice: Notice,
 ) {
     let system = app.state::<SystemState>();
-    // Consume disabled events too: turning notifications on never replays old work.
+    // OS banners and in-app unread marks share the event source, not preferences.
+    let event_key = format!("{conversation_id}/{event_id}/{notice:?}");
     let fresh = system
         .recent
         .lock()
-        .is_ok_and(|mut recent| recent.insert(format!("{conversation_id}/{event_id}/{notice:?}")));
-    if !fresh || !system.preferences().is_ok_and(|p| p.notifications) {
+        .is_ok_and(|mut recent| recent.insert(event_key.clone()));
+    if !fresh {
         return;
     }
     let app = app.clone();
     let id = conversation_id.to_owned();
     tauri::async_runtime::spawn(async move {
+        if let Err(error) = unread::notify(&app, id.clone(), event_key).await {
+            let _ = app.emit("unread:error", error);
+        }
         let lookup_app = app.clone();
         let body = tauri::async_runtime::spawn_blocking(move || {
             let home = lookup_app.path().home_dir().ok()?;
@@ -350,6 +357,7 @@ pub async fn save_system_preferences(
         }
     }
     state.changed(&app);
+    let _ = unread::refresh(&app).await;
     state.snapshot()
 }
 

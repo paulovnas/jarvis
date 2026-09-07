@@ -4,6 +4,7 @@ import { notesFromTag, parseReleaseArguments, releaseManifest, releaseVersion, r
 it("keeps publication restricted to the official main and explicit version tags", () => {
   expect(() => validateCIRequest("paulovnas/jarvis", "refs/heads/main", "", false)).not.toThrow();
   expect(() => validateCIRequest("paulovnas/jarvis", "refs/heads/main", "v0.8.3-beta.1", true)).not.toThrow();
+  expect(() => validateCIRequest("paulovnas/jarvis", "refs/heads/main", "v0.8.4-beta", true)).not.toThrow();
   for (const ref of ["refs/heads/feature", "refs/pull/1/merge", "refs/tags/v0.8.3", undefined]) expect(() => validateCIRequest("paulovnas/jarvis", ref, "v0.8.3", true)).toThrow();
   expect(() => validateCIRequest("fork/jarvis", "refs/heads/main", "v0.8.3", true)).toThrow();
   for (const tag of ["", "main", "v../main", "v0.8.3\ninjected", "v0.8.3+build", "--help"]) expect(() => validateCIRequest("paulovnas/jarvis", "refs/heads/main", tag, true)).toThrow();
@@ -18,6 +19,9 @@ it("parses launcher options without allowing ambiguous or unsupported release ta
 });
 
 it("aceita a primeira publicação e versões posteriores sem permitir downgrade ou tags ambíguas", () => {
+  expect(releaseVersion("0.8.4-beta", "0.8.3-beta.1")).toBe("0.8.4-beta");
+  expect(releaseVersion("0.8.5-beta", "0.8.4-beta")).toBe("0.8.5-beta");
+  expect(() => releaseVersion("0.8.3-beta", "0.8.3-beta.1")).toThrow("menor");
   expect(releaseVersion("0.8.0-beta.1", "0.8.0-beta.1")).toBe("0.8.0-beta.1");
   expect(releaseVersion("0.8.0-beta.10", "0.8.0-beta.2")).toBe("0.8.0-beta.10");
   expect(releaseVersion("0.8.0", "0.8.0-beta.10")).toBe("0.8.0");

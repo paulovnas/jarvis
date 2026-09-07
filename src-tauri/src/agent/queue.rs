@@ -63,7 +63,7 @@ impl Session {
         });
         self.checkpoint(&mut data, "queue_checkpoint", &queue)?;
         data.extras.queue = queue;
-        data.revision += 1;
+            data.revision = next_revision();
         Ok(None)
     }
 
@@ -110,7 +110,7 @@ impl Session {
         let removed = queue.remove(index);
         self.checkpoint(&mut data, "queue_checkpoint", &queue)?;
         data.extras.queue = queue;
-        data.revision += 1;
+        data.revision = next_revision();
         Ok(removed)
     }
 }

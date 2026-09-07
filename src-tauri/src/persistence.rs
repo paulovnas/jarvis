@@ -63,6 +63,7 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration { version: 14, sql: include_str!("../../drizzle/0013_context7_core.sql") },
     Migration { version: 15, sql: include_str!("../../drizzle/0014_image_generation.sql") },
+    Migration { version: 16, sql: include_str!("../../drizzle/0015_unread_conversations.sql") },
 ];
 
 #[test]
@@ -507,7 +508,7 @@ fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -600,7 +601,7 @@ fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {

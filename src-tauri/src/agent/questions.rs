@@ -1,4 +1,4 @@
-use super::{cancelled, journal, AgentError, AgentState, ChatSnapshot, Session, ToolCall};
+use super::{cancelled, journal, next_revision, AgentError, AgentState, ChatSnapshot, Session, ToolCall};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -180,7 +180,7 @@ pub(super) fn answer(session: &Session, turn_id: &str, tool_id: &str, response: 
     }
     *data.turns.last_mut().ok_or_else(AgentError::internal)? = current;
     let pending = data.active.as_mut().and_then(|active| active.question.take()).ok_or_else(AgentError::internal)?;
-    data.revision += 1;
+        data.revision = next_revision();
     let snapshot = session.snapshot_data(&data);
     drop(data);
     (session.emit)(snapshot.clone());

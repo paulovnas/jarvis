@@ -9,6 +9,7 @@ import {
   Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Empty,
   EmptyDescription,
@@ -58,9 +59,11 @@ const sidebarStyle = {
 export function AppSidebar({
   library,
   runningConversationIds,
+  unreadConversationIds,
 }: {
   library: LibraryController;
   runningConversationIds?: ReadonlySet<string>;
+  unreadConversationIds?: ReadonlySet<string>;
 }) {
   const [dialog, setDialog] = useState<NameDialog | null>(null);
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
@@ -103,7 +106,8 @@ export function AppSidebar({
               }}
             >
               {runningConversationIds?.has(item.id) ? <Spinner aria-label="Conversa em execução" className="text-primary motion-reduce:animate-none" /> : <MessageSquare />}
-              <span className="truncate">{item.title}</span>
+              <span className="min-w-0 flex-1 truncate">{item.title}</span>
+              {unreadConversationIds?.has(item.id) && <Badge role="img" aria-label="Mensagem não lida" title="Mensagem não lida" className="size-2 shrink-0 rounded-full border-0 bg-primary p-0 shadow-[0_0_6px_#61afef44]" />}
             </SidebarMenuButton>
           </LibraryItemMenu>
         </SidebarMenuItem>
@@ -217,10 +221,11 @@ export function AppSidebar({
                           const conversations = snapshot.conversations.filter(entry => entry.projectId === item.id)
                             .sort((a, b) => (b.lastActivityAt ?? b.createdAt) - (a.lastActivityAt ?? a.createdAt) || b.createdAt - a.createdAt || a.id.localeCompare(b.id));
                           const visibleCount = visibleCounts[item.id] ?? 3;
+                          const isCurrentProject = item.id === project?.id;
                           const isOpen = expanded[item.id] ?? item.id === project?.id;
                           return (
-                          <SidebarMenuItem key={item.id}>
-                            <Collapsible open={isOpen} onOpenChange={(open) => setExpanded(values => ({ ...values, [item.id]: open }))}>
+                          <SidebarMenuItem key={item.id} data-active-project={isCurrentProject ? "true" : undefined} className="rounded-lg border border-transparent transition-colors duration-150 data-[active-project=true]:border-primary/25 data-[active-project=true]:bg-primary/[0.055] data-[active-project=true]:shadow-[inset_2px_0_var(--primary)] motion-reduce:transition-none">
+                            <Collapsible role="group" aria-label={`Projeto ${item.name}`} aria-current={isCurrentProject ? "true" : undefined} open={isOpen} onOpenChange={(open) => setExpanded(values => ({ ...values, [item.id]: open }))}>
                             <LibraryItemMenu
                               disabled={busy}
                               onEdit={() =>
@@ -230,7 +235,7 @@ export function AppSidebar({
                             >
                               <CollapsibleTrigger render={<SidebarMenuButton
                                 size="lg"
-                                className="h-9 cursor-pointer"
+                                className={`h-9 cursor-pointer ${isCurrentProject ? "font-semibold text-primary" : ""}`}
                                 isActive={item.id === project?.id}
                                 disabled={busy}
                                 title={item.path}
@@ -248,6 +253,7 @@ export function AppSidebar({
                                     {item.name}
                                   </span>
                                 </span>
+                                {conversations.some(entry => unreadConversationIds?.has(entry.id)) && <Badge role="img" aria-label="Projeto com mensagens não lidas" title="Mensagens não lidas" className="mr-1 size-2 shrink-0 rounded-full border-0 bg-primary p-0" />}
                               </CollapsibleTrigger>
                             </LibraryItemMenu>
                               <SidebarMenuAction
@@ -263,7 +269,7 @@ export function AppSidebar({
                               >
                                 <Plus aria-hidden="true" />
                               </SidebarMenuAction>
-                              <CollapsibleContent className="my-1 ml-3 border-l border-border pl-2">
+                              <CollapsibleContent className={`my-1 ml-3 border-l pl-2 ${isCurrentProject ? "mr-1 border-primary/30" : "border-border"}`}>
                                 <SidebarMenu className="mb-1">
                                   <SidebarMenuItem>
                                     <SidebarMenuButton className="cursor-pointer" disabled={busy}

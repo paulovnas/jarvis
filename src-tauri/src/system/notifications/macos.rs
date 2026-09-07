@@ -86,7 +86,7 @@ pub(crate) async fn authorize() -> Result<(), String> {
             );
         });
         center.requestAuthorizationWithOptions_completionHandler(
-            UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound,
+            UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound | UNAuthorizationOptions::Badge,
             &completion,
         );
     }

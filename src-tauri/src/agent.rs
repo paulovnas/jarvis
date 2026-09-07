@@ -281,7 +281,7 @@ impl Session {
             question: None,
         });
         data.turns.push(turn);
-        data.revision += 1;
+        data.revision = next_revision();
         Ok(signal)
     }
     fn snapshot_data(&self, data: &SessionData) -> ChatSnapshot {
@@ -317,7 +317,7 @@ impl Session {
     ) -> Result<(), AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
         change(&mut data);
-        data.revision += 1;
+        data.revision = next_revision();
         if durable {
             if data.storage_failed {
                 return Err(AgentError::storage());
@@ -479,7 +479,7 @@ impl AgentState {
             data: Mutex::new(SessionData {
                 turns,
                 active: None,
-                revision: now(),
+                revision: next_revision(),
                 storage_failed: false,
                 last_emit: std::time::Instant::now(),
                 extras,
@@ -521,6 +521,14 @@ impl AgentState {
         tauri::async_runtime::spawn_blocking(move || agent.session(&app, &state, &home, &id)).await.map_err(|_| AgentError::internal())?
     }
 }
+// Runtime updates and disk snapshots share one sequence. Evicting an idle
+// session must never make its final persisted response look older to the UI.
+fn next_revision() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static REVISION: AtomicU64 = AtomicU64::new(0);
+    REVISION.fetch_add(1, Ordering::Relaxed) + 1
+}
+
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

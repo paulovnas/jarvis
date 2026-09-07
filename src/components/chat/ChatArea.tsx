@@ -8,14 +8,14 @@ import { questionKey, type QuestionDraft } from "@/core/questions";
 import type { ConversationDetails, LibrarySnapshot } from "@/core/library";
 import type { ChatController } from "@/hooks/use-chat";
 import { ChatComposer, type ProviderModelGroup } from "./ChatComposer";
-import { Transcript } from "./Transcript";
+import { Transcript, type LatestVisibility } from "./Transcript";
 import { ToolApproval } from "./ToolApproval";
 import { QuestionCard } from "./QuestionCard";
 import { WorkerRequests } from "./WorkerRequests";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
 import type { WorkflowController } from "@/hooks/use-workflow";
 
-function ConversationView({ context, modelGroups, chat, workflow, agentModels, drafts, questionDrafts }: { context: ConversationDetails; modelGroups: ProviderModelGroup[]; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; drafts: Map<string, ChatDraft>; questionDrafts: Map<string, QuestionDraft> }) {
+function ConversationView({ context, modelGroups, chat, workflow, agentModels, drafts, questionDrafts, onLatestVisibility }: { context: ConversationDetails; modelGroups: ProviderModelGroup[]; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; drafts: Map<string, ChatDraft>; questionDrafts: Map<string, QuestionDraft>; onLatestVisibility?: LatestVisibility }) {
   const footer = useRef<HTMLElement>(null);
   const previousQuestion = useRef<string | undefined>(undefined);
   const snapshot = chat.snapshot;
@@ -31,7 +31,7 @@ function ConversationView({ context, modelGroups, chat, workflow, agentModels, d
   if (!snapshot) return <ConversationSkeleton />;
   const last = snapshot.turns[snapshot.turns.length - 1];
   return <>
-    <Transcript snapshot={snapshot} chat={chat} />
+    <Transcript snapshot={snapshot} chat={chat} onLatestVisibility={onLatestVisibility} />
     <footer ref={footer} aria-label="Área de composição" className="chat-footer mx-auto w-full max-w-4xl min-w-0 shrink-0 max-h-[65%] overflow-y-auto overscroll-none px-5 pb-4 pt-3">
       {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.id} tool={snapshot.pendingApproval} projectPath={context.project.path} onAnswer={chat.approve} />}
       {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} />}
@@ -42,7 +42,7 @@ function ConversationView({ context, modelGroups, chat, workflow, agentModels, d
   </>;
 }
 
-export function ChatArea({ modelGroups = [], library, chat, workflow, agentModels, leftToggle, rightToggle }: { modelGroups?: ProviderModelGroup[]; library: LibrarySnapshot | null; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; leftToggle?: ReactNode; rightToggle?: ReactNode }) {
+export function ChatArea({ modelGroups = [], library, chat, workflow, agentModels, leftToggle, rightToggle, onLatestVisibility }: { modelGroups?: ProviderModelGroup[]; library: LibrarySnapshot | null; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; leftToggle?: ReactNode; rightToggle?: ReactNode; onLatestVisibility?: LatestVisibility }) {
   const [drafts] = useState(() => new Map<string, ChatDraft>());
   const [questionDrafts] = useState(() => new Map<string, QuestionDraft>());
   const id = library?.selection.conversationId;
@@ -59,6 +59,6 @@ export function ChatArea({ modelGroups = [], library, chat, workflow, agentModel
       </div>
       {rightToggle}
     </header>
-    {!library ? <ConversationSkeleton /> : id && project && workspace && conversation ? <ConversationView key={id} drafts={drafts} questionDrafts={questionDrafts} context={{ workspace, project, conversation }} modelGroups={modelGroups} chat={chat} workflow={workflow} agentModels={agentModels} /> : <Empty className="flex-1"><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>{project ? "Inicie uma conversa" : "Seu próximo projeto começa aqui"}</EmptyTitle><EmptyDescription>{project ? `Crie ou selecione uma conversa em ${project.name} pela barra lateral.` : "Selecione um projeto na barra lateral ou crie um workspace para organizar seu trabalho."}</EmptyDescription></EmptyHeader></Empty>}
+    {!library ? <ConversationSkeleton /> : id && project && workspace && conversation ? <ConversationView key={id} drafts={drafts} questionDrafts={questionDrafts} context={{ workspace, project, conversation }} modelGroups={modelGroups} chat={chat} workflow={workflow} agentModels={agentModels} onLatestVisibility={onLatestVisibility} /> : <Empty className="flex-1"><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>{project ? "Inicie uma conversa" : "Seu próximo projeto começa aqui"}</EmptyTitle><EmptyDescription>{project ? `Crie ou selecione uma conversa em ${project.name} pela barra lateral.` : "Selecione um projeto na barra lateral ou crie um workspace para organizar seu trabalho."}</EmptyDescription></EmptyHeader></Empty>}
   </main>;
 }

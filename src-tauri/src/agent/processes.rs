@@ -7,6 +7,8 @@ use std::{collections::{HashMap, VecDeque}, path::Path, sync::{Arc, Mutex, atomi
 use tauri::{Emitter, Manager};
 use tokio::{io::{AsyncRead, AsyncReadExt}, sync::watch};
 
+mod ports;
+
 const LOG_LIMIT: usize = 32 * 1024;
 fn invalid(message: &str) -> AgentError { AgentError::new("process", message) }
 #[derive(Clone, Serialize)]
@@ -52,15 +54,29 @@ impl ProcessState {
         if entry.info.running() { entry.info.status = "stopping".into(); entry.cancel.send_replace(true); entry.group.stop(); }
         Ok(())
     }
+    fn remove(&self, conversation: &str, id: &str) -> Result<(), AgentError> {
+        let mut entries = self.0.lock().map_err(|_| AgentError::internal())?;
+        let entry = entries.get(id).filter(|entry| entry.info.conversation_id == conversation)
+            .ok_or_else(|| invalid("Processo não encontrado nesta conversa."))?;
+        if entry.info.running() { return Err(invalid("Pare o processo antes de removê-lo.")); }
+        entries.remove(id);
+        Ok(())
+    }
     async fn start(&self, conversation: &str, root: &Path, call_id: &str, args: &Value, changed: Arc<dyn Fn() + Send + Sync>) -> Result<ProcessInfo, AgentError> {
-        #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct Args { title: String, command: String }
+        #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct Args { title: String, command: String, #[serde(default)] port: Option<u16> }
         let args: Args = serde_json::from_value(args.clone()).map_err(|_| invalid("Informe o nome e o comando do processo."))?;
         if args.title.trim().is_empty() || args.title.chars().count() > 80 || args.command.trim().is_empty() || args.command.len() > 8000 || args.command.contains('\0') { return Err(invalid("Nome ou comando inválido.")); }
         let mut entries = self.0.lock().map_err(|_| AgentError::internal())?;
         if let Some(existing) = entries.values().find(|e| e.info.conversation_id == conversation && (e.call_id == call_id || e.info.running() && e.info.command.trim() == args.command.trim())) { return Ok(existing.info.clone()); }
+        if let Some(port) = args.port {
+            if !ports::check(port)?.available {
+                return Err(invalid(&format!("A porta TCP {port} já está ocupada. Nenhum processo foi iniciado. Não encerre o serviço existente nem escolha outra porta sem orientação do usuário.")));
+            }
+        }
         if entries.values().filter(|e| e.info.running()).count() >= 32 || entries.values().filter(|e| e.info.conversation_id == conversation && e.info.running()).count() >= 8 { return Err(invalid("Limite de processos ativos atingido. Pare um processo antes de iniciar outro.")); }
         if entries.len() >= 64 { entries.retain(|_, entry| entry.info.running()); }
         let mut command = tokio::process::Command::new("/bin/bash");
+        crate::mcp::executable::configure(&mut command, false);
         command.args(["--noprofile", "--norc", "-c", &args.command]).current_dir(root).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
         #[cfg(unix)] command.process_group(0);
         let mut child = command.spawn().map_err(|_| invalid("Não foi possível iniciar o processo."))?;
@@ -85,13 +101,15 @@ impl ProcessState {
             "process_start" => serde_json::to_value(self.start(conversation, root, &call.id, &call.args, changed).await?).map_err(|_| AgentError::internal())?,
             "process_list" => json!(self.list(conversation)?),
             "process_output" => self.output(conversation, call.args["id"].as_str().ok_or_else(|| invalid("Informe o processo."))?)?,
+            "process_check_port" => ports::execute(&call.args)?,
             _ => return Err(invalid("Ferramenta de processo inválida.")),
         }; Ok(result.to_string())
     }
 }
 pub(super) fn definitions(mode: Mode) -> Vec<Value> {
     let mut values = vec![json!({"type":"function","name":"process_list","description":"List development processes owned by this conversation. Status and metadata only.","parameters":{"type":"object","properties":{},"additionalProperties":false}}), json!({"type":"function","name":"process_output","description":"Read the bounded recent output and actual status of a conversation process. Starting a process is not proof it is ready; inspect its output. Do not poll in a loop.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}})];
-    if mode == Mode::Build { values.push(json!({"type":"function","name":"process_start","description":"Start a persistent development server or watcher in the project directory for the USER to test manually. Run in the foreground (no &, nohup, daemon mode); Jarvis manages its lifecycle and bounded logs. It survives tool calls/turns until the user stops it in the composer or Jarvis exits. Use bash for finite unit/lint/typecheck/build commands. Never automate browser tests. Check process_list before starting duplicate services. The user manages stopping; do not kill unrelated processes.","parameters":{"type":"object","properties":{"title":{"type":"string","maxLength":80},"command":{"type":"string","maxLength":8000}},"required":["title","command"],"additionalProperties":false}})); }
+    values.push(ports::definition());
+    if mode == Mode::Build { values.push(json!({"type":"function","name":"process_start","description":"Start a persistent development server or watcher in the project directory only when needed for the USER's manual validation. In direct Standard/Designer flows, require the user's request to start a service; do not start one routinely after edits. Check process_list and process_check_port first. For servers, provide the project's actual port; a busy port prevents startup. If occupied, report that no new service was started; do not kill its owner or silently switch ports. Follow the project's packageManager and lockfile. Use verified executables, never invent paths in Jarvis Core runtimes. Run in the foreground (no &, nohup, daemon mode); Jarvis manages lifecycle and logs. Use bash for finite unit/lint/typecheck/build commands. Never automate browser tests. The user manages stopping.","parameters":{"type":"object","properties":{"title":{"type":"string","maxLength":80},"command":{"type":"string","maxLength":8000},"port":{"type":"integer","minimum":1,"maximum":65535,"description":"Required for a TCP server: the actual port from project config/startup command. Omit only for watchers or services without a TCP listener. Availability is rechecked before spawning."}},"required":["title","command"],"additionalProperties":false}})); }
     values
 }
 #[tauri::command]
@@ -105,6 +123,12 @@ pub fn read_chat_process(agent: tauri::State<'_, AgentState>, conversation_id: S
 pub fn stop_chat_process(app: tauri::AppHandle, agent: tauri::State<'_, AgentState>, conversation_id: String, id: String, confirmed: bool) -> Result<(), AgentError> {
     if !confirmed { return Err(invalid("Confirme que deseja parar o processo.")); }
     agent.processes.stop(&conversation_id, &id)?; let _ = app.emit("processes:changed", json!({"conversationId":conversation_id})); Ok(())
+}
+#[tauri::command]
+pub fn remove_chat_process(app: tauri::AppHandle, agent: tauri::State<'_, AgentState>, conversation_id: String, id: String) -> Result<(), AgentError> {
+    agent.processes.remove(&conversation_id, &id)?;
+    let _ = app.emit("processes:changed", json!({"conversationId":conversation_id}));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -136,6 +160,59 @@ mod tests {
         let result = state.output("a",&process.id).unwrap(); let output = result["output"].as_str().unwrap();
         assert!(output.len() <= LOG_LIMIT); assert!(output.ends_with("fim"));
         assert_eq!(result["process"]["status"],"failed"); assert_eq!(result["process"]["exitCode"],7);
+    }
+    #[tokio::test]
+    async fn only_inactive_owned_processes_can_be_removed() {
+        let root = tempfile::tempdir().unwrap(); let state = ProcessState::default();
+        let active = state.start("a", root.path(), "active", &json!({"title":"Keep", "command":"exec sleep 60"}), Arc::new(|| {})).await.unwrap();
+        assert!(state.remove("a", &active.id).is_err());
+        for (call, command, status) in [("missing", "/jarvis-test-missing-runtime/bin/npm", "failed"), ("exit", "exit 0", "exited")] {
+            let item = state.start("a", root.path(), call, &json!({"title":call,"command":command}), Arc::new(|| {})).await.unwrap();
+            wait(&state, "a", |items| items.iter().any(|i| i.id == item.id && i.status == status)).await;
+            assert!(state.remove("b", &item.id).is_err());
+            assert!(state.output("a", &item.id).is_ok());
+            state.remove("a", &item.id).unwrap();
+            assert!(state.output("a", &item.id).is_err());
+            assert_eq!(state.list("a").unwrap().len(), 1);
+            assert!(state.list("a").unwrap()[0].running());
+        }
+        state.stop("a", &active.id).unwrap();
+        assert!(state.remove("a", &active.id).is_err()); // Still stopping until reaped.
+        wait(&state, "a", |items| items[0].status == "stopped").await;
+        state.remove("a", &active.id).unwrap();
+        assert!(state.list("a").unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn occupied_or_invalid_port_prevents_spawn_without_touching_existing_listener() {
+        use std::net::{Ipv4Addr, TcpListener};
+        let root = tempfile::tempdir().unwrap(); let state = ProcessState::default();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut args = json!({"title":"Server", "command":"touch started", "port":port});
+        let error = state.start("a", root.path(), "server", &args, Arc::new(|| {})).await.err().unwrap();
+        assert!(error.message.contains("Nenhum processo foi iniciado"));
+        for port in [0, -1, 65536] {
+            assert!(state.start("a", root.path(), "invalid", &json!({"title":"Server","command":"touch started","port":port}), Arc::new(|| {})).await.is_err());
+        }
+        assert!(!root.path().join("started").exists());
+        assert!(state.list("a").unwrap().is_empty());
+        assert_eq!(listener.local_addr().unwrap().port(), port);
+        drop(listener);
+        // Other parallel tests can acquire an ephemeral port as soon as we
+        // release it. A check is advisory; retry only that specific collision.
+        for _ in 0..16 {
+            match state.start("a", root.path(), "server", &args, Arc::new(|| {})).await {
+                Ok(_) => {
+                    wait(&state, "a", |items| items[0].status == "exited").await;
+                    assert!(root.path().join("started").exists());
+                    return;
+                }
+                Err(error) => assert!(error.message.contains("já está ocupada"), "{}", error.message),
+            }
+            let candidate = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            args["port"] = json!(candidate.local_addr().unwrap().port());
+        }
+        panic!("Could not acquire an available temporary test port");
     }
     #[tokio::test]
     async fn deleting_one_conversation_does_not_stop_another_and_shutdown_stops_all() {

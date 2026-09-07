@@ -95,6 +95,12 @@ export const conversations = sqliteTable("conversations", {
   check("conversations_title_source", sql`${table.titleSource} IN ('default', 'manual', 'generated')`),
 ]);
 
+export const conversationUnread = sqliteTable("conversation_unread", {
+  conversationId: text("conversation_id").primaryKey().references(() => conversations.id, { onDelete: "cascade" }),
+  eventKey: text("event_key").notNull(),
+  unread: integer("unread", { mode: "boolean" }).notNull().default(true),
+}, (table) => [check("conversation_unread_flag", sql`${table.unread} IN (0, 1)`)]);
+
 export const navigationSelection = sqliteTable("navigation_selection", {
   id: integer("id").primaryKey(),
   workspaceId: text("workspace_id").references(() => workspaces.id),
