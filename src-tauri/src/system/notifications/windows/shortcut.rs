@@ -93,9 +93,11 @@ mod tests {
         let mut actual = [0_u16; 32768];
         unsafe { link.GetPath(&mut actual, std::ptr::null_mut(), 0).unwrap() };
         let length = actual.iter().position(|v| *v == 0).unwrap();
+        // ShellLink expands 8.3 aliases (for example RUNNER~1 in CI's TEMP).
+        // Compare the referenced file, not two spellings of the same path.
         assert_eq!(
-            Path::new(&String::from_utf16(&actual[..length]).unwrap()),
-            target
+            fs::canonicalize(Path::new(&String::from_utf16(&actual[..length]).unwrap())).unwrap(),
+            fs::canonicalize(target).unwrap()
         );
     }
 }

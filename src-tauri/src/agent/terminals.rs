@@ -1224,15 +1224,19 @@ mod tests {
             initial_input: Some("Write-Output ([string]::Concat('cwd=', (Get-Location).Path)); Write-Output ('terminal-' + 'ready')\r\n"),
             service: None,
         }, silent_events()).unwrap();
-        let snapshot = wait_for_output(&state, "windows-path", &terminal.id);
+        // TEMP may use an 8.3 alias on CI, while PowerShell expands the path.
+        let expected = format!(
+            "cwd={}",
+            library::strip_verbatim(&canonical.to_string_lossy())
+        );
+        // A PSReadLine history prediction can contain terminal-ready before the
+        // submitted command runs. Wait for the actual cwd result instead.
+        let snapshot = wait_for_text(&state, "windows-path", &terminal.id, &expected);
         state
             .close("windows-path", &terminal.id, &silent_events())
             .unwrap();
         let output = terminal_text(&snapshot.output);
-        assert!(
-            output.contains(&format!("cwd={}", project.display())),
-            "{output}"
-        );
+        assert!(output.contains(&expected), "{output}");
         assert!(!output.contains(r"\\?\"), "{output}");
         assert!(
             !output.contains("Microsoft.PowerShell.Core\\FileSystem::"),
@@ -1249,9 +1253,18 @@ mod tests {
     }
 
     fn wait_for_output(state: &TerminalState, conversation: &str, id: &str) -> TerminalSnapshot {
+        wait_for_text(state, conversation, id, "terminal-ready")
+    }
+
+    fn wait_for_text(
+        state: &TerminalState,
+        conversation: &str,
+        id: &str,
+        expected: &str,
+    ) -> TerminalSnapshot {
         for _ in 0..80 {
             let snapshot = state.snapshot(conversation, id).unwrap();
-            if snapshot.output.contains("terminal-ready") {
+            if terminal_text(&snapshot.output).contains(expected) {
                 return snapshot;
             }
             thread::sleep(std::time::Duration::from_millis(25));
