@@ -1393,7 +1393,7 @@ mod tests {
             .unwrap();
         let snapshot = wait_for_output(&state, "conversation-a", &terminal.id);
         assert_eq!(snapshot.terminal.title, "Verificação");
-        assert!(snapshot.output.contains("terminal-ready"));
+        assert!(terminal_text(&snapshot.output).contains("terminal-ready"));
         let context = state.context("conversation-a");
         assert!(context.contains(&terminal.id));
         assert!(context.contains("terminal_output"));
@@ -1436,14 +1436,17 @@ mod tests {
         let id = terminal["id"].as_str().unwrap();
         assert_eq!(terminal["origin"], "agent");
         assert_eq!(terminal["title"], "Terminal do agente");
-        assert!(wait_for_output(&state, "conversation-a", id)
-            .output
-            .contains("terminal-ready"));
+        let snapshot = wait_for_output(&state, "conversation-a", id);
+        assert!(terminal_text(&snapshot.output).contains("terminal-ready"));
         state.close("conversation-a", id, &silent_events()).unwrap();
     }
 
     #[test]
     fn agent_output_removes_terminal_control_sequences() {
         assert_eq!(terminal_text("a\u{1b}[31mb\u{1b}[0m\u{0007}c"), "abc");
+        // ConPTY may interleave control sequences within a single output word.
+        let conpty_output = "terminal-\u{1b}[0m\u{1b}[?25hready\r\n";
+        assert!(!conpty_output.contains("terminal-ready"));
+        assert!(terminal_text(conpty_output).contains("terminal-ready"));
     }
 }
