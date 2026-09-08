@@ -295,6 +295,7 @@ where
         // An unknown catalog limit still gets conservative payload protection.
         let window = status.limit.unwrap_or(64_000);
         let replay = input(&data);
+        let replay_tokens = replay.iter().map(estimate).sum::<u64>();
         let projected = replay
             .iter()
             .map(estimate)
@@ -306,6 +307,7 @@ where
             > 7 * 1024 * 1024;
         if !force
             && !oversized
+            && replay_tokens < 128_000
             && status.tokens.saturating_add(overhead).max(projected) < threshold(window)
         {
             return Ok(false);
@@ -326,14 +328,14 @@ where
         let through = previous.through + cut;
         let preserved_user = if raw[through..]
             .iter()
-            .any(|message| message["role"] == "user")
+            .any(|message| message["role"] == "user" && message["_jarvis_runtime"] != true)
         {
             None
         } else {
             raw[..through]
                 .iter()
                 .rev()
-                .find(|message| message["role"] == "user")
+                .find(|message| message["role"] == "user" && message["_jarvis_runtime"] != true)
                 .cloned()
         };
         (
@@ -498,6 +500,7 @@ mod tests {
             Some(&Usage {
                 input_tokens: 30_000,
                 output_tokens: 1_000,
+                ..Usage::default()
             }),
         )
         .unwrap();
@@ -533,6 +536,23 @@ mod tests {
         data.turns = turns;
         data.extras = extras;
         assert_eq!(input(&data), replay);
+    }
+    #[tokio::test]
+    async fn large_windows_compact_proactively_and_runtime_state_is_not_the_user_request() {
+        let fixture = Fixture::new();
+        let session = long_session(&fixture);
+        session.update(true, |data| {
+            let turn = data.turns.last_mut().unwrap();
+            turn.turn.context_window = Some(1_048_576);
+            turn.wire[2]["output"] = json!("large research result ".repeat(22000));
+            turn.wire.push(json!({"role":"user","_jarvis_runtime":true,"content":"Execution checkpoint"}));
+        }).unwrap();
+        let (_, signal) = watch::channel(false);
+        assert!(ensure_with(&session, 1000, false, signal, |_| async { Ok("Research summarized; continue the requested work.".into()) }).await.unwrap());
+        let replay = session.input().unwrap();
+        assert!(replay.iter().any(|item| item["content"] == "Preserve this request"));
+        assert!(replay.iter().map(estimate).sum::<u64>() < 128000);
+        assert_eq!(session.snapshot().unwrap().context.limit, Some(1_048_576));
     }
 
     #[tokio::test]
@@ -625,6 +645,7 @@ mod tests {
                 Some(&Usage {
                     input_tokens: 500,
                     output_tokens: 100,
+                    ..Usage::default()
                 }),
             )
             .unwrap();

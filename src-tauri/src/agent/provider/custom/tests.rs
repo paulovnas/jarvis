@@ -24,6 +24,7 @@ async fn live_custom_completion_smoke() {
     let result = stream(
         &credential,
         &config,
+        "synthetic-session",
         &options,
         "Responda apenas PONG.",
         vec![json!({"role":"user","content":"Ping"})],
@@ -46,6 +47,7 @@ async fn live_custom_completion_smoke() {
     let result = stream(
         &credential,
         &config,
+        "synthetic-session",
         &options,
         instructions,
         input.clone(),
@@ -65,6 +67,7 @@ async fn live_custom_completion_smoke() {
     let result = stream(
         &credential,
         &config,
+        "synthetic-session",
         &options,
         instructions,
         input,
@@ -94,6 +97,80 @@ fn options() -> TurnOptions {
         custom_workflow_id: None,
         approval_mode: ApprovalMode::Yolo,
     }
+}
+#[test]
+fn cache_affinity_is_stable_and_limited_to_documented_provider_hosts() {
+    let credential = CodexCredential::new("key", "refresh", 0, "account", None, None);
+    for protocol in [Protocol::OpenaiCompletions, Protocol::OpenaiResponses, Protocol::AnthropicMessages] {
+        for host in ["https://openrouter.ai/api/v1", "https://api.openai.com/v1", "https://api.openai.com.evil.test/v1", "https://gateway.example/v1"] {
+            let mut config = config(protocol);
+            config.base_url = host.into();
+            let request = session_request(&credential, &config, json!({"model":"model"}), "stable-session").unwrap().build().unwrap();
+            let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+            let native_openai = host == "https://api.openai.com/v1" && protocol != Protocol::AnthropicMessages;
+            assert_eq!(body["prompt_cache_key"].as_str(), native_openai.then_some("stable-session"));
+            assert_eq!(request.headers().get("x-session-id").map(|v| v.to_str().unwrap()), (host == "https://openrouter.ai/api/v1").then_some("stable-session"));
+        }
+    }
+}
+
+#[test]
+fn cache_markers_only_target_documented_claude_endpoints() {
+    for protocol in [Protocol::AnthropicMessages, Protocol::OpenaiCompletions, Protocol::OpenaiResponses] {
+        let mut config = config(protocol);
+        config.models[0].id = "anthropic/claude-sonnet-4.6".into();
+        let mut options = options();
+        options.model = config.models[0].id.clone();
+        for host in ["https://gateway.example/v1", "https://openrouter.ai/api/v1", "https://openrouter.ai.evil.test/v1"] {
+            config.base_url = host.into();
+            let body = request::body(&config, &config.models[0], &options, "Stable instructions", vec![json!({"role":"user","content":"Task"})], vec![tool()]).unwrap();
+            let supported = host == "https://openrouter.ai/api/v1" && protocol != Protocol::OpenaiResponses;
+            assert_eq!(body.to_string().contains("cache_control"), supported);
+            if supported && protocol == Protocol::AnthropicMessages {
+                assert_eq!(body["system"][0]["text"], "Stable instructions");
+                assert_eq!(body["messages"][0]["content"][0]["text"], "Task");
+                assert_eq!(body["tools"][0]["cache_control"]["type"], "ephemeral");
+            }
+        }
+        config.base_url = "https://openrouter.ai/api/v1".into();
+        config.models[0].id = "z-ai/glm-5.3".into();
+        let body = request::body(&config, &config.models[0], &options, "System", vec![], vec![]).unwrap();
+        assert!(!body.to_string().contains("cache_control"));
+    }
+}
+
+#[test]
+fn completions_cache_reporting_preserves_absence_zero_and_deepseek_alias() {
+    for (details, expected) in [
+        (json!({}), None),
+        (json!({"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":5}}), Some(0)),
+        (json!({"prompt_tokens_details":{"cached_tokens":60}}), Some(60)),
+        (json!({"prompt_cache_hit_tokens":60}), Some(60)),
+    ] {
+        let mut stream = completions::Stream::default();
+        let mut usage = json!({"prompt_tokens":100,"completion_tokens":10});
+        usage.as_object_mut().unwrap().extend(details.as_object().unwrap().clone());
+        stream.event(&json!({"choices":[{"index":0,"delta":{"content":"Answer"},"finish_reason":"stop"}],"usage":usage}), &mut |_| Ok(())).unwrap();
+        let usage = stream.finish(&json!({})).unwrap().usage.unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.cache_read_tokens, expected);
+        assert_eq!(usage.cache_write_tokens, details["prompt_tokens_details"]["cache_write_tokens"].as_u64());
+    }
+}
+
+#[test]
+fn messages_final_cache_counters_replace_partial_counters() {
+    let mut stream = messages::Stream::default();
+    for event in [
+        json!({"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":0}}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Answer"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"cache_read_input_tokens":20,"cache_creation_input_tokens":30,"output_tokens":5}}),
+    ] { stream.event(&event, &mut |_| Ok(())).unwrap(); }
+    let usage = stream.finish(&json!({})).unwrap().usage.unwrap();
+    assert_eq!(usage.input_tokens, 60);
+    assert_eq!(usage.cache_read_tokens, Some(20));
+    assert_eq!(usage.cache_write_tokens, Some(30));
 }
 fn config(protocol: Protocol) -> Config {
     Config {
@@ -518,7 +595,10 @@ fn messages_replay_keeps_signed_thinking_and_cache_usage() {
     }
     let config = config(Protocol::AnthropicMessages);
     let response = stream.finish(&request::scope(&config, &options())).unwrap();
-    assert_eq!(response.usage.unwrap().input_tokens, 60);
+    let usage = response.usage.unwrap();
+    assert_eq!(usage.input_tokens, 60);
+    assert_eq!(usage.cache_read_tokens, Some(20));
+    assert_eq!(usage.cache_write_tokens, Some(30));
     let body = request::body(
         &config,
         &config.models[0],

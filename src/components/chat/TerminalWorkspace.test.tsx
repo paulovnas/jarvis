@@ -40,6 +40,24 @@ const terminals = [
 const service: ChatTerminal = { id: "service", origin: "agent", conversationId: "chat", title: "Vite", command: "bun run dev", cwd: "/project", pid: 123, startedAt: 1, endedAt: null, exitCode: null, status: "running" };
 
 describe("Integrated terminals", () => {
+  it("shows an ended service as read-only and offers a fresh shell without replaying the service", async () => {
+    const user = userEvent.setup();
+    const ended = { ...service, status: "exited", endedAt: 10, exitCode: 130 };
+    vi.mocked(invoke).mockImplementation(async command => {
+      if (command === "list_chat_terminals") return [ended];
+      if (command === "list_chat_processes") return [];
+      if (command === "read_chat_terminal") return { terminal: ended, output: "^C", revision: 2, truncated: false };
+      if (command === "create_chat_terminal") return terminals[0];
+      return undefined;
+    });
+    render(<TestWorkspace conversationId="chat" />);
+    await user.click(screen.getByRole("button", { name: "Abrir terminais" }));
+    expect(await screen.findByText("Processo encerrado · código 130")).toBeVisible();
+    await waitFor(() => expect(renderer.create).toHaveBeenCalledWith(expect.objectContaining({ disableStdin: true })));
+    await user.click(screen.getByRole("button", { name: "Abrir novo terminal" }));
+    expect(invoke).toHaveBeenCalledWith("create_chat_terminal", { conversationId: "chat" });
+    expect(invoke).not.toHaveBeenCalledWith("write_chat_terminal", expect.anything());
+  });
   const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
 
   afterEach(() => {

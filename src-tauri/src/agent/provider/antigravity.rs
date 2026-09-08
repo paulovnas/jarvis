@@ -420,6 +420,8 @@ impl Output {
             let u = &response["usageMetadata"];
             self.usage = Some(Usage {
                 input_tokens: u["promptTokenCount"].as_u64().unwrap_or(0),
+                cache_read_tokens: u["cachedContentTokenCount"].as_u64(),
+                cache_write_tokens: None,
                 output_tokens: u["candidatesTokenCount"]
                     .as_u64()
                     .unwrap_or(0)

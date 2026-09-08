@@ -84,9 +84,30 @@ fn authenticated_request(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn session_request(
+    credential: &CodexCredential,
+    config: &Config,
+    mut body: Value,
+    session_id: &str,
+) -> Result<reqwest::RequestBuilder, AgentError> {
+    let endpoint = config.endpoint()?;
+    let official = endpoint.scheme() == "https" && endpoint.port_or_known_default() == Some(443);
+    if official && endpoint.host_str() == Some("api.openai.com")
+        && matches!(config.protocol, Protocol::OpenaiCompletions | Protocol::OpenaiResponses) {
+        body["prompt_cache_key"] = json!(session_id);
+    }
+    let mut request = authenticated_request(credential, config, &body)?;
+    if official && endpoint.host_str() == Some("openrouter.ai") {
+        request = request.header("x-session-id", session_id);
+    }
+    Ok(request)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn stream(
     credential: &CodexCredential,
     config: &Config,
+    session_id: &str,
     options: &TurnOptions,
     instructions: &str,
     input: Vec<Value>,
@@ -115,7 +136,7 @@ pub(super) async fn stream(
         ));
     }
     let body = request::body(config, model, options, instructions, input, tools)?;
-    let request = authenticated_request(credential, config, &body)?;
+    let request = session_request(credential, config, body, session_id)?;
     let scope = request::scope(config, options);
     if config.protocol == Protocol::OpenaiResponses {
         let mut response = super::receive(request, signal, on_delta)

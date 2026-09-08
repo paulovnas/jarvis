@@ -2,6 +2,7 @@
 use super::*;
 use std::{collections::BTreeSet, fs};
 mod appearance;
+pub(crate) mod permissions;
 pub use appearance::Appearance;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -20,6 +21,8 @@ pub struct AgentDefinition {
     pub description: String,
     pub instructions: String,
     pub capability: Capability,
+    #[serde(default)]
+    pub denied_tools: Vec<String>,
     pub model: Option<settings::ModelChoice>,
     #[serde(default)]
     pub appearance: Option<Appearance>,
@@ -93,6 +96,7 @@ impl Catalog {
             ));
         }
         for agent in &self.agents {
+            permissions::validate(&agent.denied_tools)?;
             if !text_valid(&agent.name, 100, true)
                 || !text_valid(&agent.description, 500, false)
                 || !text_valid(&agent.instructions, 16_000, true)

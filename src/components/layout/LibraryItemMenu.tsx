@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { FolderInput, Pencil, Trash2 } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -14,11 +14,13 @@ export function LibraryItemMenu({
   disabled,
   onEdit,
   onDelete,
+  onMove,
 }: {
   children: ReactElement;
   disabled: boolean;
   onEdit: () => void;
   onDelete: () => void;
+  onMove?: () => void;
 }) {
   if (disabled) return children;
   return (
@@ -35,6 +37,7 @@ export function LibraryItemMenu({
             Editar
           </ContextMenuItem>
           <ContextMenuSeparator />
+          {onMove && <ContextMenuItem className="cursor-pointer" onClick={onMove}><FolderInput />Mover para outro workspace</ContextMenuItem>}
           <ContextMenuItem variant="destructive" className="cursor-pointer" disabled={disabled} onClick={onDelete}>
             <Trash2 />
             Excluir

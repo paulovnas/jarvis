@@ -117,10 +117,12 @@ export function useLibrary() {
       perform("create_conversation", { projectId }, "Conversa criada"),
     renameProject: (id: string, name: string) =>
       perform("rename_project", { id, name }, "Projeto atualizado"),
+    moveProject: (id: string, workspaceId: string) =>
+      perform("move_project_workspace", { id, workspaceId }, "Projeto movido"),
     renameConversation: (id: string, title: string) =>
       perform("rename_conversation", { id, title }, "Conversa atualizada"),
     deleteItem: (target: LibraryDeleteTarget) =>
-      perform("delete_library_item", { target, confirmed: true }, target.kind === "project" ? "Projeto e históricos excluídos" : "Conversa excluída"),
+      perform("delete_library_item", { target, confirmed: true }, target.kind === "workspace" ? "Workspace e históricos excluídos" : target.kind === "project" ? "Projeto e históricos excluídos" : "Conversa excluída"),
     select: (target: LibraryTarget) =>
       perform("select_library_item", { target }),
   };

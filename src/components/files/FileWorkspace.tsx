@@ -9,6 +9,9 @@ import type { ProjectFilesController } from "@/hooks/use-project-files";
 import { FileIcon } from "./FileIcon";
 import type { BrowserController } from "@/hooks/use-browser";
 import { BrowserPanel } from "@/components/browser/BrowserPanel";
+import { useDesktopLayout } from "@/hooks/use-desktop-layout";
+import { orderedItems } from "@/core/item-order";
+import { SortableItem, SortableList } from "@/components/layout/SortableList";
 
 const CodeViewer = lazy(async () => {
   // Monaco resolves translated labels while its modules initialize. Finish the
@@ -28,6 +31,10 @@ class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolea
 }
 
 export function FileWorkspace({ files, browser, terminalLauncher, children }: { files?: ProjectFilesController; browser?: BrowserController; terminalLauncher?: ReactNode; children: ReactNode }) {
+  const { layout, updateLayout } = useDesktopLayout();
+  const sorting = useRef(false);
+  const orderKey = `tabs:${browser?.conversationId ?? files?.projectId ?? ""}`;
+  const tabs = orderedItems([...(files?.tabs.paths.map(path => `file:${path}`) ?? []), ...(browser?.snapshot.tabs.map(tab => `browser:${tab.id}`) ?? [])], layout.itemOrder[orderKey], id => id);
   const previousFile = useRef(files?.tabs.activePath);
   useEffect(() => {
     if (files?.tabs.activePath && files.tabs.activePath !== previousFile.current && browser?.snapshot.activeId) browser.select(null);
@@ -38,22 +45,33 @@ export function FileWorkspace({ files, browser, terminalLauncher, children }: { 
   const active = activeBrowser ? null : files?.tabs.activePath;
   const backgroundChat = !!active || !!activeBrowser;
   const select = (value: unknown) => {
+    if (sorting.current) return;
     if (typeof value === "string" && value.startsWith("browser:")) { files?.select(null); browser?.select(value.slice(8)); }
     else { browser?.select(null); files?.select(typeof value === "string" && value.startsWith("file:") ? value.slice(5) : null); }
   };
   const close = (event: React.MouseEvent<HTMLButtonElement>) => { const path = event.currentTarget.dataset.path; if (path) files?.close(path); };
   return <Tabs value={activeBrowser ? `browser:${activeBrowser.id}` : active ? `file:${active}` : "chat"} onValueChange={select} className="h-full min-h-0 min-w-0 flex-1 gap-0">
     <div className="flex min-h-9 min-w-0 shrink-0 items-center gap-2 border-b border-border bg-sidebar px-2">
-      <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden"><TabsList aria-label="Chat, arquivos e navegador" className="h-9 justify-start gap-1 rounded-none bg-transparent p-0">
+      <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden"><TabsList aria-label="Chat, arquivos e navegador" onKeyDown={event => {
+        // Let the drag sensor receive arrows without the tab list moving focus
+        // or stopping propagation before the event reaches the document.
+        if (sorting.current) event.preventBaseUIHandler();
+      }} className="h-9 justify-start gap-1 rounded-none bg-transparent p-0">
         <TabsTrigger value="chat" className="h-7 flex-none cursor-pointer gap-1.5 px-3 text-xs"><MessageSquare aria-hidden="true" className="size-3.5" />Chat</TabsTrigger>
-        {files?.tabs.paths.map(path => <div className="group/file-tab relative shrink-0" key={path}>
-          <TabsTrigger value={`file:${path}`} title={path} className="h-7 max-w-64 cursor-pointer gap-1.5 pl-2 pr-7 font-mono text-[11px]"><FileIcon path={path} /><span className="truncate">{fileName(path)}{files.tabs.paths.some(other => other !== path && fileName(other) === fileName(path)) && <span className="ml-1 text-muted-foreground">· {path.slice(0, path.lastIndexOf("/")) || "/"}</span>}</span></TabsTrigger>
-          <Button type="button" variant="ghost" size="icon" title={`Fechar ${path}`} aria-label={`Fechar arquivo ${path}`} data-path={path} onClick={close} className="absolute inset-y-0 right-0.5 my-auto size-5 cursor-pointer opacity-60 group-hover/file-tab:opacity-100 focus-visible:opacity-100 active:not-aria-[haspopup]:translate-y-0"><X className="size-3" /></Button>
-        </div>)}
-        {browser?.snapshot.tabs.map(tab => <div className="group/browser-tab relative shrink-0" key={tab.id}>
-          <TabsTrigger value={`browser:${tab.id}`} title={tab.url} className="h-7 max-w-52 cursor-pointer gap-1.5 pl-2 pr-7 text-xs"><Globe className="size-3.5 shrink-0 text-onedark-cyan" /><span className="truncate">{tab.title || "Navegador"}</span></TabsTrigger>
-          <Button type="button" variant="ghost" size="icon" title={`Fechar ${tab.title}`} aria-label={`Fechar navegador ${tab.title}`} onClick={() => void browser.command({ action: "close", id: tab.id })} className="absolute inset-y-0 right-0.5 my-auto size-5 cursor-pointer opacity-60 group-hover/browser-tab:opacity-100 focus-visible:opacity-100 active:not-aria-[haspopup]:translate-y-0"><X className="size-3" /></Button>
-        </div>)}
+        <SortableList ids={tabs} horizontal onSortingChange={value => { sorting.current = value; }} onReorder={ids => updateLayout(current => ({ itemOrder: { ...current.itemOrder, [orderKey]: ids } }))}>{tabs.map(id => {
+          const path = id.startsWith("file:") ? id.slice(5) : null;
+          const tab = path === null ? browser?.snapshot.tabs.find(item => `browser:${item.id}` === id) : undefined;
+          return <SortableItem key={id} id={id}>{sort => <div data-workspace-tab={id} ref={sort.setNodeRef} style={sort.style} className="group/workspace-tab relative shrink-0">
+            <TabsTrigger ref={sort.setActivatorNodeRef} {...sort.listeners} onKeyDown={event => {
+              sort.listeners?.onKeyDown?.(event);
+              if (sorting.current) event.preventBaseUIHandler();
+            }} aria-describedby={sort.attributes["aria-describedby"]} value={id} title={path ?? tab?.url} className="h-7 max-w-64 cursor-pointer gap-1.5 pl-2 pr-7 text-xs">
+              {path ? <FileIcon path={path} /> : <Globe className="size-3.5 shrink-0 text-onedark-cyan" />}
+              <span className={`truncate ${path ? "font-mono text-[11px]" : ""}`}>{path ? fileName(path) : tab?.title || "Navegador"}{path && files?.tabs.paths.some(other => other !== path && fileName(other) === fileName(path)) && <span className="ml-1 text-muted-foreground">· {path.slice(0, path.lastIndexOf("/")) || "/"}</span>}</span>
+            </TabsTrigger>
+            <Button type="button" variant="ghost" size="icon" aria-label={path ? `Fechar arquivo ${path}` : `Fechar navegador ${tab?.title}`} title={path ? `Fechar ${path}` : `Fechar ${tab?.title}`} data-path={path ?? undefined} onClick={event => { if (path) close(event); else if (tab) void browser?.command({ action: "close", id: tab.id }); }} className="absolute inset-y-0 right-0.5 my-auto size-5 cursor-pointer opacity-60 group-hover/workspace-tab:opacity-100 focus-visible:opacity-100 active:not-aria-[haspopup]:translate-y-0"><X className="size-3" /></Button>
+          </div>}</SortableItem>;
+        })}</SortableList>
         {browser && browser.snapshot.tabs.length > 0 && <Button type="button" variant="ghost" size="icon" aria-label="Nova aba do navegador" title="Nova aba do navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-6 shrink-0 cursor-pointer"><Plus className="size-3.5" /></Button>}
       </TabsList></div>
       {terminalLauncher}

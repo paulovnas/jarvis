@@ -312,6 +312,9 @@ impl Execution {
     pub(super) fn designer(&self) -> bool {
         self.role == Role::Designer
     }
+    pub(super) fn design_resources(&self) -> bool {
+        self.designer() || (self.flow == Flow::Custom && (self.allowed("design_search") || self.allowed("design_read")))
+    }
     pub(super) fn role_mode(&self) -> Mode {
         if self.flow == Flow::Custom {
             return if self.hub.job(&self.id).is_ok_and(|job| job.writes()) {
@@ -338,6 +341,14 @@ impl Execution {
         } else {
             contracts::prompt(self.flow, self.role, &self.id)
         };
+        if self.id != "main" && self.hub.job(&self.id)?.phase == Phase::Discovery {
+            text.push_str("\nThis dispatch is DESIGN DISCOVERY: read-only investigation and a design brief/handoff. No product edits, shell, MCP mutations, validation commands or Beads mutations. Return accepted decisions, options and unresolved dependencies to your parent.\n");
+        }
+        Ok(text)
+    }
+    // Mutable state belongs at the end of replay, not inside the reusable system prefix.
+    pub(super) fn context(&self) -> Result<String, AgentError> {
+        let mut text = String::new();
         let state = self
             .hub
             .manifest
@@ -372,14 +383,6 @@ impl Execution {
                 "\nPending child guidance: {}\nResolve these before waiting for children.\n",
                 json!(requests)
             ));
-        }
-        if self.id != "main"
-            && state
-                .jobs
-                .get(&self.id)
-                .is_some_and(|job| job.phase == Phase::Discovery)
-        {
-            text.push_str("\nThis dispatch is DESIGN DISCOVERY: read-only investigation and a design brief/handoff. No product edits, shell, MCP mutations, validation commands or Beads mutations. Return accepted decisions, options and unresolved dependencies to your parent.\n");
         }
         drop(state);
         text.push_str(&self.hub.env.terminals.context(&self.hub.root.id));

@@ -3,6 +3,7 @@ use super::*;
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub enum DeleteTarget {
+    Workspace(String),
     Project(String),
     Conversation(String),
 }
@@ -10,7 +11,7 @@ pub enum DeleteTarget {
 impl DeleteTarget {
     fn id(&self) -> &str {
         match self {
-            Self::Project(id) | Self::Conversation(id) => id,
+            Self::Workspace(id) | Self::Project(id) | Self::Conversation(id) => id,
         }
     }
 }
@@ -79,6 +80,12 @@ fn restore(staged: &[(PathBuf, PathBuf)]) -> Result<(), LibraryError> {
         sync_directory(original.parent().ok_or_else(recovery_error)?)
             .map_err(|_| recovery_error())?;
     }
+    Ok(())
+}
+
+fn sync_staged_directories(staged: &[(PathBuf, PathBuf)]) -> Result<(), LibraryError> {
+    let directories = staged.iter().map(|(path, _)| path.parent().ok_or_else(deletion_error)).collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+    for directory in directories { sync_directory(directory)?; }
     Ok(())
 }
 
@@ -267,6 +274,7 @@ pub(crate) fn conversation_ids(
         return Err(LibraryError::missing());
     }
     let sql = match target {
+        DeleteTarget::Workspace(_) => "SELECT c.id FROM conversations c JOIN projects p ON p.id = c.project_id WHERE p.workspace_id = ?1",
         DeleteTarget::Project(_) => "SELECT id FROM conversations WHERE project_id = ?1",
         DeleteTarget::Conversation(_) => "SELECT id FROM conversations WHERE id = ?1",
     };
@@ -316,34 +324,25 @@ pub(crate) fn delete(
         return Err(LibraryError::missing());
     }
     recover(connection, home)?;
-    let project_id: Option<String> = match target {
-        DeleteTarget::Project(id) => connection
-            .query_row("SELECT id FROM projects WHERE id = ?1", [id], |row| {
-                row.get(0)
-            })
-            .optional()?,
-        DeleteTarget::Conversation(id) => connection
-            .query_row(
-                "SELECT project_id FROM conversations WHERE id = ?1",
-                [id],
-                |row| row.get(0),
-            )
-            .optional()?,
+    let sql = match target {
+        DeleteTarget::Workspace(_) => "SELECT id FROM projects WHERE workspace_id = ?1",
+        DeleteTarget::Project(_) => "SELECT id FROM projects WHERE id = ?1",
+        DeleteTarget::Conversation(_) => "SELECT project_id FROM conversations WHERE id = ?1",
     };
-    // A retry after a committed deletion only needs to finish cleanup above.
-    let Some(project_id) = project_id else {
-        return snapshot(connection);
-    };
+    let project_ids = connection.prepare(sql)?.query_map([target.id()], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
     let selected_conversation = match target {
         DeleteTarget::Conversation(id) => Some(id.as_str()),
         _ => None,
     };
-    let files = files_to_delete(home, &project_id, selected_conversation)?;
+    let mut files = vec![];
+    for project_id in &project_ids {
+        files.extend(files_to_delete(home, project_id, selected_conversation)?);
+    }
     let mut staged = vec![];
     let result = (|| {
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for original in files {
-            let suffix = if matches!(target, DeleteTarget::Project(_)) {
+            let suffix = if !matches!(target, DeleteTarget::Conversation(_)) {
                 "project-deleting"
             } else {
                 "deleting"
@@ -362,10 +361,15 @@ pub(crate) fn delete(
             fs::rename(&original, &pending).map_err(|_| deletion_error())?;
             staged.push((original, pending));
         }
-        if let Some((original, _)) = staged.first() {
-            sync_directory(original.parent().ok_or_else(deletion_error)?)?;
-        }
+        sync_staged_directories(&staged)?;
         match target {
+            DeleteTarget::Workspace(id) => {
+                tx.execute("UPDATE navigation_selection SET workspace_id = NULL, project_id = NULL, conversation_id = NULL WHERE workspace_id = ?1", [id])?;
+                tx.execute("DELETE FROM conversations WHERE project_id IN (SELECT id FROM projects WHERE workspace_id = ?1)", [id])?;
+                tx.execute("DELETE FROM projects WHERE workspace_id = ?1", [id])?;
+                tx.execute("DELETE FROM workspaces WHERE id = ?1", [id])?;
+                tx.execute("UPDATE navigation_selection SET workspace_id = (SELECT id FROM workspaces ORDER BY created_at, rowid LIMIT 1) WHERE workspace_id IS NULL", [])?;
+            }
             DeleteTarget::Conversation(id) => {
                 tx.execute("UPDATE navigation_selection SET conversation_id = NULL WHERE conversation_id = ?1", [id])?;
                 tx.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
@@ -390,12 +394,12 @@ pub(crate) fn delete(
     for (_, pending) in &staged {
         fs::remove_file(pending).map_err(|_| deletion_error())?;
     }
-    if let Some((original, _)) = staged.first() {
-        sync_directory(original.parent().ok_or_else(deletion_error)?)?;
-    }
-    if matches!(target, DeleteTarget::Project(_)) {
+    sync_staged_directories(&staged)?;
+    if !matches!(target, DeleteTarget::Conversation(_)) {
         // Remove an empty history directory only; unknown files and project source are never traversed.
-        let _ = fs::remove_dir(home.join(".jarvis").join("sessions").join(project_id));
+        for project_id in project_ids {
+            let _ = fs::remove_dir(home.join(".jarvis").join("sessions").join(project_id));
+        }
     }
     cleanup_context_memory(connection, home)?;
     cleanup_beads_projects(connection, home)?;

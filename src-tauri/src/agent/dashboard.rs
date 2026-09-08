@@ -8,6 +8,7 @@ use std::time::SystemTime;
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Metrics {
+    pub efficiency: Efficiency,
     pub turns: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -20,6 +21,45 @@ pub struct Metrics {
     pub models: BTreeMap<String, u64>,
     pub tools: BTreeMap<String, u64>,
     pub days: BTreeMap<u64, u64>,
+}
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Efficiency {
+    pub context_searches: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub cache_read_input_tokens: u64,
+    pub cache_read_requests: u64,
+    pub cache_write_requests: u64,
+    pub auxiliary_requests: u64,
+    pub auxiliary_input_tokens: u64,
+    pub auxiliary_output_tokens: u64,
+    pub indexed_outputs: u64,
+    pub original_bytes: u64,
+    pub retained_bytes: u64,
+}
+impl Metrics {
+    fn usage(&mut self, usage: &Usage, auxiliary: bool) {
+        self.input_tokens += usage.input_tokens;
+        self.output_tokens += usage.output_tokens;
+        let e = &mut self.efficiency;
+        if auxiliary {
+            e.auxiliary_requests += 1;
+            e.auxiliary_input_tokens += usage.input_tokens;
+            e.auxiliary_output_tokens += usage.output_tokens;
+        } else {
+            self.measured_steps += 1;
+        }
+        if let Some(tokens) = usage.cache_read_tokens.filter(|n| *n <= usage.input_tokens) {
+            e.cache_read_tokens += tokens;
+            e.cache_read_input_tokens += usage.input_tokens;
+            e.cache_read_requests += 1;
+        }
+        if let Some(tokens) = usage.cache_write_tokens.filter(|n| *n <= usage.input_tokens) {
+            e.cache_write_tokens += tokens;
+            e.cache_write_requests += 1;
+        }
+    }
 }
 #[derive(Clone)]
 struct Cached {
@@ -67,15 +107,30 @@ fn summarize(turns: &[StoredTurn], extras: &journal::Extras) -> Metrics {
             .entry(turn.created_at / 86_400_000)
             .or_default() += 1;
         for step in &turn.steps {
+            metrics.efficiency.context_searches += step.context_searches;
             if let Some(usage) = &step.usage {
-                metrics.input_tokens += usage.input_tokens;
-                metrics.output_tokens += usage.output_tokens;
-                metrics.measured_steps += 1;
+                metrics.usage(usage, false);
+            }
+            for reduction in &step.context_reductions {
+                metrics.efficiency.indexed_outputs += 1;
+                metrics.efficiency.original_bytes += reduction.original_bytes;
+                metrics.efficiency.retained_bytes += reduction.retained_bytes;
             }
             for tool in &step.tools {
                 metrics.tool_calls += 1;
                 metrics.tool_errors += u64::from(tool.status == "error");
                 *metrics.tools.entry(tool.name.clone()).or_default() += 1;
+                // These native tools make separate inference requests. Do not accept
+                // arbitrary MCP/page JSON as accounting data or count provider calls twice.
+                if tool.status == "completed" && matches!(tool.name.as_str(), "vision" | "web_search") {
+                    if let Ok(value) = serde_json::from_str::<Value>(&tool.output) {
+                        if let Some(usage) = value.get("usage").filter(|u| u.is_object()) {
+                            if let Ok(usage) = serde_json::from_value::<Usage>(usage.clone()) {
+                                metrics.usage(&usage, true);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -114,6 +169,20 @@ impl DashboardState {
 }
 
 fn merge(total: &mut Metrics, metrics: &Metrics) {
+    let target = &mut total.efficiency;
+    let source = &metrics.efficiency;
+    target.context_searches += source.context_searches;
+    target.cache_read_tokens += source.cache_read_tokens;
+    target.cache_write_tokens += source.cache_write_tokens;
+    target.cache_read_input_tokens += source.cache_read_input_tokens;
+    target.cache_read_requests += source.cache_read_requests;
+    target.cache_write_requests += source.cache_write_requests;
+    target.auxiliary_requests += source.auxiliary_requests;
+    target.auxiliary_input_tokens += source.auxiliary_input_tokens;
+    target.auxiliary_output_tokens += source.auxiliary_output_tokens;
+    target.indexed_outputs += source.indexed_outputs;
+    target.original_bytes += source.original_bytes;
+    target.retained_bytes += source.retained_bytes;
     total.turns += metrics.turns;
     total.input_tokens += metrics.input_tokens;
     total.output_tokens += metrics.output_tokens;
@@ -225,6 +294,7 @@ mod tests {
             (1, 500, 75, 1, 3)
         );
         assert_eq!(metrics.days.get(&1), Some(&1));
+        assert_eq!(metrics.efficiency.cache_read_requests, 0);
         assert_eq!(state.read(&path).unwrap().turns, 1);
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 1);
@@ -233,5 +303,36 @@ mod tests {
             journal::read_only(&path).unwrap().0[0].turn.status,
             TurnStatus::Running
         );
+    }
+    #[test]
+    fn cache_auxiliary_and_indexing_metrics_survive_reload_without_double_counting() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("metrics.jsonl");
+        std::fs::write(&path, "{}\n").unwrap();
+        let stored: StoredTurn = serde_json::from_value(json!({"turn": {
+            "id":"turn","createdAt":0,"durationMs":10,"user":"request",
+            "options":{"account":"test","model":"test","reasoning":null,"mode":"build","approvalMode":"yolo"},
+            "status":"completed","steps":[{
+                "text":"done","summary":"","contextSearches":1,"usage":{"inputTokens":1000,"outputTokens":100,"cacheReadTokens":600,"cacheWriteTokens":200},
+                "contextReductions":[{"callId":"snapshot","originalBytes":10000,"retainedBytes":1000}],
+                "tools":[{"id":"vision","name":"vision","args":{},"status":"completed","durationMs":1,
+                    "output":json!({"usage":{"inputTokens":500,"outputTokens":50,"cacheReadTokens":0}}).to_string()}]
+            }],"error":null
+        },"wire":[]})).unwrap();
+        journal::append(&path, &stored).unwrap();
+        journal::append(&path, &stored).unwrap();
+        let metrics = DashboardState::default().read(&path).unwrap();
+        assert_eq!((metrics.input_tokens, metrics.output_tokens, metrics.measured_steps), (1500, 150, 1));
+        let e = &metrics.efficiency;
+        assert_eq!(e.context_searches, 1);
+        assert_eq!((e.cache_read_tokens, e.cache_read_input_tokens, e.cache_read_requests), (600, 1500, 2));
+        assert_eq!((e.cache_write_tokens, e.cache_write_requests), (200, 1));
+        assert_eq!((e.auxiliary_requests, e.auxiliary_input_tokens), (1, 500));
+        assert_eq!((e.indexed_outputs, e.original_bytes, e.retained_bytes), (1, 10000, 1000));
+        let mut project = Metrics::default();
+        merge(&mut project, &metrics);
+        merge(&mut project, &metrics);
+        assert_eq!(project.efficiency.context_searches, 2);
+        assert_eq!((project.input_tokens, project.efficiency.cache_read_tokens, project.efficiency.indexed_outputs), (3000, 1200, 2));
     }
 }

@@ -31,6 +31,7 @@ pub struct LayoutPreferences {
     pub inspector_collapsed: bool,
     pub terminal_panels: BTreeMap<String, TerminalPanelPreferences>,
     pub file_tabs: BTreeMap<String, FileTabsPreferences>,
+    pub item_order: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -77,6 +78,7 @@ pub enum SettingsTab {
     Agents,
     Skills,
     Mcps,
+    Workspaces,
 }
 
 impl LayoutPreferences {
@@ -93,11 +95,15 @@ impl LayoutPreferences {
             return Err("Invalid panel dimensions".into());
         }
         if self.expanded_projects.len() > 10_000
+            || self.item_order.len() > 10_000
             || self.activity_sections.len() > 20
             || self.terminal_panels.len() > 10_000
             || self.file_tabs.len() > 10_000
         {
             return Err("Too many layout entries".into());
+        }
+        if self.item_order.iter().any(|(key, ids)| key.len() > 256 || ids.len() > 10_000 || ids.iter().any(|id| id.is_empty() || id.len() > 8192) || ids.iter().collect::<std::collections::BTreeSet<_>>().len() != ids.len()) {
+            return Err("Invalid item order".into());
         }
         if self
             .terminal_panels
@@ -120,6 +126,24 @@ impl LayoutPreferences {
             return Err("Invalid file tabs".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod ordering_tests {
+    use super::*;
+    #[test]
+    fn item_order_and_workspace_settings_round_trip_and_reject_duplicates() {
+        let mut layout: LayoutPreferences = serde_json::from_value(serde_json::json!({
+            "settingsTab": "workspaces", "itemOrder": {"projects:w": ["b", "a"], "chats:p": ["c", "d"], "tabs:c": ["browser:web", "file:README.md"]}
+        })).unwrap();
+        assert!(layout.validate().is_ok());
+        let restored: LayoutPreferences = serde_json::from_slice(&serde_json::to_vec(&layout).unwrap()).unwrap();
+        assert_eq!(restored, layout);
+        layout.item_order.insert("projects:w".into(), vec!["a".into(), "a".into()]);
+        assert!(layout.validate().is_err());
+        let legacy: LayoutPreferences = serde_json::from_str("{}").unwrap();
+        assert!(legacy.item_order.is_empty());
     }
 }
 

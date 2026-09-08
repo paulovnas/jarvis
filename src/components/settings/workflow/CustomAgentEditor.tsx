@@ -5,14 +5,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ModelPicker } from "@/components/chat/ModelPicker";
-import { CAPABILITY_LABELS, type CustomAgent } from "@/core/workflow-catalog";
+import { type CustomAgent } from "@/core/workflow-catalog";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { accountGroups } from "./workflow-models";
-import { ChoiceField, DiscardDialog } from "./WorkflowFields";
+import { DiscardDialog } from "./WorkflowFields";
 import { modelProblem } from "@/core/provider-references";
 import { useModelProblemNotice } from "@/hooks/use-provider-references";
 import { agentAppearance } from "@/core/workflow-appearance";
 import { AppearancePicker } from "./AppearancePicker";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AgentToolPermissions } from "./AgentToolPermissions";
 
 export function CustomAgentEditor({ initial, accounts, saving, onSave, onClose, creating }: { initial: CustomAgent; accounts: ProviderAccount[]; saving: boolean; onSave: (agent: CustomAgent) => Promise<boolean>; onClose: () => void; creating: boolean }) {
   const [agent, setAgent] = useState(initial);
@@ -29,17 +31,15 @@ export function CustomAgentEditor({ initial, accounts, saving, onSave, onClose, 
         <DialogDescription>Defina a identidade, as instruções e as ferramentas deste agente.</DialogDescription>
       </DialogHeader>
       <form className="flex min-h-0 flex-col" onSubmit={event => { event.preventDefault(); if (problem || saving) return; void onSave({ ...agent, name: agent.name.trim() }).then(saved => { if (saved) onClose(); }); }}>
-        <div className="min-h-0 overflow-y-auto">
+        <Tabs defaultValue="general" className="min-h-0 gap-0">
+          <TabsList className="m-4 mb-0 shrink-0"><TabsTrigger value="general" className="cursor-pointer">Agente</TabsTrigger><TabsTrigger value="permissions" className="cursor-pointer">Permissões</TabsTrigger></TabsList>
+          <TabsContent value="general" keepMounted className="min-h-0 overflow-y-auto">
           <div className="grid min-w-0 gap-6 p-5 md:grid-cols-[320px_minmax(0,1fr)]">
             <fieldset disabled={saving} className="min-w-0 space-y-3">
               <legend className="sr-only">Identidade e permissões</legend>
               <div className="space-y-1.5"><Label htmlFor="custom-agent-name">Nome</Label><Input id="custom-agent-name" value={agent.name} maxLength={100} required onChange={e => patch({ name: e.target.value })} /></div>
               <div className="space-y-1.5"><Label htmlFor="custom-agent-description">Descrição</Label><Textarea id="custom-agent-description" className="min-h-16 resize-y text-xs" value={agent.description} maxLength={500} onChange={e => patch({ description: e.target.value })} /></div>
               <AppearancePicker value={agent.appearance ?? agentAppearance} onChange={appearance => patch({ appearance })} disabled={saving} />
-              <div className="space-y-2">
-      <ChoiceField label="Permissões" value={agent.capability} onChange={value => patch({ capability: value as CustomAgent["capability"] })} options={Object.entries(CAPABILITY_LABELS).map(([value, label]) => ({ value, label }))} />
-                <p className="text-xs leading-5 text-muted-foreground">{agent.capability === "read_only" ? "Consulta o projeto sem editar arquivos ou executar comandos." : agent.capability === "write_files" ? "Pode ler e editar arquivos. Comandos e ferramentas MCP ficam indisponíveis." : "Pode editar arquivos, executar comandos e usar MCPs disponíveis. As aprovações da conversa continuam valendo."}</p>
-              </div>
             </fieldset>
             <fieldset disabled={saving} className="flex min-w-0 flex-col gap-4">
               <legend className="sr-only">Comportamento e modelo</legend>
@@ -48,7 +48,9 @@ export function CustomAgentEditor({ initial, accounts, saving, onSave, onClose, 
               {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
             </fieldset>
           </div>
-        </div>
+          </TabsContent>
+          <TabsContent value="permissions" className="min-h-0 overflow-y-auto"><AgentToolPermissions agent={agent} disabled={saving} onChange={patch} /></TabsContent>
+        </Tabs>
         <DialogFooter className="m-0 shrink-0 gap-3 border-t border-border bg-sidebar/50 px-5 py-4">
           <Button type="button" variant="outline" className="cursor-pointer" disabled={saving} onClick={close}>Cancelar</Button>
           <Button type="submit" className="cursor-pointer" disabled={saving || Boolean(problem) || !agent.name.trim() || !agent.instructions.trim()}>{saving ? "Salvando…" : "Salvar agente"}</Button>

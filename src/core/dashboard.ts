@@ -2,9 +2,18 @@ import { z } from "zod";
 
 const count = z.number().int().nonnegative();
 const counts = z.record(z.string(), count);
+export const efficiencySchema = z.object({
+  contextSearches: count.default(0),
+  cacheReadTokens: count.default(0), cacheWriteTokens: count.default(0),
+  cacheReadInputTokens: count.default(0), cacheReadRequests: count.default(0), cacheWriteRequests: count.default(0),
+  auxiliaryRequests: count.default(0), auxiliaryInputTokens: count.default(0), auxiliaryOutputTokens: count.default(0),
+  indexedOutputs: count.default(0), originalBytes: count.default(0), retainedBytes: count.default(0),
+});
+export const emptyEfficiency = efficiencySchema.parse({});
 export const projectMetricsSchema = z.object({
   projectId: z.string(), sessions: count, unavailableSessions: count,
   metrics: z.object({ turns: count, inputTokens: count, outputTokens: count, measuredSteps: count,
+    efficiency: efficiencySchema.optional(),
     toolCalls: count, toolErrors: count, durationMs: count, compactions: count, changedFiles: count,
     models: counts, tools: counts, days: counts }),
   recent: z.array(z.object({ id: z.string(), title: z.string(), activity: count, turns: count })),

@@ -264,5 +264,52 @@ pub(super) fn body(
             }
         }
     }
+    cache_breakpoints(config, model, &mut body)?;
     Ok(body)
+}
+
+fn cache_breakpoints(config: &Config, model: &Model, body: &mut Value) -> Result<(), AgentError> {
+    let endpoint = config.endpoint()?;
+    let known_host = endpoint.scheme() == "https"
+        && endpoint.port_or_known_default() == Some(443)
+        && matches!(endpoint.host_str(), Some("api.anthropic.com" | "openrouter.ai"));
+    // Endpoint compatibility alone does not establish cache_control support.
+    // Send explicit 5-minute breakpoints only for Claude on documented hosts.
+    if !known_host || !(model.id.starts_with("claude-") || model.id.starts_with("anthropic/claude-")) {
+        return Ok(());
+    }
+    let marker = json!({"type":"ephemeral"});
+    match config.protocol {
+        Protocol::AnthropicMessages => {
+            body["system"] = json!([{"type":"text","text":body["system"],"cache_control":marker}]);
+            if let Some(tool) = body["tools"].as_array_mut().and_then(|tools| tools.last_mut()) {
+                tool["cache_control"] = marker.clone();
+            }
+            if let Some(message) = body["messages"].as_array_mut().and_then(|messages| messages.last_mut()) {
+                if message["content"].is_string() {
+                    message["content"] = json!([{"type":"text","text":message["content"]}]);
+                }
+                if let Some(block) = message["content"].as_array_mut().and_then(|blocks| blocks.last_mut())
+                    .filter(|block| matches!(block["type"].as_str(), Some("text" | "tool_result"))) {
+                    block["cache_control"] = marker;
+                }
+            }
+        }
+        Protocol::OpenaiCompletions if endpoint.host_str() == Some("openrouter.ai") => {
+            if let Some(messages) = body["messages"].as_array_mut() {
+                let last = messages.iter().rposition(|m| matches!(m["role"].as_str(), Some("user" | "assistant")));
+                for (index, message) in messages.iter_mut().enumerate() {
+                    if index != 0 && Some(index) != last { continue; }
+                    if message["content"].is_string() {
+                        message["content"] = json!([{"type":"text","text":message["content"]}]);
+                    }
+                    if let Some(block) = message["content"].as_array_mut().and_then(|blocks| blocks.iter_mut().rev().find(|b| b["type"] == "text")) {
+                        block["cache_control"] = marker.clone();
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }

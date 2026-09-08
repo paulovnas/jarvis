@@ -2,6 +2,7 @@ use super::*;
 use crate::persistence::initialize_database;
 
 mod deletion;
+mod workspaces;
 
 struct TestHome(PathBuf);
 

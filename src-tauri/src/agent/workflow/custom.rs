@@ -42,8 +42,14 @@ fn apply_model(options: &mut TurnOptions, agent: &catalog::AgentDefinition) {
 }
 
 pub(super) fn allowed(agent: &catalog::AgentDefinition, name: &str) -> bool {
+    if catalog::permissions::required(name) { return true; }
+    if agent.denied_tools.iter().any(|denied| denied == name || (denied == "mcp_*" && name.starts_with("mcp_"))) { return false; }
+    capability_allows(agent.capability, name)
+}
+
+pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
     if crate::agent::browser::mutating(name) {
-        return agent.capability == Capability::Commands;
+        return capability == Capability::Commands;
     }
     if name.starts_with("hub_") {
         return name == "hub_complete";
@@ -52,20 +58,20 @@ pub(super) fn allowed(agent: &catalog::AgentDefinition, name: &str) -> bool {
         return false;
     }
     if matches!(name, "write" | "edit" | "generate_image") {
-        return agent.capability != Capability::ReadOnly;
+        return capability != Capability::ReadOnly;
     }
     if matches!(
         name,
         "bash" | "process_start" | "terminal_start" | "terminal_write" | "workflow_check"
     ) || crate::core::context::needs_approval(name)
     {
-        return agent.capability == Capability::Commands;
+        return capability == Capability::Commands;
     }
     if name.starts_with("mcp_") {
-        return agent.capability == Capability::Commands;
+        return capability == Capability::Commands;
     }
     if crate::core::beads::needs_approval(name) {
-        return agent.capability != Capability::ReadOnly;
+        return capability != Capability::ReadOnly;
     }
     // Existing definitions and runtime checks further constrain read tools.
     true

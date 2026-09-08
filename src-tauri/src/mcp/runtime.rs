@@ -139,7 +139,7 @@ pub async fn connect(
     }
 }
 
-fn wire_name(server: &Server, name: &str) -> String {
+pub(crate) fn wire_name(server: &Server, name: &str) -> String {
     let digest = Sha256::digest(format!("{}\0{}", server.id, name).as_bytes());
     let suffix: String = digest[..8]
         .iter()

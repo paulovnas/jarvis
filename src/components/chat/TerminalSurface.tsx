@@ -29,6 +29,7 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
     const fontSize = 13;
     const xterm = new Terminal({
       cursorBlink: terminal.status === "running",
+      disableStdin: terminal.status !== "running",
       cursorStyle: "bar",
       fontFamily,
       fontSize,

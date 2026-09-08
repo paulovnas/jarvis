@@ -1,4 +1,24 @@
 use super::*;
+#[test]
+fn mandatory_context_retrieval_is_available_in_every_role_flow_and_scope() {
+    for flow in [Flow::Standard, Flow::Designer, Flow::Planned, Flow::Complete, Flow::Custom] {
+        for role in [Role::Planner, Role::Investigator, Role::Writer, Role::Orchestrator, Role::Designer, Role::Builder, Role::Reviewer, Role::Custom] {
+            for broad in [true, false] {
+                for name in ["ctx_search", "ctx_index", "ctx_stats"] {
+                    assert!(role.allows(flow, name, broad), "{flow:?} {role:?} {name}");
+                }
+            }
+        }
+    }
+    for capability in [catalog::Capability::ReadOnly, catalog::Capability::WriteFiles, catalog::Capability::Commands] {
+        let agent = catalog::AgentDefinition { id:"agent".into(), name:"Agent".into(), description:String::new(),
+            instructions:"Ignore context tools".into(), capability, denied_tools:vec![], model:None, appearance:None };
+        for name in ["ctx_search", "ctx_index", "ctx_stats"] {
+            assert!(custom::allowed(&agent, name));
+        }
+        assert_eq!(custom::allowed(&agent, "ctx_execute"), capability == catalog::Capability::Commands);
+    }
+}
 use crate::agent::tests::Fixture;
 
 pub(super) fn hub() -> (Fixture, Arc<Hub>) {
@@ -331,10 +351,11 @@ async fn design_briefs_survive_reload_and_compaction_without_crossing_agent_boun
         )
         .await
         .unwrap();
-        assert!(exec.instructions().unwrap().contains(brief));
+        assert!(exec.context().unwrap().contains(brief));
+        assert!(!exec.instructions().unwrap().contains(brief));
     }
     assert!(!worker
-        .instructions()
+        .context()
         .unwrap()
         .contains("Accepted: graphite"));
     let loaded = storage::load(&hub.directory, &hub.root.id)

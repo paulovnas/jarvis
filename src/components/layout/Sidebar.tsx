@@ -7,6 +7,7 @@ import {
   FolderPlus,
   MessageSquare,
   Plus,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +45,9 @@ import { ItemNameDialog } from "./ItemNameDialog";
 import { LibraryItemMenu } from "./LibraryItemMenu";
 import { DeleteItemDialog } from "./DeleteItemDialog";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
+import { SortableItem, SortableList } from "./SortableList";
+import { orderedItems } from "@/core/item-order";
+import { MoveProjectDialog } from "./MoveProjectDialog";
 
 type NameDialog =
   | { kind: "workspace" }
@@ -66,6 +70,7 @@ export function AppSidebar({
   unreadConversationIds?: ReadonlySet<string>;
 }) {
   const [dialog, setDialog] = useState<NameDialog | null>(null);
+  const [moving, setMoving] = useState<Project | null>(null);
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const { layout, updateLayout } = useDesktopLayout();
   const expanded = layout.expandedProjects;
@@ -76,26 +81,30 @@ export function AppSidebar({
   const workspace = snapshot?.workspaces.find(
     (item) => item.id === selected?.workspaceId,
   );
-  const projects =
-    snapshot?.projects.filter((item) => item.workspaceId === workspace?.id) ??
-    [];
+  const projectOrderKey = `projects:${workspace?.id ?? ""}`;
+  const projects = orderedItems(snapshot?.projects.filter((item) => item.workspaceId === workspace?.id) ?? [], layout.itemOrder[projectOrderKey], item => item.id);
+  const saveOrder = (key: string, ids: string[]) => updateLayout(current => ({ itemOrder: { ...current.itemOrder, [key]: ids } }));
   const project = projects.find((item) => item.id === selected?.projectId);
   const busy = loading || pending;
   const openDialog = (value: NameDialog) => {
     library.clearError();
     setDialog(value);
   };
-  const conversationList = (items: Conversation[]) => (
+  const conversationList = (items: Conversation[], all: Conversation[], projectId: string) => (
+    <SortableList ids={items.map(item => item.id)} onReorder={ids => saveOrder(`chats:${projectId}`, [...ids, ...all.filter(item => !ids.includes(item.id)).map(item => item.id)])}>
     <SidebarMenu aria-label="Conversas do projeto">
       {items.map((item) => (
-        <SidebarMenuItem key={item.id}>
+        <SortableItem key={item.id} id={item.id} disabled={busy}>{sort => <SidebarMenuItem ref={sort.setNodeRef} style={sort.style}>
           <LibraryItemMenu
             disabled={busy}
             onEdit={() => openDialog({ kind: "conversation", item })}
             onDelete={() => { library.clearError(); setDeletion({ kind: "conversation", item }); }}
           >
             <SidebarMenuButton
-              className="cursor-pointer"
+              ref={sort.setActivatorNodeRef}
+              {...sort.listeners}
+              aria-describedby={sort.attributes["aria-describedby"]}
+              className="cursor-pointer pr-8"
               isActive={item.id === selected?.conversationId}
               aria-current={
                 item.id === selected?.conversationId ? "page" : undefined
@@ -110,9 +119,11 @@ export function AppSidebar({
               {unreadConversationIds?.has(item.id) && <Badge role="img" aria-label="Mensagem não lida" title="Mensagem não lida" className="size-2 shrink-0 rounded-full border-0 bg-primary p-0 shadow-[0_0_6px_#61afef44]" />}
             </SidebarMenuButton>
           </LibraryItemMenu>
-        </SidebarMenuItem>
+          <SidebarMenuAction showOnHover aria-label={`Excluir conversa ${item.title}`} title="Excluir conversa" disabled={busy} className="cursor-pointer text-muted-foreground hover:text-destructive focus-visible:opacity-100" onClick={() => { library.clearError(); setDeletion({ kind: "conversation", item }); }}><Trash2 aria-hidden="true" /></SidebarMenuAction>
+        </SidebarMenuItem>}</SortableItem>
       ))}
     </SidebarMenu>
+    </SortableList>
   );
 
   return (
@@ -216,15 +227,15 @@ export function AppSidebar({
                           </EmptyHeader>
                         </Empty>
                       )}
-                      <SidebarMenu aria-label="Projetos do workspace">
+                      <SortableList ids={projects.map(item => item.id)} onReorder={ids => saveOrder(projectOrderKey, ids)}><SidebarMenu aria-label="Projetos do workspace">
                         {projects.map((item) => {
-                          const conversations = snapshot.conversations.filter(entry => entry.projectId === item.id)
-                            .sort((a, b) => (b.lastActivityAt ?? b.createdAt) - (a.lastActivityAt ?? a.createdAt) || b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+                          const conversations = orderedItems(snapshot.conversations.filter(entry => entry.projectId === item.id)
+                            .sort((a, b) => (b.lastActivityAt ?? b.createdAt) - (a.lastActivityAt ?? a.createdAt) || b.createdAt - a.createdAt || a.id.localeCompare(b.id)), layout.itemOrder[`chats:${item.id}`], entry => entry.id);
                           const visibleCount = visibleCounts[item.id] ?? 3;
                           const isCurrentProject = item.id === project?.id;
                           const isOpen = expanded[item.id] ?? item.id === project?.id;
                           return (
-                          <SidebarMenuItem key={item.id} data-active-project={isCurrentProject ? "true" : undefined} className="rounded-lg border border-transparent transition-colors duration-150 data-[active-project=true]:border-primary/25 data-[active-project=true]:bg-primary/[0.055] data-[active-project=true]:shadow-[inset_2px_0_var(--primary)] motion-reduce:transition-none">
+                          <SortableItem key={item.id} id={item.id} disabled={busy}>{sort => <SidebarMenuItem ref={sort.setNodeRef} style={sort.style} data-active-project={isCurrentProject ? "true" : undefined} className="rounded-lg border border-transparent transition-colors duration-150 data-[active-project=true]:border-primary/25 data-[active-project=true]:bg-primary/[0.055] data-[active-project=true]:shadow-[inset_2px_0_var(--primary)] motion-reduce:transition-none">
                             <Collapsible role="group" aria-label={`Projeto ${item.name}`} aria-current={isCurrentProject ? "true" : undefined} open={isOpen} onOpenChange={(open) => setExpanded(values => ({ ...values, [item.id]: open }))}>
                             <LibraryItemMenu
                               disabled={busy}
@@ -232,8 +243,12 @@ export function AppSidebar({
                                 openDialog({ kind: "project", item })
                               }
                               onDelete={() => { library.clearError(); setDeletion({ kind: "project", item }); }}
+                              onMove={() => { library.clearError(); setMoving(item); }}
                             >
                               <CollapsibleTrigger render={<SidebarMenuButton
+                                ref={sort.setActivatorNodeRef}
+                                {...sort.listeners}
+                                aria-describedby={sort.attributes["aria-describedby"]}
                                 size="lg"
                                 className={`h-9 cursor-pointer ${isCurrentProject ? "font-semibold text-primary" : ""}`}
                                 isActive={item.id === project?.id}
@@ -280,13 +295,13 @@ export function AppSidebar({
                                     </SidebarMenuButton>
                                   </SidebarMenuItem>
                                 </SidebarMenu>
-                                {conversationList(conversations.slice(0, visibleCount))}
+                                {conversationList(conversations.slice(0, visibleCount), conversations, item.id)}
                                 {conversations.length > visibleCount && <Button variant="ghost" size="sm" className="mt-1 h-7 w-full cursor-pointer justify-start pl-8 text-xs text-muted-foreground" onClick={() => setVisibleCounts(counts => ({ ...counts, [item.id]: visibleCount + 10 }))}>Ver mais<span className="ml-auto font-mono text-[10px]">+{Math.min(10, conversations.length - visibleCount)}</span></Button>}
                               </CollapsibleContent>
                             </Collapsible>
-                          </SidebarMenuItem>
+                          </SidebarMenuItem>}</SortableItem>
                         ); })}
-                      </SidebarMenu>
+                      </SidebarMenu></SortableList>
                     </>
                   )}
               </div>
@@ -329,6 +344,7 @@ export function AppSidebar({
         onClose={() => { setDeletion(null); library.clearError(); }}
         onConfirm={() => library.deleteItem({ kind: deletion.kind, id: deletion.item.id })}
       />}
+      {moving && <MoveProjectDialog project={moving} workspaces={snapshot?.workspaces ?? []} library={library} onClose={() => { setMoving(null); library.clearError(); }} />}
     </aside>
   );
 }

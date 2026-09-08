@@ -13,6 +13,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useLibrary } from "@/hooks/use-library";
 import { emptyLibrary, populatedLibrary } from "@/test/library-fixtures";
 import { AppSidebar } from "./Sidebar";
+import { DesktopLayoutProvider } from "./DesktopLayoutProvider";
+import { DEFAULT_DESKTOP_LAYOUT } from "@/core/desktop-layout";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
@@ -21,6 +23,32 @@ function Harness({ runningIds, unreadIds }: { runningIds?: ReadonlySet<string>; 
 }
 
 describe("Persistent sidebar", () => {
+  it("restores manually ordered projects and chats instead of overriding them with activity order", async () => {
+    const stored = populatedLibrary();
+    stored.projects.push({ id: "p3", workspaceId: "w1", name: "Website", path: "/projects/site", createdAt: 3 });
+    stored.conversations.push({ id: "c3", projectId: "p1", title: "Terceira conversa", createdAt: 3, lastActivityAt: 30 });
+    call.mockImplementation(async command => command === "get_desktop_layout" ? { ...DEFAULT_DESKTOP_LAYOUT, itemOrder: { "projects:w1": ["p3", "p1"], "chats:p1": ["c1", "c3"] } } : stored);
+    render(<DesktopLayoutProvider><Harness /></DesktopLayoutProvider>);
+    await screen.findByRole("button", { name: "Primeira conversa" });
+    const projects = screen.getByRole("list", { name: "Projetos do workspace" });
+    expect(within(projects).getAllByRole("group").map(group => group.getAttribute("aria-label"))).toEqual(["Projeto Website", "Projeto Jarvis"]);
+    const chats = screen.getByRole("list", { name: "Conversas do projeto" });
+    expect(within(chats).getAllByRole("button", { name: /^(Primeira|Terceira)/ }).map(button => button.textContent)).toEqual(["Primeira conversa", "Terceira conversa"]);
+  });
+  it("offers direct chat deletion on hover and moves a project with its history", async () => {
+    const user = userEvent.setup(); const stored = populatedLibrary();
+    call.mockResolvedValue(stored); render(<Harness />);
+    await user.click(await screen.findByRole("button", { name: "Excluir conversa Primeira conversa" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Primeira conversa");
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    fireEvent.contextMenu(screen.getByTitle("/projects/jarvis"));
+    await user.click(await screen.findByRole("menuitem", { name: "Mover para outro workspace" }));
+    const target = stored.workspaces.find(item => item.id !== "w1")!;
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("combobox", { name: "Workspace de destino" })).toHaveTextContent(target.name);
+    await user.click(within(dialog).getByRole("button", { name: "Mover projeto" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("move_project_workspace", { id: "p1", workspaceId: target.id }));
+  });
   it("keeps the project group current on chat and dashboard, then moves it to the selected project", async () => {
     const user = userEvent.setup();
     const stored = populatedLibrary();
@@ -48,7 +76,7 @@ describe("Persistent sidebar", () => {
     stored.conversations.push({ id:"c3", projectId:"p3", title:"Background chat", createdAt:3 });
     call.mockResolvedValue(stored);
     const view = render(<Harness runningIds={new Set(["c1"])} unreadIds={new Set(["c1", "c3"])} />);
-    const selected = await screen.findByRole("button", { name:/Primeira conversa/ });
+    const selected = await screen.findByRole("button", { name:/^(?!Excluir).*Primeira conversa/ });
     expect(within(selected).getByRole("img", { name:"Mensagem não lida" })).toBeVisible();
     expect(within(selected).getByRole("status", { name:"Conversa em execução" })).toBeVisible();
     expect(within(screen.getByTitle("/projects/website")).getByRole("img", { name:"Projeto com mensagens não lidas" })).toBeVisible();
@@ -65,13 +93,13 @@ describe("Persistent sidebar", () => {
     render(<Harness />);
     const dashboard = await screen.findByRole("button", { name: "Dashboard" });
     const menu = screen.getByRole("list", { name: "Conversas do projeto" });
-    expect(within(menu).getAllByRole("button").map(button => button.textContent)).toEqual(["Sessão 0", "Sessão 24", "Sessão 23"]);
+    expect(within(menu).getAllByRole("button", { name: /^Sessão/ }).map(button => button.textContent)).toEqual(["Sessão 0", "Sessão 24", "Sessão 23"]);
     await user.click(screen.getByRole("button", { name: /Ver mais/ }));
-    expect(within(menu).getAllByRole("button")).toHaveLength(13);
+    expect(within(menu).getAllByRole("button", { name: /^Sessão/ })).toHaveLength(13);
     await user.click(screen.getByRole("button", { name: /Ver mais/ }));
-    expect(within(menu).getAllByRole("button")).toHaveLength(23);
+    expect(within(menu).getAllByRole("button", { name: /^Sessão/ })).toHaveLength(23);
     await user.click(screen.getByRole("button", { name: /Ver mais/ }));
-    expect(within(menu).getAllByRole("button")).toHaveLength(25);
+    expect(within(menu).getAllByRole("button", { name: /^Sessão/ })).toHaveLength(25);
     expect(screen.queryByRole("button", { name: /Ver mais/ })).not.toBeInTheDocument();
     call.mockResolvedValue({ ...stored, selection: { ...stored.selection, conversationId: null } });
     await user.click(dashboard);
@@ -89,7 +117,7 @@ describe("Persistent sidebar", () => {
     stored.conversations.push({ id: "c3", projectId: "p3", title: "Conversa em segundo plano", createdAt: 3 });
     call.mockResolvedValue(stored);
     const { rerender } = render(<Harness runningIds={new Set(["c1", "c3"])} />);
-    const selected = await screen.findByRole("button", { name: /Primeira conversa/ });
+    const selected = await screen.findByRole("button", { name: /^(?!Excluir).*Primeira conversa/ });
     expect(within(selected).getByRole("status", { name: "Conversa em execução" })).toBeInTheDocument();
     const folded = screen.getByTitle("/projects/website");
     expect(within(folded).getByRole("status", { name: "Projeto com conversa em execução" })).toBeInTheDocument();

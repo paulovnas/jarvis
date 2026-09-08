@@ -122,7 +122,7 @@ export function Home() {
 
   const workspace = library.snapshot?.workspaces.find(item => item.id === library.snapshot?.selection.workspaceId);
   if (workspace && !library.snapshot?.projects.some(project => project.workspaceId === workspace.id)) {
-    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground"><EmptyWorkspace workspace={workspace} library={library} /><StatusBar passive /></div>;
+    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground"><div className="flex min-h-0 flex-1"><div className="w-64 shrink-0"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} /></div><EmptyWorkspace workspace={workspace} library={library} /></div><StatusBar onOpenSettings={() => setSettingsOpen(true)} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;
   }
 
   return (

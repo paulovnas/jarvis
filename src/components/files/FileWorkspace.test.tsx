@@ -5,6 +5,9 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DesktopLayoutProvider } from "@/components/layout/DesktopLayoutProvider";
 import { DEFAULT_DESKTOP_LAYOUT } from "@/core/desktop-layout";
+import { DesktopLayoutContext } from "@/core/desktop-layout";
+import type { LayoutUpdate } from "@/core/desktop-layout";
+import type { BrowserController } from "@/hooks/use-browser";
 import type { FilePreview } from "@/core/project-files";
 import { useProjectFiles } from "@/hooks/use-project-files";
 import { FileWorkspace } from "./FileWorkspace";
@@ -22,6 +25,29 @@ function Workspace({ projectId = "project-1" }: { projectId?: string }) {
   const files = useProjectFiles(projectId);
   return <><ProjectExplorer key={projectId} projectId={projectId} projectName="Meu projeto" selected={files.tabs.activePath} onOpen={files.open} /><FileWorkspace files={files}><ChatDraft /></FileWorkspace></>;
 }
+
+it("restores mixed file and browser tab order while keeping Chat first and fixed", async () => {
+  const user = userEvent.setup();
+  const browser: BrowserController = { conversationId: "chat", snapshot: { activeId: null, tabs: [{ id: "web", conversationId: "chat", title: "Local", url: "http://localhost:5173", loading: false }] }, loaded: true, busy: false, command: vi.fn(), select: vi.fn(), open: vi.fn() };
+  const layout = { ...DEFAULT_DESKTOP_LAYOUT, itemOrder: { "tabs:chat": ["browser:web", "file:README.md"] }, fileTabs: { "project-1": { paths: ["README.md"], activePath: null } } };
+  function Mixed() { const files = useProjectFiles("project-1"); return <FileWorkspace files={files} browser={browser}><ChatDraft /></FileWorkspace>; }
+  const update = vi.fn<(value: LayoutUpdate) => void>();
+  render(<DesktopLayoutContext value={{ layout, updateLayout: update }}><Mixed /></DesktopLayoutContext>);
+  await waitFor(() => expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Chat", "Local", "README.md"]));
+  expect(screen.getByRole("tab", { name: "Chat" })).not.toHaveAttribute("aria-describedby");
+  const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const item = this.closest("[data-workspace-tab]");
+    const index = item ? [...document.querySelectorAll("[data-workspace-tab]")].indexOf(item) : 0;
+    return { x: index * 180, y: 0, top: 0, left: index * 180, right: (index + 1) * 180, bottom: 28, width: 180, height: 28, toJSON: () => ({}) };
+  });
+  try {
+    screen.getByRole("tab", { name: "Local" }).focus();
+    vi.mocked(browser.select).mockClear(); update.mockClear();
+    await user.keyboard("[Space][ArrowRight][Space]");
+    expect(update.mock.calls.map(([value]) => typeof value === "function" ? value(layout) : value)).toContainEqual({ itemOrder: { "tabs:chat": ["file:README.md", "browser:web"] } });
+    expect(browser.select).not.toHaveBeenCalled();
+  } finally { geometry.mockRestore(); }
+});
 
 beforeEach(() => {
   mockedInvoke.mockReset().mockImplementation(async (command, args) => {

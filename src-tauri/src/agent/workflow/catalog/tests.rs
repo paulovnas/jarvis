@@ -7,6 +7,7 @@ pub(crate) fn example() -> Catalog {
         description: "Inspect the project".into(),
         instructions: "Read the project and return evidence.".into(),
         capability: Capability::ReadOnly,
+        denied_tools: vec![],
         model: None,
         appearance: None,
     };

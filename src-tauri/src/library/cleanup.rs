@@ -74,17 +74,24 @@ pub(crate) fn journal_path(home: &Path, item: &Candidate) -> Result<PathBuf, Lib
 
 pub(crate) fn size(home: &Path, item: &Candidate) -> Result<u64, LibraryError> {
     let files = deletion::files_to_delete(home, &item.project_id, Some(&item.id))?;
-    let mut bytes = 0;
+    let mut bytes = related_size(home, &item.id)?;
     for file in files {
-        bytes += fs::symlink_metadata(file)
-            .map_err(|_| LibraryError::storage())?
-            .len();
+        bytes += fs::symlink_metadata(file).map_err(|_| LibraryError::storage())?.len();
     }
+    Ok(bytes)
+}
+
+pub(super) fn related_size(home: &Path, id: &str) -> Result<u64, LibraryError> {
+    let attachment_root = home.join(".jarvis/attachments");
+    if fs::symlink_metadata(&attachment_root).is_ok_and(|meta| meta.is_symlink()) {
+        return Err(LibraryError::storage());
+    }
+    let mut bytes = directory_bytes(&attachment_root.join(id))?;
     let context_root = home.join(".jarvis/context-mode");
     if fs::symlink_metadata(&context_root).is_ok_and(|meta| meta.is_symlink()) {
         return Err(LibraryError::storage());
     }
-    let workflow = home.join(".jarvis/workflows").join(&item.id);
+    let workflow = home.join(".jarvis/workflows").join(id);
     if fs::symlink_metadata(home.join(".jarvis/workflows")).is_ok_and(|meta| meta.is_symlink()) {
         return Err(LibraryError::storage());
     }
@@ -106,5 +113,5 @@ pub(crate) fn size(home: &Path, item: &Candidate) -> Result<u64, LibraryError> {
             }
         }
     }
-    Ok(bytes + directory_bytes(&crate::core::context::storage(home, &item.id))?)
+    Ok(bytes + directory_bytes(&crate::core::context::storage(home, id))?)
 }

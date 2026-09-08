@@ -22,6 +22,9 @@ impl Stream {
             self.usage = Some(Usage {
                 input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
                 output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
+                cache_read_tokens: usage["prompt_tokens_details"]["cached_tokens"].as_u64()
+                    .or_else(|| usage["prompt_cache_hit_tokens"].as_u64()),
+                cache_write_tokens: usage["prompt_tokens_details"]["cache_write_tokens"].as_u64(),
             });
         }
         let Some(choices) = event["choices"].as_array() else {

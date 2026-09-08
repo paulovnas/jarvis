@@ -227,8 +227,9 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
                   <Button type="button" variant="outline" size="icon" aria-label="Novo terminal" title="Novo terminal" className="size-7 shrink-0 cursor-pointer" disabled={creating} onClick={() => { void create(); }}><Plus className="size-3.5" /></Button>
                 </div>
               </div>
-              {active && <TabsContent value={active.id} className="min-h-0 min-w-0 overflow-hidden bg-sidebar" aria-label={active.title}>
-                <Suspense fallback={<Skeleton role="status" aria-label="Carregando terminal" className="h-full w-full" />}><TerminalSurface conversationId={conversationId ?? ""} terminal={active} /></Suspense>
+              {active && <TabsContent value={active.id} className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-sidebar" aria-label={active.title}>
+                {active.status !== "running" && <div role="status" className="flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-2 text-xs text-muted-foreground"><span>Processo encerrado{active.exitCode !== null ? ` · código ${active.exitCode}` : ""}</span><Button type="button" variant="outline" size="sm" disabled={creating} onClick={() => void create()} className="h-7 cursor-pointer text-xs"><Plus className="size-3.5" />Abrir novo terminal</Button></div>}
+                <div className="min-h-0 flex-1"><Suspense fallback={<Skeleton role="status" aria-label="Carregando terminal" className="h-full w-full" />}><TerminalSurface conversationId={conversationId ?? ""} terminal={active} /></Suspense></div>
               </TabsContent>}
             </Tabs>}
         </div>

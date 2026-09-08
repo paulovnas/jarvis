@@ -7,6 +7,7 @@ export const modelChoiceSchema = z.object({ account: z.string(), model: z.string
 export const customAgentSchema = z.object({
   id, name: z.string().min(1).max(100), description: z.string().max(500), instructions: z.string().min(1).max(16000),
   capability: z.enum(["read_only", "write_files", "commands"]), model: modelChoiceSchema.nullable(),
+  deniedTools: z.array(z.string().min(1).max(128)).max(256).optional(),
   appearance: workflowAppearanceSchema.nullish(),
 });
 export const workflowStepSchema = z.object({

@@ -36,7 +36,7 @@ export interface LibraryTarget {
 }
 
 export interface LibraryDeleteTarget {
-  kind: "project" | "conversation";
+  kind: "workspace" | "project" | "conversation";
   id: string;
 }
 

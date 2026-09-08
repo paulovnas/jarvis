@@ -8,7 +8,8 @@ export const DEFAULT_FILE_TABS: FileTabsLayout = { paths: [], activePath: null }
 export type DesktopLayout = {
   panels: Record<string, number>;
   inspectorTab: "details" | "activities" | "explorer";
-  settingsTab: "general" | "tools" | "providers" | "agents" | "skills" | "mcps";
+  settingsTab: "general" | "tools" | "providers" | "agents" | "skills" | "mcps" | "workspaces";
+  itemOrder: Record<string, string[]>;
   expandedProjects: Record<string, boolean>;
   activitySections: Record<string, boolean>;
   sidebarCollapsed: boolean;
@@ -19,7 +20,7 @@ export type DesktopLayout = {
 
 export const DEFAULT_DESKTOP_LAYOUT: DesktopLayout = {
   panels: {}, inspectorTab: "activities", settingsTab: "general", expandedProjects: {}, activitySections: {},
-  sidebarCollapsed: false, inspectorCollapsed: false, terminalPanels: {}, fileTabs: {},
+  sidebarCollapsed: false, inspectorCollapsed: false, terminalPanels: {}, fileTabs: {}, itemOrder: {},
 };
 
 export type LayoutUpdate = Partial<DesktopLayout> | ((current: DesktopLayout) => Partial<DesktopLayout>);

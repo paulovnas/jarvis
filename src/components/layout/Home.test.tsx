@@ -64,7 +64,7 @@ describe("Home shell", () => {
     expect(screen.getByRole("tab", { name: "Explorer" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "README.md" })).toBeVisible();
   }, 15_000);
-  it("offers only adding a project while the selected workspace is empty and unlocks after success", async () => {
+  it("keeps workspace navigation and settings available while an empty workspace has no chat", async () => {
     const user = userEvent.setup();
     const snapshot = populatedLibrary(); snapshot.projects = []; snapshot.conversations = []; snapshot.selection.projectId = null; snapshot.selection.conversationId = null;
     invokeMock.mockImplementation(async (command) => {
@@ -75,7 +75,8 @@ describe("Home shell", () => {
     });
     render(<Home />);
     const add = await screen.findByRole("button", { name: "Adicionar projeto" });
-    expect(screen.getAllByRole("button")).toEqual([add]);
+    expect(screen.getByRole("combobox", { name: "Selecionar workspace" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Configurações" })).toBeEnabled();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     await user.click(add);
     expect(invokeMock).toHaveBeenCalledWith("add_project", { workspaceId: "w1" });

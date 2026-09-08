@@ -57,6 +57,8 @@ fn streaming_preserves_text_thought_signatures_parallel_calls_and_usage() {
     assert_eq!(response.summary, "Resumo");
     let usage = response.usage.unwrap();
     assert_eq!((usage.input_tokens, usage.output_tokens), (100, 15));
+    assert_eq!(usage.cache_read_tokens, Some(60));
+    assert_eq!(usage.cache_write_tokens, None);
     let calls = tool_calls(&response.output).unwrap();
     assert_eq!(calls.len(), 2);
     assert_ne!(calls[0].id, calls[1].id);

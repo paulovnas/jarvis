@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type Bead, type ProjectMetrics, date, number, statuses } from "@/core/dashboard";
 import type { CoreSnapshot } from "@/core/core-components";
+import { UsageEfficiency } from "./UsageEfficiency";
 
 const chartConfig = { turns: { label: "Interações", color: "#61afef" } };
 export function DashboardOverview({ data, issues, beadsError, components, onSelectSession, onOpenBoard }: {
@@ -17,6 +18,7 @@ export function DashboardOverview({ data, issues, beadsError, components, onSele
   onSelectSession: (id: string) => void; onOpenBoard: () => void;
 }) {
   const m = data.metrics;
+  const measured = m.measuredSteps + (m.efficiency?.auxiliaryRequests ?? 0) > 0;
   const models = Object.entries(m.models).sort((a,b) => b[1] - a[1]);
   const [today] = useState(() => Math.floor(Date.now() / 86_400_000));
   const days = Array.from({ length: 30 }, (_, i) => {
@@ -35,7 +37,7 @@ export function DashboardOverview({ data, issues, beadsError, components, onSele
     {data.unavailableSessions > 0 && <p role="status" className="text-xs text-onedark-yellow">Histórico indisponível em {data.unavailableSessions} sessões. Indicadores parciais.</p>}
     <div className="dashboard-metric-rail grid grid-cols-2 @3xl:grid-cols-4">
       {[{ label: "Sessões", value: number(data.sessions), sub: `${number(m.turns)} interações`, icon: MessageSquare, accent: "text-primary" },
-        { label: "Tokens", value: m.measuredSteps ? number(m.inputTokens + m.outputTokens) : "—", sub: m.measuredSteps ? "Entrada + saída" : "Sem medição", icon: Zap, accent: "text-onedark-yellow" },
+        { label: "Tokens", value: measured ? number(m.inputTokens + m.outputTokens) : "—", sub: measured ? "Acumulados · entrada + saída" : "Sem medição", icon: Zap, accent: "text-onedark-yellow" },
         { label: "Ferramentas", value: number(m.toolCalls), sub: `${number(m.toolErrors)} com erro`, icon: Terminal, accent: "text-onedark-cyan" },
         { label: "Tarefas fechadas", value: issues ? `${closed}/${issues.length}` : "—", sub: issues ? `${epics} ${epics === 1 ? "épico" : "épicos"} no projeto` : "Beads indisponível", icon: CheckCheck, accent: "text-onedark-green" }].map(item => <div key={item.label} className="dashboard-metric min-w-0 p-4 @3xl:p-5"><div className="mb-4 flex items-center justify-between gap-2"><span className="micro-label text-muted-foreground">{item.label}</span><item.icon className={`size-4 ${item.accent}`} /></div><p className="font-mono text-[28px] leading-none tracking-tight tabular-nums">{item.value}</p><p className="mt-2 text-[11px] text-muted-foreground">{item.sub}</p></div>)}
     </div>
@@ -49,12 +51,13 @@ export function DashboardOverview({ data, issues, beadsError, components, onSele
           </AreaChart>
         </ChartContainer>
       </CardContent></Card>
-      <Card className="dashboard-card gap-4"><CardHeader><CardTitle className="flex items-center gap-2 text-sm"><Zap className="size-4 text-onedark-yellow" />Uso de contexto</CardTitle></CardHeader><CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-3"><div><p className="micro-label mb-2 flex items-center gap-1 text-muted-foreground"><ArrowDownLeft className="size-3" />Entrada</p><p className="font-mono text-xl">{m.measuredSteps ? number(m.inputTokens) : "—"}</p></div><div><p className="micro-label mb-2 flex items-center gap-1 text-muted-foreground"><ArrowUpRight className="size-3" />Saída</p><p className="font-mono text-xl">{m.measuredSteps ? number(m.outputTokens) : "—"}</p></div></div>
+      <Card className="dashboard-card gap-4"><CardHeader><CardTitle className="flex items-center gap-2 text-sm"><Zap className="size-4 text-onedark-yellow" />Tokens acumulados</CardTitle></CardHeader><CardContent className="space-y-4">
+        <div className="grid grid-cols-2 gap-3"><div><p className="micro-label mb-2 flex items-center gap-1 text-muted-foreground"><ArrowDownLeft className="size-3" />Entrada</p><p className="font-mono text-xl">{measured ? number(m.inputTokens) : "—"}</p></div><div><p className="micro-label mb-2 flex items-center gap-1 text-muted-foreground"><ArrowUpRight className="size-3" />Saída</p><p className="font-mono text-xl">{measured ? number(m.outputTokens) : "—"}</p></div></div>
         <div className="space-y-3 border-t border-border pt-4"><MetricLine label="Compactações" value={m.compactions} /><MetricLine label="Etapas com tokens medidos" value={m.measuredSteps} /><MetricLine label="Tempo de execução" value={m.durationMs < 60_000 ? `${number(m.durationMs / 1000)}s` : `${number(m.durationMs / 60_000)} min`} /></div>
       </CardContent></Card>
     </div>
 
+    <UsageEfficiency metrics={m} />
     <div className="grid gap-5 @3xl:grid-cols-2">
       <Card className="dashboard-card gap-3"><CardHeader className="flex flex-row items-center justify-between"><CardTitle className="flex items-center gap-2 text-sm"><Cpu className="size-4 text-primary" />Modelos utilizados</CardTitle><span className="micro-label text-muted-foreground">Interações</span></CardHeader><CardContent className="max-h-64 space-y-4 overflow-y-auto">
         {models.length ? models.map(([model, count]) => <div key={model} className="space-y-2"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><p title={model} className="truncate font-mono text-xs">{model.slice(model.indexOf("/") + 1)}</p><p className="mt-1 truncate text-[10px] text-muted-foreground">{model.slice(0, model.indexOf("/"))}</p></div><span className="font-mono text-xs text-muted-foreground">{number(count)}</span></div><Progress value={count / Math.max(1, m.turns) * 100} className="h-1" aria-label={`${model}: ${count} interações`} /></div>) : <QuietEmpty text="Nenhum modelo utilizado" />}

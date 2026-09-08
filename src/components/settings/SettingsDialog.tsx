@@ -8,12 +8,14 @@ import { SkillsSettings } from "./SkillsSettings";
 import { CoreSettings } from "./CoreSettings";
 import { ChatCleanupSettings } from "./ChatCleanupSettings";
 import { SystemSettings } from "./SystemSettings";
+import { WorkspaceSettings } from "./WorkspaceSettings";
 import { WorkflowSettings } from "./WorkflowSettings";
 import { skillsSnapshotSchema } from "@/core/skills";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
   Users,
+  Layers,
   BookOpen,
   ExternalLink,
   Link2,
@@ -59,6 +61,7 @@ import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 
 const SETTINGS_SECTIONS = [
               { value: "general", label: "Geral", Icon: Settings, description: "Preferências do aplicativo e organização das conversas." },
+              { value: "workspaces", label: "Workspaces", Icon: Layers, description: "Projetos, conversas e armazenamento local." },
               { value: "tools", label: "Ferramentas", Icon: Plug, description: "Prepare e acompanhe as ferramentas do ambiente." },
               { value: "agents", label: "Workflow", Icon: Users, description: "Organize fluxos e agentes para o seu jeito de trabalhar." },
               { value: "providers", label: "Provedores", Icon: Sparkles, description: "Contas, modelos e recursos de inteligência artificial." },
@@ -121,7 +124,7 @@ function SettingsSurface({ embedded, open, onOpenChange, children }: { embedded:
 export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedProviders = false, onBusyChange }: SettingsDialogProps) {
   const { layout, updateLayout } = useDesktopLayout();
   const activeTab = layout.settingsTab;
-  const setActiveTab = (value: string) => { if (value === "general" || value === "tools" || value === "providers" || value === "agents" || value === "skills" || value === "mcps") updateLayout({ settingsTab: value }); };
+  const setActiveTab = (value: string) => { if (value === "general" || value === "tools" || value === "providers" || value === "agents" || value === "skills" || value === "mcps" || value === "workspaces") updateLayout({ settingsTab: value }); };
   const [mcpCount, setMcpCount] = useState<number | null>(null);
   const [skillCount, setSkillCount] = useState<number | null>(null);
   const skillCountVersion = useRef(0);
@@ -725,6 +728,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
                 <p className="mt-1 text-xs text-muted-foreground">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.description}</p>
               </div>
               <TabsContent value="general" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "general" && <div className="max-w-2xl"><SystemSettings /><ChatCleanupSettings /></div>}</TabsContent>
+              <TabsContent value="workspaces" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "workspaces" && <WorkspaceSettings />}</TabsContent>
               <TabsContent value="tools" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "tools" && <CoreSettings />}</TabsContent>
               <TabsContent value="agents" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "agents" && <WorkflowSettings accounts={accounts} />}</TabsContent>
               <TabsContent value="skills" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</TabsContent>

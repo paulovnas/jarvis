@@ -253,11 +253,28 @@ pub(super) async fn stream(
         session_id,
         options,
         instructions,
-        input,
-        tools,
+        input: input.into_iter().map(|mut item| {
+            if let Some(map) = item.as_object_mut() { map.remove("_jarvis_runtime"); }
+            item
+        }).collect(),
+        tools: ordered_tools(tools),
     }
     .run(signal, on_delta, Duration::from_secs(2))
     .await
+}
+
+fn ordered_tools(mut tools: Vec<Value>) -> Vec<Value> {
+    // MCP discovery order is not contractual. Equivalent toolsets must keep the
+    // same provider prefix across reconnects, turns and operating systems.
+    tools.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    tools
+}
+
+#[test]
+fn equivalent_tool_catalogs_keep_the_same_cacheable_prefix() {
+    let first = json!({"type":"function","name":"ctx_search","description":"Search","parameters":{"type":"object"}});
+    let second = json!({"type":"function","name":"read","description":"Read","parameters":{"type":"object"}});
+    assert_eq!(ordered_tools(vec![first.clone(), second.clone()]), ordered_tools(vec![second, first]));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -275,6 +292,7 @@ async fn stream_once(
         return custom::stream(
             credential,
             config,
+            session_id,
             options,
             instructions,
             input,
@@ -469,6 +487,8 @@ fn completed(response: &Value) -> Result<Response, AgentError> {
         .map(|value| Usage {
             input_tokens: value["input_tokens"].as_u64().unwrap_or(0),
             output_tokens: value["output_tokens"].as_u64().unwrap_or(0),
+            cache_read_tokens: value["input_tokens_details"]["cached_tokens"].as_u64(),
+            cache_write_tokens: value["input_tokens_details"]["cache_write_tokens"].as_u64(),
         });
     if text.is_empty()
         && !output
@@ -483,6 +503,17 @@ fn completed(response: &Value) -> Result<Response, AgentError> {
         summary: summary.join("\n\n"),
         usage,
     })
+}
+
+#[test]
+fn responses_cache_usage_is_a_breakdown_not_extra_input() {
+    for details in [json!({}), json!({"cached_tokens":0}), json!({"cached_tokens":70,"cache_write_tokens":20})] {
+        let response = completed(&json!({"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Done"}]}],"usage":{"input_tokens":100,"output_tokens":10,"input_tokens_details":details}})).unwrap();
+        let usage = response.usage.unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.cache_read_tokens, details["cached_tokens"].as_u64());
+        assert_eq!(usage.cache_write_tokens, details["cache_write_tokens"].as_u64());
+    }
 }
 pub(super) fn tool_calls(output: &[Value]) -> Result<Vec<ToolCall>, AgentError> {
     let mut calls: Vec<ToolCall> = vec![];

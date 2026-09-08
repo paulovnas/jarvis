@@ -19,6 +19,7 @@ pub(crate) mod cleanup;
 pub(crate) mod dashboard;
 pub(crate) mod deletion;
 pub(crate) mod files;
+pub(crate) mod workspaces;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

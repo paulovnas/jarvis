@@ -7,7 +7,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 
 export function DeleteItemDialog({ kind, name, conversationCount, pending, error, onClose, onConfirm }: {
-  kind: "project" | "conversation";
+  kind: "workspace" | "project" | "conversation";
   name: string;
   conversationCount: number;
   pending: boolean;
@@ -25,9 +25,9 @@ export function DeleteItemDialog({ kind, name, conversationCount, pending, error
   return <AlertDialog open onOpenChange={open => { if (!open && !pending && !submitting.current) onClose(); }}>
     <AlertDialogContent>
       <AlertDialogHeader>
-        <AlertDialogTitle>{kind === "project" ? "Excluir projeto?" : "Excluir conversa?"}</AlertDialogTitle>
+        <AlertDialogTitle>{kind === "workspace" ? "Excluir workspace?" : kind === "project" ? "Excluir projeto?" : "Excluir conversa?"}</AlertDialogTitle>
         <AlertDialogDescription>
-          {kind === "project"
+          {kind === "workspace" ? <>O workspace <strong className="break-words">{name}</strong>, seus projetos cadastrados e todas as conversas ({conversationCount}) serão removidos do Jarvis. As pastas dos projetos e seus arquivos permanecerão intactos e poderão ser adicionados novamente.</> : kind === "project"
             ? <>O projeto <strong className="break-words">{name}</strong> será removido do Jarvis junto com todas as suas conversas ({conversationCount}) e seus históricos. A pasta do projeto e seus arquivos permanecerão intactos.</>
             : <>A conversa <strong className="break-words">{name}</strong> e todo o seu histórico serão apagados. Os arquivos do projeto permanecerão intactos.</>}
           <span className="mt-2 block">Esta exclusão é definitiva e não pode ser desfeita.</span>
@@ -38,7 +38,7 @@ export function DeleteItemDialog({ kind, name, conversationCount, pending, error
         <AlertDialogCancel disabled={pending} className="cursor-pointer">Cancelar</AlertDialogCancel>
         <AlertDialogAction variant="destructive" disabled={pending} className="cursor-pointer" onClick={() => { void confirm(); }}>
           {pending && <Spinner aria-label="Excluindo" />}
-          {pending ? "Excluindo…" : kind === "project" ? "Excluir projeto" : "Excluir conversa"}
+          {pending ? "Excluindo…" : kind === "workspace" ? "Excluir workspace" : kind === "project" ? "Excluir projeto" : "Excluir conversa"}
         </AlertDialogAction>
       </AlertDialogFooter>
     </AlertDialogContent>
