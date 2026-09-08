@@ -241,6 +241,20 @@ describe("Persistent live conversation", () => {
     await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
     await screen.findByRole("textbox");
   });
+  it("returns from the browser to Chat when the agent needs approval", async () => {
+    let activeId: string | null = "browser-1";
+    call.mockImplementation(async (command, args) => {
+      if (command === "get_browser_tabs") return { tabs: [{ id: "browser-1", conversationId: emptyChat().conversationId, title: "Aplicativo local", url: "http://localhost:5173/", loading: false }], activeId };
+      if (command === "browser_command" && (args as { request: { action: string } }).request.action === "select") { activeId = null; return {}; }
+      return emptyChat();
+    });
+    render(<TestChat />);
+    await screen.findByRole("textbox", { name: "Endereço do navegador" });
+    await update({ ...emptyChat(), revision: 2, pendingApproval: { id: "browser-click", name: "browser_click", args: { id: "browser-1", element: "element-1" }, status: "pending", output: "", durationMs: 0 } });
+    expect(await screen.findByRole("button", { name: "Autorizar uma vez" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Autorizar ação no navegador?")).toBeVisible();
+  });
   it("keeps a rejected message draft and disables send without an account", async () => {
     const user = userEvent.setup();
     call.mockImplementation(async command => { if (command === "start_agent_turn") throw { message:"Não salvo" }; return emptyChat(); });

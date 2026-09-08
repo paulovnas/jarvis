@@ -9,6 +9,7 @@ fn options(account: &str, model: &str) -> TurnOptions {
         reasoning: None,
         mode: super::super::Mode::Plan,
         workflow: None,
+        custom_workflow_id: None,
         approval_mode: super::super::ApprovalMode::Yolo,
     }
 }
@@ -90,8 +91,8 @@ fn default_inherited_selection_and_disconnect_are_persistent() {
         read_config(&db).unwrap(),
         Config {
             inherit_chat: false,
-            account_alias: None,
-            model: None
+            account_alias: Some("openai-codex-search".into()),
+            model: Some("gpt-5.6-luna".into())
         }
     );
 }

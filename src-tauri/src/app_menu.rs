@@ -38,7 +38,7 @@ pub(crate) fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
             _ => None,
         };
         if let Some(target) = target {
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();

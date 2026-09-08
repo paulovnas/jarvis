@@ -8,7 +8,7 @@ import { WebSearchSettings } from "./WebSearchSettings";
 import { customAccountFixture } from "@/test/custom-provider-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }));
 const invokeMock = vi.mocked(invoke);
 const account = (alias: string, providerKind = "openai-codex"): ProviderAccount => ({
   alias, providerKind, enabled: true, models: [{ id: "gpt-5.6-luna", name: "Luna", reasoningLevels: [], defaultReasoningLevel: null }], modelsAvailable: true, createdAt: 1, email: null, accountType: "personal",
@@ -158,7 +158,8 @@ describe("WebSearchSettings", () => {
     invokeMock.mockResolvedValue({ accountAlias: "openai-codex-ausente" });
     render(<WebSearchSettings accounts={[account("openai-codex-outra")]} />);
     expect(await screen.findByRole("combobox", { name: "Provedor de Web Search" })).toHaveTextContent("openai-codex-ausente · Indisponível");
-    expect(screen.getByText(/Conta indisponível/)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("O provedor openai-codex-ausente não existe mais");
+    expect(toast.error).toHaveBeenCalledWith("Web Search: modelo indisponível", expect.objectContaining({ description: expect.stringContaining("openai-codex-ausente") }));
     expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 });

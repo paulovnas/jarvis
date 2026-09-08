@@ -1,0 +1,142 @@
+/* One palette for native scrollports and the scrollbars drawn by our libraries. */
+:root {
+  color-scheme: light;
+  --scrollbar-thumb: color-mix(in srgb, var(--foreground) 70%, var(--background));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 85%, var(--background));
+  --scrollbar-thumb-active: var(--primary);
+}
+
+.dark {
+  color-scheme: dark;
+  --scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 80%, var(--background));
+  --scrollbar-thumb-hover: var(--muted-foreground);
+  --scrollbar-thumb-active: var(--primary);
+}
+
+/* Keep native high-contrast scrollbars and the platform's accessibility settings.
+   Non-auto standard properties override WebKit pseudo-elements in modern engines,
+   so use them only as a fallback. Base-layer defaults preserve no-scrollbar utilities
+   and the native scrollbar hiding performed by ScrollArea and Monaco. */
+@layer base {
+  @media (forced-colors: none) {
+    @supports selector(::-webkit-scrollbar) {
+      ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+      }
+
+      ::-webkit-scrollbar-track,
+      ::-webkit-scrollbar-corner {
+        background: transparent;
+      }
+
+      ::-webkit-scrollbar-thumb {
+        min-height: 28px;
+        min-width: 28px;
+        border: 2px solid transparent;
+        border-radius: 999px;
+        background: var(--scrollbar-thumb);
+        background-clip: padding-box;
+      }
+
+      ::-webkit-scrollbar-thumb:hover {
+        background-color: var(--scrollbar-thumb-hover);
+      }
+
+      ::-webkit-scrollbar-thumb:active {
+        background-color: var(--scrollbar-thumb-active);
+      }
+
+      ::-webkit-scrollbar-button {
+        display: none;
+        width: 0;
+        height: 0;
+      }
+    }
+
+    @supports not selector(::-webkit-scrollbar) {
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: var(--scrollbar-thumb) transparent;
+      }
+    }
+  }
+}
+
+/* Theme the registry through its public slots, without changing its source. */
+[data-slot="scroll-area-scrollbar"] {
+  cursor: pointer;
+  background: transparent;
+}
+
+[data-slot="scroll-area-thumb"] {
+  background-color: var(--scrollbar-thumb);
+}
+
+[data-slot="scroll-area-scrollbar"]:hover [data-slot="scroll-area-thumb"] {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+[data-slot="scroll-area-scrollbar"]:active [data-slot="scroll-area-thumb"] {
+  background-color: var(--scrollbar-thumb-active);
+}
+
+/* Monaco and xterm calculate their own hit areas and scroll geometry. Keep those
+   intact and draw the same six-pixel indicator inside each draggable slider.
+   The application scope takes precedence over xterm's late-injected theme. */
+:root :is(.monaco-editor, .xterm) :is(.monaco-scrollable-element, .xterm-scrollable-element) > .scrollbar {
+  cursor: pointer;
+  background: transparent;
+}
+
+:root :is(.monaco-editor, .xterm) :is(.monaco-scrollable-element, .xterm-scrollable-element) > .scrollbar > .slider {
+  --scrollbar-current-thumb: var(--scrollbar-thumb);
+  cursor: pointer;
+  background: transparent;
+}
+
+:is(.monaco-editor, .xterm) .scrollbar > .slider::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 999px;
+  background: var(--scrollbar-current-thumb);
+  pointer-events: none;
+}
+
+:is(.monaco-editor, .xterm) .scrollbar.vertical > .slider::before {
+  left: 50%;
+  right: auto;
+  width: min(6px, 100%);
+  transform: translateX(-50%);
+}
+
+:is(.monaco-editor, .xterm) .scrollbar.horizontal > .slider::before {
+  top: 50%;
+  bottom: auto;
+  height: min(6px, 100%);
+  transform: translateY(-50%);
+}
+
+:root :is(.monaco-editor, .xterm) :is(.monaco-scrollable-element, .xterm-scrollable-element) > .scrollbar > .slider:hover {
+  --scrollbar-current-thumb: var(--scrollbar-thumb-hover);
+  background: transparent;
+}
+
+:root :is(.monaco-editor, .xterm) :is(.monaco-scrollable-element, .xterm-scrollable-element) > .scrollbar > .slider.active {
+  --scrollbar-current-thumb: var(--scrollbar-thumb-active);
+  background: transparent;
+}
+
+@media (forced-colors: active) {
+  :root, .dark {
+    --scrollbar-thumb: CanvasText;
+    --scrollbar-thumb-hover: Highlight;
+    --scrollbar-thumb-active: Highlight;
+  }
+
+  [data-slot="scroll-area-thumb"],
+  :is(.monaco-editor, .xterm) .scrollbar > .slider::before {
+    forced-color-adjust: none;
+  }
+}

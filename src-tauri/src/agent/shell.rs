@@ -126,6 +126,18 @@ fn arguments(script: &str) -> Vec<String> {
     }
 }
 
+/// Service commands use a PTY with stdin enabled, but exit with the command.
+pub(crate) fn terminal_service_command(root: &Path, script: &str) -> CommandBuilder {
+    let mut command = CommandBuilder::new(&SHELL.program);
+    command.args(
+        arguments(script)
+            .into_iter()
+            .filter(|arg| arg != "-NonInteractive"),
+    );
+    configure_terminal(&mut command, root);
+    command
+}
+
 /// Builds the interactive shell launched inside a PTY.
 pub(crate) fn terminal_command(root: &Path) -> CommandBuilder {
     let mut command = CommandBuilder::new(&SHELL.program);
@@ -141,6 +153,12 @@ pub(crate) fn terminal_command(root: &Path) -> CommandBuilder {
         command.args(["--noprofile", "--norc", "-i"]);
         command.env("TERM", "xterm-256color");
     }
+    configure_terminal(&mut command, root);
+    command
+}
+
+fn configure_terminal(command: &mut CommandBuilder, root: &Path) {
+    command.env("TERM", "xterm-256color");
     // Keep canonical paths for backend checks, but give PowerShell a regular
     // Win32/UNC path so its prompt and native child processes resolve the cwd.
     #[cfg(windows)]
@@ -148,7 +166,6 @@ pub(crate) fn terminal_command(root: &Path) -> CommandBuilder {
     #[cfg(not(windows))]
     command.cwd(root);
     command.env("PATH", crate::mcp::executable::configured_path());
-    command
 }
 
 /// Spawns `command` in `root` through the platform shell. The returned child

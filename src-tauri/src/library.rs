@@ -448,7 +448,7 @@ struct SessionHeader {
     created_at: i64,
 }
 
-fn session_path(
+pub(crate) fn session_path(
     home: &Path,
     project_id: &str,
     conversation_id: &str,
@@ -979,6 +979,9 @@ pub async fn delete_library_item(
     .await
     .map_err(|_| LibraryError::storage())?;
     // Refresh other views even if metadata committed but a cleanup needs retrying.
+    if let Err(cause) = crate::agent::browser::prune(&app).await {
+        eprintln!("Browser cleanup: {cause:?}");
+    }
     let _ = app.emit("library:changed", ());
     result
 }

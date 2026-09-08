@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ITerminalOptions } from "@xterm/xterm";
-import type { ChatProcess } from "@/core/processes";
+import type { ChatTerminal } from "@/core/terminals";
 import { TerminalWorkspace } from "./TerminalWorkspace";
 import { DesktopLayoutProvider } from "@/components/layout/DesktopLayoutProvider";
 import { DEFAULT_DESKTOP_LAYOUT, type DesktopLayout } from "@/core/desktop-layout";
@@ -15,7 +15,7 @@ function TestWorkspace({ conversationId }: { conversationId?: string }) {
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
-const renderer = vi.hoisted(() => ({ create: vi.fn(), open: vi.fn(), fit: vi.fn(), write: vi.fn(), dispose: vi.fn() }));
+const renderer = vi.hoisted(() => ({ create: vi.fn(), open: vi.fn(), fit: vi.fn(), write: vi.fn(), dispose: vi.fn(), input: vi.fn<(data: string) => void>() as (data: string) => void }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit() { renderer.fit(); } } }));
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
@@ -24,7 +24,7 @@ vi.mock("@xterm/xterm", () => ({
     rows = 24;
     loadAddon() {}
     open(element: HTMLElement) { renderer.open(element); }
-    onData() { return { dispose() {} }; }
+    onData(callback: (data: string) => void) { renderer.input = callback; return { dispose() { renderer.input = () => {}; } }; }
     write(data: string) { renderer.write(data); }
     reset() {}
     focus() {}
@@ -37,7 +37,7 @@ const terminals = [
   { id: "terminal-2", conversationId: "chat", title: "Terminal 2", cwd: "/project", pid: 2, startedAt: 2, endedAt: null, exitCode: null, status: "running", origin: "user" },
 ] as const;
 
-const process: ChatProcess = { id: "service", conversationId: "chat", title: "Vite", command: "bun run dev", cwd: "/project", pid: 123, startedAt: 1, endedAt: null, exitCode: null, status: "running" };
+const service: ChatTerminal = { id: "service", origin: "agent", conversationId: "chat", title: "Vite", command: "bun run dev", cwd: "/project", pid: 123, startedAt: 1, endedAt: null, exitCode: null, status: "running" };
 
 describe("Integrated terminals", () => {
   const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
@@ -252,7 +252,7 @@ describe("Integrated terminals", () => {
     expect(await screen.findByRole("tab", { name: "Terminal 2" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("separates section navigation from shell tabs and creates terminals after the last tab", async () => {
+  it("shows one terminal tab strip and creates terminals after the last tab", async () => {
     const third = { ...terminals[0], id: "terminal-3", title: "Terminal 3" };
     vi.mocked(invoke).mockImplementation(async (command, args) => {
       if (command === "list_chat_terminals") return terminals;
@@ -263,18 +263,10 @@ describe("Integrated terminals", () => {
     const user = userEvent.setup();
     render(<TestWorkspace conversationId="chat" />);
     await user.click(await screen.findByRole("button", { name: "2 terminais abertos" }));
-    const sections = screen.getByRole("tablist", { name: "Seções do painel de terminais" });
-    const terminalSection = within(sections).getByRole("tab", { name: /^Terminais/ });
-    expect(within(sections).getAllByRole("tab")).toHaveLength(2);
+    expect(screen.queryByRole("tab", { name: "Processos" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("tablist")).toHaveLength(1);
     const shells = screen.getByRole("tablist", { name: "Terminais abertos" });
-    expect(within(shells).getAllByRole("tab")).toHaveLength(2);
     await user.click(within(shells).getByRole("tab", { name: "Terminal 2" }));
-    terminalSection.focus();
-    await user.keyboard("{ArrowRight}{Enter}");
-    expect(within(sections).getByRole("tab", { name: "Processos" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("Nenhum processo gerenciado.")).toBeVisible();
-    await user.keyboard("{ArrowLeft}{Enter}");
-    expect(screen.getByRole("tab", { name: "Terminal 2" })).toHaveAttribute("aria-selected", "true");
     const strip = screen.getByRole("group", { name: "Abas dos terminais" });
     const add = within(strip).getByRole("button", { name: "Novo terminal" });
     const last = within(strip).getByRole("tab", { name: "Terminal 2" });
@@ -341,103 +333,45 @@ describe("Integrated terminals", () => {
     expect(screen.getByRole("tab", { name: "Terminal 1" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("keeps managed process logs and stop confirmation in the terminal panel", async () => {
-    let stopped = false;
-    vi.mocked(invoke).mockImplementation(async command => {
-      if (command === "list_chat_terminals") return [];
-      if (command === "list_chat_processes") return [{ ...process, status: stopped ? "stopped" : "running" }];
-      if (command === "read_chat_process") return { output: "Local: http://localhost:1420/" };
-      if (command === "stop_chat_process") {
-        stopped = true;
-        return undefined;
-      }
-      return undefined;
-    });
-    const user = userEvent.setup();
-    render(<TestWorkspace conversationId="chat" />);
 
-    await user.click(await screen.findByRole("button", { name: "1 processo monitorado" }));
-    await user.click(screen.getByRole("tab", { name: /^Processos/ }));
-    expect(screen.getByText("bun run dev")).toBeVisible();
-    expect(invoke).not.toHaveBeenCalledWith("read_chat_process", expect.anything());
-    await user.click(screen.getByRole("button", { name: "Saída" }));
-    expect(await screen.findByLabelText("Saída de Vite")).toHaveTextContent("localhost:1420");
-    await user.click(screen.getByRole("button", { name: "Parar Vite" }));
-    expect(screen.getByRole("alertdialog")).toHaveTextContent("Parar Vite?");
-    expect(invoke).not.toHaveBeenCalledWith("stop_chat_process", expect.anything());
-    await user.click(screen.getByRole("button", { name: "Cancelar" }));
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: "Parar Vite" }));
-    await user.click(screen.getByRole("button", { name: "Parar processo" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("stop_chat_process", { conversationId: "chat", id: "service", confirmed: true }));
-    await waitFor(() => expect(screen.getByText("Nenhum processo gerenciado.")).toBeVisible());
-  });
-
-  it.each(["failed", "exited"] as const)("keeps a %s process accessible until removal", async status => {
-    vi.mocked(invoke).mockImplementation(async command => {
-      if (command === "list_chat_terminals") return [];
-      if (command === "list_chat_processes") return [{ ...process, status, exitCode: status === "failed" ? 127 : 0 }];
-      if (command === "read_chat_process") return { output: "/bin/bash: npm: No such file or directory" };
-      if (command === "remove_chat_process") return undefined;
-      return undefined;
-    });
-    const user = userEvent.setup();
-    render(<TestWorkspace conversationId="chat" />);
-
-    await user.click(await screen.findByRole("button", { name: "1 processo monitorado" }));
-    await user.click(screen.getByRole("tab", { name: /^Processos/ }));
-    expect(screen.queryByRole("button", { name: "Parar Vite" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Saída" }));
-    expect(await screen.findByLabelText("Saída de Vite")).toHaveTextContent("No such file or directory");
-    await user.click(screen.getByRole("button", { name: "Remover Vite" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("remove_chat_process", { conversationId: "chat", id: "service" }));
-    await waitFor(() => expect(screen.getByText("Nenhum processo gerenciado.")).toBeVisible());
-    expect(invoke).not.toHaveBeenCalledWith("stop_chat_process", expect.anything());
-  });
-
-  it("keeps a failed process visible when removal fails and allows retry", async () => {
-    let fail = true;
-    vi.mocked(invoke).mockImplementation(async command => {
-      if (command === "list_chat_terminals") return [];
-      if (command === "list_chat_processes") return [{ ...process, status: "failed" }];
-      if (command === "remove_chat_process" && fail) throw { message: "Falha ao remover." };
-      return undefined;
-    });
-    const user = userEvent.setup();
-    render(<TestWorkspace conversationId="chat" />);
-
-    await user.click(await screen.findByRole("button", { name: "1 processo monitorado" }));
-    await user.click(screen.getByRole("tab", { name: /^Processos/ }));
-    await user.click(screen.getByRole("button", { name: "Remover Vite" }));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Falha ao remover."));
-    expect(screen.getByText("Falhou")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Remover Vite" })).toBeEnabled();
-    fail = false;
-    await user.click(screen.getByRole("button", { name: "Remover Vite" }));
-    await waitFor(() => expect(screen.getByText("Nenhum processo gerenciado.")).toBeVisible());
-  });
-
-  it("does not show another conversation's managed processes after navigation", async () => {
+  it.each(["running", "failed", "exited"] as const)("shows a %s service as a terminal with logs and confirmed closure", async status => {
+    const item = { ...service, status };
     vi.mocked(invoke).mockImplementation(async (command, args) => {
-      if (command === "list_chat_terminals") return [];
-      if (command === "list_chat_processes") {
-        return args && typeof args === "object" && "conversationId" in args && args.conversationId === "chat"
-          ? [{ ...process, status: "failed" }]
-          : [];
-      }
-      return undefined;
+      if (command === "list_chat_terminals") return [...terminals, item];
+      if (command === "read_chat_terminal") return { terminal: (args as {id: string}).id === item.id ? item : terminals[0], output: "Local: http://localhost:1420/", revision: 1, truncated: false };
+    });
+    const user = userEvent.setup();
+    render(<TestWorkspace conversationId="chat" />);
+    await user.click(await screen.findByRole("button", { name: "3 terminais abertos" }));
+    await user.click(screen.getByRole("tab", { name: "Vite" }));
+    await waitFor(() => expect(renderer.write).toHaveBeenCalledWith("Local: http://localhost:1420/"));
+    expect(screen.getByRole("application", { name: "Terminal Vite" })).toBeVisible();
+    expect(screen.queryByRole("tab", { name: "Processos" })).not.toBeInTheDocument();
+    if (status === "running") {
+      act(() => renderer.input("r\r"));
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_chat_terminal", { conversationId: "chat", id: "service", input: "r\r" }));
+    }
+    await user.click(screen.getByRole("button", { name: "Fechar Vite" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Fechar Vite?");
+    expect(invoke).not.toHaveBeenCalledWith("close_chat_terminal", expect.anything());
+    await user.click(screen.getByRole("button", { name: "Fechar terminal" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("close_chat_terminal", { conversationId: "chat", id: "service", confirmed: true }));
+    expect(screen.queryByRole("tab", { name: "Vite" })).not.toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith("list_chat_processes", expect.anything());
+  });
+
+  it("does not leak service terminals across conversations", async () => {
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === "list_chat_terminals") return (args as { conversationId: string }).conversationId === "chat" ? [service] : [];
+      if (command === "read_chat_terminal") return { terminal: service, output: "", revision: 0, truncated: false };
     });
     const user = userEvent.setup();
     const view = render(<TestWorkspace conversationId="chat" />);
-
-    await user.click(await screen.findByRole("button", { name: "1 processo monitorado" }));
-    await user.click(screen.getByRole("tab", { name: /^Processos/ }));
-    expect(screen.getByText("Vite")).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: "1 terminal aberto" }));
+    expect(screen.getByRole("tab", { name: "Vite" })).toBeVisible();
     view.rerender(<TestWorkspace conversationId="other" />);
-    expect(screen.queryByText("Vite")).not.toBeInTheDocument();
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_chat_processes", { conversationId: "other" }));
-    expect(screen.queryByRole("region", { name: "Painel de terminais" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Abrir terminais" }));
-    await waitFor(() => expect(screen.getByText("Nenhum processo gerenciado.")).toBeVisible());
+    expect(screen.queryByRole("tab", { name: "Vite" })).not.toBeInTheDocument();
+    await screen.findByRole("button", { name: "Abrir terminais" });
+    expect(invoke).not.toHaveBeenCalledWith("close_chat_terminal", expect.anything());
   });
 });

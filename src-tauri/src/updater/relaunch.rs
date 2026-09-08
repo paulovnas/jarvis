@@ -37,7 +37,7 @@ pub(crate) fn signal_ready(app: &tauri::AppHandle) {
                 socket.write_all(format!("{token}\n{}\n", app.package_info().version).as_bytes());
             let _ = socket.flush();
         }
-        if let Some(window) = app.get_webview_window("main") {
+        if let Some(window) = app.get_window("main") {
             let _ = window.set_focus();
         }
     });

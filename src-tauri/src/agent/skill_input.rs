@@ -125,6 +125,7 @@ mod tests {
             reasoning: None,
             mode: Mode::Plan,
             workflow: None,
+            custom_workflow_id: None,
             approval_mode: ApprovalMode::Manual,
         };
         session

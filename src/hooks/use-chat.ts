@@ -19,12 +19,18 @@ export function useChat(conversationId: string | null) {
   const historyLock = useRef<string | null>(null);
   const generation = useRef(0);
   const sending = useRef(false);
+  const modelNotices = useRef(new Set<string>());
   const compactLocks = useRef(new Set<string>());
   const [compactingIds, setCompactingIds] = useState<ReadonlySet<string>>(() => new Set());
   const snapshot = loaded?.conversationId === conversationId ? loaded : null;
 
   const accept = useCallback((value: unknown, id: string) => {
     const next = readChat(value, id);
+    const last = next.turns[next.turns.length - 1];
+    if (last?.error && /^(account_|provider_|credential_|invalid_model|invalid_reasoning)/.test(last.error.code) && !modelNotices.current.has(last.id)) {
+      modelNotices.current.add(last.id);
+      toast.error("O modelo da conversa está indisponível", { id: `chat-model:${last.id}`, description: last.error.message });
+    }
     setLoaded(current => mergeChat(current, next));
   }, []);
 

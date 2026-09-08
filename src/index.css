@@ -7,6 +7,7 @@
 @import "@fontsource/roboto/700.css";
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
+@import "./styles/scrollbars.css";
 
 @source not "../docs";
 
@@ -41,14 +42,14 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; over
 
 /* Settings navigation stays outside the panel scrollport. */
 .settings-navigation [data-slot="tabs-trigger"] {
-  height: 34px;
-  padding-inline: 12px;
+  height: 38px;
+  padding-inline: 8px;
 }
 .settings-navigation [data-slot="tabs-trigger"][data-active] {
-  color: #61afef;
-  background: rgb(97 175 239 / 14%);
-  border-color: rgb(97 175 239 / 38%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 8%);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 38%, transparent);
+  box-shadow: inset 0 1px 0 var(--border);
 }
 
 .skill-editor[data-empty="true"]::before {

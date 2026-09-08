@@ -18,6 +18,7 @@ import { useLibrary } from "@/hooks/use-library";
 import { useChat } from "@/hooks/use-chat";
 import { useWorkflow } from "@/hooks/use-workflow";
 import { useAgentModels } from "@/hooks/use-agent-models";
+import { useProviderReferences } from "@/hooks/use-provider-references";
 import { useAgentActivity } from "@/hooks/use-agent-activity";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
@@ -82,10 +83,13 @@ export function Home() {
   const unreadConversationIds = useUnreadConversations(!settingsOpen && !files.tabs.activePath && !chat.error && chat.snapshot && latestVisibleId === selectedId ? latestVisibleId : null);
   useSettingsMenu(setSettingsOpen);
   const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
+  const [accountsReady, setAccountsReady] = useState(false);
+  const references = useProviderReferences(accounts, accountsReady);
   const accountsVersion = useRef(0);
   const updateAccounts = useCallback((updated: ProviderAccount[]) => {
     accountsVersion.current += 1;
     setAccounts(updated);
+    setAccountsReady(true);
   }, []);
 
   useEffect(() => {
@@ -93,7 +97,7 @@ export function Home() {
     const version = accountsVersion.current;
     void invoke<ProviderAccount[]>("list_provider_accounts").then(
       (result) => {
-        if (active && version === accountsVersion.current) setAccounts(accountList(result));
+        if (active && version === accountsVersion.current) { setAccounts(accountList(result)); setAccountsReady(true); }
       },
       () => {
         if (active && version === accountsVersion.current) setAccounts([]);
@@ -161,7 +165,7 @@ export function Home() {
           minSize="360px"
           className="h-full min-h-0 min-w-0"
         >
-          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
+          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} modelBindings={references.bindings} modelsReady={accountsReady && !references.loading} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
         </ResizablePanel>
 
         {!dashboardProject && <><ResizableHandle

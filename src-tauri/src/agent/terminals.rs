@@ -45,17 +45,18 @@ enum TerminalOrigin {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatTerminal {
-    id: String,
-    conversation_id: String,
-    title: String,
+    pub(super) id: String,
+    pub(super) conversation_id: String,
+    pub(super) title: String,
     #[serde(serialize_with = "library::serialize_display_path")]
-    cwd: String,
-    pid: u32,
-    started_at: u64,
-    ended_at: Option<u64>,
-    exit_code: Option<i32>,
-    status: String,
+    pub(super) cwd: String,
+    pub(super) pid: u32,
+    pub(super) started_at: u64,
+    pub(super) ended_at: Option<u64>,
+    pub(super) exit_code: Option<i32>,
+    pub(super) status: String,
     origin: TerminalOrigin,
+    pub(super) command: Option<String>,
 }
 
 impl ChatTerminal {
@@ -227,6 +228,7 @@ impl Drop for JobObject {
 }
 
 struct Killer {
+    killed: AtomicBool,
     child: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     #[cfg(unix)]
     group: UnixGroup,
@@ -236,6 +238,9 @@ struct Killer {
 
 impl Killer {
     fn kill(&self) {
+        if self.killed.swap(true, Ordering::SeqCst) {
+            return;
+        }
         #[cfg(unix)]
         self.group.kill();
         #[cfg(windows)]
@@ -254,7 +259,7 @@ impl Drop for Killer {
 
 struct Runtime {
     writer: Mutex<Box<dyn Write + Send>>,
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     killer: Killer,
     alive: AtomicBool,
     closing: AtomicBool,
@@ -353,9 +358,91 @@ struct Spawn<'a> {
     origin: TerminalOrigin,
     call_id: Option<&'a str>,
     initial_input: Option<&'a str>,
+    service: Option<(&'a str, Option<u16>)>,
 }
 
+pub(super) struct ServiceSpawn<'a> {
+    pub conversation: &'a str,
+    pub root: &'a Path,
+    pub title: &'a str,
+    pub command: &'a str,
+    pub call_id: &'a str,
+    pub port: Option<u16>,
+}
 impl TerminalState {
+    pub(super) fn start_service(
+        &self,
+        request: ServiceSpawn,
+        events: TerminalEvents,
+    ) -> Result<ChatTerminal, AgentError> {
+        self.spawn(
+            Spawn {
+                conversation: request.conversation,
+                root: request.root,
+                title: Some(request.title),
+                origin: TerminalOrigin::Agent,
+                call_id: Some(request.call_id),
+                initial_input: None,
+                service: Some((request.command, request.port)),
+            },
+            events,
+        )
+    }
+    pub(super) fn services(
+        &self,
+        conversation: &str,
+    ) -> Result<Vec<(ChatTerminal, bool)>, AgentError> {
+        Ok(self
+            .0
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .values()
+            .filter(|entry| {
+                entry.info.conversation_id == conversation && entry.info.command.is_some()
+            })
+            .map(|entry| {
+                (
+                    entry.info.clone(),
+                    entry.runtime.closing.load(Ordering::SeqCst),
+                )
+            })
+            .collect())
+    }
+    pub(super) fn stop_services(&self, conversation: &str) {
+        if let Ok(items) = self.services(conversation) {
+            for (item, _) in items {
+                let _ = self.stop_service(conversation, &item.id);
+            }
+        }
+    }
+    pub(super) fn stop_service(&self, conversation: &str, id: &str) -> Result<(), AgentError> {
+        let entries = self.0.lock().map_err(|_| AgentError::internal())?;
+        let entry = entries
+            .get(id)
+            .filter(|entry| {
+                entry.info.conversation_id == conversation && entry.info.command.is_some()
+            })
+            .ok_or_else(|| invalid("Terminal de serviço não encontrado nesta conversa."))?;
+        if entry.info.running() {
+            entry.runtime.close();
+        }
+        Ok(())
+    }
+    pub(super) fn remove_service(&self, conversation: &str, id: &str) -> Result<(), AgentError> {
+        let mut entries = self.0.lock().map_err(|_| AgentError::internal())?;
+        let entry = entries
+            .get(id)
+            .filter(|entry| {
+                entry.info.conversation_id == conversation && entry.info.command.is_some()
+            })
+            .ok_or_else(|| invalid("Terminal de serviço não encontrado nesta conversa."))?;
+        if entry.info.running() {
+            return Err(invalid("Pare o terminal antes de removê-lo."));
+        }
+        entries.remove(id);
+        Ok(())
+    }
+
     pub(crate) fn has_running(&self) -> bool {
         self.0.lock().map_or(true, |entries| {
             entries.values().any(|entry| entry.info.running())
@@ -399,7 +486,7 @@ impl TerminalState {
         }
     }
 
-    fn list(&self, conversation: &str) -> Result<Vec<ChatTerminal>, AgentError> {
+    pub(super) fn list(&self, conversation: &str) -> Result<Vec<ChatTerminal>, AgentError> {
         let mut terminals = self
             .0
             .lock()
@@ -427,7 +514,12 @@ impl TerminalState {
         })
     }
 
-    fn write(&self, conversation: &str, id: &str, input: &str) -> Result<(), AgentError> {
+    pub(super) fn write(
+        &self,
+        conversation: &str,
+        id: &str,
+        input: &str,
+    ) -> Result<(), AgentError> {
         if input.is_empty() || input.len() > 64 * 1024 {
             return Err(invalid(
                 "A entrada do terminal deve ter entre 1 e 65.536 bytes.",
@@ -465,6 +557,9 @@ impl TerminalState {
         };
         let result = {
             let master = runtime.master.lock().map_err(|_| AgentError::internal())?;
+            let Some(master) = master.as_ref() else {
+                return Ok(());
+            };
             master.resize(PtySize {
                 rows,
                 cols,
@@ -525,6 +620,7 @@ impl TerminalState {
             origin,
             call_id,
             initial_input,
+            service,
         } = request;
         if !root.is_dir() {
             return Err(invalid("A pasta original do projeto não está disponível."));
@@ -536,6 +632,37 @@ impl TerminalState {
                     && entry.call_id.as_deref() == Some(call_id)
             }) {
                 return Ok(entry.info.clone());
+            }
+        }
+        if let Some((command, port)) = service {
+            if let Some(entry) = entries.values().find(|entry| {
+                entry.info.conversation_id == conversation
+                    && entry.info.running()
+                    && entry
+                        .info
+                        .command
+                        .as_deref()
+                        .is_some_and(|existing| existing.trim() == command.trim())
+            }) {
+                return Ok(entry.info.clone());
+            }
+            if let Some(port) = port {
+                super::processes::ensure_available(port)?;
+            }
+            let services: Vec<_> = entries
+                .values()
+                .filter(|entry| entry.info.command.is_some() && entry.info.running())
+                .collect();
+            if services.len() >= 32
+                || services
+                    .iter()
+                    .filter(|entry| entry.info.conversation_id == conversation)
+                    .count()
+                    >= 8
+            {
+                return Err(invalid(
+                    "Limite de serviços ativos atingido. Feche um terminal antes de iniciar outro.",
+                ));
             }
         }
         if entries.len() >= MAX_TERMINALS
@@ -554,7 +681,10 @@ impl TerminalState {
         let pair = system
             .openpty(INITIAL_SIZE)
             .map_err(|_| invalid("Não foi possível criar o terminal."))?;
-        let command: CommandBuilder = super::shell::terminal_command(root);
+        let command: CommandBuilder = match service {
+            Some((script, _)) => super::shell::terminal_service_command(root, script),
+            None => super::shell::terminal_command(root),
+        };
         let mut child = pair
             .slave
             .spawn_command(command)
@@ -580,8 +710,9 @@ impl TerminalState {
             .map_err(|_| invalid("Não foi possível conectar a entrada do terminal."))?;
         let runtime = Arc::new(Runtime {
             writer: Mutex::new(writer),
-            master: Mutex::new(pair.master),
+            master: Mutex::new(Some(pair.master)),
             killer: Killer {
+                killed: AtomicBool::new(false),
                 child: Mutex::new(child.clone_killer()),
                 #[cfg(unix)]
                 group,
@@ -609,6 +740,7 @@ impl TerminalState {
             exit_code: None,
             status: "running".into(),
             origin,
+            command: service.map(|(command, _)| command.to_owned()),
         };
         let output = Arc::new(Mutex::new(Output::default()));
         entries.insert(
@@ -622,7 +754,7 @@ impl TerminalState {
         );
         drop(entries);
 
-        Self::watch_output(
+        let reader = Self::watch_output(
             reader,
             output,
             runtime.clone(),
@@ -637,6 +769,7 @@ impl TerminalState {
             info.id.clone(),
             info.conversation_id.clone(),
             events.clone(),
+            reader,
         );
         if let Some(input) = initial_input {
             if let Err(error) = self.write(conversation, &info.id, input) {
@@ -659,8 +792,8 @@ impl TerminalState {
         conversation_id: String,
         id: String,
         events: TerminalEvents,
-    ) {
-        let _ = thread::Builder::new()
+    ) -> Option<thread::JoinHandle<()>> {
+        thread::Builder::new()
             .name(format!("terminal-output-{id}"))
             .spawn(move || {
                 let mut buffer = [0_u8; 4096];
@@ -711,7 +844,8 @@ impl TerminalState {
                         revision,
                     });
                 }
-            });
+            })
+            .ok()
     }
 
     fn watch_child(
@@ -721,12 +855,24 @@ impl TerminalState {
         id: String,
         conversation_id: String,
         events: TerminalEvents,
+        reader: Option<thread::JoinHandle<()>>,
     ) {
         let _ = thread::Builder::new()
             .name(format!("terminal-wait-{id}"))
             .spawn(move || {
                 let status = child.wait();
                 runtime.alive.store(false, Ordering::SeqCst);
+                // Reap descendants even when the shell exits by itself. Drain the
+                // PTY before publishing exit status so final logs remain readable.
+                runtime.killer.kill();
+                // Release ConPTY to close its output pipe, allowing the reader
+                // to finish even though the tab retains its log and metadata.
+                if let Ok(mut master) = runtime.master.lock() {
+                    master.take();
+                }
+                if let Some(reader) = reader {
+                    let _ = reader.join();
+                }
                 let changed = state.0.lock().ok().and_then(|mut entries| {
                     let entry = entries.get_mut(&id)?;
                     // Closing a tab removes its entry; global shutdown keeps entries
@@ -750,7 +896,7 @@ impl TerminalState {
             });
     }
 
-    fn agent_snapshot(
+    pub(super) fn agent_snapshot(
         &self,
         conversation: &str,
         id: &str,
@@ -845,6 +991,7 @@ impl TerminalState {
                         origin: TerminalOrigin::Agent,
                         call_id: Some(&call.id),
                         initial_input: input.as_deref(),
+                        service: None,
                     },
                     events,
                 )?)
@@ -906,6 +1053,7 @@ pub async fn create_chat_terminal(
                 origin: TerminalOrigin::User,
                 call_id: None,
                 initial_input: None,
+                service: None,
             },
             events,
         )
@@ -1051,6 +1199,7 @@ mod tests {
                 exit_code: None,
                 status: "running".into(),
                 origin: TerminalOrigin::User,
+                command: None,
             };
             assert_eq!(serde_json::to_value(&terminal).unwrap()["cwd"], display);
             assert_eq!(terminal.cwd, root);
@@ -1072,6 +1221,7 @@ mod tests {
             origin: TerminalOrigin::User,
             call_id: None,
             initial_input: Some("Write-Output ([string]::Concat('cwd=', (Get-Location).Path)); Write-Output ('terminal-' + 'ready')\r\n"),
+            service: None,
         }, silent_events()).unwrap();
         let snapshot = wait_for_output(&state, "windows-path", &terminal.id);
         state
@@ -1126,6 +1276,7 @@ mod tests {
                         origin: TerminalOrigin::User,
                         call_id: None,
                         initial_input: Some(&input),
+                        service: None,
                     },
                     silent_events(),
                 )
@@ -1161,6 +1312,7 @@ mod tests {
                     origin: TerminalOrigin::Agent,
                     call_id: Some("call"),
                     initial_input: Some(&initial_input),
+                    service: None,
                 },
                 silent_events(),
             )

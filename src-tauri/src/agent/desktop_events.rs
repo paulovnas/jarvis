@@ -109,6 +109,7 @@ mod tests {
             reasoning: None,
             mode: Mode::Build,
             workflow: None,
+            custom_workflow_id: None,
             approval_mode: ApprovalMode::Yolo,
         };
         a.submit_message("hello".into(), options, vec![]).unwrap();
@@ -131,6 +132,7 @@ mod tests {
                 reasoning: None,
                 mode: Mode::Build,
                 workflow: None,
+                custom_workflow_id: None,
                 approval_mode: ApprovalMode::Yolo,
             };
             let _signal = session.reserve("Continue".into(), options).unwrap();

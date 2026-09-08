@@ -7,6 +7,12 @@ struct HandoffSummary {
 }
 
 #[derive(Serialize)]
+struct AgentIdentity {
+    name: String,
+    appearance: Option<catalog::Appearance>,
+}
+
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCard {
     id: String,
@@ -24,6 +30,7 @@ pub struct AgentCard {
     pending_approval: Option<ToolCall>,
     pending_question: Option<questions::PendingQuestion>,
     active_turn_id: Option<String>,
+    identity: Option<AgentIdentity>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,7 +47,19 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
         id: "main".into(),
         parent_id: None,
         role: state.flow.root(),
-        title: state.flow.root().label().into(),
+        identity: state
+            .custom_definition
+            .as_ref()
+            .filter(|_| state.flow == Flow::Custom)
+            .map(|definition| AgentIdentity {
+                name: definition.flow.name.clone(),
+                appearance: definition.flow.appearance,
+            }),
+        title: state
+            .custom_definition
+            .as_ref()
+            .filter(|_| state.flow == Flow::Custom)
+            .map_or_else(|| state.flow.root().label().into(), |d| d.flow.name.clone()),
         status: state.root_status,
         created_at: state.updated_at,
         updated_at: state.updated_at,
@@ -70,7 +89,7 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
     for job in state.jobs.values().filter(|job| job.run_id == state.run_id) {
         if let Some(index) = current_jobs
             .iter()
-            .position(|current| current.role == job.role)
+            .position(|current| current.role == job.role && job.role != Role::Custom)
         {
             let current = current_jobs[index];
             if (job.created_at, job.updated_at, job.id.as_str())
@@ -87,6 +106,10 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
             id: job.id.clone(),
             parent_id: Some(job.parent_id.clone()),
             role: job.role,
+            identity: job.custom_agent.as_ref().map(|agent| AgentIdentity {
+                name: agent.name.clone(),
+                appearance: agent.appearance,
+            }),
             title: job.title.clone(),
             status: job.status,
             created_at: job.created_at,
@@ -335,5 +358,52 @@ mod tests {
         );
         assert!(value["agents"][1]["handoff"].get("evidence").is_none());
         assert!(value.to_string().len() < 2500);
+    }
+    #[test]
+    fn custom_steps_are_not_collapsed_by_role_in_the_native_snapshot() {
+        let (_fixture, hub) = super::super::tests::hub();
+        let first = super::super::tests::job(&hub, Role::Custom, ".");
+        let second = super::super::tests::job(&hub, Role::Custom, ".");
+        let mut state = hub.manifest.lock().unwrap();
+        state.flow = Flow::Custom;
+        state.jobs.insert(first.id.clone(), first);
+        state.jobs.insert(second.id.clone(), second);
+        let result = snapshot(&state, None).unwrap();
+        assert_eq!(result.agents.len(), 3);
+    }
+
+    #[test]
+    fn custom_snapshot_uses_frozen_flow_and_agent_identity() {
+        let (_fixture, hub) = super::super::tests::hub();
+        let mut catalog = catalog::tests::example();
+        let appearance =
+            serde_json::from_value(serde_json::json!({ "icon": "brain", "color": "cyan" }))
+                .unwrap();
+        catalog.agents[0].appearance = Some(appearance);
+        catalog.flows[0].appearance = Some(appearance);
+        let mut job = super::super::tests::job(&hub, Role::Custom, ".");
+        job.custom_agent = Some(catalog.agents[0].clone());
+        let mut state = hub.manifest.lock().unwrap();
+        state.flow = Flow::Custom;
+        state.custom_definition = Some(catalog.resolve(&catalog.flows[0].id).unwrap());
+        state.jobs.insert(job.id.clone(), job);
+        let value = serde_json::to_value(snapshot(&state, None).unwrap()).unwrap();
+        assert_eq!(
+            value["agents"][0]["identity"]["name"],
+            catalog.flows[0].name
+        );
+        assert_eq!(
+            value["agents"][1]["identity"]["name"],
+            catalog.agents[0].name
+        );
+        assert_eq!(
+            value["agents"][1]["identity"]["appearance"]["icon"],
+            "brain"
+        );
+        assert_eq!(
+            value["agents"][1]["identity"]["appearance"]["color"],
+            "cyan"
+        );
+        assert!(value["agents"][1]["identity"].get("instructions").is_none());
     }
 }

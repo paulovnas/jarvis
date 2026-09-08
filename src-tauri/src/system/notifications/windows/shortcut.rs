@@ -53,9 +53,8 @@ fn ensure(shortcut: &Path, executable: &Path, app_id: &str) -> windows::core::Re
         .parent()
         .ok_or_else(|| std::io::Error::other("Missing shortcut directory"))?;
     fs::create_dir_all(parent)?;
-    let target = HSTRING::from(
-        crate::library::strip_verbatim(&executable.to_string_lossy()).as_ref(),
-    );
+    let target =
+        HSTRING::from(crate::library::strip_verbatim(&executable.to_string_lossy()).as_ref());
     unsafe {
         link.SetPath(&target)?;
         link.SetDescription(&HSTRING::from("Jarvis"))?;

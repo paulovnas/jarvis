@@ -254,9 +254,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     crate::app_menu::install(app)?;
     let state = app.state::<DesktopState>();
     let path = app.path().home_dir()?.join(".jarvis/desktop.json");
-    let window = app
-        .get_webview_window("main")
-        .ok_or("Missing main window")?;
+    let window = app.get_window("main").ok_or("Missing main window")?;
     match Store::open(path) {
         Ok(store) => {
             let saved = &store.preferences.window;
@@ -368,10 +366,10 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
 }
 
 pub fn flush(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+    if let Some(window) = app.get_window("main") {
         let state = app.state::<DesktopState>();
         state.revision.fetch_add(1, Ordering::SeqCst);
-        if let Err(e) = capture(&window.as_ref().window(), &state) {
+        if let Err(e) = capture(&window, &state) {
             eprintln!("{e}");
         }
     }

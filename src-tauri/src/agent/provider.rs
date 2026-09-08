@@ -545,6 +545,7 @@ mod tests {
             reasoning: Some("low".into()),
             mode: Mode::Plan,
             workflow: None,
+            custom_workflow_id: None,
             approval_mode: ApprovalMode::Manual,
         };
         let auth_options = options.clone();
@@ -607,6 +608,7 @@ mod tests {
             reasoning: Some("high".into()),
             mode: Mode::Plan,
             workflow: None,
+            custom_workflow_id: None,
             approval_mode: ApprovalMode::Manual,
         };
         let body = request_body(

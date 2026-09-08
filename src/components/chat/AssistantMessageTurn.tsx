@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { AssistantWorkCollapse } from "./AssistantWorkCollapse";
 import { QuestionHistory } from "./QuestionHistory";
 import { GeneratedImageCard } from "./GeneratedImageCard";
+import { BrowserCaptureCard } from "./BrowserCaptureCard";
 import type { ChatMessage } from "./types";
 
 const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
@@ -24,6 +25,7 @@ export function AssistantMessageTurn({ message }: { message: ChatMessage }) {
       {message.work && <AssistantWorkCollapse work={message.work} isStreaming={message.streaming} />}
       {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "ask_user").map(tool => <QuestionHistory key={tool.id} tool={tool} />)}
       {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "generate_image").map(tool => <GeneratedImageCard key={tool.id} tool={tool} />)}
+      {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "browser_screenshot").map(tool => <BrowserCaptureCard key={tool.id} tool={tool} />)}
       {message.error && <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm"><p className="font-medium">{message.error.title}</p><p className="mt-1 text-muted-foreground">{message.error.message}</p></div>}
       {message.content && <div className="assistant-prose min-w-0 py-2 text-sm leading-7 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-card [&_pre]:p-3 [&_pre]:text-xs [&_code]:font-mono [&_p]:my-3 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h1]:text-lg [&_h2]:text-base [&_h3]:font-semibold [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_table]:block [&_table]:overflow-x-auto [&_td]:border [&_td]:p-2 [&_th]:border [&_th]:p-2">
         <Suspense fallback={<p className="whitespace-pre-wrap">{message.content}</p>}><ChatMarkdown content={message.content} /></Suspense>

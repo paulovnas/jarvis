@@ -116,6 +116,7 @@ pub(super) fn open(
         .options
         .clone();
     let mut manifest = load(&directory_path, &root.id)?.unwrap_or_else(|| Manifest {
+        custom_definition: None,
         validation: None,
         version: 1,
         conversation_id: root.id.clone(),

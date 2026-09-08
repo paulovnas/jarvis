@@ -14,6 +14,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
         reasoning: Some("high".into()),
         mode: Mode::Build,
         workflow: Some(Flow::Complete),
+        custom_workflow_id: None,
         approval_mode: ApprovalMode::Manual,
     };
     let signal = root
@@ -22,6 +23,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
     let directory = fixture.root.join("workflow");
     std::fs::create_dir(&directory).unwrap();
     let manifest = Manifest {
+        custom_definition: None,
         validation: None,
         version: 1,
         conversation_id: root.id.clone(),
@@ -39,12 +41,13 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
     };
     storage::save(&directory, &manifest).unwrap();
     let (changed, _) = watch::channel(1);
+    let terminals = terminals::TerminalState::default();
     let hub = Arc::new(Hub {
         root,
         env: Environment {
-            processes: processes::ProcessState::default(),
-            process_changed: Arc::new(|_| {}),
-            terminals: terminals::TerminalState::default(),
+            browser_app: None,
+            processes: processes::ProcessState::new(terminals.clone()),
+            terminals,
             terminal_events: terminals::silent_events(),
             state: AppState::default(),
             oauth: OpenAiCodexState::default(),
@@ -64,6 +67,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
 }
 pub(super) fn job(hub: &Hub, role: Role, scope: &str) -> Job {
     Job {
+        custom_agent: None,
         phase: Phase::Implementation,
         id: library::new_id().unwrap(),
         parent_id: "main".into(),
@@ -217,6 +221,9 @@ fn delegated_design_discovery_enforces_read_only_and_parent_questions_even_with_
         "ctx_execute",
         "process_start",
         "terminal_start",
+        "browser_open",
+        "browser_click",
+        "browser_fill",
     ] {
         assert!(!definitions.iter().any(|d| d["name"] == name));
         assert!(exec
@@ -239,6 +246,9 @@ fn delegated_design_discovery_enforces_read_only_and_parent_questions_even_with_
         "process_check_port",
         "terminal_list",
         "terminal_output",
+        "browser_snapshot",
+        "browser_console",
+        "browser_screenshot",
     ] {
         assert!(
             definitions.iter().any(|d| d["name"] == name),

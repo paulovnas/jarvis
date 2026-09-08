@@ -30,6 +30,7 @@ fn prepare(fixture: &Fixture) -> (Arc<Session>, ToolCall, watch::Receiver<bool>)
                 reasoning: None,
                 mode: Mode::Build,
                 workflow: None,
+                custom_workflow_id: None,
                 approval_mode: ApprovalMode::Manual,
             },
         )
@@ -247,6 +248,7 @@ async fn available_in_plan_build_manual_yolo_without_an_approval_prompt() {
                 reasoning: None,
                 mode,
                 workflow: None,
+                custom_workflow_id: None,
                 approval_mode,
             };
             assert!(authorize(&session, &tool, &options, signal.clone())

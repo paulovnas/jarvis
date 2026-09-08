@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { AGENT_ICONS } from "@/components/agents/agent-presentation";
 import { aliasSuffix } from "@/core/provider-usage";
 import { reasoningLabel } from "@/core/reasoning";
@@ -13,6 +13,14 @@ import { useWorkflowTranscript, type WorkflowController } from "@/hooks/use-work
 import { TurnBody } from "@/components/chat/Transcript";
 import { UserMessageBubble } from "@/components/chat/UserMessageBubble";
 import { CompactionMarker } from "@/components/chat/CompactionMarker";
+import { workflowAppearance } from "@/components/agents/workflow-appearance";
+import { agentAppearance, flowAppearance } from "@/core/workflow-appearance";
+
+function presentation(agent: WorkflowAgent) {
+  return agent.role === "custom"
+    ? { ...workflowAppearance(agent.identity?.appearance, agent.id === "main" ? flowAppearance : agentAppearance), label: agent.identity?.name ?? ROLE_LABELS.custom }
+    : { Icon: AGENT_ICONS[agent.role], color: ROLE_COLORS[agent.role], label: ROLE_LABELS[agent.role] };
+}
 
 function ModelDetails({ agent }: { agent: WorkflowAgent }) {
   return <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-[9px] text-muted-foreground" title={`${agent.options.account} / ${agent.options.model}`}>
@@ -21,8 +29,8 @@ function ModelDetails({ agent }: { agent: WorkflowAgent }) {
   </span>;
 }
 function StatusBadge({ agent }: { agent: WorkflowAgent }) {
-  const color = agent.status === "completed" ? "#98c379" : ["failed", "blocked"].includes(agent.status) ? "#e06c75" : activeAgent(agent) ? ROLE_COLORS[agent.role] : "#abb2bf";
-  return <Badge variant="outline" className="text-[9px]" style={{ color, borderColor: `${color}40`, backgroundColor: `${color}10` }}>{STATUS_LABELS[agent.status]}</Badge>;
+  const color = agent.status === "completed" ? "var(--color-onedark-green)" : ["failed", "blocked"].includes(agent.status) ? "var(--destructive)" : activeAgent(agent) ? presentation(agent).color : "var(--muted-foreground)";
+  return <Badge variant="outline" className="text-[9px]" style={{ color, borderColor: `color-mix(in srgb, ${color} 25%, transparent)`, backgroundColor: `color-mix(in srgb, ${color} 6%, transparent)` }}>{STATUS_LABELS[agent.status]}</Badge>;
 }
 function AgentHistory({ conversationId, agent }: { conversationId: string; agent: WorkflowAgent }) {
   const transcript = useWorkflowTranscript(conversationId, agent.id);
@@ -50,7 +58,7 @@ export function WorkflowAgents({ workflow, conversationId }: { workflow?: Workfl
   const agents = workflow?.data?.agents ?? [];
   const latestByRole = new Map<WorkflowAgent["role"], WorkflowAgent>();
   const currentAgents = agents.filter(agent => {
-    if (agent.id === "main") return true;
+    if (agent.id === "main" || agent.role === "custom") return true;
     const current = latestByRole.get(agent.role);
     if (!current || agent.createdAt > current.createdAt || agent.createdAt === current.createdAt && (agent.updatedAt > current.updatedAt || agent.updatedAt === current.updatedAt && agent.id > current.id)) {
       latestByRole.set(agent.role, agent);
@@ -58,16 +66,17 @@ export function WorkflowAgents({ workflow, conversationId }: { workflow?: Workfl
     return false;
   }).concat([...latestByRole.values()]);
   const selectedAgent = currentAgents.find(agent => agent.id === selected);
+  const SelectedIcon = selectedAgent ? presentation(selectedAgent).Icon : AGENT_ICONS.custom;
   const ordered = [...currentAgents].sort((a, b) => Number(activeAgent(b)) - Number(activeAgent(a)) || a.createdAt - b.createdAt || a.updatedAt - b.updatedAt || a.id.localeCompare(b.id));
   return <>
     {workflow?.error ? <div role="alert" className="space-y-2 text-xs"><p className="text-destructive">{workflow.error}</p><Button variant="ghost" size="sm" className="cursor-pointer" onClick={workflow.retry}>Tentar novamente</Button></div>
       : workflow?.loading ? <div role="status" aria-label="Carregando agentes" className="space-y-2"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div>
       : !currentAgents.length ? <p className="text-xs text-muted-foreground">Nenhum agente em execução.</p>
       : <div className="space-y-2">{ordered.map(agent => {
-        const Icon = AGENT_ICONS[agent.role];
-        return <Button key={agent.id} variant="ghost" data-status={agent.status} style={agent.status === "waiting" || agent.status === "queued" ? { borderColor: `${ROLE_COLORS[agent.role]}80` } : undefined} onClick={() => setSelected(agent.id)} aria-label={`Abrir agente ${ROLE_LABELS[agent.role]}: ${agent.title}`} className="agent-execution relative isolate h-auto w-full cursor-pointer flex-col items-stretch gap-2 rounded-md border border-border bg-card/60 p-3 text-left whitespace-normal shadow-[inset_0_1px_0_#ffffff0a] hover:border-primary/40">
-          <span className="flex items-center gap-2"><Icon aria-hidden="true" className="size-3.5 shrink-0" style={{ color: ROLE_COLORS[agent.role] }} /><span className="flex-1 text-xs font-medium">{ROLE_LABELS[agent.role]}</span>{agent.status === "running" && <span aria-label="Em execução" className="size-1.5 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />}<ChevronRight className="size-3 text-muted-foreground" /></span>
-          {agent.title !== ROLE_LABELS[agent.role] && <span className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{agent.title}</span>}
+        const { Icon, color, label } = presentation(agent);
+        return <Button key={agent.id} variant="ghost" data-status={agent.status} style={agent.status === "waiting" || agent.status === "queued" ? { borderColor: agent.role === "custom" ? `color-mix(in srgb, ${color} 50%, transparent)` : `${color}80` } : undefined} onClick={() => setSelected(agent.id)} aria-label={`Abrir agente ${label}: ${agent.title}`} className="agent-execution relative isolate h-auto w-full cursor-pointer flex-col items-stretch gap-2 rounded-md border border-border bg-card/60 p-3 text-left whitespace-normal shadow-[inset_0_1px_0_#ffffff0a] hover:border-primary/40">
+          <span className="flex items-center gap-2"><Icon aria-hidden="true" className="size-3.5 shrink-0" style={{ color }} /><span className="flex-1 text-xs font-medium">{label}</span>{agent.status === "running" && <span aria-label="Em execução" className="size-1.5 animate-pulse rounded-full motion-reduce:animate-none" style={{ backgroundColor: color }} />}<ChevronRight className="size-3 text-muted-foreground" /></span>
+          {agent.title !== label && <span className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{agent.title}</span>}
           <span className="flex items-center gap-2"><StatusBadge agent={agent} /></span>
           <ModelDetails agent={agent} />
         </Button>;
@@ -75,7 +84,7 @@ export function WorkflowAgents({ workflow, conversationId }: { workflow?: Workfl
     <Dialog open={!!selectedAgent} onOpenChange={open => { if (!open) setSelected(null); }}>
       {selectedAgent && conversationId && <DialogContent className="dark flex h-[min(760px,85dvh)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
         <DialogHeader className="shrink-0 border-b border-border bg-sidebar p-5 pr-12">
-          <DialogDescription className="micro-label flex items-center gap-2" style={{ color: ROLE_COLORS[selectedAgent.role] }}><Bot className="size-3.5" />{ROLE_LABELS[selectedAgent.role]}<StatusBadge agent={selectedAgent} /></DialogDescription>
+          <DialogDescription className="micro-label flex items-center gap-2" style={{ color: presentation(selectedAgent).color }}><SelectedIcon className="size-3.5" />{presentation(selectedAgent).label}<StatusBadge agent={selectedAgent} /></DialogDescription>
           <DialogTitle className="text-sm">{selectedAgent.title}</DialogTitle>
           <ModelDetails agent={selectedAgent} />
           {selectedAgent.attempts > 1 && <span className="font-mono text-[10px] text-muted-foreground">Rodada {selectedAgent.attempts}</span>}

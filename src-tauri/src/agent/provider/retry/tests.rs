@@ -12,6 +12,7 @@ fn options() -> TurnOptions {
         reasoning: None,
         mode: Mode::Build,
         workflow: None,
+        custom_workflow_id: None,
         approval_mode: ApprovalMode::Yolo,
     }
 }

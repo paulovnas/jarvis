@@ -62,6 +62,7 @@ describe("SettingsDialog provider accounts", () => {
     invokeMock.mockResolvedValue([]);
     renderSettings();
     const navigation = screen.getByRole("tablist", { name: "Configurações" });
+    expect(navigation).toHaveAttribute("aria-orientation", "vertical");
     const providers = within(navigation).getByRole("tab", { name: /Provedores/ });
     expect(providers).toHaveAttribute("aria-selected", "true");
     expect(providers).toHaveAttribute("data-active");
@@ -77,6 +78,9 @@ describe("SettingsDialog provider accounts", () => {
     await user.click(screen.getByRole("tab", { name: "Ferramentas" }));
     expect(await screen.findByRole("region", { name: "Core" })).toBeVisible();
     expect(screen.getByRole("tab", { name: "Ferramentas" })).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{ArrowUp}{Enter}");
+    expect(screen.getByRole("tab", { name: "Geral" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Geral", level: 2 })).toBeVisible();
   });
   it("persiste a visibilidade dos limites sem desativar a conta e preserva a preferência se o salvamento falhar", async () => {
     const user = userEvent.setup();
@@ -139,7 +143,7 @@ describe("SettingsDialog provider accounts", () => {
     const user = userEvent.setup();
     render(<SettingsDialog open onOpenChange={vi.fn()} />);
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Ferramentas", "Agentes", "Provedores", "Skills", "MCPs"]);
+    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Ferramentas", "Workflow", "Provedores", "Skills", "MCPs"]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
     expect(within(screen.getByRole("tabpanel", { name: "Geral" })).queryByRole("heading", { name: "Core" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Ferramentas" }));
@@ -522,7 +526,12 @@ describe("SettingsDialog provider accounts", () => {
     const second = account("openai-codex-empresa");
     const user = userEvent.setup();
     const successSpy = vi.spyOn(toast, "success");
-    invokeMock.mockResolvedValueOnce([first, second]).mockResolvedValueOnce([]);
+    let removed = false;
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "get_provider_removal_plan") return { alias: first.alias, revision: "review-1", items: [] };
+      if (command === "disconnect_provider_account") { removed = true; return { replaced: 0, unresolved: [] }; }
+      return removed ? [second] : [first, second];
+    });
 
     renderSettings();
     expect(await screen.findByText(first.alias)).toBeInTheDocument();
@@ -534,13 +543,17 @@ describe("SettingsDialog provider accounts", () => {
     await user.click(within(firstRow).getByRole("button", { name: `Detalhes de ${first.alias}` }));
     const details = screen.getByRole("dialog", { name: first.alias });
     await user.click(within(details).getByRole("button", { name: "Desconectar" }));
-    expect(screen.getByRole("alertdialog")).toHaveTextContent(first.alias);
+    const confirmation = await screen.findByRole("dialog", { name: "Remover provedor?" });
+    expect(confirmation).toHaveTextContent(first.alias);
     expect(invokeMock).not.toHaveBeenCalledWith("disconnect_provider_account", expect.anything());
 
-    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Desconectar" }));
-    await waitFor(() => expect(successSpy).toHaveBeenCalledWith("Conta desconectada"));
+    const remove = within(confirmation).getByRole("button", { name: "Remover provedor" });
+    await waitFor(() => expect(remove).toBeEnabled());
+    await user.click(remove);
+    await waitFor(() => expect(successSpy).toHaveBeenCalledWith("Provedor removido"));
     expect(invokeMock).toHaveBeenCalledWith("disconnect_provider_account", {
       alias: first.alias,
+      revision: "review-1", replacements: [],
     });
   });
 });

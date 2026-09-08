@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { webSearchConfigSchema } from "@/core/web-search";
+import { modelProblem } from "@/core/provider-references";
+import { useModelProblemNotice } from "@/hooks/use-provider-references";
 
 interface Config { accountAlias: string | null; model: string | null; inheritChat: boolean }
 const OFF = "off";
@@ -36,6 +38,8 @@ export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange 
   const selected = compatible.find(account => account.alias === config.accountAlias);
   const models = imageGeneration ? [imageModel] : (selected?.models ?? []).filter(model => selected && supports(selected, model.id));
   const unavailable = config.accountAlias !== null && !selected;
+  const problem = !loading && !error && !config.inheritChat && config.accountAlias ? modelProblem({ account: config.accountAlias, model: imageGeneration ? imageModel.id : config.model ?? "", reasoning: null }, accounts, kind) : null;
+  useModelProblemNotice(title, problem);
   const accountItems = [...(imageGeneration ? [] : [{ value: INHERIT, label: "Herdar do chat" }]), { value: OFF, label: "Desligado" }, ...compatible.map(account => ({ value: account.alias, label: account.alias })), ...(unavailable ? [{ value: config.accountAlias!, label: `${config.accountAlias} · Indisponível` }] : [])];
   const modelItems = models.map(model => ({ value: model.id, label: model.name }));
   if (config.model && !models.some(model => model.id === config.model)) modelItems.push({ value: config.model, label: `${config.model} · Indisponível` });
@@ -68,7 +72,7 @@ export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange 
           <SelectTrigger className="w-full cursor-pointer text-xs" aria-label={`Modelo de ${title}`}><SelectValue placeholder={config.inheritChat ? "Modelo do chat" : "Modelo"} /></SelectTrigger>
           <SelectContent>{modelItems.map(item => <SelectItem key={item.value} value={item.value} disabled={!models.some(model => model.id === item.value)} className="cursor-pointer">{item.label}</SelectItem>)}</SelectContent>
         </Select>
-        {unavailable && <p role="status" className="text-xs text-muted-foreground">Conta indisponível. Escolha outra ou desligue.</p>}
+        {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
       </div>}
     </CardContent>
   </Card>;

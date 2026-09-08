@@ -206,6 +206,7 @@ pub(super) async fn execute(
             reasoning: catalog.default_reasoning_level,
             mode: Mode::Plan,
             workflow: None,
+            custom_workflow_id: None,
             approval_mode: ApprovalMode::Yolo,
         };
         let response = provider::stream(&credential, &crate::library::new_id()?, &options,
@@ -282,6 +283,7 @@ mod tests {
             reasoning: None,
             mode: Mode::Plan,
             workflow: None,
+            custom_workflow_id: None,
             approval_mode: ApprovalMode::Yolo,
         };
         let (_send, signal) = watch::channel(false);
@@ -354,6 +356,7 @@ mod tests {
             reasoning: None,
             mode: Mode::Plan,
             workflow: None,
+            custom_workflow_id: None,
             approval_mode: ApprovalMode::Yolo,
         };
         let result = execute(&state, &oauth, &home, &conversation, &options, &json!({"ids":[item.id],"question":"Quais cores aparecem na metade esquerda e na metade direita? Responda em uma frase."}), signal).await;

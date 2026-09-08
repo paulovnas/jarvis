@@ -23,6 +23,9 @@ describe("Inspector", () => {
       expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Subagentes" })).not.toBeInTheDocument();
     }
+    view.rerender(<Inspector library={library} chat={chat} workflow={{ ...workflow, data: { ...workflow.data, flow: "custom" } }} />);
+    expect(screen.getByRole("button", { name: "Subagentes" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
     view.rerender(<Inspector library={library} chat={chat} workflow={{ ...workflow, data: { ...workflow.data, conversationId: "other" } }} />);
     expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Subagentes" })).not.toBeInTheDocument();

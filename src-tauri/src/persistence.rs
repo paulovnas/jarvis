@@ -73,6 +73,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 16,
         sql: include_str!("../../drizzle/0015_unread_conversations.sql"),
     },
+    Migration {
+        version: 17,
+        sql: include_str!("../../drizzle/0016_provider_model_bindings.sql"),
+    },
 ];
 
 #[test]
@@ -134,7 +138,7 @@ pub struct PersistenceError {
 }
 
 impl PersistenceError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -592,11 +596,13 @@ mod tests {
             0
         );
         super::delete_provider_account(&connection, "openai-codex-old").unwrap();
-        assert!(connection
-            .query_row("SELECT account_alias FROM web_search_config", [], |row| row
-                .get::<_, Option<String>>(0))
-            .unwrap()
-            .is_none());
+        assert_eq!(
+            connection
+                .query_row("SELECT account_alias FROM web_search_config", [], |row| row
+                    .get::<_, Option<String>>(0))
+                .unwrap(),
+            Some("openai-codex-old".into())
+        );
     }
     use super::*;
 
@@ -625,7 +631,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 16);
+        assert_eq!(version, 17);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -748,7 +754,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 16);
+        assert_eq!(version, 17);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {

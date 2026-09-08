@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
+import { ProviderRemovalDialog } from "./ProviderRemovalDialog";
+import type { ProviderRemovalResult } from "@/core/provider-references";
 import { invoke } from "@tauri-apps/api/core";
 import { WebSearchSettings } from "./WebSearchSettings";
 import { McpSettings } from "./McpSettings";
@@ -7,7 +8,7 @@ import { SkillsSettings } from "./SkillsSettings";
 import { CoreSettings } from "./CoreSettings";
 import { ChatCleanupSettings } from "./ChatCleanupSettings";
 import { SystemSettings } from "./SystemSettings";
-import { AgentSettings } from "./AgentSettings";
+import { WorkflowSettings } from "./WorkflowSettings";
 import { skillsSnapshotSchema } from "@/core/skills";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -23,16 +24,6 @@ import {
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { mcpServersSchema } from "@/core/mcp";
@@ -44,7 +35,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs as SettingsTabs } from "@base-ui/react/tabs";
+import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Empty,
   EmptyContent,
@@ -64,6 +56,15 @@ import { ProviderAccountCard } from "./ProviderAccountCard";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 
+
+const SETTINGS_SECTIONS = [
+              { value: "general", label: "Geral", Icon: Settings, description: "Preferências do aplicativo e organização das conversas." },
+              { value: "tools", label: "Ferramentas", Icon: Plug, description: "Prepare e acompanhe as ferramentas do ambiente." },
+              { value: "agents", label: "Workflow", Icon: Users, description: "Organize fluxos e agentes para o seu jeito de trabalhar." },
+              { value: "providers", label: "Provedores", Icon: Sparkles, description: "Contas, modelos e recursos de inteligência artificial." },
+              { value: "skills", label: "Skills", Icon: BookOpen, description: "Instruções especializadas disponíveis para os agentes." },
+              { value: "mcps", label: "MCPs", Icon: Plug, description: "Conecte ferramentas e serviços aos seus agentes." },
+            ];
 
 const ALIAS_SUFFIX_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -114,7 +115,7 @@ function safeErrorMessage(error: unknown, fallback: string): string {
 
 function SettingsSurface({ embedded, open, onOpenChange, children }: { embedded: boolean; open: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {
   if (embedded) return <div className="min-w-0">{children}</div>;
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent showCloseButton className="settings-panel dark flex max-h-[min(740px,85dvh)] w-[calc(100vw-3rem)] sm:max-w-[860px] flex-col gap-0 border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden motion-reduce:transition-none">{children}</DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent showCloseButton className="settings-panel dark flex h-[min(900px,92dvh)] max-h-[92dvh] w-[calc(100vw-2rem)] max-w-none sm:max-w-[1180px] flex-col gap-0 border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden motion-reduce:transition-none">{children}</DialogContent></Dialog>;
 }
 
 export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedProviders = false, onBusyChange }: SettingsDialogProps) {
@@ -147,7 +148,6 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   const [cancelling, setCancelling] = useState(false);
   const [disconnectAlias, setDisconnectAlias] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
-  const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
   const togglingRef = useRef(false);
 
@@ -420,26 +420,14 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
     }
   };
 
-  const handleDisconnect = async () => {
-    const alias = disconnectAlias;
-    if (!alias || disconnecting) return;
-
-    setDisconnecting(alias);
-    setDisconnectError(null);
-    try {
-      await invoke<void>("disconnect_provider_account", { alias });
-      setDisconnectAlias(null);
-      setListState("loading");
-      setListError(null);
-      await loadAccounts();
-      toast.success("Conta desconectada");
-    } catch (error) {
-      setDisconnectError(
-        safeErrorMessage(error, "Não foi possível desconectar a conta."),
-      );
-    } finally {
-      setDisconnecting(null);
-    }
+  const handleProviderRemoved = async (result: ProviderRemovalResult) => {
+    updateAccounts(accounts.filter(account => account.alias !== disconnectAlias));
+    setDisconnectAlias(null);
+    setListState("loading");
+    setListError(null);
+    toast.success(result.replaced ? `Provedor removido e ${result.replaced} vínculos atualizados` : "Provedor removido");
+    if (result.unresolved.length) toast.error(`${result.unresolved.length} vínculos ficaram sem provedor`, { id: "provider-invalid-models", description: result.unresolved.map(item => item.label).join(", "), duration: 10000 });
+    await loadAccounts();
   };
 
   const handleEnabledChange = async (alias: string, enabled: boolean) => {
@@ -523,7 +511,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
         </div>
 
         {accounts.length === 0 ? (
-          <Empty className="min-h-72 rounded-lg border border-dashed border-border bg-card/50">
+          <Empty className="min-h-52 gap-4 rounded-lg border border-dashed border-border bg-card/50 p-6 md:p-6">
             <EmptyHeader>
               <EmptyMedia variant="icon" className="bg-[#56b6c2]/10 text-[#56b6c2]">
                 <Link2 className="size-5" />
@@ -553,7 +541,6 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
                 onEnabledChange={(alias, enabled) => { void handleEnabledChange(alias, enabled); }}
                 onDisconnect={(alias) => {
                   setDisconnectAlias(alias);
-                  setDisconnectError(null);
                 }}
               />
             ))}
@@ -717,47 +704,34 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   return (
     <>
       <SettingsSurface embedded={embeddedProviders} open={open} onOpenChange={(nextOpen) => handleDialogOpenChange(nextOpen)}>
-          {embeddedProviders ? renderList() : <><DialogHeader className="shrink-0 border-b border-border bg-sidebar px-6 py-5">
+          {embeddedProviders ? renderList() : <><DialogHeader className="shrink-0 border-b border-border bg-sidebar px-5 py-4">
             <DialogTitle className="flex items-center gap-3 text-base font-heading font-medium text-foreground"><Settings aria-hidden="true" className="size-4 text-muted-foreground" />Configurações</DialogTitle>
             <DialogDescription className="sr-only">Painel de configurações do Jarvis</DialogDescription>
           </DialogHeader>
 
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 min-h-0 gap-0 overflow-hidden">
-            <div className="settings-navigation shrink-0 overflow-x-auto border-b border-border bg-sidebar px-6 py-2.5">
-              <TabsList aria-label="Configurações" className="w-max gap-1 rounded-md bg-transparent p-0">
-                <TabsTrigger value="general" className="cursor-pointer gap-2 px-2 text-xs"><Settings aria-hidden="true" className="size-3.5" />Geral</TabsTrigger>
-                <TabsTrigger value="tools" className="cursor-pointer gap-2 px-2 text-xs"><Plug aria-hidden="true" className="size-3.5" />Ferramentas</TabsTrigger>
-                <TabsTrigger value="agents" className="cursor-pointer gap-2 px-2 text-xs"><Users aria-hidden="true" className="size-3.5" />Agentes</TabsTrigger>
-                <TabsTrigger
-                  value="providers"
-                  className="cursor-pointer gap-2 px-2 text-xs"
-                >
-                  <Sparkles aria-hidden="true" className="size-3.5" />
-                  <span>Provedores</span>
-                  {listState === "ready" && (
-                    <Badge className="border-[#61afef]/30 bg-[#61afef]/10 text-[10px] text-[#61afef] px-1.5 py-0">
-                      {accounts.length}
-                    </Badge>
-                  )}
-                </TabsTrigger>
-                <TabsTrigger value="skills" className="cursor-pointer gap-2 px-2 text-xs"><BookOpen aria-hidden="true" className="size-3.5" />Skills{skillCount !== null && <Badge variant="outline" className="border-[#c678dd]/30 bg-[#c678dd]/10 px-1.5 py-0 text-[10px] text-[#c678dd]">{skillCount}</Badge>}</TabsTrigger>
-                <TabsTrigger value="mcps" className="cursor-pointer gap-2 px-2 text-xs"><Plug aria-hidden="true" className="size-3.5" />MCPs{mcpCount !== null && <Badge variant="outline" className="border-[#56b6c2]/30 bg-[#56b6c2]/10 px-1.5 py-0 text-[10px] text-[#56b6c2]">{mcpCount}</Badge>}</TabsTrigger>
+          <SettingsTabs.Root orientation="vertical" value={activeTab} onValueChange={value => { if (typeof value === "string") setActiveTab(value); }} className="group/tabs flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden">
+            <div className="settings-navigation w-14 shrink-0 overflow-y-auto border-r border-border bg-sidebar p-2 sm:w-48 sm:p-3">
+              <TabsList aria-label="Configurações" className="h-auto w-full flex-col items-stretch justify-start gap-1 rounded-none bg-transparent p-0">
+                {SETTINGS_SECTIONS.map(section => <TabsTrigger key={section.value} value={section.value} title={section.label} className="h-10 flex-none cursor-pointer justify-center gap-2.5 px-2 text-xs sm:justify-start">
+                  <section.Icon aria-hidden="true" className="size-4" />
+                  <span className="sr-only min-w-0 flex-1 text-left sm:not-sr-only">{section.label}</span>
+                  <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">{section.value === "providers" && listState === "ready" ? accounts.length : section.value === "skills" ? skillCount : section.value === "mcps" ? mcpCount : null}</span>
+                </TabsTrigger>)}
               </TabsList>
             </div>
-
-            <TabsContent value="general" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "general" && <><SystemSettings /><ChatCleanupSettings /></>}</TabsContent>
-            <TabsContent value="tools" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "tools" && <CoreSettings />}</TabsContent>
-            <TabsContent value="agents" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "agents" && <AgentSettings accounts={accounts} />}</TabsContent>
-            <TabsContent value="skills" className="m-0 min-h-0 flex-1 overflow-y-auto px-6 py-5">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</TabsContent>
-            <TabsContent value="providers" className="flex-1 min-h-0 m-0 overflow-y-auto p-0">
-              <div className="px-6 py-5">
-                {renderList()}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <div className="shrink-0 border-b border-border px-4 py-4 sm:px-6">
+                <h2 className="text-sm font-medium">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.label}</h2>
+                <p className="mt-1 text-xs text-muted-foreground">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.description}</p>
               </div>
-            </TabsContent>
-            <TabsContent value="mcps" className="flex-1 min-h-0 m-0 overflow-y-auto p-0">
-              <div className="px-6 py-5">{activeTab === "mcps" && <McpSettings onCountChange={updateMcpCount} />}</div>
-            </TabsContent>
-          </Tabs></>}
+              <TabsContent value="general" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "general" && <div className="max-w-2xl"><SystemSettings /><ChatCleanupSettings /></div>}</TabsContent>
+              <TabsContent value="tools" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "tools" && <CoreSettings />}</TabsContent>
+              <TabsContent value="agents" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "agents" && <WorkflowSettings accounts={accounts} />}</TabsContent>
+              <TabsContent value="skills" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</TabsContent>
+              <TabsContent value="providers" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{renderList()}</TabsContent>
+              <TabsContent value="mcps" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "mcps" && <div className="max-w-3xl"><McpSettings onCountChange={updateMcpCount} /></div>}</TabsContent>
+            </div>
+          </SettingsTabs.Root></>}
           <Dialog open={open && view !== "list"} onOpenChange={(nextOpen) => { if (!nextOpen && !savingCustom) handleDialogOpenChange(false, false); }}>
             <DialogContent className={`dark max-h-[85vh] overflow-y-auto ${provider === "custom" ? "sm:max-w-2xl" : "sm:max-w-xl"}`}>
               {view === "waiting" ? renderWaiting() : view === "reauthorize" ? renderReauthorize() : renderAdd()}
@@ -766,48 +740,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
           <Dialog open={open && editingCustom !== null} onOpenChange={next => { if (!next && !savingCustom) setEditingCustom(null); }}><DialogContent className="dark max-h-[85vh] overflow-y-auto sm:max-w-2xl" aria-describedby={undefined}><DialogHeader><DialogTitle>Editar provedor Custom</DialogTitle></DialogHeader>{editingCustom && <CustomProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} />}</DialogContent></Dialog>
       </SettingsSurface>
 
-      <AlertDialog
-        open={disconnectAlias !== null}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen && !disconnecting) {
-            setDisconnectAlias(null);
-            setDisconnectError(null);
-          }
-        }}
-      >
-        <AlertDialogContent size="sm" className="dark border-border bg-card text-foreground">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-foreground">Desconectar conta?</AlertDialogTitle>
-            <AlertDialogDescription className="text-xs text-foreground">
-              A conta <code className="font-mono text-[#61afef]">{disconnectAlias}</code> será removida deste workspace.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {disconnectError && (
-            <p role="alert" className="text-xs text-[#e06c75]">
-              {disconnectError}
-            </p>
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel
-              disabled={disconnecting !== null}
-              className="cursor-pointer text-xs"
-            >
-              Cancelar
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={disconnecting !== null}
-              onClick={(event) => {
-                event.preventDefault();
-                void handleDisconnect();
-              }}
-              className="cursor-pointer text-xs"
-            >
-              {disconnecting ? "Desconectando…" : "Desconectar"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {disconnectAlias && <ProviderRemovalDialog key={disconnectAlias} alias={disconnectAlias} accounts={accounts} onClose={() => setDisconnectAlias(null)} onBusyChange={busy => setDisconnecting(busy ? disconnectAlias : null)} onRemoved={handleProviderRemoved} />}
     </>
   );
 }

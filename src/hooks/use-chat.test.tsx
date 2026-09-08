@@ -4,6 +4,7 @@ import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { useChat } from "./use-chat";
+import { toast } from "sonner";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
@@ -20,6 +21,15 @@ beforeEach(() => {
 async function emit(name: string, payload: unknown = null) {
   await act(async () => { listeners.get(name)?.forEach(handler => handler({ event: name, id: 1, payload })); });
 }
+
+it("reports provider failures from execution events through Sonner without repeating them", async () => {
+  const notice = vi.spyOn(toast, "error"); const { result } = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(result.current.snapshot).not.toBeNull());
+  const failure = { ...completed(), turns: [{ ...savedTurn(), status: "error", error: { code: "account_missing", message: "O provedor foi removido." } }] };
+  await emit("agent:updated", failure); await emit("agent:updated", failure);
+  expect(notice).toHaveBeenCalledTimes(1);
+  expect(notice).toHaveBeenCalledWith("O modelo da conversa está indisponível", expect.objectContaining({ description: "O provedor foi removido." }));
+});
 
 it("recovers a missed completion when the native window regains focus", async () => {
   const { result } = renderHook(() => useChat("c1"));

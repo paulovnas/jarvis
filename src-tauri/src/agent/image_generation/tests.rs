@@ -58,7 +58,11 @@ fn settings_default_to_off_and_only_enable_active_antigravity() {
                 .map_err(|_| AgentError::storage())
         })
         .unwrap();
-    assert!(load(&state, home.path()).unwrap().account_alias.is_none());
+    assert_eq!(
+        load(&state, home.path()).unwrap().account_alias.as_deref(),
+        Some("google")
+    );
+    assert!(!enabled(&state, home.path()));
 }
 
 #[tokio::test]

@@ -24,7 +24,7 @@ fn argument<'a>(args: &'a Value, key: &str) -> Result<&'a str, AgentError> {
         .ok_or_else(|| error("Argumentos inválidos para a ferramenta."))
 }
 pub(super) fn needs_approval(name: &str) -> bool {
-    matches!(name, "write" | "edit" | "bash" | "terminal_start")
+    matches!(name, "write" | "edit" | "bash" | "terminal_start") || super::browser::mutating(name)
 }
 
 pub(super) fn definitions(mode: Mode) -> Vec<Value> {

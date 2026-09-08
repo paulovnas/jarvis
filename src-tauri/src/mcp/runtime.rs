@@ -86,7 +86,11 @@ pub async fn connect(
                 let mut cmd = super::executable::local_command(command, environment, &directory)?;
                 crate::background::prepare_node(&mut cmd)
                     .map_err(|_| error("Não foi possível preparar o runtime do MCP."))?;
-                let transport = super::stdio::spawn(cmd).map_err(|_| error("Não foi possível iniciar o MCP. Verifique se o executável está instalado."))?;
+                let transport = super::stdio::spawn(cmd).map_err(|_| {
+                    error(
+                        "Não foi possível iniciar o MCP. Verifique se o executável está instalado.",
+                    )
+                })?;
                 handler
                     .serve(transport)
                     .await

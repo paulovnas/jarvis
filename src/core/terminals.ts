@@ -11,6 +11,7 @@ export const terminalSchema = z.object({
   exitCode: z.number().nullable(),
   status: z.enum(["running", "exited", "failed"]),
   origin: z.enum(["user", "agent"]),
+  command: z.string().nullable().optional(),
 });
 
 export const terminalSnapshotSchema = z.object({

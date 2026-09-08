@@ -9,8 +9,8 @@ import { ROLE_COLORS, ROLE_LABELS, type WorkflowAgent } from "@/core/workflow";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const agent: WorkflowAgent = { id:"worker1",parentId:"main",role:"builder",title:"Implementar busca",status:"running",createdAt:1,updatedAt:2,attempts:1,options:{account:"personal",model:"gpt-5.6-terra",reasoning:"high",mode:"build",workflow:"planned",approvalMode:"manual"},beadId:"task1",handoff:null,error:null,activeTurnId:"turn1",pendingApproval:null,pendingQuestion:null };
 beforeEach(() => { vi.mocked(invoke).mockReset(); });
-it("keeps distinct role colors on waiting cards consistent with Settings", () => {
-  const roles = Object.keys(ROLE_COLORS) as WorkflowAgent["role"][];
+it("keeps distinct built-in role colors on waiting cards consistent with Settings", () => {
+  const roles = (Object.keys(ROLE_COLORS) as WorkflowAgent["role"][]).filter(role => role !== "custom");
   const agents = roles.map(role => ({ ...agent, id: role, role, status: "waiting" as const }));
   render(<WorkflowAgents conversationId="c1" workflow={{ data: { conversationId: "c1", revision: 1, flow: "complete", agents }, error: null, loading: false, retry: vi.fn() }} />);
   const colors = roles.map(role => {
@@ -52,4 +52,23 @@ it("loads a read-only transcript only after clicking an agent card", async () =>
   expect(invoke).toHaveBeenCalledWith("get_workflow_transcript",{conversationId:"c1",agentId:"worker1"});
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   expect(screen.queryByRole("button",{name:/Enviar|Autorizar/})).not.toBeInTheDocument();
+});
+
+it("keeps every custom step visible even when steps use the same agent role", () => {
+  const agents = [{ ...agent, id: "custom-first", role: "custom" as const, title: "1. Analista", status: "completed" as const }, { ...agent, id: "custom-second", role: "custom" as const, title: "2. Revisor" }];
+  render(<WorkflowAgents conversationId="c1" workflow={{ data: { conversationId: "c1", revision: 1, flow: "custom", agents }, error: null, loading: false, retry: vi.fn() }} />);
+  expect(screen.getByRole("button", { name: "Abrir agente Customizado: 1. Analista" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Abrir agente Customizado: 2. Revisor" })).toBeVisible();
+});
+
+it("shows the frozen custom identity and opens the correct step transcript", async () => {
+  const user = userEvent.setup();
+  vi.mocked(invoke).mockResolvedValue({ ...emptyChat(), conversationId: "worker1", turns: [] });
+  const custom = { ...agent, role: "custom" as const, title: "1. Analista", identity: { name: "Analista de segurança", appearance: { icon: "shield" as const, color: "purple" as const } } };
+  render(<WorkflowAgents conversationId="c1" workflow={{ data: { conversationId: "c1", revision: 1, flow: "custom", agents: [custom] }, error: null, loading: false, retry: vi.fn() }} />);
+  const card = screen.getByRole("button", { name: "Abrir agente Analista de segurança: 1. Analista" });
+  expect(card.querySelector("svg.lucide-shield-check")).toHaveStyle({ color: "var(--color-onedark-purple)" });
+  await user.click(card);
+  expect(await screen.findByRole("dialog")).toHaveTextContent("Analista de segurança");
+  expect(invoke).toHaveBeenCalledWith("get_workflow_transcript", { conversationId: "c1", agentId: "worker1" });
 });

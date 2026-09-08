@@ -554,6 +554,7 @@ fn grounded_body(
         reasoning: None,
         mode: super::super::Mode::Plan,
         workflow: None,
+        custom_workflow_id: None,
         approval_mode: super::super::ApprovalMode::Yolo,
     };
     let mut body = request_body(credential, session, &options,

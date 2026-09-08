@@ -1,25 +1,15 @@
-//! Session-owned development services. Runtime handles are never restored from PIDs.
-use super::{cancelled, now, AgentError, AgentState, Mode, ToolCall};
+//! Compatibility tools backed by conversation-owned interactive terminals.
+use super::{
+    terminals::{ChatTerminal, ServiceSpawn, TerminalEvents, TerminalState},
+    AgentError, AgentState, Mode, ToolCall,
+};
 use crate::{library, persistence::AppState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{
-    collections::{HashMap, VecDeque},
-    path::Path,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc, Mutex,
-    },
-    time::Duration,
-};
+use std::path::Path;
 use tauri::{Emitter, Manager};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt},
-    sync::watch,
-};
 
 mod ports;
-
 const LOG_LIMIT: usize = 32 * 1024;
 fn invalid(message: &str) -> AgentError {
     AgentError::new("process", message)
@@ -31,6 +21,7 @@ pub struct ProcessInfo {
     conversation_id: String,
     title: String,
     command: String,
+    #[serde(serialize_with = "library::serialize_display_path")]
     cwd: String,
     pid: u32,
     started_at: u64,
@@ -42,37 +33,32 @@ impl ProcessInfo {
     fn running(&self) -> bool {
         matches!(self.status.as_str(), "running" | "stopping")
     }
-}
-struct Group(AtomicU32);
-impl Group {
-    fn stop(&self) {
-        let pid = self.0.swap(0, Ordering::SeqCst);
-        #[cfg(unix)]
-        if pid > 0 {
-            /* SAFETY: this PID belongs to a process group created by this registry. */
-            unsafe {
-                libc::kill(-(pid as i32), libc::SIGKILL);
+    fn from_terminal(terminal: ChatTerminal, stopped: bool) -> Self {
+        let status = if stopped {
+            if terminal.status == "running" {
+                "stopping".into()
+            } else {
+                "stopped".into()
             }
+        } else {
+            terminal.status
+        };
+        Self {
+            id: terminal.id,
+            conversation_id: terminal.conversation_id,
+            title: terminal.title,
+            command: terminal.command.unwrap_or_default(),
+            cwd: terminal.cwd,
+            pid: terminal.pid,
+            started_at: terminal.started_at,
+            ended_at: terminal.ended_at,
+            exit_code: terminal.exit_code,
+            status,
         }
-        #[cfg(not(unix))]
-        let _ = pid;
     }
-}
-impl Drop for Group {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-struct Entry {
-    info: ProcessInfo,
-    call_id: String,
-    log: Arc<Mutex<VecDeque<u8>>>,
-    cancel: watch::Sender<bool>,
-    group: Arc<Group>,
 }
 #[derive(Default, Clone)]
-pub(crate) struct ProcessState(Arc<Mutex<HashMap<String, Entry>>>);
-
+pub(crate) struct ProcessState(TerminalState);
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ProcessKind {
@@ -120,99 +106,55 @@ fn required_port(
     }
 }
 
-async fn drain(mut pipe: impl AsyncRead + Unpin, log: Arc<Mutex<VecDeque<u8>>>) {
-    let mut buffer = [0; 4096];
-    while let Ok(size) = pipe.read(&mut buffer).await {
-        if size == 0 {
-            break;
-        }
-        if let Ok(mut log) = log.lock() {
-            log.extend(&buffer[..size]);
-            let excess = log.len().saturating_sub(LOG_LIMIT);
-            log.drain(..excess);
-        }
+pub(super) fn ensure_available(port: u16) -> Result<(), AgentError> {
+    if !ports::check(port)?.available {
+        return Err(invalid(&format!("A porta TCP {port} já está ocupada. Nenhum terminal foi iniciado. Não encerre o serviço existente nem escolha outra porta sem orientação do usuário.")));
     }
+    Ok(())
 }
 impl ProcessState {
+    pub(crate) fn new(terminals: TerminalState) -> Self {
+        Self(terminals)
+    }
     pub(crate) fn has_running(&self) -> bool {
-        self.0.lock().map_or(true, |entries| {
-            entries.values().any(|entry| entry.info.running())
-        })
+        self.0.has_running()
     }
     pub(crate) fn stop_all(&self) {
-        if let Ok(entries) = self.0.lock() {
-            for entry in entries.values().filter(|entry| entry.info.running()) {
-                entry.cancel.send_replace(true);
-                entry.group.stop();
-            }
-        }
+        self.0.stop_all();
     }
     pub(crate) fn stop_conversation(&self, conversation: &str) {
-        if let Ok(entries) = self.0.lock() {
-            for entry in entries
-                .values()
-                .filter(|entry| entry.info.conversation_id == conversation && entry.info.running())
-            {
-                entry.cancel.send_replace(true);
-                entry.group.stop();
-            }
-        }
+        self.0.stop_services(conversation);
     }
     fn list(&self, conversation: &str) -> Result<Vec<ProcessInfo>, AgentError> {
         let mut items: Vec<_> = self
             .0
-            .lock()
-            .map_err(|_| AgentError::internal())?
-            .values()
-            .filter(|entry| entry.info.conversation_id == conversation)
-            .map(|entry| entry.info.clone())
+            .services(conversation)?
+            .into_iter()
+            .map(|(item, stopped)| ProcessInfo::from_terminal(item, stopped))
             .collect();
         items.sort_by_key(|item| std::cmp::Reverse(item.started_at));
         Ok(items)
     }
+    fn info(&self, conversation: &str, id: &str) -> Result<ProcessInfo, AgentError> {
+        self.list(conversation)?
+            .into_iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| invalid("Terminal de serviço não encontrado nesta conversa."))
+    }
     fn output(&self, conversation: &str, id: &str) -> Result<Value, AgentError> {
-        let entries = self.0.lock().map_err(|_| AgentError::internal())?;
-        let entry = entries
-            .get(id)
-            .filter(|entry| entry.info.conversation_id == conversation)
-            .ok_or_else(|| invalid("Processo não encontrado nesta conversa."))?;
-        let bytes: Vec<_> = entry
-            .log
-            .lock()
-            .map_err(|_| AgentError::internal())?
-            .iter()
-            .copied()
-            .collect();
-        let output: String = String::from_utf8_lossy(&bytes)
-            .chars()
-            .filter(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
-            .collect();
-        Ok(json!({"process":entry.info,"output":output}))
+        let info = self.info(conversation, id)?;
+        let snapshot = self.0.agent_snapshot(conversation, id, LOG_LIMIT)?;
+        Ok(json!({"process": info, "output": snapshot["output"]}))
     }
     fn stop(&self, conversation: &str, id: &str) -> Result<(), AgentError> {
-        let mut entries = self.0.lock().map_err(|_| AgentError::internal())?;
-        let entry = entries
-            .get_mut(id)
-            .filter(|entry| entry.info.conversation_id == conversation)
-            .ok_or_else(|| invalid("Processo não encontrado nesta conversa."))?;
-        if entry.info.running() {
-            entry.info.status = "stopping".into();
-            entry.cancel.send_replace(true);
-            entry.group.stop();
-        }
-        Ok(())
+        self.info(conversation, id)?;
+        self.0.stop_service(conversation, id)
     }
     fn remove(&self, conversation: &str, id: &str) -> Result<(), AgentError> {
-        let mut entries = self.0.lock().map_err(|_| AgentError::internal())?;
-        let entry = entries
-            .get(id)
-            .filter(|entry| entry.info.conversation_id == conversation)
-            .ok_or_else(|| invalid("Processo não encontrado nesta conversa."))?;
-        if entry.info.running() {
-            return Err(invalid("Pare o processo antes de removê-lo."));
+        if self.info(conversation, id)?.running() {
+            return Err(invalid("Pare o terminal antes de removê-lo."));
         }
-        entries.remove(id);
-        Ok(())
+        self.0.remove_service(conversation, id)
     }
     async fn start(
         &self,
@@ -220,7 +162,7 @@ impl ProcessState {
         root: &Path,
         call_id: &str,
         args: &Value,
-        changed: Arc<dyn Fn() + Send + Sync>,
+        events: TerminalEvents,
     ) -> Result<ProcessInfo, AgentError> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -243,107 +185,30 @@ impl ProcessState {
             return Err(invalid("Nome ou comando inválido."));
         }
         let port = required_port(args.kind, args.port, &args.command)?;
-        let mut entries = self.0.lock().map_err(|_| AgentError::internal())?;
-        if let Some(existing) = entries.values().find(|e| {
-            e.info.conversation_id == conversation
-                && (e.call_id == call_id
-                    || e.info.running() && e.info.command.trim() == args.command.trim())
-        }) {
-            return Ok(existing.info.clone());
-        }
-        if let Some(port) = port {
-            if !ports::check(port)?.available {
-                return Err(invalid(&format!("A porta TCP {port} já está ocupada. Nenhum processo foi iniciado. Não encerre o serviço existente nem escolha outra porta sem orientação do usuário.")));
-            }
-        }
-        if entries.values().filter(|e| e.info.running()).count() >= 32
-            || entries
-                .values()
-                .filter(|e| e.info.conversation_id == conversation && e.info.running())
-                .count()
-                >= 8
-        {
-            return Err(invalid(
-                "Limite de processos ativos atingido. Pare um processo antes de iniciar outro.",
-            ));
-        }
-        if entries.len() >= 64 {
-            entries.retain(|_, entry| entry.info.running());
-        }
-        let mut child = super::shell::spawn(&args.command, root)
-            .map_err(|_| invalid("Não foi possível iniciar o processo."))?;
-        let group = Arc::new(Group(AtomicU32::new(
-            child.id().ok_or_else(AgentError::internal)?,
-        )));
-        let info = ProcessInfo {
-            id: library::new_id()?,
-            conversation_id: conversation.into(),
-            title: args.title,
-            command: args.command,
-            cwd: root.to_string_lossy().into_owned(),
-            pid: child.id().unwrap(),
-            started_at: now(),
-            ended_at: None,
-            exit_code: None,
-            status: "running".into(),
-        };
-        let log = Arc::new(Mutex::new(VecDeque::new()));
-        let (cancel, mut signal) = watch::channel(false);
-        let stdout = tokio::spawn(drain(child.stdout().take().unwrap(), log.clone()));
-        let stderr = tokio::spawn(drain(child.stderr().take().unwrap(), log.clone()));
-        entries.insert(
-            info.id.clone(),
-            Entry {
-                info: info.clone(),
-                call_id: call_id.into(),
-                log,
-                cancel,
-                group: group.clone(),
+
+        let terminal = self.0.start_service(
+            ServiceSpawn {
+                conversation,
+                root,
+                call_id,
+                title: &args.title,
+                command: &args.command,
+                port,
             },
-        );
-        drop(entries);
-        changed();
-        let registry = self.clone();
-        let id = info.id.clone();
-        tokio::spawn(async move {
-            let status = tokio::select! { result = child.wait() => result.ok(), _ = cancelled(&mut signal) => { group.stop(); let _ = Box::into_pin(child.kill()).await; child.wait().await.ok() } };
-            group.stop();
-            for mut reader in [stdout, stderr] {
-                if tokio::time::timeout(Duration::from_secs(1), &mut reader)
-                    .await
-                    .is_err()
-                {
-                    reader.abort();
-                }
-            }
-            if let Ok(mut entries) = registry.0.lock() {
-                if let Some(entry) = entries.get_mut(&id) {
-                    entry.info.status = if *signal.borrow() {
-                        "stopped"
-                    } else if status.is_some_and(|s| s.success()) {
-                        "exited"
-                    } else {
-                        "failed"
-                    }
-                    .into();
-                    entry.info.exit_code = status.and_then(|s| s.code());
-                    entry.info.ended_at = Some(now());
-                }
-            }
-            changed();
-        });
-        Ok(info)
+            events,
+        )?;
+        self.info(conversation, &terminal.id)
     }
     pub(super) async fn execute(
         &self,
         conversation: &str,
         root: &Path,
         call: &ToolCall,
-        changed: Arc<dyn Fn() + Send + Sync>,
+        events: TerminalEvents,
     ) -> Result<String, AgentError> {
         let result = match call.name.as_str() {
             "process_start" => serde_json::to_value(
-                self.start(conversation, root, &call.id, &call.args, changed)
+                self.start(conversation, root, &call.id, &call.args, events)
                     .await?,
             )
             .map_err(|_| AgentError::internal())?,
@@ -409,7 +274,7 @@ pub fn stop_chat_process(
     }
     agent.processes.stop(&conversation_id, &id)?;
     let _ = app.emit(
-        "processes:changed",
+        "terminals:changed",
         json!({"conversationId":conversation_id}),
     );
     Ok(())
@@ -423,7 +288,7 @@ pub fn remove_chat_process(
 ) -> Result<(), AgentError> {
     agent.processes.remove(&conversation_id, &id)?;
     let _ = app.emit(
-        "processes:changed",
+        "terminals:changed",
         json!({"conversationId":conversation_id}),
     );
     Ok(())
@@ -432,6 +297,7 @@ pub fn remove_chat_process(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     fn cmd(unix: &str, windows: &str) -> String {
         if cfg!(windows) {
             windows.to_string()
@@ -456,16 +322,91 @@ mod tests {
         .unwrap();
     }
     #[tokio::test]
+    async fn service_tools_share_interactive_terminals_with_the_user() {
+        let root = tempfile::tempdir().unwrap();
+        let agent = AgentState::default();
+        let command = cmd("echo input-ready; read value; printf 'received:%s' \"$value\"", "Write-Output input-ready; $value = Read-Host; [Console]::Out.Write(('received:' + $value))");
+        let service = agent
+            .processes
+            .start(
+                "chat",
+                root.path(),
+                "input",
+                &json!({"title":"Interactive service", "command":command}),
+                super::super::terminals::silent_events(),
+            )
+            .await
+            .unwrap();
+        let terminals = agent.terminals.list("chat").unwrap();
+        assert_eq!(terminals.len(), 1);
+        assert_eq!(terminals[0].id, service.id);
+        assert_eq!(terminals[0].command.as_deref(), Some(command.as_str()));
+        assert!(agent
+            .terminals
+            .write("other", &service.id, "wrong\r")
+            .is_err());
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !agent.processes.output("chat", &service.id).unwrap()["output"]
+                .as_str()
+                .unwrap()
+                .contains("input-ready")
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        agent
+            .terminals
+            .write("chat", &service.id, "Jarvis\r")
+            .unwrap();
+        wait(&agent.processes, "chat", |items| !items[0].running()).await;
+        let output = agent.processes.output("chat", &service.id).unwrap();
+        assert!(
+            output["output"]
+                .as_str()
+                .unwrap()
+                .contains("received:Jarvis"),
+            "{output}"
+        );
+        assert_eq!(agent.terminals.list("chat").unwrap()[0].status, "exited");
+        let repeated = agent
+            .processes
+            .start(
+                "chat",
+                root.path(),
+                "input",
+                &json!({"title":"Interactive service", "command":command}),
+                super::super::terminals::silent_events(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(repeated.id, service.id);
+    }
+
+    #[tokio::test]
     async fn services_survive_tool_return_are_deduplicated_scoped_and_stoppable() {
         let root = tempfile::tempdir().unwrap();
         let state = ProcessState::default();
         let args = json!({"title":"Servidor", "command":cmd("printf ready; exec sleep 60", "Write-Output ready; Start-Sleep 60")});
         let process = state
-            .start("a", root.path(), "call", &args, Arc::new(|| {}))
+            .start(
+                "a",
+                root.path(),
+                "call",
+                &args,
+                super::super::terminals::silent_events(),
+            )
             .await
             .unwrap();
         let duplicate = state
-            .start("a", root.path(), "another-call", &args, Arc::new(|| {}))
+            .start(
+                "a",
+                root.path(),
+                "another-call",
+                &args,
+                super::super::terminals::silent_events(),
+            )
             .await
             .unwrap();
         assert_eq!(process.id, duplicate.id);
@@ -493,7 +434,7 @@ mod tests {
     async fn output_is_bounded_and_exit_failure_is_reported() {
         let root = tempfile::tempdir().unwrap();
         let state = ProcessState::default();
-        let process = state.start("a",root.path(),"call", &json!({"title":"Saída", "command":cmd("head -c 100000 /dev/zero | tr '\\0' x; printf fim; exit 7", "'x' * 100000; [Console]::Out.Write('fim'); exit 7")}), Arc::new(|| {})).await.unwrap();
+        let process = state.start("a",root.path(),"call", &json!({"title":"Saída", "command":cmd("head -c 100000 /dev/zero | tr '\\0' x; printf fim; exit 7", "'x' * 100000; [Console]::Out.Write('fim'); exit 7")}), super::super::terminals::silent_events()).await.unwrap();
         wait(&state, "a", |items| !items[0].running()).await;
         let result = state.output("a", &process.id).unwrap();
         let output = result["output"].as_str().unwrap();
@@ -512,7 +453,7 @@ mod tests {
                 root.path(),
                 "active",
                 &json!({"title":"Keep", "command":cmd("exec sleep 60", "Start-Sleep 60")}),
-                Arc::new(|| {}),
+                super::super::terminals::silent_events(),
             )
             .await
             .unwrap();
@@ -539,7 +480,7 @@ mod tests {
                     root.path(),
                     call,
                     &json!({"title":call,"command":command}),
-                    Arc::new(|| {}),
+                    super::super::terminals::silent_events(),
                 )
                 .await
                 .unwrap();
@@ -569,13 +510,19 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let args = json!({"title":"Server", "command":cmd("touch started", "New-Item -ItemType File started | Out-Null"), "kind":"server", "port":port});
         let error = state
-            .start("a", root.path(), "server", &args, Arc::new(|| {}))
+            .start(
+                "a",
+                root.path(),
+                "server",
+                &args,
+                super::super::terminals::silent_events(),
+            )
             .await
             .err()
             .unwrap();
-        assert!(error.message.contains("Nenhum processo foi iniciado"));
+        assert!(error.message.contains("Nenhum terminal foi iniciado"));
         for port in [0, -1, 65536] {
-            assert!(state.start("a", root.path(), "invalid", &json!({"title":"Server","command":cmd("touch started", "New-Item -ItemType File started | Out-Null"),"port":port}), Arc::new(|| {})).await.is_err());
+            assert!(state.start("a", root.path(), "invalid", &json!({"title":"Server","command":cmd("touch started", "New-Item -ItemType File started | Out-Null"),"port":port}), super::super::terminals::silent_events()).await.is_err());
         }
         assert!(!root.path().join("started").exists());
         assert!(state.list("a").unwrap().is_empty());
@@ -594,7 +541,13 @@ mod tests {
             args["port"] = json!(candidate.local_addr().unwrap().port());
             drop(candidate);
             match state
-                .start("a", root.path(), "server", &args, Arc::new(|| {}))
+                .start(
+                    "a",
+                    root.path(),
+                    "server",
+                    &args,
+                    super::super::terminals::silent_events(),
+                )
                 .await
             {
                 Ok(_) => {
@@ -621,7 +574,7 @@ mod tests {
                 root.path(),
                 "vite-missing",
                 &json!({"title":"Vite", "command":"bun run dev", "kind":"server"}),
-                Arc::new(|| {}),
+                super::super::terminals::silent_events(),
             )
             .await
         {
@@ -640,14 +593,14 @@ mod tests {
                 root.path(),
                 "vite-occupied",
                 &json!({"title":"Vite", "command":"bun run dev", "kind":"server", "port":port}),
-                Arc::new(|| {}),
+                super::super::terminals::silent_events(),
             )
             .await
         {
             Err(error) => error,
             Ok(_) => panic!("An occupied server port must not start a fallback process"),
         };
-        assert!(occupied.message.contains("Nenhum processo foi iniciado"));
+        assert!(occupied.message.contains("Nenhum terminal foi iniciado"));
         assert!(state.list("a").unwrap().is_empty());
         assert_eq!(listener.local_addr().unwrap().port(), port);
 
@@ -657,7 +610,7 @@ mod tests {
                 root.path(),
                 "vite-watcher",
                 &json!({"title":"Vite", "command":"bun run dev", "kind":"watcher"}),
-                Arc::new(|| {}),
+                super::super::terminals::silent_events(),
             )
             .await
         {
@@ -679,7 +632,7 @@ mod tests {
                     root.path(),
                     "call",
                     &json!({"title":"Service", "command":cmd("sleep 60", "Start-Sleep 60")}),
-                    Arc::new(|| {}),
+                    super::super::terminals::silent_events(),
                 )
                 .await
                 .unwrap();
@@ -689,6 +642,7 @@ mod tests {
         assert!(state.list("b").unwrap()[0].running());
         let agent = super::AgentState {
             processes: state.clone(),
+            terminals: state.0.clone(),
             ..Default::default()
         };
         crate::shutdown_services(&crate::system::SystemState::default(), &agent);
@@ -698,7 +652,7 @@ mod tests {
     async fn stop_kills_descendants_in_the_owned_process_group() {
         let root = tempfile::tempdir().unwrap();
         let state = ProcessState::default();
-        let process = state.start("a",root.path(),"call",&json!({"title":"Tree", "command":cmd("(sleep 1; touch survivor) & echo ready; wait", "Start-Job { Start-Sleep 1; New-Item -ItemType File survivor | Out-Null }; Write-Output ready; Wait-Job | Out-Null")}),Arc::new(|| {})).await.unwrap();
+        let process = state.start("a",root.path(),"call",&json!({"title":"Tree", "command":cmd("(sleep 1; touch survivor) & echo ready; wait", "Start-Job { Start-Sleep 1; New-Item -ItemType File survivor | Out-Null }; Write-Output ready; Wait-Job | Out-Null")}),super::super::terminals::silent_events()).await.unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
             while !state.output("a", &process.id).unwrap()["output"]
                 .as_str()

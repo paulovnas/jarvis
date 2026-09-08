@@ -1,6 +1,8 @@
 //! Native role execution. Beads owns work state; this hub owns execution state.
+pub(crate) mod catalog;
 mod commands;
 mod contracts;
+mod custom;
 mod dispatch;
 mod guidance;
 pub(crate) mod settings;
@@ -11,7 +13,7 @@ pub(crate) mod validation;
 use super::*;
 pub use commands::*;
 pub use contracts::Flow;
-use contracts::Role;
+pub(super) use contracts::Role;
 use std::{collections::BTreeMap, path::Path};
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -72,6 +74,8 @@ enum Phase {
 #[serde(rename_all = "camelCase")]
 struct Job {
     #[serde(default)]
+    custom_agent: Option<catalog::AgentDefinition>,
+    #[serde(default)]
     phase: Phase,
     id: String,
     parent_id: String,
@@ -93,6 +97,9 @@ struct Job {
 }
 impl Job {
     fn writes(&self) -> bool {
+        if let Some(agent) = &self.custom_agent {
+            return agent.capability != catalog::Capability::ReadOnly;
+        }
         self.phase != Phase::Discovery && self.role.writes()
     }
 }
@@ -107,6 +114,8 @@ struct Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Manifest {
+    #[serde(default)]
+    custom_definition: Option<catalog::RunDefinition>,
     #[serde(default)]
     validation: Option<validation::Batch>,
     #[serde(default)]
@@ -128,8 +137,8 @@ struct Manifest {
 
 #[derive(Clone)]
 struct Environment {
+    browser_app: Option<tauri::AppHandle>,
     processes: processes::ProcessState,
-    process_changed: Arc<dyn Fn(&str) + Send + Sync>,
     terminals: terminals::TerminalState,
     terminal_events: terminals::TerminalEvents,
     state: AppState,
@@ -304,6 +313,13 @@ impl Execution {
         self.role == Role::Designer
     }
     pub(super) fn role_mode(&self) -> Mode {
+        if self.flow == Flow::Custom {
+            return if self.hub.job(&self.id).is_ok_and(|job| job.writes()) {
+                Mode::Build
+            } else {
+                Mode::Plan
+            };
+        }
         if !self.discovery() && self.role.writes() && self.role != Role::Writer {
             Mode::Build
         } else {
@@ -311,7 +327,17 @@ impl Execution {
         }
     }
     pub(super) fn instructions(&self) -> Result<String, AgentError> {
-        let mut text = contracts::prompt(self.flow, self.role, &self.id);
+        let mut text = if self.flow == Flow::Custom {
+            custom::instructions(
+                &self
+                    .hub
+                    .job(&self.id)?
+                    .custom_agent
+                    .ok_or_else(AgentError::internal)?,
+            )
+        } else {
+            contracts::prompt(self.flow, self.role, &self.id)
+        };
         let state = self
             .hub
             .manifest
@@ -362,6 +388,10 @@ impl Execution {
     pub(super) fn filter(&self, definitions: &mut Vec<Value>) {
         definitions.extend(processes::definitions(self.role_mode()));
         definitions.extend(terminals::definitions(self.role_mode()));
+        definitions.extend(super::browser::definitions(self.role_mode()));
+        if self.flow == Flow::Custom {
+            definitions.extend(dispatch::definitions(Role::Builder));
+        }
         if self.id == "main" && self.role == Role::Planner && !self.flow.direct() {
             definitions.push(validation::definition());
         }
@@ -371,6 +401,14 @@ impl Execution {
         definitions.retain(|d| d["name"].as_str().is_some_and(|name| self.allowed(name)));
     }
     fn allowed(&self, name: &str) -> bool {
+        if self.flow == Flow::Custom {
+            return self
+                .hub
+                .job(&self.id)
+                .ok()
+                .and_then(|j| j.custom_agent)
+                .is_some_and(|agent| custom::allowed(&agent, name));
+        }
         if name == "validation_publish" {
             return self.id == "main" && self.role == Role::Planner && !self.flow.direct();
         }
@@ -385,6 +423,7 @@ impl Execution {
                 name,
                 "write" | "edit" | "bash" | "process_start" | "terminal_start" | "workflow_check"
             ) || crate::core::beads::needs_approval(name)
+                || super::browser::mutating(name)
                 || crate::core::context::needs_approval(name))
         {
             return false;
@@ -515,6 +554,20 @@ impl Execution {
         tool: &ToolCall,
         signal: watch::Receiver<bool>,
     ) -> Result<String, AgentError> {
+        if tool.name.starts_with("browser_") {
+            if !self.allowed(&tool.name)
+                || (super::browser::mutating(&tool.name) && self.role_mode() != Mode::Build)
+            {
+                return Err(invalid("Navegador indisponível para este agente."));
+            }
+            let app = self
+                .hub
+                .env
+                .browser_app
+                .as_ref()
+                .ok_or_else(|| invalid("Navegador nativo indisponível."))?;
+            return super::browser::execute(app, &self.hub.root.id, tool, signal).await;
+        }
         if tool.name == "validation_publish" {
             return validation::publish(self, &tool.args, signal).await;
         }
@@ -533,8 +586,6 @@ impl Execution {
                 self.id,
                 tool.id
             );
-            let emit = self.hub.env.process_changed.clone();
-            let id = self.hub.root.id.clone();
             return self
                 .hub
                 .env
@@ -543,7 +594,7 @@ impl Execution {
                     &self.hub.root.id,
                     &self.hub.root.root,
                     &call,
-                    Arc::new(move || emit(&id)),
+                    self.hub.env.terminal_events.clone(),
                 )
                 .await;
         }
@@ -584,6 +635,9 @@ pub(super) fn compaction_context(
     options: &TurnOptions,
 ) -> Result<(String, Vec<Value>), AgentError> {
     let flow = options.workflow.unwrap_or_default();
+    if flow == Flow::Custom {
+        return Ok(("The native runtime routes this user-defined workflow using its saved execution definition.".into(), vec![]));
+    }
     let role = flow.root();
     let mut text = contracts::prompt(flow, role, "main");
     if let Some(state) = storage::load(&storage::path(home, id)?, id)? {
@@ -613,13 +667,44 @@ pub(super) fn compaction_context(
     Ok((text, definitions))
 }
 
+pub(super) fn validate_options(
+    state: &AppState,
+    oauth: &OpenAiCodexState,
+    home: &Path,
+    options: &TurnOptions,
+) -> Result<(), AgentError> {
+    if options.workflow == Some(Flow::Custom) {
+        custom::resolve(state, oauth, home, options)?;
+    } else {
+        if options.custom_workflow_id.is_some() {
+            return Err(invalid("Seleção de fluxo inconsistente."));
+        }
+        if let Some(flow) = options.workflow {
+            let profiles = settings::load(state, home)?;
+            settings::validate(flow, &profiles)?;
+            for role in settings::roster(flow) {
+                if let Some(choice) = profiles.get(&settings::key(flow, *role)) {
+                    oauth.inference_model(
+                        state,
+                        home,
+                        &choice.account,
+                        &choice.model,
+                        choice.reasoning.as_deref(),
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) async fn run(
     session: &Arc<Session>,
     env: (AppState, OpenAiCodexState, crate::mcp::McpState, PathBuf),
     app: &tauri::AppHandle,
     signal: watch::Receiver<bool>,
 ) -> Result<(), AgentError> {
-    let options = session
+    let mut options = session
         .data
         .lock()
         .map_err(|_| AgentError::internal())?
@@ -629,12 +714,27 @@ pub(super) async fn run(
         .turn
         .options
         .clone();
+    env.0.with_connection(&env.3, |db| {
+        super::provider_links::resolve_chat(db, &session.id, &mut options)
+    })?;
+    session.update(true, |data| {
+        data.turns.last_mut().unwrap().turn.options = options.clone();
+    })?;
     // Legacy Plan history keeps its read-only meaning until the user chooses a flow.
     if options.workflow.is_none() && options.mode == Mode::Plan {
         return super::run_turn(session, &env.0, &env.1, &env.2, &env.3, signal, None).await;
     }
     let flow = options.workflow.unwrap_or_default();
-    let profiles = settings::load(&env.0, &env.3)?;
+    let custom_definition = if flow == Flow::Custom {
+        Some(custom::resolve(&env.0, &env.1, &env.3, &options)?)
+    } else {
+        None
+    };
+    let profiles = if flow == Flow::Custom {
+        BTreeMap::new()
+    } else {
+        settings::load(&env.0, &env.3)?
+    };
     settings::validate(flow, &profiles)?;
     session.update(true, |data| {
         settings::apply(
@@ -644,12 +744,9 @@ pub(super) async fn run(
             flow.root(),
         );
     })?;
-    let process_app = app.clone();
     let environment = Environment {
+        browser_app: Some(app.clone()),
         processes: app.state::<AgentState>().processes.clone(),
-        process_changed: Arc::new(move |id| {
-            let _ = process_app.emit("processes:changed", json!({"conversationId":id}));
-        }),
         terminals: app.state::<AgentState>().terminals.clone(),
         terminal_events: terminals::events(app.clone()),
         state: env.0,
@@ -678,16 +775,20 @@ pub(super) async fn run(
         flow,
         scope: vec![".".into()],
     };
-    let result = super::run_turn(
-        session,
-        &hub.env.state,
-        &hub.env.oauth,
-        &hub.env.mcp,
-        &hub.env.home,
-        signal,
-        Some(execution),
-    )
-    .await;
+    let result = if let Some(definition) = custom_definition {
+        custom::run(hub.clone(), definition, signal).await
+    } else {
+        super::run_turn(
+            session,
+            &hub.env.state,
+            &hub.env.oauth,
+            &hub.env.mcp,
+            &hub.env.home,
+            signal,
+            Some(execution),
+        )
+        .await
+    };
     hub.shutdown().await;
     let status = match &result {
         Ok(()) => Status::Completed,

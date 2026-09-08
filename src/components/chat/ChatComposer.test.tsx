@@ -4,6 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import { ChatComposer, type ProviderModelGroup } from "./ChatComposer";
 import type { ChatDraft } from "@/core/chat";
 import { chatOptions } from "@/test/chat-fixtures";
+import { toast } from "sonner";
+import { invoke } from "@tauri-apps/api/core";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async command => command === "get_workflow_catalog" ? { revision: 0, agents: [], flows: [] } : undefined) }));
 
 async function renderComposer(element: React.ReactElement) {
   const result = render(element);
@@ -32,6 +36,42 @@ async function openModel(user: ReturnType<typeof userEvent.setup>, name: RegExp)
 }
 
 describe("ChatComposer model reasoning", () => {
+  it("honors a new manual choice over an old remap and still applies later replacements", async () => {
+    const source = { account: "pessoal", model: "compact", reasoning: "xhigh" };
+    const bindings = [{ itemKey: "chat:c1", source, target: { account: "pessoal", model: "flexible", reasoning: "high" } }];
+    const props = { modelGroups: models, onSendMessage: vi.fn(), draftKey: "c1", initialOptions: { ...chatOptions, ...source } };
+    const { rerender } = await renderComposer(<ChatComposer {...props} modelBindings={bindings} />);
+    const user = userEvent.setup(); const group = await openModel(user, /Compact/);
+    await user.click(within(group).getByRole("menuitem", { name: "Extra alto" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("clear_chat_model_binding", { conversationId: "c1", choice: source }));
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Compact · Extra alto");
+    rerender(<ChatComposer {...props} modelBindings={[]} />);
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Compact · Extra alto");
+    rerender(<ChatComposer {...props} modelBindings={[{ itemKey: "chat:c1", source, target: { account: "pessoal", model: "plain", reasoning: null } }]} />);
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Plain");
+  });
+  it("preserves the draft and reports a removed model instead of selecting another account", async () => {
+    const user = userEvent.setup(); const send = vi.fn(); const notice = vi.spyOn(toast, "error");
+    const initialOptions = { ...chatOptions, account: "removed", model: "old" };
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} initialOptions={initialOptions} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("removed/old");
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Indisponível");
+    await user.type(screen.getByRole("textbox"), "Meu pedido{Enter}");
+    expect(send).not.toHaveBeenCalled(); expect(screen.getByRole("textbox")).toHaveTextContent("Meu pedido");
+    expect(notice).toHaveBeenCalledWith("Chat: modelo indisponível", expect.anything());
+  });
+  it("uses the explicit chat remap when it arrives, without switching conversations", async () => {
+    const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
+    const initialOptions = { ...chatOptions, account: "removed", model: "old", reasoning: null };
+    const { rerender } = await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} draftKey="c1" modelsReady={false} initialOptions={initialOptions} />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await user.type(screen.getByRole("textbox"), "Continuar");
+    const bindings = [{ itemKey: "chat:c1", source: { account: "removed", model: "old", reasoning: null }, target: { account: "pessoal", model: "compact", reasoning: "xhigh" } }];
+    rerender(<ChatComposer modelGroups={models} onSendMessage={send} draftKey="c1" modelsReady initialOptions={initialOptions} modelBindings={bindings} />);
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Compact · Extra alto");
+    await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
+    expect(send).toHaveBeenCalledWith("Continuar", expect.objectContaining({ account: "pessoal", model: "compact", reasoning: "xhigh" }));
+  });
   it("selects Designer with its own model profile and sends the direct design flow", async () => {
     const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true); const save = vi.fn();
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "designer/designer": { account: "pessoal", model: "flexible", reasoning: "high" }, "planned/planner": { account: "pessoal", model: "compact", reasoning: "medium" } }, error: null, saving: false, save, refresh: vi.fn() }} />);
@@ -73,11 +113,12 @@ describe("ChatComposer model reasoning", () => {
   });
   it("allows typing and queueing during a run while locking all selectors", async () => {
     const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
-    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} running initialOptions={{ ...chatOptions, approvalMode: "manual" }} />);
+    const options = { ...chatOptions, account: "pessoal", model: "compact" };
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} running initialOptions={{ ...options, approvalMode: "manual" }} />);
     for (const name of ["Selecionar modelo de IA", "Selecionar fluxo"]) expect(screen.getByRole("button", { name })).toBeDisabled();
     expect(screen.getByRole("textbox")).toHaveAttribute("contenteditable", "true");
     await user.type(screen.getByRole("textbox"), "Depois verifique os testes{Enter}");
-    expect(send).toHaveBeenCalledWith("Depois verifique os testes", { ...chatOptions, approvalMode: "yolo" });
+    expect(send).toHaveBeenCalledWith("Depois verifique os testes", { ...options, approvalMode: "yolo" });
     expect(screen.getByRole("textbox").textContent).toBe("");
     expect(screen.getByRole("button", { name: "Interromper execução" })).toBeEnabled();
   });
@@ -165,7 +206,7 @@ describe("ChatComposer model reasoning", () => {
     expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent(/^Plain$/);
   });
 
-  it("falls back to the current model's default when a selected level disappears", async () => {
+  it("requires reviewing a reasoning level that is no longer available", async () => {
     const user = userEvent.setup();
     const { rerender } = await renderComposer(<ChatComposer modelGroups={models} onSendMessage={vi.fn()} />);
     const group = await openModel(user, /Compact/);
@@ -174,10 +215,11 @@ describe("ChatComposer model reasoning", () => {
     rerender(<ChatComposer modelGroups={[{ provider: models[0].provider, models: [{
       ...models[0].models[0], reasoningLevels: ["low", "medium"], defaultReasoningLevel: "low",
     }] }]} onSendMessage={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Compact · Baixo");
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Compact · Extra alto");
+    expect(screen.getByRole("alert")).toHaveTextContent("indisponível");
   });
 
-  it("uses the remaining account's default after the selected account is removed", async () => {
+  it("keeps a removed selection visible until the user replaces it", async () => {
     const user = userEvent.setup();
     const { rerender } = await renderComposer(<ChatComposer modelGroups={models} onSendMessage={vi.fn()} />);
     const group = await openModel(user, /Compact/);
@@ -186,10 +228,11 @@ describe("ChatComposer model reasoning", () => {
     rerender(<ChatComposer modelGroups={[{ provider: "OpenAI Codex · trabalho", models: [{
       ...models[0].models[0], value: "trabalho/compact", defaultReasoningLevel: "medium",
     }] }]} onSendMessage={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Compact · Médio");
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("compact · Indisponível");
+    expect(screen.getByRole("alert")).toHaveTextContent("pessoal/compact");
 
     rerender(<ChatComposer modelGroups={[]} onSendMessage={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Nenhum modelo conectado");
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("compact · Indisponível");
   });
 
   it("uses the first reported level when no default exists and preserves unknown identifiers", async () => {

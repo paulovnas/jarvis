@@ -8,6 +8,7 @@ pub enum Flow {
     Designer,
     Planned,
     Complete,
+    Custom,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -20,13 +21,15 @@ pub enum Role {
     Designer,
     Builder,
     Reviewer,
+    Custom,
 }
 
 impl Flow {
-    pub(super) fn root(self) -> Role {
+    pub(in crate::agent) fn root(self) -> Role {
         match self {
             Self::Standard => Role::Builder,
             Self::Designer => Role::Designer,
+            Self::Custom => Role::Custom,
             _ => Role::Planner,
         }
     }
@@ -41,7 +44,7 @@ impl Role {
     pub(super) fn writes(self) -> bool {
         matches!(self, Self::Builder | Self::Designer | Self::Writer)
     }
-    pub(super) fn label(self) -> &'static str {
+    pub(in crate::agent) fn label(self) -> &'static str {
         match self {
             Self::Planner => "Planejador",
             Self::Investigator => "Investigador",
@@ -50,6 +53,7 @@ impl Role {
             Self::Designer => "Designer",
             Self::Builder => "Construtor",
             Self::Reviewer => "Revisor",
+            Self::Custom => "Customizado",
         }
     }
     pub(super) fn spawns(self, flow: Flow, role: Self) -> bool {
@@ -67,6 +71,9 @@ impl Role {
         }
     }
     pub(super) fn allows(self, flow: Flow, tool: &str, broad: bool) -> bool {
+        if crate::agent::browser::mutating(tool) {
+            return broad && matches!(self, Self::Builder | Self::Designer);
+        }
         if tool.starts_with("hub_") {
             return tool != "hub_spawn" || self.coordinator();
         }
@@ -80,6 +87,7 @@ impl Role {
                     }
                     Self::Writer => tool != "beads_close",
                     Self::Orchestrator => true,
+                    Self::Custom => false,
                 }
                 || flow.direct();
         }
@@ -103,6 +111,7 @@ impl Role {
     }
     pub(super) fn contract(self) -> &'static str {
         match self {
+        Self::Custom => "Execute only the configured custom workflow step.",
         Self::Planner => "Decompose the user request into observable outcomes and acceptance criteria. Inspect existing Beads before planning to avoid duplicates. Use plan-and-execute and replan from evidence. In Planned, persist an epic/tasks/dependencies and delegate implementation to Builder, then visual work to Designer when applicable; independently check each outcome. In Complete, delegate focused research to Investigator, specifications and Beads creation to Writer, validate their handoffs, then dispatch Orchestrator with the resulting epic and outcomes. Never implement source code yourself. Use ask_user only for unresolved material user decisions. For simple informational requests answer proportionally; do not invent implementation work.",
         Self::Investigator => "Investigate the actual code path, versions, project instructions and Beads history. Refine queries, combine lexical searches with available contextual retrieval, rank evidence by relevance and compress returned excerpts. Cite paths/symbols or verified URLs; distinguish confirmed facts, hypotheses and unknowns. Do not claim vector search or visual inspection unless a real available tool performed it. Return a focused discovery handoff; do not change project files.",
         Self::Writer => "Turn the approved decisions into an executable specification: outcomes, current/desired behavior, scope exclusions, risks, task descriptions, objective acceptance checks and dependency edges. Persist epics/tasks/dependencies with native beads_* tools and return their exact IDs. Consult existing items before creating duplicates. You may write only docs/PLAN-*.md documents; no product code or shell. Do not invent architectural decisions missing from the Planner's dispatch.",

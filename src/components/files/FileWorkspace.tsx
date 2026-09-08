@@ -1,11 +1,14 @@
-import { Component, lazy, Suspense, type ReactNode } from "react";
-import { FileSearch, LockKeyhole, MessageSquare, RefreshCw, X } from "lucide-react";
+import { Component, lazy, Suspense, useEffect, useRef, type ReactNode } from "react";
+import { FileSearch, Globe, LockKeyhole, MessageSquare, Plus, RefreshCw, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fileName } from "@/core/project-files";
 import type { ProjectFilesController } from "@/hooks/use-project-files";
 import { FileIcon } from "./FileIcon";
+import type { BrowserController } from "@/hooks/use-browser";
+import { BrowserPanel } from "@/components/browser/BrowserPanel";
 
 const CodeViewer = lazy(async () => {
   // Monaco resolves translated labels while its modules initialize. Finish the
@@ -24,25 +27,49 @@ class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolea
   render() { return this.state.failed ? <p role="alert" className="p-5 text-sm text-destructive">Não foi possível carregar o visualizador. Reabra o Jarvis para tentar novamente.</p> : this.props.children; }
 }
 
-export function FileWorkspace({ files, terminalLauncher, children }: { files?: ProjectFilesController; terminalLauncher?: ReactNode; children: ReactNode }) {
-  if (!files?.projectId) return children;
-  const active = files.tabs.activePath;
-  const select = (value: unknown) => files.select(typeof value === "string" && value.startsWith("file:") ? value.slice(5) : null);
-  const close = (event: React.MouseEvent<HTMLButtonElement>) => { const path = event.currentTarget.dataset.path; if (path) files.close(path); };
-  return <Tabs value={active ? `file:${active}` : "chat"} onValueChange={select} className="h-full min-h-0 min-w-0 flex-1 gap-0">
+export function FileWorkspace({ files, browser, terminalLauncher, children }: { files?: ProjectFilesController; browser?: BrowserController; terminalLauncher?: ReactNode; children: ReactNode }) {
+  const previousFile = useRef(files?.tabs.activePath);
+  useEffect(() => {
+    if (files?.tabs.activePath && files.tabs.activePath !== previousFile.current && browser?.snapshot.activeId) browser.select(null);
+    previousFile.current = files?.tabs.activePath;
+  }, [files?.tabs.activePath, browser]);
+  if (!files?.projectId && !browser) return children;
+  const activeBrowser = browser?.snapshot.tabs.find(tab => tab.id === browser.snapshot.activeId);
+  const active = activeBrowser ? null : files?.tabs.activePath;
+  const backgroundChat = !!active || !!activeBrowser;
+  const select = (value: unknown) => {
+    if (typeof value === "string" && value.startsWith("browser:")) { files?.select(null); browser?.select(value.slice(8)); }
+    else { browser?.select(null); files?.select(typeof value === "string" && value.startsWith("file:") ? value.slice(5) : null); }
+  };
+  const close = (event: React.MouseEvent<HTMLButtonElement>) => { const path = event.currentTarget.dataset.path; if (path) files?.close(path); };
+  return <Tabs value={activeBrowser ? `browser:${activeBrowser.id}` : active ? `file:${active}` : "chat"} onValueChange={select} className="h-full min-h-0 min-w-0 flex-1 gap-0">
     <div className="flex min-h-9 min-w-0 shrink-0 items-center gap-2 border-b border-border bg-sidebar px-2">
-      <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden"><TabsList aria-label="Chat e arquivos abertos" className="h-9 justify-start gap-1 rounded-none bg-transparent p-0">
+      <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden"><TabsList aria-label="Chat, arquivos e navegador" className="h-9 justify-start gap-1 rounded-none bg-transparent p-0">
         <TabsTrigger value="chat" className="h-7 flex-none cursor-pointer gap-1.5 px-3 text-xs"><MessageSquare aria-hidden="true" className="size-3.5" />Chat</TabsTrigger>
-        {files.tabs.paths.map(path => <div className="group/file-tab relative shrink-0" key={path}>
+        {files?.tabs.paths.map(path => <div className="group/file-tab relative shrink-0" key={path}>
           <TabsTrigger value={`file:${path}`} title={path} className="h-7 max-w-64 cursor-pointer gap-1.5 pl-2 pr-7 font-mono text-[11px]"><FileIcon path={path} /><span className="truncate">{fileName(path)}{files.tabs.paths.some(other => other !== path && fileName(other) === fileName(path)) && <span className="ml-1 text-muted-foreground">· {path.slice(0, path.lastIndexOf("/")) || "/"}</span>}</span></TabsTrigger>
           <Button type="button" variant="ghost" size="icon" title={`Fechar ${path}`} aria-label={`Fechar arquivo ${path}`} data-path={path} onClick={close} className="absolute inset-y-0 right-0.5 my-auto size-5 cursor-pointer opacity-60 group-hover/file-tab:opacity-100 focus-visible:opacity-100 active:not-aria-[haspopup]:translate-y-0"><X className="size-3" /></Button>
         </div>)}
+        {browser?.snapshot.tabs.map(tab => <div className="group/browser-tab relative shrink-0" key={tab.id}>
+          <TabsTrigger value={`browser:${tab.id}`} title={tab.url} className="h-7 max-w-52 cursor-pointer gap-1.5 pl-2 pr-7 text-xs"><Globe className="size-3.5 shrink-0 text-onedark-cyan" /><span className="truncate">{tab.title || "Navegador"}</span></TabsTrigger>
+          <Button type="button" variant="ghost" size="icon" title={`Fechar ${tab.title}`} aria-label={`Fechar navegador ${tab.title}`} onClick={() => void browser.command({ action: "close", id: tab.id })} className="absolute inset-y-0 right-0.5 my-auto size-5 cursor-pointer opacity-60 group-hover/browser-tab:opacity-100 focus-visible:opacity-100 active:not-aria-[haspopup]:translate-y-0"><X className="size-3" /></Button>
+        </div>)}
+        {browser && browser.snapshot.tabs.length > 0 && <Button type="button" variant="ghost" size="icon" aria-label="Nova aba do navegador" title="Nova aba do navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-6 shrink-0 cursor-pointer"><Plus className="size-3.5" /></Button>}
       </TabsList></div>
       {terminalLauncher}
     </div>
-    <TabsContent value="chat" keepMounted inert={!!active} className={`min-h-0 min-w-0 flex-1 flex-col ${active ? "hidden" : "flex"}`}>{children}</TabsContent>
-    {active && <TabsContent value={`file:${active}`} className="m-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs text-muted-foreground"><FileIcon path={active} /><span className="min-w-0 flex-1 truncate font-mono" title={active}>{active}</span><LockKeyhole aria-hidden="true" className="size-3" /><span className="shrink-0 text-[10px]">Somente leitura</span><Button type="button" variant="ghost" size="icon" aria-label="Atualizar arquivo" title="Atualizar arquivo" onClick={files.refresh} disabled={files.active.loading} className="size-6 cursor-pointer"><RefreshCw className="size-3.5" /></Button></div>
+    <TabsContent value="chat" keepMounted inert={backgroundChat} className={`min-h-0 min-w-0 flex-1 flex-col ${backgroundChat ? "hidden" : "flex"}`}>{children}</TabsContent>
+    {activeBrowser && browser && <TabsContent value={`browser:${activeBrowser.id}`} className="m-0 min-h-0 flex-1 overflow-hidden"><BrowserPanel key={activeBrowser.id} browser={browser} tab={activeBrowser} /></TabsContent>}
+    {active && files && <TabsContent value={`file:${active}`} className="m-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3 text-xs text-muted-foreground">
+        <FileIcon path={active} />
+        <span className="min-w-0 flex-1 truncate font-mono" title={active}>{active}</span>
+        <Badge variant="outline" className="h-6 gap-1.5 rounded-md border-onedark-yellow/30 bg-onedark-yellow/10 px-2.5 text-xs font-medium text-onedark-yellow">
+          <LockKeyhole aria-hidden="true" />
+          Somente leitura
+        </Badge>
+        <Button type="button" variant="ghost" size="icon" aria-label="Atualizar arquivo" title="Atualizar arquivo" onClick={files.refresh} disabled={files.active.loading} className="size-6 cursor-pointer"><RefreshCw className="size-3.5" /></Button>
+      </div>
       <div className="min-h-0 min-w-0 flex-1">
         {files.active.loading ? <FileSkeleton /> : files.active.error ? <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center"><FileSearch className="size-8 text-muted-foreground" /><p role="alert" className="max-w-md text-sm text-muted-foreground">{files.active.error}</p><Button type="button" variant="outline" onClick={files.refresh} className="cursor-pointer">Tentar novamente</Button></div> : files.active.data ? <ViewerBoundary key={files.projectId}><Suspense fallback={<FileSkeleton />}><CodeViewer file={files.active.data} paths={files.tabs.paths} visible /></Suspense></ViewerBoundary> : null}
       </div>

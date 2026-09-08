@@ -1,11 +1,7 @@
 use super::*;
 mod working;
 use similar::{ChangeTag, TextDiff};
-use std::{
-    io::Read,
-    path::Path,
-    process::Stdio,
-};
+use std::{io::Read, path::Path, process::Stdio};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct FileRevision {

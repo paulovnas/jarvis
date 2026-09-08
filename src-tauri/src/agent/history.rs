@@ -588,6 +588,7 @@ mod tests {
                     reasoning: None,
                     mode: Mode::Build,
                     workflow: None,
+                    custom_workflow_id: None,
                     approval_mode: ApprovalMode::Manual,
                 },
                 context_window: Some(128000),

@@ -307,6 +307,7 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
         }
         settings::apply(&mut options, &state.profiles, exec.flow, input.role);
         let job = Job {
+            custom_agent: None,
             phase: input.phase,
             id: id.clone(),
             parent_id: exec.id.clone(),
@@ -384,15 +385,17 @@ fn complete(exec: &Execution, handoff: Handoff) -> Result<String, AgentError> {
     }
     if !strings(&handoff.task_ids, false)
         || (handoff.verdict == Verdict::Approved
-            && (handoff.task_ids.is_empty() || handoff.evidence.is_empty()))
+            && ((exec.flow != Flow::Custom && handoff.task_ids.is_empty())
+                || handoff.evidence.is_empty()))
     {
         return Err(invalid(
             "A aprovação deve citar tarefas verificadas e evidências.",
         ));
     }
-    if (exec.role == Role::Reviewer && handoff.verdict == Verdict::Completed)
-        || (exec.role != Role::Reviewer
-            && matches!(handoff.verdict, Verdict::Approved | Verdict::Rework))
+    if exec.flow != Flow::Custom
+        && ((exec.role == Role::Reviewer && handoff.verdict == Verdict::Completed)
+            || (exec.role != Role::Reviewer
+                && matches!(handoff.verdict, Verdict::Approved | Verdict::Rework)))
     {
         return Err(invalid("Veredito incompatível com o papel do agente."));
     }
@@ -574,7 +577,7 @@ fn validate_bead(value: &Value, review_ready: &[String]) -> Result<(), AgentErro
     Ok(())
 }
 
-fn launch(hub: Arc<Hub>, job: Job, resume: Option<String>) -> Result<(), AgentError> {
+pub(super) fn launch(hub: Arc<Hub>, job: Job, resume: Option<String>) -> Result<(), AgentError> {
     let prepared = storage::worker(&hub, &job, resume);
     let (session, signal) = match prepared {
         Ok(value) => value,

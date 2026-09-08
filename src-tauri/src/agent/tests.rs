@@ -27,6 +27,7 @@ fn options(approval_mode: ApprovalMode) -> TurnOptions {
         reasoning: None,
         mode: Mode::Build,
         workflow: None,
+        custom_workflow_id: None,
         approval_mode,
     }
 }
@@ -418,6 +419,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                         reasoning: None,
                         mode: Mode::Build,
                         workflow: None,
+                        custom_workflow_id: None,
                         approval_mode: ApprovalMode::Manual,
                     },
                     status: TurnStatus::Running,

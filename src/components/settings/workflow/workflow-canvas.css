@@ -1,0 +1,16 @@
+.workflow-canvas {
+  --xy-background-color: var(--sidebar);
+  --xy-node-background-color: var(--card);
+  --xy-node-color: var(--foreground);
+  --xy-edge-stroke: var(--primary);
+  --xy-attribution-background-color: var(--card);
+}
+.workflow-canvas .react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--card);
+  background: var(--muted-foreground);
+}
+.workflow-canvas .react-flow__node:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
+.workflow-canvas .react-flow__attribution { font-size: 9px; color: var(--muted-foreground); }
+.workflow-canvas .react-flow__edge { cursor: pointer; }

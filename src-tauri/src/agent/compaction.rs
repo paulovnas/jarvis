@@ -412,6 +412,7 @@ mod tests {
             reasoning: Some("low".into()),
             mode: Mode::Plan,
             workflow: None,
+            custom_workflow_id: None,
             approval_mode: ApprovalMode::Manual,
         };
         let auth = options.clone();
@@ -474,6 +475,7 @@ mod tests {
                     reasoning: None,
                     mode: Mode::Build,
                     workflow: None,
+                    custom_workflow_id: None,
                     approval_mode: ApprovalMode::Manual,
                 },
             )

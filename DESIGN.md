@@ -39,6 +39,16 @@ disclosure transitions; reduced-motion preferences stop continuous animation.
 Skeletons mirror the actual panel geometry. Active selection uses a restrained blue
 wash and a fine leading indicator. Hover and keyboard focus remain distinct.
 
+Scrollbars use the shared semantic palette in `src/styles/scrollbars.css`: a
+transparent track, a rounded neutral thumb, a brighter hover and a blue drag state.
+Native scrollports reserve 10px with a 6px visible thumb. ScrollArea, Monaco and
+xterm share these colors while retaining their own scroll and pointer geometry.
+High-contrast mode uses native scrollbars and system colors for custom indicators.
+The Metis desktop's minimal scrollbar informed the treatment; its light-theme
+values are not reused. Standard CSS scrollbar properties are a fallback because
+non-auto values override WebKit pseudo-element styling in current engines
+([MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/scrollbar-color)).
+
 `~/.jarvis/desktop.json` stores versioned native normal bounds, maximization/fullscreen,
 panel proportions, project expansion, inspector disclosure and selected settings/inspector
 tabs. Native geometry is debounced and flushed on close/exit; layout writes are ordered.

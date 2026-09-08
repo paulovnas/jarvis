@@ -1,4 +1,4 @@
-import { check, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { check, index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 export const appConfig = sqliteTable(
@@ -53,20 +53,31 @@ export const webSearchConfig = sqliteTable("web_search_config", {
   id: integer("id").primaryKey(),
   inheritChat: integer("inherit_chat", { mode: "boolean" }).notNull().default(true),
   model: text("model").default("gpt-5.6-luna"),
-  accountAlias: text("account_alias").references(() => providerAccounts.alias, { onDelete: "set null" }),
+  accountAlias: text("account_alias"),
 }, (table) => [check("web_search_config_singleton", sql`${table.id} = 1`)]);
 
 export const visionConfig = sqliteTable("vision_config", {
   id: integer("id").primaryKey(),
   inheritChat: integer("inherit_chat", { mode: "boolean" }).notNull().default(true),
-  accountAlias: text("account_alias").references(() => providerAccounts.alias, { onDelete: "set null" }),
+  accountAlias: text("account_alias"),
   model: text("model"),
 }, (table) => [check("vision_config_singleton", sql`${table.id} = 1`)]);
 
 export const imageGenerationConfig = sqliteTable("image_generation_config", {
   id: integer("id").primaryKey(),
-  accountAlias: text("account_alias").references(() => providerAccounts.alias, { onDelete: "set null" }),
+  accountAlias: text("account_alias"),
 }, (table) => [check("image_generation_config_singleton", sql`${table.id} = 1`)]);
+
+export const providerModelBindings = sqliteTable("provider_model_bindings", {
+  itemKey: text("item_key").notNull(),
+  source: text("source").notNull(),
+  target: text("target").notNull(),
+}, (table) => [primaryKey({ columns: [table.itemKey, table.source] }), check("provider_binding_source_json", sql`json_valid(${table.source})`), check("provider_binding_target_json", sql`json_valid(${table.target})`)]);
+
+export const providerBindingsRevision = sqliteTable("provider_bindings_revision", {
+  id: integer("id").primaryKey(),
+  revision: integer("revision").notNull().default(0),
+}, (table) => [check("provider_bindings_singleton", sql`${table.id} = 1`), check("provider_bindings_revision_positive", sql`${table.revision} >= 0`)]);
 
 export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(),

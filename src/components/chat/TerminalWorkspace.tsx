@@ -4,7 +4,6 @@ import { listen } from "@tauri-apps/api/event";
 import { Folder, Pencil, Plus, Terminal as TerminalIcon, X } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmationDialogContent } from "@/components/ConfirmationDialogContent";
-import { ManagedProcessesPanel } from "./ManagedProcessesPanel";
 import { Input } from "@/components/TextInput";
 import {
   AlertDialog,
@@ -30,7 +29,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { libraryError } from "@/core/library";
 import { DEFAULT_TERMINAL_PANEL, rememberTerminalPanel, type TerminalPanelLayout } from "@/core/desktop-layout";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
-import { processSchema, type ChatProcess } from "@/core/processes";
 import {
   TERMINAL_STATUS_LABELS,
   terminalSchema,
@@ -38,7 +36,6 @@ import {
 } from "@/core/terminals";
 
 const TerminalSurface = lazy(() => import("./TerminalSurface").then(module => ({ default: module.TerminalSurface })));
-const sectionTabClassName = "h-7 flex-none cursor-pointer gap-1.5 px-2.5 text-xs data-active:bg-primary/15 data-active:text-primary dark:data-active:border-primary/20 dark:data-active:bg-primary/15 dark:data-active:text-primary";
 
 function RenameTerminalPopover({
   open,
@@ -85,9 +82,6 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
   const [closingPending, setClosingPending] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renamingPending, setRenamingPending] = useState(false);
-  const [processes, setProcesses] = useState<ChatProcess[]>([]);
-  const [processError, setProcessError] = useState<string | null>(null);
-  const [panel, setPanel] = useState<"terminals" | "processes">("terminals");
 
   useEffect(() => {
     if (!conversationId) return;
@@ -118,38 +112,6 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
         toast.error(libraryError(error, "Não foi possível acompanhar os terminais."));
         void refresh();
       }
-    });
-    return () => {
-      current = false;
-      unlisten?.();
-    };
-  }, [conversationId]);
-
-  useEffect(() => {
-    if (!conversationId) return;
-    let current = true;
-    let unlisten: (() => void) | undefined;
-    const refresh = async () => {
-      try {
-        const next = processSchema.array().parse(await invoke("list_chat_processes", { conversationId }));
-        if (!current) return;
-        setProcesses(next.filter(process => process.conversationId === conversationId));
-        setProcessError(null);
-      } catch (error) {
-        if (current) setProcessError(libraryError(error, "Não foi possível consultar os processos."));
-      }
-    };
-    void listen<{ conversationId: string }>("processes:changed", event => {
-      if (current && event.payload.conversationId === conversationId) void refresh();
-    }).then(stop => {
-      if (!current) {
-        stop();
-        return;
-      }
-      unlisten = stop;
-      void refresh();
-    }).catch(() => {
-      if (current) void refresh();
     });
     return () => {
       current = false;
@@ -203,15 +165,11 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
   };
 
   const visibleTerminals = terminals.filter(terminal => terminal.conversationId === conversationId);
-  const visibleProcesses = processes.filter(process => process.conversationId === conversationId && process.status !== "stopped");
   const active = visibleTerminals.find(terminal => terminal.id === activeId) ?? visibleTerminals[0] ?? null;
   const loading = Boolean(conversationId && loadedConversationId !== conversationId);
   const terminalCount = visibleTerminals.length;
-  const processCount = visibleProcesses.length;
-  const count = terminalCount + processCount;
-  const terminalLabel = terminalCount === 1 ? "1 terminal aberto" : `${terminalCount} terminais abertos`;
-  const processLabel = processCount === 1 ? "1 processo monitorado" : `${processCount} processos monitorados`;
-  const triggerLabel = count === 0 ? "Abrir terminais" : terminalCount === 0 ? processLabel : processCount === 0 ? terminalLabel : `${terminalLabel} e ${processLabel}`;
+  const count = terminalCount;
+  const triggerLabel = count === 0 ? "Abrir terminais" : count === 1 ? "1 terminal aberto" : `${count} terminais abertos`;
 
   const launcher = <Button
         ref={launcherRef}
@@ -238,15 +196,11 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
       {open && <><ResizableHandle aria-label="Redimensionar painel de terminais" className="cursor-row-resize bg-border hover:bg-primary/50" />
       <ResizablePanel id="terminals" defaultSize={`${panelSize}%`} minSize="20%" maxSize="65%" className="min-h-0 min-w-0">
       <section id={panelId} aria-label="Painel de terminais" className="dark flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-sidebar text-foreground">
-        <Tabs value={panel} onValueChange={value => { if (value === "terminals" || value === "processes") setPanel(value); }} className="flex min-h-0 min-w-0 flex-1 flex-col gap-0">
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-2 py-1">
-            <TabsList aria-label="Seções do painel de terminais" className="h-7 justify-start gap-1 rounded-md bg-transparent p-0">
-              <TabsTrigger value="terminals" className={sectionTabClassName}>Terminais{terminalCount > 0 && <Badge variant="secondary" className="min-w-4 justify-center px-1 py-0 text-[9px]">{terminalCount}</Badge>}</TabsTrigger>
-              <TabsTrigger value="processes" className={sectionTabClassName}>Processos{processCount > 0 && <Badge variant="secondary" className="min-w-4 justify-center px-1 py-0 text-[9px]">{processCount}</Badge>}</TabsTrigger>
-            </TabsList>
-            <Button type="button" variant="ghost" size="icon" aria-label="Recolher painel de terminais" title="Recolher painel de terminais" className="size-7 shrink-0 cursor-pointer text-muted-foreground" onClick={() => { remember({ open: false }); launcherRef.current?.focus(); }}><X className="size-3.5" /></Button>
-          </div>
-          <TabsContent value="terminals" className="m-0 min-h-0 min-w-0 flex-1 outline-none">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-3 py-1">
+          <span className="flex items-center gap-2 text-xs font-medium"><TerminalIcon className="size-3.5 text-onedark-green" />Terminais{count > 0 && <Badge variant="secondary" className="px-1 py-0 font-mono text-[9px]">{count}</Badge>}</span>
+          <Button type="button" variant="ghost" size="icon" aria-label="Recolher painel de terminais" title="Recolher painel de terminais" className="size-6 shrink-0 cursor-pointer text-muted-foreground" onClick={() => { remember({ open: false }); launcherRef.current?.focus(); }}><X className="size-3.5" /></Button>
+        </div>
+        <div className="min-h-0 min-w-0 flex-1">
             {loading ? <div className="flex h-full flex-col gap-3"><Skeleton className="h-8 w-56" /><Skeleton className="min-h-0 flex-1" /></div> : visibleTerminals.length === 0 ? <div className="flex h-full flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-border bg-sidebar/50 text-center">
               <span className="flex size-11 items-center justify-center rounded-md border border-border bg-card text-primary"><TerminalIcon className="size-5" /></span>
               <div><p className="text-sm font-medium">Nenhum terminal aberto</p><p className="mt-1 text-xs text-muted-foreground">Abra um shell na raiz do projeto para trabalhar aqui.</p></div>
@@ -257,7 +211,7 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
                   <TabsList aria-label="Terminais abertos" variant="line" className="h-8 shrink-0 justify-start gap-1 p-0">
                     {visibleTerminals.map(terminal => <div key={terminal.id} className="group/tab relative shrink-0">
                       <ContextMenu>
-                        <ContextMenuTrigger render={<TabsTrigger value={terminal.id} className="h-8 max-w-52 cursor-pointer pr-7 font-mono text-[11px]" />}>
+                        <ContextMenuTrigger render={<TabsTrigger value={terminal.id} aria-label={terminal.title} className="h-8 max-w-52 cursor-pointer pr-7 font-mono text-[11px]" />}>
                           <span className="truncate">{terminal.title}</span>
                           {terminal.origin === "agent" && <span className="text-[9px] text-muted-foreground">IA</span>}
                         </ContextMenuTrigger>
@@ -277,13 +231,8 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
                 <Suspense fallback={<Skeleton role="status" aria-label="Carregando terminal" className="h-full w-full" />}><TerminalSurface conversationId={conversationId ?? ""} terminal={active} /></Suspense>
               </TabsContent>}
             </Tabs>}
-          </TabsContent>
-          <TabsContent value="processes" className="m-0 min-h-0 flex-1 overflow-y-auto p-4 outline-none">
-            {processError && <p role="alert" className="mb-3 text-xs text-destructive">{processError}</p>}
-            <ManagedProcessesPanel conversationId={conversationId ?? ""} processes={visibleProcesses} onRemove={id => setProcesses(items => items.filter(process => process.id !== id))} onStop={id => setProcesses(items => items.map(process => process.id === id ? { ...process, status: "stopped" } : process))} />
-          </TabsContent>
-        </Tabs>
-        {panel === "terminals" && active && <div className="flex shrink-0 items-center gap-2 border-t border-border bg-secondary/40 px-5 py-2 font-mono text-[11px] text-muted-foreground"><Folder className="size-3 shrink-0 text-onedark-cyan" /><span className="min-w-0 flex-1 truncate" title={active.cwd}>{active.cwd}</span><span className={`shrink-0 ${active.status === "failed" ? "text-destructive" : active.status === "running" ? "text-onedark-green" : ""}`}>{TERMINAL_STATUS_LABELS[active.status]}</span></div>}
+        </div>
+        {active && <div className="flex shrink-0 items-center gap-2 border-t border-border bg-secondary/40 px-5 py-2 font-mono text-[11px] text-muted-foreground"><Folder className="size-3 shrink-0 text-onedark-cyan" /><span className="min-w-0 flex-1 truncate" title={active.command ? `${active.cwd}\n${active.command}` : active.cwd}>{active.cwd}</span><span className={`shrink-0 ${active.status === "failed" ? "text-destructive" : active.status === "running" ? "text-onedark-green" : ""}`}>{TERMINAL_STATUS_LABELS[active.status]}</span></div>}
       </section>
       </ResizablePanel></>}
     </ResizablePanelGroup>

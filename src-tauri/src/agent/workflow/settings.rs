@@ -1,7 +1,7 @@
 use super::*;
 use std::fs;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModelChoice {
     pub account: String,
@@ -10,7 +10,7 @@ pub struct ModelChoice {
 }
 pub type ModelSettings = BTreeMap<String, ModelChoice>;
 
-pub(super) fn key(flow: Flow, role: Role) -> String {
+pub(in crate::agent) fn key(flow: Flow, role: Role) -> String {
     format!(
         "{}/{}",
         serde_json::to_value(flow).unwrap().as_str().unwrap(),
@@ -19,6 +19,7 @@ pub(super) fn key(flow: Flow, role: Role) -> String {
 }
 pub(super) fn roster(flow: Flow) -> &'static [Role] {
     match flow {
+        Flow::Custom => &[],
         Flow::Standard => &[Role::Builder],
         Flow::Designer => &[Role::Designer],
         Flow::Planned => &[Role::Planner, Role::Builder, Role::Designer],
@@ -33,7 +34,7 @@ pub(super) fn roster(flow: Flow) -> &'static [Role] {
         ],
     }
 }
-fn read(home: &Path) -> Result<ModelSettings, AgentError> {
+pub(crate) fn read(home: &Path) -> Result<ModelSettings, AgentError> {
     let path = home.join(".jarvis/agents.json");
     let meta = match fs::symlink_metadata(&path) {
         Ok(meta) => meta,
@@ -63,7 +64,16 @@ fn read(home: &Path) -> Result<ModelSettings, AgentError> {
     Ok(settings)
 }
 pub(in crate::agent) fn load(state: &AppState, home: &Path) -> Result<ModelSettings, AgentError> {
-    state.with_connection(home, |_| read(home))
+    state.with_connection(home, |db| configured(db, home))
+}
+fn configured(db: &rusqlite::Connection, home: &Path) -> Result<ModelSettings, AgentError> {
+    read(home)?
+        .into_iter()
+        .map(|(key, choice)| {
+            let choice = crate::model_bindings::resolve(db, &format!("builtin:{key}"), &choice)?;
+            Ok((key, choice))
+        })
+        .collect()
 }
 pub(in crate::agent) fn validate(flow: Flow, profiles: &ModelSettings) -> Result<(), AgentError> {
     if flow.direct() {
@@ -78,7 +88,7 @@ pub(in crate::agent) fn validate(flow: Flow, profiles: &ModelSettings) -> Result
         Ok(())
     } else {
         Err(invalid(&format!(
-            "Escolha os modelos em Configurações > Agentes: {}.",
+            "Escolha os modelos em Configurações > Workflow: {}.",
             missing.join(", ")
         )))
     }
@@ -135,8 +145,16 @@ pub async fn set_agent_model(
             &choice.model,
             choice.reasoning.as_deref(),
         )?;
-        state.with_connection(&home, |_| {
-            let mut config = read(&home)?;
+        state.with_connection(&home, |db| {
+            if !crate::persistence::list_provider_accounts(db)?
+                .iter()
+                .any(|account| account.alias == choice.account && account.enabled)
+            {
+                return Err(invalid(
+                    "O provedor foi removido ou desativado. Escolha outro modelo.",
+                ));
+            }
+            let mut config = configured(db, &home)?;
             config.insert(key(flow, role), choice);
             let directory = home.join(".jarvis");
             let mut file =
@@ -148,6 +166,7 @@ pub async fn set_agent_model(
                 .map_err(|_| AgentError::storage())?;
             file.persist(directory.join("agents.json"))
                 .map_err(|_| AgentError::storage())?;
+            crate::model_bindings::forget_item(db, &format!("builtin:{}", key(flow, role)))?;
             #[cfg(unix)]
             fs::File::open(directory)
                 .and_then(|file| file.sync_all())

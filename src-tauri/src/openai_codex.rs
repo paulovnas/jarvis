@@ -207,7 +207,7 @@ pub(crate) enum SecretStoreError {
     Unavailable,
     #[cfg(any(target_os = "macos", target_os = "windows", test))]
     OperationFailed,
-    #[cfg(test)]
+    #[cfg(any(target_os = "macos", target_os = "windows", test))]
     Missing,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     InvalidCredential,
@@ -278,6 +278,7 @@ pub(crate) fn commit_provider_account(
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn disconnect_provider_account(
     connection: &rusqlite::Connection,
     secret_store: &dyn SecretStore,
@@ -285,8 +286,38 @@ pub(crate) fn disconnect_provider_account(
 ) -> Result<(), ProviderAccountError> {
     custom::validate_alias(alias)
         .map_err(|_| ProviderAccountError::InvalidAlias(AliasValidationError::InvalidAlias))?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(PersistenceError::from)?;
+    finish_disconnect(transaction, secret_store, alias)
+}
+
+fn finish_disconnect(
+    transaction: rusqlite::Transaction<'_>,
+    secret_store: &dyn SecretStore,
+    alias: &str,
+) -> Result<(), ProviderAccountError> {
+    // Prepare all database changes before touching the credential. A constraint
+    // failure must never strand an account whose secret has already been removed.
+    persistence::delete_provider_account(&transaction, alias)?;
+    let backup = match secret_store.load(alias) {
+        Ok(credential) => Some(credential),
+        #[cfg(any(target_os = "macos", target_os = "windows", test))]
+        Err(SecretStoreError::Missing) => None,
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        Err(SecretStoreError::InvalidCredential) => None,
+        Err(error) => return Err(error.into()),
+    };
     secret_store.remove(alias)?;
-    persistence::delete_provider_account(connection, alias).map_err(Into::into)
+    if transaction.commit().is_err() {
+        if let Some(credential) = backup {
+            secret_store
+                .store(alias, &credential)
+                .map_err(|_| ProviderAccountError::SecretCleanup)?;
+        }
+        return Err(ProviderAccountError::Database);
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -315,7 +346,13 @@ impl SecretStore for KeychainSecretStore {
     fn load(&self, alias: &str) -> Result<CodexCredential, SecretStoreError> {
         let value =
             security_framework::passwords::get_generic_password(secret_service(alias), alias)
-                .map_err(|_| SecretStoreError::OperationFailed)?;
+                .map_err(|error| {
+                    if error.code() == ERR_SEC_ITEM_NOT_FOUND {
+                        SecretStoreError::Missing
+                    } else {
+                        SecretStoreError::OperationFailed
+                    }
+                })?;
         deserialize_credential(&value)
     }
 
@@ -353,9 +390,8 @@ const PROVIDER_NAMESPACE: &str = "provider-secrets";
 fn vault_error(error: crate::secrets::VaultError) -> SecretStoreError {
     match error {
         crate::secrets::VaultError::Unavailable => SecretStoreError::Unavailable,
-        crate::secrets::VaultError::NotFound | crate::secrets::VaultError::OperationFailed => {
-            SecretStoreError::OperationFailed
-        }
+        crate::secrets::VaultError::NotFound => SecretStoreError::Missing,
+        crate::secrets::VaultError::OperationFailed => SecretStoreError::OperationFailed,
     }
 }
 
@@ -623,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn disconnect_removes_secret_before_metadata_and_is_idempotent_when_missing() {
+    fn disconnect_removes_credentials_and_metadata_and_is_idempotent_when_missing() {
         let connection = connection();
         let secrets = InMemorySecretStore::default();
         commit_provider_account(
@@ -672,6 +708,84 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn failed_database_deletion_preserves_the_credential() {
+        let connection = connection();
+        let secrets = InMemorySecretStore::default();
+        commit_provider_account(
+            &connection,
+            &secrets,
+            "openai-codex-one",
+            &credential("account-one"),
+        )
+        .unwrap();
+        connection.execute_batch("CREATE TRIGGER reject_account_delete BEFORE DELETE ON provider_accounts BEGIN SELECT RAISE(ABORT, 'test failure'); END;").unwrap();
+        assert!(matches!(
+            disconnect_provider_account(&connection, &secrets, "openai-codex-one"),
+            Err(ProviderAccountError::Database)
+        ));
+        assert_eq!(
+            secrets.load("openai-codex-one").unwrap().account_id,
+            "account-one"
+        );
+        assert_eq!(list_provider_accounts(&connection).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn failed_credential_cleanup_rolls_back_model_replacements() {
+        let connection = connection();
+        let secrets = InMemorySecretStore::default();
+        commit_provider_account(
+            &connection,
+            &secrets,
+            "openai-codex-one",
+            &credential("account-one"),
+        )
+        .unwrap();
+        connection.execute("INSERT INTO web_search_config(id,account_alias,model,inherit_chat) VALUES(1,'openai-codex-one','original',0)", []).unwrap();
+        secrets.fail_remove(true);
+        let transaction = connection.unchecked_transaction().unwrap();
+        transaction
+            .execute(
+                "UPDATE web_search_config SET account_alias='replacement',model='new'",
+                [],
+            )
+            .unwrap();
+        transaction
+            .execute("UPDATE provider_bindings_revision SET revision=1", [])
+            .unwrap();
+        assert!(finish_disconnect(transaction, &secrets, "openai-codex-one").is_err());
+        assert_eq!(
+            connection
+                .query_row("SELECT model FROM web_search_config", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "original"
+        );
+        assert_eq!(crate::model_bindings::revision(&connection).unwrap(), 0);
+        assert!(secrets.load("openai-codex-one").is_ok());
+    }
+
+    #[test]
+    fn failed_commit_restores_credential_and_database() {
+        let connection = connection();
+        let secrets = InMemorySecretStore::default();
+        commit_provider_account(
+            &connection,
+            &secrets,
+            "openai-codex-one",
+            &credential("account-one"),
+        )
+        .unwrap();
+        connection.execute_batch("CREATE TABLE commit_guard(alias TEXT REFERENCES provider_accounts(alias) DEFERRABLE INITIALLY DEFERRED); INSERT INTO commit_guard VALUES('openai-codex-one');").unwrap();
+        assert!(matches!(
+            disconnect_provider_account(&connection, &secrets, "openai-codex-one"),
+            Err(ProviderAccountError::Database)
+        ));
+        assert!(secrets.load("openai-codex-one").is_ok());
+        assert_eq!(list_provider_accounts(&connection).unwrap().len(), 1);
     }
 
     #[test]
@@ -1078,6 +1192,7 @@ impl OAuthManager {
             .collect()
     }
 
+    #[cfg(test)]
     fn disconnect_account(
         &self,
         app_state: &persistence::AppState,
@@ -1291,6 +1406,34 @@ impl Default for OpenAiCodexState {
 }
 
 impl OpenAiCodexState {
+    pub(crate) fn remove_with_updates<T>(
+        &self,
+        state: &persistence::AppState,
+        home: &std::path::Path,
+        alias: &str,
+        update: impl FnOnce(&rusqlite::Connection) -> Result<T, ProviderError>,
+    ) -> Result<T, ProviderError> {
+        custom::validate_alias(alias)?;
+        let _guard = self
+            .manager
+            .credentials_guard
+            .lock()
+            .map_err(|_| ProviderError::internal())?;
+        state.with_connection(home, |connection| {
+            let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|_| ProviderError::database())?;
+            let result = update(&transaction)?;
+            finish_disconnect(transaction, self.manager.secret_store.as_ref(), alias).map_err(|cause| match cause {
+                ProviderAccountError::SecretStore(_) => ProviderError::new("provider_credential_removal", if cfg!(target_os = "macos") {
+                    "Não foi possível remover a credencial do Acesso às Chaves do macOS. Verifique o acesso do Jarvis e tente novamente. O provedor e seus vínculos foram mantidos."
+                } else {
+                    "Não foi possível remover a credencial do armazenamento seguro. Verifique o acesso do Jarvis e tente novamente. O provedor e seus vínculos foram mantidos."
+                }),
+                _ => ProviderError::from_account_error(cause),
+            })?;
+            Ok(result)
+        })
+    }
+
     /// Resolve inference credentials under the same lock as refresh/disconnect.
     /// The returned secret never crosses IPC or enters the session journal.
     pub(crate) fn inference_credential(
@@ -2443,6 +2586,7 @@ fn commit_provider_account_with_state(
         .map_err(ProviderError::from_account_error)
 }
 
+#[cfg(test)]
 fn disconnect_provider_account_with_state(
     app_state: &persistence::AppState,
     home_dir: &std::path::Path,
@@ -2575,23 +2719,6 @@ pub async fn cancel_openai_codex_connection(
         .map_err(|_| ProviderError::internal())?
 }
 
-#[tauri::command]
-pub async fn disconnect_provider_account_command(
-    app: tauri::AppHandle,
-    persistence_state: tauri::State<'_, persistence::AppState>,
-    oauth_state: tauri::State<'_, OpenAiCodexState>,
-    alias: String,
-) -> Result<(), ProviderError> {
-    let home_dir = home_dir(&app)?;
-    let persistence_state = persistence_state.inner().clone();
-    let manager = oauth_state.manager.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        manager.disconnect_account(&persistence_state, &home_dir, &alias)
-    })
-    .await
-    .map_err(|_| ProviderError::internal())?
-}
-
 #[cfg(test)]
 mod oauth_tests {
     use super::*;
@@ -2665,18 +2792,21 @@ mod oauth_tests {
 
         struct PausedLoadStore {
             inner: InMemorySecretStore,
+            paused: std::sync::atomic::AtomicBool,
             loaded: mpsc::Sender<()>,
             resume: Mutex<mpsc::Receiver<()>>,
         }
         impl SecretStore for PausedLoadStore {
             fn load(&self, alias: &str) -> Result<CodexCredential, SecretStoreError> {
                 let credential = self.inner.load(alias)?;
-                self.loaded.send(()).expect("load notification");
-                self.resume
-                    .lock()
-                    .expect("resume lock")
-                    .recv_timeout(Duration::from_secs(5))
-                    .expect("resume load");
+                if !self.paused.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    self.loaded.send(()).expect("load notification");
+                    self.resume
+                        .lock()
+                        .expect("resume lock")
+                        .recv_timeout(Duration::from_secs(5))
+                        .expect("resume load");
+                }
                 Ok(credential)
             }
             fn store(
@@ -2697,6 +2827,7 @@ mod oauth_tests {
         let (resume_tx, resume_rx) = mpsc::channel();
         let secrets = Arc::new(PausedLoadStore {
             inner: InMemorySecretStore::default(),
+            paused: std::sync::atomic::AtomicBool::new(false),
             loaded: loaded_tx,
             resume: Mutex::new(resume_rx),
         });

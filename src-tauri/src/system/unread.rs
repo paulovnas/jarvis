@@ -52,7 +52,7 @@ fn acknowledge(db: &Connection, id: &str, key: &str) -> Result<(), PersistenceEr
 }
 
 fn focused(app: &tauri::AppHandle) -> bool {
-    app.get_webview_window("main").is_some_and(|window| {
+    app.get_window("main").is_some_and(|window| {
         window.is_focused().unwrap_or(false)
             && window.is_visible().unwrap_or(false)
             && !window.is_minimized().unwrap_or(true)
@@ -89,7 +89,7 @@ async fn update(
     } else {
         0
     };
-    if let Some(window) = app.get_webview_window("main") {
+    if let Some(window) = app.get_window("main") {
         #[cfg(not(target_os = "windows"))]
         if let Err(error) = window.set_badge_count((count > 0).then_some(count)) {
             eprintln!("Unable to update Jarvis badge: {error}");

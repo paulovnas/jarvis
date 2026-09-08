@@ -1,4 +1,5 @@
 pub(crate) mod attachments;
+pub(crate) mod browser;
 pub(crate) mod cleanup;
 mod compaction;
 pub(crate) mod dashboard;
@@ -10,6 +11,7 @@ mod journal;
 pub(crate) mod maintenance;
 pub(crate) mod processes;
 mod provider;
+pub(crate) mod provider_links;
 pub(crate) mod questions;
 pub(crate) mod queue;
 mod shell;
@@ -107,6 +109,8 @@ pub struct TurnOptions {
     mode: Mode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     workflow: Option<workflow::Flow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    custom_workflow_id: Option<String>,
     approval_mode: ApprovalMode,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -429,13 +433,25 @@ impl Session {
         Ok(input)
     }
 }
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct AgentState {
     pub(crate) processes: processes::ProcessState,
     pub(crate) terminals: terminals::TerminalState,
     sessions: Arc<Mutex<HashMap<String, Arc<Session>>>>,
     histories: history::HistoryState,
     workflows: workflow::Registry,
+}
+impl Default for AgentState {
+    fn default() -> Self {
+        let terminals = terminals::TerminalState::default();
+        Self {
+            processes: processes::ProcessState::new(terminals.clone()),
+            terminals,
+            sessions: Default::default(),
+            histories: Default::default(),
+            workflows: Default::default(),
+        }
+    }
 }
 impl AgentState {
     pub(crate) fn has_active_chats(&self) -> bool {
@@ -669,7 +685,7 @@ fn now() -> u64 {
 fn resumable_direct_turn(turn: &StoredTurn) -> bool {
     let direct = match turn.turn.options.workflow {
         Some(workflow::Flow::Standard | workflow::Flow::Designer) => true,
-        Some(workflow::Flow::Planned | workflow::Flow::Complete) => false,
+        Some(workflow::Flow::Planned | workflow::Flow::Complete | workflow::Flow::Custom) => false,
         None => turn.turn.options.mode == Mode::Build,
     };
     let recoverable_status = turn.turn.status == TurnStatus::Running
@@ -797,13 +813,16 @@ pub async fn start_agent_turn(
     let run_home = home.clone();
     app.state::<crate::core::CoreState>().require_ready(&home)?;
     let mcp = app.state::<crate::mcp::McpState>().inner().clone();
+    let validation_oauth = oauth.clone();
     let (session, signal) = tauri::async_runtime::spawn_blocking(move || {
         let session = agent.session(&app, &state, &home, &conversation_id)?;
         // Revalidate the project for every turn, including already loaded conversations.
         library::agent_location(&state, &home, &conversation_id)?;
-        if let Some(flow) = options.workflow {
-            workflow::settings::validate(flow, &workflow::settings::load(&state, &home)?)?;
-        }
+        let mut options = options;
+        state.with_connection(&home, |db| {
+            provider_links::resolve_chat(db, &conversation_id, &mut options)
+        })?;
+        workflow::validate_options(&state, &validation_oauth, &home, &options)?;
         let mut parts = parts.unwrap_or_default();
         attachments::validate_parts(&home, &conversation_id, &mut parts)?;
         let (content, parts) = skill_input::normalize(&home, &session.root, content, parts)?;
@@ -1374,6 +1393,7 @@ fn run_turn<'a>(
                     if tool.name.starts_with("hub_")
                         || tool.name.starts_with("process_")
                         || tool.name.starts_with("terminal_")
+                        || tool.name.starts_with("browser_")
                         || matches!(
                             tool.name.as_str(),
                             "workflow_check" | "design_brief" | "validation_publish"

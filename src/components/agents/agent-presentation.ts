@@ -1,7 +1,8 @@
-import { Brain, Search, PenLine, Network, Palette, Hammer, ShieldCheck } from "lucide-react";
+import { Brain, Search, PenLine, Network, Palette, Hammer, ShieldCheck, Bot } from "lucide-react";
 
-export const AGENT_ICONS = { planner: Brain, investigator: Search, writer: PenLine, orchestrator: Network, designer: Palette, builder: Hammer, reviewer: ShieldCheck };
+export const AGENT_ICONS = { planner: Brain, investigator: Search, writer: PenLine, orchestrator: Network, designer: Palette, builder: Hammer, reviewer: ShieldCheck, custom: Bot };
 export const AGENT_DESCRIPTIONS = {
+  custom: "Executa as instruções e permissões definidas pelo usuário para esta etapa.",
   planner: "Transforma seu pedido em etapas claras. Consulta o Beads, define critérios de aceite e organiza as dependências antes de delegar a execução.",
   investigator: "Investiga o código, as instruções e o histórico do projeto. Localiza evidências, identifica riscos e entrega os achados que orientam o planejamento.",
   writer: "Transforma o plano em uma especificação executável. Registra épicos, tarefas, critérios de aceite e dependências no Beads para orientar a implementação.",

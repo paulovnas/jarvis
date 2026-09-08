@@ -13,7 +13,7 @@ export function ToolApproval({ tool, projectPath, onAnswer }: { tool: AgentTool;
   };
   return <Card role="region" aria-label="Autorização de ferramenta" className="mb-3 border border-primary/40" size="sm">
     <CardHeader>
-      <CardTitle>Autorizar {tool.name.startsWith("beads_") ? "alteração de tarefa" : tool.name === "bash" ? "comando" : "alteração de arquivo"}?</CardTitle>
+      <CardTitle>Autorizar {tool.name.startsWith("browser_") ? "ação no navegador" : tool.name.startsWith("beads_") ? "alteração de tarefa" : tool.name === "bash" ? "comando" : "alteração de arquivo"}?</CardTitle>
       <CardDescription className="break-all">{projectPath}</CardDescription>
     </CardHeader>
     <CardContent>
