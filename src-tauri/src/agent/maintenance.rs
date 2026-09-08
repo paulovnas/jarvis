@@ -39,7 +39,7 @@ fn begin(session: Arc<Session>) -> Result<(CompactionLease, TurnOptions), AgentE
         ));
     }
     data.manual_compaction = true;
-            data.revision = next_revision();
+    data.revision = next_revision();
     let snapshot = session.snapshot_data(&data);
     drop(data);
     (session.emit)(snapshot);
@@ -54,8 +54,11 @@ pub async fn compact_agent_context(
     agent: tauri::State<'_, AgentState>,
     conversation_id: String,
 ) -> Result<ChatSnapshot, AgentError> {
-    let _activity = crate::updater::begin_activity(&app).map_err(|message| AgentError::new("app_updating", &message))?;
-    let session = agent.runtime_session(&app, &persistence, &conversation_id).await?;
+    let _activity = crate::updater::begin_activity(&app)
+        .map_err(|message| AgentError::new("app_updating", &message))?;
+    let session = agent
+        .runtime_session(&app, &persistence, &conversation_id)
+        .await?;
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     crate::core::require_ready(&home)?;
     let hooks = crate::core::hooks::Hooks::new(&home, &session.root, &session.id)?;
@@ -80,9 +83,22 @@ pub async fn compact_agent_context(
         data.turns.last_mut().unwrap().turn.context_window = model.context_window;
     })?;
     let (_cancel, signal) = watch::channel(false);
-    let beads = crate::core::beads::Beads::new(&skill_home, session.project_id()?, &session.id, options.mode == Mode::Plan)?;
-    let beads_snapshot = beads.resume(signal.clone(), || library::agent_location(&persistence, &skill_home, &session.id).map(|_| ()).map_err(|_| crate::core::error("Projeto ou conversa indisponível."))).await?;
-    let skills = crate::skills::active(&skill_home, &session.root).await.map_err(|cause| AgentError::new("skill_error", &cause.message))?;
+    let beads = crate::core::beads::Beads::new(
+        &skill_home,
+        session.project_id()?,
+        &session.id,
+        options.mode == Mode::Plan,
+    )?;
+    let beads_snapshot = beads
+        .resume(signal.clone(), || {
+            library::agent_location(&persistence, &skill_home, &session.id)
+                .map(|_| ())
+                .map_err(|_| crate::core::error("Projeto ou conversa indisponível."))
+        })
+        .await?;
+    let skills = crate::skills::active(&skill_home, &session.root)
+        .await
+        .map_err(|cause| AgentError::new("skill_error", &cause.message))?;
     let mut instructions = tools::instructions(&session.root, options.mode);
     instructions.push_str(crate::core::context::INSTRUCTIONS);
     instructions.push_str(crate::core::beads::INSTRUCTIONS);
@@ -90,15 +106,32 @@ pub async fn compact_agent_context(
     hooks.before_agent(&mut instructions);
     let mut definitions = tools::definitions(options.mode);
     if options.workflow.is_some() {
-        let (workflow_instructions, workflow_tools) = workflow::compaction_context(&skill_home, &session.id, &options)?;
-        instructions.push_str(&workflow_instructions); definitions.extend(workflow_tools);
+        let (workflow_instructions, workflow_tools) =
+            workflow::compaction_context(&skill_home, &session.id, &options)?;
+        instructions.push_str(&workflow_instructions);
+        definitions.extend(workflow_tools);
     }
     definitions.extend(crate::core::beads::definitions(options.mode == Mode::Plan));
-    if !skills.is_empty() { definitions.extend([crate::skills::definition(), crate::skills::search_definition()]); }
-    let overhead = compaction::estimate(&json!({"instructions": instructions, "tools": definitions, "beads_snapshot": beads_snapshot}));
+    if !skills.is_empty() {
+        definitions.extend([
+            crate::skills::definition(),
+            crate::skills::search_definition(),
+        ]);
+    }
+    let overhead = compaction::estimate(
+        &json!({"instructions": instructions, "tools": definitions, "beads_snapshot": beads_snapshot}),
+    );
     let result = tokio::time::timeout(
         Duration::from_secs(600),
-        compaction::ensure(&session, &credential, &options, overhead, true, signal, Some(&hooks)),
+        compaction::ensure(
+            &session,
+            &credential,
+            &options,
+            overhead,
+            true,
+            signal,
+            Some(&hooks),
+        ),
     )
     .await
     .map_err(|_| {
@@ -125,7 +158,8 @@ mod tests {
             account: "test".into(),
             model: "model".into(),
             reasoning: None,
-            mode: Mode::Plan, workflow: None,
+            mode: Mode::Plan,
+            workflow: None,
             approval_mode: ApprovalMode::Manual,
         };
         assert!(begin(session.clone()).is_err());

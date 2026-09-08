@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ChevronRight, ListChecks, Files, Users, ClipboardCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,9 @@ import { WorkflowAgents } from "./WorkflowAgents";
 import { WorkflowValidation } from "./WorkflowValidation";
 import { activeAgent } from "@/core/workflow";
 import type { WorkflowController } from "@/hooks/use-workflow";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ProjectExplorer } from "@/components/files/ProjectExplorer";
+import type { ProjectFilesController } from "@/hooks/use-project-files";
 
 function ActivitySection({ title, icon, count, children }: { title: string; icon: ReactNode; count?: number; children: ReactNode }) {
   const { layout, updateLayout } = useDesktopLayout();
@@ -29,15 +32,23 @@ function ActivitySection({ title, icon, count, children }: { title: string; icon
   </Collapsible>;
 }
 
-export function Inspector({ library, chat, workflow, accounts = [], onCompact, onOpenKanban, compacting = false, pending = false }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; workflow?: WorkflowController; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; onOpenKanban?: (projectId: string) => void; compacting?: boolean; pending?: boolean }) {
+export function Inspector({ library, chat, workflow, accounts = [], onCompact, onOpenKanban, compacting = false, pending = false, files: fileWorkspace }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; workflow?: WorkflowController; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; onOpenKanban?: (projectId: string) => void; compacting?: boolean; pending?: boolean; files?: ProjectFilesController }) {
+  const { layout, updateLayout } = useDesktopLayout();
   const selectedChat = chat?.conversationId === library?.selection.conversationId ? chat : null;
+  const [explorerVisited, setExplorerVisited] = useState(layout.inspectorTab === "explorer");
   const turns = selectedChat?.turns ?? [];
   const tools = turns.flatMap(turn => turn.steps.flatMap(step => step.tools));
   const changes = useSessionFiles(selectedChat?.conversationId ?? null);
   const files = changes.files;
   const projectId = library?.selection.projectId;
   const projectPath = library?.projects.find(project => project.id === projectId)?.path;
+  const section = layout.inspectorTab === "explorer" ? "explorer" : "activities";
+  const selectSection = (value: unknown) => { if (value === "activities" || value === "explorer") { if (value === "explorer") setExplorerVisited(true); updateLayout({ inspectorTab: value }); } };
+  const tabClass = "h-7 flex-none cursor-pointer px-2.5 text-xs data-active:bg-primary/15 data-active:text-primary dark:data-active:border-primary/20 dark:data-active:bg-primary/15 dark:data-active:text-primary";
   return <aside aria-label="Inspector" className="flex h-full min-h-0 flex-col bg-sidebar">
+    <Tabs value={section} onValueChange={selectSection} className="h-full min-h-0 gap-0">
+      <div className="shrink-0 border-b border-border bg-card px-2 py-1"><TabsList aria-label="Seções da lateral direita" className="h-7 justify-start gap-1 rounded-md bg-transparent p-0"><TabsTrigger value="activities" className={tabClass}>Inspector</TabsTrigger><TabsTrigger value="explorer" className={tabClass}>Explorer</TabsTrigger></TabsList></div>
+      <TabsContent value="activities" keepMounted className={`min-h-0 flex-1 flex-col ${section === "activities" ? "flex" : "hidden"}`}>
     <div className="min-h-0 flex-1">
         <ScrollArea className="h-full"><div key={selectedChat?.conversationId ?? "empty"} className="px-2">
           <ActivitySection title="Plano" icon={<ListChecks aria-hidden="true" className="size-4 text-[#c678dd]" />}>
@@ -56,5 +67,10 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
         </div></ScrollArea>
     </div>
     <ContextUsage key={selectedChat?.conversationId ?? "empty"} context={conversationContext(turns, accounts)} live={selectedChat?.context} onCompact={onCompact} compacting={compacting} disabled={!selectedChat || turns.length === 0 || !!selectedChat.activeTurnId || pending} />
+      </TabsContent>
+      <TabsContent value="explorer" keepMounted className={`min-h-0 flex-1 ${section === "explorer" ? "block" : "hidden"}`}>
+        {projectId && fileWorkspace && (explorerVisited || section === "explorer") ? <ProjectExplorer key={projectId} projectId={projectId} projectName={library?.projects.find(project => project.id === projectId)?.name ?? "Projeto"} selected={fileWorkspace.tabs.activePath} onOpen={fileWorkspace.open} /> : section === "explorer" ? <p className="p-4 text-xs text-muted-foreground">Abra uma conversa para explorar os arquivos do projeto.</p> : null}
+      </TabsContent>
+    </Tabs>
   </aside>;
 }

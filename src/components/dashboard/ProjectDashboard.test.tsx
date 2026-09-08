@@ -1,8 +1,8 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { toast } from "sonner";
 import { bead, projectMetrics } from "@/test/dashboard-fixtures";
 import { ProjectDashboard } from "./ProjectDashboard";
 import { BeadsBoard } from "./BeadsBoard";
@@ -10,23 +10,29 @@ import { BeadDrawer } from "./BeadDrawer";
 import { coreFixture } from "@/test/core-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/plugin-opener", () => ({ openPath: vi.fn() }));
 const call = vi.mocked(invoke);
-const open = vi.mocked(openPath);
 const project = { id: "p1", workspaceId: "w1", name: "Jarvis", path: "/projects/jarvis", createdAt: 1 };
 
 describe("Project Dashboard", () => {
   beforeEach(() => {
+    // jsdom has no layout; give responsive charts their actual container shape.
+    const bounds = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("recharts-responsive-container")
+        ? new DOMRect(0, 0, 640, 240)
+        : bounds.call(this);
+    });
     call.mockReset();
-    open.mockReset().mockResolvedValue();
     call.mockImplementation(async command => {
       if (command === "get_project_metrics") return projectMetrics();
       if (command === "get_project_beads") return [bead()];
       if (command === "get_core_status") return coreFixture();
       if (command === "get_bead_detail") return { issue: bead(), comments: [] };
+      if (command === "open_project_directory") return;
       throw new Error(`Unexpected command ${command}`);
     });
   });
+  afterEach(() => vi.restoreAllMocks());
   it("loads real metrics and navigates from overview to sessions and board", async () => {
     const user = userEvent.setup(); const select = vi.fn();
     render(<ProjectDashboard project={project} onSelectSession={select} />);
@@ -39,11 +45,23 @@ describe("Project Dashboard", () => {
     await user.click(screen.getByRole("button", { name: /Ver quadro/ }));
     expect(await screen.findByRole("button", { name: "Tarefa: Validar integração" })).toBeInTheDocument();
   });
-  it("opens the selected project's folder from its path", async () => {
+  it.each(["/projects/jarvis", "C:\\Users\\João Silva\\projetos\\Jarvis"])("opens the registered project instead of passing %s to the scoped frontend opener", async path => {
     const user = userEvent.setup();
-    render(<ProjectDashboard project={project} onSelectSession={vi.fn()} />);
+    render(<ProjectDashboard project={{ ...project, path }} onSelectSession={vi.fn()} />);
     await user.click(screen.getByRole("button", { name: "Abrir pasta do projeto Jarvis" }));
-    expect(open).toHaveBeenCalledWith("/projects/jarvis");
+    expect(call).toHaveBeenCalledWith("open_project_directory", { projectId: "p1" });
+  });
+  it("reports an unavailable project directory without losing the dashboard", async () => {
+    const report = vi.spyOn(toast, "error");
+    const fallback = call.getMockImplementation();
+    call.mockImplementation((command, args, options) => command === "open_project_directory"
+      ? Promise.reject({ code: "project_directory", message: "A pasta do projeto não está disponível." })
+      : fallback!(command, args, options));
+    render(<ProjectDashboard project={project} onSelectSession={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Abrir pasta do projeto Jarvis" }));
+    await waitFor(() => expect(report).toHaveBeenCalledWith("A pasta do projeto não está disponível."));
+    expect(screen.getByRole("main", { name: "Dashboard de Jarvis" })).toBeVisible();
+    report.mockRestore();
   });
   it("shows all statuses on demand, filters cards and opens readonly details", async () => {
     const user = userEvent.setup();

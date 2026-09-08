@@ -63,13 +63,17 @@ impl Session {
         });
         self.checkpoint(&mut data, "queue_checkpoint", &queue)?;
         data.extras.queue = queue;
-            data.revision = next_revision();
+        data.revision = next_revision();
         Ok(None)
     }
 
     pub(super) fn reserve_next(&self) -> Result<Option<watch::Receiver<bool>>, AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
-        if data.active.is_some() || data.recovery.is_some() || data.storage_failed || data.compacting || data.manual_compaction
+        if data.active.is_some()
+            || data.recovery.is_some()
+            || data.storage_failed
+            || data.compacting
+            || data.manual_compaction
         {
             return Ok(None);
         }
@@ -130,7 +134,9 @@ pub async fn remove_queued_message(
     conversation_id: String,
     message_id: String,
 ) -> Result<RemovedMessage, AgentError> {
-    let session = agent.runtime_session(&app, &persistence, &conversation_id).await?;
+    let session = agent
+        .runtime_session(&app, &persistence, &conversation_id)
+        .await?;
     let message = session.remove_queued(&message_id)?;
     let snapshot = session.snapshot()?;
     (session.emit)(snapshot.clone());
@@ -175,7 +181,8 @@ mod tests {
             account: "test".into(),
             model: "model".into(),
             reasoning: None,
-            mode: Mode::Build, workflow: None,
+            mode: Mode::Build,
+            workflow: None,
             approval_mode: ApprovalMode::Manual,
         }
     }
@@ -190,8 +197,15 @@ mod tests {
             let mut data = session.data.lock().unwrap();
             data.turns[0].turn.options.approval_mode = ApprovalMode::Manual;
             journal::append(&session.journal, &data.turns[0]).unwrap();
-            let queue = vec![QueuedMessage { id: library::new_id().unwrap(), content: "resume".into(), options: tests_options(), parts: vec![] }];
-            session.checkpoint(&mut data, "queue_checkpoint", &queue).unwrap();
+            let queue = vec![QueuedMessage {
+                id: library::new_id().unwrap(),
+                content: "resume".into(),
+                options: tests_options(),
+                parts: vec![],
+            }];
+            session
+                .checkpoint(&mut data, "queue_checkpoint", &queue)
+                .unwrap();
             data.extras.queue = queue;
         }
         assert!(session.reserve_next().unwrap().is_some());

@@ -6,7 +6,7 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -123,7 +123,7 @@ fn repository(home: &Path, source: &str, force: bool) -> Result<PathBuf, SkillEr
         .tempdir_in(&cache_path)?;
     let path = temporary.path().join("checkout");
     let url = format!("https://github.com/{source}.git");
-    let mut child = Command::new("git")
+    let mut child = crate::background::command("git")
         .args([
             "-c",
             "core.hooksPath=/dev/null",

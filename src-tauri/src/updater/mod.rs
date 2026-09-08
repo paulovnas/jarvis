@@ -186,8 +186,10 @@ pub async fn check_app_update(
         .map_err(|_| "O GitHub retornou uma lista de versões inválida.")?;
     let mut candidate = None;
     if let Some((version, endpoint)) = select_release(&releases, &current, &platform_key()) {
+        let exit_app = app.clone();
         let updater = app
             .updater_builder()
+            .on_before_exit(move || crate::prepare_exit(&exit_app))
             .endpoints(vec![endpoint])
             .map_err(|_| "Endereço de atualização inválido.")?
             .timeout(Duration::from_secs(20))
@@ -278,6 +280,14 @@ pub async fn install_app_update(
         tauri::async_runtime::spawn_blocking(move || update.install(bytes)).await
             .map_err(|_| "Não foi possível instalar a atualização.")?
             .map_err(|_| "Não foi possível substituir o aplicativo. Verifique a permissão de escrita da instalação.")?;
+        // A successful Windows install exits the process and lets NSIS restart it.
+        // Never start a competing successor while the installer owns replacement.
+        if cfg!(windows) {
+            return Err(
+                "O instalador não confirmou o encerramento do Jarvis. Tente atualizar novamente."
+                    .into(),
+            );
+        }
         *state
             .installed
             .lock()
@@ -351,6 +361,21 @@ mod tests {
         ] {
             assert!(!release_url(url, "v0.8.0"));
         }
+    }
+    #[test]
+    fn windows_updates_require_the_windows_manifest_even_when_macos_is_newer() {
+        let releases = vec![
+            release("0.8.6-beta", false, true, "windows-x86_64"),
+            release("0.8.7-beta", false, true, "darwin-aarch64"),
+        ];
+        let (version, endpoint) = select_release(
+            &releases,
+            &semver::Version::parse("0.8.5-beta").unwrap(),
+            "windows-x86_64",
+        )
+        .unwrap();
+        assert_eq!(version.to_string(), "0.8.6-beta");
+        assert!(endpoint.path().ends_with("/latest-windows-x86_64.json"));
     }
     #[test]
     fn updates_and_active_work_are_mutually_exclusive_and_failures_release_the_gate() {

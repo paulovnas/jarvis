@@ -1,6 +1,9 @@
 pub mod config;
 pub(crate) mod executable;
 pub mod runtime;
+mod stdio;
+#[cfg(target_os = "windows")]
+mod windows_secrets;
 
 use crate::persistence::{AppState, PersistenceError};
 use config::Config;
@@ -88,7 +91,19 @@ impl Secrets for Keychain {
         }
     }
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+impl Secrets for Keychain {
+    fn load(&self, key: &str) -> Result<String, McpError> {
+        windows_secrets::load(key)
+    }
+    fn store(&self, key: &str, value: &str) -> Result<(), McpError> {
+        windows_secrets::store(key, value)
+    }
+    fn delete(&self, key: &str) -> Result<(), McpError> {
+        windows_secrets::delete(key)
+    }
+}
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 impl Secrets for Keychain {
     fn load(&self, _: &str) -> Result<String, McpError> {
         Err(error(

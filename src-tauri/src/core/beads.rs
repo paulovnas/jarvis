@@ -1,6 +1,6 @@
 //! Project-scoped durable tasks using the private bd binary and embedded Dolt.
-mod process;
 pub mod dashboard;
+mod process;
 mod tools;
 use super::{ComponentId, CoreError};
 use fs2::FileExt;
@@ -96,13 +96,19 @@ impl Beads {
             .open(path)?;
         let timeout = tokio::time::sleep(std::time::Duration::from_secs(120));
         tokio::pin!(timeout);
+        // A contended try-lock surfaces differently per platform: EWOULDBLOCK on
+        // Unix (ErrorKind::WouldBlock) but ERROR_LOCK_VIOLATION on Windows, which
+        // Rust reports as Uncategorized. Match the raw code fs2 itself documents
+        // for contention so the retry loop runs everywhere instead of failing the
+        // first time two conversations touch the same tracker.
+        let contended = fs2::lock_contended_error().raw_os_error();
         loop {
             if *signal.borrow() {
                 return Err(super::cancelled_error());
             }
             match FileExt::try_lock_exclusive(&file) {
                 Ok(()) => return Ok(file),
-                Err(cause) if cause.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(cause) if Some(cause.raw_os_error()) == Some(contended) => {}
                 Err(_) => return Err(failure("Não foi possível bloquear o banco de tarefas.")),
             }
             tokio::select! {

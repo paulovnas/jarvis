@@ -33,9 +33,9 @@ url = "2.5"
 tauri-plugin-dialog = "2"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs", "net"] }
 libc = "0.2.189"
-rmcp = { version = "3.2.0", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+rmcp = { version = "3.2.0", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client-reqwest", "reqwest"] }
 jsonschema = { version = "0.53.0", default-features = false }
-process-wrap = { version = "9.1.0", default-features = false, features = ["tokio1", "process-group", "kill-on-drop"] }
+process-wrap = { version = "10.0.0", default-features = false, features = ["tokio1", "process-group", "job-object", "kill-on-drop", "creation-flags"] }
 similar = "2.7"
 serde_yaml_ng = "0.10"
 regex = "1"
@@ -50,6 +50,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 pdf-extract = "0.12"
 quick-xml = "0.42"
 time = { version = "0.3.55", default-features = false, features = ["parsing"] }
+portable-pty = "0.9"
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "3.7", default-features = false }
 objc2 = "0.6"
@@ -59,3 +60,11 @@ block2 = "0.6"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify-rust = "4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows = { version = "0.61", features = ["UI_Notifications", "Win32_System_WinRT", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_UI_Shell_PropertiesSystem", "Win32_Storage_EnhancedStorage"] }
+windows-registry = "0.6"
+
+[target.'cfg(windows)'.dev-dependencies]
+junction = "2.0.0"

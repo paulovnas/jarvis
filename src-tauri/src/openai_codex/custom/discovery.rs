@@ -81,11 +81,11 @@ fn parse(catalog: &Value, id: &str, protocol: Protocol) -> Result<DiscoveredMode
     // Intersect its wire vocabulary with the catalog rather than inventing levels
     // or token budgets: /docs/api/api-reference/anthropic-messages/create-a-message
     if protocol == Protocol::AnthropicMessages {
-        levels.retain(|level| matches!(level.as_str(), "low" | "medium" | "high" | "xhigh" | "max"));
+        levels
+            .retain(|level| matches!(level.as_str(), "low" | "medium" | "high" | "xhigh" | "max"));
     }
     // A list of supported parameters is not a list of supported effort values.
-    let reasoning = if !levels.is_empty()
-        && (supports("reasoning") || supports("reasoning_effort"))
+    let reasoning = if !levels.is_empty() && (supports("reasoning") || supports("reasoning_effort"))
     {
         if info["mandatory"] == false && !levels.iter().any(|l| l == "off") {
             levels.insert(0, "off".into());
@@ -210,7 +210,13 @@ mod tests {
     #[ignore = "Reads only the public OpenRouter catalog for an explicitly selected model"]
     async fn live_openrouter_metadata() {
         let id = std::env::var("JARVIS_CUSTOM_MODEL_ID").expect("Select an exact catalog ID");
-        let result = lookup_custom_model("https://openrouter.ai/api/v1".into(), id.clone(), Protocol::OpenaiCompletions).await.unwrap();
+        let result = lookup_custom_model(
+            "https://openrouter.ai/api/v1".into(),
+            id.clone(),
+            Protocol::OpenaiCompletions,
+        )
+        .await
+        .unwrap();
         assert_eq!(result.model.id, id);
         assert!(result.model.context_window > result.model.max_output_tokens);
         assert!(result.model.supports_tools);
@@ -265,7 +271,11 @@ mod tests {
         let mut catalog = fixture();
         catalog["data"][0]["reasoning"]["mandatory"] = Value::Bool(true);
         catalog["data"][0]["reasoning"]["default_effort"] = Value::String("max".into());
-        for protocol in [Protocol::OpenaiCompletions, Protocol::OpenaiResponses, Protocol::AnthropicMessages] {
+        for protocol in [
+            Protocol::OpenaiCompletions,
+            Protocol::OpenaiResponses,
+            Protocol::AnthropicMessages,
+        ] {
             let model = parse(&catalog, "vendor/model", protocol).unwrap().model;
             assert_eq!(model.reasoning_levels, vec!["max", "high", "low"]);
             assert_eq!(model.default_reasoning_level.as_deref(), Some("max"));
@@ -278,13 +288,21 @@ mod tests {
     #[test]
     fn messages_filters_unsupported_wire_efforts_and_preserves_explicit_disabled_default() {
         let mut catalog = fixture();
-        catalog["data"][0]["reasoning"]["supported_efforts"] = json!(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+        catalog["data"][0]["reasoning"]["supported_efforts"] =
+            json!(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
         catalog["data"][0]["reasoning"]["default_enabled"] = Value::Bool(false);
-        let model = parse(&catalog, "vendor/model", Protocol::AnthropicMessages).unwrap().model;
-        assert_eq!(model.reasoning_levels, vec!["off", "low", "medium", "high", "xhigh", "max"]);
+        let model = parse(&catalog, "vendor/model", Protocol::AnthropicMessages)
+            .unwrap()
+            .model;
+        assert_eq!(
+            model.reasoning_levels,
+            vec!["off", "low", "medium", "high", "xhigh", "max"]
+        );
         assert_eq!(model.default_reasoning_level.as_deref(), Some("off"));
         catalog["data"][0]["reasoning"]["supported_efforts"] = json!(["minimal", "ultra"]);
-        let model = parse(&catalog, "vendor/model", Protocol::AnthropicMessages).unwrap().model;
+        let model = parse(&catalog, "vendor/model", Protocol::AnthropicMessages)
+            .unwrap()
+            .model;
         assert_eq!(model.reasoning, Reasoning::None);
         assert!(model.reasoning_levels.is_empty());
         assert_eq!(model.default_reasoning_level, None);

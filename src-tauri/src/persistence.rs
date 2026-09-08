@@ -61,9 +61,18 @@ const MIGRATIONS: &[Migration] = &[
         version: 13,
         sql: include_str!("../../drizzle/0012_sudden_nehzno.sql"),
     },
-    Migration { version: 14, sql: include_str!("../../drizzle/0013_context7_core.sql") },
-    Migration { version: 15, sql: include_str!("../../drizzle/0014_image_generation.sql") },
-    Migration { version: 16, sql: include_str!("../../drizzle/0015_unread_conversations.sql") },
+    Migration {
+        version: 14,
+        sql: include_str!("../../drizzle/0013_context7_core.sql"),
+    },
+    Migration {
+        version: 15,
+        sql: include_str!("../../drizzle/0014_image_generation.sql"),
+    },
+    Migration {
+        version: 16,
+        sql: include_str!("../../drizzle/0015_unread_conversations.sql"),
+    },
 ];
 
 #[test]
@@ -288,7 +297,15 @@ pub(crate) fn insert_provider_account(
     connection.execute(
         "INSERT INTO provider_accounts (alias, provider_kind, account_id)
          VALUES (?1, ?3, ?2)",
-        params![alias, account_id, if alias.starts_with("antigravity-") { "antigravity" } else { "openai-codex" }],
+        params![
+            alias,
+            account_id,
+            if alias.starts_with("antigravity-") {
+                "antigravity"
+            } else {
+                "openai-codex"
+            }
+        ],
     )?;
     connection
         .query_row(
@@ -337,22 +354,45 @@ pub(crate) fn require_enabled_account(
     }
 }
 
-fn complete_app_config(connection: &mut Connection, workspace_name: &str) -> Result<AppConfig, PersistenceError> {
+fn complete_app_config(
+    connection: &mut Connection,
+    workspace_name: &str,
+) -> Result<AppConfig, PersistenceError> {
     let transaction = connection.transaction()?;
     let existing = read_app_config(&transaction)?;
-    if existing.onboarding_completed { return Ok(existing); }
+    if existing.onboarding_completed {
+        return Ok(existing);
+    }
     let name = workspace_name.trim();
     let name = if name.is_empty() { "Pessoal" } else { name };
-    if name.chars().count() > 120 || name.chars().any(char::is_control) { return Err(PersistenceError::new("Informe um nome de até 120 caracteres, sem quebras de linha.")); }
-    if !transaction.query_row("SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE enabled = 1)", [], |row| row.get::<_, bool>(0))? {
-        return Err(PersistenceError::new("Conecte um provedor antes de começar."));
+    if name.chars().count() > 120 || name.chars().any(char::is_control) {
+        return Err(PersistenceError::new(
+            "Informe um nome de até 120 caracteres, sem quebras de linha.",
+        ));
     }
-    let workspace: Option<String> = transaction.query_row("SELECT id FROM workspaces WHERE name = ?1", [name], |row| row.get(0)).optional()?;
+    if !transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE enabled = 1)",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Err(PersistenceError::new(
+            "Conecte um provedor antes de começar.",
+        ));
+    }
+    let workspace: Option<String> = transaction
+        .query_row("SELECT id FROM workspaces WHERE name = ?1", [name], |row| {
+            row.get(0)
+        })
+        .optional()?;
     let workspace = match workspace {
         Some(id) => id,
         None => {
-            let id = crate::library::new_id().map_err(|_| PersistenceError::new("Não foi possível criar o workspace."))?;
-            transaction.execute("INSERT INTO workspaces(id, name) VALUES (?1, ?2)", params![id, name])?;
+            let id = crate::library::new_id()
+                .map_err(|_| PersistenceError::new("Não foi possível criar o workspace."))?;
+            transaction.execute(
+                "INSERT INTO workspaces(id, name) VALUES (?1, ?2)",
+                params![id, name],
+            )?;
             id
         }
     };
@@ -397,9 +437,16 @@ impl AppState {
         self.with_connection(home_dir, |connection| read_app_config(connection))
     }
 
-    fn complete_onboarding(&self, home_dir: &Path, workspace_name: &str) -> Result<AppConfig, PersistenceError> {
-        crate::core::require_ready(home_dir).map_err(|cause| PersistenceError::new(cause.message))?;
-        self.with_connection(home_dir, |connection| complete_app_config(connection, workspace_name))
+    fn complete_onboarding(
+        &self,
+        home_dir: &Path,
+        workspace_name: &str,
+    ) -> Result<AppConfig, PersistenceError> {
+        crate::core::require_ready(home_dir)
+            .map_err(|cause| PersistenceError::new(cause.message))?;
+        self.with_connection(home_dir, |connection| {
+            complete_app_config(connection, workspace_name)
+        })
     }
 
     pub(crate) fn list_provider_accounts(
@@ -407,6 +454,17 @@ impl AppState {
         home_dir: &Path,
     ) -> Result<Vec<ProviderAccountRecord>, PersistenceError> {
         self.with_connection(home_dir, |connection| list_provider_accounts(connection))
+    }
+
+    // Drop the cached SQLite handle. Tests use it before remove_dir_all so NTFS
+    // releases the .db file even when detached OAuth threads still hold Arc
+    // clones of this state. Production never needs it: closing a Jarvis session
+    // drops the whole process.
+    #[cfg(test)]
+    pub(crate) fn close(&self) {
+        if let Ok(mut guard) = self.connection.lock() {
+            *guard = None;
+        }
     }
 }
 
@@ -435,51 +493,110 @@ pub async fn complete_onboarding(
         PersistenceError::new(format!("Unable to resolve home directory: {error}"))
     })?;
     let state = state.inner().clone();
-    if state.get_app_config(&home_dir)?.onboarding_completed { return state.get_app_config(&home_dir); }
-    let accounts = crate::openai_codex::list_provider_accounts(app.clone(), app.state(), app.state()).await
-        .map_err(|_| PersistenceError::new("Não foi possível verificar os provedores. Tente novamente."))?;
-    if !accounts.iter().any(|account| account.enabled && account.models_available && !account.models.is_empty()) {
-        return Err(PersistenceError::new("Conecte um provedor com modelos disponíveis antes de começar."));
+    if state.get_app_config(&home_dir)?.onboarding_completed {
+        return state.get_app_config(&home_dir);
     }
-    tauri::async_runtime::spawn_blocking(move || state.complete_onboarding(&home_dir, &workspace_name))
-        .await
-        .map_err(|error| PersistenceError::new(format!("Database task failed: {error}")))?
+    let accounts =
+        crate::openai_codex::list_provider_accounts(app.clone(), app.state(), app.state())
+            .await
+            .map_err(|_| {
+                PersistenceError::new("Não foi possível verificar os provedores. Tente novamente.")
+            })?;
+    if !accounts
+        .iter()
+        .any(|account| account.enabled && account.models_available && !account.models.is_empty())
+    {
+        return Err(PersistenceError::new(
+            "Conecte um provedor com modelos disponíveis antes de começar.",
+        ));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        state.complete_onboarding(&home_dir, &workspace_name)
+    })
+    .await
+    .map_err(|error| PersistenceError::new(format!("Database task failed: {error}")))?
 }
 
 #[cfg(test)]
 mod tests {
-#[test]
-fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
-    let mut db = Connection::open_in_memory().unwrap();
-    for migration in super::MIGRATIONS.iter().take(11) { db.execute_batch(migration.sql).unwrap(); }
-    db.pragma_update(None, "user_version", 11).unwrap();
-    db.execute("INSERT INTO web_search_config (id, account_alias) VALUES (1, NULL)", []).unwrap();
-    db.execute("INSERT INTO provider_accounts (alias, provider_kind, account_id) VALUES ('antigravity-personal', 'antigravity', 'account')", []).unwrap();
-    db.execute("INSERT INTO vision_config (id, account_alias, model) VALUES (1, 'antigravity-personal', 'gemini-3.8-flash')", []).unwrap();
-    crate::persistence::initialize_database(&mut db).unwrap();
-    assert!(db.query_row("SELECT inherit_chat FROM web_search_config WHERE id = 1", [], |row| row.get::<_, bool>(0)).unwrap());
-    let preserved: (bool, String) = db.query_row("SELECT inherit_chat, model FROM vision_config", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
-    assert_eq!(preserved, (false, "gemini-3.8-flash".into()));
-}
+    #[test]
+    fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
+        let mut db = Connection::open_in_memory().unwrap();
+        for migration in super::MIGRATIONS.iter().take(11) {
+            db.execute_batch(migration.sql).unwrap();
+        }
+        db.pragma_update(None, "user_version", 11).unwrap();
+        db.execute(
+            "INSERT INTO web_search_config (id, account_alias) VALUES (1, NULL)",
+            [],
+        )
+        .unwrap();
+        db.execute("INSERT INTO provider_accounts (alias, provider_kind, account_id) VALUES ('antigravity-personal', 'antigravity', 'account')", []).unwrap();
+        db.execute("INSERT INTO vision_config (id, account_alias, model) VALUES (1, 'antigravity-personal', 'gemini-3.8-flash')", []).unwrap();
+        crate::persistence::initialize_database(&mut db).unwrap();
+        assert!(db
+            .query_row(
+                "SELECT inherit_chat FROM web_search_config WHERE id = 1",
+                [],
+                |row| row.get::<_, bool>(0)
+            )
+            .unwrap());
+        let preserved: (bool, String) = db
+            .query_row("SELECT inherit_chat, model FROM vision_config", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(preserved, (false, "gemini-3.8-flash".into()));
+    }
 
     #[test]
     fn antigravity_migration_preserves_codex_accounts_and_search_selection() {
         let mut connection = rusqlite::Connection::open_in_memory().unwrap();
-        connection.pragma_update(None, "foreign_keys", true).unwrap();
-        for migration in super::MIGRATIONS.iter().take(7) { connection.execute_batch(migration.sql).unwrap(); }
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .unwrap();
+        for migration in super::MIGRATIONS.iter().take(7) {
+            connection.execute_batch(migration.sql).unwrap();
+        }
         connection.pragma_update(None, "user_version", 7).unwrap();
         connection.execute("INSERT INTO provider_accounts(alias, provider_kind, account_id) VALUES ('openai-codex-old','openai-codex','account-old')", []).unwrap();
-        connection.execute("UPDATE provider_accounts SET enabled=0", []).unwrap();
-        connection.execute("INSERT INTO web_search_config (id,account_alias) VALUES (1,'openai-codex-old')", []).unwrap();
+        connection
+            .execute("UPDATE provider_accounts SET enabled=0", [])
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO web_search_config (id,account_alias) VALUES (1,'openai-codex-old')",
+                [],
+            )
+            .unwrap();
         super::initialize_database(&mut connection).unwrap();
-        let accounts=super::list_provider_accounts(&connection).unwrap();
-        assert_eq!(accounts.len(),1); assert_eq!(accounts[0].alias,"openai-codex-old"); assert!(!accounts[0].enabled);
-        assert_eq!(connection.query_row("SELECT account_alias FROM web_search_config", [], |row|row.get::<_,String>(0)).unwrap(),"openai-codex-old");
-        super::insert_provider_account(&connection,"antigravity-new","google:123").unwrap();
-        assert_eq!(super::list_provider_accounts(&connection).unwrap().len(),2);
-        assert_eq!(connection.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row|row.get::<_,i64>(0)).unwrap(),0);
-        super::delete_provider_account(&connection,"openai-codex-old").unwrap();
-        assert!(connection.query_row("SELECT account_alias FROM web_search_config", [], |row|row.get::<_,Option<String>>(0)).unwrap().is_none());
+        let accounts = super::list_provider_accounts(&connection).unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].alias, "openai-codex-old");
+        assert!(!accounts[0].enabled);
+        assert_eq!(
+            connection
+                .query_row("SELECT account_alias FROM web_search_config", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "openai-codex-old"
+        );
+        super::insert_provider_account(&connection, "antigravity-new", "google:123").unwrap();
+        assert_eq!(super::list_provider_accounts(&connection).unwrap().len(), 2);
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
+        super::delete_provider_account(&connection, "openai-codex-old").unwrap();
+        assert!(connection
+            .query_row("SELECT account_alias FROM web_search_config", [], |row| row
+                .get::<_, Option<String>>(0))
+            .unwrap()
+            .is_none());
     }
     use super::*;
 
@@ -551,7 +668,13 @@ fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
                 onboarding_completed: true,
             }
         );
-        assert_eq!(connection.query_row("SELECT count(*) FROM workspaces", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM workspaces", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
         assert_eq!(connection.query_row("SELECT name FROM workspaces JOIN navigation_selection ON workspaces.id = navigation_selection.workspace_id", [], |row| row.get::<_, String>(0)).unwrap(), "Meu espaço");
     }
 
@@ -562,20 +685,44 @@ fn tool_migration_preserves_explicit_models_and_inherits_unconfigured_tools() {
         connection.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('test','openai-codex','test')", []).unwrap();
         assert!(complete_app_config(&mut connection, "bad\nname").is_err());
         assert!(!read_app_config(&connection).unwrap().onboarding_completed);
-        assert_eq!(connection.query_row("SELECT count(*) FROM workspaces", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM workspaces", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
         complete_app_config(&mut connection, " ").unwrap();
-        assert_eq!(connection.query_row("SELECT name FROM workspaces", [], |row| row.get::<_, String>(0)).unwrap(), "Pessoal");
+        assert_eq!(
+            connection
+                .query_row("SELECT name FROM workspaces", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "Pessoal"
+        );
     }
 
     #[test]
     fn context7_migration_removes_only_unconfigured_seed() {
         for configured in [false, true] {
             let mut db = Connection::open_in_memory().unwrap();
-            for migration in MIGRATIONS.iter().take(13) { db.execute_batch(migration.sql).unwrap(); }
+            for migration in MIGRATIONS.iter().take(13) {
+                db.execute_batch(migration.sql).unwrap();
+            }
             db.pragma_update(None, "user_version", 13).unwrap();
-            db.execute("UPDATE mcp_servers SET configured = ?1 WHERE id = 'builtin-context7'", [configured]).unwrap();
+            db.execute(
+                "UPDATE mcp_servers SET configured = ?1 WHERE id = 'builtin-context7'",
+                [configured],
+            )
+            .unwrap();
             initialize_database(&mut db).unwrap();
-            let count = db.query_row("SELECT count(*) FROM mcp_servers WHERE id = 'builtin-context7'", [], |row| row.get::<_, i64>(0)).unwrap();
+            let count = db
+                .query_row(
+                    "SELECT count(*) FROM mcp_servers WHERE id = 'builtin-context7'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap();
             assert_eq!(count, i64::from(configured));
         }
     }

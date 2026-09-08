@@ -22,7 +22,13 @@ pub(crate) fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
     // Tauri's first application item is its native About panel.
     application.remove_at(0)?;
     application.insert(&about, 0)?;
-    let settings = MenuItem::with_id(app, SETTINGS_ID, "Configurações…", true, Some("CmdOrCtrl+,"))?;
+    let settings = MenuItem::with_id(
+        app,
+        SETTINGS_ID,
+        "Configurações…",
+        true,
+        Some("CmdOrCtrl+,"),
+    )?;
     application.insert(&settings, 1)?;
     app.set_menu(menu)?;
     app.on_menu_event(|app, event| {

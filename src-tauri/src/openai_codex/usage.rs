@@ -53,6 +53,13 @@ struct Cached {
 #[derive(Default)]
 pub(super) struct UsageCache(Mutex<HashMap<String, Arc<Mutex<Cached>>>>);
 impl UsageCache {
+    pub(super) fn invalidate(&self, alias: &str) {
+        if let Ok(mut entries) = self.0.lock() {
+            let prefix = format!("{alias}/");
+            entries.retain(|key, _| !key.starts_with(&prefix));
+        }
+    }
+
     fn entry(&self, record: &ProviderAccountRecord) -> Result<Arc<Mutex<Cached>>, ProviderError> {
         let key = format!(
             "{}/{}/{}",

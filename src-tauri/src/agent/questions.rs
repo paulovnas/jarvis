@@ -1,4 +1,6 @@
-use super::{cancelled, journal, next_revision, AgentError, AgentState, ChatSnapshot, Session, ToolCall};
+use super::{
+    cancelled, journal, next_revision, AgentError, AgentState, ChatSnapshot, Session, ToolCall,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -67,15 +69,33 @@ fn parse_request(args: &Value) -> Result<Request, AgentError> {
     }
     let mut ids = HashSet::new();
     for question in &request.questions {
-        if !bounded(&question.id, 64) || !ids.insert(&question.id)
-            || !bounded(&question.question, 1000) || question.options.len() > 6 {
-            return Err(invalid("Perguntas devem ter identificadores únicos, texto curto e até seis opções."));
+        if !bounded(&question.id, 64)
+            || !ids.insert(&question.id)
+            || !bounded(&question.question, 1000)
+            || question.options.len() > 6
+        {
+            return Err(invalid(
+                "Perguntas devem ter identificadores únicos, texto curto e até seis opções.",
+            ));
         }
         let mut labels = HashSet::new();
         for option in &question.options {
-            if option.preview.as_ref().is_some_and(|preview| !preview.valid()) { return Err(invalid("Prévia visual inválida. Verifique os limites e o formato.")); }
-            if !bounded(&option.label, 200) || !labels.insert(option.label.trim())
-                || option.description.as_ref().is_some_and(|text| text.chars().count() > 500) {
+            if option
+                .preview
+                .as_ref()
+                .is_some_and(|preview| !preview.valid())
+            {
+                return Err(invalid(
+                    "Prévia visual inválida. Verifique os limites e o formato.",
+                ));
+            }
+            if !bounded(&option.label, 200)
+                || !labels.insert(option.label.trim())
+                || option
+                    .description
+                    .as_ref()
+                    .is_some_and(|text| text.chars().count() > 500)
+            {
                 return Err(invalid("As opções devem ser curtas e distintas."));
             }
         }
@@ -84,21 +104,36 @@ fn parse_request(args: &Value) -> Result<Request, AgentError> {
 }
 fn validate_response(request: &PendingQuestion, response: &Response) -> Result<(), AgentError> {
     if response.cancelled {
-        return if response.answers.is_empty() { Ok(()) } else { Err(invalid("Uma solicitação cancelada não pode conter respostas.")) };
+        return if response.answers.is_empty() {
+            Ok(())
+        } else {
+            Err(invalid(
+                "Uma solicitação cancelada não pode conter respostas.",
+            ))
+        };
     }
     if response.answers.len() != request.questions.len() {
         return Err(invalid("Responda todas as perguntas antes de enviar."));
     }
     let mut ids = HashSet::new();
     for answer in &response.answers {
-        let question = request.questions.iter().find(|question| question.id == answer.id)
+        let question = request
+            .questions
+            .iter()
+            .find(|question| question.id == answer.id)
             .ok_or_else(|| invalid("Esta resposta não corresponde às perguntas abertas."))?;
         if !ids.insert(&answer.id) || !bounded(&answer.value, 4000) {
-            return Err(invalid("Cada pergunta precisa de uma resposta válida, com até 4.000 caracteres."));
+            return Err(invalid(
+                "Cada pergunta precisa de uma resposta válida, com até 4.000 caracteres.",
+            ));
         }
         if let Some(label) = &answer.selected_label {
-            if answer.value != *label || !question.options.iter().any(|option| option.label == *label) {
-                return Err(invalid("A opção escolhida não foi oferecida nesta pergunta."));
+            if answer.value != *label
+                || !question.options.iter().any(|option| option.label == *label)
+            {
+                return Err(invalid(
+                    "A opção escolhida não foi oferecida nesta pergunta.",
+                ));
             }
         }
     }
@@ -128,15 +163,26 @@ pub(super) fn definition() -> Value {
 pub(super) fn cancelled_output() -> String {
     json!({"cancelled": true, "answers": []}).to_string()
 }
-pub(super) async fn execute(session: &Session, tool: &ToolCall, mut signal: watch::Receiver<bool>) -> Result<String, AgentError> {
+pub(super) async fn execute(
+    session: &Session,
+    tool: &ToolCall,
+    mut signal: watch::Receiver<bool>,
+) -> Result<String, AgentError> {
     let request = parse_request(&tool.args)?;
-    if *signal.borrow() { return Err(AgentError::cancelled()); }
+    if *signal.borrow() {
+        return Err(AgentError::cancelled());
+    }
     let (reply, received) = oneshot::channel();
     session.update(true, |data| {
         if let Some(active) = &mut data.active {
             active.question = Some(Pending {
-                request: PendingQuestion { turn_id: active.id.clone(), tool_id: tool.id.clone(), questions: request.questions },
-                started: std::time::Instant::now(), reply,
+                request: PendingQuestion {
+                    turn_id: active.id.clone(),
+                    tool_id: tool.id.clone(),
+                    questions: request.questions,
+                },
+                started: std::time::Instant::now(),
+                reply,
             });
         }
     })?;
@@ -148,39 +194,74 @@ pub(super) async fn execute(session: &Session, tool: &ToolCall, mut signal: watc
 }
 #[tauri::command]
 pub fn answer_agent_question(
-    agent: tauri::State<'_, AgentState>, conversation_id: String, turn_id: String,
-    tool_id: String, response: Response,
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+    turn_id: String,
+    tool_id: String,
+    response: Response,
 ) -> Result<ChatSnapshot, AgentError> {
     let session = agent.existing(&conversation_id)?;
     answer(&session, &turn_id, &tool_id, response)
 }
-pub(super) fn answer(session: &Session, turn_id: &str, tool_id: &str, response: Response) -> Result<ChatSnapshot, AgentError> {
+pub(super) fn answer(
+    session: &Session,
+    turn_id: &str,
+    tool_id: &str,
+    response: Response,
+) -> Result<ChatSnapshot, AgentError> {
     let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
-    if data.storage_failed { return Err(AgentError::storage()); }
-    let pending = data.active.as_ref()
+    if data.storage_failed {
+        return Err(AgentError::storage());
+    }
+    let pending = data
+        .active
+        .as_ref()
         .filter(|active| active.id == turn_id && !*active.cancel.borrow())
         .and_then(|active| active.question.as_ref())
         .filter(|pending| pending.request.tool_id == tool_id)
-        .ok_or_else(|| AgentError::new("stale_question", "Esta solicitação de perguntas não está mais ativa."))?;
+        .ok_or_else(|| {
+            AgentError::new(
+                "stale_question",
+                "Esta solicitação de perguntas não está mais ativa.",
+            )
+        })?;
     validate_response(&pending.request, &response)?;
     let output = serde_json::to_string(&response).map_err(|_| AgentError::internal())?;
     let elapsed = pending.started.elapsed().as_millis() as u64;
     // Acknowledge only after both the visible answer and provider result are durable.
-    let mut current = data.turns.last().filter(|turn| turn.turn.id == turn_id).cloned().ok_or_else(AgentError::internal)?;
-    let tool = current.turn.steps.iter_mut().flat_map(|step| &mut step.tools)
-        .find(|tool| tool.id == tool_id && tool.name == "ask_user").ok_or_else(AgentError::internal)?;
+    let mut current = data
+        .turns
+        .last()
+        .filter(|turn| turn.turn.id == turn_id)
+        .cloned()
+        .ok_or_else(AgentError::internal)?;
+    let tool = current
+        .turn
+        .steps
+        .iter_mut()
+        .flat_map(|step| &mut step.tools)
+        .find(|tool| tool.id == tool_id && tool.name == "ask_user")
+        .ok_or_else(AgentError::internal)?;
     tool.output = output.clone();
     tool.status = "completed".into();
     tool.duration_ms = elapsed;
-    current.wire.push(json!({"type":"function_call_output", "call_id":tool_id, "output":output}));
+    current
+        .wire
+        .push(json!({"type":"function_call_output", "call_id":tool_id, "output":output}));
     if journal::append(&session.journal, &current).is_err() {
         data.storage_failed = true;
-        if let Some(active) = &data.active { let _ = active.cancel.send(true); }
+        if let Some(active) = &data.active {
+            let _ = active.cancel.send(true);
+        }
         return Err(AgentError::storage());
     }
     *data.turns.last_mut().ok_or_else(AgentError::internal)? = current;
-    let pending = data.active.as_mut().and_then(|active| active.question.take()).ok_or_else(AgentError::internal)?;
-        data.revision = next_revision();
+    let pending = data
+        .active
+        .as_mut()
+        .and_then(|active| active.question.take())
+        .ok_or_else(AgentError::internal)?;
+    data.revision = next_revision();
     let snapshot = session.snapshot_data(&data);
     drop(data);
     (session.emit)(snapshot.clone());

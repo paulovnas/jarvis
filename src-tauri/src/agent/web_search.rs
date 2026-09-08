@@ -21,17 +21,34 @@ pub struct Config {
 }
 
 impl Default for Config {
-    fn default() -> Self { Self { inherit_chat: true, account_alias: None, model: None } }
+    fn default() -> Self {
+        Self {
+            inherit_chat: true,
+            account_alias: None,
+            model: None,
+        }
+    }
 }
 impl Config {
     pub(super) fn resolve(&self, options: &TurnOptions) -> Self {
-        if self.inherit_chat { Self { inherit_chat: false, account_alias: Some(options.account.clone()), model: Some(options.model.clone()) } }
-        else { self.clone() }
+        if self.inherit_chat {
+            Self {
+                inherit_chat: false,
+                account_alias: Some(options.account.clone()),
+                model: Some(options.model.clone()),
+            }
+        } else {
+            self.clone()
+        }
     }
 }
 fn account_kind(state: &AppState, home: &Path, alias: &str) -> Result<String, AgentError> {
     crate::persistence::require_enabled_account(state, home, alias)?;
-    state.list_provider_accounts(home)?.into_iter().find(|record| record.alias == alias).map(|record| record.provider_kind)
+    state
+        .list_provider_accounts(home)?
+        .into_iter()
+        .find(|record| record.alias == alias)
+        .map(|record| record.provider_kind)
         .ok_or_else(|| AgentError::new("web_search_account", "Conta indisponível."))
 }
 pub(super) fn supports(kind: &str, model: &str) -> bool {
@@ -40,9 +57,13 @@ pub(super) fn supports(kind: &str, model: &str) -> bool {
 pub(super) fn enabled(state: &AppState, home: &Path, options: &TurnOptions) -> bool {
     load(state, home).is_ok_and(|config| {
         let selected = config.resolve(options);
-        selected.account_alias.as_deref().zip(selected.model.as_deref()).is_some_and(|(alias, model)| {
-            account_kind(state, home, alias).is_ok_and(|kind| supports(&kind, model))
-        })
+        selected
+            .account_alias
+            .as_deref()
+            .zip(selected.model.as_deref())
+            .is_some_and(|(alias, model)| {
+                account_kind(state, home, alias).is_ok_and(|kind| supports(&kind, model))
+            })
     })
 }
 
@@ -58,10 +79,23 @@ fn read_config(connection: &Connection) -> Result<Config, AgentError> {
         .query_row(
             "SELECT account_alias, model, inherit_chat FROM web_search_config WHERE id = 1",
             [],
-            |row| { let account_alias: Option<String> = row.get(0)?; let model = if account_alias.is_some() { row.get(1)? } else { None }; Ok(Config { account_alias, model, inherit_chat: row.get(2)? }) },
+            |row| {
+                let account_alias: Option<String> = row.get(0)?;
+                let model = if account_alias.is_some() {
+                    row.get(1)?
+                } else {
+                    None
+                };
+                Ok(Config {
+                    account_alias,
+                    model,
+                    inherit_chat: row.get(2)?,
+                })
+            },
         )
         .optional()
-        .map_err(|_| storage_error()).map(|value| value.unwrap_or_default())
+        .map_err(|_| storage_error())
+        .map(|value| value.unwrap_or_default())
 }
 
 pub(super) fn load(state: &AppState, home: &Path) -> Result<Config, AgentError> {
@@ -92,7 +126,11 @@ fn save_config(
         params![account_alias, model, inherit_chat],
     ).map_err(|_| storage_error())?;
     transaction.commit().map_err(|_| storage_error())?;
-    Ok(Config { account_alias, model, inherit_chat })
+    Ok(Config {
+        account_alias,
+        model,
+        inherit_chat,
+    })
 }
 
 #[tauri::command]
@@ -122,13 +160,24 @@ pub async fn set_web_search_config(
         let account_alias = if inherit_chat { None } else { account_alias };
         let model = if let Some(alias) = &account_alias {
             let kind = account_kind(&state, &home, alias)?;
-            if !model.as_deref().is_some_and(|model| supports(&kind, model)) { return Err(AgentError::new("web_search_model", "O modelo não oferece pesquisa nativa.")); }
-            let model = model.ok_or_else(|| AgentError::new("web_search_model", "Selecione o modelo de Web Search."))?;
+            if !model.as_deref().is_some_and(|model| supports(&kind, model)) {
+                return Err(AgentError::new(
+                    "web_search_model",
+                    "O modelo não oferece pesquisa nativa.",
+                ));
+            }
+            let model = model.ok_or_else(|| {
+                AgentError::new("web_search_model", "Selecione o modelo de Web Search.")
+            })?;
             let (_, models) = oauth.credential_and_models(&state, &home, alias)?;
             require_search_model(&models, &model)?;
             Some(model)
-        } else { None };
-        state.with_connection(&home, |connection| save_config(connection, account_alias, model, inherit_chat))
+        } else {
+            None
+        };
+        state.with_connection(&home, |connection| {
+            save_config(connection, account_alias, model, inherit_chat)
+        })
     })
     .await
     .map_err(|_| storage_error())?
@@ -210,7 +259,16 @@ pub(super) async fn execute(
             )
         })?;
         let kind = account_kind(state, home, &alias)?;
-        if !config.model.as_deref().is_some_and(|model| supports(&kind, model)) { return Err(AgentError::new("web_search_model", "O modelo não oferece pesquisa nativa. Selecione outro em Ferramentas.")); }
+        if !config
+            .model
+            .as_deref()
+            .is_some_and(|model| supports(&kind, model))
+        {
+            return Err(AgentError::new(
+                "web_search_model",
+                "O modelo não oferece pesquisa nativa. Selecione outro em Ferramentas.",
+            ));
+        }
         let auth_state = state.clone();
         let auth_oauth = oauth.clone();
         let auth_home = home.to_path_buf();
@@ -220,7 +278,9 @@ pub(super) async fn execute(
         })
         .await
         .map_err(|_| AgentError::internal())??;
-        let model = config.model.as_deref().ok_or_else(|| AgentError::new("web_search_model", "Selecione o modelo de Web Search."))?;
+        let model = config.model.as_deref().ok_or_else(|| {
+            AgentError::new("web_search_model", "Selecione o modelo de Web Search.")
+        })?;
         require_search_model(&models, model)?;
         // A disconnect or settings change while credentials were resolving must not
         // silently send a query through an account the user no longer selected.
@@ -232,7 +292,14 @@ pub(super) async fn execute(
         }
         crate::persistence::require_enabled_account(state, home, &alias)?;
         if kind == "antigravity" {
-            let response = provider::grounded_search(&credential, &crate::library::new_id()?, model, &args.query, signal.clone()).await?;
+            let response = provider::grounded_search(
+                &credential,
+                &crate::library::new_id()?,
+                model,
+                &args.query,
+                signal.clone(),
+            )
+            .await?;
             return format_result(&response, &alias, model, args.limit.unwrap_or(8));
         }
         let request = provider::authenticated_request(

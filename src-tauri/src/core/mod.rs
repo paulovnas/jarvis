@@ -1,12 +1,12 @@
 //! Jarvis-owned packages. Installation readiness is independent of provider setup.
-pub mod context;
 pub mod beads;
+pub mod context;
+pub mod context7;
+pub mod design;
+pub mod health;
 pub mod hooks;
 mod install;
 pub mod ponytail;
-pub mod design;
-pub mod context7;
-pub mod health;
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -28,7 +28,13 @@ pub enum ComponentId {
     Context7,
 }
 impl ComponentId {
-    pub const ALL: [Self; 5] = [Self::ContextMode, Self::Ponytail, Self::Beads, Self::OpenDesign, Self::Context7];
+    pub const ALL: [Self; 5] = [
+        Self::ContextMode,
+        Self::Ponytail,
+        Self::Beads,
+        Self::OpenDesign,
+        Self::Context7,
+    ];
     pub fn key(self) -> &'static str {
         match self {
             Self::ContextMode => "context-mode",
@@ -141,18 +147,23 @@ impl Installation {
         {
             return Err(error("Caminho inválido no registro do Core."));
         }
-        let path = fs::canonicalize(root(home).join(&self.directory))?;
+        let plain = root(home).join(&self.directory);
+        let path = fs::canonicalize(&plain)?;
         let base = fs::canonicalize(root(home))?;
         if !path.starts_with(&base) {
             return Err(error("O Core precisa estar dentro de ~/.jarvis."));
         }
         for file in &self.files {
-            let target = path.join(file);
-            if !target.is_file() || !fs::canonicalize(target)?.starts_with(&path) {
+            if !plain.join(file).is_file()
+                || !fs::canonicalize(plain.join(file))?.starts_with(&path)
+            {
                 return Err(error("Instalação incompleta. Reinstale o componente."));
             }
         }
-        Ok(path)
+        // Windows canonicalize() returns a \\?\ verbatim path: node cannot resolve
+        // module paths under it and CreateProcessW rejects its mixed separators.
+        // Containment was proven above, so callers receive the plain path.
+        Ok(plain)
     }
 }
 pub fn installed(home: &Path, id: ComponentId) -> Result<Installation, CoreError> {
@@ -172,7 +183,11 @@ pub fn require_ready(home: &Path) -> Result<(), CoreError> {
     for id in ComponentId::ALL {
         installed(home, id)?;
     }
-    if !context7::configured(home) { return Err(error("Configure a chave do Context7 em Ferramentas → Core.")); }
+    if !context7::configured(home) {
+        return Err(error(
+            "Configure a chave do Context7 em Ferramentas → Core.",
+        ));
+    }
     Ok(())
 }
 
@@ -227,11 +242,18 @@ pub struct CoreState {
     install_lock: Arc<tokio::sync::Mutex<()>>,
 }
 impl CoreState {
-    pub(crate) fn busy_for_update(&self) -> bool { self.install_lock.try_lock().is_err() }
+    pub(crate) fn busy_for_update(&self) -> bool {
+        self.install_lock.try_lock().is_err()
+    }
     pub fn require_ready(&self, home: &Path) -> Result<(), CoreError> {
         require_ready(home)?;
-        if self.snapshot(home)?.ready { Ok(()) }
-        else { Err(error("O Core precisa de atenção. Abra Diagnóstico e Reparo.")) }
+        if self.snapshot(home)?.ready {
+            Ok(())
+        } else {
+            Err(error(
+                "O Core precisa de atenção. Abra Diagnóstico e Reparo.",
+            ))
+        }
     }
     pub fn snapshot(&self, home: &Path) -> Result<Snapshot, CoreError> {
         let manifest_result = read_manifest(home);
@@ -246,7 +268,12 @@ impl CoreState {
                 let valid = validation.as_ref().is_some_and(|result| result.is_ok());
                 let latest = data.latest.get(&id).cloned();
                 let diagnostics = data.diagnostics.get(&id).cloned().unwrap_or_default();
-                let health_error = manifest_error.clone().or_else(|| diagnostics.iter().find(|c| !c.passed).map(|c| c.message.clone()));
+                let health_error = manifest_error.clone().or_else(|| {
+                    diagnostics
+                        .iter()
+                        .find(|c| !c.passed)
+                        .map(|c| c.message.clone())
+                });
                 CoreItem {
                     id,
                     name: id.name().into(),
@@ -254,7 +281,8 @@ impl CoreState {
                     installed_version: record.map(|r| r.version.clone()),
                     latest_version: latest.clone(),
                     installed: valid,
-                    configured: valid && (id != ComponentId::Context7 || context7::configured(home)),
+                    configured: valid
+                        && (id != ComponentId::Context7 || context7::configured(home)),
                     update_available: valid
                         && record
                             .zip(latest.as_ref())
@@ -273,7 +301,9 @@ impl CoreState {
             })
             .collect();
         Ok(Snapshot {
-            ready: items.iter().all(|i| i.installed && i.configured && i.health_error.is_none()),
+            ready: items
+                .iter()
+                .all(|i| i.installed && i.configured && i.health_error.is_none()),
             items,
             checking: data.checking,
         })
@@ -389,7 +419,8 @@ pub async fn install_core_component(
         id,
         |stage| core.stage(&app, &home, id, stage),
         |download| core.download(&app, id, download),
-    ).await;
+    )
+    .await;
     if let Ok(mut data) = core.data.lock() {
         data.stages.remove(&id);
         data.downloads.remove(&id);

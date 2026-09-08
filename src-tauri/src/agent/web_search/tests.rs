@@ -3,7 +3,14 @@ use crate::openai_codex::CodexCredential;
 use std::io::{Read, Write};
 
 fn options(account: &str, model: &str) -> TurnOptions {
-    TurnOptions { account: account.into(), model: model.into(), reasoning: None, mode: super::super::Mode::Plan, workflow: None, approval_mode: super::super::ApprovalMode::Yolo }
+    TurnOptions {
+        account: account.into(),
+        model: model.into(),
+        reasoning: None,
+        mode: super::super::Mode::Plan,
+        workflow: None,
+        approval_mode: super::super::ApprovalMode::Yolo,
+    }
 }
 
 #[test]
@@ -12,15 +19,33 @@ fn inheritance_uses_each_executing_agents_model_and_explicit_choices_stay_fixed(
     let root = options("openai-codex-chat", "gpt-5.6-sol");
     let child = options("antigravity-designer", "gemini-3.8-flash");
     assert_eq!(config.resolve(&root).model.as_deref(), Some("gpt-5.6-sol"));
-    assert_eq!(config.resolve(&child).account_alias.as_deref(), Some("antigravity-designer"));
-    assert_eq!(config.resolve(&child).model.as_deref(), Some("gemini-3.8-flash"));
-    let explicit = Config { inherit_chat: false, account_alias: Some("search".into()), model: Some("gpt-5.6-luna".into()) };
+    assert_eq!(
+        config.resolve(&child).account_alias.as_deref(),
+        Some("antigravity-designer")
+    );
+    assert_eq!(
+        config.resolve(&child).model.as_deref(),
+        Some("gemini-3.8-flash")
+    );
+    let explicit = Config {
+        inherit_chat: false,
+        account_alias: Some("search".into()),
+        model: Some("gpt-5.6-luna".into()),
+    };
     assert_eq!(explicit.resolve(&root), explicit.resolve(&child));
-    assert_eq!(Config { inherit_chat: false, account_alias: None, model: None }.resolve(&child).account_alias, None);
+    assert_eq!(
+        Config {
+            inherit_chat: false,
+            account_alias: None,
+            model: None
+        }
+        .resolve(&child)
+        .account_alias,
+        None
+    );
     assert!(supports("antigravity", "gemini-3.8-flash"));
     assert!(!supports("antigravity", "claude-opus"));
 }
-
 
 fn database() -> Connection {
     let mut connection = Connection::open_in_memory().unwrap();
@@ -35,7 +60,13 @@ fn database() -> Connection {
 fn default_inherited_selection_and_disconnect_are_persistent() {
     let mut db = database();
     assert_eq!(read_config(&db).unwrap(), Config::default());
-    save_config(&mut db, Some("openai-codex-search".into()), Some("gpt-5.6-luna".into()), false).unwrap();
+    save_config(
+        &mut db,
+        Some("openai-codex-search".into()),
+        Some("gpt-5.6-luna".into()),
+        false,
+    )
+    .unwrap();
     crate::persistence::initialize_database(&mut db).unwrap();
     assert_eq!(
         read_config(&db).unwrap().account_alias.as_deref(),
@@ -55,20 +86,46 @@ fn default_inherited_selection_and_disconnect_are_persistent() {
         [],
     )
     .unwrap();
-    assert_eq!(read_config(&db).unwrap(), Config { inherit_chat: false, account_alias: None, model: None });
+    assert_eq!(
+        read_config(&db).unwrap(),
+        Config {
+            inherit_chat: false,
+            account_alias: None,
+            model: None
+        }
+    );
 }
 
 #[test]
 fn invalid_accounts_do_not_replace_selection_and_off_is_explicit() {
     let mut db = database();
-    save_config(&mut db, Some("openai-codex-search".into()), Some("gpt-5.6-luna".into()), false).unwrap();
-    assert!(save_config(&mut db, Some("missing' OR 1 = 1 --".into()), Some("gpt-5.6-luna".into()), false).is_err());
+    save_config(
+        &mut db,
+        Some("openai-codex-search".into()),
+        Some("gpt-5.6-luna".into()),
+        false,
+    )
+    .unwrap();
+    assert!(save_config(
+        &mut db,
+        Some("missing' OR 1 = 1 --".into()),
+        Some("gpt-5.6-luna".into()),
+        false
+    )
+    .is_err());
     assert_eq!(
         read_config(&db).unwrap().account_alias.as_deref(),
         Some("openai-codex-search")
     );
     save_config(&mut db, None, None, false).unwrap();
-    assert_eq!(read_config(&db).unwrap(), Config { inherit_chat: false, account_alias: None, model: None });
+    assert_eq!(
+        read_config(&db).unwrap(),
+        Config {
+            inherit_chat: false,
+            account_alias: None,
+            model: None
+        }
+    );
 }
 
 #[test]
@@ -119,7 +176,9 @@ async fn disabled_search_never_resolves_credentials_or_uses_the_chat_account() {
         crate::library::new_id().unwrap()
     ));
     let state = AppState::default();
-    state.with_connection(&home, |db| save_config(db, None, None, false)).unwrap();
+    state
+        .with_connection(&home, |db| save_config(db, None, None, false))
+        .unwrap();
     let options = options("chat", "gpt-5.6-sol");
     let (_send, signal) = watch::channel(false);
     let result = execute(
@@ -132,6 +191,7 @@ async fn disabled_search_never_resolves_credentials_or_uses_the_chat_account() {
     )
     .await;
     assert_eq!(result.unwrap_err().code, "web_search_disabled");
+    state.close();
     std::fs::remove_dir_all(home).unwrap();
 }
 
@@ -150,8 +210,10 @@ fn sources_are_merged_sanitized_bounded_and_include_the_search_account() {
         summary: "not exposed".into(),
         usage: None,
     };
-    let result: Value =
-        serde_json::from_str(&format_result(&response, "openai-codex-search", "gpt-5.6-luna", 1).unwrap()).unwrap();
+    let result: Value = serde_json::from_str(
+        &format_result(&response, "openai-codex-search", "gpt-5.6-luna", 1).unwrap(),
+    )
+    .unwrap();
     assert_eq!(result["accountAlias"], "openai-codex-search");
     assert_eq!(result["model"], "gpt-5.6-luna");
     assert_eq!(
@@ -171,14 +233,18 @@ fn plain_completions_failed_searches_and_missing_sources_are_not_search_results(
         usage: None,
     };
     assert_eq!(
-        format_result(&response, "a", "gpt-5.6-luna", 8).unwrap_err().code,
+        format_result(&response, "a", "gpt-5.6-luna", 8)
+            .unwrap_err()
+            .code,
         "web_search_not_invoked"
     );
     response.output = vec![json!({"type":"web_search_call", "status":"failed"})];
     assert!(format_result(&response, "a", "gpt-5.6-luna", 8).is_err());
     response.output[0]["status"] = json!("completed");
     assert_eq!(
-        format_result(&response, "a", "gpt-5.6-luna", 8).unwrap_err().code,
+        format_result(&response, "a", "gpt-5.6-luna", 8)
+            .unwrap_err()
+            .code,
         "web_search_no_sources"
     );
 }

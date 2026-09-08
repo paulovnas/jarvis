@@ -126,30 +126,72 @@ mod tests {
             let fixture = Fixture::new();
             let session = session(&fixture);
             let options = TurnOptions {
-                account: "synthetic".into(), model: "model".into(), reasoning: None,
-                mode: Mode::Build, workflow: None, approval_mode: ApprovalMode::Yolo,
+                account: "synthetic".into(),
+                model: "model".into(),
+                reasoning: None,
+                mode: Mode::Build,
+                workflow: None,
+                approval_mode: ApprovalMode::Yolo,
             };
             let _signal = session.reserve("Continue".into(), options).unwrap();
-            session.update(true, |data| {
-                data.turns.last_mut().unwrap().turn.steps.push(Step::default());
-            }).unwrap();
+            session
+                .update(true, |data| {
+                    data.turns
+                        .last_mut()
+                        .unwrap()
+                        .turn
+                        .steps
+                        .push(Step::default());
+                })
+                .unwrap();
             for attempt in 1..=5 {
-                session.update(true, |data| {
-                    data.turns.last_mut().unwrap().turn.steps.last_mut().unwrap().retry = Some(provider::retry::Status {
-                        attempt, max_attempts: 5, retry_at: now(), message: "HTTP 502".into(),
-                    });
-                }).unwrap();
+                session
+                    .update(true, |data| {
+                        data.turns
+                            .last_mut()
+                            .unwrap()
+                            .turn
+                            .steps
+                            .last_mut()
+                            .unwrap()
+                            .retry = Some(provider::retry::Status {
+                            attempt,
+                            max_attempts: 5,
+                            retry_at: now(),
+                            message: "HTTP 502".into(),
+                        });
+                    })
+                    .unwrap();
                 let snapshot = session.snapshot().unwrap();
                 assert!(snapshot.active_turn_id.is_some());
                 assert!(snapshot.turns[0].error.is_none());
-                assert_eq!(terminal_notice(snapshot.turns[0].status.clone(), true, false, false), None);
+                assert_eq!(
+                    terminal_notice(snapshot.turns[0].status.clone(), true, false, false),
+                    None
+                );
             }
-            finish(&session, if succeeds { Ok(()) } else { Err(AgentError::new("provider_retry_exhausted", "Cinco reconexões falharam.")) });
+            finish(
+                &session,
+                if succeeds {
+                    Ok(())
+                } else {
+                    Err(AgentError::new(
+                        "provider_retry_exhausted",
+                        "Cinco reconexões falharam.",
+                    ))
+                },
+            );
             let snapshot = session.snapshot().unwrap();
             assert!(snapshot.active_turn_id.is_none());
             assert!(snapshot.turns[0].steps[0].retry.is_none());
-            assert_eq!(terminal_notice(snapshot.turns[0].status.clone(), false, false, false),
-                Some(if succeeds { Notice::Completed } else { Notice::Failed }));
+            assert_eq!(
+                terminal_notice(snapshot.turns[0].status.clone(), false, false, false),
+                Some(if succeeds {
+                    Notice::Completed
+                } else {
+                    Notice::Failed
+                })
+            );
             let (history, _) = journal::load_all(&session.journal).unwrap();
             assert!(history[0].turn.steps[0].retry.is_none());
         }

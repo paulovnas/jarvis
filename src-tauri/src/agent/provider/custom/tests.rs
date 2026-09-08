@@ -129,23 +129,52 @@ fn history() -> Vec<Value> {
 #[test]
 fn openrouter_attribution_identifies_jarvis_for_each_protocol_only_on_its_official_origin() {
     let credential = CodexCredential::new("test-key", "", 0, "", None, None);
-    for protocol in [Protocol::OpenaiCompletions, Protocol::OpenaiResponses, Protocol::AnthropicMessages] {
+    for protocol in [
+        Protocol::OpenaiCompletions,
+        Protocol::OpenaiResponses,
+        Protocol::AnthropicMessages,
+    ] {
         let mut config = config(protocol);
-        for base_url in ["https://openrouter.ai/api/v1", "https://OPENROUTER.ai:443/api/v1/"] {
+        for base_url in [
+            "https://openrouter.ai/api/v1",
+            "https://OPENROUTER.ai:443/api/v1/",
+        ] {
             config.base_url = base_url.into();
-            let request = authenticated_request(&credential, &config, &json!({})).unwrap().build().unwrap();
-            assert_eq!(request.headers()["http-referer"], "https://github.com/paulovnas/jarvis");
+            let request = authenticated_request(&credential, &config, &json!({}))
+                .unwrap()
+                .build()
+                .unwrap();
+            assert_eq!(
+                request.headers()["http-referer"],
+                "https://github.com/paulovnas/jarvis"
+            );
             assert_eq!(request.headers()["x-openrouter-title"], "Jarvis");
             assert_eq!(request.headers()["x-openrouter-app-visibility"], "hidden");
             assert_eq!(request.headers()["authorization"], "Bearer test-key");
             config.base_url = request.url().to_string();
-            let explicit_endpoint = authenticated_request(&credential, &config, &json!({})).unwrap().build().unwrap();
+            let explicit_endpoint = authenticated_request(&credential, &config, &json!({}))
+                .unwrap()
+                .build()
+                .unwrap();
             assert_eq!(explicit_endpoint.headers()["x-openrouter-title"], "Jarvis");
         }
-        for base_url in ["https://gateway.example/v1", "http://localhost:8080/v1", "https://openrouter.ai.other.example/api/v1", "https://openrouter.ai:8443/api/v1", "https://gateway.example/openrouter.ai/api/v1"] {
+        for base_url in [
+            "https://gateway.example/v1",
+            "http://localhost:8080/v1",
+            "https://openrouter.ai.other.example/api/v1",
+            "https://openrouter.ai:8443/api/v1",
+            "https://gateway.example/openrouter.ai/api/v1",
+        ] {
             config.base_url = base_url.into();
-            let request = authenticated_request(&credential, &config, &json!({})).unwrap().build().unwrap();
-            for header in ["http-referer", "x-openrouter-title", "x-openrouter-app-visibility"] {
+            let request = authenticated_request(&credential, &config, &json!({}))
+                .unwrap()
+                .build()
+                .unwrap();
+            for header in [
+                "http-referer",
+                "x-openrouter-title",
+                "x-openrouter-app-visibility",
+            ] {
                 assert!(!request.headers().contains_key(header));
             }
         }
@@ -283,13 +312,16 @@ fn configured_reasoning_is_sent_only_in_selected_protocol_format() {
 fn messages_sends_each_selected_effort_without_openai_fields_or_invented_budgets() {
     let mut config = config(Protocol::AnthropicMessages);
     config.models[0].reasoning = Reasoning::Adaptive;
-    config.models[0].reasoning_levels = ["off", "low", "medium", "high", "xhigh", "max"].map(str::to_owned).to_vec();
+    config.models[0].reasoning_levels = ["off", "low", "medium", "high", "xhigh", "max"]
+        .map(str::to_owned)
+        .to_vec();
     config.models[0].default_reasoning_level = Some("max".into());
     config.validate().unwrap();
     for level in &config.models[0].reasoning_levels {
         let mut options = options();
         options.reasoning = Some(level.clone());
-        let body = request::body(&config, &config.models[0], &options, "", history(), vec![]).unwrap();
+        let body =
+            request::body(&config, &config.models[0], &options, "", history(), vec![]).unwrap();
         if level == "off" {
             assert_eq!(body["thinking"], json!({"type":"disabled"}));
             assert!(body.get("output_config").is_none());

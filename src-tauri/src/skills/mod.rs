@@ -59,7 +59,9 @@ pub struct Skill {
     pub name: String,
     pub description: String,
     pub origin: String,
+    #[serde(serialize_with = "crate::library::serialize_display_path_buf")]
     pub path: PathBuf,
+    #[serde(serialize_with = "crate::library::serialize_display_path_buf")]
     pub removal_path: PathBuf,
     pub linked: bool,
     pub enabled: bool,
@@ -87,6 +89,7 @@ pub struct Detail {
     pub name: String,
     pub description: String,
     pub content: String,
+    #[serde(serialize_with = "crate::library::serialize_display_opt_path_buf")]
     pub path: Option<PathBuf>,
     pub source: Option<String>,
     pub files: Vec<String>,
@@ -303,13 +306,21 @@ fn remove(home: &Path, project: Option<&Path>, id: &str) -> Result<Snapshot, Ski
     let scope = match skill.origin.as_str() {
         "jarvis" => root(home).join("skills"),
         "agents" => home.join(".agents/skills"),
-        "project" => project.ok_or_else(|| error("Projeto indisponível."))?.join(".agents/skills"),
+        "project" => project
+            .ok_or_else(|| error("Projeto indisponível."))?
+            .join(".agents/skills"),
         _ => return Err(error("Origem da skill inválida.")),
-    }.canonicalize()?;
+    }
+    .canonicalize()?;
     let target = &skill.removal_path;
-    let parent = target.parent().ok_or_else(|| error("Pasta de skill inválida."))?.canonicalize()?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| error("Pasta de skill inválida."))?
+        .canonicalize()?;
     if !parent.starts_with(&scope) || target.canonicalize()? == scope {
-        return Err(error("Não é possível excluir a pasta raiz ou uma skill dentro de um vínculo externo."));
+        return Err(error(
+            "Não é possível excluir a pasta raiz ou uma skill dentro de um vínculo externo.",
+        ));
     }
     let metadata = fs::symlink_metadata(target)?;
     if metadata.file_type().is_symlink() {
@@ -319,7 +330,9 @@ fn remove(home: &Path, project: Option<&Path>, id: &str) -> Result<Snapshot, Ski
     } else {
         return Err(error("Pasta de skill inválida."));
     }
-    if config.disabled.remove(id) { write_config(home, &config)?; }
+    if config.disabled.remove(id) {
+        write_config(home, &config)?;
+    }
     snapshot(home, project)
 }
 
@@ -329,17 +342,28 @@ pub async fn delete_skill(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<Snapshot, SkillError> {
-    local(app, state.inner().clone(), move |home, project| remove(home, project, &id)).await
+    local(app, state.inner().clone(), move |home, project| {
+        remove(home, project, &id)
+    })
+    .await
 }
 
-pub(crate) fn validate_mentions(home: &Path, project: &Path, ids: &[String]) -> Result<Vec<Skill>, SkillError> {
+pub(crate) fn validate_mentions(
+    home: &Path,
+    project: &Path,
+    ids: &[String],
+) -> Result<Vec<Skill>, SkillError> {
     let _guard = LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
     let available = snapshot(home, Some(project))?.skills;
     ids.iter().map(|id| available.iter().find(|s| &s.id == id && s.enabled).cloned()
         .ok_or_else(|| error("Uma skill selecionada foi desativada ou removida. Retire a badge e selecione novamente."))).collect()
 }
 
-pub(crate) async fn explicit(home: &Path, project: &Path, ids: Vec<String>) -> Result<String, SkillError> {
+pub(crate) async fn explicit(
+    home: &Path,
+    project: &Path,
+    ids: Vec<String>,
+) -> Result<String, SkillError> {
     let home = home.to_owned();
     let project = project.to_owned();
     tauri::async_runtime::spawn_blocking(move || {

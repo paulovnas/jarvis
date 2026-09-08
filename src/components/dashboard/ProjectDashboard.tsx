@@ -1,11 +1,11 @@
 import { useState, type ReactNode } from "react";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
 import { LayoutDashboard, Kanban, RefreshCw, FolderGit2, FolderOpen } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import type { Project } from "@/core/library";
+import { libraryError, type Project } from "@/core/library";
 import { boardSchema, projectMetricsSchema } from "@/core/dashboard";
 import { useDashboardQuery } from "@/hooks/use-dashboard-query";
 import { useCore } from "@/hooks/use-core";
@@ -24,7 +24,7 @@ export function ProjectDashboard({ project, onSelectSession, navigation, initial
     <header className="flex shrink-0 items-center gap-3 border-b border-border px-6 py-5">
       {navigation}
       <div className="dashboard-project-mark"><FolderGit2 className="size-5" /></div>
-      <div className="min-w-0 flex-1"><p className="micro-label mb-1 text-muted-foreground">Projeto / Dashboard</p><h1 className="truncate text-xl font-semibold tracking-tight">{project.name}</h1><Button variant="ghost" size="sm" className="mt-0.5 h-auto max-w-full cursor-pointer justify-start gap-1.5 px-0 py-0.5 font-mono text-[11px] text-muted-foreground hover:bg-transparent hover:text-primary" title="Abrir no Finder/Explorador" aria-label={`Abrir pasta do projeto ${project.name}`} onClick={() => { void openPath(project.path).catch(() => toast.error("Não foi possível abrir a pasta do projeto.")); }}><FolderOpen aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.path}</span></Button></div>
+      <div className="min-w-0 flex-1"><p className="micro-label mb-1 text-muted-foreground">Projeto / Dashboard</p><h1 className="truncate text-xl font-semibold tracking-tight">{project.name}</h1><Button variant="ghost" size="sm" className="mt-0.5 h-auto max-w-full cursor-pointer justify-start gap-1.5 px-0 py-0.5 font-mono text-[11px] text-muted-foreground hover:bg-transparent hover:text-primary" title="Abrir no Finder/Explorador" aria-label={`Abrir pasta do projeto ${project.name}`} onClick={() => { void invoke("open_project_directory", { projectId: project.id }).catch(error => toast.error(libraryError(error, "Não foi possível abrir a pasta do projeto."))); }}><FolderOpen aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.path}</span></Button></div>
       <Button variant="ghost" size="icon" className="cursor-pointer" aria-label="Atualizar Dashboard" title="Atualizar" disabled={loading} onClick={() => { void metrics.refresh(); void board.refresh(); }}><RefreshCw className="size-4" /></Button>
     </header>
     <Tabs value={tab} onValueChange={value => setTab(String(value))} className="min-h-0 flex-1 gap-0">

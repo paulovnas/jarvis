@@ -205,6 +205,63 @@ describe("SettingsDialog provider accounts", () => {
     expect(within(details).getByText("GPT-5.6 Sol")).toBeInTheDocument();
   });
 
+  it.each(["openai-codex", "antigravity"] as const)("reautoriza %s dentro dos detalhes e atualiza a conta sem recriar o cadastro", async providerKind => {
+    const user = userEvent.setup();
+    const existing = account(`${providerKind}-pessoal`, { providerKind, modelsAvailable: false, showUsage: false });
+    const renewed = { ...existing, modelsAvailable: true, email: "dev@example.com", models: [{ id: "model-new", name: "Modelo do novo plano", reasoningLevels: [], defaultReasoningLevel: null }] };
+    const wait = deferred<ProviderAccount>();
+    const authorizationUrl = "https://example.test/reauthorize";
+    invokeMock.mockResolvedValueOnce([existing])
+      .mockResolvedValueOnce({ flowId: "reauth-flow", authorizationUrl })
+      .mockReturnValueOnce(wait.promise)
+      .mockResolvedValueOnce([renewed]);
+    const success = vi.spyOn(toast, "success");
+    renderSettings();
+    await user.click(await screen.findByRole("button", { name: `Detalhes de ${existing.alias}` }));
+    await user.click(within(screen.getByRole("dialog", { name: existing.alias })).getByRole("button", { name: "Re-autorizar" }));
+    expect(await screen.findByText("Aguardando autenticação no navegador")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Sufixo do alias" })).not.toBeInTheDocument();
+    expect(invokeMock).toHaveBeenCalledWith("reauthorize_provider_account", { alias: existing.alias });
+    expect(openUrlMock).toHaveBeenCalledWith(authorizationUrl);
+    wait.resolve(renewed);
+    await waitFor(() => expect(success).toHaveBeenCalledWith("Autorização atualizada"));
+    await user.click(await screen.findByRole("button", { name: `Detalhes de ${existing.alias}` }));
+    const details = screen.getByRole("dialog", { name: existing.alias });
+    expect(within(details).getByText("Modelo do novo plano")).toBeInTheDocument();
+    expect(within(details).getByRole("switch", { name: `Limites de ${existing.alias} na statusbar` })).not.toBeChecked();
+    expect(invokeMock).not.toHaveBeenCalledWith("disconnect_provider_account_command", expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith("begin_openai_codex_connection", expect.anything());
+  });
+
+  it.each(["failure", "cancel"])("preserva o provedor após %s na reautorização e permite repetir o login", async outcome => {
+    const user = userEvent.setup();
+    const existing = account("openai-codex-pessoal", { enabled: false, modelsAvailable: false });
+    let pending = deferred<ProviderAccount>();
+    let attempts = 0;
+    invokeMock.mockImplementation(command => {
+      if (command === "list_provider_accounts") return Promise.resolve([existing]);
+      if (command === "reauthorize_provider_account") return Promise.resolve({ flowId: `renew-${++attempts}`, authorizationUrl: "https://example.test/auth" });
+      if (command === "wait_openai_codex_connection") return pending.promise;
+      if (command === "cancel_openai_codex_connection") pending.reject({ code: "cancelled", message: "Cancelada" });
+      return Promise.resolve();
+    });
+    renderSettings();
+    await user.click(await screen.findByRole("button", { name: `Detalhes de ${existing.alias}` }));
+    await user.click(screen.getByRole("button", { name: "Re-autorizar" }));
+    await screen.findByText("Aguardando autenticação no navegador");
+    if (outcome === "cancel") await user.click(screen.getByRole("button", { name: "Cancelar conexão" }));
+    else pending.reject({ code: "token_exchange", message: "Não foi possível atualizar a autorização." });
+    const retry = await screen.findByRole("button", { name: "Tentar novamente" });
+    if (outcome === "failure") expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível atualizar a autorização.");
+    pending = deferred<ProviderAccount>();
+    await user.click(retry);
+    await screen.findByText("Aguardando autenticação no navegador");
+    expect(attempts).toBe(2);
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(await screen.findByTestId(`provider-account-${existing.alias}`)).toHaveTextContent("Desativada");
+    expect(invokeMock).not.toHaveBeenCalledWith("disconnect_provider_account_command", expect.anything());
+  });
+
   it("permite tentar novamente após falha ao carregar contas", async () => {
     const connected = account("openai-codex-pessoal");
     const user = userEvent.setup();

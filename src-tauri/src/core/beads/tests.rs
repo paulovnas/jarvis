@@ -109,11 +109,8 @@ fn create_is_retry_stable_and_text_is_one_argument() {
 
 #[test]
 fn child_environment_is_private_and_cannot_inherit_tracker_routing() {
-    let command = process::command(
-        Path::new("/private/package"),
-        Path::new("/private/store"),
-        SESSION,
-    );
+    let workspace = Path::new("/private/store");
+    let command = process::command(Path::new("/private/package"), workspace, SESSION);
     let env: std::collections::HashMap<_, _> = command
         .as_std()
         .get_envs()
@@ -124,8 +121,10 @@ fn child_environment_is_private_and_cannot_inherit_tracker_routing() {
             )
         })
         .collect();
-    assert_eq!(env["BEADS_DIR"], "/private/store/.beads");
-    assert_eq!(env["HOME"], "/private/store/host");
+    // Build the expected paths the same way the product does: Path::join uses
+    // the native separator, so this stays correct on Windows and Unix alike.
+    assert_eq!(env["BEADS_DIR"], workspace.join(".beads").to_string_lossy());
+    assert_eq!(env["HOME"], workspace.join("host").to_string_lossy());
     assert_eq!(env["BD_DOLT_MODE"], "embedded");
     assert_eq!(env["BEADS_DOLT_AUTO_START"], "0");
     assert!(!env.contains_key("BEADS_DOLT_SERVER_HOST"));
@@ -246,6 +245,36 @@ async fn cancellation_and_deletion_respect_the_shared_project_lock() {
     drop(lock);
     cleanup_project(home.path(), PROJECT).unwrap();
     assert!(!storage(home.path(), PROJECT).exists());
+}
+
+// Two conversations in one project share the tracker lock. A contended try-lock
+// must wait and then succeed — not fail fast — so the plan sidebar never shows a
+// spurious "could not lock" error that only clears by luck on a later attempt.
+#[tokio::test]
+async fn a_contended_project_lock_waits_for_release_then_succeeds() {
+    let home = tempfile::tempdir().unwrap();
+    store(&fixture(home.path()));
+    let (_cancel, signal) = watch::channel(false);
+    let held = fixture(home.path()).lock(signal.clone()).await.unwrap();
+
+    // The second lock contends the same file and must stay pending, not error.
+    let waiter = fixture(home.path());
+    let pending = tokio::spawn(async move { waiter.lock(signal).await });
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    assert!(
+        !pending.is_finished(),
+        "a contended lock must wait, not resolve early"
+    );
+
+    drop(held);
+    let second = tokio::time::timeout(std::time::Duration::from_secs(5), pending)
+        .await
+        .expect("lock released within timeout")
+        .expect("waiter task joined");
+    assert!(
+        second.is_ok(),
+        "the waiting lock must succeed once released"
+    );
 }
 
 async fn call(beads: &Beads, name: &str, args: Value, id: &str) -> Value {

@@ -68,7 +68,7 @@ import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 const ALIAS_SUFFIX_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 
-type SettingsView = "list" | "add" | "waiting";
+type SettingsView = "list" | "add" | "reauthorize" | "waiting";
 type ListState = "loading" | "ready" | "error";
 
 
@@ -137,6 +137,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   const [suffix, setSuffix] = useState("");
   const [provider, setProvider] = useState("openai-codex");
   const [editingCustom, setEditingCustom] = useState<ProviderAccount | null>(null);
+  const [reauthorizing, setReauthorizing] = useState<ProviderAccount | null>(null);
   const [savingCustom, setSavingCustom] = useState(false);
   const aliasPrefix = `${provider}-`;
   const connectionLabel = provider === "antigravity" ? "Antigravity" : "ChatGPT";
@@ -231,6 +232,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
 
   const openAddView = () => {
     if (startingRef.current || cancellingRef.current) return;
+    setReauthorizing(null);
     setView("add");
     setConnectionError(null);
     setSuffixError(null);
@@ -245,22 +247,15 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
     activeConnectionRef.current = null;
   };
 
-  const handleConnect = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const connectAccount = async (alias: string, reauthorize = false) => {
     if (startingRef.current || activeConnectionRef.current) return;
-
-    const validationError = validateAliasSuffix(suffix);
-    setSuffixError(validationError);
-    if (validationError) return;
-
-    const alias = `${aliasPrefix}${suffix}`;
     startingRef.current = true;
     setStarting(true);
     setConnectionError(null);
 
     let started: ActiveConnection | null = null;
     try {
-      const result = await invoke<ConnectionStart>("begin_openai_codex_connection", { alias });
+      const result = await invoke<ConnectionStart>(reauthorize ? "reauthorize_provider_account" : "begin_openai_codex_connection", { alias });
       if (
         !result ||
         typeof result.flowId !== "string" ||
@@ -298,7 +293,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
         }
         if (activeConnectionRef.current?.flowId === started.flowId) {
           clearActiveConnection();
-          setView("add");
+          setView(reauthorize ? "reauthorize" : "add");
           setConnectionError("Não foi possível abrir o navegador.");
         }
         return;
@@ -314,13 +309,13 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
       setListError(null);
       setView("list");
       await loadAccounts();
-      toast.success("Conta conectada");
+      toast.success(reauthorize ? "Autorização atualizada" : "Conta conectada");
     } catch (error) {
       if (!started) {
         setConnectionError(safeErrorMessage(error, "Não foi possível iniciar a conexão."));
       } else if (activeConnectionRef.current?.flowId === started.flowId) {
         clearActiveConnection();
-        setView("add");
+        setView(reauthorize ? "reauthorize" : "add");
         const cancelled =
           typeof error === "object" &&
           error !== null &&
@@ -335,6 +330,22 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
       closeRequestedRef.current = false;
       setStarting(false);
     }
+  };
+
+  const handleConnect = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const validationError = validateAliasSuffix(suffix);
+    setSuffixError(validationError);
+    if (!validationError) void connectAccount(`${aliasPrefix}${suffix}`);
+  };
+
+  const handleReauthorize = (account: ProviderAccount) => {
+    if (startingRef.current || cancellingRef.current) return;
+    setReauthorizing(account);
+    setProvider(account.providerKind);
+    setConnectionError(null);
+    setView("reauthorize");
+    void connectAccount(account.alias, true);
   };
 
   const cancelActiveConnection = useCallback(
@@ -535,8 +546,9 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
               <ProviderAccountCard
                 key={account.alias}
                 account={account}
-                saving={toggling}
+                saving={toggling || starting || cancelling}
                 onEdit={setEditingCustom}
+                onReauthorize={handleReauthorize}
                 onUsageChange={(alias, showUsage, showThirdPartyUsage) => { void handleUsageChange(alias, showUsage, showThirdPartyUsage); }}
                 onEnabledChange={(alias, enabled) => { void handleEnabledChange(alias, enabled); }}
                 onDisconnect={(alias) => {
@@ -639,12 +651,30 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
     );
   };
 
+  const renderReauthorize = () => (
+    <>
+      <DialogHeader>
+        <DialogTitle>Re-autorizar provedor</DialogTitle>
+        <DialogDescription>
+          Entre novamente com {connectionLabel} para atualizar a autorização de <span className="font-mono">{reauthorizing?.alias}</span>. O alias e as configurações serão mantidos.
+        </DialogDescription>
+      </DialogHeader>
+      {connectionError && <p role="alert" className="text-xs text-destructive">{connectionError}</p>}
+      <CardFooter className="justify-end gap-2 border-t border-border pt-4">
+        <Button variant="ghost" className="cursor-pointer" disabled={starting} onClick={() => setView("list")}>Voltar</Button>
+        <Button className="cursor-pointer" disabled={starting} onClick={() => { if (reauthorizing) void connectAccount(reauthorizing.alias, true); }}>
+          {starting ? "Iniciando autorização…" : "Tentar novamente"}
+        </Button>
+      </CardFooter>
+    </>
+  );
+
   const renderWaiting = () => (
     <>
       <DialogHeader>
-        <DialogTitle>Conectar com {connectionLabel}</DialogTitle>
+        <DialogTitle>{reauthorizing ? "Re-autorizar" : "Conectar com"} {connectionLabel}</DialogTitle>
         <DialogDescription>
-          A janela de autenticação foi aberta no navegador padrão.
+          A janela de autenticação foi aberta no navegador padrão.{reauthorizing && " O alias e as configurações serão mantidos."}
         </DialogDescription>
       </DialogHeader>
       <CardContent className="space-y-4">
@@ -730,7 +760,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
           </Tabs></>}
           <Dialog open={open && view !== "list"} onOpenChange={(nextOpen) => { if (!nextOpen && !savingCustom) handleDialogOpenChange(false, false); }}>
             <DialogContent className={`dark max-h-[85vh] overflow-y-auto ${provider === "custom" ? "sm:max-w-2xl" : "sm:max-w-xl"}`}>
-              {view === "waiting" ? renderWaiting() : renderAdd()}
+              {view === "waiting" ? renderWaiting() : view === "reauthorize" ? renderReauthorize() : renderAdd()}
             </DialogContent>
           </Dialog>
           <Dialog open={open && editingCustom !== null} onOpenChange={next => { if (!next && !savingCustom) setEditingCustom(null); }}><DialogContent className="dark max-h-[85vh] overflow-y-auto sm:max-w-2xl" aria-describedby={undefined}><DialogHeader><DialogTitle>Editar provedor Custom</DialogTitle></DialogHeader>{editingCustom && <CustomProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} />}</DialogContent></Dialog>

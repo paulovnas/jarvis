@@ -39,15 +39,16 @@ pub(super) fn environment(
     paths.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
+    #[cfg(unix)]
     paths.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].map(PathBuf::from));
+    #[cfg(windows)]
+    if let Some(system) = std::env::var_os("SystemRoot") {
+        paths.push(PathBuf::from(system).join("System32"));
+    }
+    let path = std::env::join_paths(paths)
+        .unwrap_or_else(|_| std::env::var_os("PATH").unwrap_or_default());
     BTreeMap::from([
-        (
-            "PATH".into(),
-            std::env::join_paths(paths)
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into(),
-        ),
+        ("PATH".into(), path.to_string_lossy().into()),
         ("CONTEXT_MODE_DIR".into(), storage.to_string_lossy().into()),
         ("CONTEXT_MODE_PLATFORM".into(), "claude-code".into()),
         ("CLAUDE_PROJECT_DIR".into(), root.to_string_lossy().into()),
@@ -88,7 +89,8 @@ impl ContextMode {
     ) -> Result<Self, CoreError> {
         let package = installed(home, ComponentId::ContextMode)?.path(home)?;
         let hooks = Hooks::new(home, root, session)?;
-        let mut context = Self::at(&package, &storage(home, session), root, session, signal).await?;
+        let mut context =
+            Self::at(&package, &storage(home, session), root, session, signal).await?;
         context.hooks = hooks;
         Ok(context)
     }

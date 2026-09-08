@@ -33,9 +33,12 @@ pub fn configured(home: &Path) -> bool {
     settings(home).is_ok()
 }
 pub(super) fn verify_credentials(home: &Path) -> Result<(), CoreError> {
-    let key = Keychain.load(&settings(home)?.credential_ref)
+    let key = Keychain
+        .load(&settings(home)?.credential_ref)
         .map_err(|_| error("A chave do Context7 não está acessível. Configure-a novamente."))?;
-    if key.trim().is_empty() { return Err(error("Configure novamente a chave do Context7.")); }
+    if key.trim().is_empty() {
+        return Err(error("Configure novamente a chave do Context7."));
+    }
     Ok(())
 }
 fn save(home: &Path, key: &str, secrets: &dyn Secrets) -> Result<(), CoreError> {

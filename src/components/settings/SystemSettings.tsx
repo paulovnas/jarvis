@@ -47,7 +47,7 @@ export function SystemSettings() {
   const test = async () => {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError(null);
-    try { await invoke("test_system_notification"); toast.success("Notificação de teste enviada"); }
+    try { await invoke("test_system_notification"); toast.success("Notificação enviada ao sistema", { description: "Se o aviso não aparecer, confira as notificações do Jarvis e o modo Não incomodar nos ajustes do sistema." }); }
     catch (cause) { setError(systemError(cause, "Não foi possível enviar a notificação.")); }
     finally { lock.current = false; setBusy(false); }
   };

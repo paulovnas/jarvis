@@ -26,27 +26,58 @@ fn shared_discovery_reads_two_links_deduplicates_cycles_and_ignores_other_roots(
         skill(&target, name, "Linked instructions");
         symlink(target, agents.join(name)).unwrap();
     }
-    symlink(home.join("managed/nextjs-developer"), agents.join("duplicate")).unwrap();
+    symlink(
+        home.join("managed/nextjs-developer"),
+        agents.join("duplicate"),
+    )
+    .unwrap();
     symlink(&agents, agents.join("cycle")).unwrap();
     symlink(home.join("missing"), agents.join("broken")).unwrap();
-    skill(&home.join(".codex/skills/excluded"), "excluded", "Do not discover");
-    skill(&home.join(".skills-manager/skills/unlinked"), "unlinked", "Do not discover");
+    skill(
+        &home.join(".codex/skills/excluded"),
+        "excluded",
+        "Do not discover",
+    );
+    skill(
+        &home.join(".skills-manager/skills/unlinked"),
+        "unlinked",
+        "Do not discover",
+    );
     assert!(snapshot(home, None).unwrap().skills.is_empty());
-    write_config(home, &Config { include_agents: true, ..Config::default() }).unwrap();
+    write_config(
+        home,
+        &Config {
+            include_agents: true,
+            ..Config::default()
+        },
+    )
+    .unwrap();
     let found = snapshot(home, None).unwrap().skills;
     assert_eq!(found.len(), 2);
-    assert!(found.iter().all(|skill| skill.linked && skill.origin == "agents"));
-    assert!(found.iter().all(|skill| catalog::resource(skill, "SKILL.md").unwrap().contains("Linked instructions")));
+    assert!(found
+        .iter()
+        .all(|skill| skill.linked && skill.origin == "agents"));
+    assert!(found
+        .iter()
+        .all(|skill| catalog::resource(skill, "SKILL.md")
+            .unwrap()
+            .contains("Linked instructions")));
 }
 
 #[test]
 #[ignore = "Read-only check of user-provided links in the host .agents/skills"]
 fn live_shared_skill_links() {
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
-    let config = Config { include_agents: true, ..Config::default() };
+    let config = Config {
+        include_agents: true,
+        ..Config::default()
+    };
     let (found, _) = catalog::discover(&home, None, &config).unwrap();
     for name in ["nextjs-developer", "nextjs-best-practices"] {
-        let entry = found.iter().find(|skill| skill.name == name && skill.origin == "agents").expect("Expected user-provided global link");
+        let entry = found
+            .iter()
+            .find(|skill| skill.name == name && skill.origin == "agents")
+            .expect("Expected user-provided global link");
         assert!(entry.linked);
         assert!(!catalog::resource(entry, "SKILL.md").unwrap().is_empty());
     }
@@ -62,7 +93,14 @@ fn deletion_removes_only_selected_skill_and_preserves_neighbors() {
     skill(&other, "two", "Keep");
     let found = snapshot(home, None).unwrap().skills;
     let first = found.iter().find(|s| s.name == "one").unwrap();
-    write_config(home, &Config { disabled: [first.id.clone()].into_iter().collect(), ..Config::default() }).unwrap();
+    write_config(
+        home,
+        &Config {
+            disabled: [first.id.clone()].into_iter().collect(),
+            ..Config::default()
+        },
+    )
+    .unwrap();
     let after = remove(home, None, &first.id).unwrap();
     assert!(!read_config(home).unwrap().disabled.contains(&first.id));
     assert!(!own.exists());
@@ -82,7 +120,14 @@ fn deleting_shared_link_unlinks_without_following_target_and_rejects_linked_cont
     skill(&target, "shared", "Keep target");
     fs::create_dir_all(linked.parent().unwrap()).unwrap();
     symlink(&target, &linked).unwrap();
-    write_config(home, &Config { include_agents: true, ..Config::default() }).unwrap();
+    write_config(
+        home,
+        &Config {
+            include_agents: true,
+            ..Config::default()
+        },
+    )
+    .unwrap();
     let found = snapshot(home, None).unwrap().skills.pop().unwrap();
     assert!(found.linked);
     remove(home, None, &found.id).unwrap();
@@ -408,4 +453,53 @@ fn skill_document_links_cannot_read_outside_the_package() {
     let snapshot = snapshot(home, None).unwrap();
     assert!(snapshot.skills.is_empty());
     assert_eq!(snapshot.warnings.len(), 1);
+}
+
+#[test]
+fn skill_paths_serialize_without_the_windows_verbatim_prefix() {
+    // Skills work on Windows through filesystem discovery, so SkillDetailsDialog
+    // and the delete dialog would otherwise show \\?\C:\ to the user.
+    let stored = if cfg!(windows) {
+        PathBuf::from(r"\\?\C:\Users\me\.jarvis\skills\demo")
+    } else {
+        PathBuf::from("/home/me/.jarvis/skills/demo")
+    };
+    let skill = Skill {
+        id: "demo".into(),
+        name: "Demo".into(),
+        description: "d".into(),
+        origin: "jarvis".into(),
+        path: stored.clone(),
+        removal_path: stored.clone(),
+        linked: false,
+        file: stored.clone(),
+        enabled: true,
+        automatic: false,
+        source: None,
+        marketplace_id: None,
+        update_available: false,
+        update_error: None,
+    };
+    let value = serde_json::to_value(&skill).unwrap();
+    assert_eq!(
+        value["path"],
+        crate::library::strip_verbatim(&stored.to_string_lossy()).as_ref()
+    );
+    assert_eq!(value["removalPath"], value["path"]);
+    // The Rust value keeps its canonical form for the delete containment checks.
+    assert_eq!(skill.path, stored);
+
+    let detail = Detail {
+        name: "Demo".into(),
+        description: "d".into(),
+        content: "body".into(),
+        path: Some(stored.clone()),
+        source: None,
+        files: vec![],
+    };
+    let value = serde_json::to_value(&detail).unwrap();
+    assert_eq!(
+        value["path"],
+        crate::library::strip_verbatim(&stored.to_string_lossy()).as_ref()
+    );
 }

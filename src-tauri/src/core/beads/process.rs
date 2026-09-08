@@ -75,6 +75,8 @@ pub(super) async fn run(
     let mut wrapped = CommandWrap::from(command);
     #[cfg(unix)]
     wrapped.wrap(process_wrap::tokio::ProcessGroup::leader());
+    #[cfg(windows)]
+    crate::background::windows_job(&mut wrapped);
     wrapped.wrap(KillOnDrop);
     let mut child = wrapped
         .spawn()

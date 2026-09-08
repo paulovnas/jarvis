@@ -24,6 +24,7 @@ import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
 import { EmptyWorkspace } from "./EmptyWorkspace";
 import { useSettingsMenu } from "@/hooks/use-settings-menu";
 import { useUnreadConversations } from "@/hooks/use-unread-conversations";
+import { useProjectFiles } from "@/hooks/use-project-files";
 
 const SettingsDialog = lazy(() => import("@/components/settings/SettingsDialog").then(module => ({ default: module.SettingsDialog })));
 const ProjectDashboard = lazy(() => import("@/components/dashboard/ProjectDashboard").then(module => ({ default: module.ProjectDashboard })));
@@ -31,9 +32,17 @@ const ProjectDashboard = lazy(() => import("@/components/dashboard/ProjectDashbo
 export function Home() {
   const { layout, updateLayout } = useDesktopLayout();
   const library = useLibrary();
+  const files = useProjectFiles(library.snapshot?.selection.projectId ?? null);
   const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(null);
   const sidebarLibrary = { ...library, select: (target: Parameters<typeof library.select>[0]) => {
     setKanbanProjectId(null);
+    if (target.kind === "conversation") {
+      const projectId = library.snapshot?.conversations.find(item => item.id === target.id)?.projectId;
+      if (projectId) updateLayout(current => {
+        const tabs = current.fileTabs[projectId];
+        return tabs ? { fileTabs: { ...current.fileTabs, [projectId]: { ...tabs, activePath: null } } } : {};
+      });
+    }
     return library.select(target);
   } };
   const openKanban = (projectId: string) => {
@@ -70,7 +79,7 @@ export function Home() {
     setLatestVisibleId(current => visible ? id : current === id ? null : current);
   }, []);
   const selectedId = library.snapshot?.selection.conversationId;
-  const unreadConversationIds = useUnreadConversations(!settingsOpen && !chat.error && chat.snapshot && latestVisibleId === selectedId ? latestVisibleId : null);
+  const unreadConversationIds = useUnreadConversations(!settingsOpen && !files.tabs.activePath && !chat.error && chat.snapshot && latestVisibleId === selectedId ? latestVisibleId : null);
   useSettingsMenu(setSettingsOpen);
   const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
   const accountsVersion = useRef(0);
@@ -152,7 +161,7 @@ export function Home() {
           minSize="360px"
           className="h-full min-h-0 min-w-0"
         >
-          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} />}
+          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
         </ResizablePanel>
 
         {!dashboardProject && <><ResizableHandle
@@ -170,7 +179,7 @@ export function Home() {
           maxSize="550px"
           className="h-full min-h-0 min-w-0"
         >
-          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} /></div>
+          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} files={files} /></div>
         </ResizablePanel></>}
       </ResizablePanelGroup>
       <StatusBar accounts={accounts} onOpenSettings={() => setSettingsOpen(true)} />

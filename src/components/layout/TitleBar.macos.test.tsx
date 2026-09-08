@@ -15,6 +15,13 @@ beforeEach(() => {
   native.onResized.mockResolvedValue(() => {});
 });
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
+it("shows macOS traffic-light controls before the wordmark", () => {
+  render(<TitleBar />);
+  const buttons = screen.getAllByRole("button");
+  expect(buttons.map(button => button.getAttribute("aria-label"))).toEqual(["Fechar janela", "Minimizar janela", "Entrar em tela cheia"]);
+  const logo = screen.getByRole("img", { name: "Jarvis" });
+  expect(buttons[2].compareDocumentPosition(logo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
 it("toggles macOS fullscreen with the green button and hides the custom titlebar", async () => {
   const user = userEvent.setup(); render(<TitleBar />);
   await waitFor(() => expect(native.onResized).toHaveBeenCalled());

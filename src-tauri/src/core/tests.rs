@@ -13,11 +13,18 @@ fn requires_every_component_and_never_treats_newer_release_as_missing() {
         if id == ComponentId::Ponytail {
             ponytail::tests::fixture_package(&path, "1.0.0");
         }
-        if id == ComponentId::OpenDesign { design::tests::prepare_fixture(&path, &[]).unwrap(); }
+        if id == ComponentId::OpenDesign {
+            design::tests::prepare_fixture(&path, &[]).unwrap();
+        }
         manifest.installations.insert(
             id,
             Installation {
-                version: if id == ComponentId::OpenDesign { "1.2.3" } else { "1.0.0" }.into(),
+                version: if id == ComponentId::OpenDesign {
+                    "1.2.3"
+                } else {
+                    "1.0.0"
+                }
+                .into(),
                 directory,
                 files: vec!["verified".into()],
             },
@@ -26,7 +33,11 @@ fn requires_every_component_and_never_treats_newer_release_as_missing() {
         assert!(require_ready(home.path()).is_err());
     }
     assert!(!CoreState::default().snapshot(home.path()).unwrap().ready);
-    fs::write(root(home.path()).join("context7.json"), r#"{"credential_ref":"jarvis-core-context7-test"}"#).unwrap();
+    fs::write(
+        root(home.path()).join("context7.json"),
+        r#"{"credential_ref":"jarvis-core-context7-test"}"#,
+    )
+    .unwrap();
     assert!(require_ready(home.path()).is_ok());
     let state = CoreState::default();
     state
@@ -52,7 +63,10 @@ fn version_comparison_is_semantic_and_invalid_manifests_fail_closed() {
     fs::write(root(home.path()).join("manifest.json"), "{").unwrap();
     let snapshot = CoreState::default().snapshot(home.path()).unwrap();
     assert!(!snapshot.ready);
-    assert!(snapshot.items.iter().all(|item| item.health_error.is_some()));
+    assert!(snapshot
+        .items
+        .iter()
+        .all(|item| item.health_error.is_some()));
     let install = Installation {
         version: "1.0.0".into(),
         directory: "../escape".into(),
@@ -71,16 +85,52 @@ fn preflight_routes_http_without_blocking_regular_mutations() {
     assert!(hooks::pre_tool("edit", &serde_json::json!({"newText":"curl url"})).is_none());
 }
 
+#[cfg(windows)]
+#[test]
+fn installation_path_is_spawnable_and_not_a_verbatim_path() {
+    // fs::canonicalize() yields a \\?\ verbatim path on Windows. node's module
+    // loader cannot realpath it (EISDIR on "C:") and CreateProcessW rejects the
+    // mixed-separator form node_path() builds, so the Core never starts. path()
+    // must hand callers a plain Win32 path that Command and node both accept.
+    let home = tempfile::tempdir().unwrap();
+    let directory = "context7/probe";
+    let package = root(home.path()).join(directory);
+    fs::create_dir_all(&package).unwrap();
+    fs::write(package.join("verified"), b"ok").unwrap();
+    let record = Installation {
+        version: "1.0.0".into(),
+        directory: directory.into(),
+        files: vec!["verified".into()],
+    };
+    let resolved = record.path(home.path()).unwrap();
+    assert!(
+        !resolved.to_string_lossy().starts_with(r"\\?\"),
+        "{resolved:?} is a verbatim path"
+    );
+    assert!(resolved.join("verified").is_file());
+    assert!(record.validate(home.path(), ComponentId::Context7).is_ok());
+}
+
 #[tokio::test]
 #[ignore = "Downloads official Core releases into an isolated temporary home"]
 async fn official_installation_smoke() {
     let home = tempfile::tempdir().unwrap();
     for id in ComponentId::ALL {
-        let version = install::install(home.path(), id, |stage| eprintln!("{}: {stage}", id.key()), |_| {})
-            .await
-            .unwrap();
+        let version = install::install(
+            home.path(),
+            id,
+            |stage| eprintln!("{}: {stage}", id.key()),
+            |_| {},
+        )
+        .await
+        .unwrap();
         assert!(!version.is_empty());
     }
     assert!(!CoreState::default().snapshot(home.path()).unwrap().ready);
-    assert!(CoreState::default().snapshot(home.path()).unwrap().items.iter().all(|item| item.installed));
+    assert!(CoreState::default()
+        .snapshot(home.path())
+        .unwrap()
+        .items
+        .iter()
+        .all(|item| item.installed));
 }

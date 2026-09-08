@@ -3,11 +3,13 @@ import { listen } from "@tauri-apps/api/event";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import { SystemSettings } from "./SystemSettings";
 import type { SystemSnapshot } from "@/core/system-preferences";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 const call = vi.mocked(invoke);
 const initial: SystemSnapshot = { preferences: { preventSleep: "off", notifications: false }, sleepInhibited: false, sleepError: null, notificationError: null };
 
@@ -15,6 +17,7 @@ describe("system preferences", () => {
   beforeEach(() => {
     call.mockReset().mockResolvedValue(initial);
     vi.mocked(listen).mockReset().mockResolvedValue(vi.fn());
+    vi.mocked(toast.success).mockReset();
   });
   it.each([["open", "Enquanto Jarvis aberto"], ["off", "Desligado"], ["active", "Enquanto houver agentes/chats ativos"]])("saves sleep mode %s without changing notifications", async (value, label) => {
     const user = userEvent.setup();
@@ -38,6 +41,7 @@ describe("system preferences", () => {
     expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { preventSleep: "off", notifications: true } });
     await user.click(screen.getByRole("button", { name: "Testar" }));
     expect(call).toHaveBeenLastCalledWith("test_system_notification");
+    expect(toast.success).toHaveBeenCalledWith("Notificação enviada ao sistema", expect.objectContaining({ description: expect.stringContaining("Não incomodar") }));
     call.mockResolvedValue(initial); await user.click(toggle);
     await waitFor(() => expect(toggle).not.toBeChecked());
     expect(screen.getByRole("button", { name: "Testar" })).toBeDisabled();
@@ -61,13 +65,14 @@ describe("system preferences", () => {
     await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
     expect(await screen.findByRole("combobox", { name: "Impedir repouso" })).toHaveTextContent("Desligado");
   });
-  it("reports a native notification delivery failure", async () => {
+  it.each(["O macOS recusou a notificação.", "Notificações do Jarvis bloqueadas. Ative Jarvis em Configurações do Windows → Sistema → Notificações."])("reports a native notification delivery failure: %s", async message => {
     call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, notifications: true } });
     const user = userEvent.setup(); render(<SystemSettings />);
     const test = await screen.findByRole("button", { name: "Testar" });
-    call.mockRejectedValue("O macOS recusou a notificação.");
+    call.mockRejectedValue(message);
     await user.click(test);
-    expect(await screen.findByRole("alert")).toHaveTextContent("O macOS recusou");
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(toast.success).not.toHaveBeenCalled();
     expect(test).toBeEnabled();
   });
   it("updates native service failures live and removes its subscription on close", async () => {

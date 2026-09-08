@@ -1,8 +1,8 @@
 //! Native preferences and OS services, independent of the visible conversation.
 mod notifications;
-pub(crate) mod unread;
 #[cfg(test)]
 mod tests;
+pub(crate) mod unread;
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -209,7 +209,12 @@ pub fn setup(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "System preferences lock poisoned")? = Some(Store::open(
         app.path().home_dir()?.join(".jarvis/system.json"),
     ));
-    notifications::setup();
+    if let Err(error) = notifications::setup(app) {
+        *state
+            .notification_error
+            .lock()
+            .map_err(|_| "Notification state lock poisoned")? = Some(error);
+    }
     unread::setup(app);
     let (send, receive) = mpsc::channel();
     let handle = app.clone();

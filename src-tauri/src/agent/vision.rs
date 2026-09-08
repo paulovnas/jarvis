@@ -266,8 +266,24 @@ mod tests {
     async fn disabled_vision_never_resolves_credentials() {
         let home = tempfile::tempdir().unwrap();
         let state = AppState::default();
-        save(&state, home.path(), Config { inherit_chat: false, account_alias: None, model: None }).unwrap();
-        let options = TurnOptions { account: "chat".into(), model: "gpt-5.6-sol".into(), reasoning: None, mode: Mode::Plan, workflow: None, approval_mode: ApprovalMode::Yolo };
+        save(
+            &state,
+            home.path(),
+            Config {
+                inherit_chat: false,
+                account_alias: None,
+                model: None,
+            },
+        )
+        .unwrap();
+        let options = TurnOptions {
+            account: "chat".into(),
+            model: "gpt-5.6-sol".into(),
+            reasoning: None,
+            mode: Mode::Plan,
+            workflow: None,
+            approval_mode: ApprovalMode::Yolo,
+        };
         let (_send, signal) = watch::channel(false);
         assert_eq!(
             execute(
@@ -332,7 +348,14 @@ mod tests {
         )
         .unwrap();
         let (_send, signal) = watch::channel(false);
-        let options = TurnOptions { account: selected.account_alias.clone().unwrap(), model: selected.model.clone().unwrap(), reasoning: None, mode: Mode::Plan, workflow: None, approval_mode: ApprovalMode::Yolo };
+        let options = TurnOptions {
+            account: selected.account_alias.clone().unwrap(),
+            model: selected.model.clone().unwrap(),
+            reasoning: None,
+            mode: Mode::Plan,
+            workflow: None,
+            approval_mode: ApprovalMode::Yolo,
+        };
         let result = execute(&state, &oauth, &home, &conversation, &options, &json!({"ids":[item.id],"question":"Quais cores aparecem na metade esquerda e na metade direita? Responda em uma frase."}), signal).await;
         std::fs::remove_dir_all(attachments::directory(&home, &conversation).unwrap()).unwrap();
         let response: Value =

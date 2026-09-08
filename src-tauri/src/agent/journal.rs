@@ -1,6 +1,8 @@
 use super::{
-    compaction::{Checkpoint, CompactionEvent, CompletedCompaction}, diffs::FileRevision, queue::QueuedMessage, AgentError, StoredTurn,
-    TurnStatus,
+    compaction::{Checkpoint, CompactionEvent, CompletedCompaction},
+    diffs::FileRevision,
+    queue::QueuedMessage,
+    AgentError, StoredTurn, TurnStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -74,19 +76,38 @@ pub(super) fn append_event(
 }
 
 // Scan one bounded record at a time. The journal itself can grow beyond memory.
-pub(super) fn scan(path: &Path, start: u64, mut visit: impl FnMut(u64, usize, Record) -> Result<(), AgentError>) -> Result<u64, AgentError> {
+pub(super) fn scan(
+    path: &Path,
+    start: u64,
+    mut visit: impl FnMut(u64, usize, Record) -> Result<(), AgentError>,
+) -> Result<u64, AgentError> {
     let mut file = open(path, false)?;
-    file.seek(SeekFrom::Start(start)).map_err(|_| AgentError::storage())?;
+    file.seek(SeekFrom::Start(start))
+        .map_err(|_| AgentError::storage())?;
     let mut reader = BufReader::new(file);
     let mut offset = start;
     loop {
         let mut line = Vec::new();
-        (&mut reader).take(MAX_RECORD as u64 + 1).read_until(b'\n', &mut line).map_err(|_| AgentError::storage())?;
-        if line.len() > MAX_RECORD { return Err(AgentError::storage()); }
-        if !line.ends_with(b"\n") { break; }
+        (&mut reader)
+            .take(MAX_RECORD as u64 + 1)
+            .read_until(b'\n', &mut line)
+            .map_err(|_| AgentError::storage())?;
+        if line.len() > MAX_RECORD {
+            return Err(AgentError::storage());
+        }
+        if !line.ends_with(b"\n") {
+            break;
+        }
         if offset > 0 {
-            let record: Record = serde_json::from_slice(&line).map_err(|_| AgentError::new("invalid_history", "O histórico contém um registro inválido. O arquivo original foi preservado."))?;
-            if record.version != 1 { return Err(AgentError::storage()); }
+            let record: Record = serde_json::from_slice(&line).map_err(|_| {
+                AgentError::new(
+                    "invalid_history",
+                    "O histórico contém um registro inválido. O arquivo original foi preservado.",
+                )
+            })?;
+            if record.version != 1 {
+                return Err(AgentError::storage());
+            }
             visit(offset, line.len(), record)?;
         }
         offset += line.len() as u64;
@@ -95,11 +116,15 @@ pub(super) fn scan(path: &Path, start: u64, mut visit: impl FnMut(u64, usize, Re
 }
 
 pub(super) fn record_at(path: &Path, offset: u64, length: usize) -> Result<Record, AgentError> {
-    if length > MAX_RECORD { return Err(AgentError::storage()); }
+    if length > MAX_RECORD {
+        return Err(AgentError::storage());
+    }
     let mut file = open(path, false)?;
-    file.seek(SeekFrom::Start(offset)).map_err(|_| AgentError::storage())?;
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|_| AgentError::storage())?;
     let mut bytes = vec![0; length];
-    file.read_exact(&mut bytes).map_err(|_| AgentError::storage())?;
+    file.read_exact(&mut bytes)
+        .map_err(|_| AgentError::storage())?;
     serde_json::from_slice(&bytes).map_err(|_| AgentError::storage())
 }
 
@@ -129,7 +154,8 @@ fn read(
     let valid_end = scan(path, 0, |_, _, record| {
         match record.r#type.as_str() {
             "compaction_completed" => {
-                let completed: CompletedCompaction = serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+                let completed: CompletedCompaction =
+                    serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
                 extras.context = Some(completed.context);
                 extras.compactions.push(completed.event);
                 return Ok(());
@@ -168,7 +194,13 @@ fn read(
         }
         Ok(())
     })?;
-    if repair && valid_end < open(path, false)?.metadata().map_err(|_| AgentError::storage())?.len() {
+    if repair
+        && valid_end
+            < open(path, false)?
+                .metadata()
+                .map_err(|_| AgentError::storage())?
+                .len()
+    {
         // Preserve crash debris before repairing only an incomplete final line.
         let backup = path.with_extension(format!("recovery-{}.jsonl", crate::library::new_id()?));
         let mut options = OpenOptions::new();
@@ -186,7 +218,16 @@ fn read(
         File::open(path.parent().ok_or_else(AgentError::storage)?)
             .and_then(|directory| directory.sync_all())
             .map_err(|_| AgentError::storage())?;
-        let file = open(path, true)?;
+        // Truncation needs a write handle that is NOT in append mode: on Windows
+        // SetEndOfFile is denied (ACCESS_DENIED) on an append-only handle.
+        let mut options = OpenOptions::new();
+        options.read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW);
+        }
+        let file = options.open(path).map_err(|_| AgentError::storage())?;
         file.set_len(valid_end)
             .and_then(|()| file.sync_all())
             .map_err(|_| AgentError::storage())?;
@@ -266,10 +307,16 @@ pub(super) fn all_tool_results_durable(turn: &StoredTurn) -> bool {
 
 pub(super) fn safe_to_resume(turn: &StoredTurn) -> bool {
     all_tool_results_durable(turn)
-        && !turn.turn.steps.iter().flat_map(|step| &step.tools).any(|tool| {
-            tool.output == UNKNOWN_TOOL_OUTPUT
-                || (tool.name == "ask_user" && tool.output == super::questions::cancelled_output())
-        })
+        && !turn
+            .turn
+            .steps
+            .iter()
+            .flat_map(|step| &step.tools)
+            .any(|tool| {
+                tool.output == UNKNOWN_TOOL_OUTPUT
+                    || (tool.name == "ask_user"
+                        && tool.output == super::questions::cancelled_output())
+            })
         && !turn.wire.iter().any(|item| {
             item["type"].as_str() == Some("function_call_output")
                 && item["output"].as_str() == Some(UNKNOWN_TOOL_OUTPUT)
@@ -303,7 +350,8 @@ mod tests {
                     account: "test".into(),
                     model: "model".into(),
                     reasoning: None,
-                    mode: Mode::Build, workflow: None,
+                    mode: Mode::Build,
+                    workflow: None,
                     approval_mode: ApprovalMode::Manual,
                 },
                 status: TurnStatus::Running,

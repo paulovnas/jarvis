@@ -44,6 +44,20 @@ export function HomeSkeleton() {
   </div>;
 }
 
+/**
+ * Neutral full-screen placeholder shown while the app resolves its boot config
+ * and while the onboarding chunk loads. Deliberately not the Home layout: a
+ * first-run user must not see the three-pane shell flash before the centered
+ * onboarding card appears.
+ */
+export function BootSkeleton() {
+  return <div role="status" aria-label="Iniciando o Jarvis" className="flex h-full min-h-0 w-full flex-1 flex-col items-center justify-center gap-5 bg-background">
+    <Skeleton className="h-9 w-44 rounded-md" />
+    <div aria-hidden="true" className="flex flex-col items-center gap-2.5"><Skeleton className="h-3 w-56" /><Skeleton className="h-3 w-36" /></div>
+    <Skeleton className="mt-2 h-8 w-28 rounded-full" />
+  </div>;
+}
+
 export function SettingsSkeleton({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="flex max-h-[min(740px,85dvh)] w-[calc(100vw-3rem)] sm:max-w-[860px] flex-col gap-0 p-0 motion-reduce:transition-none"><DialogHeader className="border-b bg-card px-6 py-5"><DialogTitle className="text-base">Configurações</DialogTitle><DialogDescription className="sr-only">Carregando configurações</DialogDescription></DialogHeader><div role="status" aria-label="Carregando configurações" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto"><div aria-hidden="true" className="flex h-12 shrink-0 items-center gap-5 border-b px-6">{[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-5 w-20" />)}</div><div aria-hidden="true" className="px-6 pb-5"><CardsSkeleton label="Carregando opções" /></div></div></DialogContent></Dialog>;
 }

@@ -41,19 +41,20 @@ impl Stream {
                 // envelope, including role:"assistant" and content:"".
                 let changed_stop = !choice["finish_reason"].is_null()
                     && choice["finish_reason"].as_str() != Some(stopped.as_str());
-                let payload = !delta.is_null() && delta.as_object().is_none_or(|map| {
-                    map.iter().any(|(key, value)| {
-                        if key == "role" {
-                            return !value.is_null() && value != "assistant";
-                        }
-                        match value {
-                            Value::Null => false,
-                            Value::String(s) => !s.is_empty(),
-                            Value::Array(items) => !items.is_empty(),
-                            _ => true,
-                        }
-                    })
-                });
+                let payload = !delta.is_null()
+                    && delta.as_object().is_none_or(|map| {
+                        map.iter().any(|(key, value)| {
+                            if key == "role" {
+                                return !value.is_null() && value != "assistant";
+                            }
+                            match value {
+                                Value::Null => false,
+                                Value::String(s) => !s.is_empty(),
+                                Value::Array(items) => !items.is_empty(),
+                                _ => true,
+                            }
+                        })
+                    });
                 if changed_stop || payload {
                     return Err(protocol_error());
                 }

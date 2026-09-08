@@ -2,8 +2,8 @@
 //! leaves the backend, and opening a Dashboard never repairs session files.
 use super::*;
 use std::collections::BTreeMap;
-use std::time::SystemTime;
 use std::path::Path;
+use std::time::SystemTime;
 
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,8 +58,14 @@ fn summarize(turns: &[StoredTurn], extras: &journal::Extras) -> Metrics {
     for stored in turns {
         let turn = &stored.turn;
         metrics.duration_ms += turn.duration_ms;
-        *metrics.models.entry(format!("{}/{}", turn.options.account, turn.options.model)).or_default() += 1;
-        *metrics.days.entry(turn.created_at / 86_400_000).or_default() += 1;
+        *metrics
+            .models
+            .entry(format!("{}/{}", turn.options.account, turn.options.model))
+            .or_default() += 1;
+        *metrics
+            .days
+            .entry(turn.created_at / 86_400_000)
+            .or_default() += 1;
         for step in &turn.steps {
             if let Some(usage) = &step.usage {
                 metrics.input_tokens += usage.input_tokens;
@@ -79,16 +85,30 @@ fn summarize(turns: &[StoredTurn], extras: &journal::Extras) -> Metrics {
 impl DashboardState {
     fn read(&self, path: &Path) -> Result<Metrics, AgentError> {
         let meta = std::fs::symlink_metadata(path).map_err(|_| AgentError::storage())?;
-        if !meta.is_file() || meta.is_symlink() { return Err(AgentError::storage()); }
+        if !meta.is_file() || meta.is_symlink() {
+            return Err(AgentError::storage());
+        }
         let modified = meta.modified().map_err(|_| AgentError::storage())?;
         let mut cache = self.0.lock().map_err(|_| AgentError::storage())?;
-        if let Some(entry) = cache.get(path).filter(|entry| entry.modified == modified && entry.length == meta.len()) {
+        if let Some(entry) = cache
+            .get(path)
+            .filter(|entry| entry.modified == modified && entry.length == meta.len())
+        {
             return Ok(entry.metrics.clone());
         }
         let (turns, extras) = journal::read_only(path)?;
         let metrics = summarize(&turns, &extras);
-        if cache.len() >= 256 { cache.clear(); }
-        cache.insert(path.into(), Cached { modified, length: meta.len(), metrics: metrics.clone() });
+        if cache.len() >= 256 {
+            cache.clear();
+        }
+        cache.insert(
+            path.into(),
+            Cached {
+                modified,
+                length: meta.len(),
+                metrics: metrics.clone(),
+            },
+        );
         Ok(metrics)
     }
 }
@@ -103,30 +123,60 @@ fn merge(total: &mut Metrics, metrics: &Metrics) {
     total.duration_ms += metrics.duration_ms;
     total.compactions += metrics.compactions;
     total.changed_files += metrics.changed_files;
-    for (key, value) in &metrics.models { *total.models.entry(key.clone()).or_default() += value; }
-    for (key, value) in &metrics.tools { *total.tools.entry(key.clone()).or_default() += value; }
-    for (key, value) in &metrics.days { *total.days.entry(*key).or_default() += value; }
+    for (key, value) in &metrics.models {
+        *total.models.entry(key.clone()).or_default() += value;
+    }
+    for (key, value) in &metrics.tools {
+        *total.tools.entry(key.clone()).or_default() += value;
+    }
+    for (key, value) in &metrics.days {
+        *total.days.entry(*key).or_default() += value;
+    }
 }
 
 #[tauri::command]
-pub async fn get_project_metrics(app: tauri::AppHandle, state: tauri::State<'_, AppState>, dashboard: tauri::State<'_, DashboardState>, project_id: String) -> Result<DashboardMetrics, AgentError> {
+pub async fn get_project_metrics(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    dashboard: tauri::State<'_, DashboardState>,
+    project_id: String,
+) -> Result<DashboardMetrics, AgentError> {
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     let state = state.inner().clone();
     let dashboard = dashboard.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let sources = library::dashboard::sources(&state, &home, &project_id)?;
-        let mut result = DashboardMetrics { project_id, sessions: sources.len(), unavailable_sessions: 0, metrics: Metrics::default(), recent: vec![] };
+        let mut result = DashboardMetrics {
+            project_id,
+            sessions: sources.len(),
+            unavailable_sessions: 0,
+            metrics: Metrics::default(),
+            recent: vec![],
+        };
         for source in sources {
-            let metrics = source.journal.as_ref().ok_or_else(AgentError::storage).and_then(|path| dashboard.read(path));
-            if metrics.is_err() { result.unavailable_sessions += 1; }
+            let metrics = source
+                .journal
+                .as_ref()
+                .ok_or_else(AgentError::storage)
+                .and_then(|path| dashboard.read(path));
+            if metrics.is_err() {
+                result.unavailable_sessions += 1;
+            }
             let metrics = metrics.unwrap_or_default();
             merge(&mut result.metrics, &metrics);
             if result.recent.len() < 5 {
-                result.recent.push(RecentSession { id: source.id, title: source.title, activity: source.activity, turns: metrics.turns });
+                result.recent.push(RecentSession {
+                    id: source.id,
+                    title: source.title,
+                    activity: source.activity,
+                    turns: metrics.turns,
+                });
             }
         }
         Ok(result)
-    }).await.map_err(|_| AgentError::storage())?
+    })
+    .await
+    .map_err(|_| AgentError::storage())?
 }
 
 #[cfg(test)]
@@ -145,18 +195,43 @@ mod tests {
         journal::append(&path, &stored).unwrap();
         stored.turn.steps[0].usage.as_mut().unwrap().output_tokens = 75;
         journal::append(&path, &stored).unwrap();
-        journal::append_event(&path, "context_checkpoint", &compaction::Checkpoint { count: 3, ..Default::default() }).unwrap();
+        journal::append_event(
+            &path,
+            "context_checkpoint",
+            &compaction::Checkpoint {
+                count: 3,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         use std::io::Write;
-        std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"{truncated").unwrap();
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{truncated")
+            .unwrap();
         let before = std::fs::read(&path).unwrap();
         let state = DashboardState::default();
         let metrics = state.read(&path).unwrap();
-        assert_eq!((metrics.turns, metrics.input_tokens, metrics.output_tokens, metrics.tool_calls, metrics.compactions), (1,500,75,1,3));
+        assert_eq!(
+            (
+                metrics.turns,
+                metrics.input_tokens,
+                metrics.output_tokens,
+                metrics.tool_calls,
+                metrics.compactions
+            ),
+            (1, 500, 75, 1, 3)
+        );
         assert_eq!(metrics.days.get(&1), Some(&1));
         assert_eq!(state.read(&path).unwrap().turns, 1);
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 1);
         assert!(!serde_json::to_string(&metrics).unwrap().contains("private"));
-        assert_eq!(journal::read_only(&path).unwrap().0[0].turn.status, TurnStatus::Running);
+        assert_eq!(
+            journal::read_only(&path).unwrap().0[0].turn.status,
+            TurnStatus::Running
+        );
     }
 }

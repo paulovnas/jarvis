@@ -81,15 +81,121 @@ fn setup_project(connection: &mut Connection, home: &TestHome) -> Project {
 }
 
 #[test]
+fn project_opener_resolves_only_registered_directories_with_native_display_paths() {
+    let home = TestHome::new();
+    let mut connection = database();
+    let state = insert_workspace(&mut connection, "Workspace").unwrap();
+    let directory = home.project("João Silva [projeto]");
+    let state = insert_project(&mut connection, &state.workspaces[0].id, &directory).unwrap();
+    let project = &state.projects[0];
+    let opened = project_opener_path(&connection, &project.id).unwrap();
+    assert_eq!(
+        fs::canonicalize(&opened).unwrap(),
+        PathBuf::from(&project.path)
+    );
+    assert!(opened.contains("João Silva [projeto]"));
+    #[cfg(windows)]
+    assert!(!opened.starts_with(r"\\?\"));
+    assert!(project_opener_path(&connection, &directory.to_string_lossy()).is_err());
+    assert!(project_opener_path(&connection, "unknown-project").is_err());
+    fs::remove_dir(&directory).unwrap();
+    assert_eq!(
+        project_opener_path(&connection, &project.id)
+            .unwrap_err()
+            .code,
+        "project_directory"
+    );
+    fs::write(&directory, "a file is not a project directory").unwrap();
+    assert_eq!(
+        project_opener_path(&connection, &project.id)
+            .unwrap_err()
+            .code,
+        "project_directory"
+    );
+}
+
+#[test]
+fn conversation_opener_accepts_existing_project_files_and_rejects_escapes() {
+    let home = TestHome::new();
+    let mut connection = database();
+    let project = setup_project(&mut connection, &home);
+    let root = PathBuf::from(&project.path);
+    fs::create_dir(root.join("src")).unwrap();
+    fs::write(root.join("src/ação [teste].ts"), "source").unwrap();
+    fs::write(home.0.join("outside.ts"), "outside").unwrap();
+    let snapshot = insert_conversation(&mut connection, &home.0, &project.id, "Review").unwrap();
+    let conversation = &snapshot.conversations[0].id;
+    let opened = conversation_opener_path(
+        &connection,
+        &home.0,
+        conversation,
+        Some("src/ação [teste].ts"),
+    )
+    .unwrap();
+    assert_eq!(fs::read_to_string(opened).unwrap(), "source");
+    assert_eq!(
+        conversation_opener_path(&connection, &home.0, conversation, None).unwrap(),
+        project_opener_path(&connection, &project.id).unwrap(),
+    );
+    for relative in [
+        "",
+        "..",
+        "../outside.ts",
+        r"..\outside.ts",
+        "C:/outside.ts",
+        "/outside.ts",
+        "src/missing.ts",
+        "src",
+        "src/ação [teste].ts:stream",
+    ] {
+        assert!(
+            conversation_opener_path(&connection, &home.0, conversation, Some(relative)).is_err(),
+            "{relative}"
+        );
+    }
+    assert!(conversation_opener_path(&connection, &home.0, "unknown", None).is_err());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(home.0.join("outside.ts"), root.join("outside-link.ts"))
+            .unwrap();
+        assert!(conversation_opener_path(
+            &connection,
+            &home.0,
+            conversation,
+            Some("outside-link.ts")
+        )
+        .is_err());
+    }
+}
+
+#[test]
 fn dashboard_selection_and_activity_survive_without_touching_source_or_history() {
     let home = TestHome::new();
     let mut connection = database();
     let project = setup_project(&mut connection, &home);
-    let first = insert_conversation(&mut connection, &home.0, &project.id, "First").unwrap().selection.conversation_id.unwrap();
-    let second = insert_conversation(&mut connection, &home.0, &project.id, "Second").unwrap().selection.conversation_id.unwrap();
+    let first = insert_conversation(&mut connection, &home.0, &project.id, "First")
+        .unwrap()
+        .selection
+        .conversation_id
+        .unwrap();
+    let second = insert_conversation(&mut connection, &home.0, &project.id, "Second")
+        .unwrap()
+        .selection
+        .conversation_id
+        .unwrap();
     dashboard::backfill_activity(&connection, &home.0).unwrap();
-    connection.execute("UPDATE conversations SET last_activity_at = 9999999999 WHERE id = ?1", [&first]).unwrap();
-    let result = select_item(&mut connection, &home.0, LibraryTarget::Project(project.id.clone())).unwrap();
+    connection
+        .execute(
+            "UPDATE conversations SET last_activity_at = 9999999999 WHERE id = ?1",
+            [&first],
+        )
+        .unwrap();
+    let result = select_item(
+        &mut connection,
+        &home.0,
+        LibraryTarget::Project(project.id.clone()),
+    )
+    .unwrap();
     assert_eq!(result.selection.project_id, Some(project.id));
     assert_eq!(result.selection.conversation_id, None);
     assert_eq!(result.conversations[0].id, first);
@@ -283,12 +389,24 @@ fn creating_a_conversation_reuses_the_latest_empty_session() {
     let home = TestHome::new();
     let mut connection = database();
     let project = setup_project(&mut connection, &home);
-    let first = insert_conversation(&mut connection, &home.0, &project.id, "Nova Conversa").unwrap();
+    let first =
+        insert_conversation(&mut connection, &home.0, &project.id, "Nova Conversa").unwrap();
     let first_id = first.selection.conversation_id.unwrap();
 
-    let reused = insert_conversation(&mut connection, &home.0, &project.id, "Nova Conversa").unwrap();
-    assert_eq!(reused.selection.conversation_id.as_deref(), Some(first_id.as_str()));
-    assert_eq!(reused.conversations.iter().filter(|conversation| conversation.project_id == project.id).count(), 1);
+    let reused =
+        insert_conversation(&mut connection, &home.0, &project.id, "Nova Conversa").unwrap();
+    assert_eq!(
+        reused.selection.conversation_id.as_deref(),
+        Some(first_id.as_str())
+    );
+    assert_eq!(
+        reused
+            .conversations
+            .iter()
+            .filter(|conversation| conversation.project_id == project.id)
+            .count(),
+        1
+    );
 
     let first_path = session_path(&home.0, &project.id, &first_id, false).unwrap();
     let mut history = fs::read(&first_path).unwrap();
@@ -298,9 +416,20 @@ fn creating_a_conversation_reuses_the_latest_empty_session() {
     let next = insert_conversation(&mut connection, &home.0, &project.id, "Nova Conversa").unwrap();
     let next_id = next.selection.conversation_id.unwrap();
     assert_ne!(next_id, first_id);
-    let repeated = insert_conversation(&mut connection, &home.0, &project.id, "Nova Conversa").unwrap();
-    assert_eq!(repeated.selection.conversation_id.as_deref(), Some(next_id.as_str()));
-    assert_eq!(repeated.conversations.iter().filter(|conversation| conversation.project_id == project.id).count(), 2);
+    let repeated =
+        insert_conversation(&mut connection, &home.0, &project.id, "Nova Conversa").unwrap();
+    assert_eq!(
+        repeated.selection.conversation_id.as_deref(),
+        Some(next_id.as_str())
+    );
+    assert_eq!(
+        repeated
+            .conversations
+            .iter()
+            .filter(|conversation| conversation.project_id == project.id)
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -753,4 +882,38 @@ fn version_three_migration_keeps_existing_conversation_names_and_navigation() {
         .unwrap()
         .exists([])
         .unwrap());
+}
+
+#[test]
+fn serialized_project_path_drops_the_windows_verbatim_prefix() {
+    // strip_verbatim is the single boundary that keeps a `\\?\` path away from
+    // the UI and the opener plugin. Verified directly so the contract holds on
+    // every platform, including where the prefix never appears.
+    #[cfg(windows)]
+    {
+        assert_eq!(strip_verbatim(r"\\?\C:\Users\me\proj"), r"C:\Users\me\proj");
+        assert_eq!(strip_verbatim(r"\\?\UNC\server\share"), r"\\server\share");
+        assert_eq!(strip_verbatim(r"C:\already\plain"), r"C:\already\plain");
+    }
+    #[cfg(not(windows))]
+    assert_eq!(strip_verbatim("/already/plain"), "/already/plain");
+
+    // A stored Windows-canonical path must serialize without the prefix while
+    // the in-memory value is untouched (the backend's containment checks rely on
+    // the verbatim form).
+    let stored = if cfg!(windows) {
+        r"\\?\C:\Users\me\proj"
+    } else {
+        "/Users/me/proj"
+    };
+    let project = Project {
+        id: "p".into(),
+        workspace_id: "w".into(),
+        name: "proj".into(),
+        path: stored.into(),
+        created_at: 1,
+    };
+    let value = serde_json::to_value(&project).unwrap();
+    assert_eq!(value["path"], strip_verbatim(stored).as_ref());
+    assert_eq!(project.path, stored, "in-memory path must stay verbatim");
 }

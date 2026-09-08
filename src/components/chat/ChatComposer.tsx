@@ -1,8 +1,7 @@
-import { lazy, Suspense, useRef, useState } from "react";
+import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, Plus, Square, ListOrdered, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/TextInput";
-import { ProcessPopover } from "./ProcessPopover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -20,6 +19,7 @@ import { mergeDrafts, type ChatDraft, type MessagePart, type QueuedMessage, type
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
 interface ChatComposerProps {
+  terminalLauncher?: ReactNode;
   agentModels?: AgentModelsController;
   onSendMessage: (content: string, options: TurnOptions, parts?: MessagePart[]) => Promise<boolean>;
   onStop?: () => Promise<void>;
@@ -36,6 +36,7 @@ interface ChatComposerProps {
 }
 
 export function ChatComposer({
+  terminalLauncher,
   agentModels,
   onSendMessage,
   modelGroups,
@@ -160,7 +161,7 @@ export function ChatComposer({
           >
             <Plus className="size-3.5 stroke-[2.2]" />
           </Button>
-          {draftKey && <ProcessPopover key={draftKey} conversationId={draftKey} />}
+          {terminalLauncher}
           <Input ref={fileInput} type="file" multiple className="hidden" aria-label="Selecionar anexos" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.pdf,.docx,.odt,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.ts,.tsx,.js,.css,.html,.rs,.py" onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void addFiles(files); }} />
 
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}

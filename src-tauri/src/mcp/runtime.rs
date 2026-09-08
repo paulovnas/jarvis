@@ -5,7 +5,6 @@ use rmcp::{
     service::{NotificationContext, RunningService},
     transport::{
         streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport,
-        TokioChildProcess,
     },
     ClientHandler, RoleClient, ServiceExt,
 };
@@ -14,7 +13,6 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
-    process::Stdio,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -85,20 +83,10 @@ pub async fn connect(
                 let directory = cwd
                     .as_ref()
                     .map_or_else(|| root.to_path_buf(), |cwd| root.join(cwd));
-                if !directory.is_dir() {
-                    return Err(error("A pasta de trabalho do MCP não existe."));
-                }
-                let mut cmd = tokio::process::Command::new(&command[0]);
-                cmd.args(&command[1..])
-                    .current_dir(directory)
-                    .envs(environment)
-                    .kill_on_drop(true);
-                super::executable::configure(&mut cmd, environment.contains_key("PATH"));
-                let mut wrapped = process_wrap::tokio::CommandWrap::from(cmd);
-                #[cfg(unix)]
-                wrapped.wrap(process_wrap::tokio::ProcessGroup::leader());
-                wrapped.wrap(process_wrap::tokio::KillOnDrop);
-                let (transport, _) = TokioChildProcess::builder(wrapped).stderr(Stdio::null()).spawn().map_err(|_| error("Não foi possível iniciar o MCP. Verifique se o executável está instalado."))?;
+                let mut cmd = super::executable::local_command(command, environment, &directory)?;
+                crate::background::prepare_node(&mut cmd)
+                    .map_err(|_| error("Não foi possível preparar o runtime do MCP."))?;
+                let transport = super::stdio::spawn(cmd).map_err(|_| error("Não foi possível iniciar o MCP. Verifique se o executável está instalado."))?;
                 handler
                     .serve(transport)
                     .await
@@ -178,7 +166,11 @@ fn wire_name(server: &Server, name: &str) -> String {
 fn redact_core(mut text: String, config: &Config) -> String {
     if let Config::Local { environment, .. } = config {
         for (name, value) in environment {
-            if value.len() >= 4 && ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"].iter().any(|part| name.to_ascii_uppercase().contains(part)) {
+            if value.len() >= 4
+                && ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"]
+                    .iter()
+                    .any(|part| name.to_ascii_uppercase().contains(part))
+            {
                 text = text.replace(value, "[redacted]");
             }
         }
@@ -187,30 +179,72 @@ fn redact_core(mut text: String, config: &Config) -> String {
 }
 #[test]
 fn core_output_redacts_keys_but_preserves_project_paths() {
-    let config = Config::Local { command: vec!["node".into()], cwd: None, enabled: true, timeout: 1000,
-        environment: std::collections::BTreeMap::from([("CONTEXT7_API_KEY".into(), "secret-test-key".into()), ("PWD".into(), "/my/project".into())]) };
-    assert_eq!(redact_core("Documentation at /my/project with secret-test-key".into(), &config), "Documentation at /my/project with [redacted]");
+    let config = Config::Local {
+        command: vec!["node".into()],
+        cwd: None,
+        enabled: true,
+        timeout: 1000,
+        environment: std::collections::BTreeMap::from([
+            ("CONTEXT7_API_KEY".into(), "secret-test-key".into()),
+            ("PWD".into(), "/my/project".into()),
+        ]),
+    };
+    assert_eq!(
+        redact_core(
+            "Documentation at /my/project with secret-test-key".into(),
+            &config
+        ),
+        "Documentation at /my/project with [redacted]"
+    );
 }
 impl Client {
     pub(crate) fn core_definitions(&self) -> Vec<Value> {
-        self.tools.iter().map(|tool| {
-            let mut definition = tool.definition.clone();
-            definition["name"] = json!(tool.original);
-            definition
-        }).collect()
+        self.tools
+            .iter()
+            .map(|tool| {
+                let mut definition = tool.definition.clone();
+                definition["name"] = json!(tool.original);
+                definition
+            })
+            .collect()
     }
-    pub(crate) async fn core_call(&self, name: &str, args: &Value, mut signal: watch::Receiver<bool>) -> Result<String, McpError> {
-        let tool = self.tools.iter().find(|tool| tool.original == name).ok_or_else(protocol_error)?;
-        if !tool.validator.is_valid(args) || args.to_string().len() > 256 * 1024 { return Err(error("Argumentos inválidos para a ferramenta do Core.")); }
-        let request = self.service.call_tool(CallToolRequestParams::new(tool.original.clone()).with_arguments(args.as_object().cloned().ok_or_else(protocol_error)?));
+    pub(crate) async fn core_call(
+        &self,
+        name: &str,
+        args: &Value,
+        mut signal: watch::Receiver<bool>,
+    ) -> Result<String, McpError> {
+        let tool = self
+            .tools
+            .iter()
+            .find(|tool| tool.original == name)
+            .ok_or_else(protocol_error)?;
+        if !tool.validator.is_valid(args) || args.to_string().len() > 256 * 1024 {
+            return Err(error("Argumentos inválidos para a ferramenta do Core."));
+        }
+        let request = self.service.call_tool(
+            CallToolRequestParams::new(tool.original.clone())
+                .with_arguments(args.as_object().cloned().ok_or_else(protocol_error)?),
+        );
         let response = tokio::select! {
             _ = cancelled(&mut signal) => { self.service.cancellation_token().cancel(); return Err(error("Ferramenta do Core interrompida; confira o resultado antes de repetir a ação.")); },
             result = tokio::time::timeout(self.config.timeout(), request) => result.map_err(|_| error("A ferramenta do Core excedeu o tempo limite; confira o resultado antes de repetir a ação."))?.map_err(|_| protocol_error())?,
         };
         let value = serde_json::to_value(&response).map_err(|_| protocol_error())?;
-        let text = value["content"].as_array().into_iter().flatten().filter_map(|item| item["text"].as_str()).collect::<Vec<_>>().join("\n\n");
-        let text: String = redact_core(text, &self.config).chars().take(MAX_OUTPUT).collect();
-        if response.is_error == Some(true) { return Err(error(&text)); }
+        let text = value["content"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let text: String = redact_core(text, &self.config)
+            .chars()
+            .take(MAX_OUTPUT)
+            .collect();
+        if response.is_error == Some(true) {
+            return Err(error(&text));
+        }
         Ok(text)
     }
     async fn refresh(&mut self) -> Result<(), McpError> {

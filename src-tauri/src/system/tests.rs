@@ -1,5 +1,24 @@
 use super::*;
 
+#[test]
+fn application_exit_waits_for_the_power_worker_and_is_repeatable() {
+    let system = SystemState::default();
+    let agent = crate::agent::AgentState::default();
+    let (stop, receive) = mpsc::channel::<bool>();
+    let (released, confirmation) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        assert!(receive.recv().unwrap());
+        released.send(()).unwrap();
+    });
+    *system.worker.lock().unwrap() = Some((stop, worker));
+    crate::shutdown_services(&system, &agent);
+    confirmation
+        .try_recv()
+        .expect("The OS power worker must finish before the updater exits");
+    crate::shutdown_services(&system, &agent);
+    assert!(system.worker.lock().unwrap().is_none());
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 #[ignore = "Requires the macOS power service; run explicitly on the host"]

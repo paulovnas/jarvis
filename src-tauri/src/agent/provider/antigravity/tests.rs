@@ -20,10 +20,18 @@ fn grounding_uses_selected_gemini_and_only_verified_source_metadata() {
     output.event(&json!({"response":{"candidates":[{"content":{"parts":[{"text":"Documentação"}]},"groundingMetadata":{"groundingChunks":[{"web":{"uri":"https://v2.tauri.app/","title":"Tauri"}}]},"finishReason":"STOP"}]}}), &mut |_| Ok(())).unwrap();
     let response = output.finish("gemini-3.8-flash").unwrap();
     assert_eq!(response.output[0]["type"], "web_search_call");
-    assert_eq!(response.output[0]["action"]["sources"][0]["url"], "https://v2.tauri.app/");
+    assert_eq!(
+        response.output[0]["action"]["sources"][0]["url"],
+        "https://v2.tauri.app/"
+    );
     let mut plain = Output::default();
     plain.event(&json!({"candidates":[{"content":{"parts":[{"text":"Sem pesquisa"}]},"finishReason":"STOP"}]}), &mut |_| Ok(())).unwrap();
-    assert!(!plain.finish("gemini").unwrap().output.iter().any(|item| item["type"] == "web_search_call"));
+    assert!(!plain
+        .finish("gemini")
+        .unwrap()
+        .output
+        .iter()
+        .any(|item| item["type"] == "web_search_call"));
 }
 fn credential() -> CodexCredential {
     let mut c = CodexCredential::new("test", "test", 0, "google:1", None, None);

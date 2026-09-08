@@ -160,7 +160,9 @@ fn cleanup_context_memory(connection: &Connection, home: &Path) -> Result<(), Li
         })
         .collect();
     for id in workers {
-        if let Some(name) = crate::core::context::storage(home, &id).file_name() { live.insert(name.to_os_string()); }
+        if let Some(name) = crate::core::context::storage(home, &id).file_name() {
+            live.insert(name.to_os_string());
+        }
     }
     for entry in fs::read_dir(&directory).map_err(|_| deletion_error())? {
         let entry = entry.map_err(|_| deletion_error())?;
@@ -181,31 +183,52 @@ fn cleanup_context_memory(connection: &Connection, home: &Path) -> Result<(), Li
 // Retain worker Context-mode stores while the owning conversation still exists.
 fn cleanup_attachments(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
     let root = home.join(".jarvis/attachments");
-    if !is_directory(&root)? { return Ok(()); }
-    let live: std::collections::HashSet<String> = connection.prepare("SELECT id FROM conversations")?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
+    if !is_directory(&root)? {
+        return Ok(());
+    }
+    let live: std::collections::HashSet<String> = connection
+        .prepare("SELECT id FROM conversations")?
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
     for entry in fs::read_dir(&root).map_err(|_| deletion_error())? {
         let entry = entry.map_err(|_| deletion_error())?;
         let id = entry.file_name().to_string_lossy().into_owned();
-        if valid_id(&id) && !live.contains(&id) && is_directory(&entry.path())? { fs::remove_dir_all(entry.path()).map_err(|_| deletion_error())?; }
+        if valid_id(&id) && !live.contains(&id) && is_directory(&entry.path())? {
+            fs::remove_dir_all(entry.path()).map_err(|_| deletion_error())?;
+        }
     }
     sync_directory(&root)
 }
 
 fn cleanup_workflows(connection: &Connection, home: &Path) -> Result<Vec<String>, LibraryError> {
     let root = home.join(".jarvis/workflows");
-    if !is_directory(&root)? { return Ok(vec![]); }
-    let live: std::collections::HashSet<String> = connection.prepare("SELECT id FROM conversations")?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
+    if !is_directory(&root)? {
+        return Ok(vec![]);
+    }
+    let live: std::collections::HashSet<String> = connection
+        .prepare("SELECT id FROM conversations")?
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
     let mut workers = vec![];
     for entry in fs::read_dir(&root).map_err(|_| deletion_error())? {
         let entry = entry.map_err(|_| deletion_error())?;
         let id = entry.file_name().to_string_lossy().into_owned();
-        if !valid_id(&id) { continue; }
-        if !is_directory(&entry.path())? { continue; }
-        if !live.contains(&id) { fs::remove_dir_all(entry.path()).map_err(|_| deletion_error())?; continue; }
+        if !valid_id(&id) {
+            continue;
+        }
+        if !is_directory(&entry.path())? {
+            continue;
+        }
+        if !live.contains(&id) {
+            fs::remove_dir_all(entry.path()).map_err(|_| deletion_error())?;
+            continue;
+        }
         for artifact in fs::read_dir(entry.path()).map_err(|_| deletion_error())? {
             let artifact = artifact.map_err(|_| deletion_error())?;
             let name = artifact.file_name().to_string_lossy().into_owned();
-            if let Some(worker) = name.strip_suffix(".jsonl").filter(|id| valid_id(id)) { workers.push(worker.to_owned()); }
+            if let Some(worker) = name.strip_suffix(".jsonl").filter(|id| valid_id(id)) {
+                workers.push(worker.to_owned());
+            }
         }
     }
     sync_directory(&root)?;

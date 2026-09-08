@@ -117,7 +117,7 @@ describe("App bootstrap and onboarding", () => {
 
     render(<App />);
 
-    expect(screen.getByRole("status", { name: "Carregando Jarvis" })).toBeVisible();
+    expect(screen.getByRole("status", { name: "Iniciando o Jarvis" })).toBeVisible();
     expect(screen.queryByText("Carregando configuração…")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(

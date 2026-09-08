@@ -29,6 +29,33 @@ pub struct LayoutPreferences {
     pub activity_sections: BTreeMap<String, bool>,
     pub sidebar_collapsed: bool,
     pub inspector_collapsed: bool,
+    pub terminal_panels: BTreeMap<String, TerminalPanelPreferences>,
+    pub file_tabs: BTreeMap<String, FileTabsPreferences>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FileTabsPreferences {
+    pub paths: Vec<String>,
+    pub active_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TerminalPanelPreferences {
+    pub open: bool,
+    pub size: f64,
+    pub active_terminal_id: Option<String>,
+}
+
+impl Default for TerminalPanelPreferences {
+    fn default() -> Self {
+        Self {
+            open: false,
+            size: 40.0,
+            active_terminal_id: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -37,6 +64,7 @@ pub enum InspectorTab {
     Details,
     #[default]
     Activities,
+    Explorer,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -64,8 +92,32 @@ impl LayoutPreferences {
         {
             return Err("Invalid panel dimensions".into());
         }
-        if self.expanded_projects.len() > 10_000 || self.activity_sections.len() > 20 {
+        if self.expanded_projects.len() > 10_000
+            || self.activity_sections.len() > 20
+            || self.terminal_panels.len() > 10_000
+            || self.file_tabs.len() > 10_000
+        {
             return Err("Too many layout entries".into());
+        }
+        if self
+            .terminal_panels
+            .values()
+            .any(|panel| !panel.size.is_finite() || !(20.0..=65.0).contains(&panel.size))
+        {
+            return Err("Invalid terminal panel dimensions".into());
+        }
+        if self.file_tabs.values().any(|tabs| {
+            tabs.paths.len() > 30
+                || tabs
+                    .paths
+                    .iter()
+                    .any(|path| path.is_empty() || path.len() > 4096)
+                || tabs
+                    .active_path
+                    .as_ref()
+                    .is_some_and(|path| !tabs.paths.contains(path))
+        }) {
+            return Err("Invalid file tabs".into());
         }
         Ok(())
     }
@@ -376,15 +428,38 @@ mod tests {
             maximized: true,
             fullscreen: false,
         };
-        store.preferences.layout.inspector_tab = InspectorTab::Details;
+        store.preferences.layout.inspector_tab = InspectorTab::Explorer;
         store.preferences.layout.settings_tab = SettingsTab::Tools;
         store.preferences.layout.sidebar_collapsed = true;
         store.preferences.layout.inspector_collapsed = true;
+        store.preferences.layout.terminal_panels.insert(
+            "chat-1".into(),
+            TerminalPanelPreferences {
+                open: true,
+                size: 57.0,
+                active_terminal_id: Some("terminal-2".into()),
+            },
+        );
+        store.preferences.layout.terminal_panels.insert(
+            "chat-2".into(),
+            TerminalPanelPreferences {
+                open: false,
+                size: 25.0,
+                active_terminal_id: None,
+            },
+        );
         store
             .preferences
             .layout
             .expanded_projects
             .insert("project-1".into(), false);
+        store.preferences.layout.file_tabs.insert(
+            "project-1".into(),
+            FileTabsPreferences {
+                paths: vec!["src/ação.ts".into(), "README.md".into()],
+                active_path: Some("src/ação.ts".into()),
+            },
+        );
         store.save().unwrap();
         let restored = Store::open(path).unwrap();
         assert_eq!(restored.preferences.window, store.preferences.window);
@@ -421,6 +496,67 @@ mod tests {
         assert!(layout.validate().is_err());
         layout.panels.insert(PANEL_IDS[0].into(), 80.0);
         assert!(layout.validate().is_err());
+    }
+
+    #[test]
+    fn old_layouts_remain_readable_and_terminal_dimensions_are_validated() {
+        let mut layout: LayoutPreferences =
+            serde_json::from_str(r#"{"sidebarCollapsed":true}"#).unwrap();
+        assert!(layout.sidebar_collapsed);
+        assert!(layout.terminal_panels.is_empty());
+        assert!(layout.file_tabs.is_empty());
+        for size in [20.0, 40.0, 65.0] {
+            layout.terminal_panels.insert(
+                "chat".into(),
+                TerminalPanelPreferences {
+                    size,
+                    ..Default::default()
+                },
+            );
+            assert!(layout.validate().is_ok());
+        }
+        for size in [0.0, 19.0, 66.0, f64::NAN, f64::INFINITY] {
+            layout.terminal_panels.insert(
+                "chat".into(),
+                TerminalPanelPreferences {
+                    size,
+                    ..Default::default()
+                },
+            );
+            assert!(layout.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn file_tabs_require_an_existing_active_tab_and_bounded_paths() {
+        let mut layout = LayoutPreferences::default();
+        let tabs = FileTabsPreferences {
+            paths: vec!["src/main.ts".into()],
+            active_path: None,
+        };
+        layout.file_tabs.insert("project".into(), tabs.clone());
+        assert!(layout.validate().is_ok());
+        for invalid in [
+            FileTabsPreferences {
+                active_path: Some("missing.ts".into()),
+                ..tabs.clone()
+            },
+            FileTabsPreferences {
+                paths: vec!["".into()],
+                ..tabs.clone()
+            },
+            FileTabsPreferences {
+                paths: vec!["a".repeat(4097)],
+                ..tabs.clone()
+            },
+            FileTabsPreferences {
+                paths: (0..31).map(|i| format!("file-{i}")).collect(),
+                ..tabs
+            },
+        ] {
+            layout.file_tabs.insert("project".into(), invalid);
+            assert!(layout.validate().is_err());
+        }
     }
 
     #[test]

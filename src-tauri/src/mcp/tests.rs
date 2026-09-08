@@ -343,6 +343,7 @@ async fn failed_server_is_isolated_and_cancellation_stops_stdio_process() {
         cancel
     );
     assert!(result.unwrap_err().message.contains("interrompida"));
+    #[cfg(unix)]
     let pid: i32 = fs::read_to_string(f.home.join("docs-pid"))
         .unwrap()
         .parse()
@@ -407,15 +408,32 @@ async fn streamable_http_supports_headers_and_real_protocol_dispatch() {
 async fn live_context7_with_gui_runtime_path() {
     let fixture = Fixture::new();
     let raw = json!({"context7": {"type":"local", "command":["npx", "-y", "@upstash/context7-mcp"], "timeout":60000}}).to_string();
-    let server = fixture.mcp.save(&fixture.state, &fixture.home, Some("builtin-context7"), &raw).unwrap().into_iter().find(|server| server.name == "context7").unwrap();
+    let server = fixture
+        .mcp
+        .save(
+            &fixture.state,
+            &fixture.home,
+            Some("builtin-context7"),
+            &raw,
+        )
+        .unwrap()
+        .into_iter()
+        .find(|server| server.name == "context7")
+        .unwrap();
     let mut config = fixture.mcp.config(&server).unwrap();
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
     if let Config::Local { environment, .. } = &mut config {
-        let path = executable::search_path(std::ffi::OsStr::new("/usr/bin:/bin:/usr/sbin:/sbin"), &home, &[Path::new("/opt/homebrew"), Path::new("/usr/local")]);
+        let path = executable::search_path(
+            std::ffi::OsStr::new("/usr/bin:/bin:/usr/sbin:/sbin"),
+            &home,
+            &[Path::new("/opt/homebrew"), Path::new("/usr/local")],
+        );
         environment.insert("PATH".into(), path.to_string_lossy().into_owned());
     }
     let (_send, signal) = watch::channel(false);
-    let mut client = runtime::connect(server, config, &fixture.home, signal).await.expect("Context7 discovery failed");
+    let mut client = runtime::connect(server, config, &fixture.home, signal)
+        .await
+        .expect("Context7 discovery failed");
     assert!(client.tool_count() > 0);
     println!("Context7 discovery passed: {} tools", client.tool_count());
     client.close().await;

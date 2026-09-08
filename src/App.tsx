@@ -5,7 +5,7 @@ import { TitleBar } from "@/components/layout/TitleBar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
-import { HomeSkeleton } from "@/components/layout/LoadingSkeletons";
+import { BootSkeleton, HomeSkeleton } from "@/components/layout/LoadingSkeletons";
 import { DesktopLayoutProvider } from "@/components/layout/DesktopLayoutProvider";
 import { CoreGate } from "@/components/core/CoreGate";
 import { useNotificationFeedback } from "@/hooks/use-notification-feedback";
@@ -101,7 +101,7 @@ export function App() {
     switch (bootstrap.status) {
       case "loading":
         return (
-          <main className="flex min-h-0 flex-1"><HomeSkeleton /></main>
+          <main className="flex min-h-0 flex-1"><BootSkeleton /></main>
         );
 
       case "error":
@@ -140,7 +140,7 @@ export function App() {
         );
 
       case "onboarding":
-        return <Suspense fallback={<HomeSkeleton />}><Onboarding saving={bootstrap.saving} onComplete={handleCompleteOnboarding} /></Suspense>;
+        return <Suspense fallback={<main className="flex min-h-0 flex-1"><BootSkeleton /></main>}><Onboarding saving={bootstrap.saving} onComplete={handleCompleteOnboarding} /></Suspense>;
     }
   })();
 

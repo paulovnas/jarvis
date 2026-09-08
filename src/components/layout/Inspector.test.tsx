@@ -34,7 +34,7 @@ describe("Inspector", () => {
     expect(within(footer).queryByText(/realizada/)).not.toBeInTheDocument();
     expect(within(footer).queryByText("150")).not.toBeInTheDocument();
   });
-  it("groups confirmed file edits and keeps context in the footer without project details tabs", async () => {
+  it("groups confirmed file edits and keeps context in the Inspector tab", async () => {
     const turn = savedTurn();
     turn.contextWindow = 1000;
     turn.steps[0].tools = [
@@ -43,7 +43,8 @@ describe("Inspector", () => {
     ];
     vi.mocked(invoke).mockImplementation(async command => command === "get_agent_file_changes" ? [{ path: "src/main.ts", additions: 2, deletions: 1, base: "conversation" }] : []);
     render(<Inspector library={populatedLibrary()} chat={{ ...emptyChat(), turns: [turn], fileChanges: [{ path: "src/main.ts", additions: 2, deletions: 1, base: "conversation" }] }} />);
-    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Inspector" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Explorer" })).toHaveAttribute("aria-selected", "false");
     const file = await screen.findByRole("button", { name: "Alterações em src/main.ts" });
     expect(file).toHaveTextContent("+2");
     expect(file).toHaveTextContent("−1");

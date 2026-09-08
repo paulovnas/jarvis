@@ -111,7 +111,9 @@ pub(super) fn info(data: &SessionData) -> ContextInfo {
     let measured = context.and_then(|context| context.measured.as_ref());
     let trailing = measured
         .map(|usage| {
-            data.turns.iter().flat_map(|turn| turn.wire.iter())
+            data.turns
+                .iter()
+                .flat_map(|turn| turn.wire.iter())
                 .skip(usage.wire_end)
                 .map(estimate)
                 .sum::<u64>()
@@ -224,7 +226,17 @@ pub(super) async fn ensure(
         let prepare = first;
         first = false;
         async move {
-            if prepare { if let Some(hooks) = hooks { hooks.run(crate::core::hooks::Event::PreCompact, json!({}), signal.clone()).await?; } }
+            if prepare {
+                if let Some(hooks) = hooks {
+                    hooks
+                        .run(
+                            crate::core::hooks::Event::PreCompact,
+                            json!({}),
+                            signal.clone(),
+                        )
+                        .await?;
+                }
+            }
             let response = provider::stream(
                 credential,
                 &session.id,
@@ -240,10 +252,26 @@ pub(super) async fn ensure(
         }
     })
     .await?;
-    if result { if let Some(hooks) = hooks {
-        let summary = session.data.lock().map_err(|_| AgentError::internal())?.extras.context.as_ref().map(|c| c.summary.clone()).unwrap_or_default();
-        hooks.run(crate::core::hooks::Event::PostCompact, json!({"text":summary}), summary_signal).await?;
-    } }
+    if result {
+        if let Some(hooks) = hooks {
+            let summary = session
+                .data
+                .lock()
+                .map_err(|_| AgentError::internal())?
+                .extras
+                .context
+                .as_ref()
+                .map(|c| c.summary.clone())
+                .unwrap_or_default();
+            hooks
+                .run(
+                    crate::core::hooks::Event::PostCompact,
+                    json!({"text":summary}),
+                    summary_signal,
+                )
+                .await?;
+        }
+    }
     Ok(result)
 }
 
@@ -382,7 +410,8 @@ mod tests {
             account,
             model: "gpt-5.6-luna".into(),
             reasoning: Some("low".into()),
-            mode: Mode::Plan, workflow: None,
+            mode: Mode::Plan,
+            workflow: None,
             approval_mode: ApprovalMode::Manual,
         };
         let auth = options.clone();
@@ -408,7 +437,15 @@ mod tests {
         let original = session.input().unwrap();
         assert!(tokio::time::timeout(
             Duration::from_secs(90),
-            ensure(&session, &credential, &options, 100, true, signal.clone(), None)
+            ensure(
+                &session,
+                &credential,
+                &options,
+                100,
+                true,
+                signal.clone(),
+                None
+            )
         )
         .await
         .unwrap()
@@ -435,7 +472,8 @@ mod tests {
                     account: "test".into(),
                     model: "model".into(),
                     reasoning: None,
-                    mode: Mode::Build, workflow: None,
+                    mode: Mode::Build,
+                    workflow: None,
                     approval_mode: ApprovalMode::Manual,
                 },
             )
@@ -513,7 +551,9 @@ mod tests {
             assert!(prompt.contains("Empty list"));
             assert!(prompt.contains("latest durable status"));
             async { Ok("Synthetic task remains pending.".into()) }
-        }).await.unwrap());
+        })
+        .await
+        .unwrap());
         assert_eq!(session.data.lock().unwrap().turns[0].wire, original);
         let replay = session.input().unwrap();
         assert_eq!(replay.len(), 2);
@@ -543,7 +583,11 @@ mod tests {
         assert_eq!(session.input().unwrap(), original);
         assert!(!session.snapshot().unwrap().context.compacting);
         assert!(session.snapshot().unwrap().compactions.is_empty());
-        assert!(journal::load_all(&session.journal).unwrap().1.compactions.is_empty());
+        assert!(journal::load_all(&session.journal)
+            .unwrap()
+            .1
+            .compactions
+            .is_empty());
         assert!(journal::load_all(&session.journal)
             .unwrap()
             .1
@@ -555,26 +599,42 @@ mod tests {
     async fn manual_marker_survives_usage_checkpoints_and_read_only_replay() {
         let fixture = Fixture::new();
         let session = long_session(&fixture);
-        session.update(true, |data| {
-            data.active = None;
-            data.manual_compaction = true;
-            data.turns.last_mut().unwrap().turn.status = TurnStatus::Completed;
-        }).unwrap();
+        session
+            .update(true, |data| {
+                data.active = None;
+                data.manual_compaction = true;
+                data.turns.last_mut().unwrap().turn.status = TurnStatus::Completed;
+            })
+            .unwrap();
         let (_cancel, signal) = watch::channel(false);
-        ensure_with(&session, 100, true, signal, |_| async { Ok("Leitura concluída; preservar a solicitação.".into()) }).await.unwrap();
+        ensure_with(&session, 100, true, signal, |_| async {
+            Ok("Leitura concluída; preservar a solicitação.".into())
+        })
+        .await
+        .unwrap();
         let markers = session.snapshot().unwrap().compactions;
         assert_eq!(markers.len(), 1);
         assert!(!markers[0].automatic);
         assert!(markers[0].after_turn);
         assert_eq!(markers[0].turn_id, session.snapshot().unwrap().turns[0].id);
         for _ in 0..2 {
-            record_usage(&session, Some(&Usage { input_tokens: 500, output_tokens: 100 })).unwrap();
+            record_usage(
+                &session,
+                Some(&Usage {
+                    input_tokens: 500,
+                    output_tokens: 100,
+                }),
+            )
+            .unwrap();
         }
         let (turns, extras) = journal::read_only(&session.journal).unwrap();
         assert_eq!(extras.compactions, markers);
         assert_eq!(extras.context.unwrap().count, 1);
         assert_eq!(turns.len(), 1);
-        assert_eq!(journal::load_all(&session.journal).unwrap().1.compactions, markers);
+        assert_eq!(
+            journal::load_all(&session.journal).unwrap().1.compactions,
+            markers
+        );
     }
 
     #[tokio::test]

@@ -1,13 +1,23 @@
 use super::*;
 
 pub(super) fn backfill_activity(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
-    let rows = connection.prepare("SELECT id, project_id, created_at FROM conversations WHERE last_activity_at IS NULL")?
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)))?
+    let rows = connection
+        .prepare(
+            "SELECT id, project_id, created_at FROM conversations WHERE last_activity_at IS NULL",
+        )?
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     for (id, project, created) in rows {
         // Existing sessions predate activity tracking; use their durable journal's
         // last write once, without parsing or repairing history during startup.
-        let activity = session_path(home, &project, &id, false).ok()
+        let activity = session_path(home, &project, &id, false)
+            .ok()
             .and_then(|path| fs::symlink_metadata(path).ok())
             .filter(|meta| meta.is_file() && !meta.is_symlink())
             .and_then(|meta| meta.modified().ok())
@@ -26,7 +36,10 @@ pub(crate) fn touch_activity(state: &AppState, home: &Path, id: &str) -> Result<
 }
 
 pub(crate) fn check_project(state: &AppState, home: &Path, id: &str) -> Result<(), LibraryError> {
-    state.with_connection(home, |connection| { project(connection, id)?; Ok(()) })
+    state.with_connection(home, |connection| {
+        project(connection, id)?;
+        Ok(())
+    })
 }
 
 pub(crate) struct SessionSource {
@@ -36,7 +49,11 @@ pub(crate) struct SessionSource {
     pub journal: Option<PathBuf>,
 }
 
-pub(crate) fn sources(state: &AppState, home: &Path, project_id: &str) -> Result<Vec<SessionSource>, LibraryError> {
+pub(crate) fn sources(
+    state: &AppState,
+    home: &Path,
+    project_id: &str,
+) -> Result<Vec<SessionSource>, LibraryError> {
     state.with_connection(home, |connection| {
         project(connection, project_id)?;
         let mut query = connection.prepare("SELECT id, project_id, COALESCE(display_title, title), created_at, title, COALESCE(last_activity_at, created_at) FROM conversations WHERE project_id = ?1 ORDER BY COALESCE(last_activity_at, created_at) DESC, rowid DESC")?;

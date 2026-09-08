@@ -54,7 +54,7 @@ export function signedDevArguments(args: string[], projectRoot: string): string[
     throw new Error("O modo dev assinado usa o runner Cargo do Jarvis; remova a opção --runner.");
   }
   // Cargo's array syntax preserves spaces in checkout paths. A string runner does not.
-  const runner = JSON.stringify(["/bin/sh", path.join(projectRoot, "scripts/run-signed-macos.sh")]);
+  const runner = JSON.stringify(["/bin/sh", path.posix.join(projectRoot, "scripts/run-signed-macos.sh")]);
   const config = JSON.stringify({
     build: {
       runner: {

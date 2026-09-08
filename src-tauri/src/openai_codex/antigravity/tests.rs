@@ -213,12 +213,13 @@ fn ineligible_account_is_not_provisioned() {
 
 #[test]
 fn catalog_filters_internal_models_and_offers_model_specific_reasoning() {
-    let models=normalize_models(&json!({"models":{
+    let models = normalize_models(&json!({"models":{
         "internal":{"isInternal":true},"chat_20706":{},"gemini-2.5-pro":{},
         "gemini-3-pro":{"displayName":"Gemini Pro","supportsThinking":true,"maxTokens":1048576},
         "claude-sonnet":{"displayName":"Claude","supportsThinking":false},
         "claude-opus-thinking":{"displayName":"Claude Thinking","supportsThinking":true}
-    }})).unwrap();
+    }}))
+    .unwrap();
     assert_eq!(models.len(), 3);
     assert!(models[0].reasoning_levels.is_empty());
     assert_eq!(models[1].reasoning_levels, ["low", "medium", "high"]);

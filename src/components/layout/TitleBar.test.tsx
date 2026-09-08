@@ -4,15 +4,17 @@ import { describe, expect, it } from "vitest";
 import { TitleBar } from "./TitleBar";
 
 describe("TitleBar Component", () => {
-  it("shows window controls in macOS order before the branding without a page label", () => {
+  it("shows branding first and native caption controls last on non-macOS", () => {
     render(<TitleBar />);
     const buttons = screen.getAllByRole("button");
-    expect(buttons.map(button => button.getAttribute("aria-label"))).toEqual(["Fechar janela", "Minimizar janela", "Maximizar janela"]);
+    // Windows/Linux caption order: minimize, maximize/restore, close (right side).
+    expect(buttons.map(button => button.getAttribute("aria-label"))).toEqual(["Minimizar janela", "Maximizar janela", "Fechar janela"]);
     const logo = screen.getByRole("img", { name: "Jarvis" });
     expect(logo).toHaveAttribute("src", "/logo_horizontal.png");
     expect(logo).toHaveAttribute("draggable", "false");
     expect(screen.queryByText("Jarvis")).not.toBeInTheDocument();
-    expect(buttons[2].compareDocumentPosition(logo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The wordmark precedes the controls in the DOM (branding left, controls right).
+    expect(logo.compareDocumentPosition(buttons[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("does not maximize when double clicking the minimize control", async () => {

@@ -80,7 +80,11 @@ impl Sse {
     fn push(&mut self, bytes: &[u8]) -> Result<Vec<Value>, AgentError> {
         self.push_bounded(bytes, MAX_EVENT)
     }
-    pub(super) fn push_bounded(&mut self, bytes: &[u8], limit: usize) -> Result<Vec<Value>, AgentError> {
+    pub(super) fn push_bounded(
+        &mut self,
+        bytes: &[u8],
+        limit: usize,
+    ) -> Result<Vec<Value>, AgentError> {
         self.pending.extend_from_slice(bytes);
         let mut consumed = 0;
         let mut events = vec![];
@@ -130,7 +134,9 @@ fn failure(status: u16) -> AgentError {
 }
 fn http_failure(response: &reqwest::Response) -> AgentError {
     let mut error = failure(response.status().as_u16());
-    error.retry_after = response.headers().get("retry-after")
+    error.retry_after = response
+        .headers()
+        .get("retry-after")
         .and_then(|header| header.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|seconds| *seconds <= 86_400)
@@ -164,18 +170,37 @@ fn overflow_error() -> AgentError {
     )
 }
 fn event_failure(value: &Value) -> AgentError {
-    if context_overflow(value) { return overflow_error(); }
-    let error = value.get("error").or_else(|| value.get("response").and_then(|response| response.get("error"))).unwrap_or(value);
-    if let Some(status) = error["code"].as_u64().and_then(|code| u16::try_from(code).ok()) {
+    if context_overflow(value) {
+        return overflow_error();
+    }
+    let error = value
+        .get("error")
+        .or_else(|| {
+            value
+                .get("response")
+                .and_then(|response| response.get("error"))
+        })
+        .unwrap_or(value);
+    if let Some(status) = error["code"]
+        .as_u64()
+        .and_then(|code| u16::try_from(code).ok())
+    {
         return failure(status);
     }
-    match error["code"].as_str().or_else(|| error["type"].as_str()).unwrap_or_default() {
+    match error["code"]
+        .as_str()
+        .or_else(|| error["type"].as_str())
+        .unwrap_or_default()
+    {
         "invalid_request" | "invalid_request_error" | "invalid_argument" => failure(400),
         "authentication_error" | "invalid_api_key" => failure(401),
         "permission_error" | "permission_denied" => failure(403),
         "rate_limit_error" | "rate_limit_exceeded" => failure(429),
         "overloaded_error" | "server_error" | "internal_error" => failure(503),
-        _ => AgentError::new("provider_failed", "O provedor não conseguiu concluir esta resposta. O progresso foi preservado."),
+        _ => AgentError::new(
+            "provider_failed",
+            "O provedor não conseguiu concluir esta resposta. O progresso foi preservado.",
+        ),
     }
 }
 fn request_body(
@@ -223,7 +248,16 @@ pub(super) async fn stream(
     signal: watch::Receiver<bool>,
     on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
-    retry::Request { credential, session_id, options, instructions, input, tools }.run(signal, on_delta, Duration::from_secs(2)).await
+    retry::Request {
+        credential,
+        session_id,
+        options,
+        instructions,
+        input,
+        tools,
+    }
+    .run(signal, on_delta, Duration::from_secs(2))
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -251,7 +285,17 @@ async fn stream_once(
         .await;
     }
     if credential.project_id.is_some() {
-        return antigravity::stream(credential, session_id, options, instructions, input, tools, signal, on_delta).await;
+        return antigravity::stream(
+            credential,
+            session_id,
+            options,
+            instructions,
+            input,
+            tools,
+            signal,
+            on_delta,
+        )
+        .await;
     }
     let body = request_body(options, instructions, input, tools, session_id);
     let request = authenticated_request(credential, session_id, &body, Duration::from_secs(600))?;
@@ -499,7 +543,8 @@ mod tests {
             account,
             model: "gpt-5.6-luna".into(),
             reasoning: Some("low".into()),
-            mode: Mode::Plan, workflow: None,
+            mode: Mode::Plan,
+            workflow: None,
             approval_mode: ApprovalMode::Manual,
         };
         let auth_options = options.clone();
@@ -560,7 +605,8 @@ mod tests {
             account: "a".into(),
             model: "chosen-model".into(),
             reasoning: Some("high".into()),
-            mode: Mode::Plan, workflow: None,
+            mode: Mode::Plan,
+            workflow: None,
             approval_mode: ApprovalMode::Manual,
         };
         let body = request_body(

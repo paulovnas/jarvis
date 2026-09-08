@@ -1191,3 +1191,129 @@ O suporte Windows só deve ser apresentado como concluído quando existir evidê
 7. Regressões macOS verificadas e limitações remanescentes registradas no Beads/documentação.
 
 Esta entrega encerra a **auditoria documental**, não esses critérios de implementação. A documentação foi preparada para que a adaptação possa começar em Windows com prioridades, pontos de código e testes definidos, sem depender de reconstruir o histórico da conversa.
+
+## 26. Implementation update — 2026-09-07
+
+The audit above describes the original baseline. This addendum records implementation progress in the current Windows checkout; it does not declare the full migration complete. Beads remains the task source of truth.
+
+| Area | Implemented behavior | Beads |
+| --- | --- | --- |
+| Project and file opening | Dashboard folders open through a native command that resolves a registered project ID. The changed-files view uses a conversation-scoped command for its folder and relative files. Paths are validated against the canonical project directory, then converted to ordinary Windows paths at the OS boundary. | `jarvis-442` |
+| Native MCP launch | Windows executable discovery supports native programs and npm/npx launchers. Standard npm/npx shims are replaced with direct Node + CLI argv, preserving spaces, Unicode, quotes and shell metacharacters. Explicit `Path`/`PATH` is respected without replacing it with the discovered GUI PATH. MCPs use an ordinary working directory, no extra console window, and the existing Job Object supervisor. | `jarvis-gwl` |
+| Update shutdown | The Windows updater invokes the same layout/service cleanup as normal exit through `on_before_exit`. NSIS owns restart; the existing successor acknowledgment stays in the non-Windows path. Terminals retained after global shutdown now leave the running state. | `jarvis-0om` |
+| Windows packaging | `src-tauri/tauri.windows.conf.json` selects NSIS, current-user installation, Portuguese/English installer resources and passive updater installation. The platform overlay leaves the macOS bundle configuration intact. | `jarvis-0om` |
+
+The folder-opening failure was not only a display-path issue. `opener:default` permits URL opening and revealing files, but excludes frontend `openPath`. Native commands now resolve the permitted project resource themselves, instead of granting the renderer unrestricted filesystem opening.
+
+The MCP implementation follows the platform-aware process-launch boundary studied in `docs/metis/src/utils/child-process.ts`; project opening follows Metis's workspace-scoped native IPC approach. No Metis source was modified or copied.
+
+### Validation evidence
+
+Native Rust tests currently pass: 366 passed, 14 explicitly ignored. Clippy passes with `-D warnings`. New coverage exercises registered project paths, unavailable directories, relative file containment, Windows npm/npx argv and working directories, process/terminal shutdown, power-worker exit, and Windows-specific release selection.
+
+Frontend gates pass in the required order: `bun run lint`, `bun run typecheck`, `bun run test --maxWorkers=1` (369 passed, 3 skipped), and `bun run build`. One worker keeps the DOM-heavy suite within its existing timeout budget on this Windows host. Chart tests provide explicit container geometry because jsdom does not perform layout.
+
+Local packaging passed with `bun run tauri build --ci --bundles nsis --no-sign` (exit 0; optimized Rust compilation took 3m 36s). That baseline installer was `src-tauri/target/release/bundle/nsis/Jarvis_0.8.5-beta_x64-setup.exe`, 13,762,149 bytes. SHA-256: `8797f75e5c2ef2a28d3fd02b49d436580677154383db9d0320c841e07f4989cc`. Section 27 records the replacement artifact including notification fixes.
+
+The packaged application reports version `0.8.5-beta`; its PE header confirms x64 and the Windows GUI subsystem. The generated NSIS script confirms `currentUser`, x64, PortugueseBR and English. This local installer is unsigned and has not been installed, published or used for a real A-to-B upgrade. The explicit no-sign option produces its expected bundler notice; the MSVC informational warning described below also occurs during release linking.
+
+The installed Portuguese MSVC linker emits informational `linker_messages` warnings while creating import libraries. No real linker diagnostic was suppressed; `jarvis-9au` tracks resolving that toolchain warning. Therefore the strict zero-warning migration completion criterion is still open.
+
+### Remaining acceptance work
+
+| Evidence still required | Beads |
+| --- | --- |
+| Clean current-user NSIS installation and a signed, installed A-to-B update with automatic reopening and retained user data; failure recovery and uninstallation. | `jarvis-o5o` |
+| Manual Windows Core/desktop matrix: all five Core components, install/repair, Explorer associations, DPI, notifications, taskbar, sleep/resume and native MCP lifecycle. | `jarvis-dnf` |
+| Native macOS regression checks for paths, terminals, providers, MCP discovery and updater reopening. | `jarvis-wgi` |
+| Eliminate the localized MSVC informational warning without hiding actual linker errors. | `jarvis-9au` |
+
+Windows release publication, production signing and CI activation remain outside this local implementation. A locally generated installer is not evidence that the installed update flow has passed.
+
+### Quick application checks
+
+Open a registered project dashboard and click its displayed folder: Windows should open Explorer at that project's directory, including names with spaces or accents. In a conversation's changed-files dialog, both the folder action and the selected file's default-application action should work. A deleted file or unavailable project should produce a toast and leave the current screen usable.
+
+In Settings > MCPs, test an existing configured local server using `npx`, then a native executable. Its configured environment and working directory should be retained; testing must not create an extra console window. Actual credentials remain in the existing secure configuration and are not required by the automated fixture tests.
+
+## 27. Windows notification implementation — 2026-09-07
+
+Work is tracked in `jarvis-av1`. Native Windows notification delivery previously selected the Jarvis AUMID without registering its sender identity. Authorization also returned success without reading Windows notification settings. Two diagnostic sends were accepted into the WinRT history, but the user confirmed that neither a banner nor a Jarvis entry in Windows notification settings appeared. History acceptance is therefore not treated as proof of visible delivery.
+
+The Windows implementation now registers the Jarvis name and local icon under its own per-user AUMID, sets the process identity, and creates the matching current-user Start Menu shortcut when it is missing. The shortcut targets the running Jarvis executable and matches the NSIS identity. Existing shortcuts with the same identity are preserved; an unrelated entry is not overwritten. Registration uses native Windows APIs, including the redirected Programs known folder, without administrator privileges. The runtime supports local development as well as installed builds.
+
+Enabling notifications and sending them consult `ToastNotifier.Setting`. Application, user, policy and manifest blocks produce distinct, actionable Portuguese errors. The code does not change Windows notification preferences, banner settings or Do Not Disturb. Classic Win32 notifications do not use the macOS authorization dialog; the in-app toggle controls Jarvis's preference, while Windows controls the registered sender. The existing macOS UserNotifications authorization and foreground presentation behavior remain unchanged.
+
+The Settings test action now reports that the notification was sent to the system, with guidance about notification settings and Do Not Disturb. It does not claim a banner appeared. The NSIS uninstall hook removes only Jarvis's registration and preserves it during updates.
+
+### Validation and local artifact
+
+The ordered frontend gates passed: lint, typecheck, 370 tests passed with 3 skipped, and build. Native Clippy passed with `-D warnings`; after the console and supervision fixes in section 28, `cargo test --quiet -- --test-threads=1` passed 374 tests with 16 explicitly ignored. Sequential execution avoids the existing Windows process-startup timing sensitivity under concurrent compilation. Coverage includes native registry identity and icon creation, idempotence, preservation of preferences and shortcuts, shortcut identity/path round trips, permission error mapping, and visible settings feedback.
+
+The opt-in native notification test is ignored in ordinary runs because it registers the real Jarvis identity and emits an OS notification. Its history assertion is a transport check, not a banner assertion. After completing shortcut registration, the actual notification facade sent a new test, Windows created its per-app notification settings entry, and the user explicitly confirmed that the banner appeared. The earlier GUI attempt exposed the separate console-window issue described in section 28. After that fix and the final rebuild, the user also confirmed that Settings > System > Test displays the banner without opening terminal windows.
+
+The updated release executable was launched successfully. `Get-StartApps` now returns `Jarvis` with AUMID `com.foxtag.jarvis`, and its current-user Start Menu shortcut resolves to this checkout's `src-tauri/target/release/jarvis.exe`. This verifies shell discovery separately from Windows notification-center visibility.
+
+`bun run tauri build --ci --bundles nsis --no-sign` passed, including compilation of the uninstall hook. The final `Jarvis_0.8.5-beta_x64-setup.exe`, including the console and supervision fixes in section 28, is 13,735,000 bytes; SHA-256: `a0a730fada28c6527768b61321cd6a4790eb5fc4aee8b17acf98f6e34944931c`. It is unsigned and has not been installed or published. The localized MSVC informational linker warning remains tracked separately in `jarvis-9au`; this is not recorded as a fully warning-free native build.
+
+References: [Microsoft desktop notification identity](https://learn.microsoft.com/en-us/windows/win32/shell/enable-desktop-toast-with-appusermodelid), [ToastNotifier.Setting](https://learn.microsoft.com/en-us/uwp/api/windows.ui.notifications.toastnotifier.setting), and [Tauri notification platform support](https://v2.tauri.app/plugin/notification/). The Tauri plugin documents installed-app limitations on Windows; Jarvis's explicit native registration avoids using PowerShell's identity for local execution.
+
+## 28. Background console windows — 2026-09-07
+
+During notification validation, the user reported rapidly appearing console windows in the GUI release build. The review Jarvis instance was closed gracefully before investigation; unrelated user processes were left running. The fix is tracked in `jarvis-hwl`.
+
+The audit found internal Git and shell-version probes using ordinary console-process creation. Core, Beads, agent-shell and MCP subprocesses also use `process-wrap` Job Objects. Version 9.1.0 replaces flags set directly on the command and empties its wrapper registry while running spawn hooks. Consequently `JobObject` cannot retrieve either `CreationFlags` or `KillOnDrop`; adding the documented wrappers was insufficient. A native window trace reproduced 12 transient Windows Terminal windows during the release app's startup and zero during a no-app control. A separate GUI probe reproduced three visible windows only for supervised launches, while ordinary `CREATE_NO_WINDOW` launches stayed hidden.
+
+`background.rs` now provides constructors for internal synchronous/asynchronous commands and a shared Windows Job Object configuration. `process-wrap` is updated to 10.0.0, whose upstream fixes preserve live wrapper lookup and Windows creation flags. The `creation-flags` feature is enabled and `CreationFlags(CREATE_NO_WINDOW)` is registered alongside `JobObject`. Git status/diffs, skill downloads, shell discovery, Core runtime commands, Beads and MCP launches use these boundaries. Interactive terminal PTYs retain their own lifecycle.
+
+The rmcp 3.2.0 child-process adapter pins the older supervisor. Jarvis therefore uses rmcp's existing asynchronous stdio framing through a small owned transport in `mcp/stdio.rs`, with process-wrap 10 managing its child tree. Normal shutdown closes stdin first; cancellation, failed handshakes and dropped connections terminate descendants and reap the process. The MCP protocol implementation and remote HTTP transport remain in rmcp.
+
+Context-mode also performs synchronous Node runtime-discovery probes without `windowsHide`. A Windows-only preload supplies that option for `execSync`, `execFileSync` and `spawnSync`, including ES module imports. It preserves existing `NODE_OPTIONS`, arguments and captured output, and is injected only into Jarvis-owned Node integrations. The content-addressed preload lives outside verified third-party Core packages; those packages are not modified.
+
+Native tests cover captured stdout/stderr from ordinary and supervised commands, synchronous Node probes and ES module exports, an MCP protocol round trip, and actual parent/descendant termination on both transport close and drop. `GetConsoleWindow()` alone did not detect the original GUI/Windows Terminal failure, so the release window trace is a separate acceptance check. The implementation follows the platform-aware subprocess boundary studied in read-only `docs/metis/src/utils/child-process.ts`.
+
+The release trace after the upgrade observed **zero new visible console windows**, compared with 12 before it. The same startup exercised Context-mode, Context7, Node runtime discovery, Beads, Dolt and Git. The control interval also observed zero windows. The trace enumerates native visible window handles, including Windows Terminal delegation, rather than treating a background `conhost.exe` process as a visible window. Only the launched review instance was closed afterward.
+
+The final bundled executable was checked again: zero new visible console windows across 86 observed descendant process starts. Its SHA-256 is `3eeaf793dc7135ba2baf6f7d45529f4a79da0bee8f9c1831adec51dcc6959088`. The user then confirmed that Settings > System > Test displays the banner without opening terminals. The validated review instance remains open. `jarvis-hwl` and `jarvis-av1` are complete. Installed upgrades, the broader Windows acceptance matrix and native macOS regression checks remain tracked in `jarvis-o5o`, `jarvis-dnf` and `jarvis-wgi` respectively.
+
+Dependency evidence: [process-wrap 10.0.0 changelog](https://github.com/watchexec/process-wrap/blob/v10.0.0/CHANGELOG.md), [Windows creation-flag fix](https://github.com/watchexec/process-wrap/commit/be83bbb2bfb79816d85acc12329a4f33130fafd7), and [rmcp async stdio transport](https://docs.rs/rmcp/3.2.0/rmcp/transport/async_rw/struct.AsyncRwTransport.html).
+
+## 29. Terminal tab close confirmation — 2026-09-07
+
+The user reported that closing either the active terminal or another tab sometimes did nothing until the panel or conversation changed. Work is tracked in `jarvis-2kc`. Browser reproduction showed a pointer hit-target problem: the close button used a `translateY(-50%)` centering transform, while the shared Button pressed animation replaced it with `translateY(1px)`. The button moved 11 pixels downward on pointerdown, leaving the pointer outside it before release. Keyboard activation opened the confirmation immediately, so changing React state or forcing extra renders would not address the cause.
+
+The application close control now centers with vertical insets and automatic margins and declares `aria-haspopup="dialog"`. This preserves its hit target and correctly identifies the confirmation trigger. Shared shadcn registry components are unchanged. Confirmation still requires an explicit action before terminating a terminal; cancel preserves the active tab, and a failed close keeps the requested terminal and confirmation available for retry.
+
+The real browser check exercised the actual component and CSS with isolated Tauri fixtures: closing an inactive tab, canceling and reopening without another UI update, confirming that close while preserving the active tab, and closing the active tab with selection moving to the remaining terminal. After the fix, pointerdown, pointerup and click retained identical button bounds. No user terminal was closed by the fixture. The temporary review page was removed afterward.
+
+Colocated regression tests cover both target types, cancellation, immediate reopening, the exact terminal sent to the backend, active-tab preservation/fallback, and failure followed by retry. The focused terminal suite passes 19 tests. These tests cover observable confirmation behavior; the browser check covers the CSS hit-target regression that jsdom cannot lay out. No Rust source changed for this fix. Native macOS acceptance remains tracked separately in `jarvis-wgi`.
+
+Frontend validation completed in the required order: lint, typecheck, all 70 test files (373 passed, 3 skipped), and production build. The default parallel test run hit the existing timing-sensitive Home/Kanban assertion; the complete suite passed with `bun run test --maxWorkers=1`, without changing that unrelated test or extending its timeout.
+
+The local Windows application and NSIS bundle were rebuilt with `bun run tauri build --ci --bundles nsis --no-sign` (exit 0). The replacement `Jarvis_0.8.5-beta_x64-setup.exe` is 13,736,827 bytes; SHA-256: `987e1b9e73d7a71a086b8ec60496712c54fd61e7506b7414656134e736612797`. The release executable SHA-256 is `95aef7ce878a4502acd8dbb72d1c77cad221b5c145577e84859f170e774187bd`. These artifacts supersede the earlier hashes in sections 27 and 28 and include the terminal close fix. The installer remains unsigned, uninstalled and unpublished; the known localized MSVC informational linker warning remains tracked in `jarvis-9au`.
+
+## 30. Authorization callback close action — 2026-09-07
+
+Work is tracked in `jarvis-jvw`. The standalone provider callback page had hover rules for its button but no base styling, leaving the browser's native button appearance. Its inline `window.close()` also provided no feedback when the browser refused to close a tab opened by the operating system. After reviewing this browser restriction, the user explicitly chose to keep direct authentication and show manual-closing guidance when needed, rather than introduce an extra browser launch step.
+
+The existing button now has the page's blue action styling, inherited typography, a full-width hit target, keyboard focus treatment and a reduced-motion rule. Its label is `Fechar aba`. The callback attempts closure immediately; if the page survives, an accessible status message explains that the browser blocked the action and gives `Ctrl + W` on Windows or `⌘ + W` on Mac, plus the tab's own close control. The action also handles hosts that throw instead of silently refusing closure. A brief pending state prevents duplicate clicks. Provider login, reauthorization, callback validation and credential storage retain their existing flow.
+
+The close handler lives in `src/components/settings/authorization-callback.ts` and is embedded verbatim into the native HTML response, so it intentionally uses browser JavaScript syntax without TypeScript-only constructs. Colocated Vitest tests execute that exact source without transpilation and cover successful closure, silent Windows/macOS blocks and thrown errors. Native callback tests check the action and guidance on both successful and rejected authorization responses. The page remains self-contained after the temporary OAuth listener closes.
+
+Browser validation used the actual Rust HTML template and embedded script with isolated, credential-free fixtures. A normal tab with navigation history remained open and displayed the Windows guidance after clicking the button. A tab opened through a page link closed successfully; the browser inventory confirmed its removal. Computed styles confirmed the blue background/text, 8px radius, 14px inherited typography, padding and pointer cursor. The fixture server and review tabs were removed afterward.
+
+Browser policy reference: [MDN Window.close()](https://developer.mozilla.org/en-US/docs/Web/API/Window/close). The application does not attempt to bypass browser tab protections or close unrelated windows.
+
+Validation passed in the required order: frontend lint, typecheck, all 71 test files (377 passed, 3 skipped, one worker), and production build. Native Clippy passed with `-D warnings`; the sequential native suite passed 374 tests with 16 explicitly ignored. Native test linking still reports the existing localized MSVC informational notice tracked in `jarvis-9au`, so this is not described as a warning-free native build. No provider credentials or accounts were changed by these checks. The updated callback is served on a new authentication attempt; an already loaded callback tab retains its earlier HTML.
+
+`bun run tauri build --ci --bundles nsis --no-sign` completed successfully. The replacement `Jarvis_0.8.5-beta_x64-setup.exe` is 13,731,149 bytes; SHA-256: `990612f2edc935e0fe847b2e7fbd2e2a955cd12be0862873c5cc6daaf0eda270`. The release executable SHA-256 is `a2cb892af26175d391f0b52930b15a5299221d7a19be2c8c0a9e94944e881fc9`. These supersede the section 29 artifacts and include the callback correction. The application was reopened for review. The local installer remains unsigned, uninstalled and unpublished; the previously tracked linker notice also appears during release linking.
+
+## 31. Project Explorer and read-only central tabs — 2026-09-08
+
+Work is tracked in `jarvis-w7z`; behavior, limits and maintenance details are documented in [PROJECT-EXPLORER.md](PROJECT-EXPLORER.md). The user explicitly selected viewing files only. The right sidebar now switches between Inspector and Explorer using the same filled tabs as the bottom terminal panel. Files open in central tabs beside a permanent Chat tab, while the composer and bottom terminals remain mounted. File-tab paths and the sidebar selection use existing desktop layout persistence.
+
+Project-scoped Rust commands perform bounded, one-level directory listing and text reads outside the database lock. Tests include Windows separators, Unicode names, UTF-8/UTF-16 BOMs, CRLF preservation, binary/oversize rejection and junction escapes. Monaco and its worker are packaged locally and loaded on demand; no write/save API is exposed.
+
+The required frontend gates pass in order: lint, typecheck, 73 test files (384 passed, 3 existing skipped), and production build. Native Clippy passes with `-D warnings`; native tests pass 379 cases with 16 existing ignored tests. A production browser fixture with actual application components verified TypeScript/JSON highlighting, read-only typing, Portuguese search controls, tab closure, restored selection, chat draft continuity and the bottom terminal. Native macOS acceptance remains tracked in `jarvis-wgi`, and the existing localized MSVC linker notice remains tracked in `jarvis-9au`.
+
+`bun run tauri build --ci --bundles nsis --no-sign` completed successfully. The new release executable is 46,310,400 bytes, SHA-256 `a9b698d7c3145bfa58004d08e37802a56a18b536371e3ff6ac5d9fc1079a1137`. The NSIS installer is 14,659,384 bytes, SHA-256 `903ce190bbeab965a1e8916e4bec59bb805d663de25aa106406ea46644329a30`; these supersede section 30. The local application was reopened and its Jarvis window is responding. The installer remains unsigned, uninstalled and unpublished.

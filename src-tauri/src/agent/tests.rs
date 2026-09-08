@@ -25,7 +25,8 @@ fn options(approval_mode: ApprovalMode) -> TurnOptions {
         account: "account".into(),
         model: "model".into(),
         reasoning: None,
-        mode: Mode::Build, workflow: None,
+        mode: Mode::Build,
+        workflow: None,
         approval_mode,
     }
 }
@@ -140,10 +141,9 @@ fn direct_recovery_resumes_only_durable_tool_results_and_preserves_new_messages(
     assert_eq!(session.snapshot().unwrap().queued_messages.len(), 1);
 
     let (persisted, _) = journal::read_only(&session.journal).unwrap();
-    assert!(persisted[0]
-        .wire
-        .iter()
-        .any(|item| item["content"].as_str().is_some_and(|text| text.contains("runtime restarted"))));
+    assert!(persisted[0].wire.iter().any(|item| item["content"]
+        .as_str()
+        .is_some_and(|text| text.contains("runtime restarted"))));
 }
 
 #[test]
@@ -416,7 +416,8 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                         account: "account-alias".into(),
                         model: "model".into(),
                         reasoning: None,
-                        mode: Mode::Build, workflow: None,
+                        mode: Mode::Build,
+                        workflow: None,
                         approval_mode: ApprovalMode::Manual,
                     },
                     status: TurnStatus::Running,

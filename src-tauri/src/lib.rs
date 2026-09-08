@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod agent;
+mod background;
 #[cfg(target_os = "macos")]
 mod app_menu;
 mod core;
@@ -8,6 +9,7 @@ mod library;
 mod mcp;
 mod openai_codex;
 mod persistence;
+mod secrets;
 mod skills;
 mod system;
 mod updater;
@@ -82,6 +84,10 @@ pub fn run() {
             agent::attachments::save_chat_image,
             agent::web_search::set_web_search_config,
             library::get_library_snapshot,
+            library::open_project_directory,
+            library::open_conversation_path,
+            library::files::list_project_directory,
+            library::files::read_project_file,
             library::create_workspace,
             library::add_project,
             library::create_conversation,
@@ -99,6 +105,13 @@ pub fn run() {
             agent::processes::read_chat_process,
             agent::processes::stop_chat_process,
             agent::processes::remove_chat_process,
+            agent::terminals::list_chat_terminals,
+            agent::terminals::create_chat_terminal,
+            agent::terminals::read_chat_terminal,
+            agent::terminals::write_chat_terminal,
+            agent::terminals::resize_chat_terminal,
+            agent::terminals::rename_chat_terminal,
+            agent::terminals::close_chat_terminal,
             agent::workflow::get_workflow,
             agent::workflow::validation::decide_workflow_validation,
             agent::workflow::validation::submit_workflow_validation,
@@ -128,6 +141,7 @@ pub fn run() {
             openai_codex::usage::get_provider_usage,
             openai_codex::usage::set_provider_usage_visibility,
             openai_codex::begin_openai_codex_connection,
+            openai_codex::reauthorize_provider_account,
             openai_codex::wait_openai_codex_connection,
             openai_codex::cancel_openai_codex_connection,
             disconnect_provider_account
@@ -136,12 +150,26 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
-                desktop::flush(app);
-                use tauri::Manager;
-                app.state::<system::SystemState>().shutdown();
-                app.state::<agent::AgentState>().processes.stop_all();
+                prepare_exit(app);
             }
         });
+}
+
+// Windows updater installation exits directly, bypassing Tauri's ExitRequested event.
+// Keep the same cleanup available to that hook and to normal application shutdown.
+pub(crate) fn prepare_exit(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    desktop::flush(app);
+    shutdown_services(
+        &app.state::<system::SystemState>(),
+        &app.state::<agent::AgentState>(),
+    );
+}
+
+fn shutdown_services(system: &system::SystemState, agent: &agent::AgentState) {
+    system.shutdown();
+    agent.processes.stop_all();
+    agent.terminals.stop_all();
 }
 
 #[tauri::command]

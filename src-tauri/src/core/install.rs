@@ -54,19 +54,32 @@ struct DownloadReporter<'a, F: Fn(DownloadProgress)> {
 }
 impl<'a, F: Fn(DownloadProgress)> DownloadReporter<'a, F> {
     fn new(report: &'a F, total: Option<u64>) -> Self {
-        let mut reporter = Self { report, total: total.filter(|n| *n > 0), last_update: Instant::now() };
+        let mut reporter = Self {
+            report,
+            total: total.filter(|n| *n > 0),
+            last_update: Instant::now(),
+        };
         reporter.update(0, true);
         reporter
     }
     fn update(&mut self, received: u64, force: bool) {
-        if self.total.is_some_and(|total| received > total) { self.total = None; }
+        if self.total.is_some_and(|total| received > total) {
+            self.total = None;
+        }
         if force || self.last_update.elapsed() >= Duration::from_millis(250) {
-            (self.report)(DownloadProgress { received_bytes: received, total_bytes: self.total });
+            (self.report)(DownloadProgress {
+                received_bytes: received,
+                total_bytes: self.total,
+            });
             self.last_update = Instant::now();
         }
     }
 }
-async fn download_with_progress(url: &str, limit: usize, progress: &(impl Fn(DownloadProgress) + Sync)) -> Result<Vec<u8>, CoreError> {
+async fn download_with_progress(
+    url: &str,
+    limit: usize,
+    progress: &(impl Fn(DownloadProgress) + Sync),
+) -> Result<Vec<u8>, CoreError> {
     let mut response = client()?
         .get(url)
         .send()
@@ -106,18 +119,39 @@ async fn json(url: &str) -> Result<Value, CoreError> {
 }
 // Source releases contain media unrelated to Jarvis. Spool the bounded archive
 // to disk instead of retaining hundreds of MB while building the resource index.
-async fn source_archive(url: &str, directory: &Path, progress: &(impl Fn(DownloadProgress) + Sync)) -> Result<(tempfile::NamedTempFile, String), CoreError> {
+async fn source_archive(
+    url: &str,
+    directory: &Path,
+    progress: &(impl Fn(DownloadProgress) + Sync),
+) -> Result<(tempfile::NamedTempFile, String), CoreError> {
     const LIMIT: u64 = 512 * 1024 * 1024;
-    let mut response = client()?.get(url).timeout(Duration::from_secs(600)).send().await.map_err(|_| error("Falha ao baixar os recursos de design."))?;
-    if !response.status().is_success() || response.content_length().is_some_and(|n| n > LIMIT) { return Err(error("Arquivo de recursos indisponível ou maior que 512 MB.")); }
+    let mut response = client()?
+        .get(url)
+        .timeout(Duration::from_secs(600))
+        .send()
+        .await
+        .map_err(|_| error("Falha ao baixar os recursos de design."))?;
+    if !response.status().is_success() || response.content_length().is_some_and(|n| n > LIMIT) {
+        return Err(error(
+            "Arquivo de recursos indisponível ou maior que 512 MB.",
+        ));
+    }
     let mut reporter = DownloadReporter::new(progress, response.content_length());
     let file = tempfile::NamedTempFile::new_in(directory)?;
     let mut output = tokio::fs::File::from_std(file.reopen()?);
-    let mut digest = Sha256::new(); let mut total = 0u64;
-    while let Some(chunk) = response.chunk().await.map_err(|_| error("Download interrompido. Tente novamente."))? {
+    let mut digest = Sha256::new();
+    let mut total = 0u64;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| error("Download interrompido. Tente novamente."))?
+    {
         total += chunk.len() as u64;
-        if total > LIMIT { return Err(error("Download de recursos excedeu 512 MB.")); }
-        digest.update(&chunk); output.write_all(&chunk).await?;
+        if total > LIMIT {
+            return Err(error("Download de recursos excedeu 512 MB."));
+        }
+        digest.update(&chunk);
+        output.write_all(&chunk).await?;
         reporter.update(total, false);
     }
     output.flush().await?;
@@ -140,15 +174,27 @@ pub(super) async fn release(repository: &str) -> Result<Release, CoreError> {
     Ok(release)
 }
 fn context7_release(releases: Vec<Release>) -> Result<Release, CoreError> {
-    releases.into_iter().filter(|r| !r.draft && !r.prerelease && r.tag_name.starts_with("@upstash/context7-mcp@"))
-        .filter_map(|r| semver::Version::parse(&r.version()).ok().filter(|v| v.pre.is_empty()).map(|v| (v, r)))
-        .max_by(|a, b| a.0.cmp(&b.0)).map(|(_, r)| r)
+    releases
+        .into_iter()
+        .filter(|r| !r.draft && !r.prerelease && r.tag_name.starts_with("@upstash/context7-mcp@"))
+        .filter_map(|r| {
+            semver::Version::parse(&r.version())
+                .ok()
+                .filter(|v| v.pre.is_empty())
+                .map(|v| (v, r))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, r)| r)
         .ok_or_else(|| error("Nenhuma release estável do Context7 MCP disponível."))
 }
 pub(super) async fn component_release(id: ComponentId) -> Result<Release, CoreError> {
-    if id != ComponentId::Context7 { return release(id.repository()).await; }
-    let releases = serde_json::from_value(json("https://api.github.com/repos/upstash/context7/releases?per_page=100").await?)
-        .map_err(|_| error("O GitHub não retornou releases válidas do Context7."))?;
+    if id != ComponentId::Context7 {
+        return release(id.repository()).await;
+    }
+    let releases = serde_json::from_value(
+        json("https://api.github.com/repos/upstash/context7/releases?per_page=100").await?,
+    )
+    .map_err(|_| error("O GitHub não retornou releases válidas do Context7."))?;
     context7_release(releases)
 }
 fn platform() -> Result<(&'static str, &'static str), CoreError> {
@@ -311,6 +357,7 @@ pub(super) async fn command_input(
     seconds: u64,
     input: Option<Vec<u8>>,
 ) -> Result<String, CoreError> {
+    crate::background::prepare_node(cmd)?;
     cmd.stdin(if input.is_some() {
         Stdio::piped()
     } else {
@@ -326,6 +373,8 @@ pub(super) async fn command_input(
     ));
     #[cfg(unix)]
     wrapped.wrap(process_wrap::tokio::ProcessGroup::leader());
+    #[cfg(windows)]
+    crate::background::windows_job(&mut wrapped);
     wrapped.wrap(process_wrap::tokio::KillOnDrop);
     let mut child = wrapped
         .spawn()
@@ -385,7 +434,11 @@ pub(super) async fn command_input(
         .await
         .map_err(|_| error("O Core excedeu o tempo limite. Tente novamente."))?
 }
-async fn install_node(destination: &Path, stage: &(impl Fn(&str) + Sync), progress: &(impl Fn(DownloadProgress) + Sync)) -> Result<(), CoreError> {
+async fn install_node(
+    destination: &Path,
+    stage: &(impl Fn(&str) + Sync),
+    progress: &(impl Fn(DownloadProgress) + Sync),
+) -> Result<(), CoreError> {
     let (os, arch) = platform()?;
     let node_os = if os == "windows" { "win" } else { os };
     let node_arch = if arch == "amd64" { "x64" } else { arch };
@@ -413,7 +466,11 @@ async fn install_node(destination: &Path, stage: &(impl Fn(&str) + Sync), progre
     }
     Ok(())
 }
-async fn registry_package(name: &str, version: &str, progress: &(impl Fn(DownloadProgress) + Sync)) -> Result<Vec<u8>, CoreError> {
+async fn registry_package(
+    name: &str,
+    version: &str,
+    progress: &(impl Fn(DownloadProgress) + Sync),
+) -> Result<Vec<u8>, CoreError> {
     let metadata = json(&format!("https://registry.npmjs.org/{name}/{version}")).await?;
     if metadata["version"] != version || metadata["name"] != name {
         return Err(error("O pacote não corresponde à release do GitHub."));
@@ -432,7 +489,11 @@ async fn registry_package(name: &str, version: &str, progress: &(impl Fn(Downloa
     }
     Ok(bytes)
 }
-async fn install_bun(destination: &Path, stage: &(impl Fn(&str) + Sync), progress: &(impl Fn(DownloadProgress) + Sync)) -> Result<(), CoreError> {
+async fn install_bun(
+    destination: &Path,
+    stage: &(impl Fn(&str) + Sync),
+    progress: &(impl Fn(DownloadProgress) + Sync),
+) -> Result<(), CoreError> {
     let release = release("oven-sh/bun").await?;
     let (os, arch) = platform()?;
     let arch = if arch == "arm64" { "aarch64" } else { "x64" };
@@ -477,10 +538,36 @@ async fn binary(
         .as_deref()
         .filter(|d| d.starts_with("sha256:"))
         .ok_or_else(|| error("A release não oferece checksum SHA-256."))?;
-    let bytes = download_with_progress(&asset.browser_download_url, DOWNLOAD_LIMIT, progress).await?;
+    let bytes =
+        download_with_progress(&asset.browser_download_url, DOWNLOAD_LIMIT, progress).await?;
     stage("Verificando e extraindo arquivos");
     check_hash(&bytes, digest)?;
     extract(bytes, destination, name.ends_with(".zip"), strip).await
+}
+async fn publish(source: &Path, target: &Path) -> Result<(), CoreError> {
+    #[cfg(windows)]
+    {
+        for delay in [0, 50, 100, 250, 500, 1_000, 2_000] {
+            if delay > 0 {
+                tokio::time::sleep(Duration::from_millis(delay)).await;
+            }
+            match fs::rename(source, target) {
+                Ok(()) => return Ok(()),
+                Err(cause) if matches!(cause.raw_os_error(), Some(5 | 32 | 33)) => {
+                    continue;
+                }
+                Err(_) => return Err(error("Não foi possível publicar a instalação do Core.")),
+            }
+        }
+        Err(error(
+            "Um arquivo do Core está em uso. Feche o aplicativo que o utiliza e tente novamente.",
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(source, target)?;
+        Ok(())
+    }
 }
 pub(super) async fn install(
     home: &Path,
@@ -509,27 +596,71 @@ pub(super) async fn install(
             stage("Instalando dependências");
             let mut cmd = tokio::process::Command::new(node_path(destination));
             cmd.arg(npm_path(destination))
-                .args(["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund", "--package-lock=true", "--global=false", "--workspaces=false", "--registry=https://registry.npmjs.org"])
-                .arg("--prefix").arg(destination).current_dir(destination)
-                .env("NODE_OPTIONS", "").env("npm_config_cache", root(home).join("cache/npm"))
+                .args([
+                    "install",
+                    "--ignore-scripts",
+                    "--omit=dev",
+                    "--no-audit",
+                    "--no-fund",
+                    "--package-lock=true",
+                    "--global=false",
+                    "--workspaces=false",
+                    "--registry=https://registry.npmjs.org",
+                ])
+                .arg("--prefix")
+                .arg(destination)
+                .current_dir(destination)
+                .env("NODE_OPTIONS", "")
+                .env("npm_config_cache", root(home).join("cache/npm"))
                 .env("npm_config_userconfig", destination.join("empty.npmrc"));
             command(cmd, 240).await?;
-            required.extend(["node_modules/@upstash/context7-mcp/dist/index.js", "node_modules/@upstash/context7-mcp/package.json"].map(String::from));
-            required.push(node_path(destination).strip_prefix(destination).unwrap().to_string_lossy().into());
+            required.extend(
+                [
+                    "node_modules/@upstash/context7-mcp/dist/index.js",
+                    "node_modules/@upstash/context7-mcp/package.json",
+                ]
+                .map(String::from),
+            );
+            required.push(
+                node_path(destination)
+                    .strip_prefix(destination)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into(),
+            );
             stage("Validando ferramentas");
             context7::verify(destination).await?;
         }
         ComponentId::OpenDesign => {
             stage("Baixando recursos de design");
-            let commit = json(&format!("https://api.github.com/repos/{}/commits/{}", id.repository(), release.tag_name)).await?;
-            let sha = commit["sha"].as_str().filter(|sha| sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit()))
-                .ok_or_else(|| error("Referência do Open Design inválida."))?.to_owned();
-            let (archive, digest) = source_archive(&format!("https://codeload.github.com/{}/tar.gz/{sha}", id.repository()), &base, &progress).await?;
+            let commit = json(&format!(
+                "https://api.github.com/repos/{}/commits/{}",
+                id.repository(),
+                release.tag_name
+            ))
+            .await?;
+            let sha = commit["sha"]
+                .as_str()
+                .filter(|sha| sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit()))
+                .ok_or_else(|| error("Referência do Open Design inválida."))?
+                .to_owned();
+            let (archive, digest) = source_archive(
+                &format!(
+                    "https://codeload.github.com/{}/tar.gz/{sha}",
+                    id.repository()
+                ),
+                &base,
+                &progress,
+            )
+            .await?;
             stage("Indexando sistemas, templates e guias");
             let directory = destination.to_path_buf();
             let expected = version.clone();
-            tauri::async_runtime::spawn_blocking(move || design::prepare(archive.reopen()?, &directory, &expected, &sha, &digest))
-                .await.map_err(|_| error("Não foi possível preparar os recursos de design."))??;
+            tauri::async_runtime::spawn_blocking(move || {
+                design::prepare(archive.reopen()?, &directory, &expected, &sha, &digest)
+            })
+            .await
+            .map_err(|_| error("Não foi possível preparar os recursos de design."))??;
             required.extend(["package.json", "LICENSE", "jarvis-design.json"].map(String::from));
         }
         ComponentId::ContextMode => {
@@ -671,7 +802,7 @@ pub(super) async fn install(
         "{version}-{}",
         crate::library::new_id().map_err(|_| error("Não foi possível criar a instalação."))?
     ));
-    fs::rename(destination, &final_path)?;
+    publish(destination, &final_path).await?;
     let record = Installation {
         version: version.clone(),
         directory: final_path
@@ -696,7 +827,10 @@ async fn release_for_dolt() -> Result<Release, CoreError> {
 mod tests {
     use super::*;
 
-    async fn download_server(chunked: bool, interrupted: bool) -> (String, tokio::task::JoinHandle<()>) {
+    async fn download_server(
+        chunked: bool,
+        interrupted: bool,
+    ) -> (String, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let task = tokio::spawn(async move {
@@ -706,14 +840,38 @@ mod tests {
                 request.push(socket.read_u8().await.unwrap());
                 assert!(request.len() < 8192);
             }
-            let header = if chunked { "Transfer-Encoding: chunked" } else { "Content-Length: 12" };
-            socket.write_all(format!("HTTP/1.1 200 OK\r\n{header}\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
-            socket.write_all(if chunked { b"4\r\nabcd\r\n" } else { b"abcd" }).await.unwrap();
-            if interrupted { return; }
+            let header = if chunked {
+                "Transfer-Encoding: chunked"
+            } else {
+                "Content-Length: 12"
+            };
+            socket
+                .write_all(
+                    format!("HTTP/1.1 200 OK\r\n{header}\r\nConnection: close\r\n\r\n").as_bytes(),
+                )
+                .await
+                .unwrap();
+            socket
+                .write_all(if chunked { b"4\r\nabcd\r\n" } else { b"abcd" })
+                .await
+                .unwrap();
+            if interrupted {
+                return;
+            }
             tokio::time::sleep(Duration::from_millis(300)).await;
-            socket.write_all(if chunked { b"4\r\nefgh\r\n" } else { b"efgh" }).await.unwrap();
+            socket
+                .write_all(if chunked { b"4\r\nefgh\r\n" } else { b"efgh" })
+                .await
+                .unwrap();
             tokio::time::sleep(Duration::from_millis(300)).await;
-            socket.write_all(if chunked { b"4\r\nijkl\r\n0\r\n\r\n" } else { b"ijkl" }).await.unwrap();
+            socket
+                .write_all(if chunked {
+                    b"4\r\nijkl\r\n0\r\n\r\n"
+                } else {
+                    b"ijkl"
+                })
+                .await
+                .unwrap();
         });
         (format!("http://{address}/archive"), task)
     }
@@ -727,19 +885,29 @@ mod tests {
                 let report = |progress| events.lock().unwrap().push(progress);
                 let body = if archive {
                     let directory = tempfile::tempdir().unwrap();
-                    let (file, digest) = source_archive(&url, directory.path(), &report).await.unwrap();
+                    let (file, digest) = source_archive(&url, directory.path(), &report)
+                        .await
+                        .unwrap();
                     let bytes = fs::read(file.path()).unwrap();
                     assert_eq!(digest, format!("{:x}", Sha256::digest(&bytes)));
                     bytes
-                } else { download_with_progress(&url, 64, &report).await.unwrap() };
+                } else {
+                    download_with_progress(&url, 64, &report).await.unwrap()
+                };
                 server.await.unwrap();
                 assert_eq!(body, b"abcdefghijkl");
                 let events = events.into_inner().unwrap();
                 assert_eq!(events[0].received_bytes, 0);
-                assert!(events.iter().any(|event| event.received_bytes > 0 && event.received_bytes < 12));
+                assert!(events
+                    .iter()
+                    .any(|event| event.received_bytes > 0 && event.received_bytes < 12));
                 assert_eq!(events.last().unwrap().received_bytes, 12);
-                assert!(events.windows(2).all(|pair| pair[0].received_bytes <= pair[1].received_bytes));
-                assert!(events.iter().all(|event| event.total_bytes == if chunked { None } else { Some(12) }));
+                assert!(events
+                    .windows(2)
+                    .all(|pair| pair[0].received_bytes <= pair[1].received_bytes));
+                assert!(events
+                    .iter()
+                    .all(|event| event.total_bytes == if chunked { None } else { Some(12) }));
             }
         }
     }
@@ -751,11 +919,20 @@ mod tests {
             let directory = tempfile::tempdir().unwrap();
             let events = Mutex::new(Vec::new());
             let report = |progress| events.lock().unwrap().push(progress);
-            let result = if archive { source_archive(&url, directory.path(), &report).await.map(|_| ()) }
-                else { download_with_progress(&url, 64, &report).await.map(|_| ()) };
+            let result = if archive {
+                source_archive(&url, directory.path(), &report)
+                    .await
+                    .map(|_| ())
+            } else {
+                download_with_progress(&url, 64, &report).await.map(|_| ())
+            };
             server.await.unwrap();
             assert!(result.is_err());
-            assert!(events.into_inner().unwrap().iter().all(|event| event.received_bytes < 12));
+            assert!(events
+                .into_inner()
+                .unwrap()
+                .iter()
+                .all(|event| event.received_bytes < 12));
             assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
         }
     }
@@ -765,7 +942,9 @@ mod tests {
         let events = Mutex::new(Vec::new());
         let report = |progress| events.lock().unwrap().push(progress);
         let mut reporter = DownloadReporter::new(&report, Some(10_000));
-        for received in 1..100 { reporter.update(received, false); }
+        for received in 1..100 {
+            reporter.update(received, false);
+        }
         reporter.update(100, true);
         let events = events.into_inner().unwrap();
         assert_eq!(events.len(), 2);
@@ -775,16 +954,33 @@ mod tests {
     #[ignore = "Downloads the official release into a disposable isolated Core installation"]
     async fn official_open_design_install() {
         let home = tempfile::tempdir().unwrap();
-        let version = install(home.path(), ComponentId::OpenDesign, |stage| eprintln!("{stage}"), |_| {}).await.unwrap();
+        let version = install(
+            home.path(),
+            ComponentId::OpenDesign,
+            |stage| eprintln!("{stage}"),
+            |_| {},
+        )
+        .await
+        .unwrap();
         let pack = design::Pack::open(home.path()).unwrap();
-        let result = pack.execute("design_search", &serde_json::json!({"query":""})).unwrap();
+        let result = pack
+            .execute("design_search", &serde_json::json!({"query":""}))
+            .unwrap();
         let result: Value = serde_json::from_str(&result).unwrap();
         assert!(result["total"].as_u64().unwrap() > 200);
-        eprintln!("Open Design {version}: {} resources verified", result["total"]);
+        eprintln!(
+            "Open Design {version}: {} resources verified",
+            result["total"]
+        );
     }
     #[test]
     fn open_design_release_prefix_has_a_semantic_version() {
-        let release = Release { tag_name:"open-design-v0.21.1".into(), assets:vec![], draft:false, prerelease:false };
+        let release = Release {
+            tag_name: "open-design-v0.21.1".into(),
+            assets: vec![],
+            draft: false,
+            prerelease: false,
+        };
         assert_eq!(release.version(), "0.21.1");
     }
     #[test]
@@ -802,7 +998,14 @@ mod tests {
     #[ignore = "Downloads and verifies the official Context7 MCP package with its private Node runtime"]
     async fn official_context7_install() {
         let home = tempfile::tempdir().unwrap();
-        let version = install(home.path(), ComponentId::Context7, |stage| eprintln!("{stage}"), |_| {}).await.unwrap();
+        let version = install(
+            home.path(),
+            ComponentId::Context7,
+            |stage| eprintln!("{stage}"),
+            |_| {},
+        )
+        .await
+        .unwrap();
         let record = installed(home.path(), ComponentId::Context7).unwrap();
         assert_eq!(record.version, version);
         assert!(node_path(&record.path(home.path()).unwrap()).is_file());
@@ -820,5 +1023,33 @@ mod tests {
         );
         assert!(check_hash(b"tampered", "sha256:bad").is_err());
         assert!(check_hash(b"valid", &format!("sha256:{:x}", Sha256::digest(b"valid"))).is_ok());
+    }
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn publishes_after_a_transient_directory_lock() {
+        use std::{os::windows::fs::OpenOptionsExt, sync::mpsc};
+
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let target = temp.path().join("target");
+        fs::create_dir(&source).unwrap();
+        let locked = source.join("locked");
+        fs::write(&locked, b"locked").unwrap();
+        let (ready, started) = mpsc::channel();
+        let releaser = std::thread::spawn(move || {
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&locked)
+                .unwrap();
+            ready.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+            drop(file);
+        });
+        started.recv().unwrap();
+
+        publish(&source, &target).await.unwrap();
+        releaser.join().unwrap();
+        assert!(target.join("locked").is_file());
     }
 }

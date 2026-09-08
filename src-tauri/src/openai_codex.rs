@@ -4,9 +4,11 @@ use crate::persistence::{self, PersistenceError, ProviderAccountRecord};
 
 pub(crate) mod antigravity;
 pub(crate) mod custom;
+mod reauthorization;
 pub(crate) mod usage;
 
 pub(crate) const OPENAI_CODEX_ALIAS_PREFIX: &str = "openai-codex-";
+#[cfg(target_os = "macos")]
 pub(crate) const KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.openai-codex";
 pub(crate) const OPENAI_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
 pub(crate) const OPENAI_CODEX_CLIENT_VERSION: &str = "0.153.0";
@@ -203,9 +205,11 @@ pub(crate) fn validate_provider_alias(alias: &str) -> Result<(), AliasValidation
 pub(crate) enum SecretStoreError {
     #[cfg(not(target_os = "macos"))]
     Unavailable,
+    #[cfg(any(target_os = "macos", target_os = "windows", test))]
     OperationFailed,
     #[cfg(test)]
     Missing,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     InvalidCredential,
 }
 
@@ -296,12 +300,12 @@ pub(crate) struct KeychainSecretStore;
 #[cfg(target_os = "macos")]
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn serialize_credential(credential: &CodexCredential) -> Result<Vec<u8>, SecretStoreError> {
     serde_json::to_vec(credential).map_err(|_| SecretStoreError::InvalidCredential)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn deserialize_credential(value: &[u8]) -> Result<CodexCredential, SecretStoreError> {
     serde_json::from_slice(value).map_err(|_| SecretStoreError::InvalidCredential)
 }
@@ -309,8 +313,9 @@ fn deserialize_credential(value: &[u8]) -> Result<CodexCredential, SecretStoreEr
 #[cfg(target_os = "macos")]
 impl SecretStore for KeychainSecretStore {
     fn load(&self, alias: &str) -> Result<CodexCredential, SecretStoreError> {
-        let value = security_framework::passwords::get_generic_password(secret_service(alias), alias)
-            .map_err(|_| SecretStoreError::OperationFailed)?;
+        let value =
+            security_framework::passwords::get_generic_password(secret_service(alias), alias)
+                .map_err(|_| SecretStoreError::OperationFailed)?;
         deserialize_credential(&value)
     }
 
@@ -331,10 +336,48 @@ impl SecretStore for KeychainSecretStore {
 
 #[cfg(target_os = "macos")]
 fn secret_service(alias: &str) -> &'static str {
-    if alias.starts_with("antigravity-") { "com.foxtag.jarvis.antigravity" } else { KEYCHAIN_SERVICE }
+    if alias.starts_with("antigravity-") {
+        "com.foxtag.jarvis.antigravity"
+    } else {
+        KEYCHAIN_SERVICE
+    }
 }
 
-#[cfg(not(target_os = "macos"))]
+// Windows: provider credentials live in the shared DPAPI vault. One namespace
+// keyed by alias covers OpenAI Codex, Antigravity and Custom — their aliases are
+// already disjoint by prefix, so no per-provider service split is needed.
+#[cfg(target_os = "windows")]
+const PROVIDER_NAMESPACE: &str = "provider-secrets";
+
+#[cfg(target_os = "windows")]
+fn vault_error(error: crate::secrets::VaultError) -> SecretStoreError {
+    match error {
+        crate::secrets::VaultError::Unavailable => SecretStoreError::Unavailable,
+        crate::secrets::VaultError::NotFound | crate::secrets::VaultError::OperationFailed => {
+            SecretStoreError::OperationFailed
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl SecretStore for KeychainSecretStore {
+    fn load(&self, alias: &str) -> Result<CodexCredential, SecretStoreError> {
+        let value = crate::secrets::load(PROVIDER_NAMESPACE, alias).map_err(vault_error)?;
+        deserialize_credential(&value)
+    }
+
+    fn store(&self, alias: &str, credential: &CodexCredential) -> Result<(), SecretStoreError> {
+        let value = serialize_credential(credential)?;
+        crate::secrets::store(PROVIDER_NAMESPACE, alias, &value).map_err(vault_error)
+    }
+
+    fn remove(&self, alias: &str) -> Result<(), SecretStoreError> {
+        crate::secrets::delete(PROVIDER_NAMESPACE, alias).map_err(vault_error)
+    }
+}
+
+// Any other non-macOS target (e.g. Linux) has no secure backend yet.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 impl SecretStore for KeychainSecretStore {
     fn load(&self, _alias: &str) -> Result<CodexCredential, SecretStoreError> {
         Err(SecretStoreError::Unavailable)
@@ -432,6 +475,47 @@ mod tests {
             None,
             None,
         )
+    }
+
+    // The production credential path on Windows: serialize -> DPAPI vault ->
+    // deserialize. InMemorySecretStore tests never exercise this seam, which is
+    // exactly where the store returned Unavailable before the vault landed.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_provider_store_round_trips_a_real_credential_via_dpapi() {
+        let store = KeychainSecretStore;
+        // Unique per run so concurrent/parallel tests never collide on one key.
+        let alias = format!("openai-codex-test-{}", crate::library::new_id().unwrap());
+        let original = credential("account-dpapi");
+
+        store.store(&alias, &original).expect("DPAPI store");
+        let loaded = store.load(&alias).expect("DPAPI load");
+        // CodexCredential has PartialEq but no Debug on purpose: a credential
+        // must never be printable in a failure message.
+        assert!(
+            loaded == original,
+            "DPAPI round-trip changed the credential"
+        );
+
+        // Overwrite proves replacement, not append, on the same key.
+        let rotated = CodexCredential::new(
+            "rotated-token",
+            "rotated-refresh",
+            1_800_000_000_000,
+            "account-dpapi",
+            Some("person@example.com".to_string()),
+            None,
+        );
+        store.store(&alias, &rotated).expect("DPAPI overwrite");
+        assert!(
+            store.load(&alias).expect("reload") == rotated,
+            "overwrite lost the rotated credential"
+        );
+
+        store.remove(&alias).expect("DPAPI remove");
+        assert!(store.load(&alias).is_err());
+        // Removing an absent key stays idempotent for disconnect.
+        store.remove(&alias).expect("idempotent remove");
     }
 
     #[test]
@@ -710,9 +794,13 @@ mod tests {
         ] {
             let models = normalize_codex_models(&serde_json::json!({"models":[{
                 "id":"model", "context_window":value
-            }]})).unwrap();
+            }]}))
+            .unwrap();
             assert_eq!(models[0].context_window, expected);
-            assert_eq!(serde_json::to_value(&models[0]).unwrap()["contextWindow"], serde_json::json!(expected));
+            assert_eq!(
+                serde_json::to_value(&models[0]).unwrap()["contextWindow"],
+                serde_json::json!(expected)
+            );
         }
     }
 
@@ -820,6 +908,7 @@ impl ProviderError {
                 "secret_store",
                 "O armazenamento seguro não está disponível neste sistema.",
             ),
+            #[cfg(any(target_os = "macos", target_os = "windows", test))]
             ProviderAccountError::SecretStore(_) => Self::new(
                 "secret_store",
                 "Não foi possível salvar a credencial com segurança.",
@@ -879,6 +968,7 @@ impl OAuthEndpoints {
 struct OAuthFlow {
     id: String,
     alias: String,
+    replacing: Option<ProviderAccountRecord>,
     state: String,
     verifier: String,
     redirect_uri: String,
@@ -1012,6 +1102,16 @@ impl OAuthManager {
         home_dir: &std::path::Path,
         alias: &str,
     ) -> Result<OpenAiCodexConnectionStart, ProviderError> {
+        self.begin_connection(app_state, home_dir, alias, false)
+    }
+
+    fn begin_connection(
+        self: &std::sync::Arc<Self>,
+        app_state: &persistence::AppState,
+        home_dir: &std::path::Path,
+        alias: &str,
+        reauthorize: bool,
+    ) -> Result<OpenAiCodexConnectionStart, ProviderError> {
         validate_provider_alias(alias).map_err(|_| ProviderError::invalid_alias())?;
 
         let mut active = self
@@ -1028,7 +1128,11 @@ impl OAuthManager {
         let existing = app_state
             .list_provider_accounts(home_dir)
             .map_err(|_| ProviderError::database())?;
-        if existing.iter().any(|account| account.alias == alias) {
+        let replacing = existing.into_iter().find(|account| account.alias == alias);
+        if reauthorize && replacing.is_none() {
+            return Err(reauthorization::account_changed());
+        }
+        if !reauthorize && replacing.is_some() {
             return Err(ProviderError::new(
                 "duplicate_account",
                 "Este alias já está conectado.",
@@ -1036,7 +1140,11 @@ impl OAuthManager {
         }
 
         let google = alias.starts_with("antigravity-");
-        let (listener, port) = bind_callback_listener(if google { &[51121] } else { &self.callback_ports })?;
+        let (listener, port) = bind_callback_listener(if google {
+            &[51121]
+        } else {
+            &self.callback_ports
+        })?;
         listener.set_nonblocking(true).map_err(|_| {
             ProviderError::new(
                 "port_unavailable",
@@ -1047,17 +1155,26 @@ impl OAuthManager {
         let (verifier, challenge) = create_pkce()?;
         let state = random_token(32)?;
         let flow_id = random_token(16)?;
-        let redirect_uri = if google { format!("http://127.0.0.1:{port}/oauth-callback") } else { format!("http://localhost:{port}{OPENAI_CODEX_CALLBACK_ROUTE}") };
-        let authorization_url = if google { antigravity::authorization_url(&redirect_uri, &challenge, &state)? } else { build_authorization_url(
-            &self.endpoints.authorize_url,
-            &redirect_uri,
-            &challenge,
-            &state,
-        )? };
+        let redirect_uri = if google {
+            format!("http://127.0.0.1:{port}/oauth-callback")
+        } else {
+            format!("http://localhost:{port}{OPENAI_CODEX_CALLBACK_ROUTE}")
+        };
+        let authorization_url = if google {
+            antigravity::authorization_url(&redirect_uri, &challenge, &state)?
+        } else {
+            build_authorization_url(
+                &self.endpoints.authorize_url,
+                &redirect_uri,
+                &challenge,
+                &state,
+            )?
+        };
 
         let flow = std::sync::Arc::new(OAuthFlow {
             id: flow_id.clone(),
             alias: alias.to_owned(),
+            replacing,
             state,
             verifier,
             redirect_uri,
@@ -1282,13 +1399,12 @@ impl OpenAiCodexState {
                 .map_err(|_| ProviderError::internal())?;
         }
         let client = build_codex_client().map_err(|_| ProviderError::internal())?;
-        let models =
-            fetch_provider_models(&client, &mut credential).ok_or_else(|| {
-                ProviderError::new(
-                    "catalog_unavailable",
-                    "Não foi possível verificar os modelos da conta. Tente novamente.",
-                )
-            })?;
+        let models = fetch_provider_models(&client, &mut credential).ok_or_else(|| {
+            ProviderError::new(
+                "catalog_unavailable",
+                "Não foi possível verificar os modelos da conta. Tente novamente.",
+            )
+        })?;
         Ok((credential, models))
     }
 }
@@ -1368,7 +1484,17 @@ fn run_oauth_flow_inner(
     home_dir: &std::path::Path,
 ) -> Result<ProviderAccount, ProviderError> {
     let google = flow.alias.starts_with("antigravity-");
-    let code = wait_for_callback_route(listener, &flow.state, &flow.cancelled, manager.timeout, if google { "/oauth-callback" } else { OPENAI_CODEX_CALLBACK_ROUTE })?;
+    let code = wait_for_callback_route(
+        listener,
+        &flow.state,
+        &flow.cancelled,
+        manager.timeout,
+        if google {
+            "/oauth-callback"
+        } else {
+            OPENAI_CODEX_CALLBACK_ROUTE
+        },
+    )?;
     if flow.cancelled.load(std::sync::atomic::Ordering::Acquire) {
         return Err(ProviderError::new("cancelled", "A conexão foi cancelada."));
     }
@@ -1376,23 +1502,24 @@ fn run_oauth_flow_inner(
     let credential = if google {
         antigravity::exchange(&code, &flow.verifier, &flow.redirect_uri, &flow.cancelled)?
     } else {
-    let token = exchange_authorization_code(
-        &manager.endpoints,
-        &code,
-        &flow.verifier,
-        &flow.redirect_uri,
-    )?;
-    if flow.cancelled.load(std::sync::atomic::Ordering::Acquire) {
-        return Err(ProviderError::new("cancelled", "A conexão foi cancelada."));
-    }
-    CodexCredential::new(
-        token.access,
-        token.refresh,
-        token.expires,
-        token.account_id,
-        token.email,
-        token.plan_type,
-    ) };
+        let token = exchange_authorization_code(
+            &manager.endpoints,
+            &code,
+            &flow.verifier,
+            &flow.redirect_uri,
+        )?;
+        if flow.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(ProviderError::new("cancelled", "A conexão foi cancelada."));
+        }
+        CodexCredential::new(
+            token.access,
+            token.refresh,
+            token.expires,
+            token.account_id,
+            token.email,
+            token.plan_type,
+        )
+    };
     let _commit_guard = flow
         .commit_guard
         .lock()
@@ -1406,13 +1533,27 @@ fn run_oauth_flow_inner(
         .credentials_guard
         .lock()
         .map_err(|_| ProviderError::internal())?;
-    let result = commit_provider_account_with_state(
-        app_state,
-        home_dir,
-        manager.secret_store.as_ref(),
-        &flow.alias,
-        &credential,
-    );
+    let result = if let Some(expected) = &flow.replacing {
+        app_state.with_connection(home_dir, |connection| {
+            reauthorization::replace_account(
+                connection,
+                manager.secret_store.as_ref(),
+                expected,
+                &credential,
+            )
+        })
+    } else {
+        commit_provider_account_with_state(
+            app_state,
+            home_dir,
+            manager.secret_store.as_ref(),
+            &flow.alias,
+            &credential,
+        )
+    };
+    if result.is_ok() {
+        manager.usage_cache.invalidate(&flow.alias);
+    }
     flow.complete(result.clone());
     result
 }
@@ -1445,7 +1586,8 @@ fn wait_for_callback_route(
         }
 
         match listener.accept() {
-            Ok((mut stream, _)) => match process_callback_route(&mut stream, expected_state, route) {
+            Ok((mut stream, _)) => match process_callback_route(&mut stream, expected_state, route)
+            {
                 CallbackEvent::Code(code) => return Ok(code),
                 CallbackEvent::Denied => {
                     return Err(ProviderError::new("denied", "A autorização foi recusada."));
@@ -1471,7 +1613,11 @@ fn wait_for_callback_route(
     }
 }
 
-fn process_callback_route(stream: &mut std::net::TcpStream, expected_state: &str, route: &str) -> CallbackEvent {
+fn process_callback_route(
+    stream: &mut std::net::TcpStream,
+    expected_state: &str,
+    route: &str,
+) -> CallbackEvent {
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(250)));
     let request = match read_http_request(stream) {
@@ -1576,6 +1722,23 @@ fn read_http_request(stream: &mut std::net::TcpStream) -> Result<String, ()> {
     String::from_utf8(bytes).map_err(|_| ())
 }
 
+/// The current Jarvis mark, embedded once as a data URI. The callback page is
+/// served by a throwaway local listener with no static assets, so the logo must
+/// travel inline. The raw PNG ships in the binary, not a base64 source literal,
+/// and the encoding runs at most once per process.
+fn embedded_logo_data_uri() -> &'static str {
+    use base64::Engine;
+    use std::sync::LazyLock;
+    static LOGO: LazyLock<String> = LazyLock::new(|| {
+        format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD
+                .encode(include_bytes!("../icons/128x128.png"))
+        )
+    });
+    &LOGO
+}
+
 fn render_callback_html(status: &str, body: &str) -> String {
     let is_success = status.starts_with("200");
     let (accent_bar, badge_class, badge_icon, badge_text, heading, description, info_text) =
@@ -1591,7 +1754,7 @@ fn render_callback_html(status: &str, body: &str) -> String {
                 "Autenticação recebida",
                 "Conexão autorizada",
                 "Volte ao Jarvis para concluir a conexão da conta.",
-                "Você pode fechar esta janela com segurança e voltar ao aplicativo.",
+                "Você pode fechar esta aba com segurança e voltar ao aplicativo.",
             )
         } else {
             (
@@ -1609,6 +1772,8 @@ fn render_callback_html(status: &str, body: &str) -> String {
             )
         };
 
+    let logo = embedded_logo_data_uri();
+    let close_script = include_str!("../../src/components/settings/authorization-callback.ts");
     format!(
         r##"<!DOCTYPE html>
 <html lang="pt-BR">
@@ -1705,34 +1870,51 @@ fn render_callback_html(status: &str, body: &str) -> String {
       border: 1px solid rgba(62, 68, 81, 0.7);
       border-radius: 10px;
       padding: 12px 16px;
-      font-size: 13px;
-      color: #7f848e;
-      margin-bottom: 24px;
-      line-height: 1.4;
     }}
     .btn {{
+      appearance: none;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 9px 24px;
-      border-radius: 8px;
-      background: rgba(97, 175, 239, 0.15);
+      gap: 8px;
+      width: 100%;
+      min-height: 40px;
+      margin-top: 24px;
+      padding: 10px 16px;
       border: 1px solid rgba(97, 175, 239, 0.35);
+      border-radius: 8px;
+      background: rgba(97, 175, 239, 0.12);
       color: #61afef;
-      font-size: 13px;
+      font: inherit;
+      font-size: 14px;
       font-weight: 500;
+      line-height: 1.4;
       cursor: pointer;
-      text-decoration: none;
-      transition: all 0.15s ease;
-      font-family: inherit;
+      transition: background-color 150ms, border-color 150ms, color 150ms;
     }}
-    .btn:hover {{
+    .btn:hover:not(:disabled) {{
       background: rgba(97, 175, 239, 0.25);
       border-color: rgba(97, 175, 239, 0.6);
       color: #ffffff;
     }}
-    .btn:active {{
-      transform: scale(0.98);
+    .btn:focus-visible {{
+      outline: 2px solid #61afef;
+      outline-offset: 3px;
+    }}
+    .btn:disabled {{
+      cursor: wait;
+      opacity: 0.7;
+    }}
+    .close-feedback {{
+      margin-top: 16px;
+      color: #abb2bf;
+      font-size: 13px;
+      line-height: 1.5;
+      text-wrap: pretty;
+    }}
+    .close-feedback:focus {{ outline: none; }}
+    @media (prefers-reduced-motion: reduce) {{
+      .btn {{ transition: none; }}
     }}
   </style>
 </head>
@@ -1740,25 +1922,7 @@ fn render_callback_html(status: &str, body: &str) -> String {
   <div class="card">
     <div class="accent-bar"></div>
     <div class="logo-container">
-      <svg viewBox="0 0 1024 1024" width="44" height="44" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="jarvisChevron" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#56b6c2" />
-            <stop offset="100%" stop-color="#61afef" />
-          </linearGradient>
-          <linearGradient id="jarvisJ" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#61afef" />
-            <stop offset="55%" stop-color="#56b6c2" />
-            <stop offset="100%" stop-color="#98c379" />
-          </linearGradient>
-        </defs>
-        <path d="M 270 380 L 390 490 L 270 600" stroke="url(#jarvisChevron)" stroke-width="76" stroke-linecap="round" stroke-linejoin="round" />
-        <line x1="440" y1="600" x2="520" y2="600" stroke="#98c379" stroke-width="54" stroke-linecap="round" />
-        <path d="M 660 270 L 660 590 C 660 720 570 790 440 790 C 350 790 280 740 240 680" stroke="url(#jarvisJ)" stroke-width="76" stroke-linecap="round" stroke-linejoin="round" />
-        <circle cx="660" cy="270" r="30" fill="#61afef" fill-opacity="0.4" />
-        <circle cx="660" cy="270" r="20" fill="#98c379" />
-        <circle cx="660" cy="270" r="10" fill="#ffffff" />
-      </svg>
+      <img src="{logo}" alt="Jarvis" width="52" height="52" style="display:block;border-radius:14px;" />
     </div>
     <div class="status-badge {badge_class}">
       {badge_icon}
@@ -1767,8 +1931,13 @@ fn render_callback_html(status: &str, body: &str) -> String {
     <h1>{heading}</h1>
     <p class="desc">{description}</p>
     <div class="callout">{info_text}</div>
-    <button class="btn" onclick="window.close()">Fechar janela</button>
+    <button class="btn" id="close-tab" type="button">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+      Fechar aba
+    </button>
+    <p class="close-feedback" id="close-feedback" role="status" tabindex="-1" hidden></p>
   </div>
+  <script>{close_script}</script>
 </body>
 </html>"##
     )
@@ -2017,7 +2186,9 @@ fn refresh_credential(
     endpoints: &OAuthEndpoints,
     credential: &CodexCredential,
 ) -> Result<CodexCredential, ProviderError> {
-    if credential.project_id.is_some() { return antigravity::refresh(credential); }
+    if credential.project_id.is_some() {
+        return antigravity::refresh(credential);
+    }
     let mut form = url::form_urlencoded::Serializer::new(String::new());
     form.append_pair("grant_type", "refresh_token")
         .append_pair("client_id", OPENAI_CODEX_CLIENT_ID)
@@ -2165,7 +2336,8 @@ fn normalize_codex_models(payload: &serde_json::Value) -> Option<Vec<ProviderMod
                 name: name.to_owned(),
                 reasoning_levels,
                 default_reasoning_level,
-                context_window: entry.get("context_window")
+                context_window: entry
+                    .get("context_window")
                     .and_then(serde_json::Value::as_u64)
                     .filter(|value| *value > 0 && *value <= 9_007_199_254_740_991),
             },
@@ -2246,9 +2418,15 @@ fn account_details(
     )
 }
 
-fn fetch_provider_models(client: &reqwest::blocking::Client, credential: &mut CodexCredential) -> Option<Vec<ProviderModel>> {
-    if credential.project_id.is_some() { antigravity::fetch_models(client, credential) }
-    else { fetch_codex_models(client, OPENAI_CODEX_BASE_URL, credential) }
+fn fetch_provider_models(
+    client: &reqwest::blocking::Client,
+    credential: &mut CodexCredential,
+) -> Option<Vec<ProviderModel>> {
+    if credential.project_id.is_some() {
+        antigravity::fetch_models(client, credential)
+    } else {
+        fetch_codex_models(client, OPENAI_CODEX_BASE_URL, credential)
+    }
 }
 
 fn commit_provider_account_with_state(
@@ -2317,6 +2495,23 @@ pub async fn begin_openai_codex_connection(
     let manager = oauth_state.manager.clone();
     tauri::async_runtime::spawn_blocking(move || {
         manager.begin(&persistence_state, &home_dir, &alias)
+    })
+    .await
+    .map_err(|_| ProviderError::internal())?
+}
+
+#[tauri::command]
+pub async fn reauthorize_provider_account(
+    app: tauri::AppHandle,
+    persistence_state: tauri::State<'_, persistence::AppState>,
+    oauth_state: tauri::State<'_, OpenAiCodexState>,
+    alias: String,
+) -> Result<OpenAiCodexConnectionStart, ProviderError> {
+    let home = home_dir(&app)?;
+    let state = persistence_state.inner().clone();
+    let manager = oauth_state.manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager.begin_connection(&state, &home, &alias, true)
     })
     .await
     .map_err(|_| ProviderError::internal())?
@@ -2571,6 +2766,7 @@ mod oauth_tests {
             .list_provider_accounts(&home)
             .expect("remaining accounts")
             .is_empty());
+        state.close();
         std::fs::remove_dir_all(home).expect("remove test home");
     }
 
@@ -2781,6 +2977,7 @@ mod oauth_tests {
             "flow_not_found"
         );
         manager.cancel(&start.flow_id).expect("repeat cancel");
+        app_state.close();
         std::fs::remove_dir_all(home).expect("remove test home");
     }
 
@@ -2797,10 +2994,13 @@ mod oauth_tests {
         );
         let start = begin(&manager, &app_state, &home, "openai-codex-callback");
         assert!(request(&start, "/unknown").starts_with("HTTP/1.1 404 Not Found"));
-        assert!(
-            request(&start, "/auth/callback?state=wrong&code=authorization-code")
-                .starts_with("HTTP/1.1 400 Bad Request")
-        );
+        let rejected = request(&start, "/auth/callback?state=wrong&code=authorization-code");
+        assert!(rejected.starts_with("HTTP/1.1 400 Bad Request"));
+        assert!(rejected.contains("Não foi possível autenticar"));
+        assert!(rejected.contains("id=\"close-tab\" type=\"button\""));
+        assert!(rejected.contains("id=\"close-feedback\" role=\"status\""));
+        assert!(rejected.contains("Seu navegador bloqueou o fechamento pelo botão."));
+        assert!(!rejected.contains("authorization-code"));
         assert_eq!(
             manager.wait(&start.flow_id).expect_err("state result").code,
             "callback_state"
@@ -2809,6 +3009,7 @@ mod oauth_tests {
             .list_provider_accounts(&home)
             .expect("account list");
         assert!(accounts.is_empty());
+        app_state.close();
         std::fs::remove_dir_all(home).expect("remove test home");
     }
 
@@ -2859,6 +3060,121 @@ mod oauth_tests {
     }
 
     #[test]
+    fn reauthorization_keeps_old_credentials_until_success_and_survives_cancellation() {
+        let home = test_home();
+        let state = persistence::AppState::default();
+        let secrets = Arc::new(InMemorySecretStore::default());
+        let alias = "openai-codex-reauthorize";
+        let old = CodexCredential::new(
+            "old-access",
+            "old-refresh",
+            i64::MAX,
+            "existing-account",
+            None,
+            Some("plus".into()),
+        );
+        commit_provider_account_with_state(&state, &home, secrets.as_ref(), alias, &old).unwrap();
+        let original = state.list_provider_accounts(&home).unwrap();
+        let access = jwt("existing-account");
+        let (token_url, server) = fake_token_server(
+            serde_json::json!({
+                "access_token": access, "refresh_token": "new-refresh", "expires_in": 3600
+            })
+            .to_string(),
+            "200 OK",
+        );
+        let manager = new_manager(
+            token_url,
+            Duration::from_secs(5),
+            secrets.clone(),
+            vec![free_port()],
+        );
+        assert_eq!(
+            manager.begin(&state, &home, alias).unwrap_err().code,
+            "duplicate_account"
+        );
+        let cancelled = manager
+            .begin_connection(&state, &home, alias, true)
+            .unwrap();
+        let pending = manager.flow(&cancelled.flow_id).unwrap();
+        manager.cancel(&cancelled.flow_id).unwrap();
+        assert_eq!(pending.wait().unwrap_err().code, "cancelled");
+        assert_eq!(secrets.load(alias).unwrap().access, "old-access");
+        assert_eq!(state.list_provider_accounts(&home).unwrap(), original);
+
+        // Use a fresh ephemeral callback port; cancellation may still be releasing the first listener.
+        let manager = new_manager(
+            manager.endpoints.token_url.clone(),
+            Duration::from_secs(5),
+            secrets.clone(),
+            vec![free_port()],
+        );
+        let start = manager
+            .begin_connection(&state, &home, alias, true)
+            .unwrap();
+        assert_eq!(secrets.load(alias).unwrap().refresh, "old-refresh");
+        request(
+            &start,
+            &format!(
+                "/auth/callback?state={}&code=AUTHORIZATION_CODE",
+                callback_state(&start)
+            ),
+        );
+        assert_eq!(manager.wait(&start.flow_id).unwrap().alias, alias);
+        server.join().unwrap();
+        assert_eq!(state.list_provider_accounts(&home).unwrap(), original);
+        let renewed = secrets.load(alias).unwrap();
+        assert_eq!(renewed.access, access);
+        assert_eq!(renewed.refresh, "new-refresh");
+        state.close();
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn reauthorization_token_failure_preserves_existing_account() {
+        let home = test_home();
+        let state = persistence::AppState::default();
+        let secrets = Arc::new(InMemorySecretStore::default());
+        let alias = "openai-codex-reauthorize";
+        let old = CodexCredential::new(
+            "old-access",
+            "old-refresh",
+            i64::MAX,
+            "existing-account",
+            None,
+            None,
+        );
+        commit_provider_account_with_state(&state, &home, secrets.as_ref(), alias, &old).unwrap();
+        let original = state.list_provider_accounts(&home).unwrap();
+        let (token_url, server) = fake_token_server("{}".into(), "400 Bad Request");
+        let manager = new_manager(
+            token_url,
+            Duration::from_secs(5),
+            secrets.clone(),
+            vec![free_port()],
+        );
+        let start = manager
+            .begin_connection(&state, &home, alias, true)
+            .unwrap();
+        request(
+            &start,
+            &format!(
+                "/auth/callback?state={}&code=AUTHORIZATION_CODE",
+                callback_state(&start)
+            ),
+        );
+        assert_eq!(
+            manager.wait(&start.flow_id).unwrap_err().code,
+            "token_exchange"
+        );
+        server.join().unwrap();
+        assert_eq!(state.list_provider_accounts(&home).unwrap(), original);
+        assert_eq!(secrets.load(alias).unwrap().access, "old-access");
+        state.close();
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
     fn fake_issuer_success_commits_metadata_and_secret_without_redaction_leaks() {
         let access = jwt("account-success");
         let refresh = "REFRESH_SECRET";
@@ -2889,7 +3205,13 @@ mod oauth_tests {
         assert!(callback_response.starts_with("HTTP/1.1 200 OK"));
         assert!(callback_response.contains("Jarvis — Autenticação"));
         assert!(callback_response.contains("Autenticação recebida"));
-        assert!(callback_response.contains("Você pode fechar esta janela"));
+        assert!(callback_response.contains("Você pode fechar esta aba"));
+        assert!(callback_response.contains("id=\"close-tab\" type=\"button\""));
+        assert!(callback_response.contains("Fechar aba"));
+        assert!(callback_response.contains("Seu navegador bloqueou o fechamento pelo botão."));
+        // The page must carry the current brand mark and drop the stale chevron.
+        assert!(callback_response.contains("data:image/png;base64,"));
+        assert!(!callback_response.contains("jarvisChevron"));
         let account = manager.wait(&start.flow_id).expect("OAuth success");
         let token_request = token_server.join().expect("token server");
         assert!(token_request.contains("grant_type=authorization_code"));
@@ -2918,6 +3240,7 @@ mod oauth_tests {
         .expect("error JSON")
         .find("REFRESH_SECRET")
         .is_none());
+        app_state.close();
         std::fs::remove_dir_all(home).expect("remove test home");
     }
 
@@ -2995,6 +3318,7 @@ mod oauth_tests {
             1
         );
         assert!(secrets.load("openai-codex-cancel-race").is_ok());
+        app_state.close();
         std::fs::remove_dir_all(home).expect("remove test home");
     }
 
@@ -3072,6 +3396,7 @@ mod oauth_tests {
             .list_provider_accounts(&home)
             .expect("account list")
             .is_empty());
+        app_state.close();
         std::fs::remove_dir_all(home).expect("remove test home");
     }
 
@@ -3143,6 +3468,7 @@ mod oauth_tests {
             .list_provider_accounts(&home)
             .expect("account list")
             .is_empty());
+        app_state.close();
         std::fs::remove_dir_all(home).expect("remove test home");
     }
 
@@ -3248,6 +3574,7 @@ mod oauth_tests {
             "openai-codex-duplicate-one",
         )
         .expect("idempotent disconnect");
+        app_state.close();
         std::fs::remove_dir_all(home).expect("remove test home");
     }
 }

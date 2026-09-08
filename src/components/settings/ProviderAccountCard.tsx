@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { CheckCircle2, ChevronRight, Pencil, Unplug } from "lucide-react";
+import { CheckCircle2, ChevronRight, Pencil, RefreshCw, Unplug } from "lucide-react";
 import { protocolLabels } from "@/core/custom-provider";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { Badge } from "@/components/ui/badge";
@@ -23,13 +23,14 @@ function formatConnectionDate(timestamp: number): string {
   });
 }
 
-export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, onUsageChange, onEdit, saving = false }: {
+export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, onUsageChange, onEdit, onReauthorize, saving = false }: {
   account: ProviderAccount;
   onDisconnect: (alias: string) => void;
   onEnabledChange: (alias: string, enabled: boolean) => void;
   onUsageChange?: (alias: string, showUsage: boolean, showThirdPartyUsage: boolean) => void;
   saving?: boolean;
   onEdit?: (account: ProviderAccount) => void;
+  onReauthorize?: (account: ProviderAccount) => void;
 }) {
   const [open, setOpen] = useState(false);
   const custom = account.providerKind === "custom";
@@ -119,6 +120,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             <span aria-hidden="true">{account.enabled ? "Ativada" : "Desativada"}</span>
           </label>
           <div className="ml-auto flex items-center gap-2">
+          {!custom && onReauthorize && <Button type="button" variant="outline" size="sm" disabled={saving} className="cursor-pointer" onClick={() => { setOpen(false); onReauthorize(account); }}><RefreshCw aria-hidden="true" data-icon="inline-start" />Re-autorizar</Button>}
           {custom && <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => { setOpen(false); onEdit?.(account); }}><Pencil data-icon="inline-start" />Editar</Button>}
           <Button type="button" variant="destructive" size="sm" disabled={saving} onClick={() => onDisconnect(account.alias)} className="cursor-pointer">
             <Unplug aria-hidden="true" data-icon="inline-start" />

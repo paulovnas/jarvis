@@ -4,7 +4,7 @@ use similar::{ChangeTag, TextDiff};
 use std::{
     io::Read,
     path::Path,
-    process::{Command, Stdio},
+    process::Stdio,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,16 +149,28 @@ pub(super) fn summaries(data: &SessionData) -> Vec<FileSummary> {
 }
 
 pub(super) async fn record(session: &Session, revision: FileRevision) -> Result<(), AgentError> {
-    let previous = session.data.lock().map_err(|_| AgentError::internal())?.extras.files.get(&revision.path).cloned();
+    let previous = session
+        .data
+        .lock()
+        .map_err(|_| AgentError::internal())?
+        .extras
+        .files
+        .get(&revision.path)
+        .cloned();
     let mut baseline = revision.before.clone();
     if let Some(previous) = previous.as_ref().filter(|file| file.base != "unknown") {
         // Rebase ownership after full/partial commits before recording another
         // edit. Preserve the journal baseline if Git is temporarily unavailable.
         baseline = previous.before.clone();
         if let Ok(repository) = working::Repository::open(&session.root).await {
-            let head = if let Some(repo) = repository { repo.contents(&session.root, &revision.path).await } else { Ok(previous.before.clone()) };
+            let head = if let Some(repo) = repository {
+                repo.contents(&session.root, &revision.path).await
+            } else {
+                Ok(previous.before.clone())
+            };
             if let Ok(head) = head {
-                baseline = working::pending(previous, head.as_deref(), revision.before.as_deref()).before;
+                baseline =
+                    working::pending(previous, head.as_deref(), revision.before.as_deref()).before;
             }
         }
     }
@@ -227,7 +239,7 @@ pub(super) fn load_legacy(
     if contents.is_empty() {
         return;
     }
-    let git_root = Command::new("git")
+    let git_root = crate::background::command("git")
         .arg("-C")
         .arg(root)
         .args(["rev-parse", "--show-toplevel"])
@@ -244,7 +256,7 @@ pub(super) fn load_legacy(
         let mut before = None;
         if let Some(git_root) = &git_root {
             if let Ok(relative) = root.join(&path).strip_prefix(git_root) {
-                if let Ok(mut child) = Command::new("git")
+                if let Ok(mut child) = crate::background::command("git")
                     .arg("--no-pager")
                     .arg("-C")
                     .arg(git_root)
@@ -269,7 +281,7 @@ pub(super) fn load_legacy(
                                 before = Some(text);
                                 base = "git";
                             }
-                        } else if Command::new("git")
+                        } else if crate::background::command("git")
                             .arg("-C")
                             .arg(git_root)
                             .args(["ls-tree", "-z", "--full-tree", "HEAD", "--"])
@@ -299,9 +311,18 @@ pub async fn get_agent_file_changes(
     conversation_id: String,
 ) -> Result<Vec<FileSummary>, AgentError> {
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
-    let state = persistence.inner().clone(); let agent = agent.inner().clone();
-    let session = tauri::async_runtime::spawn_blocking(move || agent.file_session(&state, &home, &conversation_id)).await.map_err(|_| AgentError::internal())??;
-    Ok(working::files(&session, None).await?.iter().map(FileRevision::summary).collect())
+    let state = persistence.inner().clone();
+    let agent = agent.inner().clone();
+    let session = tauri::async_runtime::spawn_blocking(move || {
+        agent.file_session(&state, &home, &conversation_id)
+    })
+    .await
+    .map_err(|_| AgentError::internal())??;
+    Ok(working::files(&session, None)
+        .await?
+        .iter()
+        .map(FileRevision::summary)
+        .collect())
 }
 
 #[tauri::command]
@@ -313,9 +334,16 @@ pub async fn get_agent_file_diff(
     path: String,
 ) -> Result<FileDiff, AgentError> {
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
-    let state = persistence.inner().clone(); let agent = agent.inner().clone();
-    let session = tauri::async_runtime::spawn_blocking(move || agent.file_session(&state, &home, &conversation_id)).await.map_err(|_| AgentError::internal())??;
-    let file = working::files(&session, Some(&path)).await?.pop()
+    let state = persistence.inner().clone();
+    let agent = agent.inner().clone();
+    let session = tauri::async_runtime::spawn_blocking(move || {
+        agent.file_session(&state, &home, &conversation_id)
+    })
+    .await
+    .map_err(|_| AgentError::internal())??;
+    let file = working::files(&session, Some(&path))
+        .await?
+        .pop()
         .ok_or_else(|| {
             AgentError::new(
                 "diff_missing",

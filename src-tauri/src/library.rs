@@ -8,15 +8,17 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_opener::OpenerExt;
 
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 
 use crate::persistence::{AppState, PersistenceError};
 
-pub(crate) mod deletion;
 pub(crate) mod cleanup;
 pub(crate) mod dashboard;
+pub(crate) mod deletion;
+pub(crate) mod files;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +34,7 @@ pub struct Project {
     id: String,
     workspace_id: String,
     name: String,
+    #[serde(serialize_with = "serialize_display_path")]
     path: String,
     created_at: i64,
 }
@@ -296,6 +299,96 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, LibraryError> {
     Ok(path)
 }
 
+fn project_opener_path(connection: &Connection, id: &str) -> Result<String, LibraryError> {
+    let stored = PathBuf::from(project(connection, id)?.path);
+    let directory = canonical_directory(&stored)?;
+    if directory != stored {
+        return Err(LibraryError::new(
+            "project_directory",
+            "A pasta do projeto mudou. Verifique o caminho antes de abri-la.",
+        ));
+    }
+    Ok(strip_verbatim(&directory.to_string_lossy()).into_owned())
+}
+
+fn conversation_opener_path(
+    connection: &Connection,
+    home: &Path,
+    id: &str,
+    relative: Option<&str>,
+) -> Result<String, LibraryError> {
+    let details = read_conversation(connection, home, id)?;
+    let root = project_opener_path(connection, &details.project.id)?;
+    let Some(relative) = relative else {
+        return Ok(root);
+    };
+    let invalid = || {
+        LibraryError::new(
+            "open_file",
+            "O arquivo não está disponível dentro da pasta do projeto.",
+        )
+    };
+    let relative = relative.replace('\\', "/");
+    let path = Path::new(&relative);
+    if relative.is_empty()
+        || relative.contains(':')
+        || !path
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)))
+    {
+        return Err(invalid());
+    }
+    let root = canonical_directory(Path::new(&root))?;
+    let file = root.join(path).canonicalize().map_err(|_| invalid())?;
+    if !file.is_file() || !file.starts_with(&root) {
+        return Err(invalid());
+    }
+    Ok(strip_verbatim(&file.to_string_lossy()).into_owned())
+}
+
+// Keep the canonical Windows path for identity and containment checks. Convert
+// at display and native-launch boundaries so UI, shells and external runtimes
+// receive ordinary drive/UNC paths without changing the stored project root.
+#[cfg(windows)]
+pub(crate) fn strip_verbatim(path: &str) -> std::borrow::Cow<'_, str> {
+    if let Some(share) = path.strip_prefix(r"\\?\UNC\") {
+        return std::borrow::Cow::Owned(format!(r"\\{share}"));
+    }
+    match path.strip_prefix(r"\\?\") {
+        Some(rest) => std::borrow::Cow::Borrowed(rest),
+        None => std::borrow::Cow::Borrowed(path),
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn strip_verbatim(path: &str) -> std::borrow::Cow<'_, str> {
+    std::borrow::Cow::Borrowed(path)
+}
+
+pub(crate) fn serialize_display_path<S: serde::Serializer>(
+    path: &str,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&strip_verbatim(path))
+}
+
+pub(crate) fn serialize_display_path_buf<S: serde::Serializer>(
+    path: &std::path::Path,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&strip_verbatim(&path.to_string_lossy()))
+}
+
+pub(crate) fn serialize_display_opt_path_buf<S: serde::Serializer>(
+    path: &Option<std::path::PathBuf>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match path {
+        Some(path) => serializer.serialize_str(&strip_verbatim(&path.to_string_lossy())),
+        None => serializer.serialize_none(),
+    }
+}
+
 fn insert_project(
     connection: &mut Connection,
     workspace_id: &str,
@@ -368,7 +461,10 @@ fn session_path(
     for component in [".jarvis", "sessions", project_id] {
         directory.push(component);
         if create {
+            #[cfg(unix)]
             let mut builder = fs::DirBuilder::new();
+            #[cfg(not(unix))]
+            let builder = fs::DirBuilder::new();
             #[cfg(unix)]
             builder.mode(0o700);
             match builder.create(&directory) {
@@ -433,12 +529,17 @@ fn is_empty_conversation(home: &Path, conversation: &Conversation) -> Result<boo
     let mut header = Vec::new();
     {
         let mut bounded = reader.by_ref().take(65_537);
-        bounded.read_until(b'\n', &mut header).map_err(|_| LibraryError::storage())?;
+        bounded
+            .read_until(b'\n', &mut header)
+            .map_err(|_| LibraryError::storage())?;
     }
     if header.len() > 65_536 || !header.ends_with(b"\n") {
         return Err(LibraryError::invalid_session());
     }
-    reader.fill_buf().map(|remaining| remaining.is_empty()).map_err(|_| LibraryError::storage())
+    reader
+        .fill_buf()
+        .map(|remaining| remaining.is_empty())
+        .map_err(|_| LibraryError::storage())
 }
 
 fn latest_empty_conversation(
@@ -459,7 +560,11 @@ fn latest_empty_conversation(
         return Ok(None);
     }
     read_conversation(connection, home, &latest.id)?;
-    if is_empty_conversation(home, &latest)? { Ok(Some(latest)) } else { Ok(None) }
+    if is_empty_conversation(home, &latest)? {
+        Ok(Some(latest))
+    } else {
+        Ok(None)
+    }
 }
 
 fn insert_conversation(
@@ -479,11 +584,14 @@ fn insert_conversation(
     }
     if let Some(existing) = latest_empty_conversation(&tx, home, project_id, title)? {
         let result = (|| {
-            save_selection(&tx, &Selection {
-                workspace_id: Some(project.workspace_id),
-                project_id: Some(project_id.to_owned()),
-                conversation_id: Some(existing.id),
-            })?;
+            save_selection(
+                &tx,
+                &Selection {
+                    workspace_id: Some(project.workspace_id),
+                    project_id: Some(project_id.to_owned()),
+                    conversation_id: Some(existing.id),
+                },
+            )?;
             let snapshot = snapshot(&tx)?;
             tx.commit()?;
             Ok(snapshot)
@@ -587,7 +695,11 @@ pub(crate) fn agent_location(
     })
 }
 
-pub(crate) fn notification_names(state: &AppState, home: &Path, id: &str) -> Result<(String, String), LibraryError> {
+pub(crate) fn notification_names(
+    state: &AppState,
+    home: &Path,
+    id: &str,
+) -> Result<(String, String), LibraryError> {
     state.with_connection(home, |connection| {
         Ok(connection.query_row(
             "SELECT p.name, COALESCE(c.display_title, c.title) FROM conversations c JOIN projects p ON p.id = c.project_id WHERE c.id = ?1",
@@ -726,6 +838,42 @@ pub async fn get_library_snapshot(
         tx.commit()?;
         Ok(result)
     })
+    .await
+}
+
+#[tauri::command]
+pub async fn open_project_directory(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<(), LibraryError> {
+    run(app.clone(), state.inner().clone(), move |connection, _| {
+        let path = project_opener_path(connection, &project_id)?;
+        app.opener().open_path(path, None::<&str>).map_err(|_| {
+            LibraryError::new("open_project", "Não foi possível abrir a pasta do projeto.")
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn open_conversation_path(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    conversation_id: String,
+    path: Option<String>,
+) -> Result<(), LibraryError> {
+    run(
+        app.clone(),
+        state.inner().clone(),
+        move |connection, home| {
+            let path =
+                conversation_opener_path(connection, home, &conversation_id, path.as_deref())?;
+            app.opener().open_path(path, None::<&str>).map_err(|_| {
+                LibraryError::new("open_path", "Não foi possível abrir no aplicativo padrão.")
+            })
+        },
+    )
     .await
 }
 
