@@ -1,11 +1,11 @@
-name: Release macOS
+name: Release Desktop
 run-name: ${{ inputs.publish && 'Publicar' || 'Validar' }} Jarvis ${{ inputs.tag || 'main' }}
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Tag existente (v0.8.4-beta); vazio valida a main
+        description: Tag existente (v0.9.0-beta); vazio valida a main
         type: string
         default: ''
       publish:
@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: jarvis-release-macos
+  group: jarvis-release-desktop
   cancel-in-progress: false
 
 env:
@@ -28,9 +28,20 @@ env:
 jobs:
   build:
     if: github.repository == 'paulovnas/jarvis' && github.ref == 'refs/heads/main'
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     environment: macos-release
+    env:
+      CI: 'true'
+      RELEASE_TARGET: ${{ matrix.target }}
     outputs:
       sha: ${{ steps.prepare.outputs.sha }}
       version: ${{ steps.prepare.outputs.version }}
@@ -55,7 +66,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --component clippy
           rustup default stable
-          rustup target add aarch64-apple-darwin
+          rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           workspaces: src-tauri
@@ -65,8 +76,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - name: Testes Rust
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml -- --test-threads=1
       - name: Importar assinaturas no Keychain temporário
+        if: runner.os == 'macOS'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -74,30 +86,38 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: bash scripts/ci-macos-signing.sh
       - name: Compilar e assinar aplicativo e DMG
+        if: runner.os == 'macOS'
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_BUNDLER_DMG_IGNORE_CI: 'false'
         run: bun run tauri build --target aarch64-apple-darwin --bundles app,dmg --config src-tauri/tauri.release.conf.json -- --locked
+      - name: Compilar instalador Windows e assinar atualização
+        if: runner.os == 'Windows'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bun run tauri build --ci --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.release.conf.json -- --locked
       - name: Verificar e preparar artefatos
         env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && secrets.APPLE_SIGNING_IDENTITY || '' }}
           RELEASE_SHA: ${{ steps.prepare.outputs.sha }}
         run: bun scripts/release-ci.ts stage
       - name: Remover chaves temporárias
-        if: always()
+        if: always() && runner.os == 'macOS'
         run: bash scripts/ci-macos-signing-cleanup.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: jarvis-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          name: jarvis-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: release-artifacts/
           if-no-files-found: error
           retention-days: 7
       - name: Resumo
+        shell: bash
         env:
           VERSION: ${{ steps.prepare.outputs.version }}
         run: |
-          printf '### Jarvis %s — macOS Apple Silicon\n\nApp e DMG assinados; pacote do atualizador verificado.\n' "$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          printf '### Jarvis %s — %s\n\nInstaladores preparados; assinatura do atualizador verificada.\n' "$VERSION" "$RELEASE_TARGET" >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     if: inputs.publish
@@ -118,7 +138,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: jarvis-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: jarvis-*-${{ github.run_id }}-${{ github.run_attempt }}
+          merge-multiple: true
           path: release-artifacts
       - name: Publicar pacote e manifestos
         env:

@@ -6,7 +6,7 @@ import { RELEASE_REPOSITORY, replaceCargoVersion } from "./release-plan";
 
 export const root = fileURLToPath(new URL("../", import.meta.url));
 export const versionFiles = ["package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"];
-export const releaseTarget = "aarch64-apple-darwin";
+// Keep the workflow and environment identifiers so existing launchers and secrets remain valid.
 export const releaseWorkflow = "release-macos.yml";
 export const releaseEnvironment = "macos-release";
 export const requiredSecrets = ["TAURI_SIGNING_PRIVATE_KEY", "APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD", "APPLE_SIGNING_IDENTITY"];

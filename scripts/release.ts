@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { command, configuration, optionalRelease, read, releaseEnvironment, releaseTarget, releaseWorkflow, requiredSecrets, root, versionFiles } from "./release-common";
+import { command, configuration, optionalRelease, read, releaseEnvironment, releaseWorkflow, requiredSecrets, root, versionFiles } from "./release-common";
 import { parseReleaseArguments, releaseVersion, RELEASE_REPOSITORY, replaceCargoVersion } from "./release-plan";
 
 function main() {
@@ -15,7 +15,7 @@ function main() {
   const version = releaseVersion(options.version, pkg.version);
   const tag = `v${version}`;
   if (options.dryRun) {
-    console.info(`${tag} → ${RELEASE_REPOSITORY}\nmacOS Apple Silicon (${releaseTarget})\nCommit/tag → push → GitHub Actions: verificações → build assinado → DMG/atualizador → publicação.\nNenhum arquivo foi alterado ou publicado.`);
+    console.info(`${tag} → ${RELEASE_REPOSITORY}\nmacOS Apple Silicon + Windows x64\nCommit/tag → push → GitHub Actions: verificações → DMG/NSIS e atualizadores assinados → publicação conjunta.\nNenhum arquivo foi alterado ou publicado.`);
     return;
   }
   if (command("git", ["status", "--porcelain"], true)) throw new Error("Faça commit das alterações antes de gerar um release.");

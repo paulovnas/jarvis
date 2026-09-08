@@ -10,7 +10,7 @@ const state = vi.hoisted(() => ({
 vi.mock("./release-common", () => ({
   get root() { return state.root; },
   versionFiles: ["package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"],
-  releaseTarget: "aarch64-apple-darwin", releaseWorkflow: "release-macos.yml", releaseEnvironment: "macos-release",
+  releaseWorkflow: "release-macos.yml", releaseEnvironment: "macos-release",
   requiredSecrets: ["KEY"], command: state.command, optionalRelease: state.optionalRelease,
   configuration: () => ({ pkg: JSON.parse(readFileSync(path.join(state.root, "package.json"), "utf8")) as { version: string }, config: { version: "0.8.3-beta.1" } }),
   read: (name: string) => readFileSync(path.join(state.root, name), "utf8"),

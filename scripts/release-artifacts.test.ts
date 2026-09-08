@@ -1,0 +1,42 @@
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, expect, it } from "vitest";
+import { verifyReleaseArtifacts } from "./release-artifacts";
+import { artifactNames, releaseTargets } from "./release-plan";
+
+const directories: string[] = [];
+afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+it.each(releaseTargets)("verifies %s packages and rejects wrong commits, empty installers and altered signatures", target => {
+  const directory = mkdtempSync(path.join(tmpdir(), "jarvis-release-artifacts-"));
+  directories.push(directory);
+  const version = "0.9.0-beta";
+  const sha = "release-commit";
+  const bytes = Buffer.from("package content");
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const keyId = Buffer.from("12345678");
+  const key = Buffer.concat([Buffer.from("Ed"), keyId, publicKey.export({ format: "der", type: "spki" }).subarray(-32)]);
+  const publicText = Buffer.from(`untrusted comment: key\n${key.toString("base64")}\n`).toString("base64");
+  const signed = sign(null, createHash("blake2b512").update(bytes).digest(), privateKey);
+  const comment = "timestamp:1788730000";
+  const global = sign(null, Buffer.concat([signed, Buffer.from(comment)]), privateKey);
+  const signature = Buffer.from(`untrusted comment: signature\n${Buffer.concat([Buffer.from("ED"), keyId, signed]).toString("base64")}\ntrusted comment: ${comment}\n${global.toString("base64")}\n`).toString("base64");
+  const names = artifactNames(version, target);
+  for (const name of names.names) writeFileSync(path.join(directory, name), bytes);
+  writeFileSync(path.join(directory, names.signature), signature);
+  const metadata = path.join(directory, `build-${target}.json`);
+  writeFileSync(metadata, JSON.stringify({ version, sha, target }));
+  const verify = () => verifyReleaseArtifacts(directory, version, sha, target, publicText);
+  expect(verify()).toMatchObject({ version, target, archive: names.archive, signature });
+  writeFileSync(metadata, JSON.stringify({ version, sha: "other", target }));
+  expect(verify).toThrow("outra versão, commit ou arquitetura");
+  writeFileSync(metadata, JSON.stringify({ version, sha, target }));
+  writeFileSync(path.join(directory, names.archive), "");
+  expect(verify).toThrow("vazio");
+  writeFileSync(path.join(directory, names.archive), "tampered");
+  expect(verify).toThrow("chave pública");
+  rmSync(path.join(directory, names.signature));
+  expect(verify).toThrow();
+});
