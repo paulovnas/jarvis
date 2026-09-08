@@ -33,9 +33,9 @@ it("sends the reviewed mapping and locks duplicate submissions", async () => {
   const { user, close, removed } = setup();
   await user.click(await screen.findByRole("combobox", { name: "Novo provedor para Analista" }));
   expect(screen.queryByRole("option", { name: "antigo" })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("option", { name: "novo" }));
+  await user.click(await screen.findByRole("option", { name: "novo" }));
   await user.click(screen.getByRole("combobox", { name: "Raciocínio para Analista" }));
-  await user.click(screen.getByRole("option", { name: "Alto" }));
+  await user.click(await screen.findByRole("option", { name: "Alto" }));
   expect(screen.getByText("1 de 1 substituições definidas")).toBeVisible();
   let finish!: (value: unknown) => void;
   call.mockImplementation(command => command === "disconnect_provider_account" ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(plan));
