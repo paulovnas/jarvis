@@ -685,7 +685,7 @@ impl TerminalState {
             Some((script, _)) => super::shell::terminal_service_command(root, script),
             None => super::shell::terminal_command(root),
         };
-        let mut child = pair
+        let child = pair
             .slave
             .spawn_command(command)
             .map_err(|_| invalid("Não foi possível iniciar o shell do terminal."))?;
@@ -694,6 +694,7 @@ impl TerminalState {
         let job = match JobObject::assign(pid) {
             Ok(job) => job,
             Err(_) => {
+                let mut child = child;
                 let _ = child.kill();
                 return Err(invalid("Não foi possível isolar o terminal no Windows."));
             }
