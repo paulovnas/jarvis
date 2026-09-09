@@ -5,14 +5,18 @@ use super::{
     AgentError, StoredTurn, TurnStatus,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::{
-    fs::{File, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::Path,
 };
 
 const MAX_RECORD: usize = 10 * 1024 * 1024;
+#[cfg(not(test))]
+const VACUUM_MIN_BYTES: u64 = 16 * 1024 * 1024;
+#[cfg(test)]
+const VACUUM_MIN_BYTES: u64 = 64 * 1024;
 const UNKNOWN_TOOL_OUTPUT: &str =
     "Execução interrompida; resultado desconhecido. Verifique o estado atual antes de repetir a operação.";
 #[derive(Serialize, Deserialize)]
@@ -21,6 +25,40 @@ pub(super) struct Record {
     pub r#type: String,
     pub version: u8,
     pub data: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub(super) enum DeltaPathPart {
+    Key(String),
+    Index(usize),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub(super) enum DeltaOperation {
+    Set {
+        path: Vec<DeltaPathPart>,
+        value: Value,
+    },
+    Remove {
+        path: Vec<DeltaPathPart>,
+    },
+    Append {
+        path: Vec<DeltaPathPart>,
+        values: Vec<Value>,
+    },
+    Truncate {
+        path: Vec<DeltaPathPart>,
+        len: usize,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct TurnDelta {
+    pub turn_id: String,
+    pub operations: Vec<DeltaOperation>,
 }
 
 #[derive(Default)]
@@ -32,6 +70,7 @@ pub(super) struct Extras {
 }
 
 fn open(path: &Path, write: bool) -> Result<File, AgentError> {
+    recover_swap(path)?;
     let mut options = OpenOptions::new();
     options.read(true).write(write).append(write);
     #[cfg(unix)]
@@ -47,8 +86,219 @@ fn open(path: &Path, write: bool) -> Result<File, AgentError> {
     Ok(file)
 }
 
+#[cfg(not(windows))]
+fn recover_swap(_path: &Path) -> Result<(), AgentError> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn recover_swap(path: &Path) -> Result<(), AgentError> {
+    let backup = path.with_extension("vacuum-backup");
+    match (path.exists(), backup.exists()) {
+        (false, true) => fs::rename(&backup, path).map_err(|_| AgentError::storage()),
+        (true, true) => fs::remove_file(backup).map_err(|_| AgentError::storage()),
+        _ => Ok(()),
+    }
+}
+
 pub(super) fn append(path: &Path, turn: &StoredTurn) -> Result<(), AgentError> {
     append_event(path, "turn_checkpoint", turn)
+}
+
+pub(super) fn append_update(
+    path: &Path,
+    before: &StoredTurn,
+    after: &StoredTurn,
+) -> Result<(), AgentError> {
+    let Some((kind, value)) = update_event(before, after)? else {
+        return Ok(());
+    };
+    append_event(path, kind, &value)
+}
+
+fn update_event(
+    before: &StoredTurn,
+    after: &StoredTurn,
+) -> Result<Option<(&'static str, Value)>, AgentError> {
+    if before.turn.id != after.turn.id {
+        return Err(AgentError::storage());
+    }
+    // A final full checkpoint keeps completed turns directly addressable by
+    // the paged history index. Only the growing, in-flight state uses deltas.
+    if after.turn.status != TurnStatus::Running {
+        return serde_json::to_value(after)
+            .map(|value| Some(("turn_checkpoint", value)))
+            .map_err(|_| AgentError::storage());
+    }
+    let before_value = serde_json::to_value(before).map_err(|_| AgentError::storage())?;
+    let after_value = serde_json::to_value(after).map_err(|_| AgentError::storage())?;
+    let mut operations = Vec::new();
+    diff_value(
+        &before_value,
+        &after_value,
+        &mut Vec::new(),
+        &mut operations,
+    );
+    if operations.is_empty() {
+        return Ok(None);
+    }
+    let delta = TurnDelta {
+        turn_id: after.turn.id.clone(),
+        operations,
+    };
+    let delta_size = serde_json::to_vec(&delta)
+        .map_err(|_| AgentError::storage())?
+        .len();
+    let full_size = serde_json::to_vec(after)
+        .map_err(|_| AgentError::storage())?
+        .len();
+    if delta_size >= full_size {
+        Ok(Some(("turn_checkpoint", after_value)))
+    } else {
+        serde_json::to_value(delta)
+            .map(|value| Some(("turn_delta", value)))
+            .map_err(|_| AgentError::storage())
+    }
+}
+
+fn diff_value(
+    before: &Value,
+    after: &Value,
+    path: &mut Vec<DeltaPathPart>,
+    operations: &mut Vec<DeltaOperation>,
+) {
+    if before == after {
+        return;
+    }
+    match (before, after) {
+        (Value::Object(before), Value::Object(after)) => {
+            for key in before.keys().filter(|key| !after.contains_key(*key)) {
+                path.push(DeltaPathPart::Key(key.clone()));
+                operations.push(DeltaOperation::Remove { path: path.clone() });
+                path.pop();
+            }
+            for (key, value) in after {
+                path.push(DeltaPathPart::Key(key.clone()));
+                if let Some(previous) = before.get(key) {
+                    diff_value(previous, value, path, operations);
+                } else {
+                    operations.push(DeltaOperation::Set {
+                        path: path.clone(),
+                        value: value.clone(),
+                    });
+                }
+                path.pop();
+            }
+        }
+        (Value::Array(before), Value::Array(after)) => {
+            for index in 0..before.len().min(after.len()) {
+                path.push(DeltaPathPart::Index(index));
+                diff_value(&before[index], &after[index], path, operations);
+                path.pop();
+            }
+            if after.len() > before.len() {
+                operations.push(DeltaOperation::Append {
+                    path: path.clone(),
+                    values: after[before.len()..].to_vec(),
+                });
+            } else if after.len() < before.len() {
+                operations.push(DeltaOperation::Truncate {
+                    path: path.clone(),
+                    len: after.len(),
+                });
+            }
+        }
+        _ => operations.push(DeltaOperation::Set {
+            path: path.clone(),
+            value: after.clone(),
+        }),
+    }
+}
+
+pub(super) fn apply_delta(turn: &mut StoredTurn, delta: TurnDelta) -> Result<(), AgentError> {
+    if turn.turn.id != delta.turn_id {
+        return Err(AgentError::storage());
+    }
+    let mut value = serde_json::to_value(&*turn).map_err(|_| AgentError::storage())?;
+    for operation in delta.operations {
+        apply_operation(&mut value, operation)?;
+    }
+    *turn = serde_json::from_value(value).map_err(|_| AgentError::storage())?;
+    Ok(())
+}
+
+fn apply_operation(root: &mut Value, operation: DeltaOperation) -> Result<(), AgentError> {
+    match operation {
+        DeltaOperation::Set { path, value } => {
+            if path.is_empty() {
+                *root = value;
+                return Ok(());
+            }
+            let (parent, last) = parent_mut(root, &path)?;
+            match (parent, last) {
+                (Value::Object(object), DeltaPathPart::Key(key)) => {
+                    object.insert(key.clone(), value);
+                }
+                (Value::Array(array), DeltaPathPart::Index(index)) if *index < array.len() => {
+                    array[*index] = value;
+                }
+                _ => return Err(AgentError::storage()),
+            }
+        }
+        DeltaOperation::Remove { path } => {
+            let (parent, last) = parent_mut(root, &path)?;
+            match (parent, last) {
+                (Value::Object(object), DeltaPathPart::Key(key)) => {
+                    if object.remove(key).is_none() {
+                        return Err(AgentError::storage());
+                    }
+                }
+                _ => return Err(AgentError::storage()),
+            }
+        }
+        DeltaOperation::Append { path, values } => {
+            let Value::Array(array) = value_mut(root, &path)? else {
+                return Err(AgentError::storage());
+            };
+            array.extend(values);
+        }
+        DeltaOperation::Truncate { path, len } => {
+            let Value::Array(array) = value_mut(root, &path)? else {
+                return Err(AgentError::storage());
+            };
+            if len > array.len() {
+                return Err(AgentError::storage());
+            }
+            array.truncate(len);
+        }
+    }
+    Ok(())
+}
+
+fn parent_mut<'a>(
+    root: &'a mut Value,
+    path: &'a [DeltaPathPart],
+) -> Result<(&'a mut Value, &'a DeltaPathPart), AgentError> {
+    let (last, parents) = path.split_last().ok_or_else(AgentError::storage)?;
+    Ok((value_mut(root, parents)?, last))
+}
+
+fn value_mut<'a>(
+    mut value: &'a mut Value,
+    path: &[DeltaPathPart],
+) -> Result<&'a mut Value, AgentError> {
+    for part in path {
+        value = match (value, part) {
+            (Value::Object(object), DeltaPathPart::Key(key)) => {
+                object.get_mut(key).ok_or_else(AgentError::storage)?
+            }
+            (Value::Array(array), DeltaPathPart::Index(index)) => {
+                array.get_mut(*index).ok_or_else(AgentError::storage)?
+            }
+            _ => return Err(AgentError::storage()),
+        };
+    }
+    Ok(value)
 }
 
 pub(super) fn append_event(
@@ -56,6 +306,14 @@ pub(super) fn append_event(
     kind: &str,
     value: &impl Serialize,
 ) -> Result<(), AgentError> {
+    let bytes = event_bytes(kind, value)?;
+    let mut file = open(path, true)?;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|_| AgentError::storage())
+}
+
+fn event_bytes(kind: &str, value: &impl Serialize) -> Result<Vec<u8>, AgentError> {
     let mut bytes = serde_json::to_vec(&Record {
         r#type: kind.into(),
         version: 1,
@@ -69,10 +327,7 @@ pub(super) fn append_event(
             "Esta interação atingiu o limite de histórico local.",
         ));
     }
-    let mut file = open(path, true)?;
-    file.write_all(&bytes)
-        .and_then(|()| file.sync_all())
-        .map_err(|_| AgentError::storage())
+    Ok(bytes)
 }
 
 // Scan one bounded record at a time. The journal itself can grow beyond memory.
@@ -151,6 +406,7 @@ fn read(
     let mut turns: Vec<StoredTurn> = vec![];
     let mut extras = Extras::default();
     let mut ids = std::collections::HashSet::new();
+    let mut turn_checkpoints = 0usize;
     let valid_end = scan(path, 0, |_, _, record| {
         match record.r#type.as_str() {
             "compaction_completed" => {
@@ -176,7 +432,14 @@ fn read(
                 extras.files.insert(file.path.clone(), file);
                 return Ok(());
             }
-            "turn_checkpoint" => {}
+            "turn_delta" => {
+                let delta: TurnDelta =
+                    serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+                let turn = turns.last_mut().ok_or_else(AgentError::storage)?;
+                apply_delta(turn, delta)?;
+                return Ok(());
+            }
+            "turn_checkpoint" => turn_checkpoints += 1,
             _ => return Err(AgentError::storage()),
         }
         let turn: StoredTurn =
@@ -246,7 +509,118 @@ fn read(
     if let Some(context) = &extras.context {
         context.validate(&turns)?;
     }
+    if repair && valid_end >= VACUUM_MIN_BYTES && turn_checkpoints > turns.len().saturating_mul(3) {
+        // Vacuum is best effort: the validated original remains authoritative
+        // if the replacement cannot be completed on this filesystem.
+        let _ = vacuum(path, &turns, &extras);
+    }
     Ok((turns, extras))
+}
+
+fn vacuum(path: &Path, turns: &[StoredTurn], extras: &Extras) -> Result<(), AgentError> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| AgentError::storage())?;
+    if !metadata.is_file() || metadata.is_symlink() {
+        return Err(AgentError::storage());
+    }
+    let mut source = BufReader::new(open(path, false)?);
+    let mut header = Vec::new();
+    source
+        .read_until(b'\n', &mut header)
+        .map_err(|_| AgentError::storage())?;
+    if header.is_empty() || !header.ends_with(b"\n") || header.len() > MAX_RECORD {
+        return Err(AgentError::storage());
+    }
+    let temp = path.with_extension(format!("vacuum-{}.tmp", crate::library::new_id()?));
+    let result = (|| {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut replacement = options.open(&temp).map_err(|_| AgentError::storage())?;
+        replacement
+            .write_all(&header)
+            .map_err(|_| AgentError::storage())?;
+        for turn in turns {
+            replacement
+                .write_all(&event_bytes("turn_checkpoint", turn)?)
+                .map_err(|_| AgentError::storage())?;
+        }
+        for event in &extras.compactions {
+            if let Some(context) = &extras.context {
+                replacement
+                    .write_all(&event_bytes(
+                        "compaction_completed",
+                        &CompletedCompaction {
+                            context: context.clone(),
+                            event: event.clone(),
+                        },
+                    )?)
+                    .map_err(|_| AgentError::storage())?;
+            }
+        }
+        replacement
+            .write_all(&event_bytes("queue_checkpoint", &extras.queue)?)
+            .map_err(|_| AgentError::storage())?;
+        if let Some(context) = &extras.context {
+            replacement
+                .write_all(&event_bytes("context_checkpoint", context)?)
+                .map_err(|_| AgentError::storage())?;
+        }
+        for revision in extras.files.values() {
+            replacement
+                .write_all(&event_bytes("file_checkpoint", revision)?)
+                .map_err(|_| AgentError::storage())?;
+        }
+        replacement.sync_all().map_err(|_| AgentError::storage())?;
+        fs::set_permissions(&temp, metadata.permissions()).map_err(|_| AgentError::storage())?;
+        let (verified_turns, verified_extras) = read_only(&temp)?;
+        if serde_json::to_value(&verified_turns).map_err(|_| AgentError::storage())?
+            != serde_json::to_value(turns).map_err(|_| AgentError::storage())?
+            || serde_json::to_value(&verified_extras.queue).map_err(|_| AgentError::storage())?
+                != serde_json::to_value(&extras.queue).map_err(|_| AgentError::storage())?
+            || serde_json::to_value(&verified_extras.context).map_err(|_| AgentError::storage())?
+                != serde_json::to_value(&extras.context).map_err(|_| AgentError::storage())?
+            || serde_json::to_value(&verified_extras.compactions)
+                .map_err(|_| AgentError::storage())?
+                != serde_json::to_value(&extras.compactions).map_err(|_| AgentError::storage())?
+            || serde_json::to_value(&verified_extras.files).map_err(|_| AgentError::storage())?
+                != serde_json::to_value(&extras.files).map_err(|_| AgentError::storage())?
+        {
+            return Err(AgentError::storage());
+        }
+        replace_file(path, &temp)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn replace_file(path: &Path, replacement: &Path) -> Result<(), AgentError> {
+    fs::rename(replacement, path).map_err(|_| AgentError::storage())?;
+    File::open(path.parent().ok_or_else(AgentError::storage)?)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| AgentError::storage())
+}
+
+#[cfg(windows)]
+fn replace_file(path: &Path, replacement: &Path) -> Result<(), AgentError> {
+    let backup = path.with_extension("vacuum-backup");
+    if backup.exists() {
+        fs::remove_file(&backup).map_err(|_| AgentError::storage())?;
+    }
+    fs::rename(path, &backup).map_err(|_| AgentError::storage())?;
+    if fs::rename(replacement, path).is_err() {
+        let _ = fs::rename(&backup, path);
+        return Err(AgentError::storage());
+    }
+    let _ = fs::remove_file(backup);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -267,6 +641,11 @@ pub(super) fn interrupt_tools(turn: &mut StoredTurn) {
                 tool.output = UNKNOWN_TOOL_OUTPUT.into();
                 if tool.name == "ask_user" {
                     tool.output = super::questions::cancelled_output();
+                } else if matches!(
+                    tool.name.as_str(),
+                    "jarvis_propose_agent" | "jarvis_propose_flow"
+                ) {
+                    tool.output = super::authoring::cancelled_output();
                 }
                 turn.wire.push(
                     json!({"type":"function_call_output", "call_id":tool.id, "output":tool.output}),
@@ -316,6 +695,10 @@ pub(super) fn safe_to_resume(turn: &StoredTurn) -> bool {
                 tool.output == UNKNOWN_TOOL_OUTPUT
                     || (tool.name == "ask_user"
                         && tool.output == super::questions::cancelled_output())
+                    || (matches!(
+                        tool.name.as_str(),
+                        "jarvis_propose_agent" | "jarvis_propose_flow"
+                    ) && tool.output == super::authoring::cancelled_output())
             })
         && !turn.wire.iter().any(|item| {
             item["type"].as_str() == Some("function_call_output")
@@ -353,9 +736,11 @@ mod tests {
                     mode: Mode::Build,
                     workflow: None,
                     custom_workflow_id: None,
+                    custom_agent_id: None,
                     approval_mode: ApprovalMode::Manual,
                 },
                 status: TurnStatus::Running,
+                tasks: vec![],
                 steps: vec![],
                 error: None,
             },
@@ -426,12 +811,111 @@ mod tests {
     #[test]
     fn legacy_turn_without_context_window_remains_readable() {
         let mut value = serde_json::to_value(turn()).unwrap();
-        value["turn"]
-            .as_object_mut()
-            .unwrap()
-            .remove("contextWindow");
+        let turn = value["turn"].as_object_mut().unwrap();
+        turn.remove("contextWindow");
+        turn.remove("tasks");
         let stored: StoredTurn = serde_json::from_value(value).unwrap();
         assert_eq!(stored.turn.context_window, None);
+        assert!(stored.turn.tasks.is_empty());
+    }
+
+    #[test]
+    fn incremental_turn_events_grow_with_new_work_instead_of_prior_snapshots() {
+        let mut current = turn();
+        let initial = serde_json::to_vec(&current).unwrap().len();
+        let mut journal_bytes = initial;
+        for index in 0..500 {
+            let previous = current.clone();
+            let call_id = format!("call-{index}");
+            current.turn.steps.push(Step {
+                text: format!("Step {index}"),
+                tools: vec![ToolCall {
+                    id: call_id.clone(),
+                    name: "read".into(),
+                    args: json!({"path":format!("src/{index}.ts")}),
+                    status: "completed".into(),
+                    output: "x".repeat(256),
+                    duration_ms: 1,
+                }],
+                ..Step::default()
+            });
+            current.wire.extend([
+                json!({"type":"function_call","call_id":call_id,"name":"read","arguments":"{}"}),
+                json!({"type":"function_call_output","call_id":call_id,"output":"x".repeat(256)}),
+            ]);
+            let (kind, value) = update_event(&previous, &current).unwrap().unwrap();
+            assert_eq!(kind, "turn_delta");
+            journal_bytes += serde_json::to_vec(&Record {
+                r#type: kind.into(),
+                version: 1,
+                data: value,
+            })
+            .unwrap()
+            .len();
+        }
+        let final_size = serde_json::to_vec(&current).unwrap().len();
+        assert!(journal_bytes < final_size * 2);
+    }
+
+    #[test]
+    fn recovery_replays_every_incremental_event_boundary_and_final_checkpoint() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("incremental.jsonl");
+        fs::write(&path, "{\"type\":\"session\"}\n").unwrap();
+        let mut current = turn();
+        append(&path, &current).unwrap();
+        for index in 0..5 {
+            let previous = current.clone();
+            current.turn.steps.push(Step {
+                text: format!("Durable {index}"),
+                ..Step::default()
+            });
+            current
+                .wire
+                .push(json!({"role":"assistant","content":format!("Durable {index}")}));
+            append_update(&path, &previous, &current).unwrap();
+            let (recovered, _) = load_for_recovery(&path).unwrap();
+            assert_eq!(
+                serde_json::to_value(&recovered[0]).unwrap(),
+                serde_json::to_value(&current).unwrap()
+            );
+        }
+        let previous = current.clone();
+        current.turn.status = TurnStatus::Completed;
+        append_update(&path, &previous, &current).unwrap();
+        let (loaded, _) = read_only(&path).unwrap();
+        assert_eq!(
+            serde_json::to_value(&loaded[0]).unwrap(),
+            serde_json::to_value(&current).unwrap()
+        );
+    }
+
+    #[test]
+    fn legacy_cumulative_journal_is_vacuumed_after_validation() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("legacy-large.jsonl");
+        let header = "{\"type\":\"session\",\"title\":\"Preservado\"}\n";
+        fs::write(&path, header).unwrap();
+        let mut current = turn();
+        current.turn.status = TurnStatus::Completed;
+        current.turn.steps.push(Step {
+            text: "x".repeat(8 * 1024),
+            ..Step::default()
+        });
+        for index in 0..12 {
+            current.turn.duration_ms = index;
+            append(&path, &current).unwrap();
+        }
+        let cumulative_size = fs::metadata(&path).unwrap().len();
+        let (loaded, _) = load_all(&path).unwrap();
+        let compacted_size = fs::metadata(&path).unwrap().len();
+        assert!(compacted_size * 3 < cumulative_size);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap().lines().next(),
+            Some(header.trim())
+        );
+        assert_eq!(loaded[0].turn.duration_ms, 11);
+        assert_eq!(read_only(&path).unwrap().0.len(), 1);
     }
 
     #[test]

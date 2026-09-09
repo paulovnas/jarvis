@@ -25,6 +25,8 @@ export function UsageEfficiency({ metrics }: { metrics: ProjectMetrics["metrics"
         <Progress value={reduction} className="h-1" aria-label="Redução dos resultados enviados ao modelo" />
         <Line label="Redução de conteúdo" value={e.indexedOutputs ? `${number(reduction)}%` : "—"} />
         <Line label="Consultas automáticas" value={number(e.contextSearches)} />
+        <Line label="Loops orientados" value={number(e.loopSteers)} />
+        <Line label="Repetições bloqueadas" value={number(e.loopAvoidedCalls)} />
         <Line label="Original → enviado" value={e.indexedOutputs ? `${bytes(e.originalBytes)} → ${bytes(e.retainedBytes)}` : "—"} />
         <p className="text-[11px] text-muted-foreground">Medição em bytes; conteúdo completo disponível para consulta.</p>
       </section>

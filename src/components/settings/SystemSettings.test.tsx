@@ -11,7 +11,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 const call = vi.mocked(invoke);
-const initial: SystemSnapshot = { preferences: { preventSleep: "off", notifications: false }, sleepInhibited: false, sleepError: null, notificationError: null };
+const initial: SystemSnapshot = { preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30 }, sleepInhibited: false, sleepError: null, notificationError: null };
 
 describe("system preferences", () => {
   beforeEach(() => {
@@ -21,14 +21,14 @@ describe("system preferences", () => {
   });
   it.each([["open", "Enquanto Jarvis aberto"], ["off", "Desligado"], ["active", "Enquanto houver agentes/chats ativos"]])("saves sleep mode %s without changing notifications", async (value, label) => {
     const user = userEvent.setup();
-    call.mockResolvedValue({ ...initial, preferences: { preventSleep: value === "active" ? "off" : "active", notifications: true } });
+    call.mockResolvedValue({ ...initial, preferences: { preventSleep: value === "active" ? "off" : "active", notifications: true, askUserTimeoutSeconds: 30 } });
     render(<SystemSettings />);
     const select = await screen.findByRole("combobox", { name: "Impedir repouso" });
     expect(select).toHaveTextContent(value === "active" ? "Desligado" : "Enquanto houver agentes/chats ativos");
     expect(screen.getByRole("switch", { name: "Notificações do sistema" })).toBeChecked();
-      call.mockResolvedValue({ ...initial, preferences: { preventSleep: value, notifications: true } });
+      call.mockResolvedValue({ ...initial, preferences: { preventSleep: value, notifications: true, askUserTimeoutSeconds: 30 } });
       await user.click(select); await user.click(await screen.findByRole("option", { name: label }));
-      await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { preventSleep: value, notifications: true } }));
+      await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { preventSleep: value, notifications: true, askUserTimeoutSeconds: 30 } }));
       expect(select).toHaveTextContent(label);
   });
   it("enables notifications before testing and can turn them off", async () => {
@@ -38,7 +38,7 @@ describe("system preferences", () => {
     call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, notifications: true } });
     await user.click(toggle);
     await waitFor(() => expect(toggle).toBeChecked());
-    expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { preventSleep: "off", notifications: true } });
+    expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { preventSleep: "off", notifications: true, askUserTimeoutSeconds: 30 } });
     await user.click(screen.getByRole("button", { name: "Testar" }));
     expect(call).toHaveBeenLastCalledWith("test_system_notification");
     expect(toast.success).toHaveBeenCalledWith("Notificação enviada ao sistema", expect.objectContaining({ description: expect.stringContaining("Não incomodar") }));
@@ -53,6 +53,17 @@ describe("system preferences", () => {
     await user.click(toggle);
     expect(await screen.findByRole("alert")).toHaveTextContent("Notificações bloqueadas");
     expect(toggle).not.toBeChecked(); expect(toggle).toBeEnabled();
+  });
+  it("saves the ask_user countdown in seconds and rejects out-of-range values", async () => {
+    const user = userEvent.setup(); render(<SystemSettings />);
+    const input = await screen.findByRole("spinbutton", { name: "Tempo para resposta recomendada" });
+    call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, askUserTimeoutSeconds: 45 } });
+    await user.clear(input); await user.type(input, "45"); await user.tab();
+    await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { ...initial.preferences, askUserTimeoutSeconds: 45 } }));
+    expect(input).toHaveValue(45);
+    await user.clear(input); await user.type(input, "0"); await user.tab();
+    expect(screen.getByRole("alert")).toHaveTextContent("entre 1 e 3.600 segundos");
+    expect(input).toHaveValue(45);
   });
   it("uses skeletons while loading and allows retrying a failed load", async () => {
     let reject: (error: Error) => void = () => {};

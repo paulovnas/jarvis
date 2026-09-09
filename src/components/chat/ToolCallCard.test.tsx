@@ -1,12 +1,39 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ToolCallCard } from "./ToolCallCard";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 describe("ToolCallCard Web Search", () => {
+  it("loads deferred history details only when the action is expanded", async () => {
+    const user = userEvent.setup();
+    vi.mocked(invoke).mockResolvedValue({ id: "read-large", name: "read", status: "completed", args: { path: "src/grande.ts" }, output: "conteúdo completo", durationMs: 18 });
+    render(<ToolCallCard detailContext={{ conversationId: "chat-1", turnId: "turn-1" }} tool={{ id: "read-large", name: "read", status: "completed", args: { path: "src/grande.ts", _jarvisHistoryDetailsDeferred: true }, output: "", durationMs: 18 }} />);
+    expect(invoke).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /Leitura de arquivo.*src\/grande.ts/ }));
+    expect(invoke).toHaveBeenCalledWith("get_chat_tool_call", { conversationId: "chat-1", turnId: "turn-1", toolId: "read-large" });
+    expect(await screen.findByText("conteúdo completo")).toBeVisible();
+    expect(screen.getByText(/"path": "src\/grande.ts"/)).toBeVisible();
+  });
+
+  it("identifies native direct-task updates", () => {
+    render(<ToolCallCard tool={{ id: "tasks", name: "update_tasks", status: "completed", args: { tasks: [{ id: "build", title: "Implementar", status: "in_progress" }] }, output: "{\"updated\":1}" }} />);
+    expect(screen.getByRole("button", { name: /Atualizar tarefas.*Concluída/ })).toBeVisible();
+  });
+  it.each([
+    ["apply_patch", "Patch transacional"],
+    ["lsp_definition", "Código · Definição"],
+    ["lsp_references", "Código · Referências"],
+    ["lsp_symbols", "Código · Símbolos"],
+    ["lsp_diagnostics", "Código · Diagnósticos"],
+  ])("identifica a ferramenta nativa %s", (name, label) => {
+    render(<ToolCallCard tool={{ id: name, name, status: "completed", args: { path: "src/app.ts" }, output: "{}" }} />);
+    expect(screen.getByRole("button", { name: new RegExp(label) })).toBeVisible();
+  });
   it("shows native Context7 queries compactly and expands their documentation", async () => {
     const user = userEvent.setup();
     render(<ToolCallCard tool={{ id: "docs", name: "context7_query_docs", status: "completed", args: { libraryId: "/websites/react_dev", query: "useState" }, output: "Documentação encontrada" }} />);

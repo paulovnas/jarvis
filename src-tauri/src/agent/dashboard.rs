@@ -26,6 +26,8 @@ pub struct Metrics {
 #[serde(rename_all = "camelCase")]
 pub struct Efficiency {
     pub context_searches: u64,
+    pub loop_steers: u64,
+    pub loop_avoided_calls: u64,
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
     pub cache_read_input_tokens: u64,
@@ -55,7 +57,10 @@ impl Metrics {
             e.cache_read_input_tokens += usage.input_tokens;
             e.cache_read_requests += 1;
         }
-        if let Some(tokens) = usage.cache_write_tokens.filter(|n| *n <= usage.input_tokens) {
+        if let Some(tokens) = usage
+            .cache_write_tokens
+            .filter(|n| *n <= usage.input_tokens)
+        {
             e.cache_write_tokens += tokens;
             e.cache_write_requests += 1;
         }
@@ -108,6 +113,8 @@ fn summarize(turns: &[StoredTurn], extras: &journal::Extras) -> Metrics {
             .or_default() += 1;
         for step in &turn.steps {
             metrics.efficiency.context_searches += step.context_searches;
+            metrics.efficiency.loop_steers += step.loop_steers;
+            metrics.efficiency.loop_avoided_calls += step.loop_avoided_calls;
             if let Some(usage) = &step.usage {
                 metrics.usage(usage, false);
             }
@@ -122,7 +129,9 @@ fn summarize(turns: &[StoredTurn], extras: &journal::Extras) -> Metrics {
                 *metrics.tools.entry(tool.name.clone()).or_default() += 1;
                 // These native tools make separate inference requests. Do not accept
                 // arbitrary MCP/page JSON as accounting data or count provider calls twice.
-                if tool.status == "completed" && matches!(tool.name.as_str(), "vision" | "web_search") {
+                if tool.status == "completed"
+                    && matches!(tool.name.as_str(), "vision" | "web_search")
+                {
                     if let Ok(value) = serde_json::from_str::<Value>(&tool.output) {
                         if let Some(usage) = value.get("usage").filter(|u| u.is_object()) {
                             if let Ok(usage) = serde_json::from_value::<Usage>(usage.clone()) {
@@ -172,6 +181,8 @@ fn merge(total: &mut Metrics, metrics: &Metrics) {
     let target = &mut total.efficiency;
     let source = &metrics.efficiency;
     target.context_searches += source.context_searches;
+    target.loop_steers += source.loop_steers;
+    target.loop_avoided_calls += source.loop_avoided_calls;
     target.cache_read_tokens += source.cache_read_tokens;
     target.cache_write_tokens += source.cache_write_tokens;
     target.cache_read_input_tokens += source.cache_read_input_tokens;
@@ -322,17 +333,41 @@ mod tests {
         journal::append(&path, &stored).unwrap();
         journal::append(&path, &stored).unwrap();
         let metrics = DashboardState::default().read(&path).unwrap();
-        assert_eq!((metrics.input_tokens, metrics.output_tokens, metrics.measured_steps), (1500, 150, 1));
+        assert_eq!(
+            (
+                metrics.input_tokens,
+                metrics.output_tokens,
+                metrics.measured_steps
+            ),
+            (1500, 150, 1)
+        );
         let e = &metrics.efficiency;
         assert_eq!(e.context_searches, 1);
-        assert_eq!((e.cache_read_tokens, e.cache_read_input_tokens, e.cache_read_requests), (600, 1500, 2));
+        assert_eq!(
+            (
+                e.cache_read_tokens,
+                e.cache_read_input_tokens,
+                e.cache_read_requests
+            ),
+            (600, 1500, 2)
+        );
         assert_eq!((e.cache_write_tokens, e.cache_write_requests), (200, 1));
         assert_eq!((e.auxiliary_requests, e.auxiliary_input_tokens), (1, 500));
-        assert_eq!((e.indexed_outputs, e.original_bytes, e.retained_bytes), (1, 10000, 1000));
+        assert_eq!(
+            (e.indexed_outputs, e.original_bytes, e.retained_bytes),
+            (1, 10000, 1000)
+        );
         let mut project = Metrics::default();
         merge(&mut project, &metrics);
         merge(&mut project, &metrics);
         assert_eq!(project.efficiency.context_searches, 2);
-        assert_eq!((project.input_tokens, project.efficiency.cache_read_tokens, project.efficiency.indexed_outputs), (3000, 1200, 2));
+        assert_eq!(
+            (
+                project.input_tokens,
+                project.efficiency.cache_read_tokens,
+                project.efficiency.indexed_outputs
+            ),
+            (3000, 1200, 2)
+        );
     }
 }

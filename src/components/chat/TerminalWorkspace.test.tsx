@@ -100,12 +100,17 @@ describe("Integrated terminals", () => {
     await user.keyboard(" com terminal aberto");
     expect(message).toHaveValue("Continuar revisão com terminal aberto");
     await user.click(screen.getByRole("button", { name: "Recolher painel de terminais" }));
+    expect(panel).toHaveAttribute("inert");
+    expect(panel).toHaveClass("translate-y-full", "motion-reduce:transition-none");
+    expect(renderer.dispose).not.toHaveBeenCalled();
     expect(screen.queryByRole("region", { name: "Painel de terminais" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1 terminal aberto" })).toHaveFocus();
     expect(invoke).not.toHaveBeenCalledWith("close_chat_terminal", expect.anything());
     expect(invoke).not.toHaveBeenCalledWith("stop_chat_process", expect.anything());
     await user.click(screen.getByRole("button", { name: "1 terminal aberto" }));
     expect(await screen.findByRole("tab", { name: "Terminal 1" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Painel de terminais" })).toBe(panel);
+    expect(panel).not.toHaveAttribute("inert");
     expect(message).toHaveValue("Continuar revisão com terminal aberto");
   });
 
@@ -159,6 +164,12 @@ describe("Integrated terminals", () => {
     fireEvent.click(screen.getByRole("button", { name: "Recolher painel de terminais" }));
     fireEvent.click(screen.getByRole("button", { name: "Abrir terminais" }));
     await waitFor(() => expect(screen.getByRole("separator", { name: "Redimensionar painel de terminais" })).toHaveAttribute("aria-valuenow", String(100 - size)));
+    fireEvent.keyDown(handle, { key: "End" });
+    await waitFor(() => expect(saved.terminalPanels.chat.open).toBe(false));
+    expect(screen.getByRole("button", { name: "Abrir terminais" })).toHaveAttribute("aria-expanded", "false");
+    expect(saved.terminalPanels.chat.size).toBe(size);
+    fireEvent.click(screen.getByRole("button", { name: "Abrir terminais" }));
+    await waitFor(() => expect(handle).toHaveAttribute("aria-valuenow", String(100 - size)));
   });
 
   it("waits for the resolved monospace font before measuring and fitting the terminal", async () => {

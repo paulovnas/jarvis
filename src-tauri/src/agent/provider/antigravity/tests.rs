@@ -7,6 +7,7 @@ fn options(model: &str) -> TurnOptions {
         mode: crate::agent::Mode::Build,
         workflow: None,
         custom_workflow_id: None,
+        custom_agent_id: None,
         approval_mode: crate::agent::ApprovalMode::Manual,
     }
 }
@@ -101,6 +102,23 @@ fn incomplete_or_rejected_streams_never_execute_tools() {
     assert!(overflow(
         &json!({"error":{"message":"The input token count exceeds the maximum allowed"}})
     ));
+}
+
+#[test]
+fn finish_reasons_preserve_diagnostics_and_do_not_accept_partial_tools() {
+    for (reason, code) in [
+        ("MAX_TOKENS", "provider_output_limit"),
+        ("MALFORMED_FUNCTION_CALL", "provider_incomplete"),
+        ("UNEXPECTED_TOOL_CALL", "provider_incomplete"),
+        ("SAFETY", "provider_blocked"),
+        ("RECITATION", "provider_blocked"),
+    ] {
+        let mut state = Output::default();
+        let error = state.event(&json!({"candidates":[{"content":{"parts":[{"functionCall":{"name":"write","args":{"path":"a"}}}]},"finishReason":reason}]}), &mut |_| Ok(())).unwrap_err();
+        assert_eq!(error.code, code);
+        assert!(error.message.contains(reason));
+        assert!(state.finish("gemini-3.8-flash").is_err());
+    }
 }
 
 #[test]

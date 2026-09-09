@@ -1,25 +1,30 @@
 import { memo, useCallback, useLayoutEffect, useRef, useState } from "react";
-import { ArrowDown, MessageSquare } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import type { AgentTurn, ChatSnapshot, HistoryExcerpt } from "@/core/chat";
 import { historyWindow, type HistoryDirection } from "@/core/chat-history";
 import type { ChatController } from "@/hooks/use-chat";
 import { AssistantMessageTurn } from "./AssistantMessageTurn";
 import { UserMessageBubble } from "./UserMessageBubble";
 import { CompactionMarker } from "./CompactionMarker";
+import { executionDuration, useRunningClock } from "@/hooks/use-running-clock";
 
-export const TurnBody = memo(function TurnBody({ turn }: { turn: AgentTurn }) {
+export const TurnBody = memo(function TurnBody({ turn, conversationId }: { turn: AgentTurn; conversationId?: string }) {
+  const running = turn.status === "running";
+  const now = useRunningClock(running);
+  const durationMs = executionDuration(turn.createdAt, turn.durationMs, running, now);
   const timestamp = new Date(turn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   return <AssistantMessageTurn message={{
     id: turn.id, role: "assistant", content: turn.steps[turn.steps.length - 1]?.text ?? "", timestamp,
-    model: `${turn.options.account} / ${turn.options.model}`, streaming: turn.status === "running",
-    work: turn.status === "running" || turn.steps.some((step, index) => step.summary || step.tools.length || (step.text && index < turn.steps.length - 1)) ? {
-      retry: turn.status === "running" ? turn.steps[turn.steps.length - 1]?.retry : undefined,
-      durationSeconds: Math.round(turn.durationMs / 1000), steps: turn.steps.map((step, index) => ({ thinking: step.summary, tools: step.tools, commentary: index < turn.steps.length - 1 ? step.text : "" })),
+    model: `${turn.options.account} / ${turn.options.model}`, streaming: running,
+    work: running || turn.steps.some((step, index) => step.summary || step.tools.length || (step.text && index < turn.steps.length - 1)) ? {
+      retry: running ? turn.steps[turn.steps.length - 1]?.retry : undefined,
+      durationSeconds: Math.floor(durationMs / 1000),
+      detailContext: conversationId ? { conversationId, turnId: turn.id } : undefined,
+      steps: turn.steps.map((step, index) => ({ thinking: step.summary, tools: step.tools, commentary: index < turn.steps.length - 1 ? step.text : "" })),
     } : undefined,
     error: turn.error ? { title: turn.status === "cancelled" || turn.status === "interrupted" ? "Execução interrompida" : "Falha na execução", message: turn.error.message } : undefined,
   }} />;
@@ -131,11 +136,10 @@ export function Transcript({ snapshot, chat, onLatestVisibility }: { snapshot: C
         {hasOlder && <div className="flex justify-center py-3"><Button variant="ghost" size="sm" className="cursor-pointer text-xs text-muted-foreground" disabled={chat.historyLoading} onClick={() => { void navigate("older"); }}>Mensagens anteriores</Button></div>}
         {chat.historyLoading && <div role="status" aria-label="Carregando trecho" className="space-y-2 py-3 pl-4"><Skeleton className="h-3 w-1/3" /><Skeleton className="h-3 w-2/3" /></div>}
         {chat.historyError && <p role="alert" className="px-4 py-2 text-xs text-destructive">{chat.historyError}</p>}
-        {snapshot.turns.length === 0 && <Empty className="py-16"><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>Conversa criada</EmptyTitle><EmptyDescription>Envie uma instrução para começar a trabalhar neste projeto.</EmptyDescription></EmptyHeader></Empty>}
         {snapshot.turns.map((turn, index) => <div key={turn.id} data-turn-id={turn.id} data-turn-index={window.start + index} className="[overflow-anchor:none]">
           <UserMessageBubble message={{ id: turn.id, role: "user", content: turn.user, parts: turn.parts, timestamp: new Date(turn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && !event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
-          <TurnBody turn={turn} />
+          <TurnBody turn={turn} conversationId={snapshot.conversationId} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
         </div>)}
         {hasNewer && <div className="flex justify-center py-3"><Button variant="ghost" size="sm" className="cursor-pointer text-xs text-muted-foreground" disabled={chat.historyLoading} onClick={() => { void navigate("newer"); }}>Mensagens seguintes</Button></div>}

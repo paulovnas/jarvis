@@ -77,6 +77,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 17,
         sql: include_str!("../../drizzle/0016_provider_model_bindings.sql"),
     },
+    Migration {
+        version: 18,
+        sql: include_str!("../../drizzle/0017_provider_usage_alerts.sql"),
+    },
 ];
 
 #[test]
@@ -249,6 +253,8 @@ pub(crate) struct ProviderAccountRecord {
     pub(crate) enabled: bool,
     pub(crate) show_usage: bool,
     pub(crate) show_third_party_usage: bool,
+    pub(crate) usage_alert_window: Option<String>,
+    pub(crate) usage_alert_threshold: Option<i64>,
 }
 
 fn provider_account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderAccountRecord> {
@@ -260,6 +266,8 @@ fn provider_account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provid
         enabled: row.get(4)?,
         show_usage: row.get(5)?,
         show_third_party_usage: row.get(6)?,
+        usage_alert_window: row.get(7)?,
+        usage_alert_threshold: row.get(8)?,
     })
 }
 
@@ -267,7 +275,7 @@ pub(crate) fn list_provider_accounts(
     connection: &Connection,
 ) -> Result<Vec<ProviderAccountRecord>, PersistenceError> {
     let mut statement = connection.prepare(
-        "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage
+        "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage, usage_alert_window, usage_alert_threshold
          FROM provider_accounts
          ORDER BY created_at, alias",
     )?;
@@ -313,7 +321,7 @@ pub(crate) fn insert_provider_account(
     )?;
     connection
         .query_row(
-            "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage
+            "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage, usage_alert_window, usage_alert_threshold
              FROM provider_accounts
              WHERE alias = ?1",
             params![alias],
@@ -631,7 +639,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 17);
+        assert_eq!(version, 18);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -754,7 +762,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 17);
+        assert_eq!(version, 18);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {
@@ -825,7 +833,9 @@ mod tests {
                 "created_at",
                 "enabled",
                 "show_usage",
-                "show_third_party_usage"
+                "show_third_party_usage",
+                "usage_alert_window",
+                "usage_alert_threshold"
             ]
         );
         assert_eq!(

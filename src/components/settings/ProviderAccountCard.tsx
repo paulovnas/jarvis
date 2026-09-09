@@ -8,7 +8,8 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import type { ProviderAccount } from "@/core/provider-accounts";
+import type { ProviderAccount, ProviderUsageAlert } from "@/core/provider-accounts";
+import { ProviderUsageAlertSettings } from "./ProviderUsageAlertSettings";
 
 const ACCOUNT_TYPE_LABELS: Record<ProviderAccount["accountType"], string> = {
   personal: "Pessoal",
@@ -23,11 +24,12 @@ function formatConnectionDate(timestamp: number): string {
   });
 }
 
-export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, onUsageChange, onEdit, onReauthorize, saving = false }: {
+export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, onUsageChange, onUsageAlertChange, onEdit, onReauthorize, saving = false }: {
   account: ProviderAccount;
   onDisconnect: (alias: string) => void;
   onEnabledChange: (alias: string, enabled: boolean) => void;
   onUsageChange?: (alias: string, showUsage: boolean, showThirdPartyUsage: boolean) => void;
+  onUsageAlertChange?: (alias: string, alert: ProviderUsageAlert | null) => void;
   saving?: boolean;
   onEdit?: (account: ProviderAccount) => void;
   onReauthorize?: (account: ProviderAccount) => void;
@@ -97,7 +99,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
               <span aria-hidden="true">Incluir modelos de terceiros</span>
               <Switch aria-label={`Incluir modelos de terceiros de ${account.alias}`} checked={account.showThirdPartyUsage === true} disabled={saving} onCheckedChange={show => onUsageChange?.(account.alias, account.showUsage !== false, show)} className="cursor-pointer" />
             </label>}
-          </div></>}
+          </div><ProviderUsageAlertSettings key={`${account.usageAlert?.window ?? "off"}/${account.usageAlert?.remainingPercent ?? 20}`} account={account} saving={saving || !onUsageAlertChange} onChange={(alias, alert) => onUsageAlertChange?.(alias, alert)} /></>}
           <Separator />
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2"><span className="micro-label text-muted-foreground">Modelos disponíveis</span><Badge variant="secondary">{account.models.length}</Badge></div>

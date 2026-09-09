@@ -92,7 +92,7 @@ async fn completion_wakes_parent_once_even_when_it_arrives_before_wait_registrat
         Ok(())
     })
     .unwrap();
-    settle(&hub, &child, &Ok(())).unwrap();
+    settle(&hub, &child, &Ok(()), Some(1200)).unwrap();
     let messages = tokio::time::timeout(
         Duration::from_secs(1),
         hub.wait("main", hub.root_signal.clone()),
@@ -236,7 +236,7 @@ async fn failed_coordinator_waits_for_children_to_settle_before_retry_can_start(
     let waiting = tokio::spawn(async move { await_children_settled(&task_hub, "main").await });
     tokio::task::yield_now().await;
     assert!(!waiting.is_finished());
-    settle(&hub, &child, &Err(AgentError::cancelled())).unwrap();
+    settle(&hub, &child, &Err(AgentError::cancelled()), Some(800)).unwrap();
     tokio::time::timeout(Duration::from_secs(1), waiting)
         .await
         .unwrap()

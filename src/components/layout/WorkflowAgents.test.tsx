@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -7,7 +7,7 @@ import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { ROLE_COLORS, ROLE_LABELS, type WorkflowAgent } from "@/core/workflow";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-const agent: WorkflowAgent = { id:"worker1",parentId:"main",role:"builder",title:"Implementar busca",status:"running",createdAt:1,updatedAt:2,attempts:1,options:{account:"personal",model:"gpt-5.6-terra",reasoning:"high",mode:"build",workflow:"planned",approvalMode:"manual"},beadId:"task1",handoff:null,error:null,activeTurnId:"turn1",pendingApproval:null,pendingQuestion:null };
+const agent: WorkflowAgent = { id:"worker1",parentId:"main",role:"builder",title:"Implementar busca",status:"running",createdAt:1,updatedAt:2,startedAt:1,durationMs:2_000,currentThought:"Conferindo o contrato atual",attempts:1,options:{account:"personal",model:"gpt-5.6-terra",reasoning:"high",mode:"build",workflow:"planned",approvalMode:"manual"},beadId:"task1",handoff:null,error:null,activeTurnId:"turn1",pendingApproval:null,pendingQuestion:null };
 beforeEach(() => { vi.mocked(invoke).mockReset(); });
 it("keeps distinct built-in role colors on waiting cards consistent with Settings", () => {
   const roles = (Object.keys(ROLE_COLORS) as WorkflowAgent["role"][]).filter(role => role !== "custom");
@@ -41,6 +41,33 @@ it("keeps only the latest card when a role runs more than once", () => {
   render(<WorkflowAgents conversationId="c1" workflow={{ data: { conversationId: "c1", revision: 1, flow: "planned", agents: [first, latest] }, error: null, loading: false, retry: vi.fn() }} />);
   expect(screen.queryByRole("button", { name: "Abrir agente Designer: Primeira análise" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Abrir agente Designer: Nova análise" })).toBeInTheDocument();
+});
+it("shows the live thought and advances the worker duration while it runs", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(12_500);
+  try {
+    const current = { ...agent, startedAt: 10_000, durationMs: 2_000, currentThought: "Conferindo o contrato atual" };
+    const workflow = { data: { conversationId: "c1", revision: 1, flow: "planned" as const, agents: [current] }, error: null, loading: false, retry: vi.fn() };
+    const view = render(<WorkflowAgents conversationId="c1" workflow={workflow} />);
+    const card = screen.getByRole("button", { name: "Abrir agente Construtor: Implementar busca" });
+    expect(within(card).getByText("Conferindo o contrato atual")).toHaveClass("reasoning-shimmer");
+    expect(within(card).getByLabelText("Tempo de execução")).toHaveTextContent("2s");
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(within(card).getByLabelText("Tempo de execução")).toHaveTextContent("3s");
+    view.rerender(<WorkflowAgents conversationId="c1" workflow={{ ...workflow, data: { ...workflow.data, agents: [{ ...current, status: "completed", durationMs: 3_500 }] } }} />);
+    expect(within(card).getByLabelText("Tempo de execução")).toHaveTextContent("3s");
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(within(card).getByLabelText("Tempo de execução")).toHaveTextContent("3s");
+    view.unmount();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("does not count time in the queue as execution time", () => {
+  const queued = { ...agent, status: "queued" as const, startedAt: 1, durationMs: 0, currentThought: null };
+  render(<WorkflowAgents conversationId="c1" workflow={{ data: { conversationId: "c1", revision: 1, flow: "planned", agents: [queued] }, error: null, loading: false, retry: vi.fn() }} />);
+  const card = screen.getByRole("button", { name: "Abrir agente Construtor: Implementar busca" });
+  expect(within(card).getByLabelText("Tempo de execução")).toHaveTextContent("0s");
 });
 it("loads a read-only transcript only after clicking an agent card", async () => {
   const user = userEvent.setup(); const turn = savedTurn(); turn.user = "Implementar busca"; turn.steps[0].text = "Busca implementada com validação.";

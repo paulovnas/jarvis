@@ -55,6 +55,7 @@ fn preferences_restore_all_modes_without_touching_layout() {
         let preferences = Preferences {
             prevent_sleep: mode,
             notifications: mode != SleepMode::Off,
+            ask_user_timeout_seconds: 45,
         };
         store.save(preferences.clone()).unwrap();
         assert_eq!(Store::open(path.clone()).unwrap().preferences, preferences);
@@ -79,10 +80,36 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
     assert!(store
         .save(Preferences {
             prevent_sleep: SleepMode::Open,
-            notifications: true
+            notifications: true,
+            ask_user_timeout_seconds: 30,
         })
         .is_err());
     assert_eq!(store.preferences, Preferences::default());
+}
+
+#[test]
+fn question_timeout_defaults_for_existing_installs_and_rejects_invalid_values() {
+    let home = tempfile::tempdir().unwrap();
+    let directory = home.path().join(".jarvis");
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("system.json");
+    fs::write(&path, r#"{"preventSleep":"off","notifications":true}"#).unwrap();
+    assert_eq!(ask_user_timeout_seconds(home.path()), 30);
+    let mut store = Store::open(path).unwrap();
+    assert_eq!(store.preferences.ask_user_timeout_seconds, 30);
+    assert!(store
+        .save(Preferences {
+            ask_user_timeout_seconds: 0,
+            ..Preferences::default()
+        })
+        .is_err());
+    assert_eq!(store.preferences.ask_user_timeout_seconds, 30);
+    fs::write(
+        home.path().join(".jarvis/system.json"),
+        r#"{"preventSleep":"off","notifications":true,"askUserTimeoutSeconds":0}"#,
+    )
+    .unwrap();
+    assert_eq!(ask_user_timeout_seconds(home.path()), 30);
 }
 
 #[test]

@@ -7,7 +7,7 @@ import type { ProviderAccount } from "@/core/provider-accounts";
 import SettingsDialog from "./SettingsDialog";
 import { coreFixture } from "@/test/core-fixtures";
 
-const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+const { invokeMock, usageMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), usageMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => command === "get_web_search_config" || command === "get_vision_config" || command === "get_image_generation_config"
     ? Promise.resolve({ accountAlias: null })
@@ -20,6 +20,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
 }));
+vi.mock("@/hooks/use-provider-usage", () => ({ useProviderUsage: usageMock }));
 
 const openUrlMock = vi.mocked(openUrl);
 
@@ -102,6 +103,26 @@ describe("SettingsDialog provider accounts", () => {
     await waitFor(() => expect(errorToast).toHaveBeenCalledWith("Não foi possível salvar a visualização dos limites."));
     expect(screen.getByRole("switch", { name: `Incluir modelos de terceiros de ${google.alias}` })).not.toBeChecked();
   });
+  it("persiste o alerta de limite dentro do provedor usando somente janelas disponíveis", async () => {
+    const user = userEvent.setup();
+    const codex = account("openai-codex-pessoal");
+    usageMock.mockReturnValue({ data: { alias: codex.alias, fetchedAt: 1, email: null, plan: null, error: null, resetCredits: null, windows: [
+      { id: "weekly", group: "Codex", thirdParty: false, label: "7d", durationSeconds: 604_800, remainingPercent: 80, resetsAt: 2 },
+    ] }, error: false });
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_provider_accounts") return Promise.resolve([codex]);
+      return Promise.resolve(undefined);
+    });
+    const changed = vi.fn();
+    render(<SettingsDialog open onOpenChange={vi.fn()} onAccountsChange={changed} />);
+    await user.click(screen.getByRole("tab", { name: /Provedores/ }));
+    await user.click(await screen.findByRole("button", { name: `Detalhes de ${codex.alias}` }));
+    const alert = await screen.findByRole("switch", { name: "Alertar sobre limite" });
+    await waitFor(() => expect(alert).toBeEnabled());
+    await user.click(alert);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("set_provider_usage_alert", { alias: codex.alias, alert: { window: "weekly", remainingPercent: 20 } }));
+    expect(changed).toHaveBeenLastCalledWith([expect.objectContaining({ usageAlert: { window: "weekly", remainingPercent: 20 } })]);
+  });
   it("conecta Antigravity pelo navegador e mostra seus modelos no mesmo card", async () => {
     const user = userEvent.setup();
     const google = account("antigravity-pessoal", { providerKind: "antigravity", email: "google@example.com", models: [{ id: "gemini-pro", name: "Gemini Pro", reasoningLevels: ["low", "high"], defaultReasoningLevel: "high" }] });
@@ -134,6 +155,7 @@ describe("SettingsDialog provider accounts", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     invokeMock.mockReset();
+    usageMock.mockReset().mockReturnValue({ data: null, error: false });
     openUrlMock.mockReset();
     openUrlMock.mockResolvedValue(undefined);
   });

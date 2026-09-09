@@ -20,6 +20,9 @@ import { resolveChatModel, type ModelBinding } from "@/core/provider-references"
 import { useModelProblemNotice } from "@/hooks/use-provider-references";
 import { libraryError } from "@/core/library";
 import { mergeDrafts, type ChatDraft, type MessagePart, type QueuedMessage, type TurnOptions } from "@/core/chat";
+import type { WorkflowSnapshot } from "@/core/workflow";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
 
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
@@ -40,6 +43,7 @@ interface ChatComposerProps {
   queuedMessages?: QueuedMessage[];
   onRemoveQueued?: (id: string) => Promise<ChatDraft | null>;
   onResumeQueue?: () => Promise<void>;
+  workflowSnapshot?: WorkflowSnapshot | null;
 }
 
 export function ChatComposer({
@@ -59,6 +63,7 @@ export function ChatComposer({
   queuedMessages = [],
   onRemoveQueued,
   onResumeQueue,
+  workflowSnapshot,
 }: ChatComposerProps) {
   const [draft, updateDraft] = useState<ChatDraft>(() => draftKey ? drafts?.get(draftKey) ?? { content: "" } : { content: "" });
   const text = draft.content;
@@ -112,8 +117,16 @@ export function ChatComposer({
   const [choosingModel, setChoosingModel] = useState(false);
   const choosingModelLock = useRef(false);
   const [workflow, setWorkflow] = useState<FlowSelection>(flowSelection(initialOptions));
+  const [pendingWorkflow, setPendingWorkflow] = useState<FlowSelection | null>(null);
   const selectedFlow = flowOptions(workflow);
-  const customUnavailable = selectedFlow.workflow === "custom" && !catalog.data?.flows.some(flow => flow.id === selectedFlow.customWorkflowId);
+  const customFlow = catalog.data?.flows.find(flow => flow.id === selectedFlow.customWorkflowId);
+  const selectedCustomAgent = catalog.data?.agents.find(agent => agent.id === selectedFlow.customAgentId);
+  const customUnavailable = selectedFlow.workflow === "custom" && (selectedFlow.customAgentId
+    ? !selectedCustomAgent || selectedCustomAgent.usage === "flow_only"
+    : !customFlow);
+  const customUnavailableMessage = catalog.error ?? (!catalog.data
+    ? selectedFlow.customAgentId ? "Carregando o agente individual…" : "Carregando o fluxo customizado…"
+    : selectedFlow.customAgentId ? "Este agente não está mais disponível para uso individual. Escolha outra opção." : "Este fluxo foi removido. Escolha outro fluxo para enviar.");
 
   const handleSend = async () => {
     const submitted = draftRef.current;
@@ -124,19 +137,29 @@ export function ChatComposer({
     if (separator < 1) return;
     sendLock.current = true;
     setSending(true);
+    setDraft({ content: "" });
+    const restoreSubmitted = () => {
+      const current = draftKey && drafts ? drafts.get(draftKey) ?? { content: "" } : draftRef.current;
+      setDraft(current.content || current.parts?.length
+        ? mergeDrafts(submitted, current)
+        : { ...submitted, parts: submitted.parts ? [...submitted.parts] : undefined });
+    };
     try {
       const options: TurnOptions = running && initialOptions ? { ...initialOptions, approvalMode: "yolo" } : { account: currentModelDef.value.slice(0, separator), model: currentModelDef.value.slice(separator + 1), reasoning, mode: "build", ...selectedFlow, approvalMode: "yolo" };
       const accepted = submitted.parts?.length ? await onSendMessage(trimmed, options, submitted.parts) : await onSendMessage(trimmed, options);
-      const current = draftKey && drafts ? drafts.get(draftKey) ?? { content: "" } : draftRef.current;
-      if (accepted && JSON.stringify(current) === JSON.stringify(submitted)) setDraft({ content: "" });
+      if (!accepted) restoreSubmitted();
+    } catch (cause) {
+      restoreSubmitted();
+      toast.error(libraryError(cause, "Não foi possível enviar a mensagem. Seu texto foi mantido."));
     } finally { sendLock.current = false; setSending(false); }
   };
 
   const availableModels = modelGroups.flatMap((group) => group.models);
   const profile = selectedFlow.workflow === "custom" ? undefined : agentModels?.data?.[`${workflow}/${rootRole(selectedFlow.workflow ?? "standard")}`];
+  const customAgentSelection = selectedCustomAgent?.model ? { model: `${selectedCustomAgent.model.account}/${selectedCustomAgent.model.model}`, reasoning: selectedCustomAgent.model.reasoning } : null;
   const separator = selection?.model.indexOf("/") ?? -1;
   const boundChoice = selection && separator > 0 && manualBindings !== modelBindings ? resolveChatModel(modelBindings, draftKey, { account: selection.model.slice(0, separator), model: selection.model.slice(separator + 1), reasoning: selection.reasoning }) : null;
-  const effectiveSelection = running && initialOptions ? { model: `${initialOptions.account}/${initialOptions.model}`, reasoning: initialOptions.reasoning } : profile ? { model: `${profile.account}/${profile.model}`, reasoning: profile.reasoning } : boundChoice ? { model: `${boundChoice.account}/${boundChoice.model}`, reasoning: boundChoice.reasoning } : selection;
+  const effectiveSelection = running && initialOptions ? { model: `${initialOptions.account}/${initialOptions.model}`, reasoning: initialOptions.reasoning } : customAgentSelection ?? (profile ? { model: `${profile.account}/${profile.model}`, reasoning: profile.reasoning } : boundChoice ? { model: `${boundChoice.account}/${boundChoice.model}`, reasoning: boundChoice.reasoning } : selection);
   const currentModelDef =
     availableModels.find((availableModel) => availableModel.value === effectiveSelection?.model) ??
     (effectiveSelection ? undefined : availableModels[0]);
@@ -144,13 +167,14 @@ export function ChatComposer({
     const model = availableModels.find(item => item.value === choice.model);
     return !model || Boolean(choice.reasoning && !model.reasoningLevels.includes(choice.reasoning));
   };
-  const customFlow = catalog.data?.flows.find(flow => flow.id === selectedFlow.customWorkflowId);
-  const invalidAgent = selectedFlow.workflow === "custom"
-    ? catalog.data?.agents.find(agent => agent.model && customFlow?.steps.some(step => step.agentId === agent.id) && invalidSelection({ model: `${agent.model.account}/${agent.model.model}`, reasoning: agent.model.reasoning }))?.name
+  const invalidAgent = selectedFlow.customAgentId
+    ? selectedCustomAgent?.model && invalidSelection({ model: `${selectedCustomAgent.model.account}/${selectedCustomAgent.model.model}`, reasoning: selectedCustomAgent.model.reasoning }) ? selectedCustomAgent.name : undefined
+    : selectedFlow.workflow === "custom"
+      ? catalog.data?.agents.find(agent => agent.model && customFlow?.steps.some(step => step.agentId === agent.id) && invalidSelection({ model: `${agent.model.account}/${agent.model.model}`, reasoning: agent.model.reasoning }))?.name
     : Object.entries(agentModels?.data ?? {}).find(([key, choice]) => key.startsWith(`${workflow}/`) && invalidSelection({ model: `${choice.account}/${choice.model}`, reasoning: choice.reasoning }))?.[0];
-  const modelError = !modelsReady ? null : effectiveSelection && invalidSelection(effectiveSelection)
-    ? `O modelo ${effectiveSelection.model} está indisponível. Escolha outro provedor e modelo para este chat.`
-    : invalidAgent ? `O agente ${invalidAgent} usa um modelo indisponível. Revise o modelo em Configurações → Workflow.` : null;
+  const modelError = !modelsReady ? null : invalidAgent
+    ? `O agente ${invalidAgent} usa um modelo indisponível. Revise o modelo em Configurações → Workflow.`
+    : effectiveSelection && invalidSelection(effectiveSelection) ? `O modelo ${effectiveSelection.model} está indisponível. Escolha outro provedor e modelo para este chat.` : null;
   useModelProblemNotice("Chat", modelError, `chat:${draftKey ?? "new"}`);
   const reasoning =
     currentModelDef?.value === effectiveSelection?.model &&
@@ -159,6 +183,7 @@ export function ChatComposer({
       ? effectiveSelection.reasoning
       : currentModelDef?.defaultReasoningLevel ?? currentModelDef?.reasoningLevels[0] ?? null;
   const chooseModel = (next: ModelSelection) => {
+    if (selectedCustomAgent?.model) return;
     if (agentModels && selectedFlow.workflow !== "custom") { void agentModels.save(selectedFlow.workflow ?? "standard", rootRole(selectedFlow.workflow ?? "standard"), { account: next.model.slice(0, next.model.indexOf("/")), model: next.model.slice(next.model.indexOf("/") + 1), reasoning: next.reasoning }); }
     else {
       const split = next.model.indexOf("/");
@@ -170,11 +195,25 @@ export function ChatComposer({
       void invoke("clear_chat_model_binding", { conversationId: draftKey, choice }).then(() => { setManualBindings(modelBindings); setSelection(next); }).catch(cause => toast.error(libraryError(cause, "Não foi possível atualizar o modelo do chat."))).finally(() => { choosingModelLock.current = false; setChoosingModel(false); });
     }
   };
+  const chooseWorkflow = (next: FlowSelection) => {
+    const currentFlow = flowOptions(workflow).workflow;
+    const leavingCoordinatedFlow = ["planned", "complete"].includes(currentFlow ?? "")
+      && (next === "standard" || next === "designer" || next.startsWith("agent:"));
+    const currentSnapshot = workflowSnapshot;
+    const hasWorkflowState = currentSnapshot != null && currentSnapshot.flow === currentFlow
+      && (currentSnapshot.agents.some(agent => agent.id !== "main")
+        || currentSnapshot.validation?.items.some(item => item.decision === "pending"));
+    if (leavingCoordinatedFlow && hasWorkflowState) {
+      setPendingWorkflow(next);
+      return;
+    }
+    setWorkflow(next);
+  };
 
   return (
     <div className="w-full">
       {modelError && <p role="alert" className="px-4 py-2 text-xs text-destructive">{modelError}</p>}
-      {customUnavailable && <p role="alert" className="px-4 py-2 text-xs text-destructive">{catalog.error ?? (catalog.data ? "Este fluxo foi removido. Escolha outro fluxo para enviar." : "Carregando o fluxo customizado…")}</p>}
+      {customUnavailable && <p role="alert" className="px-4 py-2 text-xs text-destructive">{customUnavailableMessage}</p>}
       {queuedMessages.length > 0 && <section aria-label="Mensagens agendadas" className="mx-3 rounded-t-xl border border-b-0 border-border bg-card px-3 py-2">
         <div className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground"><ListOrdered className="size-3.5" /><span>{running ? "Após a resposta atual" : "Fila pausada"} · {queuedMessages.length}</span>
           {!running && <Button variant="ghost" size="sm" className="ml-auto h-6 cursor-pointer text-[11px]" disabled={resuming || compacting} onClick={() => { setResuming(true); void onResumeQueue?.().finally(() => setResuming(false)); }}>Continuar fila</Button>}
@@ -206,9 +245,9 @@ export function ChatComposer({
 
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}
           <div className="composer-options flex flex-1 items-center gap-0.5">
-            <FlowPicker customFlows={catalog.data?.flows} value={workflow} onChange={setWorkflow} disabled={running || sending || compacting} />
+            <FlowPicker customFlows={catalog.data?.flows} customAgents={catalog.data?.agents} value={workflow} onChange={chooseWorkflow} disabled={running || sending || compacting} />
 
-            <ModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} disabled={!modelsReady || running || sending || compacting || choosingModel || agentModels?.saving} />
+            <ModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} disabled={!modelsReady || running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} />
 
             {/* Botão redondo com seta pra cima no canto inferior direito */}
             {running && !compacting && <Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button>}
@@ -229,6 +268,18 @@ export function ChatComposer({
           </div>
         </div>
       </SkillInput></Suspense>
+      <AlertDialog open={pendingWorkflow !== null} onOpenChange={open => { if (!open) setPendingWorkflow(null); }}>
+        <AlertDialogContent className="dark">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Trocar para um agente direto?</AlertDialogTitle>
+            <AlertDialogDescription>Ao iniciar a próxima mensagem, o histórico visual dos subagentes e as validações pendentes deste fluxo serão substituídos. Confirme somente se deseja encerrar este acompanhamento.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="cursor-pointer">Manter fluxo atual</AlertDialogCancel>
+            <AlertDialogAction data-confirm-action className="cursor-pointer" onClick={() => { if (pendingWorkflow) setWorkflow(pendingWorkflow); setPendingWorkflow(null); }}>Trocar fluxo</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

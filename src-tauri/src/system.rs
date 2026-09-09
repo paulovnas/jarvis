@@ -9,7 +9,7 @@ use std::{
     collections::{HashSet, VecDeque},
     fs,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{mpsc, Mutex},
     time::Duration,
 };
@@ -29,11 +29,33 @@ impl SleepMode {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) const DEFAULT_ASK_USER_TIMEOUT_SECONDS: u16 = 30;
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Preferences {
     pub prevent_sleep: SleepMode,
     pub notifications: bool,
+    pub ask_user_timeout_seconds: u16,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            prevent_sleep: SleepMode::Off,
+            notifications: false,
+            ask_user_timeout_seconds: DEFAULT_ASK_USER_TIMEOUT_SECONDS,
+        }
+    }
+}
+
+impl Preferences {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if !(1..=3600).contains(&self.ask_user_timeout_seconds) {
+            return Err("O tempo das perguntas deve ficar entre 1 e 3.600 segundos.".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -57,9 +79,11 @@ impl Store {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Preferences::default(),
             Err(_) => return Err("Não foi possível abrir as preferências do sistema.".into()),
         };
+        preferences.validate()?;
         Ok(Self { path, preferences })
     }
     fn save(&mut self, preferences: Preferences) -> Result<(), String> {
+        preferences.validate()?;
         let persist = || -> Result<(), Box<dyn std::error::Error>> {
             let parent = self.path.parent().ok_or("Missing preferences directory")?;
             fs::create_dir_all(parent)?;
@@ -73,6 +97,12 @@ impl Store {
         self.preferences = preferences;
         Ok(())
     }
+}
+
+pub(crate) fn ask_user_timeout_seconds(home: &Path) -> u16 {
+    Store::open(home.join(".jarvis/system.json"))
+        .map(|store| store.preferences.ask_user_timeout_seconds)
+        .unwrap_or(DEFAULT_ASK_USER_TIMEOUT_SECONDS)
 }
 
 #[derive(Default)]
@@ -198,6 +228,29 @@ impl SystemState {
             }
         }
     }
+
+    pub(crate) fn reload_from_disk(
+        &self,
+        app: &tauri::AppHandle,
+        home: &Path,
+    ) -> Result<(), String> {
+        let store = Store::open(home.join(".jarvis/system.json"))?;
+        *self
+            .store
+            .lock()
+            .map_err(|_| "Preferências indisponíveis.")? = Some(Ok(store));
+        if let Ok(worker) = self.worker.lock() {
+            if let Some((wake, _)) = worker.as_ref() {
+                let _ = wake.send(false);
+            }
+        }
+        self.changed(app);
+        Ok(())
+    }
+}
+
+pub(crate) fn backup_preferences(home: &Path) -> Result<Preferences, String> {
+    Store::open(home.join(".jarvis/system.json")).map(|store| store.preferences)
 }
 
 // The assertion is created and dropped on one dedicated thread (required on Windows).
@@ -327,6 +380,26 @@ pub(crate) fn notify(
     });
 }
 
+pub(crate) fn notifications_enabled(app: &tauri::AppHandle) -> bool {
+    app.state::<SystemState>()
+        .preferences()
+        .is_ok_and(|preferences| preferences.notifications)
+}
+
+pub(crate) fn notify_usage_limit(app: &tauri::AppHandle, title: &str, body: &str) {
+    if !notifications_enabled(app) {
+        return;
+    }
+    let app = app.clone();
+    let title = title.to_owned();
+    let body = body.to_owned();
+    tauri::async_runtime::spawn(async move {
+        let system = app.state::<SystemState>();
+        let result = notifications::show(&title, &body).await;
+        system.notification_result(&app, &result);
+    });
+}
+
 #[tauri::command]
 pub fn get_system_preferences(state: tauri::State<'_, SystemState>) -> Result<Snapshot, String> {
     state.snapshot()
@@ -339,6 +412,7 @@ pub async fn save_system_preferences(
     preferences: Preferences,
 ) -> Result<Snapshot, String> {
     let _edit = state.edit.lock().await;
+    preferences.validate()?;
     if preferences.notifications && !state.preferences()?.notifications {
         let result = notifications::authorize().await;
         state.notification_result(&app, &result);

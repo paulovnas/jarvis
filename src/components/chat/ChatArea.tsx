@@ -19,13 +19,15 @@ import type { WorkflowController } from "@/hooks/use-workflow";
 import type { ProjectFilesController } from "@/hooks/use-project-files";
 import { FileWorkspace } from "@/components/files/FileWorkspace";
 import { useBrowser } from "@/hooks/use-browser";
+import { JarvisLogo } from "@/components/JarvisLogo";
+import { AuthoringApprovalDrawer } from "./AuthoringApprovalDrawer";
 
 function ConversationView({ context, modelGroups, modelBindings, modelsReady, chat, workflow, agentModels, drafts, questionDrafts, onLatestVisibility, files }: { context: ConversationDetails; modelGroups: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; drafts: Map<string, ChatDraft>; questionDrafts: Map<string, QuestionDraft>; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController }) {
   const footer = useRef<HTMLElement>(null);
   const previousQuestion = useRef<string | undefined>(undefined);
   const snapshot = chat.snapshot;
   const browser = useBrowser(context.conversation.id, () => files?.select(null), !!snapshot);
-  const attention = [snapshot?.pendingApproval?.id, snapshot?.pendingQuestion?.toolId, ...(workflow?.data?.agents ?? []).flatMap(agent => [agent.pendingApproval?.id, agent.pendingQuestion?.toolId])].filter(Boolean).join("|");
+  const attention = [snapshot?.pendingApproval?.id, snapshot?.pendingQuestion?.toolId, snapshot?.pendingAuthoring?.toolId, ...(workflow?.data?.agents ?? []).flatMap(agent => [agent.pendingApproval?.id, agent.pendingQuestion?.toolId, agent.pendingAuthoring?.toolId])].filter(Boolean).join("|");
   const previousAttention = useRef("");
   useEffect(() => {
     if (attention !== previousAttention.current) {
@@ -45,22 +47,46 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, ch
   if (!snapshot) return <ConversationSkeleton />;
   const last = snapshot.turns[snapshot.turns.length - 1];
   const outsideChat = !!files?.tabs.activePath || !!browser.snapshot.activeId;
+  const isNewConversation = (snapshot.history?.total ?? snapshot.turns.length) === 0
+    && snapshot.activeTurnId === null
+    && !snapshot.pendingApproval
+    && !snapshot.pendingQuestion
+    && !snapshot.pendingAuthoring
+    && !snapshot.queuedMessages?.length;
   const browserLauncher = <Button type="button" variant="ghost" size="icon" aria-label="Abrir navegador" title="Abrir navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-7 cursor-pointer text-muted-foreground hover:text-onedark-cyan"><Globe className="size-3.5" /></Button>;
+  const composer = (terminalLauncher: ReactNode) => <footer ref={footer} aria-label="Área de composição" className="chat-footer mx-auto max-h-[65dvh] w-full max-w-4xl min-w-0 shrink-0 overflow-y-auto overscroll-none px-5 pb-4 pt-3">
+    {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.id} tool={snapshot.pendingApproval} projectPath={context.project.path} onAnswer={chat.approve} />}
+    {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} />}
+    {snapshot.pendingAuthoring && <AuthoringApprovalDrawer key={snapshot.pendingAuthoring.toolId} request={snapshot.pendingAuthoring} onAnswer={(approved, note) => chat.answerAuthoring(snapshot.pendingAuthoring!, approved, note)} />}
+    <WorkerRequests conversationId={context.conversation.id} projectPath={context.project.path} agents={workflow?.data?.agents ?? []} drafts={questionDrafts} />
+    <ChatComposer terminalLauncher={outsideChat ? undefined : <>{terminalLauncher}{browserLauncher}</>} agentModels={agentModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} initialOptions={snapshot.latestOptions ?? last?.options} workflowSnapshot={workflow?.data} />
+    {modelGroups.length === 0 && <p className="mt-2 text-center text-xs text-muted-foreground">Conecte uma conta em Configurações para enviar mensagens.</p>}
+  </footer>;
   return <TerminalWorkspace conversationId={context.conversation.id}>{terminalLauncher => <FileWorkspace files={files} browser={browser} terminalLauncher={outsideChat ? <>{terminalLauncher}{browserLauncher}</> : undefined}>
-    <Transcript snapshot={snapshot} chat={chat} onLatestVisibility={onLatestVisibility} />
-    <footer ref={footer} aria-label="Área de composição" className="chat-footer mx-auto w-full max-w-4xl min-w-0 shrink-0 max-h-[65%] overflow-y-auto overscroll-none px-5 pb-4 pt-3">
-      {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.id} tool={snapshot.pendingApproval} projectPath={context.project.path} onAnswer={chat.approve} />}
-      {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} />}
-      <WorkerRequests conversationId={context.conversation.id} projectPath={context.project.path} agents={workflow?.data?.agents ?? []} drafts={questionDrafts} />
-      <ChatComposer terminalLauncher={outsideChat ? undefined : <>{terminalLauncher}{browserLauncher}</>} agentModels={agentModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} initialOptions={snapshot.latestOptions ?? last?.options} />
-      {modelGroups.length === 0 && <p className="mt-2 text-center text-xs text-muted-foreground">Conecte uma conta em Configurações para enviar mensagens.</p>}
-    </footer>
+    <section aria-label={isNewConversation ? "Nova conversa" : undefined} data-empty={isNewConversation} className="new-conversation-stage relative isolate grid min-h-0 flex-1 overflow-hidden">
+      <div aria-hidden="true" className="new-conversation-glow pointer-events-none absolute left-1/2 top-1/2 h-64 w-[min(90%,56rem)] -translate-x-1/2 -translate-y-1/2" />
+      <div className="conversation-transcript-slot relative z-10 flex min-h-0 overflow-hidden">
+        {!isNewConversation && <Transcript snapshot={snapshot} chat={chat} onLatestVisibility={onLatestVisibility} />}
+      </div>
+      <div className="new-conversation-brand-slot relative z-10 min-h-0 overflow-hidden" aria-hidden={!isNewConversation}>
+        <div className="new-conversation-brand flex flex-col items-center gap-1 pb-5 text-center">
+          <JarvisLogo variant="vertical" alt="Jarvis" className="size-32" />
+          <h2 className="text-lg font-medium tracking-tight text-foreground">O que vamos construir?</h2>
+        </div>
+      </div>
+      <div className="conversation-composer-slot relative z-20 mx-auto w-full min-w-0">
+        {composer(terminalLauncher)}
+      </div>
+      <div aria-hidden="true" className="new-conversation-spacer min-h-0" />
+    </section>
   </FileWorkspace>}</TerminalWorkspace>;
 }
 
-export function ChatArea({ modelGroups = [], modelBindings, modelsReady, library, chat, workflow, agentModels, leftToggle, rightToggle, onLatestVisibility, files }: { modelGroups?: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; library: LibrarySnapshot | null; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; leftToggle?: ReactNode; rightToggle?: ReactNode; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController }) {
-  const [drafts] = useState(() => new Map<string, ChatDraft>());
-  const [questionDrafts] = useState(() => new Map<string, QuestionDraft>());
+export function ChatArea({ modelGroups = [], modelBindings, modelsReady, library, chat, workflow, agentModels, leftToggle, rightToggle, onLatestVisibility, files, drafts: sharedDrafts, questionDrafts: sharedQuestionDrafts }: { modelGroups?: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; library: LibrarySnapshot | null; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; leftToggle?: ReactNode; rightToggle?: ReactNode; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController; drafts?: Map<string, ChatDraft>; questionDrafts?: Map<string, QuestionDraft> }) {
+  const [localDrafts] = useState(() => new Map<string, ChatDraft>());
+  const [localQuestionDrafts] = useState(() => new Map<string, QuestionDraft>());
+  const drafts = sharedDrafts ?? localDrafts;
+  const questionDrafts = sharedQuestionDrafts ?? localQuestionDrafts;
   const id = library?.selection.conversationId;
   const project = library?.projects.find(item => item.id === library.selection.projectId);
   const workspace = library?.workspaces.find(item => item.id === project?.workspaceId);

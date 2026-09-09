@@ -126,6 +126,7 @@ mod tests {
             mode: Mode::Plan,
             workflow: None,
             custom_workflow_id: None,
+            custom_agent_id: None,
             approval_mode: ApprovalMode::Manual,
         };
         session

@@ -10,11 +10,12 @@ export type QuestionPreview = z.infer<typeof questionPreviewSchema>;
 export const questionSchema = z.object({
   id: z.string().min(1).max(64),
   question: z.string().min(1).max(1000),
-  options: z.array(z.object({ label: z.string().min(1).max(200), description: z.string().max(500).nullish(), preview: questionPreviewSchema.nullish() })).max(6)
-    .refine(options => new Set(options.map(option => option.label.trim())).size === options.length).default([]),
+  options: z.array(z.object({ label: z.string().min(1).max(200), description: z.string().max(500).nullish(), preview: questionPreviewSchema.nullish(), recommended: z.boolean().optional() })).max(6)
+    .refine(options => new Set(options.map(option => option.label.trim())).size === options.length)
+    .refine(options => options.filter(option => option.recommended).length <= 1).default([]),
 });
 export const questionRequestSchema = z.object({ questions: z.array(questionSchema).min(1).max(3).refine(questions => new Set(questions.map(question => question.id)).size === questions.length) });
-export const pendingQuestionSchema = questionRequestSchema.extend({ turnId: z.string(), toolId: z.string() });
+export const pendingQuestionSchema = questionRequestSchema.extend({ turnId: z.string(), toolId: z.string(), deadlineAt: z.number().int().positive().optional() });
 export const questionResponseSchema = z.object({
   cancelled: z.boolean(),
   answers: z.array(z.object({ id: z.string(), value: z.string().min(1).max(4000), selectedLabel: z.string().optional() })),

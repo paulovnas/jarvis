@@ -41,3 +41,11 @@ it("restores denied tools when editing and filters the catalog without discardin
   await user.click(screen.getByRole("button", { name: "Salvar agente" }));
   await waitFor(() => expect(save).toHaveBeenCalledWith({ ...customAgent, deniedTools: ["ask_user", "web_search"] }));
 });
+
+it("lets the user choose where the custom agent can work", async () => {
+  const user = userEvent.setup(); const save = vi.fn().mockResolvedValue(true);
+  render(<CustomAgentEditor initial={customAgent} accounts={[]} saving={false} onSave={save} onClose={vi.fn()} creating />);
+  await user.click(screen.getByRole("button", { name: "Solo" }));
+  await user.click(screen.getByRole("button", { name: "Salvar agente" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith({ ...customAgent, usage: "solo" }));
+});

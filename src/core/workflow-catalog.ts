@@ -6,6 +6,7 @@ const id = z.string().regex(/^[a-f0-9]{32}$/i);
 export const modelChoiceSchema = z.object({ account: z.string(), model: z.string(), reasoning: z.string().nullable() });
 export const customAgentSchema = z.object({
   id, name: z.string().min(1).max(100), description: z.string().max(500), instructions: z.string().min(1).max(16000),
+  usage: z.enum(["solo", "mixed", "flow_only"]).default("flow_only"),
   capability: z.enum(["read_only", "write_files", "commands"]), model: modelChoiceSchema.nullable(),
   deniedTools: z.array(z.string().min(1).max(128)).max(256).optional(),
   appearance: workflowAppearanceSchema.nullish(),
@@ -25,14 +26,16 @@ export type CustomFlow = z.infer<typeof customFlowSchema>;
 export type WorkflowStep = z.infer<typeof workflowStepSchema>;
 export type WorkflowCatalog = z.infer<typeof workflowCatalogSchema>;
 export type BuiltinFlow = "standard" | "designer" | "planned" | "complete";
-export type FlowSelection = BuiltinFlow | `custom:${string}`;
+export type FlowSelection = BuiltinFlow | `custom:${string}` | `agent:${string}`;
 export type CatalogMutation = { kind: "save_agent"; agent: CustomAgent } | { kind: "save_flow"; flow: CustomFlow } | { kind: "delete_agent" | "delete_flow"; id: string };
 export const customId = () => crypto.randomUUID().replace(/-/g, "");
-export const flowSelection = (options?: TurnOptions): FlowSelection => options?.workflow === "custom" && options.customWorkflowId ? `custom:${options.customWorkflowId}` : options?.workflow && options.workflow !== "custom" ? options.workflow : "standard";
-export function flowOptions(selection: FlowSelection): Pick<TurnOptions, "workflow" | "customWorkflowId"> {
+export const flowSelection = (options?: TurnOptions): FlowSelection => options?.workflow === "custom" && options.customAgentId ? `agent:${options.customAgentId}` : options?.workflow === "custom" && options.customWorkflowId ? `custom:${options.customWorkflowId}` : options?.workflow && options.workflow !== "custom" ? options.workflow : "standard";
+export function flowOptions(selection: FlowSelection): Pick<TurnOptions, "workflow" | "customWorkflowId" | "customAgentId"> {
+  if (selection.startsWith("agent:")) return { workflow: "custom", customAgentId: selection.slice(6) };
   return selection.startsWith("custom:") ? { workflow: "custom", customWorkflowId: selection.slice(7) } : { workflow: selection as BuiltinFlow };
 }
 export const CAPABILITY_LABELS = { read_only: "Somente leitura", write_files: "Editar arquivos", commands: "Arquivos e comandos" };
+export const AGENT_USAGE_LABELS = { solo: "Solo", mixed: "Misto", flow_only: "Somente em fluxos" };
 
 export function validateGraph(flow: CustomFlow, agents: CustomAgent[]): string | null {
   if (!flow.name.trim()) return "Dê um nome ao fluxo.";
@@ -42,7 +45,9 @@ export function validateGraph(flow: CustomFlow, agents: CustomAgent[]): string |
   const nodes = new Map(flow.steps.map(step => [step.id, step]));
   if (!nodes.has(flow.entry)) return "Escolha o bloco inicial.";
   for (const step of flow.steps) {
-    if (!agents.some(agent => agent.id === step.agentId)) return "Vincule um agente existente a cada bloco.";
+    const agent = agents.find(agent => agent.id === step.agentId);
+    if (!agent) return "Vincule um agente existente a cada bloco.";
+    if (agent.usage === "solo") return "Agentes Solo não podem fazer parte de fluxos. Altere o uso para Misto ou Somente em fluxos.";
     if ([step.next, step.onRework].some(next => next && !nodes.has(next))) return "Remova as conexões para blocos que não existem mais.";
     const seen = new Set<string>();
     let cursor: string | null = step.id;

@@ -12,6 +12,7 @@ beforeEach(() => { mutate.mockClear(); vi.mocked(useWorkflowCatalog).mockReturnV
 
 it("separates immutable built-in flow and agent cards from custom management", async () => {
   const user = userEvent.setup(); render(<WorkflowSettings accounts={[]} />);
+  expect(screen.getByRole("tablist", { name: "Workflow" })).toHaveAttribute("aria-orientation", "horizontal");
   const jarvis = screen.getByRole("region", { name: "Fluxos Jarvis" });
   expect(within(jarvis).getAllByRole("button")).toHaveLength(4);
   expect(within(jarvis).queryByRole("button", { name: /Excluir|Editar/ })).not.toBeInTheDocument();

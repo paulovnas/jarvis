@@ -13,12 +13,15 @@ describe("Usage efficiency", () => {
     render(<UsageEfficiency metrics={{ ...projectMetrics().metrics, measuredSteps: 8, inputTokens: 5000,
       efficiency: { ...emptyEfficiency, cacheReadTokens: 600, cacheReadInputTokens: 1000, cacheReadRequests: 2,
         cacheWriteTokens: 200, cacheWriteRequests: 1, auxiliaryRequests: 2,
-        indexedOutputs: 3, originalBytes: 10000, retainedBytes: 1000, contextSearches: 7 } }} />);
+        indexedOutputs: 3, originalBytes: 10000, retainedBytes: 1000, contextSearches: 7,
+        loopSteers: 2, loopAvoidedCalls: 1 } }} />);
     const cache = within(screen.getByRole("region", { name: "Cache do provedor" }));
     expect(cache.getByText("60%")).toBeInTheDocument();
     expect(cache.getByText("2/10 chamadas com leitura de cache informada")).toBeInTheDocument();
     expect(screen.getByText("90%")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Redução pelo Context-mode" })).getByText("7")).toBeInTheDocument();
+    expect(screen.getByText("Loops orientados").nextSibling).toHaveTextContent("2");
+    expect(screen.getByText("Repetições bloqueadas").nextSibling).toHaveTextContent("1");
     expect(screen.getByText("Incluídas nos tokens acumulados.")).toBeInTheDocument();
   });
   it("distinguishes an explicit zero hit from missing reporting", () => {

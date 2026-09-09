@@ -322,6 +322,7 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
             status: Status::Queued,
             created_at: now(),
             updated_at: now(),
+            duration_ms: 0,
             attempts: 1,
             handoff: None,
             error: None,
@@ -352,7 +353,7 @@ fn retry(exec: &Execution, id: &str, prompt: &str) -> Result<String, AgentError>
         let job = state.jobs.get_mut(id).ok_or_else(|| invalid("Agente não encontrado."))?;
         if job.parent_id != exec.id || !exec.role.spawns(exec.flow, job.role) || job.status.active() || job.attempts >= 3 { return Err(invalid("Retomada indisponível: confira o responsável, o estado e o limite de duas revisões.")); }
         validate_phase(exec.flow, exec.role, job.role, job.phase)?;
-        job.attempts += 1; job.status = Status::Queued; job.handoff = None; job.error = None; job.updated_at = now(); job.run_id = state.run_id.clone();
+        job.attempts += 1; job.status = Status::Queued; job.handoff = None; job.error = None; job.updated_at = now(); job.duration_ms = 0; job.run_id = state.run_id.clone();
         job.options = state.options.clone();
         settings::apply(&mut job.options, &state.profiles, exec.flow, job.role);
         Ok(job.clone())
@@ -582,7 +583,7 @@ pub(super) fn launch(hub: Arc<Hub>, job: Job, resume: Option<String>) -> Result<
     let (session, signal) = match prepared {
         Ok(value) => value,
         Err(error) => {
-            settle(&hub, &job, &Err(error.clone()))?;
+            settle(&hub, &job, &Err(error.clone()), None)?;
             return Err(error);
         }
     };
@@ -642,10 +643,15 @@ pub(super) fn launch(hub: Arc<Hub>, job: Job, resume: Option<String>) -> Result<
         }
         bridge.abort();
         finish(&session, result.clone());
+        let duration_ms = session
+            .data
+            .lock()
+            .ok()
+            .and_then(|data| data.turns.last().map(|turn| turn.turn.duration_ms));
         if let Ok(mut live) = hub.live.lock() {
             live.remove(&job.id);
         }
-        if let Err(error) = settle(&hub, &job, &result) {
+        if let Err(error) = settle(&hub, &job, &result, duration_ms) {
             if let Ok(data) = hub.root.data.lock() {
                 if let Some(active) = &data.active {
                     active.cancel.send_replace(true);
@@ -699,7 +705,12 @@ fn cancel_tree(hub: &Hub, id: &str) -> Result<(), AgentError> {
     }
     Ok(())
 }
-fn settle(hub: &Hub, original: &Job, result: &Result<(), AgentError>) -> Result<(), AgentError> {
+fn settle(
+    hub: &Hub,
+    original: &Job,
+    result: &Result<(), AgentError>,
+    duration_ms: Option<u64>,
+) -> Result<(), AgentError> {
     hub.mutate(|state| {
         let job = state.jobs.get_mut(&original.id).ok_or_else(AgentError::internal)?;
         job.status = match result {
@@ -708,7 +719,7 @@ fn settle(hub: &Hub, original: &Job, result: &Result<(), AgentError>) -> Result<
             Err(error) if error.code == "cancelled" => Status::Cancelled,
             Err(_) => Status::Failed,
         };
-        job.updated_at = now(); job.error = result.as_ref().err().map(|error| error.message.clone());
+        job.updated_at = now(); job.duration_ms = duration_ms.unwrap_or_else(|| job.updated_at.saturating_sub(original.updated_at)); job.error = result.as_ref().err().map(|error| error.message.clone());
         let text = json!({"agent":job.id,"role":job.role,"status":job.status,"beadId":job.bead_id,"handoff":job.handoff,"error":job.error}).to_string();
         state.messages.push(Message { from: job.id.clone(), to: job.parent_id.clone(), text });
         Ok(())

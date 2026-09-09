@@ -3,6 +3,7 @@ mod agent;
 #[cfg(target_os = "macos")]
 mod app_menu;
 mod background;
+mod backup;
 mod core;
 mod desktop;
 mod library;
@@ -53,7 +54,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            use tauri::Manager;
             desktop::setup(app)?;
+            let home = app.path().home_dir()?;
+            skills::setup(&home).map_err(|error| std::io::Error::other(error.message))?;
             core::health::start_monitor(app.handle());
             system::setup(app.handle())
         })
@@ -69,6 +73,9 @@ pub fn run() {
                 system::get_system_preferences,
                 system::save_system_preferences,
                 system::test_system_notification,
+                backup::export_settings_backup,
+                backup::inspect_settings_backup,
+                backup::import_settings_backup,
                 system::unread::get_unread_conversations,
                 system::unread::mark_conversation_read,
                 updater::check_app_update,
@@ -151,7 +158,9 @@ pub fn run() {
                 agent::workflow::get_workflow_transcript,
                 agent::workflow::approve_workflow_tool,
                 agent::workflow::answer_workflow_question,
+                agent::workflow::answer_workflow_authoring,
                 agent::history::get_chat_history,
+                agent::history::get_chat_tool_call,
                 agent::cleanup::preview_chat_cleanup,
                 agent::cleanup::cleanup_old_chats,
                 agent::get_agent_activity,
@@ -164,12 +173,14 @@ pub fn run() {
                 agent::cancel_agent_turn,
                 agent::approve_agent_tool,
                 agent::questions::answer_agent_question,
+                agent::authoring::answer_agent_authoring,
                 openai_codex::list_provider_accounts,
                 openai_codex::custom::save_custom_provider,
                 openai_codex::custom::discovery::lookup_custom_model,
                 openai_codex::set_provider_enabled,
                 openai_codex::usage::get_provider_usage,
                 openai_codex::usage::set_provider_usage_visibility,
+                openai_codex::usage::set_provider_usage_alert,
                 openai_codex::begin_openai_codex_connection,
                 openai_codex::reauthorize_provider_account,
                 openai_codex::wait_openai_codex_connection,

@@ -10,6 +10,7 @@ fn options(account: &str, model: &str) -> TurnOptions {
         mode: super::super::Mode::Plan,
         workflow: None,
         custom_workflow_id: None,
+        custom_agent_id: None,
         approval_mode: super::super::ApprovalMode::Yolo,
     }
 }

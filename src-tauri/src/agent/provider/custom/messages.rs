@@ -116,12 +116,19 @@ impl Stream {
                     // Streaming counters are cumulative. Gateways may report final cache
                     // counters only in message_delta; replace, never sum snapshots.
                     let delta = &event["usage"];
-                    let uncached = usage.input_tokens
+                    let uncached = usage
+                        .input_tokens
                         .saturating_sub(usage.cache_read_tokens.unwrap_or(0))
                         .saturating_sub(usage.cache_write_tokens.unwrap_or(0));
-                    usage.cache_read_tokens = delta["cache_read_input_tokens"].as_u64().or(usage.cache_read_tokens);
-                    usage.cache_write_tokens = delta["cache_creation_input_tokens"].as_u64().or(usage.cache_write_tokens);
-                    usage.input_tokens = delta["input_tokens"].as_u64().unwrap_or(uncached)
+                    usage.cache_read_tokens = delta["cache_read_input_tokens"]
+                        .as_u64()
+                        .or(usage.cache_read_tokens);
+                    usage.cache_write_tokens = delta["cache_creation_input_tokens"]
+                        .as_u64()
+                        .or(usage.cache_write_tokens);
+                    usage.input_tokens = delta["input_tokens"]
+                        .as_u64()
+                        .unwrap_or(uncached)
                         .saturating_add(usage.cache_read_tokens.unwrap_or(0))
                         .saturating_add(usage.cache_write_tokens.unwrap_or(0));
                     if let Some(tokens) = event["usage"]["output_tokens"].as_u64() {

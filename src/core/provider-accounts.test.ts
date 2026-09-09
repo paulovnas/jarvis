@@ -9,7 +9,8 @@ const account: ProviderAccount = {
 
 describe("provider account IPC validation", () => {
   it("retains the model's reported levels and default", () => {
-    expect(accountList([account])).toEqual([account]);
+    const configured = { ...account, usageAlert: { window: "weekly" as const, remainingPercent: 20 } };
+    expect(accountList([configured])).toEqual([configured]);
   });
 
   it.each([
@@ -25,5 +26,14 @@ describe("provider account IPC validation", () => {
   it("handles unavailable account payloads", () => {
     expect(accountList(undefined)).toEqual([]);
     expect(accountList({ accounts: [account] })).toEqual([]);
+  });
+
+  it.each([
+    { window: "daily", remainingPercent: 20 },
+    { window: "weekly", remainingPercent: 0 },
+    { window: "five_hour", remainingPercent: 101 },
+    { window: "weekly", remainingPercent: 20.5 },
+  ])("rejects invalid usage alert settings at the IPC boundary: %j", (usageAlert) => {
+    expect(accountList([{ ...account, usageAlert }])).toEqual([]);
   });
 });

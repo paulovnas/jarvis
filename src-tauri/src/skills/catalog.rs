@@ -102,6 +102,7 @@ struct Scan {
 fn walk(
     path: &Path,
     origin: &str,
+    managed: bool,
     depth: usize,
     config: &Config,
     scan: &mut Scan,
@@ -138,6 +139,7 @@ fn walk(
                     origin: origin.into(),
                     removal_path: path.to_path_buf(),
                     linked: fs::symlink_metadata(path)?.file_type().is_symlink(),
+                    managed,
                     path: canonical,
                     file,
                     automatic,
@@ -169,7 +171,7 @@ fn walk(
         if name.starts_with('.') || matches!(name.as_ref(), "node_modules" | "target" | "vendor") {
             continue;
         }
-        walk(&entry.path(), origin, depth + 1, config, scan)?;
+        walk(&entry.path(), origin, managed, depth + 1, config, scan)?;
     }
     Ok(())
 }
@@ -186,18 +188,30 @@ pub(super) fn discover(
         skills: Vec::new(),
         warnings: Vec::new(),
     };
-    walk(&own, "jarvis", 0, config, &mut scan)?;
+    walk(&own, "jarvis", false, 0, config, &mut scan)?;
+    let builtin = super::builtin::root(home);
+    if builtin.exists() {
+        walk(&builtin, "jarvis", true, 0, config, &mut scan)?;
+    }
     if config.include_agents {
         if let Some(project) = project {
             walk(
                 &project.join(".agents/skills"),
                 "project",
+                false,
                 0,
                 config,
                 &mut scan,
             )?;
         }
-        walk(&home.join(".agents/skills"), "agents", 0, config, &mut scan)?;
+        walk(
+            &home.join(".agents/skills"),
+            "agents",
+            false,
+            0,
+            config,
+            &mut scan,
+        )?;
     }
     if scan.visited >= 6000 || scan.skills.len() >= 512 {
         scan.warnings

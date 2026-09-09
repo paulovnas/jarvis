@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { aliasSuffix, planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, expectedQuotaRemaining } from "./provider-usage";
+import { aliasSuffix, availableUsageAlertWindows, planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, expectedQuotaRemaining } from "./provider-usage";
 import { shortId } from "./dashboard";
 
 it("keeps the complete alias suffix and formats only available quota data", () => {
@@ -37,4 +37,16 @@ it("calcula reserva e deficit relativos ao tempo restante sem inventar janelas",
   expect(quotaReserve({ ...window, resetsAt: null }, 0)).toBeNull();
   expect(quotaReserve(window, window.resetsAt)).toBeNull();
   expect(quotaReserve({ ...window, resetsAt: 8 * 86400_000 }, 0)).toBeNull();
+});
+
+it("derives only alert windows actually returned by the provider", () => {
+  const base = { id: "limit", label: "Cota", group: "Gemini", thirdParty: false, remainingPercent: 50, resetsAt: 1 };
+  expect(availableUsageAlertWindows([
+    { ...base, id: "5h", durationSeconds: 18_000 },
+    { ...base, id: "7d", durationSeconds: 604_800 },
+    { ...base, id: "daily", durationSeconds: 86_400 },
+    { ...base, id: "third", durationSeconds: 18_000, thirdParty: true },
+  ], false)).toEqual(["five_hour", "weekly"]);
+  expect(availableUsageAlertWindows([{ ...base, id: "third", durationSeconds: 18_000, thirdParty: true }], false)).toEqual([]);
+  expect(availableUsageAlertWindows([{ ...base, id: "third", durationSeconds: 18_000, thirdParty: true }], true)).toEqual(["five_hour"]);
 });

@@ -76,7 +76,9 @@ pub(crate) fn size(home: &Path, item: &Candidate) -> Result<u64, LibraryError> {
     let files = deletion::files_to_delete(home, &item.project_id, Some(&item.id))?;
     let mut bytes = related_size(home, &item.id)?;
     for file in files {
-        bytes += fs::symlink_metadata(file).map_err(|_| LibraryError::storage())?.len();
+        bytes += fs::symlink_metadata(file)
+            .map_err(|_| LibraryError::storage())?
+            .len();
     }
     Ok(bytes)
 }

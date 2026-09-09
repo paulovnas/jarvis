@@ -6,12 +6,16 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 
 Jarvis é uma GUI de coding agent construída com **Tauri v2 (Rust) + React 19 + TypeScript + Tailwind CSS v4 + shadcn/ui**. Esta seção é lei: suas regras se aplicam a TODO trabalho no repositório.
 
-### Fonte de conhecimento: docs/metis (OBRIGATÓRIA)
+### Projetos de referência: Metis, OpenCode e OMP (OBRIGATÓRIOS)
 
-- `docs/metis` contém o código-fonte completo do **metis**, um coding agent (TUI/desktop). Ele é a **BASE DE CONHECIMENTO obrigatória** do Jarvis.
-- ANTES de projetar ou implementar qualquer feature (agent loop, sessões, tools, streaming, config, themes, comandos, etc.), ESTUDE como o metis resolve o mesmo problema em `docs/metis/src` e `docs/metis/docs`.
-- NÃO é uma cópia: portar ideias, fluxos e decisões arquiteturais — nunca copiar código textualmente. Melhorias são bem-vindas; partes que não se aplicam ao Jarvis ficam de fora.
-- `docs/metis` é somente leitura: NUNCA editar, mover ou deletar arquivos lá dentro.
+- `docs/metis`, `docs/opencode` e `docs/omp` contêm projetos completos de coding agents e formam, em conjunto, a **BASE DE CONHECIMENTO obrigatória** do Jarvis.
+- **Metis:** referência para arquitetura de coding agent, agent loop, sessões, coordenação e experiências TUI/desktop.
+- **OpenCode:** referência para padrões maduros de ferramentas, eficiência, portabilidade e estabilidade operacional.
+- **OMP:** referência para providers, modelos customizados, streaming, gerenciamento de contexto e comportamento de ferramentas e agentes.
+- ANTES de projetar ou implementar uma feature, identifique quais desses projetos tratam do mesmo problema e ESTUDE as implementações e decisões relevantes. Alterações triviais, sem comportamento equivalente nessas bases, não exigem uma varredura integral dos três projetos.
+- Quando mais de um projeto resolver o mesmo problema, compare os fluxos e trade-offs antes de escolher a abordagem que melhor se encaixa na arquitetura e na experiência do Jarvis.
+- O Jarvis NÃO é uma cópia: portar conceitos, fluxos e decisões arquiteturais — nunca copiar código textualmente. Melhorias são bem-vindas; partes que não se aplicam ao produto ficam de fora.
+- As três árvores são somente leitura: NUNCA editar, mover ou deletar conteúdo em `docs/metis`, `docs/opencode` ou `docs/omp`.
 
 ### Stack e arquitetura
 

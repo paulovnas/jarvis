@@ -8,12 +8,18 @@ export type ProviderModel = {
   contextWindow?: number | null;
 };
 
+export type ProviderUsageAlert = {
+  window: "five_hour" | "weekly";
+  remainingPercent: number;
+};
+
 export type ProviderAccount = {
   alias: string;
   providerKind: string;
   enabled: boolean;
   showUsage?: boolean;
   showThirdPartyUsage?: boolean;
+  usageAlert?: ProviderUsageAlert | null;
   createdAt: number;
   email: string | null;
   accountType: "personal" | "enterprise" | "unknown";
@@ -21,6 +27,16 @@ export type ProviderAccount = {
   modelsAvailable: boolean;
   custom?: CustomConfig;
 };
+
+function isUsageAlert(value: unknown): value is ProviderUsageAlert {
+  if (typeof value !== "object" || value === null) return false;
+  const alert = value as Partial<ProviderUsageAlert>;
+  return (alert.window === "five_hour" || alert.window === "weekly")
+    && typeof alert.remainingPercent === "number"
+    && Number.isInteger(alert.remainingPercent)
+    && alert.remainingPercent >= 1
+    && alert.remainingPercent <= 100;
+}
 
 function isProviderModel(value: unknown): value is ProviderModel {
   if (typeof value !== "object" || value === null) return false;
@@ -49,6 +65,7 @@ function isProviderAccount(value: unknown): value is ProviderAccount {
     typeof account.enabled === "boolean" &&
     (account.showUsage === undefined || typeof account.showUsage === "boolean") &&
     (account.showThirdPartyUsage === undefined || typeof account.showThirdPartyUsage === "boolean") &&
+    (account.usageAlert == null || isUsageAlert(account.usageAlert)) &&
     typeof account.createdAt === "number" &&
     (typeof account.email === "string" || account.email === null) &&
     (account.accountType === "personal" ||

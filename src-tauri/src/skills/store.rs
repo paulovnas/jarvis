@@ -100,21 +100,18 @@ fn save_metadata(dir: &Path, meta: &Metadata) -> Result<(), SkillError> {
 fn repository(home: &Path, source: &str, force: bool) -> Result<PathBuf, SkillError> {
     validate(source, "skill")?;
     let key = format!("{}:{source}", home.display());
-    let mut cache = REPOS
-        .lock()
-        .map_err(|_| error("Cache de skills indisponível."))?;
-    if !force {
-        if let Some(repo) = cache.get(&key) {
-            if repo.checked.elapsed() < Duration::from_secs(120) {
-                return Ok(repo.path.clone());
+    {
+        let mut cache = REPOS
+            .lock()
+            .map_err(|_| error("Cache de skills indisponível."))?;
+        if !force {
+            if let Some(repo) = cache.get(&key) {
+                if repo.checked.elapsed() < Duration::from_secs(120) {
+                    return Ok(repo.path.clone());
+                }
             }
         }
-    }
-    cache.retain(|_, repo| repo.checked.elapsed() < Duration::from_secs(120));
-    if cache.len() >= 8 {
-        if let Some(key) = cache.keys().next().cloned() {
-            cache.remove(&key);
-        }
+        cache.retain(|_, repo| repo.checked.elapsed() < Duration::from_secs(120));
     }
     let cache_path = root(home).join("cache/skills");
     fs::create_dir_all(&cache_path)?;
@@ -171,6 +168,28 @@ fn repository(home: &Path, source: &str, force: bool) -> Result<PathBuf, SkillEr
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    // Git and the network must never hold the shared cache mutex. A detail
+    // request closed by the user may still finish in the background, and it
+    // must not freeze every later Marketplace request while cloning.
+    let mut cache = REPOS
+        .lock()
+        .map_err(|_| error("Cache de skills indisponível."))?;
+    if !force {
+        if let Some(repo) = cache.get(&key) {
+            if repo.checked.elapsed() < Duration::from_secs(120) {
+                return Ok(repo.path.clone());
+            }
+        }
+    }
+    if cache.len() >= 8 {
+        if let Some(oldest) = cache
+            .iter()
+            .min_by_key(|(_, repo)| repo.checked)
+            .map(|(key, _)| key.clone())
+        {
+            cache.remove(&oldest);
+        }
+    }
     cache.insert(
         key,
         CachedRepo {
@@ -181,7 +200,34 @@ fn repository(home: &Path, source: &str, force: bool) -> Result<PathBuf, SkillEr
     );
     Ok(path)
 }
-fn resolve(repo: &Path, skill_id: &str) -> Result<PathBuf, SkillError> {
+pub(super) fn resolve(repo: &Path, skill_id: &str) -> Result<PathBuf, SkillError> {
+    fn matches(dir: &Path, skill_id: &str) -> bool {
+        let Some(file) = catalog::skill_file(dir) else {
+            return false;
+        };
+        catalog::parse(&file).is_ok_and(|(name, _, _)| {
+            dir.file_name().is_some_and(|segment| segment == skill_id) || name == skill_id
+        })
+    }
+
+    // Match the deterministic roots used by skill managers before recursive
+    // discovery. Repositories may publish generated plugin/provider copies of
+    // the same skill elsewhere; the authoring root remains the stable source.
+    for dir in [
+        repo.join(skill_id),
+        repo.join("skills").join(skill_id),
+        repo.join(".agents").join("skills").join(skill_id),
+        repo.join(".claude").join("skills").join(skill_id),
+        repo.join(".codex").join("skills").join(skill_id),
+        repo.join(".cursor").join("skills").join(skill_id),
+        repo.join(".gemini").join("skills").join(skill_id),
+        repo.join(".github").join("skills").join(skill_id),
+    ] {
+        if matches(&dir, skill_id) {
+            return Ok(dir);
+        }
+    }
+
     fn walk(
         dir: &Path,
         skill_id: &str,
@@ -193,10 +239,12 @@ fn resolve(repo: &Path, skill_id: &str) -> Result<PathBuf, SkillError> {
             return Ok(());
         }
         *remaining -= 1;
-        if let Some(file) = catalog::skill_file(dir) {
-            if dir.file_name().is_some_and(|name| name == skill_id)
-                || catalog::parse(&file).is_ok_and(|(name, _, _)| name == skill_id)
-            {
+        if catalog::skill_file(dir).is_some() {
+            // Repositories commonly expose compatibility aliases such as
+            // `.gemini/skills/<name>/SKILL.md` through symlinks. Parsing uses
+            // O_NOFOLLOW and therefore accepts only an actual package manifest;
+            // otherwise a single skill appears twice and becomes ambiguous.
+            if matches(dir, skill_id) {
                 found.push(dir.to_path_buf());
             }
             return Ok(());

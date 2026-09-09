@@ -7,7 +7,7 @@ export const sleepModes = {
 } as const;
 
 export const systemSnapshotSchema = z.object({
-  preferences: z.object({ preventSleep: z.enum(["off", "active", "open"]), notifications: z.boolean() }),
+  preferences: z.object({ preventSleep: z.enum(["off", "active", "open"]), notifications: z.boolean(), askUserTimeoutSeconds: z.number().int().min(1).max(3600) }),
   sleepInhibited: z.boolean(),
   sleepError: z.string().nullable(),
   notificationError: z.string().nullable(),

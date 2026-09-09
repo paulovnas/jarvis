@@ -253,10 +253,15 @@ pub(super) async fn stream(
         session_id,
         options,
         instructions,
-        input: input.into_iter().map(|mut item| {
-            if let Some(map) = item.as_object_mut() { map.remove("_jarvis_runtime"); }
-            item
-        }).collect(),
+        input: input
+            .into_iter()
+            .map(|mut item| {
+                if let Some(map) = item.as_object_mut() {
+                    map.remove("_jarvis_runtime");
+                }
+                item
+            })
+            .collect(),
         tools: ordered_tools(tools),
     }
     .run(signal, on_delta, Duration::from_secs(2))
@@ -274,7 +279,10 @@ fn ordered_tools(mut tools: Vec<Value>) -> Vec<Value> {
 fn equivalent_tool_catalogs_keep_the_same_cacheable_prefix() {
     let first = json!({"type":"function","name":"ctx_search","description":"Search","parameters":{"type":"object"}});
     let second = json!({"type":"function","name":"read","description":"Read","parameters":{"type":"object"}});
-    assert_eq!(ordered_tools(vec![first.clone(), second.clone()]), ordered_tools(vec![second, first]));
+    assert_eq!(
+        ordered_tools(vec![first.clone(), second.clone()]),
+        ordered_tools(vec![second, first])
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -507,12 +515,19 @@ fn completed(response: &Value) -> Result<Response, AgentError> {
 
 #[test]
 fn responses_cache_usage_is_a_breakdown_not_extra_input() {
-    for details in [json!({}), json!({"cached_tokens":0}), json!({"cached_tokens":70,"cache_write_tokens":20})] {
+    for details in [
+        json!({}),
+        json!({"cached_tokens":0}),
+        json!({"cached_tokens":70,"cache_write_tokens":20}),
+    ] {
         let response = completed(&json!({"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Done"}]}],"usage":{"input_tokens":100,"output_tokens":10,"input_tokens_details":details}})).unwrap();
         let usage = response.usage.unwrap();
         assert_eq!(usage.input_tokens, 100);
         assert_eq!(usage.cache_read_tokens, details["cached_tokens"].as_u64());
-        assert_eq!(usage.cache_write_tokens, details["cache_write_tokens"].as_u64());
+        assert_eq!(
+            usage.cache_write_tokens,
+            details["cache_write_tokens"].as_u64()
+        );
     }
 }
 pub(super) fn tool_calls(output: &[Value]) -> Result<Vec<ToolCall>, AgentError> {
@@ -577,6 +592,7 @@ mod tests {
             mode: Mode::Plan,
             workflow: None,
             custom_workflow_id: None,
+            custom_agent_id: None,
             approval_mode: ApprovalMode::Manual,
         };
         let auth_options = options.clone();
@@ -640,6 +656,7 @@ mod tests {
             mode: Mode::Plan,
             workflow: None,
             custom_workflow_id: None,
+            custom_agent_id: None,
             approval_mode: ApprovalMode::Manual,
         };
         let body = request_body(

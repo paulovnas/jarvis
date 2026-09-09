@@ -19,3 +19,6 @@
 [submodule "docs/beads"]
 	path = docs/beads
 	url = https://github.com/gastownhall/beads
+[submodule "docs/opencode"]
+	path = docs/opencode
+	url = https://github.com/anomalyco/opencode.git

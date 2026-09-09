@@ -17,6 +17,80 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; over
 .transcript-scroll > [data-slot="scroll-area-viewport"] { overscroll-behavior: none; }
 .chat-footer { overscroll-behavior: none; }
 
+.new-conversation-stage {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 0rem) auto minmax(0, 0fr);
+  transition: grid-template-rows 620ms cubic-bezier(0.65, 0, 0.35, 1);
+}
+.new-conversation-stage[data-empty="true"] {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 11.5rem) auto minmax(0, 1fr);
+}
+.new-conversation-glow {
+  background:
+    radial-gradient(circle at 18% 50%, color-mix(in srgb, var(--color-onedark-blue) 44%, transparent), transparent 40%),
+    radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--color-onedark-purple) 34%, transparent), transparent 44%),
+    radial-gradient(circle at 82% 56%, color-mix(in srgb, var(--color-onedark-cyan) 42%, transparent), transparent 40%);
+  filter: blur(42px);
+  opacity: 0;
+  transition: opacity 720ms ease-in, filter 720ms ease-in;
+}
+.new-conversation-stage[data-empty="true"] .new-conversation-glow {
+  opacity: 0.48;
+  animation: new-conversation-breathe 7s ease-in-out infinite;
+}
+.new-conversation-brand-slot {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+}
+.new-conversation-brand {
+  opacity: 0;
+  filter: blur(3px);
+  transform: translateY(-32px) scale(0.97);
+  transition:
+    opacity 360ms cubic-bezier(0.55, 0, 1, 0.45),
+    filter 420ms cubic-bezier(0.55, 0, 1, 0.45),
+    transform 520ms cubic-bezier(0.55, 0, 1, 0.45);
+}
+.new-conversation-brand img {
+  filter: drop-shadow(0 12px 28px color-mix(in srgb, var(--color-onedark-cyan) 24%, transparent));
+}
+.new-conversation-stage[data-empty="true"] .new-conversation-brand {
+  opacity: 1;
+  filter: blur(0);
+  transform: translateY(0) scale(1);
+}
+.conversation-transcript-slot {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 360ms ease-out 140ms,
+    transform 520ms cubic-bezier(0.16, 1, 0.3, 1) 80ms;
+}
+.new-conversation-stage[data-empty="true"] .conversation-transcript-slot {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(18px);
+}
+.conversation-composer-slot {
+  max-width: 56rem;
+  transition: max-width 620ms cubic-bezier(0.65, 0, 0.35, 1);
+}
+.new-conversation-stage[data-empty="true"] .conversation-composer-slot {
+  max-width: 48rem;
+}
+@keyframes new-conversation-breathe {
+  0%, 100% { transform: translate(-50%, -50%) scale(0.96); }
+  50% { transform: translate(-50%, -50%) scale(1.04); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .new-conversation-stage,
+  .new-conversation-glow,
+  .new-conversation-brand,
+  .conversation-transcript-slot,
+  .conversation-composer-slot { transition: none; }
+  .new-conversation-stage[data-empty="true"] .new-conversation-glow { animation: none; }
+}
+
 .core-install-progress[data-indeterminate] [data-slot="progress-indicator"] {
   width: 40%;
   animation: core-download 1.5s ease-in-out infinite;
@@ -135,7 +209,9 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; over
 .chat-composer[data-working="true"]::before,
 .chat-composer[data-working="true"]::after,
 .agent-execution[data-status="running"]::before,
-.agent-execution[data-status="running"]::after {
+.agent-execution[data-status="running"]::after,
+.direct-task[data-working="true"]::before,
+.direct-task[data-working="true"]::after {
   content: "";
   position: absolute;
   inset: -1px;
@@ -155,13 +231,53 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; over
 }
 
 .chat-composer[data-working="true"]::before,
-.agent-execution[data-status="running"]::before {
+.agent-execution[data-status="running"]::before,
+.direct-task[data-working="true"]::before {
   opacity: 0.55;
   filter: blur(4px);
 }
 
 @keyframes chat-glow-turn {
   to { --chat-glow-angle: 360deg; }
+}
+
+.bootstrap-screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .16;
+  background-image:
+    linear-gradient(rgb(255 255 255 / 4%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 4%) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(circle at center, black, transparent 76%);
+}
+
+.bootstrap-ambient {
+  background:
+    radial-gradient(circle at 34% 42%, color-mix(in srgb, var(--color-onedark-cyan) 14%, transparent), transparent 34%),
+    radial-gradient(circle at 68% 56%, color-mix(in srgb, var(--color-onedark-purple) 11%, transparent), transparent 32%);
+  animation: bootstrap-breathe 4.8s ease-in-out infinite alternate;
+}
+
+.bootstrap-mark {
+  filter: drop-shadow(0 0 14px color-mix(in srgb, var(--color-onedark-cyan) 36%, transparent));
+}
+
+.bootstrap-step-active {
+  box-shadow: 0 0 16px color-mix(in srgb, var(--color-onedark-cyan) 18%, transparent);
+  animation: bootstrap-step-pulse 1.7s ease-in-out infinite;
+}
+
+@keyframes bootstrap-breathe {
+  from { opacity: .65; transform: scale(.98); }
+  to { opacity: 1; transform: scale(1.04); }
+}
+
+@keyframes bootstrap-step-pulse {
+  0%, 100% { opacity: .72; }
+  50% { opacity: 1; }
 }
 
 .context-meter[data-compacting="true"] [data-slot="progress-track"] {
@@ -179,7 +295,11 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; over
   .chat-composer[data-working="true"]::after,
   .agent-execution[data-status="running"]::before,
   .agent-execution[data-status="running"]::after,
+  .direct-task[data-working="true"]::before,
+  .direct-task[data-working="true"]::after,
   .context-meter[data-compacting="true"] [data-slot="progress-track"],
+  .bootstrap-ambient,
+  .bootstrap-step-active,
   [data-slot="spinner"] {
     animation: none;
   }

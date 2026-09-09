@@ -412,7 +412,7 @@ impl Output {
         }
         if let Some(reason) = candidate["finishReason"].as_str() {
             if reason != "STOP" {
-                return Err(AgentError::new("provider_incomplete", "O Antigravity interrompeu a resposta antes de concluir. O progresso foi preservado."));
+                return Err(finish_error(reason));
             }
             self.finished = true;
         }
@@ -497,6 +497,27 @@ impl Output {
         })
     }
 }
+
+fn finish_error(reason: &str) -> AgentError {
+    // Keep the actual termination category: output exhaustion needs a smaller
+    // summary, malformed calls can be retried, and refusals must not be retried.
+    let code = match reason {
+        "MAX_TOKENS" => "provider_output_limit",
+        "SAFETY" | "RECITATION" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "SPII" | "IMAGE_SAFETY" => {
+            "provider_blocked"
+        }
+        _ => "provider_incomplete",
+    };
+    let reason: String = reason
+        .chars()
+        .filter(|c| c.is_ascii_uppercase() || *c == '_')
+        .take(64)
+        .collect();
+    AgentError::new(
+        code,
+        &format!("O Antigravity interrompeu a resposta ({reason}). O progresso foi preservado."),
+    )
+}
 fn overflow(value: &Value) -> bool {
     let message = value["error"]["message"]
         .as_str()
@@ -557,6 +578,7 @@ fn grounded_body(
         mode: super::super::Mode::Plan,
         workflow: None,
         custom_workflow_id: None,
+        custom_agent_id: None,
         approval_mode: super::super::ApprovalMode::Yolo,
     };
     let mut body = request_body(credential, session, &options,

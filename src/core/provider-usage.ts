@@ -13,6 +13,18 @@ export const accountUsageSchema = z.object({
 });
 export type AccountUsage = z.infer<typeof accountUsageSchema>;
 export type UsageWindow = z.infer<typeof usageWindowSchema>;
+export type UsageAlertWindow = "five_hour" | "weekly";
+
+export function availableUsageAlertWindows(windows: UsageWindow[], includeThirdParty: boolean): UsageAlertWindow[] {
+  const available = new Set<UsageAlertWindow>();
+  for (const window of windows) {
+    if ((window.thirdParty && !includeThirdParty) || window.remainingPercent === null || window.resetsAt === null) continue;
+    if (window.durationSeconds === 18_000) available.add("five_hour");
+    if (window.durationSeconds === 604_800) available.add("weekly");
+  }
+  const order: UsageAlertWindow[] = ["five_hour", "weekly"];
+  return order.filter(window => available.has(window));
+}
 export function aliasSuffix(alias: string) { return alias.replace(/^(openai-codex|antigravity)-/, ""); }
 export function planLabel(plan: string | null | undefined, accountType: string) {
   if (plan) {

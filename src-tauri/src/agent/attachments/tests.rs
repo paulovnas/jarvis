@@ -122,6 +122,7 @@ async fn attachment_references_survive_queue_and_journal_and_never_inline_binary
         mode: Mode::Build,
         workflow: None,
         custom_workflow_id: None,
+        custom_agent_id: None,
         approval_mode: ApprovalMode::Yolo,
     };
     session

@@ -9,6 +9,65 @@ use std::{
 pub(super) const PAGE_SIZE: usize = 20;
 const PAGE_BYTES: usize = 1024 * 1024;
 const RAIL_SIZE: usize = 48;
+const INDEX_CACHE_ENTRIES: usize = 16;
+const INDEX_CACHE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_CACHED_PREVIEW_BYTES: usize = 256 * 1024;
+const DEFERRED_DETAIL_KEY: &str = "_jarvisHistoryDetailsDeferred";
+
+fn preview_value(value: &Value) -> Option<Value> {
+    match value {
+        Value::String(text) => Some(Value::String(text.chars().take(240).collect())),
+        Value::Number(_) | Value::Bool(_) | Value::Null => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn history_preview(mut turn: Turn) -> Turn {
+    const SUMMARY_KEYS: [&str; 12] = [
+        "title",
+        "path",
+        "command",
+        "query",
+        "question",
+        "url",
+        "name",
+        "libraryId",
+        "library_id",
+        "target",
+        "port",
+        "id",
+    ];
+    for tool in turn.steps.iter_mut().flat_map(|step| &mut step.tools) {
+        if matches!(tool.status.as_str(), "pending" | "running")
+            || matches!(
+                tool.name.as_str(),
+                "ask_user" | "generate_image" | "browser_screenshot"
+            )
+        {
+            continue;
+        }
+        let mut args = serde_json::Map::new();
+        for key in SUMMARY_KEYS {
+            if let Some(value) = tool.args.get(key).and_then(preview_value) {
+                args.insert(key.into(), value);
+            }
+        }
+        args.insert(DEFERRED_DETAIL_KEY.into(), Value::Bool(true));
+        tool.args = Value::Object(args);
+        tool.output = if tool.name == "read_skill" {
+            tool.output
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .chars()
+                .take(240)
+                .collect()
+        } else {
+            String::new()
+        };
+    }
+    turn
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +112,8 @@ struct Entry {
     offset: u64,
     length: usize,
     excerpt: Excerpt,
+    preview: Option<Turn>,
+    preview_size: usize,
     status: TurnStatus,
     resumable: bool,
     tokens: Vec<u64>,
@@ -70,6 +131,47 @@ struct Index {
     context: Option<compaction::Checkpoint>,
     compactions: Vec<compaction::CompactionEvent>,
     files: BTreeMap<String, (u64, usize, diffs::FileSummary)>,
+    tail: Option<StoredTurn>,
+}
+
+fn indexed_entry(
+    turn: &StoredTurn,
+    index: usize,
+    offset: u64,
+    length: usize,
+) -> Result<Entry, AgentError> {
+    let edited_paths = turn
+        .turn
+        .steps
+        .iter()
+        .flat_map(|step| &step.tools)
+        .filter(|tool| {
+            tool.status == "completed"
+                && matches!(tool.name.as_str(), "write" | "edit" | "apply_patch")
+        })
+        .filter_map(|tool| tool.args["path"].as_str().map(str::to_owned))
+        .collect();
+    let preview = history_preview(turn.turn.clone());
+    let serialized_preview = serde_json::to_vec(&preview)
+        .map_err(|_| AgentError::storage())?
+        .len();
+    let (preview, preview_size) = if serialized_preview <= MAX_CACHED_PREVIEW_BYTES {
+        (Some(preview), serialized_preview)
+    } else {
+        (None, 0)
+    };
+    Ok(Entry {
+        offset,
+        length,
+        excerpt: excerpt(&turn.turn, index),
+        preview,
+        preview_size,
+        status: turn.turn.status.clone(),
+        resumable: resumable_direct_turn(turn),
+        tokens: turn.wire.iter().map(compaction::estimate).collect(),
+        limit: turn.turn.context_window,
+        edited_paths,
+    })
 }
 
 impl Index {
@@ -101,28 +203,23 @@ impl Index {
                     } else if !self.ids.insert(turn.turn.id.clone()) {
                         return Err(AgentError::storage());
                     }
-                    let edited_paths = turn
-                        .turn
-                        .steps
-                        .iter()
-                        .flat_map(|step| &step.tools)
-                        .filter(|tool| {
-                            tool.status == "completed"
-                                && matches!(tool.name.as_str(), "write" | "edit")
-                        })
-                        .filter_map(|tool| tool.args["path"].as_str().map(str::to_owned))
-                        .collect();
-                    let entry = Entry {
-                        offset,
-                        length,
-                        excerpt: excerpt(&turn.turn, self.entries.len()),
-                        status: turn.turn.status.clone(),
-                        resumable: resumable_direct_turn(&turn),
-                        tokens: turn.wire.iter().map(compaction::estimate).collect(),
-                        limit: turn.turn.context_window,
-                        edited_paths,
-                    };
+                    let entry = indexed_entry(&turn, self.entries.len(), offset, length)?;
+                    self.tail = (turn.turn.status == TurnStatus::Running).then_some(turn);
                     self.entries.push(entry);
+                }
+                "turn_delta" => {
+                    let delta: journal::TurnDelta =
+                        serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+                    let turn = self.tail.as_mut().ok_or_else(AgentError::storage)?;
+                    journal::apply_delta(turn, delta)?;
+                    let entry = self.entries.last().ok_or_else(AgentError::storage)?;
+                    let replacement = indexed_entry(
+                        turn,
+                        self.entries.len().saturating_sub(1),
+                        entry.offset,
+                        entry.length,
+                    )?;
+                    *self.entries.last_mut().ok_or_else(AgentError::storage)? = replacement;
                 }
                 "queue_checkpoint" => {
                     self.queue =
@@ -213,6 +310,22 @@ impl Index {
         after: Option<usize>,
         around: Option<usize>,
     ) -> Result<Page, AgentError> {
+        self.page_internal(path, id, before, after, around, true)
+    }
+
+    fn full_page(&self, path: &Path, id: &str) -> Result<Page, AgentError> {
+        self.page_internal(path, id, None, None, None, false)
+    }
+
+    fn page_internal(
+        &self,
+        path: &Path,
+        id: &str,
+        before: Option<usize>,
+        after: Option<usize>,
+        around: Option<usize>,
+        defer_details: bool,
+    ) -> Result<Page, AgentError> {
         let total = self.entries.len();
         if before.is_some() as u8 + after.is_some() as u8 + around.is_some() as u8 > 1 {
             return Err(AgentError::internal());
@@ -249,11 +362,39 @@ impl Index {
         }
         // An oversized predecessor must not prevent a requested jump from arriving.
         if let Some(target) = around.filter(|target| *target < total && *target >= end) {
-            return self.page(path, id, None, Some(target), None);
+            return self.page_internal(path, id, None, Some(target), None, defer_details);
         }
         let turns = self.entries[start..end]
             .iter()
-            .map(|entry| {
+            .enumerate()
+            .map(|(relative, entry)| {
+                if start + relative + 1 == self.entries.len() {
+                    if let Some(tail) = self
+                        .tail
+                        .as_ref()
+                        .filter(|turn| turn.turn.id == entry.excerpt.id)
+                    {
+                        let mut stored = tail.clone();
+                        if stored.turn.status == TurnStatus::Running {
+                            journal::interrupt_tools(&mut stored);
+                            stored.turn.status = TurnStatus::Interrupted;
+                            stored.turn.error = Some(AgentError::new(
+                                "interrupted",
+                                "Execução interrompida. Revise os arquivos antes de continuar.",
+                            ));
+                        }
+                        return Ok(if defer_details {
+                            history_preview(stored.turn)
+                        } else {
+                            stored.turn
+                        });
+                    }
+                }
+                if defer_details && entry.status != TurnStatus::Running {
+                    if let Some(preview) = &entry.preview {
+                        return Ok(preview.clone());
+                    }
+                }
                 let mut stored: StoredTurn = serde_json::from_value(
                     journal::record_at(path, entry.offset, entry.length)?.data,
                 )
@@ -266,7 +407,11 @@ impl Index {
                         "Execução interrompida. Revise os arquivos antes de continuar.",
                     ));
                 }
-                Ok(stored.turn)
+                Ok(if defer_details {
+                    history_preview(stored.turn)
+                } else {
+                    stored.turn
+                })
             })
             .collect::<Result<Vec<_>, AgentError>>()?;
         let ids: HashSet<_> = turns.iter().map(|turn| turn.id.as_str()).collect();
@@ -289,7 +434,8 @@ impl Index {
         self.entries
             .iter()
             .map(|entry| {
-                256 + entry.excerpt.user.len()
+                entry.preview_size
+                    + entry.excerpt.user.len()
                     + entry.excerpt.assistant.len()
                     + entry.tokens.len() * 8
                     + entry
@@ -301,6 +447,45 @@ impl Index {
             .sum::<usize>()
             + self.files.len() * 512
             + self.compactions.len() * 256
+    }
+
+    fn tool_call(&self, path: &Path, turn_id: &str, tool_id: &str) -> Result<ToolCall, AgentError> {
+        if let Some(tool) = self.tail.as_ref().and_then(|turn| {
+            (turn.turn.id == turn_id).then_some(turn).and_then(|turn| {
+                turn.turn
+                    .steps
+                    .iter()
+                    .flat_map(|step| &step.tools)
+                    .find(|tool| tool.id == tool_id)
+            })
+        }) {
+            return Ok(tool.clone());
+        }
+        let entry = self
+            .entries
+            .iter()
+            .find(|entry| entry.excerpt.id == turn_id)
+            .ok_or_else(|| {
+                AgentError::new(
+                    "history_detail_not_found",
+                    "A interação não está mais disponível no histórico.",
+                )
+            })?;
+        let stored: StoredTurn =
+            serde_json::from_value(journal::record_at(path, entry.offset, entry.length)?.data)
+                .map_err(|_| AgentError::storage())?;
+        stored
+            .turn
+            .steps
+            .into_iter()
+            .flat_map(|step| step.tools)
+            .find(|tool| tool.id == tool_id)
+            .ok_or_else(|| {
+                AgentError::new(
+                    "history_detail_not_found",
+                    "Os detalhes desta ação não estão mais disponíveis.",
+                )
+            })
     }
 }
 
@@ -334,7 +519,7 @@ impl HistoryState {
         id: &str,
     ) -> Result<ChatSnapshot, AgentError> {
         self.with(path, |index| {
-            let page = index.page(path, id, None, None, None)?;
+            let page = index.full_page(path, id)?;
             Ok(ChatSnapshot {
                 conversation_id: id.into(),
                 compacting: false,
@@ -345,6 +530,7 @@ impl HistoryState {
                 active_turn_id: None,
                 pending_approval: None,
                 pending_question: None,
+                pending_authoring: None,
                 queued_messages: vec![],
                 context: index.context(),
                 compactions: page.compactions,
@@ -377,8 +563,8 @@ impl HistoryState {
         if index.weight() <= 16 * 1024 * 1024 {
             cache.push_back((path.into(), index));
         }
-        while cache.len() > 4
-            || cache.iter().map(|(_, value)| value.weight()).sum::<usize>() > 16 * 1024 * 1024
+        while cache.len() > INDEX_CACHE_ENTRIES
+            || cache.iter().map(|(_, value)| value.weight()).sum::<usize>() > INDEX_CACHE_BYTES
         {
             cache.pop_front();
         }
@@ -474,6 +660,41 @@ impl AgentState {
         Ok(page)
     }
 
+    fn chat_tool_call(
+        &self,
+        state: &AppState,
+        home: &Path,
+        id: &str,
+        turn_id: &str,
+        tool_id: &str,
+    ) -> Result<ToolCall, AgentError> {
+        {
+            let sessions = self.sessions.lock().map_err(|_| AgentError::internal())?;
+            if let Some(tool) = sessions.get(id).and_then(|session| {
+                session.data.lock().ok().and_then(|data| {
+                    data.turns
+                        .iter()
+                        .rev()
+                        .find(|stored| stored.turn.id == turn_id)
+                        .and_then(|stored| {
+                            stored
+                                .turn
+                                .steps
+                                .iter()
+                                .flat_map(|step| &step.tools)
+                                .find(|tool| tool.id == tool_id)
+                        })
+                        .cloned()
+                })
+            }) {
+                return Ok(tool);
+            }
+        }
+        let (path, _) = library::agent_location(state, home, id)?;
+        self.histories
+            .with(&path, |index| index.tool_call(&path, turn_id, tool_id))
+    }
+
     pub(super) fn read_chat(
         &self,
         state: &AppState,
@@ -499,7 +720,7 @@ impl AgentState {
             }
             snapshot.turns = data.turns[start..]
                 .iter()
-                .map(|turn| turn.turn.clone())
+                .map(|turn| history_preview(turn.turn.clone()))
                 .collect();
             snapshot.history.start = start;
             snapshot.compactions = data
@@ -536,6 +757,7 @@ impl AgentState {
                 active_turn_id: None,
                 pending_approval: None,
                 pending_question: None,
+                pending_authoring: None,
                 queued_messages: index.queue.clone(),
                 context: index.context(),
                 compactions: page.compactions,
@@ -569,6 +791,25 @@ pub async fn get_chat_history(
     .map_err(|_| AgentError::internal())?
 }
 
+#[tauri::command]
+pub async fn get_chat_tool_call(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+    turn_id: String,
+    tool_id: String,
+) -> Result<ToolCall, AgentError> {
+    let state = persistence.inner().clone();
+    let agent = agent.inner().clone();
+    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        agent.chat_tool_call(&state, &home, &conversation_id, &turn_id, &tool_id)
+    })
+    .await
+    .map_err(|_| AgentError::internal())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,10 +830,12 @@ mod tests {
                     mode: Mode::Build,
                     workflow: None,
                     custom_workflow_id: None,
+                    custom_agent_id: None,
                     approval_mode: ApprovalMode::Manual,
                 },
                 context_window: Some(128000),
                 status: TurnStatus::Completed,
+                tasks: vec![],
                 steps: vec![Step {
                     text: format!("Resposta {index}"),
                     ..Step::default()
@@ -750,12 +993,46 @@ mod tests {
         assert_eq!(page.turns[0].id, "t6");
         assert_eq!(page.turns.len(), 1);
         let cache = HistoryState::default();
-        for i in 0..7 {
+        for i in 0..(INDEX_CACHE_ENTRIES + 3) {
             let path = fixture.root.join(format!("cache-{i}.jsonl"));
             fs::write(&path, "{}\n").unwrap();
             cache.with(&path, |_| Ok(())).unwrap();
         }
-        assert_eq!(cache.0.lock().unwrap().len(), 4);
+        assert_eq!(cache.0.lock().unwrap().len(), INDEX_CACHE_ENTRIES);
+    }
+
+    #[test]
+    fn history_defers_large_tool_details_until_the_action_is_requested() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("deferred-details.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        let mut turn = stored(0);
+        let content = "x".repeat(512 * 1024);
+        let output = "y".repeat(512 * 1024);
+        turn.turn.steps[0].tools.push(ToolCall {
+            id: "large-read".into(),
+            name: "read".into(),
+            args: json!({"path":"src/large.ts","content":content}),
+            status: "completed".into(),
+            output,
+            duration_ms: 8,
+        });
+        journal::append(&path, &turn).unwrap();
+        let mut index = Index::default();
+        index.refresh(&path).unwrap();
+        assert!(index.entries[0].preview.is_some());
+
+        let page = index.page(&path, "chat", None, None, None).unwrap();
+        let preview = &page.turns[0].steps[0].tools[0];
+        assert_eq!(preview.args[DEFERRED_DETAIL_KEY], true);
+        assert_eq!(preview.args["path"], "src/large.ts");
+        assert!(preview.args.get("content").is_none());
+        assert!(preview.output.is_empty());
+        assert!(serde_json::to_vec(&page).unwrap().len() < 16 * 1024);
+
+        let detail = index.tool_call(&path, "t0", "large-read").unwrap();
+        assert_eq!(detail.args["content"].as_str().unwrap().len(), 512 * 1024);
+        assert_eq!(detail.output.len(), 512 * 1024);
     }
 
     #[test]

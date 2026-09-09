@@ -90,6 +90,8 @@ struct Job {
     status: Status,
     created_at: u64,
     updated_at: u64,
+    #[serde(default)]
+    duration_ms: u64,
     attempts: u8,
     handoff: Option<Handoff>,
     error: Option<String>,
@@ -116,6 +118,8 @@ struct Message {
 struct Manifest {
     #[serde(default)]
     custom_definition: Option<catalog::RunDefinition>,
+    #[serde(default)]
+    custom_agent: Option<catalog::AgentDefinition>,
     #[serde(default)]
     validation: Option<validation::Batch>,
     #[serde(default)]
@@ -302,6 +306,32 @@ impl Execution {
     pub(super) fn root(&self) -> &Arc<Session> {
         &self.hub.root
     }
+    fn custom_agent(&self) -> Result<catalog::AgentDefinition, AgentError> {
+        if self.id == "main" {
+            return self
+                .hub
+                .manifest
+                .lock()
+                .map_err(|_| AgentError::internal())?
+                .custom_agent
+                .clone()
+                .ok_or_else(AgentError::internal);
+        }
+        self.hub
+            .job(&self.id)?
+            .custom_agent
+            .ok_or_else(AgentError::internal)
+    }
+    fn direct(&self) -> bool {
+        self.flow.direct()
+            || (self.flow == Flow::Custom
+                && self.id == "main"
+                && self
+                    .hub
+                    .manifest
+                    .lock()
+                    .is_ok_and(|state| state.custom_agent.is_some()))
+    }
     fn discovery(&self) -> bool {
         self.id != "main"
             && self
@@ -313,11 +343,16 @@ impl Execution {
         self.role == Role::Designer
     }
     pub(super) fn design_resources(&self) -> bool {
-        self.designer() || (self.flow == Flow::Custom && (self.allowed("design_search") || self.allowed("design_read")))
+        self.designer()
+            || (self.flow == Flow::Custom
+                && (self.allowed("design_search") || self.allowed("design_read")))
     }
     pub(super) fn role_mode(&self) -> Mode {
         if self.flow == Flow::Custom {
-            return if self.hub.job(&self.id).is_ok_and(|job| job.writes()) {
+            return if self
+                .custom_agent()
+                .is_ok_and(|agent| agent.capability != catalog::Capability::ReadOnly)
+            {
                 Mode::Build
             } else {
                 Mode::Plan
@@ -331,13 +366,12 @@ impl Execution {
     }
     pub(super) fn instructions(&self) -> Result<String, AgentError> {
         let mut text = if self.flow == Flow::Custom {
-            custom::instructions(
-                &self
-                    .hub
-                    .job(&self.id)?
-                    .custom_agent
-                    .ok_or_else(AgentError::internal)?,
-            )
+            let agent = self.custom_agent()?;
+            if self.direct() {
+                custom::direct_instructions(&agent)
+            } else {
+                custom::instructions(&agent)
+            }
         } else {
             contracts::prompt(self.flow, self.role, &self.id)
         };
@@ -389,34 +423,32 @@ impl Execution {
         Ok(text)
     }
     pub(super) fn filter(&self, definitions: &mut Vec<Value>) {
+        let direct = self.direct();
         definitions.extend(processes::definitions(self.role_mode()));
         definitions.extend(terminals::definitions(self.role_mode()));
         definitions.extend(super::browser::definitions(self.role_mode()));
-        if self.flow == Flow::Custom {
+        if self.flow == Flow::Custom && !direct {
             definitions.extend(dispatch::definitions(Role::Builder));
         }
-        if self.id == "main" && self.role == Role::Planner && !self.flow.direct() {
+        if self.id == "main" && self.role == Role::Planner && !direct {
             definitions.push(validation::definition());
         }
-        if !self.flow.direct() || self.designer() {
+        if !direct || self.designer() {
             definitions.extend(dispatch::definitions(self.role));
         }
         definitions.retain(|d| d["name"].as_str().is_some_and(|name| self.allowed(name)));
     }
     fn allowed(&self, name: &str) -> bool {
+        if self.direct() && name.starts_with("hub_") {
+            return false;
+        }
         if self.flow == Flow::Custom {
             return self
-                .hub
-                .job(&self.id)
-                .ok()
-                .and_then(|j| j.custom_agent)
-                .is_some_and(|agent| custom::allowed(&agent, name));
+                .custom_agent()
+                .is_ok_and(|agent| custom::allowed(&agent, name));
         }
         if name == "validation_publish" {
-            return self.id == "main" && self.role == Role::Planner && !self.flow.direct();
-        }
-        if self.flow.direct() && name.starts_with("hub_") {
-            return false;
+            return self.id == "main" && self.role == Role::Planner && !self.direct();
         }
         if name == "ask_user" && self.designer() && self.id != "main" {
             return false;
@@ -424,7 +456,13 @@ impl Execution {
         if self.discovery()
             && (matches!(
                 name,
-                "write" | "edit" | "bash" | "process_start" | "terminal_start" | "workflow_check"
+                "write"
+                    | "edit"
+                    | "apply_patch"
+                    | "bash"
+                    | "process_start"
+                    | "terminal_start"
+                    | "workflow_check"
             ) || crate::core::beads::needs_approval(name)
                 || super::browser::mutating(name)
                 || crate::core::context::needs_approval(name))
@@ -438,9 +476,22 @@ impl Execution {
         if !self.allowed(&tool.name) {
             return Some("Ferramenta indisponível para o papel deste agente.");
         }
-        if matches!(tool.name.as_str(), "write" | "edit")
-            && !dispatch::path_allowed(&self.hub.root.root, &tool.args, &self.scope, self.role)
-        {
+        let paths_allowed = if tool.name == "apply_patch" {
+            super::patch::target_paths(&tool.args).is_ok_and(|paths| {
+                !paths.is_empty()
+                    && paths.iter().all(|path| {
+                        dispatch::path_allowed(
+                            &self.hub.root.root,
+                            &json!({"path":path}),
+                            &self.scope,
+                            self.role,
+                        )
+                    })
+            })
+        } else {
+            dispatch::path_allowed(&self.hub.root.root, &tool.args, &self.scope, self.role)
+        };
+        if matches!(tool.name.as_str(), "write" | "edit" | "apply_patch") && !paths_allowed {
             return Some("O arquivo está fora do escopo atribuído ao agente.");
         }
         if matches!(self.role, Role::Investigator | Role::Reviewer)
@@ -639,7 +690,21 @@ pub(super) fn compaction_context(
 ) -> Result<(String, Vec<Value>), AgentError> {
     let flow = options.workflow.unwrap_or_default();
     if flow == Flow::Custom {
-        return Ok(("The native runtime routes this user-defined workflow using its saved execution definition.".into(), vec![]));
+        if let Some(id) = options.custom_agent_id.as_deref() {
+            let agent = catalog::read(home)?.resolve_agent(id)?;
+            return Ok((
+                format!(
+                    "{}{}",
+                    custom::direct_instructions(&agent),
+                    super::tasks::INSTRUCTIONS
+                ),
+                vec![super::tasks::definition()],
+            ));
+        }
+        if options.custom_workflow_id.is_some() {
+            return Ok(("The native runtime routes this user-defined workflow using its saved execution definition.".into(), vec![]));
+        }
+        return Err(invalid("Seleção de agente ou fluxo customizado ausente."));
     }
     let role = flow.root();
     let mut text = contracts::prompt(flow, role, "main");
@@ -658,6 +723,7 @@ pub(super) fn compaction_context(
     }
     let mut definitions = dispatch::definitions(role);
     if flow.direct() {
+        definitions.push(super::tasks::definition());
         definitions.retain(|d| {
             !d["name"]
                 .as_str()
@@ -677,9 +743,20 @@ pub(super) fn validate_options(
     options: &TurnOptions,
 ) -> Result<(), AgentError> {
     if options.workflow == Some(Flow::Custom) {
-        custom::resolve(state, oauth, home, options)?;
+        match (
+            options.custom_workflow_id.as_ref(),
+            options.custom_agent_id.as_ref(),
+        ) {
+            (Some(_), None) => {
+                custom::resolve(state, oauth, home, options)?;
+            }
+            (None, Some(_)) => {
+                custom::resolve_agent(state, oauth, home, options)?;
+            }
+            _ => return Err(invalid("Escolha um agente ou fluxo customizado válido.")),
+        }
     } else {
-        if options.custom_workflow_id.is_some() {
+        if options.custom_workflow_id.is_some() || options.custom_agent_id.is_some() {
             return Err(invalid("Seleção de fluxo inconsistente."));
         }
         if let Some(flow) = options.workflow {
@@ -720,19 +797,36 @@ pub(super) async fn run(
     env.0.with_connection(&env.3, |db| {
         super::provider_links::resolve_chat(db, &session.id, &mut options)
     })?;
-    session.update(true, |data| {
-        data.turns.last_mut().unwrap().turn.options = options.clone();
-    })?;
     // Legacy Plan history keeps its read-only meaning until the user chooses a flow.
     if options.workflow.is_none() && options.mode == Mode::Plan {
+        session.update(true, |data| {
+            data.turns.last_mut().unwrap().turn.options = options.clone();
+        })?;
         return super::run_turn(session, &env.0, &env.1, &env.2, &env.3, signal, None).await;
     }
     let flow = options.workflow.unwrap_or_default();
-    let custom_definition = if flow == Flow::Custom {
-        Some(custom::resolve(&env.0, &env.1, &env.3, &options)?)
+    let (custom_definition, custom_agent) = if flow == Flow::Custom {
+        match (
+            options.custom_workflow_id.as_ref(),
+            options.custom_agent_id.as_ref(),
+        ) {
+            (Some(_), None) => (
+                Some(custom::resolve(&env.0, &env.1, &env.3, &options)?),
+                None,
+            ),
+            (None, Some(_)) => {
+                let agent = custom::resolve_agent(&env.0, &env.1, &env.3, &options)?;
+                custom::apply_model(&mut options, &agent);
+                (None, Some(agent))
+            }
+            _ => return Err(invalid("Escolha um agente ou fluxo customizado válido.")),
+        }
     } else {
-        None
+        (None, None)
     };
+    session.update(true, |data| {
+        data.turns.last_mut().unwrap().turn.options = options.clone();
+    })?;
     let profiles = if flow == Flow::Custom {
         BTreeMap::new()
     } else {
@@ -765,6 +859,13 @@ pub(super) async fn run(
         profiles,
         signal.clone(),
     )?;
+    if let Some(agent) = &custom_agent {
+        hub.mutate(|state| {
+            state.custom_agent = Some(agent.clone());
+            state.custom_definition = None;
+            Ok(())
+        })?;
+    }
     app.state::<AgentState>()
         .workflows
         .0

@@ -7,7 +7,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { AlertDialog, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Context7Configuration, InstallProgress } from "@/components/settings/CoreSettings";
+import { CoreInstallProgress } from "@/components/core/CoreInstallProgress";
+import { Context7Configuration } from "@/components/settings/CoreSettings";
 import { CORE_DETAILS } from "@/core/core-presentation";
 import type { CoreId } from "@/core/core-components";
 import type { CoreController } from "@/hooks/use-core";
@@ -33,7 +34,7 @@ export default function CoreDiagnostics({ core, onClose }: { core: CoreControlle
               const ready = item.installed && item.configured && !item.healthError;
               return <Card key={item.id} className="instrument-panel gap-0 py-0"><CardContent className="p-4">
                 <div className="flex items-center gap-3"><div className={`flex size-8 items-center justify-center rounded-md border ${tint} ${color}`}><Icon className="size-4" /></div><div className="min-w-0 flex-1"><h2 className="text-sm font-medium">{item.name}</h2><p className="font-mono text-[10px] text-muted-foreground">{item.installedVersion ? `v${item.installedVersion}` : "Não instalado"}</p></div>{ready ? <ShieldCheck aria-label="Pronto" className="size-4 text-onedark-green" /> : <CircleAlert aria-label="Precisa de atenção" className="size-4 text-onedark-yellow" />}</div>
-                {item.stage ? <InstallProgress item={item} /> : <div className="mt-4 space-y-2">
+                {item.stage ? <CoreInstallProgress item={item} /> : <div className="mt-4 space-y-2">
                   {item.diagnostics.length ? item.diagnostics.map(check => <div key={check.label} className="flex items-start gap-2 text-[11px]">{check.passed ? <Check className="mt-0.5 size-3 shrink-0 text-onedark-green" /> : <CircleAlert className="mt-0.5 size-3 shrink-0 text-onedark-red" />}<div><p className="font-medium">{check.label}</p>{!check.passed && <p className="mt-1 text-muted-foreground">{check.message}</p>}</div></div>) : <p className="text-xs text-muted-foreground">{item.healthError ?? item.error ?? (ready ? "Aguardando análise" : item.installed ? "Configuração pendente" : "Instalação pendente")}</p>}
                   {item.error && item.diagnostics.length > 0 && <p role="alert" className="text-xs text-destructive">{item.error}</p>}
                 </div>}

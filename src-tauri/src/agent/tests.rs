@@ -28,8 +28,20 @@ fn options(approval_mode: ApprovalMode) -> TurnOptions {
         mode: Mode::Build,
         workflow: None,
         custom_workflow_id: None,
+        custom_agent_id: None,
         approval_mode,
     }
+}
+
+#[test]
+fn custom_agent_turns_are_direct_while_custom_graphs_remain_coordinated() {
+    let mut selected = options(ApprovalMode::Yolo);
+    selected.workflow = Some(workflow::Flow::Custom);
+    selected.custom_agent_id = Some("a".repeat(32));
+    assert!(selected.direct());
+    selected.custom_agent_id = None;
+    selected.custom_workflow_id = Some("b".repeat(32));
+    assert!(!selected.direct());
 }
 pub(super) fn session(fixture: &Fixture) -> Arc<Session> {
     let journal = fixture.root.join("session.jsonl");
@@ -94,6 +106,11 @@ fn direct_recovery_resumes_only_durable_tool_results_and_preserves_new_messages(
             options: direct,
             context_window: Some(128_000),
             status: TurnStatus::Running,
+            tasks: vec![tasks::Task {
+                id: "design".into(),
+                title: "Ajustar o layout".into(),
+                status: tasks::Status::InProgress,
+            }],
             steps: vec![Step {
                 tools: vec![ToolCall {
                     id: "read-1".into(),
@@ -135,6 +152,7 @@ fn direct_recovery_resumes_only_durable_tool_results_and_preserves_new_messages(
     let snapshot = session.snapshot().unwrap();
     assert_eq!(snapshot.active_turn_id.as_deref(), Some("recovered-turn"));
     assert_eq!(snapshot.turns[0].status, TurnStatus::Running);
+    assert_eq!(snapshot.turns[0].tasks[0].id, "design");
     assert!(session
         .submit("Continue depois".into(), options(ApprovalMode::Yolo))
         .unwrap()
@@ -145,6 +163,56 @@ fn direct_recovery_resumes_only_durable_tool_results_and_preserves_new_messages(
     assert!(persisted[0].wire.iter().any(|item| item["content"]
         .as_str()
         .is_some_and(|text| text.contains("runtime restarted"))));
+}
+
+#[test]
+fn direct_tasks_are_durable_and_reset_for_each_new_turn() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let mut direct = options(ApprovalMode::Yolo);
+    direct.workflow = Some(workflow::Flow::Standard);
+    session
+        .reserve("Implementar".into(), direct.clone())
+        .unwrap();
+
+    let output = tasks::execute(
+        &session,
+        &json!({"tasks":[
+            {"id":"inspect","title":"Analisar o escopo","status":"completed"},
+            {"id":"implement","title":"Implementar a mudança","status":"in_progress"}
+        ]}),
+    )
+    .unwrap();
+    assert!(output.contains("\"updated\":2"));
+    assert_eq!(session.snapshot().unwrap().turns[0].tasks.len(), 2);
+    let (stored, _) = journal::read_only(&session.journal).unwrap();
+    assert_eq!(
+        stored[0].turn.tasks,
+        session.snapshot().unwrap().turns[0].tasks
+    );
+
+    finish(&session, Ok(()));
+    session
+        .reserve("Próxima solicitação".into(), direct)
+        .unwrap();
+    assert!(session.snapshot().unwrap().turns[0].tasks.is_empty());
+}
+
+#[test]
+fn failed_task_checkpoint_does_not_change_the_in_memory_list() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let mut direct = options(ApprovalMode::Yolo);
+    direct.workflow = Some(workflow::Flow::Designer);
+    session.reserve("Criar layout".into(), direct).unwrap();
+    fs::remove_file(&session.journal).unwrap();
+
+    let result = tasks::execute(
+        &session,
+        &json!({"tasks":[{"id":"design","title":"Criar o layout","status":"in_progress"}]}),
+    );
+    assert_eq!(result.unwrap_err().code, "session_storage");
+    assert!(session.snapshot().unwrap().turns[0].tasks.is_empty());
 }
 
 #[test]
@@ -397,6 +465,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                 cancel,
                 approval: None,
                 question: None,
+                authoring: None,
             }),
             recovery: None,
             storage_failed: false,
@@ -420,9 +489,11 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                         mode: Mode::Build,
                         workflow: None,
                         custom_workflow_id: None,
+                        custom_agent_id: None,
                         approval_mode: ApprovalMode::Manual,
                     },
                     status: TurnStatus::Running,
+                    tasks: vec![],
                     steps: vec![],
                     error: None,
                 },

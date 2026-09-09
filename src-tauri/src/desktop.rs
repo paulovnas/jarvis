@@ -102,7 +102,12 @@ impl LayoutPreferences {
         {
             return Err("Too many layout entries".into());
         }
-        if self.item_order.iter().any(|(key, ids)| key.len() > 256 || ids.len() > 10_000 || ids.iter().any(|id| id.is_empty() || id.len() > 8192) || ids.iter().collect::<std::collections::BTreeSet<_>>().len() != ids.len()) {
+        if self.item_order.iter().any(|(key, ids)| {
+            key.len() > 256
+                || ids.len() > 10_000
+                || ids.iter().any(|id| id.is_empty() || id.len() > 8192)
+                || ids.iter().collect::<std::collections::BTreeSet<_>>().len() != ids.len()
+        }) {
             return Err("Invalid item order".into());
         }
         if self
@@ -138,9 +143,12 @@ mod ordering_tests {
             "settingsTab": "workspaces", "itemOrder": {"projects:w": ["b", "a"], "chats:p": ["c", "d"], "tabs:c": ["browser:web", "file:README.md"]}
         })).unwrap();
         assert!(layout.validate().is_ok());
-        let restored: LayoutPreferences = serde_json::from_slice(&serde_json::to_vec(&layout).unwrap()).unwrap();
+        let restored: LayoutPreferences =
+            serde_json::from_slice(&serde_json::to_vec(&layout).unwrap()).unwrap();
         assert_eq!(restored, layout);
-        layout.item_order.insert("projects:w".into(), vec!["a".into(), "a".into()]);
+        layout
+            .item_order
+            .insert("projects:w".into(), vec!["a".into(), "a".into()]);
         assert!(layout.validate().is_err());
         let legacy: LayoutPreferences = serde_json::from_str("{}").unwrap();
         assert!(legacy.item_order.is_empty());

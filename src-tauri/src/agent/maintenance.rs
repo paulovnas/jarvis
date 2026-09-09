@@ -83,25 +83,31 @@ pub async fn compact_agent_context(
         data.turns.last_mut().unwrap().turn.context_window = model.context_window;
     })?;
     let (_cancel, signal) = watch::channel(false);
-    let beads = crate::core::beads::Beads::new(
-        &skill_home,
-        session.project_id()?,
-        &session.id,
-        options.mode == Mode::Plan,
-    )?;
-    let beads_snapshot = beads
+    let direct_tasks = options.direct();
+    let beads_snapshot = if direct_tasks {
+        String::new()
+    } else {
+        crate::core::beads::Beads::new(
+            &skill_home,
+            session.project_id()?,
+            &session.id,
+            options.mode == Mode::Plan,
+        )?
         .resume(signal.clone(), || {
             library::agent_location(&persistence, &skill_home, &session.id)
                 .map(|_| ())
                 .map_err(|_| crate::core::error("Projeto ou conversa indisponível."))
         })
-        .await?;
+        .await?
+    };
     let skills = crate::skills::active(&skill_home, &session.root)
         .await
         .map_err(|cause| AgentError::new("skill_error", &cause.message))?;
     let mut instructions = tools::instructions(&session.root, options.mode);
     instructions.push_str(crate::core::context::INSTRUCTIONS);
-    instructions.push_str(crate::core::beads::INSTRUCTIONS);
+    if !direct_tasks {
+        instructions.push_str(crate::core::beads::INSTRUCTIONS);
+    }
     instructions.push_str(&crate::skills::prompt(&skills));
     hooks.before_agent(&mut instructions);
     let mut definitions = tools::definitions(options.mode);
@@ -110,16 +116,26 @@ pub async fn compact_agent_context(
             workflow::compaction_context(&skill_home, &session.id, &options)?;
         instructions.push_str(&workflow_instructions);
         definitions.extend(workflow_tools);
+    } else if direct_tasks {
+        instructions.push_str(super::tasks::INSTRUCTIONS);
+        definitions.push(super::tasks::definition());
     }
-    definitions.extend(crate::core::beads::definitions(options.mode == Mode::Plan));
+    if !direct_tasks {
+        definitions.extend(crate::core::beads::definitions(options.mode == Mode::Plan));
+    }
     if !skills.is_empty() {
         definitions.extend([
             crate::skills::definition(),
             crate::skills::search_definition(),
         ]);
     }
+    let runtime_state = if direct_tasks {
+        session.task_context()?
+    } else {
+        beads_snapshot
+    };
     let overhead = compaction::estimate(
-        &json!({"instructions": instructions, "tools": definitions, "beads_snapshot": beads_snapshot}),
+        &json!({"instructions": instructions, "tools": definitions, "runtime_state": runtime_state}),
     );
     let result = tokio::time::timeout(
         Duration::from_secs(600),
@@ -161,6 +177,7 @@ mod tests {
             mode: Mode::Plan,
             workflow: None,
             custom_workflow_id: None,
+            custom_agent_id: None,
             approval_mode: ApprovalMode::Manual,
         };
         assert!(begin(session.clone()).is_err());

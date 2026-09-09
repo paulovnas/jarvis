@@ -15,6 +15,8 @@ import { UserMessageBubble } from "@/components/chat/UserMessageBubble";
 import { CompactionMarker } from "@/components/chat/CompactionMarker";
 import { workflowAppearance } from "@/components/agents/workflow-appearance";
 import { agentAppearance, flowAppearance } from "@/core/workflow-appearance";
+import { reasoningPreview } from "@/components/chat/reasoning-preview";
+import { executionDuration, formatExecutionDuration, useRunningClock } from "@/hooks/use-running-clock";
 
 function presentation(agent: WorkflowAgent) {
   return agent.role === "custom"
@@ -32,6 +34,7 @@ function StatusBadge({ agent }: { agent: WorkflowAgent }) {
   const color = agent.status === "completed" ? "var(--color-onedark-green)" : ["failed", "blocked"].includes(agent.status) ? "var(--destructive)" : activeAgent(agent) ? presentation(agent).color : "var(--muted-foreground)";
   return <Badge variant="outline" className="text-[9px]" style={{ color, borderColor: `color-mix(in srgb, ${color} 25%, transparent)`, backgroundColor: `color-mix(in srgb, ${color} 6%, transparent)` }}>{STATUS_LABELS[agent.status]}</Badge>;
 }
+const timingActive = (agent: WorkflowAgent) => agent.status === "running" || agent.status === "waiting";
 function AgentHistory({ conversationId, agent }: { conversationId: string; agent: WorkflowAgent }) {
   const transcript = useWorkflowTranscript(conversationId, agent.id);
   const root = useRef<HTMLDivElement>(null);
@@ -56,6 +59,7 @@ function AgentHistory({ conversationId, agent }: { conversationId: string; agent
 export function WorkflowAgents({ workflow, conversationId }: { workflow?: WorkflowController; conversationId?: string }) {
   const [selected, setSelected] = useState<string | null>(null);
   const agents = workflow?.data?.agents ?? [];
+  const now = useRunningClock(agents.some(timingActive));
   const latestByRole = new Map<WorkflowAgent["role"], WorkflowAgent>();
   const currentAgents = agents.filter(agent => {
     if (agent.id === "main" || agent.role === "custom") return true;
@@ -74,10 +78,13 @@ export function WorkflowAgents({ workflow, conversationId }: { workflow?: Workfl
       : !currentAgents.length ? <p className="text-xs text-muted-foreground">Nenhum agente em execução.</p>
       : <div className="space-y-2">{ordered.map(agent => {
         const { Icon, color, label } = presentation(agent);
+        const duration = executionDuration(agent.startedAt, agent.durationMs, timingActive(agent), now);
+        const thought = agent.currentThought ? reasoningPreview(agent.currentThought) : "";
         return <Button key={agent.id} variant="ghost" data-status={agent.status} style={agent.status === "waiting" || agent.status === "queued" ? { borderColor: agent.role === "custom" ? `color-mix(in srgb, ${color} 50%, transparent)` : `${color}80` } : undefined} onClick={() => setSelected(agent.id)} aria-label={`Abrir agente ${label}: ${agent.title}`} className="agent-execution relative isolate h-auto w-full cursor-pointer flex-col items-stretch gap-2 rounded-md border border-border bg-card/60 p-3 text-left whitespace-normal shadow-[inset_0_1px_0_#ffffff0a] hover:border-primary/40">
           <span className="flex items-center gap-2"><Icon aria-hidden="true" className="size-3.5 shrink-0" style={{ color }} /><span className="flex-1 text-xs font-medium">{label}</span>{agent.status === "running" && <span aria-label="Em execução" className="size-1.5 animate-pulse rounded-full motion-reduce:animate-none" style={{ backgroundColor: color }} />}<ChevronRight className="size-3 text-muted-foreground" /></span>
           {agent.title !== label && <span className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{agent.title}</span>}
-          <span className="flex items-center gap-2"><StatusBadge agent={agent} /></span>
+          {thought && <span title={thought} className={`line-clamp-2 text-[10px] italic leading-4 text-muted-foreground ${agent.status === "running" ? "reasoning-shimmer" : ""}`}>{thought}</span>}
+          <span className="flex items-center gap-2"><StatusBadge agent={agent} /><span aria-label="Tempo de execução" className="font-mono text-[9px] tabular-nums text-muted-foreground">{formatExecutionDuration(duration)}</span></span>
           <ModelDetails agent={agent} />
         </Button>;
       })}</div>}

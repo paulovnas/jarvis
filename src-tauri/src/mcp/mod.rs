@@ -283,6 +283,113 @@ impl McpState {
         }
         Ok(active)
     }
+
+    pub(crate) fn backup_configs(
+        &self,
+        state: &AppState,
+        home: &Path,
+    ) -> Result<Vec<String>, McpError> {
+        let _guard = self.0.guard.lock().map_err(|_| storage_error())?;
+        let servers = state.with_connection(home, |connection| rows(connection))?;
+        servers
+            .iter()
+            .map(|server| self.config(server).map(|config| config.named(&server.name)))
+            .collect()
+    }
+
+    pub(crate) fn replace_from_backup(
+        &self,
+        state: &AppState,
+        home: &Path,
+        raw_configs: &[String],
+        model_targets: &[String],
+    ) -> Result<Vec<Server>, McpError> {
+        if raw_configs.len() > 32 {
+            return Err(error("O backup contém mais de 32 MCPs."));
+        }
+        let mut names = std::collections::BTreeSet::new();
+        let mut imported = Vec::with_capacity(raw_configs.len());
+        for raw in raw_configs {
+            let (name, config) = config::parse(raw)?;
+            if !names.insert(name.clone()) {
+                return Err(error("O backup contém MCPs com nomes repetidos."));
+            }
+            let mut bytes = [0_u8; 16];
+            getrandom::fill(&mut bytes).map_err(|_| storage_error())?;
+            imported.push((
+                Server {
+                    id: bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+                    name,
+                    kind: config.kind().into(),
+                    enabled: config.enabled(),
+                    configured: config.configured(),
+                    revision: 1,
+                    last_check: None,
+                },
+                config,
+            ));
+        }
+
+        let _guard = self.0.guard.lock().map_err(|_| storage_error())?;
+        let previous = state.with_connection(home, |connection| rows(connection))?;
+        let mut stored: Vec<String> = Vec::new();
+        for (server, config) in &imported {
+            if let Err(cause) = self
+                .0
+                .secrets
+                .store(&key(server), &config.named(&server.name))
+            {
+                for key in &stored {
+                    let _ = self.0.secrets.delete(key);
+                }
+                return Err(cause);
+            }
+            stored.push(key(server));
+        }
+
+        let update = state.with_connection(home, |connection| {
+            let transaction = connection.transaction()?;
+            transaction.execute("DELETE FROM mcp_servers", [])?;
+            for (server, _) in &imported {
+                transaction.execute(
+                    "INSERT INTO mcp_servers (id, name, kind, enabled, configured, revision) VALUES (?1,?2,?3,?4,?5,?6)",
+                    params![
+                        server.id,
+                        server.name,
+                        server.kind,
+                        server.enabled,
+                        server.configured,
+                        server.revision
+                    ],
+                )?;
+            }
+            for target in model_targets {
+                transaction.execute(
+                    "DELETE FROM provider_model_bindings WHERE item_key = ?1",
+                    [target],
+                )?;
+            }
+            if !model_targets.is_empty() {
+                transaction.execute(
+                    "UPDATE provider_bindings_revision SET revision = revision + 1 WHERE id = 1",
+                    [],
+                )?;
+            }
+            transaction.commit()?;
+            Ok::<_, McpError>(())
+        });
+        if let Err(cause) = update {
+            for key in &stored {
+                let _ = self.0.secrets.delete(key);
+            }
+            return Err(cause);
+        }
+        for server in previous.into_iter().filter(|server| server.revision > 0) {
+            let _ = self.0.secrets.delete(&key(&server));
+        }
+        self.list(state, home)
+    }
+
     pub fn current(&self, state: &AppState, home: &Path, server: &Server) -> bool {
         state
             .with_connection(home, |connection| find(connection, &server.id))

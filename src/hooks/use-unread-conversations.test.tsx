@@ -5,6 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useUnreadConversations } from "./use-unread-conversations";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    isFocused: async () => document.hasFocus(),
+    onFocusChanged: async () => () => {},
+  }),
+}));
 const handlers = new Map<string, EventCallback<unknown>>();
 const notice = (conversationId: string, eventKey = "done") => ({ conversationId, eventKey });
 const update = (revision: number, conversations: ReturnType<typeof notice>[]) => ({ revision, conversations });
@@ -30,6 +36,14 @@ describe("Unread conversations", () => {
     vi.mocked(invoke).mockImplementation(async command => command === "mark_conversation_read" ? update(2, [notice("b")]) : update(1, [notice("a"), notice("b")]));
     await emit("tauri://focus");
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("mark_conversation_read", { conversationId:"a", eventKey:"done" }));
+    await waitFor(() => expect([...result.current]).toEqual(["b"]));
+  });
+
+  it("clears the selected conversation when the desktop window regains focus", async () => {
+    const { result } = renderHook(() => useUnreadConversations("a"));
+    await waitFor(() => expect(result.current.has("a")).toBe(true));
+    vi.mocked(invoke).mockImplementation(async command => command === "mark_conversation_read" ? update(2, [notice("b")]) : update(1, [notice("a"), notice("b")]));
+    window.dispatchEvent(new Event("focus"));
     await waitFor(() => expect([...result.current]).toEqual(["b"]));
   });
 

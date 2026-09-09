@@ -22,6 +22,9 @@ pub struct AgentCard {
     status: Status,
     updated_at: u64,
     created_at: u64,
+    started_at: u64,
+    duration_ms: u64,
+    current_thought: Option<String>,
     options: TurnOptions,
     bead_id: Option<String>,
     handoff: Option<HandoffSummary>,
@@ -29,6 +32,7 @@ pub struct AgentCard {
     attempts: u8,
     pending_approval: Option<ToolCall>,
     pending_question: Option<questions::PendingQuestion>,
+    pending_authoring: Option<authoring::PendingProposal>,
     active_turn_id: Option<String>,
     identity: Option<AgentIdentity>,
 }
@@ -42,27 +46,74 @@ pub struct Snapshot {
     validation: Option<validation::Batch>,
 }
 
+fn live_telemetry(data: &SessionData) -> (u64, u64, Option<String>) {
+    let Some(turn) = data.turns.last() else {
+        return (0, 0, None);
+    };
+    let running = data
+        .active
+        .as_ref()
+        .is_some_and(|active| active.id == turn.turn.id);
+    let duration = if running {
+        now().saturating_sub(turn.turn.created_at)
+    } else {
+        turn.turn.duration_ms
+    };
+    let thought = running
+        .then(|| {
+            turn.turn
+                .steps
+                .iter()
+                .rev()
+                .find_map(|step| (!step.summary.trim().is_empty()).then_some(step.summary.trim()))
+                .unwrap_or_default()
+                .chars()
+                .take(2_000)
+                .collect::<String>()
+        })
+        .filter(|thought| !thought.is_empty());
+    (turn.turn.created_at, duration, thought)
+}
+
 fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError> {
     let mut agents = vec![AgentCard {
         id: "main".into(),
         parent_id: None,
         role: state.flow.root(),
-        identity: state
-            .custom_definition
-            .as_ref()
-            .filter(|_| state.flow == Flow::Custom)
-            .map(|definition| AgentIdentity {
-                name: definition.flow.name.clone(),
-                appearance: definition.flow.appearance,
-            }),
-        title: state
-            .custom_definition
-            .as_ref()
-            .filter(|_| state.flow == Flow::Custom)
-            .map_or_else(|| state.flow.root().label().into(), |d| d.flow.name.clone()),
+        identity: state.custom_agent.as_ref().map_or_else(
+            || {
+                state
+                    .custom_definition
+                    .as_ref()
+                    .filter(|_| state.flow == Flow::Custom)
+                    .map(|definition| AgentIdentity {
+                        name: definition.flow.name.clone(),
+                        appearance: definition.flow.appearance,
+                    })
+            },
+            |agent| {
+                Some(AgentIdentity {
+                    name: agent.name.clone(),
+                    appearance: agent.appearance,
+                })
+            },
+        ),
+        title: state.custom_agent.as_ref().map_or_else(
+            || {
+                state
+                    .custom_definition
+                    .as_ref()
+                    .filter(|_| state.flow == Flow::Custom)
+                    .map_or_else(|| state.flow.root().label().into(), |d| d.flow.name.clone())
+            },
+            |agent| agent.name.clone(),
+        ),
         status: state.root_status,
         created_at: state.updated_at,
         updated_at: state.updated_at,
+        started_at: state.updated_at,
+        duration_ms: 0,
+        current_thought: None,
         options: state.options.clone(),
         bead_id: None,
         handoff: None,
@@ -70,15 +121,20 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
         attempts: 1,
         pending_approval: None,
         pending_question: None,
+        pending_authoring: None,
         active_turn_id: None,
     }];
     if let Some(hub) = hub {
         let data = hub.root.data.lock().map_err(|_| AgentError::internal())?;
-        if data
-            .active
-            .as_ref()
-            .is_some_and(|active| active.question.is_some() || active.approval.is_some())
-        {
+        let (started_at, duration_ms, current_thought) = live_telemetry(&data);
+        if started_at > 0 {
+            agents[0].started_at = started_at;
+        }
+        agents[0].duration_ms = duration_ms;
+        agents[0].current_thought = current_thought;
+        if data.active.as_ref().is_some_and(|active| {
+            active.question.is_some() || active.approval.is_some() || active.authoring.is_some()
+        }) {
             agents[0].status = Status::Waiting;
         }
     }
@@ -114,6 +170,9 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
             status: job.status,
             created_at: job.created_at,
             updated_at: job.updated_at,
+            started_at: job.updated_at.saturating_sub(job.duration_ms),
+            duration_ms: job.duration_ms,
+            current_thought: None,
             options: job.options.clone(),
             bead_id: job.bead_id.clone(),
             handoff: job.handoff.as_ref().map(|handoff| HandoffSummary {
@@ -124,10 +183,17 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
             attempts: job.attempts,
             pending_approval: None,
             pending_question: None,
+            pending_authoring: None,
             active_turn_id: None,
         };
         if let Some(session) = live.as_ref().and_then(|live| live.get(&job.id)) {
             let data = session.data.lock().map_err(|_| AgentError::internal())?;
+            let (started_at, duration_ms, current_thought) = live_telemetry(&data);
+            if started_at > 0 {
+                card.started_at = started_at;
+            }
+            card.duration_ms = duration_ms;
+            card.current_thought = current_thought;
             if let Some(active) = &data.active {
                 card.pending_approval = active
                     .approval
@@ -137,8 +203,15 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
                     .question
                     .as_ref()
                     .map(|pending| pending.request.clone());
+                card.pending_authoring = active
+                    .authoring
+                    .as_ref()
+                    .map(|pending| pending.request.clone());
                 card.active_turn_id = Some(active.id.clone());
-                if card.pending_approval.is_some() || card.pending_question.is_some() {
+                if card.pending_approval.is_some()
+                    || card.pending_question.is_some()
+                    || card.pending_authoring.is_some()
+                {
                     card.status = Status::Waiting;
                 }
             }
@@ -291,6 +364,21 @@ pub fn answer_workflow_question(
     questions::answer(&session, &turn_id, &tool_id, response).map(|_| ())
 }
 
+#[tauri::command]
+pub fn answer_workflow_authoring(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+    agent_id: String,
+    decision: authoring::Decision,
+) -> Result<(), AgentError> {
+    use tauri::Manager;
+    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let session = active_worker(&agent, &conversation_id, &agent_id)?;
+    authoring::answer(&app, persistence.inner(), &home, &session, decision).map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,6 +419,39 @@ mod tests {
         assert_eq!(cards.len(), 2);
         assert_eq!(cards[1].id, latest_id);
         assert!(state.jobs.contains_key(&first_id));
+    }
+
+    #[test]
+    fn live_worker_snapshots_report_elapsed_time_and_current_thought() {
+        let (_fixture, hub) = super::super::tests::hub();
+        let mut worker = super::super::tests::job(&hub, Role::Builder, ".");
+        worker.status = Status::Running;
+        let worker_id = worker.id.clone();
+        let started_at = now().saturating_sub(2_000);
+        {
+            let mut data = hub.root.data.lock().unwrap();
+            let turn = data.turns.last_mut().unwrap();
+            turn.turn.created_at = started_at;
+            turn.turn.steps.push(Step {
+                summary: "Conferindo o contrato antes de editar".into(),
+                ..Step::default()
+            });
+        }
+        hub.live
+            .lock()
+            .unwrap()
+            .insert(worker_id.clone(), hub.root.clone());
+        let mut state = hub.manifest.lock().unwrap();
+        state.jobs.insert(worker_id, worker);
+
+        let value = serde_json::to_value(snapshot(&state, Some(&hub)).unwrap()).unwrap();
+        let card = &value["agents"][1];
+        assert_eq!(card["startedAt"], started_at);
+        assert!(card["durationMs"].as_u64().unwrap() >= 2_000);
+        assert_eq!(
+            card["currentThought"],
+            "Conferindo o contrato antes de editar"
+        );
     }
     #[test]
     fn inspector_snapshots_omit_full_handoff_evidence_until_transcript_is_opened() {
@@ -405,5 +526,33 @@ mod tests {
             "cyan"
         );
         assert!(value["agents"][1]["identity"].get("instructions").is_none());
+    }
+
+    #[test]
+    fn direct_custom_agent_is_the_root_identity_without_a_duplicate_worker() {
+        let (_fixture, hub) = super::super::tests::hub();
+        let mut agent = catalog::tests::example().agents.remove(0);
+        let appearance =
+            serde_json::from_value(serde_json::json!({ "icon": "search", "color": "yellow" }))
+                .unwrap();
+        agent.name = "Support analyst".into();
+        agent.appearance = Some(appearance);
+        let mut state = hub.manifest.lock().unwrap();
+        state.flow = Flow::Custom;
+        state.options.workflow = Some(Flow::Custom);
+        state.options.custom_workflow_id = None;
+        state.options.custom_agent_id = Some(agent.id.clone());
+        state.custom_definition = None;
+        state.custom_agent = Some(agent.clone());
+        let value = serde_json::to_value(snapshot(&state, None).unwrap()).unwrap();
+        assert_eq!(value["agents"].as_array().unwrap().len(), 1);
+        assert_eq!(value["agents"][0]["title"], agent.name);
+        assert_eq!(value["agents"][0]["identity"]["name"], agent.name);
+        assert_eq!(
+            value["agents"][0]["identity"]["appearance"]["icon"],
+            "search"
+        );
+        assert_eq!(value["agents"][0]["options"]["customAgentId"], agent.id);
+        assert!(value["agents"][0]["identity"].get("instructions").is_none());
     }
 }

@@ -172,6 +172,52 @@ fn secure_configuration_survives_toggle_and_restart_and_is_removed_on_delete() {
 }
 
 #[test]
+fn backup_configs_replace_the_catalog_and_keep_secrets_in_secure_storage() {
+    let f = Fixture::new();
+    let first = f.local("docs");
+    f.mcp
+        .set_enabled(&f.state, &f.home, &first.id, false)
+        .unwrap();
+    let exported = f.mcp.backup_configs(&f.state, &f.home).unwrap();
+    assert_eq!(exported.len(), 1);
+    assert!(exported[0].contains("fixture-sensitive-value"));
+    assert!(exported[0].contains("\"enabled\": false"));
+
+    f.mcp
+        .replace_from_backup(
+            &f.state,
+            &f.home,
+            &[json!({"other": {"type":"local", "command":["node", "server.js"], "environment":{"TOKEN":"restored-secret"}, "enabled":true}}).to_string()],
+            &["builtin:planned/planner".into()],
+        )
+        .unwrap();
+
+    let servers = f.mcp.list(&f.state, &f.home).unwrap();
+    assert_eq!(servers.len(), 1);
+    assert_eq!(servers[0].name, "other");
+    assert!(f
+        .mcp
+        .edit(&f.state, &f.home, &servers[0].id)
+        .unwrap()
+        .contains("restored-secret"));
+    assert_eq!(f.secrets.values.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn invalid_backup_mcp_set_preserves_the_current_catalog() {
+    let f = Fixture::new();
+    let server = f.local("docs");
+    let duplicate = f.mcp.edit(&f.state, &f.home, &server.id).unwrap();
+
+    assert!(f
+        .mcp
+        .replace_from_backup(&f.state, &f.home, &[duplicate.clone(), duplicate], &[])
+        .is_err());
+    assert_eq!(f.mcp.list(&f.state, &f.home).unwrap().len(), 1);
+    assert_eq!(f.mcp.list(&f.state, &f.home).unwrap()[0].id, server.id);
+}
+
+#[test]
 fn duplicate_names_and_failed_secret_updates_preserve_existing_configuration() {
     let f = Fixture::new();
     let server = f.local("docs");

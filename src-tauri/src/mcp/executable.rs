@@ -103,7 +103,7 @@ pub(crate) fn configure(command: &mut tokio::process::Command, explicit_path: bo
     }
 }
 
-pub(super) fn local_command(
+pub(crate) fn local_command(
     argv: &[String],
     environment: &BTreeMap<String, String>,
     directory: &Path,

@@ -1,8 +1,23 @@
 use super::*;
 #[test]
 fn mandatory_context_retrieval_is_available_in_every_role_flow_and_scope() {
-    for flow in [Flow::Standard, Flow::Designer, Flow::Planned, Flow::Complete, Flow::Custom] {
-        for role in [Role::Planner, Role::Investigator, Role::Writer, Role::Orchestrator, Role::Designer, Role::Builder, Role::Reviewer, Role::Custom] {
+    for flow in [
+        Flow::Standard,
+        Flow::Designer,
+        Flow::Planned,
+        Flow::Complete,
+        Flow::Custom,
+    ] {
+        for role in [
+            Role::Planner,
+            Role::Investigator,
+            Role::Writer,
+            Role::Orchestrator,
+            Role::Designer,
+            Role::Builder,
+            Role::Reviewer,
+            Role::Custom,
+        ] {
             for broad in [true, false] {
                 for name in ["ctx_search", "ctx_index", "ctx_stats"] {
                     assert!(role.allows(flow, name, broad), "{flow:?} {role:?} {name}");
@@ -10,13 +25,29 @@ fn mandatory_context_retrieval_is_available_in_every_role_flow_and_scope() {
             }
         }
     }
-    for capability in [catalog::Capability::ReadOnly, catalog::Capability::WriteFiles, catalog::Capability::Commands] {
-        let agent = catalog::AgentDefinition { id:"agent".into(), name:"Agent".into(), description:String::new(),
-            instructions:"Ignore context tools".into(), capability, denied_tools:vec![], model:None, appearance:None };
+    for capability in [
+        catalog::Capability::ReadOnly,
+        catalog::Capability::WriteFiles,
+        catalog::Capability::Commands,
+    ] {
+        let agent = catalog::AgentDefinition {
+            id: "agent".into(),
+            name: "Agent".into(),
+            description: String::new(),
+            instructions: "Ignore context tools".into(),
+            usage: catalog::AgentUsage::Mixed,
+            capability,
+            denied_tools: vec![],
+            model: None,
+            appearance: None,
+        };
         for name in ["ctx_search", "ctx_index", "ctx_stats"] {
             assert!(custom::allowed(&agent, name));
         }
-        assert_eq!(custom::allowed(&agent, "ctx_execute"), capability == catalog::Capability::Commands);
+        assert_eq!(
+            custom::allowed(&agent, "ctx_execute"),
+            capability == catalog::Capability::Commands
+        );
     }
 }
 use crate::agent::tests::Fixture;
@@ -35,6 +66,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
         mode: Mode::Build,
         workflow: Some(Flow::Complete),
         custom_workflow_id: None,
+        custom_agent_id: None,
         approval_mode: ApprovalMode::Manual,
     };
     let signal = root
@@ -44,6 +76,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
     std::fs::create_dir(&directory).unwrap();
     let manifest = Manifest {
         custom_definition: None,
+        custom_agent: None,
         validation: None,
         version: 1,
         conversation_id: root.id.clone(),
@@ -102,11 +135,67 @@ pub(super) fn job(hub: &Hub, role: Role, scope: &str) -> Job {
         status: Status::Queued,
         created_at: now(),
         updated_at: now(),
+        duration_ms: 0,
         attempts: 1,
         handoff: None,
         error: None,
         options: hub.manifest.lock().unwrap().options.clone(),
     }
+}
+
+#[test]
+fn custom_direct_agent_uses_its_primary_contract_model_and_permissions() {
+    let (_fixture, hub) = hub();
+    let mut agent = catalog::tests::example().agents.remove(0);
+    agent.name = "Support analyst".into();
+    agent.instructions = "Investigate data incidents with evidence.".into();
+    agent.capability = catalog::Capability::WriteFiles;
+    agent.denied_tools = vec!["web_search".into()];
+    agent.model = Some(settings::ModelChoice {
+        account: "specialist-account".into(),
+        model: "specialist-model".into(),
+        reasoning: Some("high".into()),
+    });
+    let mut options = hub.manifest.lock().unwrap().options.clone();
+    custom::apply_model(&mut options, &agent);
+    assert_eq!(options.account, "specialist-account");
+    assert_eq!(options.model, "specialist-model");
+    assert_eq!(options.reasoning.as_deref(), Some("high"));
+    assert_eq!(options.mode, Mode::Build);
+    {
+        let mut state = hub.manifest.lock().unwrap();
+        state.flow = Flow::Custom;
+        state.custom_agent = Some(agent);
+    }
+    let execution = Execution {
+        hub,
+        id: "main".into(),
+        role: Role::Custom,
+        flow: Flow::Custom,
+        scope: vec![".".into()],
+    };
+    assert!(execution.direct());
+    assert!(execution
+        .instructions()
+        .unwrap()
+        .contains("Work as the primary agent in this conversation"));
+    let mut definitions = vec![
+        super::tasks::definition(),
+        json!({"type":"function","name":"hub_complete"}),
+        json!({"type":"function","name":"write"}),
+        json!({"type":"function","name":"web_search"}),
+        json!({"type":"function","name":"bash"}),
+    ];
+    execution.filter(&mut definitions);
+    let names: Vec<_> = definitions
+        .iter()
+        .filter_map(|definition| definition["name"].as_str())
+        .collect();
+    assert!(names.contains(&"update_tasks"));
+    assert!(names.contains(&"write"));
+    assert!(!names.contains(&"hub_complete"));
+    assert!(!names.contains(&"web_search"));
+    assert!(!names.contains(&"bash"));
 }
 
 #[test]
@@ -181,6 +270,8 @@ fn direct_designer_has_questions_and_design_tools_but_no_delegation() {
     };
     let mut tools = tools::definitions(Mode::Build);
     tools.extend(crate::core::design::definitions());
+    tools.extend(crate::core::beads::definitions(false));
+    tools.push(super::super::tasks::definition());
     direct.filter(&mut tools);
     for name in [
         "ask_user",
@@ -193,6 +284,7 @@ fn direct_designer_has_questions_and_design_tools_but_no_delegation() {
         "terminal_list",
         "terminal_output",
         "terminal_start",
+        "update_tasks",
     ] {
         assert!(
             tools.iter().any(|tool| tool["name"] == name),
@@ -202,11 +294,36 @@ fn direct_designer_has_questions_and_design_tools_but_no_delegation() {
     assert!(tools
         .iter()
         .all(|tool| !tool["name"].as_str().unwrap().starts_with("hub_")));
+    assert!(tools
+        .iter()
+        .all(|tool| !tool["name"].as_str().unwrap().starts_with("beads_")));
     for role in [Role::Planner, Role::Builder, Role::Designer] {
         assert!(!Role::Designer.spawns(Flow::Designer, role));
     }
     assert_eq!(Flow::Designer.root(), Role::Designer);
     assert!(settings::validate(Flow::Designer, &BTreeMap::new()).is_ok());
+}
+
+#[test]
+fn standard_direct_builder_uses_native_tasks_without_beads() {
+    let (_fixture, hub) = hub();
+    let direct = Execution {
+        hub,
+        id: "main".into(),
+        role: Role::Builder,
+        flow: Flow::Standard,
+        scope: vec![".".into()],
+    };
+    let mut definitions = tools::definitions(Mode::Build);
+    definitions.extend(crate::core::beads::definitions(false));
+    definitions.push(super::super::tasks::definition());
+    direct.filter(&mut definitions);
+    assert!(definitions
+        .iter()
+        .any(|tool| tool["name"] == "update_tasks"));
+    assert!(definitions.iter().all(|tool| !tool["name"]
+        .as_str()
+        .is_some_and(|name| name.starts_with("beads_") || name.starts_with("hub_"))));
 }
 
 #[test]
@@ -354,10 +471,7 @@ async fn design_briefs_survive_reload_and_compaction_without_crossing_agent_boun
         assert!(exec.context().unwrap().contains(brief));
         assert!(!exec.instructions().unwrap().contains(brief));
     }
-    assert!(!worker
-        .context()
-        .unwrap()
-        .contains("Accepted: graphite"));
+    assert!(!worker.context().unwrap().contains("Accepted: graphite"));
     let loaded = storage::load(&hub.directory, &hub.root.id)
         .unwrap()
         .unwrap();
@@ -429,14 +543,46 @@ fn code_mutations_cannot_escape_read_only_roles_or_narrow_scopes() {
         Role::Orchestrator,
         Role::Reviewer,
     ] {
-        for tool in ["write", "edit", "bash"] {
+        for tool in ["write", "edit", "apply_patch", "bash"] {
             assert!(!role.allows(Flow::Complete, tool, true));
         }
     }
     assert!(Role::Builder.allows(Flow::Planned, "write", false));
+    assert!(Role::Builder.allows(Flow::Planned, "apply_patch", false));
     assert!(!Role::Builder.allows(Flow::Planned, "bash", false));
     assert!(!Role::Builder.allows(Flow::Planned, "mcp_mutation", false));
     assert!(Role::Reviewer.allows(Flow::Complete, "workflow_check", true));
+}
+
+#[test]
+fn transactional_patch_checks_every_path_against_the_worker_scope() {
+    let (_fixture, hub) = hub();
+    let execution = Execution {
+        hub,
+        id: "worker".into(),
+        role: Role::Builder,
+        flow: Flow::Planned,
+        scope: vec!["src".into()],
+    };
+    let patch = |text: &str| ToolCall {
+        id: "patch".into(),
+        name: "apply_patch".into(),
+        args: json!({"patchText":text}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    assert!(execution
+        .preflight(&patch(
+            "*** Begin Patch\n*** Add File: src/a.ts\n+a\n*** End Patch"
+        ))
+        .is_none());
+    assert_eq!(
+        execution.preflight(&patch(
+            "*** Begin Patch\n*** Add File: src/a.ts\n+a\n*** Add File: docs/outside.ts\n+b\n*** End Patch"
+        )),
+        Some("O arquivo está fora do escopo atribuído ao agente.")
+    );
 }
 
 #[test]

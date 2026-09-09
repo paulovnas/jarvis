@@ -4,6 +4,7 @@ const count = z.number().int().nonnegative();
 const counts = z.record(z.string(), count);
 export const efficiencySchema = z.object({
   contextSearches: count.default(0),
+  loopSteers: count.default(0), loopAvoidedCalls: count.default(0),
   cacheReadTokens: count.default(0), cacheWriteTokens: count.default(0),
   cacheReadInputTokens: count.default(0), cacheReadRequests: count.default(0), cacheWriteRequests: count.default(0),
   auxiliaryRequests: count.default(0), auxiliaryInputTokens: count.default(0), auxiliaryOutputTokens: count.default(0),

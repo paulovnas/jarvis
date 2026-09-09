@@ -9,6 +9,36 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => { vi.mocked(invoke).mockResolvedValue([]); });
 
 describe("Inspector", () => {
+  it("shows native tasks for direct flows and keeps Beads plans for larger flows", async () => {
+    const chat = emptyChat();
+    const turn = savedTurn();
+    turn.options.workflow = "standard";
+    turn.tasks = [
+      { id: "inspect", title: "Entender a solicitação", status: "completed" },
+      { id: "build", title: "Implementar a mudança", status: "in_progress" },
+    ];
+    const directChat = { ...chat, turns: [turn], activeTurnId: turn.id };
+    const view = render(<Inspector library={populatedLibrary()} chat={directChat} />);
+    expect(screen.getByRole("button", { name: /Tarefas.*2/ })).toBeVisible();
+    expect(screen.getByText("Implementar a mudança")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Plano" })).not.toBeInTheDocument();
+
+    turn.options.workflow = "designer";
+    view.rerender(<Inspector library={populatedLibrary()} chat={{ ...directChat, turns: [{ ...turn }] }} />);
+    expect(screen.getByRole("button", { name: /Tarefas.*2/ })).toBeVisible();
+
+    turn.options.workflow = "custom";
+    turn.options.customAgentId = "a".repeat(32);
+    view.rerender(<Inspector library={populatedLibrary()} chat={{ ...directChat, turns: [{ ...turn }] }} />);
+    expect(screen.getByRole("button", { name: /Tarefas.*2/ })).toBeVisible();
+
+    turn.options.workflow = "planned";
+    delete turn.options.customAgentId;
+    view.rerender(<Inspector library={populatedLibrary()} chat={{ ...directChat, turns: [{ ...turn }] }} />);
+    expect(screen.getByRole("button", { name: "Plano" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Tarefas/ })).not.toBeInTheDocument();
+  });
+
   it("shows subagents and manual validation only in the selected Planned and Complete workflows", async () => {
     const chat = emptyChat(); const library = populatedLibrary();
     const workflow = { data: { conversationId: chat.conversationId, revision: 1, flow: "planned" as const, agents: [], validation: null }, error: null, loading: false, retry: vi.fn() };
@@ -26,6 +56,12 @@ describe("Inspector", () => {
     view.rerender(<Inspector library={library} chat={chat} workflow={{ ...workflow, data: { ...workflow.data, flow: "custom" } }} />);
     expect(screen.getByRole("button", { name: "Subagentes" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
+    const turn = savedTurn();
+    turn.options.workflow = "custom";
+    turn.options.customAgentId = "a".repeat(32);
+    view.rerender(<Inspector library={library} chat={{ ...chat, turns: [turn] }} workflow={{ ...workflow, data: { ...workflow.data, flow: "custom" } }} />);
+    expect(screen.getByRole("button", { name: /Tarefas/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Subagentes" })).not.toBeInTheDocument();
     view.rerender(<Inspector library={library} chat={chat} workflow={{ ...workflow, data: { ...workflow.data, conversationId: "other" } }} />);
     expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Subagentes" })).not.toBeInTheDocument();
@@ -63,7 +99,7 @@ describe("Inspector", () => {
   it("shows empty activity sections and an unknown context without fabricating data", async () => {
     render(<Inspector library={populatedLibrary()} />);
     expect(screen.getByText("Nenhuma alteração pendente.")).toBeInTheDocument();
-    expect(await screen.findByText("Nenhum plano em aberto.")).toBeInTheDocument();
+    expect(screen.getByText("Nenhuma tarefa registrada nesta solicitação.")).toBeInTheDocument();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.queryByText("Primeira conversa")).not.toBeInTheDocument();
     expect(screen.queryByText("Conversa do trabalho")).not.toBeInTheDocument();
@@ -79,6 +115,6 @@ describe("Inspector", () => {
     rerender(<Inspector library={emptyLibrary()} chat={chat} />);
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Alterações em/ })).not.toBeInTheDocument();
-    expect(screen.getByText("Nenhum plano em aberto.")).toBeInTheDocument();
+    expect(screen.getByText("Nenhuma tarefa registrada nesta solicitação.")).toBeInTheDocument();
   });
 });

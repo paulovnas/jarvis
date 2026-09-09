@@ -7,6 +7,7 @@ import { historyWindow, mergeChat, mergeHistory, type HistoryDirection } from "@
 import { libraryError } from "@/core/library";
 import type { PendingQuestion, QuestionResponse } from "@/core/questions";
 import { onDesktopResume } from "@/core/desktop-resume";
+import type { PendingAuthoring } from "@/core/authoring";
 
 export function useChat(conversationId: string | null) {
   const [loaded, setLoaded] = useState<ChatSnapshot | null>(null);
@@ -138,6 +139,16 @@ export function useChat(conversationId: string | null) {
       return true;
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível enviar as respostas. Tente novamente.")); return false; }
   };
+  const answerAuthoring = async (proposal: PendingAuthoring, approved: boolean, note: string | null): Promise<boolean> => {
+    if (!conversationId || snapshot?.activeTurnId !== proposal.turnId || snapshot.pendingAuthoring?.toolId !== proposal.toolId) return false;
+    const id = conversationId; const request = generation.current;
+    try {
+      const result = await invoke<unknown>("answer_agent_authoring", { conversationId: id, decision: { turnId: proposal.turnId, toolId: proposal.toolId, approved, note } });
+      if (generation.current === request) accept(result, id);
+      toast.success(approved ? "Configuração aprovada e salva" : "Proposta recusada");
+      return true;
+    } catch (cause) { toast.error(libraryError(cause, "Não foi possível responder à proposta.")); return false; }
+  };
   const resumeQueue = async () => {
     if (!conversationId) return;
     const id = conversationId; const request = generation.current;
@@ -158,6 +169,6 @@ export function useChat(conversationId: string | null) {
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível compactar o contexto.")); return false; }
     finally { compactLocks.current.delete(id); setCompactingIds(new Set(compactLocks.current)); }
   };
-  return { snapshot, loadHistory, historyLoading: historyPending === conversationId && conversationId !== null, historyError: historyError?.id === conversationId ? historyError.message : null, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, send, stop, approve, answerQuestion, removeQueued, resumeQueue, compact, retry: () => setAttempt(value => value + 1) };
+  return { snapshot, loadHistory, historyLoading: historyPending === conversationId && conversationId !== null, historyError: historyError?.id === conversationId ? historyError.message : null, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, send, stop, approve, answerQuestion, answerAuthoring, removeQueued, resumeQueue, compact, retry: () => setAttempt(value => value + 1) };
 }
 export type ChatController = ReturnType<typeof useChat>;

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Home from "./Home";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { populatedLibrary } from "@/test/library-fixtures";
@@ -22,6 +22,48 @@ const invokeMock = vi.mocked(invoke);
 const accountsMock = vi.fn<() => Promise<ProviderAccount[]>>();
 
 describe("Home shell", () => {
+  it("keeps independent drafts through dashboard and empty-workspace navigation", async () => {
+    const user = userEvent.setup();
+    let library = populatedLibrary();
+    library.workspaces.push({ id: "empty", name: "Vazio", createdAt: 3 });
+    const original = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation(async (command, args, options) => {
+      if (command === "get_library_snapshot") return library;
+      if (command === "get_project_metrics") return projectMetrics();
+      if (command === "get_core_status") return coreFixture();
+      if (command === "get_chat") return emptyChat((args as { conversationId: string }).conversationId);
+      if (command === "select_library_item") {
+        const { target } = args as { target: { kind: string; id: string } };
+        const workspaceId = target.kind === "workspace" ? target.id : target.id === "c2" || target.id === "p2" ? "w2" : "w1";
+        library = { ...library, selection: { workspaceId, projectId: workspaceId === "empty" ? null : workspaceId === "w2" ? "p2" : "p1", conversationId: target.kind === "project" || workspaceId === "empty" ? null : workspaceId === "w2" ? "c2" : "c1" } };
+        return library;
+      }
+      return original(command, args, options);
+    });
+    render(<Home />);
+    const field = await screen.findByRole("textbox", { name: "Mensagem" });
+    field.focus(); await user.paste("Rascunho pessoal");
+    await user.click(screen.getByRole("button", { name: "Dashboard" }));
+    expect(await screen.findByRole("tab", { name: /Kanban/ })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Primeira conversa" }));
+    expect(await screen.findByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho pessoal");
+    const workspace = async (name: string) => {
+      // jsdom has no panel geometry; avoid the resize handle's (0, 0) hit area.
+      screen.getByRole("combobox", { name: "Selecionar workspace" }).focus();
+      await user.keyboard("{Enter}");
+      await user.click(await screen.findByRole("option", { name }));
+    };
+    await workspace("Trabalho");
+    const work = await screen.findByRole("textbox", { name: "Mensagem" });
+    expect(work).not.toHaveTextContent("Rascunho pessoal");
+    work.focus(); await user.paste("Rascunho trabalho");
+    await workspace("Vazio");
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Mensagem" })).not.toBeInTheDocument());
+    await workspace("Pessoal");
+    expect(await screen.findByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho pessoal");
+    await workspace("Trabalho");
+    expect(await screen.findByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho trabalho");
+  }, 15000);
   it("opens Explorer files beside Chat while preserving the composer and bottom terminal, then restores the Explorer section", async () => {
     const user = userEvent.setup();
     accountsMock.mockResolvedValue([{ alias: "preview", providerKind: "openai-codex", enabled: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, showUsage: false, models: [{ id: "model", name: "Modelo", reasoningLevels: [], defaultReasoningLevel: null }] }]);
@@ -85,6 +127,12 @@ describe("Home shell", () => {
   });
   beforeEach(() => {
     vi.restoreAllMocks();
+    const bounds = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("recharts-responsive-container")
+        ? new DOMRect(0, 0, 640, 240)
+        : bounds.call(this);
+    });
     invokeMock.mockReset();
     accountsMock.mockReset().mockResolvedValue([]);
     invokeMock.mockImplementation((command, args) => {
@@ -102,6 +150,7 @@ describe("Home shell", () => {
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
   });
+  afterEach(() => vi.restoreAllMocks());
 
   it("abre o Kanban do projeto pelo resumo do plano", async () => {
     const user = userEvent.setup();
@@ -110,6 +159,7 @@ describe("Home shell", () => {
     invokeMock.mockImplementation(async (command, args) => {
       if (command === "get_library_snapshot") return snapshot;
       if (command === "get_chat") return emptyChat();
+      if (command === "get_workflow") return { conversationId: "c1", revision: 1, flow: "planned", agents: [], validation: null };
       if (command === "get_project_beads") return [bead({ issue_type: "epic", title: "Plano de integração" })];
       if (command === "get_project_metrics") return { ...projectMetrics(), projectId };
       if (command === "get_core_status") return coreFixture();
@@ -138,7 +188,7 @@ describe("Home shell", () => {
     expect(screen.getByRole("main", { name: "Conversa" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Primeira conversa" })).toBeInTheDocument();
     expect(screen.getByText("Arquivos alterados")).toBeInTheDocument();
-    expect(screen.getByText("Plano")).toBeInTheDocument();
+    expect(screen.getByText("Tarefas")).toBeInTheDocument();
     expect(screen.queryByText("Subagentes")).not.toBeInTheDocument();
     expect(screen.getByText("Contexto")).toBeInTheDocument();
   });

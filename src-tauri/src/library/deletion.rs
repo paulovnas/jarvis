@@ -84,8 +84,13 @@ fn restore(staged: &[(PathBuf, PathBuf)]) -> Result<(), LibraryError> {
 }
 
 fn sync_staged_directories(staged: &[(PathBuf, PathBuf)]) -> Result<(), LibraryError> {
-    let directories = staged.iter().map(|(path, _)| path.parent().ok_or_else(deletion_error)).collect::<Result<std::collections::BTreeSet<_>, _>>()?;
-    for directory in directories { sync_directory(directory)?; }
+    let directories = staged
+        .iter()
+        .map(|(path, _)| path.parent().ok_or_else(deletion_error))
+        .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+    for directory in directories {
+        sync_directory(directory)?;
+    }
     Ok(())
 }
 
@@ -329,7 +334,10 @@ pub(crate) fn delete(
         DeleteTarget::Project(_) => "SELECT id FROM projects WHERE id = ?1",
         DeleteTarget::Conversation(_) => "SELECT project_id FROM conversations WHERE id = ?1",
     };
-    let project_ids = connection.prepare(sql)?.query_map([target.id()], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+    let project_ids = connection
+        .prepare(sql)?
+        .query_map([target.id()], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
     let selected_conversation = match target {
         DeleteTarget::Conversation(id) => Some(id.as_str()),
         _ => None,

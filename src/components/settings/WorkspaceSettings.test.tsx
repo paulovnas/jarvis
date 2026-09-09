@@ -13,8 +13,11 @@ it("shows per-project chat storage and confirms workspace deletion without imply
   render(<WorkspaceSettings />);
   expect(screen.getByRole("status", { name: "Medindo históricos dos workspaces" })).toBeVisible();
   expect(await screen.findByText("Pessoal")).toBeVisible();
-  expect(screen.getAllByText("2 KB")).toHaveLength(2);
-  expect(screen.getByText("/code/jarvis")).toBeVisible();
+  expect(screen.getByText("2 KB em históricos")).toBeVisible();
+  expect(screen.getByText("2 KB")).toBeVisible();
+  expect(screen.getByText(/As pastas dos projetos não entram no cálculo/)).toBeVisible();
+  expect(screen.queryByText("/code/jarvis")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Históricos dos projetos de Pessoal")).toHaveTextContent("Jarvis3 conversas2 KB");
   await user.click(screen.getByRole("button", { name: "Excluir workspace Pessoal" }));
   const dialog = screen.getByRole("alertdialog");
   expect(dialog).toHaveTextContent("As pastas dos projetos e seus arquivos permanecerão intactos");

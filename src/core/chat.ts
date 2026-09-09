@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { pendingQuestionSchema } from "./questions";
 import { attachmentSchema } from "./attachments";
+import { pendingAuthoringSchema } from "./authoring";
 
 export const messagePartSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
@@ -28,9 +29,10 @@ export const turnOptionsSchema = z.object({
   mode: z.enum(["plan", "build"]),
   workflow: z.enum(["standard", "designer", "planned", "complete", "custom"]).optional(),
   customWorkflowId: z.string().optional(),
+  customAgentId: z.string().optional(),
   approvalMode: z.enum(["manual", "yolo"]),
 });
-const toolSchema = z.object({
+export const agentToolSchema = z.object({
   id: z.string(), name: z.string(), args: z.record(z.string(), z.unknown()),
   status: z.enum(["pending", "running", "completed", "error"]),
   output: z.string(), durationMs: z.number().nonnegative(),
@@ -40,15 +42,22 @@ const retryStatusSchema = z.object({
   retryAt: z.number().nonnegative(), message: z.string(),
 });
 export type RetryStatus = z.infer<typeof retryStatusSchema>;
+export const directTaskSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: z.enum(["pending", "in_progress", "completed", "blocked"]),
+});
+export type DirectTask = z.infer<typeof directTaskSchema>;
 const turnSchema = z.object({
   id: z.string(), createdAt: z.number().nonnegative(), durationMs: z.number().nonnegative(),
   user: z.string(), options: turnOptionsSchema,
   parts: z.array(messagePartSchema).optional(),
   contextWindow: z.number().int().positive().nullable().optional(),
   status: z.enum(["running", "completed", "cancelled", "error", "interrupted"]),
+  tasks: z.array(directTaskSchema).default([]),
   steps: z.array(z.object({
     durationMs: z.number().nonnegative(),
-    text: z.string(), summary: z.string(), tools: z.array(toolSchema),
+    text: z.string(), summary: z.string(), tools: z.array(agentToolSchema),
     retry: retryStatusSchema.nullable().optional(),
     usage: z.object({ inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative() }).nullable(),
   })),
@@ -81,11 +90,12 @@ export const historyPageSchema = z.object({ conversationId: z.string(), turns: z
 export type HistoryPage = z.infer<typeof historyPageSchema>;
 const snapshotSchema = z.object({
   conversationId: z.string(), revision: z.number().int().nonnegative(),
-  turns: z.array(turnSchema), activeTurnId: z.string().nullable(), pendingApproval: toolSchema.nullable(),
+  turns: z.array(turnSchema), activeTurnId: z.string().nullable(), pendingApproval: agentToolSchema.nullable(),
   queuedMessages: z.array(queuedMessageSchema).optional(), context: contextInfoSchema.optional(), fileChanges: z.array(fileChangeSchema).optional(),
   compacting: z.boolean().optional(),
   compactions: z.array(compactionEventSchema).optional(),
   pendingQuestion: pendingQuestionSchema.nullable().optional(),
+  pendingAuthoring: pendingAuthoringSchema.nullable().optional(),
   history: historyWindowSchema.optional(), navigation: z.array(historyExcerptSchema).optional(),
   latestOptions: turnOptionsSchema.optional(),
 });
@@ -95,7 +105,7 @@ export type FileDiff = z.infer<typeof fileDiffSchema>;
 export type ContextInfo = z.infer<typeof contextInfoSchema>;
 export type TurnOptions = z.infer<typeof turnOptionsSchema>;
 export type AgentTurn = z.infer<typeof turnSchema>;
-export type AgentTool = z.infer<typeof toolSchema>;
+export type AgentTool = z.infer<typeof agentToolSchema>;
 export type ChatSnapshot = z.infer<typeof snapshotSchema>;
 
 export const agentActivitySchema = snapshotSchema.pick({ conversationId: true, revision: true, activeTurnId: true, compacting: true });

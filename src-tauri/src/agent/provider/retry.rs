@@ -21,6 +21,7 @@ fn retryable(error: &AgentError) -> bool {
             | "provider_unavailable"
             | "provider_limit"
             | "provider_protocol"
+            | "provider_incomplete"
             | "provider_failed"
     )
 }

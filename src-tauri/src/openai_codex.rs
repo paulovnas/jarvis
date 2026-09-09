@@ -34,6 +34,48 @@ pub(crate) enum ProviderAccountType {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UsageAlertWindow {
+    FiveHour,
+    Weekly,
+}
+
+impl UsageAlertWindow {
+    fn from_storage(value: &str) -> Option<Self> {
+        match value {
+            "five_hour" => Some(Self::FiveHour),
+            "weekly" => Some(Self::Weekly),
+            _ => None,
+        }
+    }
+
+    fn as_storage(self) -> &'static str {
+        match self {
+            Self::FiveHour => "five_hour",
+            Self::Weekly => "weekly",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct UsageAlert {
+    pub(crate) window: UsageAlertWindow,
+    pub(crate) remaining_percent: u8,
+}
+
+impl UsageAlert {
+    fn from_record(record: &ProviderAccountRecord) -> Option<Self> {
+        let window = UsageAlertWindow::from_storage(record.usage_alert_window.as_deref()?)?;
+        let remaining_percent = u8::try_from(record.usage_alert_threshold?).ok()?;
+        (1..=100).contains(&remaining_percent).then_some(Self {
+            window,
+            remaining_percent,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct ProviderAccount {
     pub(crate) alias: String,
@@ -42,6 +84,8 @@ pub(crate) struct ProviderAccount {
     pub(crate) show_usage: bool,
     #[serde(rename = "showThirdPartyUsage")]
     pub(crate) show_third_party_usage: bool,
+    #[serde(rename = "usageAlert", skip_serializing_if = "Option::is_none")]
+    pub(crate) usage_alert: Option<UsageAlert>,
     #[serde(rename = "providerKind")]
     pub(crate) provider_kind: String,
     #[serde(rename = "createdAt")]
@@ -63,11 +107,13 @@ impl ProviderAccount {
         models: Vec<ProviderModel>,
         models_available: bool,
     ) -> Self {
+        let usage_alert = UsageAlert::from_record(&record);
         Self {
             alias: record.alias,
             enabled: record.enabled,
             show_usage: record.show_usage,
             show_third_party_usage: record.show_third_party_usage,
+            usage_alert,
             provider_kind: record.provider_kind,
             created_at: record.created_at,
             email: credential.and_then(|value| value.email.clone()),
@@ -795,6 +841,7 @@ mod tests {
             enabled: true,
             show_usage: true,
             show_third_party_usage: false,
+            usage_alert: None,
             provider_kind: "openai-codex".to_owned(),
             created_at: 1_735_689_600,
             email: Some("person@example.com".to_owned()),

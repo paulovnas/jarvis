@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PendingQuestion, QuestionDraft } from "@/core/questions";
 import { QuestionCard } from "./QuestionCard";
 
@@ -15,6 +15,7 @@ function setup(onAnswer = vi.fn().mockResolvedValue(true)) {
 }
 
 describe("Interactive questions", () => {
+  afterEach(() => vi.useRealTimers());
   it("offers a clear send action for a single free-text question", () => {
     render(<QuestionCard request={{ turnId: "t", toolId: "a", questions: [{ id: "one", question: "Qual sua preferência?", options: [] }] }} drafts={new Map()} draftKey="one" onAnswer={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Enviar respostas" })).toBeDisabled();
@@ -86,5 +87,30 @@ describe("Interactive questions", () => {
     expect(onAnswer).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("textbox")).toBeDisabled();
     resolve(true);
+  });
+
+  it("shows the backend deadline counting down without submitting a competing UI response", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const onAnswer = vi.fn().mockResolvedValue(true);
+    const timed: PendingQuestion = { turnId: "t", toolId: "a", deadlineAt: 3_000, questions: [
+      { id: "one", question: "Primeira?", options: [{ label: "A", recommended: true }, { label: "B" }] },
+      { id: "two", question: "Segunda?", options: [{ label: "C" }, { label: "D", recommended: true }] },
+    ] };
+    render(<QuestionCard request={timed} drafts={new Map()} draftKey="timed" onAnswer={onAnswer} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByText("2s")).toBeVisible();
+    expect(screen.getByText("Recomendada")).toBeVisible();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
+    expect(screen.getByText("Enviando…")).toBeVisible();
+    expect(onAnswer).not.toHaveBeenCalled();
+  });
+
+  it("does not invent an automatic answer when any question lacks a recommendation", () => {
+    render(<QuestionCard request={{ turnId: "t", toolId: "a", deadlineAt: Date.now() + 1_000, questions: [
+      { id: "one", question: "Escolha?", options: [{ label: "A" }, { label: "B" }] },
+    ] }} drafts={new Map()} draftKey="manual" onAnswer={vi.fn()} />);
+    expect(screen.queryByTitle("As recomendações serão enviadas automaticamente ao fim da contagem.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recomendada")).not.toBeInTheDocument();
   });
 });

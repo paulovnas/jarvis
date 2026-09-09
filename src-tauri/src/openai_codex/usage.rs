@@ -1,5 +1,8 @@
 //! Account-scoped, read-only quota probes. Secrets and wire responses stay in Rust.
-use super::{antigravity, current_time_millis, CodexCredential, OpenAiCodexState, ProviderError};
+use super::{
+    antigravity, current_time_millis, CodexCredential, OpenAiCodexState, ProviderError, UsageAlert,
+    UsageAlertWindow,
+};
 use crate::persistence::{AppState, ProviderAccountRecord};
 use serde::Serialize;
 use serde_json::Value;
@@ -43,6 +46,87 @@ pub struct AccountUsage {
     windows: Vec<UsageWindow>,
     reset_credits: Option<ResetCredits>,
     error: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct AlertNotice {
+    window_id: String,
+    resets_at: i64,
+    threshold: u8,
+    title: String,
+    body: String,
+}
+
+fn alert_notices(
+    record: &ProviderAccountRecord,
+    usage: &AccountUsage,
+    now: i64,
+) -> Vec<AlertNotice> {
+    let Some(alert) = UsageAlert::from_record(record) else {
+        return vec![];
+    };
+    if usage.error.is_some() || usage.fetched_at.is_none() {
+        return vec![];
+    }
+    let expected_duration = match alert.window {
+        UsageAlertWindow::FiveHour => 18_000.0,
+        UsageAlertWindow::Weekly => 604_800.0,
+    };
+    let provider = if record.provider_kind == "antigravity" {
+        "Antigravity"
+    } else {
+        "OpenAI Codex"
+    };
+    let alias = record
+        .alias
+        .strip_prefix("openai-codex-")
+        .or_else(|| record.alias.strip_prefix("antigravity-"))
+        .unwrap_or(&record.alias);
+    usage
+        .windows
+        .iter()
+        .filter(|window| {
+            window
+                .duration_seconds
+                .is_some_and(|duration| (duration - expected_duration).abs() < 1.0)
+                && window
+                    .remaining_percent
+                    .is_some_and(|remaining| remaining <= f64::from(alert.remaining_percent))
+                && window.resets_at.is_some_and(|reset| reset > now)
+                && (record.provider_kind != "openai-codex" || window.group == "Codex")
+                && (!window.third_party || record.show_third_party_usage)
+        })
+        .filter_map(|window| {
+            let reset = window.resets_at?;
+            let remaining = window.remaining_percent?.round().clamp(0.0, 100.0) as u8;
+            Some(AlertNotice {
+                window_id: window.id.clone(),
+                resets_at: reset,
+                threshold: alert.remaining_percent,
+                title: format!("Limite do {provider}"),
+                body: format!(
+                    "{alias} · {} · {}: restam {remaining}% do limite.",
+                    window.group, window.label
+                ),
+            })
+        })
+        .collect()
+}
+
+fn claim_alert_delivery(
+    connection: &rusqlite::Connection,
+    alias: &str,
+    notice: &AlertNotice,
+) -> Result<bool, ProviderError> {
+    connection
+        .execute(
+            "INSERT INTO provider_usage_alert_deliveries(alias, window_id, resets_at, threshold) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(alias, window_id) DO UPDATE SET resets_at=excluded.resets_at, threshold=excluded.threshold
+             WHERE provider_usage_alert_deliveries.resets_at <> excluded.resets_at OR provider_usage_alert_deliveries.threshold <> excluded.threshold",
+            rusqlite::params![alias, notice.window_id, notice.resets_at, notice.threshold],
+        )
+        .map(|changed| changed == 1)
+        .map_err(|_| ProviderError::database())
 }
 
 #[derive(Default)]
@@ -198,7 +282,7 @@ impl OpenAiCodexState {
             .map_err(|_| ProviderError::database())?;
         if !records
             .iter()
-            .any(|current| current == record && current.enabled && current.show_usage)
+            .any(|current| current == record && current.enabled)
         {
             return Err(unavailable());
         }
@@ -235,10 +319,7 @@ impl OpenAiCodexState {
             .map_err(|_| ProviderError::database())?
             .into_iter()
             .find(|record| {
-                record.alias == alias
-                    && record.enabled
-                    && record.show_usage
-                    && record.provider_kind != "custom"
+                record.alias == alias && record.enabled && record.provider_kind != "custom"
             })
             .ok_or_else(unavailable)?;
         let entry = self.manager.usage_cache.entry(&record)?;
@@ -305,9 +386,45 @@ pub async fn get_provider_usage(
     let home = super::home_dir(&app)?;
     let state = persistence_state.inner().clone();
     let oauth = oauth_state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || oauth.account_usage(&state, &home, &alias))
+    let query_state = state.clone();
+    let query_home = home.clone();
+    let (usage, record) = tauri::async_runtime::spawn_blocking(move || {
+        let usage = oauth.account_usage(&query_state, &query_home, &alias)?;
+        let record = query_state
+            .list_provider_accounts(&query_home)
+            .map_err(|_| ProviderError::database())?
+            .into_iter()
+            .find(|record| record.alias == alias)
+            .ok_or_else(unavailable)?;
+        Ok::<_, ProviderError>((usage, record))
+    })
+    .await
+    .map_err(|_| ProviderError::internal())??;
+    let now = current_time_millis()?;
+    let notices = alert_notices(&record, &usage, now);
+    if crate::system::notifications_enabled(&app) && !notices.is_empty() {
+        let account = record.alias.clone();
+        let claimed = tauri::async_runtime::spawn_blocking(move || {
+            state.with_connection(&home, |connection| {
+                notices
+                    .into_iter()
+                    .filter_map(|notice| {
+                        match claim_alert_delivery(connection, &account, &notice) {
+                            Ok(true) => Some(Ok(notice)),
+                            Ok(false) => None,
+                            Err(error) => Some(Err(error)),
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+        })
         .await
-        .map_err(|_| ProviderError::internal())?
+        .map_err(|_| ProviderError::internal())??;
+        for notice in claimed {
+            crate::system::notify_usage_limit(&app, &notice.title, &notice.body);
+        }
+    }
+    Ok(usage)
 }
 
 pub(super) fn save_visibility(
@@ -343,6 +460,59 @@ pub async fn set_provider_usage_visibility(
         state.with_connection(&home, |connection| {
             save_visibility(connection, &alias, show_usage, show_third_party_usage)
         })
+    })
+    .await
+    .map_err(|_| ProviderError::internal())?
+}
+
+pub(super) fn save_alert(
+    connection: &rusqlite::Connection,
+    alias: &str,
+    alert: Option<UsageAlert>,
+) -> Result<(), ProviderError> {
+    if alert.is_some_and(|value| !(1..=100).contains(&value.remaining_percent)) {
+        return Err(ProviderError::new(
+            "invalid_usage_alert",
+            "A porcentagem do alerta deve ficar entre 1% e 100%.",
+        ));
+    }
+    let window = alert.map(|value| value.window.as_storage());
+    let threshold = alert.map(|value| value.remaining_percent);
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|_| ProviderError::database())?;
+    let changed = transaction
+        .execute(
+            "UPDATE provider_accounts SET usage_alert_window=?2, usage_alert_threshold=?3 WHERE alias=?1 AND provider_kind IN ('openai-codex', 'antigravity')",
+            rusqlite::params![alias, window, threshold],
+        )
+        .map_err(|_| ProviderError::database())?;
+    if changed != 1 {
+        return Err(unavailable());
+    }
+    if alert.is_none() {
+        transaction
+            .execute(
+                "DELETE FROM provider_usage_alert_deliveries WHERE alias=?1",
+                [alias],
+            )
+            .map_err(|_| ProviderError::database())?;
+    }
+    transaction.commit().map_err(|_| ProviderError::database())
+}
+
+#[tauri::command]
+pub async fn set_provider_usage_alert(
+    app: tauri::AppHandle,
+    persistence_state: tauri::State<'_, AppState>,
+    alias: String,
+    alert: Option<UsageAlert>,
+) -> Result<(), ProviderError> {
+    super::validate_provider_alias(&alias).map_err(|_| ProviderError::invalid_alias())?;
+    let home = super::home_dir(&app)?;
+    let state = persistence_state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.with_connection(&home, |connection| save_alert(connection, &alias, alert))
     })
     .await
     .map_err(|_| ProviderError::internal())?

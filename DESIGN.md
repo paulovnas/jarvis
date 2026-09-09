@@ -35,6 +35,9 @@ between restrained chrome and the live rainbow perimeter of the composer.
 The composer keeps its 5s conic rainbow animation while running. Context compaction
 keeps its matching rainbow meter. Other motion is limited to short hover/focus and
 disclosure transitions; reduced-motion preferences stop continuous animation.
+New conversations use the vertical Jarvis mark over a restrained ambient glow. On
+the first message, the mark exits upward, the glow dissolves and the same composer
+settles into the transcript footer so focus, drafts and attachments remain intact.
 
 Skeletons mirror the actual panel geometry. Active selection uses a restrained blue
 wash and a fine leading indicator. Hover and keyboard focus remain distinct.

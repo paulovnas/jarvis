@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 fn request() -> Value {
     json!({"questions":[
-        {"id":"place","question":"Onde prefere ficar?","options":[{"label":"Praia","description":"Perto do mar"},{"label":"Montanha"}]},
-        {"id":"night","question":"O que prefere fazer à noite?"}
+        {"id":"place","question":"Onde prefere ficar?","options":[{"label":"Praia","description":"Perto do mar","recommended":true},{"label":"Montanha"}]},
+        {"id":"night","question":"O que prefere fazer à noite?","options":[{"label":"Ficar em casa e jogar","recommended":true},{"label":"Sair"}]}
     ]})
 }
 fn response() -> Response {
@@ -31,6 +31,7 @@ fn prepare(fixture: &Fixture) -> (Arc<Session>, ToolCall, watch::Receiver<bool>)
                 mode: Mode::Build,
                 workflow: None,
                 custom_workflow_id: None,
+                custom_agent_id: None,
                 approval_mode: ApprovalMode::Manual,
             },
         )
@@ -56,7 +57,7 @@ async fn start(
     signal: watch::Receiver<bool>,
 ) -> tokio::task::JoinHandle<Result<String, AgentError>> {
     let running = session.clone();
-    let task = tokio::spawn(async move { execute(&running, &tool, signal).await });
+    let task = tokio::spawn(async move { execute(&running, &tool, signal, 30).await });
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         while session.snapshot().unwrap().pending_question.is_none() {
             tokio::task::yield_now().await;
@@ -68,12 +69,31 @@ async fn start(
 }
 
 #[tokio::test]
+async fn timeout_answers_with_recommendations_even_when_the_question_ui_is_not_open() {
+    let fixture = Fixture::new();
+    let (session, tool, signal) = prepare(&fixture);
+    let running = session.clone();
+    let task = tokio::spawn(async move { execute(&running, &tool, signal, 1).await });
+    let output = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let response: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(response["cancelled"], false);
+    assert_eq!(response["answers"][0]["selectedLabel"], "Praia");
+    assert_eq!(response["answers"][1]["value"], "Ficar em casa e jogar");
+    assert!(session.snapshot().unwrap().pending_question.is_none());
+}
+
+#[tokio::test]
 async fn answers_wake_tool_only_after_durable_history_and_survive_restart() {
     let fixture = Fixture::new();
     let (session, tool, signal) = prepare(&fixture);
     let task = start(&session, tool, signal).await;
     assert!(!task.is_finished());
     let pending = session.snapshot().unwrap().pending_question.unwrap();
+    assert!(pending.deadline_at > 0);
     let snapshot = answer(&session, &pending.turn_id, &pending.tool_id, response()).unwrap();
     assert!(snapshot.pending_question.is_none());
     assert!(snapshot.active_turn_id.is_some());
@@ -249,6 +269,7 @@ async fn available_in_plan_build_manual_yolo_without_an_approval_prompt() {
                 mode,
                 workflow: None,
                 custom_workflow_id: None,
+                custom_agent_id: None,
                 approval_mode,
             };
             assert!(authorize(&session, &tool, &options, signal.clone())
@@ -268,6 +289,7 @@ fn validates_bounded_question_schema_before_opening_ui() {
         json!({"questions":[{"id":"x","question":"One?"},{"id":"x","question":"Two?"}]}),
         json!({"questions":[{"id":"x","question":"Pick?","options":[{"label":"A"},{"label":" A "}]}]}),
         json!({"questions":[{"id":"x","question":"Pick?","options": [{"label":"A","description":"x".repeat(501)}]}]}),
+        json!({"questions":[{"id":"x","question":"Pick?","options":[{"label":"A","recommended":true},{"label":"B","recommended":true}]}]}),
         json!({"questions":[{"id":"x","question":"Pick?","options":"bad"}]}),
     ] {
         assert!(parse_request(&args).is_err());

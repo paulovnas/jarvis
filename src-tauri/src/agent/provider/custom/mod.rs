@@ -92,8 +92,13 @@ fn session_request(
 ) -> Result<reqwest::RequestBuilder, AgentError> {
     let endpoint = config.endpoint()?;
     let official = endpoint.scheme() == "https" && endpoint.port_or_known_default() == Some(443);
-    if official && endpoint.host_str() == Some("api.openai.com")
-        && matches!(config.protocol, Protocol::OpenaiCompletions | Protocol::OpenaiResponses) {
+    if official
+        && endpoint.host_str() == Some("api.openai.com")
+        && matches!(
+            config.protocol,
+            Protocol::OpenaiCompletions | Protocol::OpenaiResponses
+        )
+    {
         body["prompt_cache_key"] = json!(session_id);
     }
     let mut request = authenticated_request(credential, config, &body)?;

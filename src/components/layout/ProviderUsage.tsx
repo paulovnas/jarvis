@@ -26,7 +26,7 @@ function WindowBar({ window, now, stale }: { window: UsageWindow; now: number; s
 }
 
 export function ProviderUsage({ account, now }: { account: ProviderAccount; now: number }) {
-  const { data, error } = useProviderUsage(account.alias);
+  const { data, error } = useProviderUsage(account.alias, { pollWhileHidden: Boolean(account.usageAlert) });
   const windows = data?.windows.filter(window => account.providerKind !== "antigravity" || !window.thirdParty || account.showThirdPartyUsage === true) ?? [];
   const groups = [...new Set(windows.map(window => window.group))];
   const failed = error || Boolean(data?.error);

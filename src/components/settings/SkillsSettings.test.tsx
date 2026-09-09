@@ -62,6 +62,40 @@ describe("SkillsSettings", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: /Atualizar todas/ })).not.toBeInTheDocument());
     expect(toast.success).toHaveBeenCalledWith("2 skills atualizadas");
   });
+  it("mantém os switches disponíveis e explica a checagem remota em andamento", async () => {
+    state = { ...state, skills: [{ ...own, source: "a/b", marketplaceId: "a/b/react" }] };
+    const staleCheckedSnapshot = structuredClone(state);
+    let finishCheck!: (value: SkillSnapshot) => void;
+    const check = new Promise<SkillSnapshot>(resolve => { finishCheck = resolve; });
+    mocked.mockImplementation(async (command, args) => {
+      if (command === "list_skills") return state;
+      if (command === "check_skill_updates") return check;
+      if (command === "set_skill_enabled") {
+        const values = args as { id: string; enabled: boolean };
+        state = { ...state, skills: state.skills.map(skill => skill.id === values.id ? { ...skill, enabled: values.enabled } : skill) };
+        return state;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const user = userEvent.setup();
+
+    render(<SkillsSettings />);
+
+    expect(await screen.findByText("Verificando atualizações das skills")).toBeVisible();
+    expect(screen.getByText(/Você pode continuar ativando ou desativando skills/)).toBeVisible();
+    const toggle = screen.getByRole("switch", { name: "Ativar react-expert" });
+    expect(toggle).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Excluir react-expert" })).toBeDisabled();
+
+    await user.click(toggle);
+    await waitFor(() => expect(mocked).toHaveBeenCalledWith("set_skill_enabled", { id: "own", enabled: false }));
+    expect(toggle).not.toBeChecked();
+
+    finishCheck(staleCheckedSnapshot);
+    await waitFor(() => expect(screen.queryByText("Verificando atualizações das skills")).not.toBeInTheDocument());
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Excluir react-expert" })).toBeEnabled();
+  });
   it("oferece atualização individual e filtra a lista", async () => {
     state = { ...state, skills: [{ ...own, source: "a/b", marketplaceId: "a/b/react", updateAvailable: true }] };
     const user = userEvent.setup(); render(<SkillsSettings />);

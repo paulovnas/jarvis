@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, PencilLine, X } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Check, ChevronLeft, ChevronRight, PencilLine, Timer, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +17,7 @@ export function QuestionCard({ request, drafts, draftKey, onAnswer }: {
 }) {
   const [draft, setDraft] = useState<QuestionDraft>(() => drafts.get(draftKey) ?? { index: 0, answers: {}, custom: {} });
   const [pending, setPending] = useState(false);
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const submitting = useRef(false);
   const title = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -26,35 +27,56 @@ export function QuestionCard({ request, drafts, draftKey, onAnswer }: {
   const last = draft.index === request.questions.length - 1;
   const ready = request.questions.every(item => draft.answers[item.id]?.value.trim());
   const otherAnswersReady = request.questions.every(item => item.id === question.id || draft.answers[item.id]?.value.trim());
+  const hasRecommendations = request.questions.every(item => item.options.some(option => option.recommended));
+  const deadline = hasRecommendations ? request.deadlineAt : undefined;
   const update = (next: QuestionDraft) => { drafts.set(draftKey, next); setDraft(next); };
   const navigate = (index: number) => { update({ ...draft, index }); title.current?.focus(); };
   useEffect(() => { title.current?.focus(); }, []);
-  const submit = async (cancelled: boolean) => {
-    if (submitting.current || (!cancelled && !ready)) return;
+  const submitResponse = useCallback(async (response: QuestionResponse) => {
+    if (submitting.current) return;
     submitting.current = true; setPending(true);
-    const accepted = await onAnswer(request, { cancelled, answers: cancelled ? [] : request.questions.map(item => draft.answers[item.id]) });
+    const accepted = await onAnswer(request, response);
     if (accepted) drafts.delete(draftKey);
     else { submitting.current = false; setPending(false); }
+  }, [draftKey, drafts, onAnswer, request]);
+  const submit = (cancelled: boolean) => {
+    if (!cancelled && !ready) return;
+    void submitResponse({ cancelled, answers: cancelled ? [] : request.questions.map(item => draft.answers[item.id]) });
   };
+  useEffect(() => {
+    if (!deadline || pending) return;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1_000));
+      setRemainingSeconds(remaining);
+    };
+    const initial = window.setTimeout(tick, 0);
+    const timer = window.setInterval(tick, 250);
+    return () => { window.clearTimeout(initial); window.clearInterval(timer); };
+  }, [deadline, pending]);
   return <Card size="sm" role="region" aria-label="Perguntas do Jarvis" aria-busy={pending} className="mx-auto mb-3 max-w-4xl rounded-lg" onKeyDown={event => {
-    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); void submit(true); }
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); submit(true); }
   }}>
     <CardHeader className="flex flex-row items-start justify-between gap-3">
       <CardTitle id={titleId} ref={title} tabIndex={-1} className="min-w-0 flex-1 break-words outline-none" aria-live="polite">{question.question}</CardTitle>
       <div className="flex shrink-0 items-center gap-1">
+        {deadline && <Badge variant="outline" role={remainingSeconds === 0 ? "status" : undefined} aria-live={remainingSeconds === 0 ? "polite" : undefined} title="As recomendações serão enviadas automaticamente ao fim da contagem." className="mr-1 gap-1 font-mono text-[10px] tabular-nums text-onedark-green">
+          <Timer aria-hidden="true" className="size-3" />
+          <span aria-hidden="true">{remainingSeconds === null ? "…" : remainingSeconds > 0 ? `${remainingSeconds}s` : "Enviando…"}</span>
+          <span className="sr-only">{remainingSeconds === null ? "Calculando tempo para resposta recomendada automática" : remainingSeconds > 0 ? `Resposta recomendada automática em ${remainingSeconds} segundos` : "Enviando respostas recomendadas"}</span>
+        </Badge>}
         {request.questions.length > 1 && <>
           <Button variant="ghost" size="icon-xs" className="cursor-pointer" aria-label="Pergunta anterior" disabled={pending || draft.index === 0} onClick={() => navigate(draft.index - 1)}><ChevronLeft /></Button>
           <span className="text-xs tabular-nums text-muted-foreground">{draft.index + 1} de {request.questions.length}</span>
           <Button variant="ghost" size="icon-xs" className="cursor-pointer" aria-label="Próxima pergunta" disabled={pending || last} onClick={() => navigate(draft.index + 1)}><ChevronRight /></Button>
         </>}
-        <Button variant="ghost" size="icon-xs" className="cursor-pointer" aria-label="Cancelar perguntas" disabled={pending} onClick={() => { void submit(true); }}><X /></Button>
+        <Button variant="ghost" size="icon-xs" className="cursor-pointer" aria-label="Cancelar perguntas" disabled={pending} onClick={() => submit(true)}><X /></Button>
       </div>
     </CardHeader>
     <CardContent>
       <form className="flex flex-col gap-3" onSubmit={event => {
         event.preventDefault();
         if (pending || !answer?.value.trim()) return;
-        if (last) { if (ready) void submit(false); else navigate(request.questions.findIndex(item => !draft.answers[item.id]?.value.trim())); }
+        if (last) { if (ready) submit(false); else navigate(request.questions.findIndex(item => !draft.answers[item.id]?.value.trim())); }
         else navigate(draft.index + 1);
       }}>
         {question.options.length > 0 && <ToggleGroup orientation="vertical" aria-labelledby={titleId} className={`max-h-[42vh] w-full overflow-y-auto ${question.options.some(option => option.preview) ? "grid grid-cols-1 items-start gap-2 sm:grid-cols-2" : ""}`} disabled={pending}
@@ -65,7 +87,7 @@ export function QuestionCard({ request, drafts, draftKey, onAnswer }: {
           }}>
           {question.options.map((option, index) => <div key={`${question.id}-${index}`} className="flex w-full min-w-0 flex-col"><ToggleGroupItem value={option.label} className="h-auto min-h-10 w-full cursor-pointer justify-start gap-3 px-3 py-2 text-left whitespace-normal">
             <Badge variant="outline" className="size-6 shrink-0 justify-center rounded-full p-0" aria-hidden="true">{index + 1}</Badge>
-            <span className="flex min-w-0 flex-1 flex-col gap-1.5 break-words"><span>{option.label}</span>{option.preview && <span className="block w-full max-w-72"><QuestionVisual preview={option.preview} label={option.label} /></span>}{option.description && <span className="text-xs font-normal text-muted-foreground">{option.description}</span>}</span>
+            <span className="flex min-w-0 flex-1 flex-col gap-1.5 break-words"><span className="flex flex-wrap items-center gap-2"><span>{option.label}</span>{option.recommended && <Badge variant="secondary" className="text-[9px] text-onedark-green">Recomendada</Badge>}</span>{option.preview && <span className="block w-full max-w-72"><QuestionVisual preview={option.preview} label={option.label} /></span>}{option.description && <span className="text-xs font-normal text-muted-foreground">{option.description}</span>}</span>
             {answer?.selectedLabel === option.label && <Check aria-hidden="true" data-icon="inline-end" />}
           </ToggleGroupItem>{option.preview && <ExpandQuestionVisual preview={option.preview} label={option.label} />}</div>)}
         </ToggleGroup>}

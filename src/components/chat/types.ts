@@ -16,6 +16,7 @@ export interface ToolCallItem {
 export interface AssistantWorkData {
   durationSeconds: number;
   retry?: import("@/core/chat").RetryStatus | null;
+  detailContext?: { conversationId: string; turnId: string };
   steps: {
     thinking: string;
     commentary: string;

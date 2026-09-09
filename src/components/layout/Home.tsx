@@ -26,11 +26,19 @@ import { EmptyWorkspace } from "./EmptyWorkspace";
 import { useSettingsMenu } from "@/hooks/use-settings-menu";
 import { useUnreadConversations } from "@/hooks/use-unread-conversations";
 import { useProjectFiles } from "@/hooks/use-project-files";
+import type { ChatDraft } from "@/core/chat";
+import type { QuestionDraft } from "@/core/questions";
+import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 
 const SettingsDialog = lazy(() => import("@/components/settings/SettingsDialog").then(module => ({ default: module.SettingsDialog })));
 const ProjectDashboard = lazy(() => import("@/components/dashboard/ProjectDashboard").then(module => ({ default: module.ProjectDashboard })));
 
 export function Home() {
+  const bootstrapResources = useBootstrapResources();
+  const updateBootstrapAccounts = bootstrapResources?.updateAccounts;
+  // Outlive ChatArea remounts when navigating through dashboards/empty workspaces.
+  const [drafts] = useState(() => new Map<string, ChatDraft>());
+  const [questionDrafts] = useState(() => new Map<string, QuestionDraft>());
   const { layout, updateLayout } = useDesktopLayout();
   const library = useLibrary();
   const files = useProjectFiles(library.snapshot?.selection.projectId ?? null);
@@ -82,36 +90,42 @@ export function Home() {
   const selectedId = library.snapshot?.selection.conversationId;
   const unreadConversationIds = useUnreadConversations(!settingsOpen && !files.tabs.activePath && !chat.error && chat.snapshot && latestVisibleId === selectedId ? latestVisibleId : null);
   useSettingsMenu(setSettingsOpen);
-  const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
-  const [accountsReady, setAccountsReady] = useState(false);
+  const [localAccounts, setLocalAccounts] = useState<ProviderAccount[]>(() => bootstrapResources?.resources.accounts ?? []);
+  const [localAccountsReady, setLocalAccountsReady] = useState(() => bootstrapResources?.resources.loaded.accounts ?? false);
+  const accounts = bootstrapResources ? bootstrapResources.resources.accounts : localAccounts;
+  const accountsReady = bootstrapResources ? bootstrapResources.resources.loaded.accounts : localAccountsReady;
   const references = useProviderReferences(accounts, accountsReady);
   const accountsVersion = useRef(0);
+  const loadAccountsInitially = useRef(!(bootstrapResources?.resources.loaded.accounts ?? false));
   const updateAccounts = useCallback((updated: ProviderAccount[]) => {
     accountsVersion.current += 1;
-    setAccounts(updated);
-    setAccountsReady(true);
-  }, []);
+    if (updateBootstrapAccounts) updateBootstrapAccounts(updated);
+    else { setLocalAccounts(updated); setLocalAccountsReady(true); }
+  }, [updateBootstrapAccounts]);
 
   useEffect(() => {
+    if (!loadAccountsInitially.current) return;
+    loadAccountsInitially.current = false;
     let active = true;
     const version = accountsVersion.current;
     void invoke<ProviderAccount[]>("list_provider_accounts").then(
       (result) => {
-        if (active && version === accountsVersion.current) { setAccounts(accountList(result)); setAccountsReady(true); }
+        if (active && version === accountsVersion.current) updateAccounts(accountList(result));
       },
       () => {
-        if (active && version === accountsVersion.current) setAccounts([]);
+        if (active && version === accountsVersion.current) setLocalAccounts([]);
       },
     );
     return () => {
       active = false;
     };
-  }, []);
+  }, [updateAccounts]);
 
   const modelGroups = accounts
     .filter((account) => account.enabled && account.modelsAvailable && account.models.length > 0)
     .map((account) => ({
       provider: account.alias,
+      providerKind: account.providerKind,
       models: account.models.map((model) => ({
         value: `${account.alias}/${model.id}`,
         label: model.name,
@@ -122,7 +136,7 @@ export function Home() {
 
   const workspace = library.snapshot?.workspaces.find(item => item.id === library.snapshot?.selection.workspaceId);
   if (workspace && !library.snapshot?.projects.some(project => project.workspaceId === workspace.id)) {
-    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground"><div className="flex min-h-0 flex-1"><div className="w-64 shrink-0"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} /></div><EmptyWorkspace workspace={workspace} library={library} /></div><StatusBar onOpenSettings={() => setSettingsOpen(true)} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;
+    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground"><div className="flex min-h-0 flex-1"><div className="w-64 shrink-0"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} /></div><EmptyWorkspace workspace={workspace} library={library} /></div><StatusBar accounts={accounts} onOpenSettings={() => setSettingsOpen(true)} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;
   }
 
   return (
@@ -165,7 +179,7 @@ export function Home() {
           minSize="360px"
           className="h-full min-h-0 min-w-0"
         >
-          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} modelBindings={references.bindings} modelsReady={accountsReady && !references.loading} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
+          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea drafts={drafts} questionDrafts={questionDrafts} onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} modelBindings={references.bindings} modelsReady={accountsReady && !references.loading} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
         </ResizablePanel>
 
         {!dashboardProject && <><ResizableHandle

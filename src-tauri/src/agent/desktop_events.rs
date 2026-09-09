@@ -14,6 +14,7 @@ fn attention_key(snapshot: &ChatSnapshot) -> Option<String> {
         .pending_question
         .as_ref()
         .map(|q| &q.tool_id)
+        .or_else(|| snapshot.pending_authoring.as_ref().map(|p| &p.tool_id))
         .or_else(|| snapshot.pending_approval.as_ref().map(|a| &a.id))?;
     Some(format!("{}/{turn}/{tool}", snapshot.conversation_id))
 }
@@ -74,6 +75,7 @@ mod tests {
             turn_id: "turn".into(),
             tool_id: "question".into(),
             questions: vec![],
+            deadline_at: 1,
         });
         assert_eq!(
             attention_key(&snapshot).as_deref(),
@@ -85,6 +87,23 @@ mod tests {
             Some("child/turn/question")
         );
         snapshot.pending_question = None;
+        snapshot.pending_authoring = Some(authoring::PendingProposal {
+            turn_id: "turn".into(),
+            tool_id: "proposal".into(),
+            action: authoring::Action::Create,
+            summary: "Criar agente".into(),
+            catalog_revision: 1,
+            target: authoring::Target::Agent {
+                before: None,
+                after: workflow::catalog::tests::example().agents[0].clone(),
+            },
+            agent_references: vec![],
+        });
+        assert_eq!(
+            attention_key(&snapshot).as_deref(),
+            Some("child/turn/proposal")
+        );
+        snapshot.pending_authoring = None;
         assert_eq!(attention_key(&snapshot), None);
         snapshot.active_turn_id = None;
         assert_eq!(attention_key(&snapshot), None);
@@ -110,6 +129,7 @@ mod tests {
             mode: Mode::Build,
             workflow: None,
             custom_workflow_id: None,
+            custom_agent_id: None,
             approval_mode: ApprovalMode::Yolo,
         };
         a.submit_message("hello".into(), options, vec![]).unwrap();
@@ -133,6 +153,7 @@ mod tests {
                 mode: Mode::Build,
                 workflow: None,
                 custom_workflow_id: None,
+                custom_agent_id: None,
                 approval_mode: ApprovalMode::Yolo,
             };
             let _signal = session.reserve("Continue".into(), options).unwrap();

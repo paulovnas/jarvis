@@ -104,7 +104,7 @@ export function AppSidebar({
               ref={sort.setActivatorNodeRef}
               {...sort.listeners}
               aria-describedby={sort.attributes["aria-describedby"]}
-              className="cursor-pointer pr-8"
+              className="h-7 cursor-pointer pr-8 text-muted-foreground/80 data-active:text-foreground!"
               isActive={item.id === selected?.conversationId}
               aria-current={
                 item.id === selected?.conversationId ? "page" : undefined
@@ -114,7 +114,7 @@ export function AppSidebar({
                 void library.select({ kind: "conversation", id: item.id });
               }}
             >
-              {runningConversationIds?.has(item.id) ? <Spinner aria-label="Conversa em execução" className="text-primary motion-reduce:animate-none" /> : <MessageSquare />}
+              {runningConversationIds?.has(item.id) ? <Spinner aria-label="Conversa em execução" className="text-primary motion-reduce:animate-none" /> : <MessageSquare className={item.id === selected?.conversationId ? "text-primary" : "text-muted-foreground/55"} />}
               <span className="min-w-0 flex-1 truncate">{item.title}</span>
               {unreadConversationIds?.has(item.id) && <Badge role="img" aria-label="Mensagem não lida" title="Mensagem não lida" className="size-2 shrink-0 rounded-full border-0 bg-primary p-0 shadow-[0_0_6px_#61afef44]" />}
             </SidebarMenuButton>
@@ -129,7 +129,7 @@ export function AppSidebar({
   return (
     <aside
       aria-label="Workspace"
-      className="h-full min-h-0 w-full overflow-hidden border-r border-border"
+      className="h-full min-h-0 w-full overflow-hidden border-r border-border/70"
     >
       <SidebarProvider
         defaultOpen
@@ -137,7 +137,7 @@ export function AppSidebar({
         className="h-full min-h-0 w-full"
       >
         <Sidebar collapsible="none" className="h-full w-full bg-sidebar">
-          <SidebarHeader className="gap-2 border-b border-border px-3 pt-3 pb-3.5">
+          <SidebarHeader className="gap-2 border-b border-border/70 px-3 pt-3 pb-3.5">
             <span className="micro-label flex items-center gap-2 px-1 text-muted-foreground"><Layers aria-hidden="true" className="size-3 text-onedark-cyan" />Workspace</span>
             <div className="flex items-center gap-2">
               <Select
@@ -153,7 +153,7 @@ export function AppSidebar({
               >
                 <SelectTrigger
                   aria-label="Selecionar workspace"
-                  className="h-8 w-full min-w-0 cursor-pointer border-border bg-card/60 text-xs shadow-[inset_0_1px_0_#ffffff0a]"
+                  className="h-8 w-full min-w-0 cursor-pointer border-transparent bg-card/30 text-xs shadow-none hover:border-border hover:bg-card/50"
                 >
                   <SelectValue placeholder="Selecione um workspace" />
                 </SelectTrigger>
@@ -177,7 +177,7 @@ export function AppSidebar({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-64">
                 <DropdownMenuGroup>
-                  <DropdownMenuItem className="cursor-pointer" disabled={!workspace || busy} onClick={() => { if (workspace) void library.addProject(workspace.id); }}><FolderPlus />Novo projeto</DropdownMenuItem>
+                  <DropdownMenuItem className="cursor-pointer" disabled={!workspace || busy} onClick={() => { if (workspace) void library.addProject(workspace.id); }}><FolderPlus />Adicionar projeto</DropdownMenuItem>
                   <DropdownMenuItem className="cursor-pointer" disabled={busy} onClick={() => openDialog({ kind: "workspace" })}><Layers />Novo workspace</DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
@@ -204,8 +204,8 @@ export function AppSidebar({
               </div>
             )}
             {!loading && snapshot && (
-              <div className="min-h-0 flex-1 overflow-y-auto p-3">
-                <div className="micro-label mb-3 flex items-center justify-between px-1 text-muted-foreground"><span>Projetos</span><span className="font-mono tabular-nums">{projects.length}</span></div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+                <div className="micro-label mb-2.5 flex items-center justify-between px-1.5 text-muted-foreground/80"><span>Projetos</span><span className="font-mono tabular-nums">{projects.length}</span></div>
                   {!workspace ? (
                     <Empty>
                       <EmptyHeader>
@@ -222,7 +222,7 @@ export function AppSidebar({
                           <EmptyHeader>
                             <EmptyTitle>Nenhum projeto</EmptyTitle>
                             <EmptyDescription>
-                              Use Novo → Novo projeto para selecionar uma pasta.
+                              Use Novo → Adicionar projeto para selecionar uma pasta.
                             </EmptyDescription>
                           </EmptyHeader>
                         </Empty>
@@ -235,7 +235,7 @@ export function AppSidebar({
                           const isCurrentProject = item.id === project?.id;
                           const isOpen = expanded[item.id] ?? item.id === project?.id;
                           return (
-                          <SortableItem key={item.id} id={item.id} disabled={busy}>{sort => <SidebarMenuItem ref={sort.setNodeRef} style={sort.style} data-active-project={isCurrentProject ? "true" : undefined} className="rounded-lg border border-transparent transition-colors duration-150 data-[active-project=true]:border-primary/25 data-[active-project=true]:bg-primary/[0.055] data-[active-project=true]:shadow-[inset_2px_0_var(--primary)] motion-reduce:transition-none">
+                          <SortableItem key={item.id} id={item.id} disabled={busy}>{sort => <SidebarMenuItem ref={sort.setNodeRef} style={sort.style} data-active-project={isCurrentProject ? "true" : undefined} className="rounded-r-md border-l-2 border-l-transparent py-0.5 transition-colors duration-150 data-[active-project=true]:border-l-onedark-cyan/70 data-[active-project=true]:bg-card/20 motion-reduce:transition-none">
                             <Collapsible role="group" aria-label={`Projeto ${item.name}`} aria-current={isCurrentProject ? "true" : undefined} open={isOpen} onOpenChange={(open) => setExpanded(values => ({ ...values, [item.id]: open }))}>
                             <LibraryItemMenu
                               disabled={busy}
@@ -250,7 +250,7 @@ export function AppSidebar({
                                 {...sort.listeners}
                                 aria-describedby={sort.attributes["aria-describedby"]}
                                 size="lg"
-                                className={`h-9 cursor-pointer ${isCurrentProject ? "font-semibold text-primary" : ""}`}
+                                className={`h-8 cursor-pointer text-muted-foreground data-active:bg-transparent! data-active:shadow-none! ${isCurrentProject ? "font-semibold text-foreground!" : ""}`}
                                 isActive={item.id === project?.id}
                                 disabled={busy}
                                 title={item.path}
@@ -261,8 +261,8 @@ export function AppSidebar({
                                   });
                                 }}
                               />}>
-                                <ChevronRight aria-hidden="true" className={`size-3 text-muted-foreground transition-transform motion-reduce:transition-none ${isOpen ? "rotate-90" : ""}`} />
-                                {snapshot.conversations.some(entry => entry.projectId === item.id && runningConversationIds?.has(entry.id)) ? <Spinner aria-label="Projeto com conversa em execução" className="text-primary motion-reduce:animate-none" /> : <Folder className="text-primary" />}
+                                <ChevronRight aria-hidden="true" className={`size-3 text-muted-foreground/55 transition-transform motion-reduce:transition-none ${isOpen ? "rotate-90" : ""}`} />
+                                {snapshot.conversations.some(entry => entry.projectId === item.id && runningConversationIds?.has(entry.id)) ? <Spinner aria-label="Projeto com conversa em execução" className="text-primary motion-reduce:animate-none" /> : <Folder className={isCurrentProject ? "text-onedark-cyan" : "text-muted-foreground/55"} />}
                                 <span className="min-w-0 flex-1">
                                   <span className="block truncate">
                                     {item.name}
@@ -284,19 +284,19 @@ export function AppSidebar({
                               >
                                 <Plus aria-hidden="true" />
                               </SidebarMenuAction>
-                              <CollapsibleContent className={`my-1 ml-3 border-l pl-2 ${isCurrentProject ? "mr-1 border-primary/30" : "border-border"}`}>
+                              <CollapsibleContent className="my-0.5 ml-2.5 border-l border-border/60 pl-1.5">
                                 <SidebarMenu className="mb-1">
                                   <SidebarMenuItem>
-                                    <SidebarMenuButton className="cursor-pointer" disabled={busy}
+                                    <SidebarMenuButton className="h-7 cursor-pointer text-muted-foreground data-active:text-foreground!" disabled={busy}
                                       isActive={selected?.projectId === item.id && !selected.conversationId}
                                       aria-current={selected?.projectId === item.id && !selected.conversationId ? "page" : undefined}
                                       onClick={() => { void library.select({ kind: "project", id: item.id }); }}>
-                                      <LayoutDashboard className="text-onedark-cyan" /><span>Dashboard</span>
+                                      <LayoutDashboard className={selected?.projectId === item.id && !selected.conversationId ? "text-onedark-cyan" : "text-muted-foreground/55"} /><span>Dashboard</span>
                                     </SidebarMenuButton>
                                   </SidebarMenuItem>
                                 </SidebarMenu>
                                 {conversationList(conversations.slice(0, visibleCount), conversations, item.id)}
-                                {conversations.length > visibleCount && <Button variant="ghost" size="sm" className="mt-1 h-7 w-full cursor-pointer justify-start pl-8 text-xs text-muted-foreground" onClick={() => setVisibleCounts(counts => ({ ...counts, [item.id]: visibleCount + 10 }))}>Ver mais<span className="ml-auto font-mono text-[10px]">+{Math.min(10, conversations.length - visibleCount)}</span></Button>}
+                                {conversations.length > visibleCount && <Button variant="ghost" size="sm" className="mt-0.5 h-7 w-full cursor-pointer justify-start pl-8 text-xs text-muted-foreground/80" onClick={() => setVisibleCounts(counts => ({ ...counts, [item.id]: visibleCount + 10 }))}>Ver mais<span className="ml-auto font-mono text-[10px]">+{Math.min(10, conversations.length - visibleCount)}</span></Button>}
                               </CollapsibleContent>
                             </Collapsible>
                           </SidebarMenuItem>}</SortableItem>

@@ -109,6 +109,44 @@ fn deletion_removes_only_selected_skill_and_preserves_neighbors() {
     assert!(remove(home, None, "../two").is_err());
 }
 
+#[test]
+fn portable_backup_keeps_installed_skill_state_across_different_home_paths() {
+    let source = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+    for home in [source.path(), target.path()] {
+        skill(
+            &root(home).join("skills/review"),
+            "review",
+            "Review instructions",
+        );
+    }
+    let source_skill = snapshot(source.path(), None).unwrap().skills.remove(0);
+    write_config(
+        source.path(),
+        &Config {
+            include_agents: true,
+            disabled: [source_skill.id].into_iter().collect(),
+        },
+    )
+    .unwrap();
+
+    let portable = backup_config(source.path()).unwrap();
+    assert!(portable.include_agents);
+    assert_eq!(
+        portable.disabled_skills,
+        ["review".into()].into_iter().collect()
+    );
+    write_config(
+        target.path(),
+        &restore_config(target.path(), &portable).unwrap(),
+    )
+    .unwrap();
+
+    let restored = snapshot(target.path(), None).unwrap();
+    assert!(!restored.skills[0].enabled);
+    assert!(restored.include_agents);
+}
+
 #[cfg(unix)]
 #[test]
 fn deleting_shared_link_unlinks_without_following_target_and_rejects_linked_container() {
@@ -170,6 +208,35 @@ fn discovery_defaults_to_jarvis_and_agents_switch_includes_global_and_project() 
     );
     assert!(read_config(home).unwrap().include_agents);
 }
+
+#[test]
+fn configuration_changes_do_not_wait_for_marketplace_catalog_work() {
+    use std::{sync::mpsc, time::Duration};
+
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path();
+    let disabled_id = "skill-being-toggled".to_string();
+    let catalog_guard = CATALOG_LOCK.lock().unwrap();
+    let (sender, receiver) = mpsc::channel();
+
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let result = update_config(home, |config| {
+                config.disabled.insert(disabled_id.clone());
+            });
+            sender.send(result).unwrap();
+        });
+
+        let result = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("skills.json should remain writable during a remote catalog check");
+        drop(catalog_guard);
+        result.unwrap();
+    });
+
+    assert!(read_config(home).unwrap().disabled.contains(&disabled_id));
+}
+
 #[tokio::test]
 async fn progressive_loading_reads_only_enabled_skills_and_confines_references() {
     let temp = tempfile::tempdir().unwrap();
@@ -190,6 +257,10 @@ async fn progressive_loading_reads_only_enabled_skills_and_confines_references()
         .await
         .unwrap()
         .contains("Private instructions"));
+    assert!(read(home, &project, &json!({"id":id,"path":"  "}))
+        .await
+        .unwrap()
+        .contains("Private instructions"));
     assert!(read(
         home,
         &project,
@@ -206,6 +277,20 @@ async fn progressive_loading_reads_only_enabled_skills_and_confines_references()
     assert!(read(home, &project, &json!({"id":id,"path":"/etc/passwd"}))
         .await
         .is_err());
+    fs::write(
+        root(home).join("skills/own/references/large.md"),
+        vec![b'x'; MAX_TEXT + 1],
+    )
+    .unwrap();
+    let oversized = read(
+        home,
+        &project,
+        &json!({"id":id,"path":"references/large.md"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(oversized.message.contains("own"));
+    assert!(oversized.message.contains("1 MiB"));
     write_config(
         home,
         &Config {
@@ -282,6 +367,87 @@ fn marketplace_parses_rankings_searches_and_rejects_unsafe_sources() {
     ] {
         assert!(store::validate(source, id).is_err());
     }
+}
+
+#[test]
+fn marketplace_resolution_ignores_materialized_compatibility_aliases() {
+    let temp = tempfile::tempdir().unwrap();
+    let canonical = temp.path().join("engineering-team/skills/senior-backend");
+    skill(&canonical, "senior-backend", "Canonical package");
+    let alias = temp.path().join(".gemini/skills/senior-backend");
+    fs::create_dir_all(&alias).unwrap();
+    fs::write(
+        alias.join("SKILL.md"),
+        "../../../engineering-team/skills/senior-backend/SKILL.md",
+    )
+    .unwrap();
+
+    assert_eq!(
+        store::resolve(temp.path(), "senior-backend").unwrap(),
+        canonical
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn marketplace_resolution_ignores_symlinked_compatibility_aliases() {
+    let temp = tempfile::tempdir().unwrap();
+    let canonical = temp.path().join("engineering-team/skills/senior-backend");
+    skill(&canonical, "senior-backend", "Canonical package");
+    let alias = temp.path().join(".gemini/skills/senior-backend");
+    fs::create_dir_all(&alias).unwrap();
+    std::os::unix::fs::symlink(
+        "../../../engineering-team/skills/senior-backend/SKILL.md",
+        alias.join("SKILL.md"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        store::resolve(temp.path(), "senior-backend").unwrap(),
+        canonical
+    );
+}
+
+#[test]
+fn marketplace_resolution_prefers_standard_authoring_roots_over_generated_plugin_copies() {
+    let temp = tempfile::tempdir().unwrap();
+    let authoring = temp.path().join(".claude/skills/tauri-v2");
+    let generated = temp.path().join("plugins/cce-tauri/skills/tauri-v2");
+    skill(&authoring, "tauri-v2", "Authoring package");
+    skill(&generated, "tauri-v2", "Generated plugin package");
+
+    assert_eq!(store::resolve(temp.path(), "tauri-v2").unwrap(), authoring);
+}
+
+#[test]
+fn marketplace_resolution_prefers_unified_agents_root_over_provider_variants() {
+    let temp = tempfile::tempdir().unwrap();
+    let unified = temp.path().join(".agents/skills/example");
+    let provider = temp.path().join(".claude/skills/example");
+    skill(&unified, "example", "Unified package");
+    skill(&provider, "example", "Provider package");
+
+    assert_eq!(store::resolve(temp.path(), "example").unwrap(), unified);
+}
+
+#[test]
+fn marketplace_resolution_keeps_genuinely_nested_duplicates_ambiguous() {
+    let temp = tempfile::tempdir().unwrap();
+    skill(
+        &temp.path().join("category-a/example"),
+        "example",
+        "First package",
+    );
+    skill(
+        &temp.path().join("category-b/example"),
+        "example",
+        "Second package",
+    );
+
+    assert!(store::resolve(temp.path(), "example")
+        .unwrap_err()
+        .message
+        .contains("mais de uma skill"));
 }
 #[test]
 fn installs_complete_packages_and_recovers_interrupted_updates() {
@@ -417,6 +583,7 @@ fn large_catalog_is_bounded_and_search_reaches_skills_omitted_from_prompt() {
             path: PathBuf::new(),
             removal_path: PathBuf::new(),
             linked: false,
+            managed: false,
             file: PathBuf::new(),
             enabled: true,
             automatic: true,
@@ -472,6 +639,7 @@ fn skill_paths_serialize_without_the_windows_verbatim_prefix() {
         path: stored.clone(),
         removal_path: stored.clone(),
         linked: false,
+        managed: false,
         file: stored.clone(),
         enabled: true,
         automatic: false,

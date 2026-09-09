@@ -4,6 +4,9 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import type { AccountUsage } from "@/core/provider-usage";
+import type { BootstrapResources } from "@/core/bootstrap";
+import { BootstrapResourcesProvider } from "@/components/bootstrap/BootstrapResourcesProvider";
+import { emptyLibrary } from "@/test/library-fixtures";
 import { StatusBar } from "./StatusBar";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -87,4 +90,29 @@ it("ignores a late response after hiding an account and isolates failed accounts
   await act(async () => resolve(report(account.alias)));
   expect(screen.queryByRole("button", { name: `Limites de ${account.alias}` })).not.toBeInTheDocument();
   expect(within(screen.getByRole("button", { name: `Limites de ${other.alias}` })).getByLabelText("Limites desatualizados")).toBeInTheDocument();
+});
+
+it("keeps polling alerts when an account is hidden from the statusbar", async () => {
+  render(<StatusBar accounts={[{ ...account, showUsage: false, usageAlert: { window: "weekly", remainingPercent: 20 } }]} />);
+  await waitFor(() => expect(call).toHaveBeenCalledWith("get_provider_usage", { alias: account.alias }));
+  expect(screen.queryByRole("button", { name: `Limites de ${account.alias}` })).not.toBeInTheDocument();
+});
+
+it("reuses limits fetched during bootstrap instead of requesting them again", async () => {
+  const cached = report(account.alias);
+  const resources: BootstrapResources = {
+    core: null,
+    skills: null,
+    accounts: [account],
+    usageByAlias: { [account.alias]: { data: cached, error: false } },
+    library: emptyLibrary(),
+    checked: { core: false, skills: false },
+    loaded: { core: false, skills: false, accounts: true, usage: true, library: true },
+    warnings: [],
+  };
+
+  render(<BootstrapResourcesProvider initial={resources}><StatusBar passive accounts={[account]} /></BootstrapResourcesProvider>);
+
+  expect(await screen.findByRole("button", { name: `Limites de ${account.alias}` })).toHaveTextContent("36%");
+  expect(call).not.toHaveBeenCalled();
 });

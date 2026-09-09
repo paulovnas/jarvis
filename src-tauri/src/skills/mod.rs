@@ -1,3 +1,4 @@
+mod builtin;
 mod catalog;
 mod marketplace;
 mod store;
@@ -15,7 +16,8 @@ use std::{
 };
 use tauri::Manager;
 
-static LOCK: Mutex<()> = Mutex::new(());
+static CATALOG_LOCK: Mutex<()> = Mutex::new(());
+static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 const MAX_TEXT: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,11 +47,37 @@ impl From<rusqlite::Error> for SkillError {
     }
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
-struct Config {
-    include_agents: bool,
-    disabled: BTreeSet<String>,
+pub(crate) struct Config {
+    pub(crate) include_agents: bool,
+    pub(crate) disabled: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub(crate) struct PortableConfig {
+    pub(crate) include_agents: bool,
+    pub(crate) disabled_skills: BTreeSet<String>,
+}
+
+impl PortableConfig {
+    pub(crate) fn validate(&self) -> Result<(), SkillError> {
+        if self.disabled_skills.len() > 512
+            || self.disabled_skills.iter().any(|relative| {
+                relative.is_empty()
+                    || relative.len() > 1024
+                    || relative.contains(['\\', '\0'])
+                    || Path::new(relative).is_absolute()
+                    || Path::new(relative)
+                        .components()
+                        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            })
+        {
+            return Err(error("A configuração portátil de skills é inválida."));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -64,6 +92,7 @@ pub struct Skill {
     #[serde(serialize_with = "crate::library::serialize_display_path_buf")]
     pub removal_path: PathBuf,
     pub linked: bool,
+    pub managed: bool,
     pub enabled: bool,
     pub automatic: bool,
     pub source: Option<String>,
@@ -95,10 +124,14 @@ pub struct Detail {
     pub files: Vec<String>,
 }
 
-fn root(home: &Path) -> PathBuf {
+pub(crate) fn root(home: &Path) -> PathBuf {
     home.join(".jarvis")
 }
-fn read_config(home: &Path) -> Result<Config, SkillError> {
+
+pub(crate) fn setup(home: &Path) -> Result<(), SkillError> {
+    builtin::sync(home)
+}
+pub(crate) fn read_config(home: &Path) -> Result<Config, SkillError> {
     match fs::read(root(home).join("skills.json")) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|_| error("A configuração de skills é inválida.")),
@@ -110,6 +143,69 @@ fn write_config(home: &Path, config: &Config) -> Result<(), SkillError> {
     let bytes = serde_json::to_vec_pretty(config)
         .map_err(|_| error("Não foi possível salvar as skills."))?;
     store::atomic_file(&root(home).join("skills.json"), &bytes)
+}
+
+pub(crate) fn lock() -> Result<std::sync::MutexGuard<'static, ()>, SkillError> {
+    CATALOG_LOCK.lock().map_err(|_| error("Skills ocupadas."))
+}
+
+fn update_config(home: &Path, operation: impl FnOnce(&mut Config)) -> Result<Config, SkillError> {
+    let _guard = CONFIG_LOCK
+        .lock()
+        .map_err(|_| error("Configuração de skills ocupada."))?;
+    let mut config = read_config(home)?;
+    operation(&mut config);
+    write_config(home, &config)?;
+    Ok(config)
+}
+
+pub(crate) fn backup_config(home: &Path) -> Result<PortableConfig, SkillError> {
+    let config = read_config(home)?;
+    let own = root(home).join("skills");
+    fs::create_dir_all(&own)?;
+    let own = own.canonicalize()?;
+    let (available, _) = catalog::discover(home, None, &config)?;
+    let mut disabled_skills = BTreeSet::new();
+    for skill in available
+        .iter()
+        .filter(|skill| skill.origin == "jarvis" && !skill.managed && !skill.enabled)
+    {
+        let relative = skill
+            .path
+            .strip_prefix(&own)
+            .map_err(|_| error("Uma skill instalada possui um caminho inválido."))?;
+        let segments: Vec<_> = relative
+            .components()
+            .map(|component| match component {
+                std::path::Component::Normal(segment) => segment
+                    .to_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| error("Uma skill possui um nome incompatível.")),
+                _ => Err(error("Uma skill instalada possui um caminho inválido.")),
+            })
+            .collect::<Result<_, _>>()?;
+        disabled_skills.insert(segments.join("/"));
+    }
+    let portable = PortableConfig {
+        include_agents: config.include_agents,
+        disabled_skills,
+    };
+    portable.validate()?;
+    Ok(portable)
+}
+
+pub(crate) fn restore_config(home: &Path, portable: &PortableConfig) -> Result<Config, SkillError> {
+    portable.validate()?;
+    let jarvis = root(home).canonicalize()?;
+    let skills = jarvis.join("skills");
+    Ok(Config {
+        include_agents: portable.include_agents,
+        disabled: portable
+            .disabled_skills
+            .iter()
+            .map(|relative| catalog::id(&skills.join(relative)))
+            .collect(),
+    })
 }
 
 fn selected_project(state: &AppState, home: &Path) -> Result<Option<PathBuf>, SkillError> {
@@ -187,7 +283,7 @@ pub async fn active(home: &Path, project: &Path) -> Result<Vec<Skill>, SkillErro
     let home = home.to_path_buf();
     let project = project.to_path_buf();
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
+        let _guard = CATALOG_LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
         Ok(snapshot(&home, Some(&project))?
             .skills
             .into_iter()
@@ -206,7 +302,7 @@ pub async fn read(
     let project = project.to_path_buf();
     let args = args.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
+        let _guard = CATALOG_LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
         let id = args["id"]
             .as_str()
             .ok_or_else(|| error("Informe a skill."))?;
@@ -214,10 +310,22 @@ pub async fn read(
         if !skill.enabled {
             return Err(error("Esta skill está desativada."));
         }
-        let path = args["path"].as_str().unwrap_or("SKILL.md");
+        // Providers occasionally serialize an omitted optional string as "".
+        // Treat it exactly like an omitted path so the skill directory itself is
+        // never handed to the bounded text reader.
+        let path = args["path"]
+            .as_str()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .unwrap_or("SKILL.md");
         let offset = args["offset"].as_u64().unwrap_or(1).max(1) as usize;
         let limit = args["limit"].as_u64().unwrap_or(300).clamp(1, 500) as usize;
-        let content = catalog::resource(&skill, path)?;
+        let content = catalog::resource(&skill, path).map_err(|cause| {
+            error(format!(
+                "Não foi possível ler a skill \"{}\": {}",
+                skill.name, cause.message
+            ))
+        })?;
         let lines: Vec<_> = content.lines().collect();
         let page = lines
             .iter()
@@ -252,12 +360,33 @@ async fn local<T: Send + 'static>(
         .map_err(|_| error("Pasta pessoal indisponível."))?;
     tauri::async_runtime::spawn_blocking(move || {
         let project = selected_project(&state, &home)?;
-        let _guard = LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
+        let _guard = CATALOG_LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
         operation(&home, project.as_deref())
     })
     .await
     .map_err(|_| error("Não foi possível concluir a operação da skill."))?
 }
+
+async fn local_config<T: Send + 'static>(
+    app: tauri::AppHandle,
+    state: AppState,
+    operation: impl FnOnce(&Path, Option<&Path>) -> Result<T, SkillError> + Send + 'static,
+) -> Result<T, SkillError> {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|_| error("Pasta pessoal indisponível."))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = selected_project(&state, &home)?;
+        // Marketplace checks only replace metadata through atomic renames.
+        // Configuration changes can therefore discover either complete
+        // metadata version without waiting for the remote repository work.
+        operation(&home, project.as_deref())
+    })
+    .await
+    .map_err(|_| error("Não foi possível concluir a configuração da skill."))?
+}
+
 #[tauri::command]
 pub async fn list_skills(
     app: tauri::AppHandle,
@@ -271,10 +400,8 @@ pub async fn set_skills_agents(
     state: tauri::State<'_, AppState>,
     enabled: bool,
 ) -> Result<Snapshot, SkillError> {
-    local(app, state.inner().clone(), move |home, project| {
-        let mut config = read_config(home)?;
-        config.include_agents = enabled;
-        write_config(home, &config)?;
+    local_config(app, state.inner().clone(), move |home, project| {
+        update_config(home, |config| config.include_agents = enabled)?;
         snapshot(home, project)
     })
     .await
@@ -286,15 +413,15 @@ pub async fn set_skill_enabled(
     id: String,
     enabled: bool,
 ) -> Result<Snapshot, SkillError> {
-    local(app, state.inner().clone(), move |home, project| {
+    local_config(app, state.inner().clone(), move |home, project| {
         find(home, project, &id)?;
-        let mut config = read_config(home)?;
-        if enabled {
-            config.disabled.remove(&id);
-        } else {
-            config.disabled.insert(id);
-        }
-        write_config(home, &config)?;
+        update_config(home, |config| {
+            if enabled {
+                config.disabled.remove(&id);
+            } else {
+                config.disabled.insert(id.clone());
+            }
+        })?;
         snapshot(home, project)
     })
     .await
@@ -302,7 +429,9 @@ pub async fn set_skill_enabled(
 
 fn remove(home: &Path, project: Option<&Path>, id: &str) -> Result<Snapshot, SkillError> {
     let skill = find(home, project, id)?;
-    let mut config = read_config(home)?;
+    if skill.managed {
+        return Err(error("Skills nativas do Jarvis não podem ser excluídas."));
+    }
     let scope = match skill.origin.as_str() {
         "jarvis" => root(home).join("skills"),
         "agents" => home.join(".agents/skills"),
@@ -330,9 +459,9 @@ fn remove(home: &Path, project: Option<&Path>, id: &str) -> Result<Snapshot, Ski
     } else {
         return Err(error("Pasta de skill inválida."));
     }
-    if config.disabled.remove(id) {
-        write_config(home, &config)?;
-    }
+    update_config(home, |config| {
+        config.disabled.remove(id);
+    })?;
     snapshot(home, project)
 }
 
@@ -353,7 +482,7 @@ pub(crate) fn validate_mentions(
     project: &Path,
     ids: &[String],
 ) -> Result<Vec<Skill>, SkillError> {
-    let _guard = LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
+    let _guard = CATALOG_LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
     let available = snapshot(home, Some(project))?.skills;
     ids.iter().map(|id| available.iter().find(|s| &s.id == id && s.enabled).cloned()
         .ok_or_else(|| error("Uma skill selecionada foi desativada ou removida. Retire a badge e selecione novamente."))).collect()
@@ -367,7 +496,9 @@ pub(crate) async fn explicit(
     let home = home.to_owned();
     let project = project.to_owned();
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
+        let _guard = CATALOG_LOCK
+            .lock()
+            .map_err(|_| error("Skills ocupadas."))?;
         let available = snapshot(&home, Some(&project))?.skills;
         let mut prompt = String::new();
         for id in ids.into_iter().collect::<BTreeSet<_>>() {
@@ -404,14 +535,18 @@ pub async fn browse_skill_marketplace(
 #[tauri::command]
 pub async fn get_marketplace_skill(
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
     source: String,
     skill_id: String,
 ) -> Result<Detail, SkillError> {
-    local(app, state.inner().clone(), move |home, _| {
-        store::preview(home, &source, &skill_id)
-    })
-    .await
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|_| error("Pasta pessoal indisponível."))?;
+    // Preview is read-only and has its own repository cache. Do not queue it
+    // behind installs, updates, or a detail request the user already closed.
+    tauri::async_runtime::spawn_blocking(move || store::preview(&home, &source, &skill_id))
+        .await
+        .map_err(|_| error("Não foi possível carregar os detalhes da skill."))?
 }
 #[tauri::command]
 pub async fn install_marketplace_skill(

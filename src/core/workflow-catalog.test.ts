@@ -5,7 +5,10 @@ import { chatOptions } from "@/test/chat-fixtures";
 
 it("retains custom selection through persisted turn options without changing built-ins", () => {
   const selection = `custom:${customFlow.id}` as const;
+  const agentSelection = `agent:${customAgent.id}` as const;
   expect(flowSelection({ ...chatOptions, ...flowOptions(selection) })).toBe(selection);
+  expect(flowSelection({ ...chatOptions, ...flowOptions(agentSelection) })).toBe(agentSelection);
+  expect(flowOptions(agentSelection)).toEqual({ workflow: "custom", customAgentId: customAgent.id });
   expect(flowOptions("complete")).toEqual({ workflow: "complete" });
   expect(flowSelection()).toBe("standard");
   expect(workflowCatalogSchema.parse(customCatalog)).toEqual(customCatalog);
@@ -17,6 +20,7 @@ it("reads legacy identities and retains only predefined appearance choices", () 
   expect(workflowCatalogSchema.parse(catalog)).toEqual(catalog);
   expect(workflowCatalogSchema.safeParse({ ...catalog, agents: [{ ...customAgent, appearance: { ...appearance, icon: "arbitrary" } }] }).success).toBe(false);
   expect(workflowCatalogSchema.safeParse({ ...catalog, flows: [{ ...customFlow, appearance: { ...appearance, color: "url(evil)" } }] }).success).toBe(false);
+  expect(workflowCatalogSchema.parse({ ...customCatalog, agents: [{ ...customAgent, usage: undefined }] }).agents[0].usage).toBe("flow_only");
 });
 
 it("validates entry, references, termination, reachability and bounded correction loops", () => {
@@ -28,5 +32,6 @@ it("validates entry, references, termination, reachability and bounded correctio
   expect(validateGraph({ ...connected, steps: [connected.steps[0], { ...second, next: connected.entry }] }, [customAgent])).toMatch(/ciclo/);
   expect(validateGraph({ ...customFlow, entry: "missing" }, [customAgent])).toMatch(/inicial/);
   expect(validateGraph(customFlow, [])).toMatch(/agente/);
+  expect(validateGraph(customFlow, [{ ...customAgent, usage: "solo" }])).toMatch(/Solo/);
   expect(validateGraph({ ...connected, maxSteps: 1 }, [customAgent])).toMatch(/limite/);
 });

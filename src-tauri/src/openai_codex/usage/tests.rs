@@ -129,6 +129,151 @@ fn usage_preferences_migrate_and_remain_isolated_by_alias() {
 }
 
 #[test]
+fn usage_alerts_persist_and_only_match_the_configured_available_window() {
+    let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+    crate::persistence::initialize_database(&mut connection).unwrap();
+    let account =
+        crate::persistence::insert_provider_account(&connection, "openai-codex-a", "one").unwrap();
+    save_alert(
+        &connection,
+        &account.alias,
+        Some(crate::openai_codex::UsageAlert {
+            window: crate::openai_codex::UsageAlertWindow::Weekly,
+            remaining_percent: 20,
+        }),
+    )
+    .unwrap();
+    let record = crate::persistence::list_provider_accounts(&connection)
+        .unwrap()
+        .remove(0);
+    assert_eq!(record.usage_alert_window.as_deref(), Some("weekly"));
+    assert_eq!(record.usage_alert_threshold, Some(20));
+
+    let usage = AccountUsage {
+        alias: record.alias.clone(),
+        fetched_at: Some(1_000),
+        email: None,
+        plan: None,
+        windows: vec![
+            UsageWindow {
+                id: "codex/primary_window".into(),
+                group: "Codex".into(),
+                third_party: false,
+                label: "5h".into(),
+                duration_seconds: Some(18_000.0),
+                remaining_percent: Some(10.0),
+                resets_at: Some(2_000),
+            },
+            UsageWindow {
+                id: "codex/secondary_window".into(),
+                group: "Codex".into(),
+                third_party: false,
+                label: "7d".into(),
+                duration_seconds: Some(604_800.0),
+                remaining_percent: Some(19.6),
+                resets_at: Some(3_000),
+            },
+        ],
+        reset_credits: None,
+        error: None,
+    };
+    let notices = alert_notices(&record, &usage, 1_500);
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].body.contains("7d: restam 20%"));
+    assert_eq!(notices[0].window_id, "codex/secondary_window");
+    assert_eq!(notices[0].resets_at, 3_000);
+    assert_eq!(notices[0].threshold, 20);
+    assert!(claim_alert_delivery(&connection, &record.alias, &notices[0]).unwrap());
+    assert!(!claim_alert_delivery(&connection, &record.alias, &notices[0]).unwrap());
+    let next_cycle = AccountUsage {
+        windows: usage
+            .windows
+            .iter()
+            .cloned()
+            .map(|mut window| {
+                if window.label == "7d" {
+                    window.resets_at = Some(4_000);
+                }
+                window
+            })
+            .collect(),
+        ..usage
+    };
+    let next_notice = alert_notices(&record, &next_cycle, 1_500).remove(0);
+    assert_eq!(next_notice.resets_at, 4_000);
+    assert!(claim_alert_delivery(&connection, &record.alias, &next_notice).unwrap());
+
+    save_alert(&connection, &record.alias, None).unwrap();
+    assert!(
+        crate::persistence::list_provider_accounts(&connection).unwrap()[0]
+            .usage_alert_window
+            .is_none()
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT count(*) FROM provider_usage_alert_deliveries WHERE alias=?1",
+                [&record.alias],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0
+    );
+    assert!(save_alert(
+        &connection,
+        &record.alias,
+        Some(crate::openai_codex::UsageAlert {
+            window: crate::openai_codex::UsageAlertWindow::Weekly,
+            remaining_percent: 0,
+        })
+    )
+    .is_err());
+}
+
+#[test]
+fn antigravity_alerts_respect_third_party_visibility_and_ignore_stale_data() {
+    let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+    crate::persistence::initialize_database(&mut connection).unwrap();
+    let account =
+        crate::persistence::insert_provider_account(&connection, "antigravity-a", "one").unwrap();
+    save_alert(
+        &connection,
+        &account.alias,
+        Some(crate::openai_codex::UsageAlert {
+            window: crate::openai_codex::UsageAlertWindow::FiveHour,
+            remaining_percent: 25,
+        }),
+    )
+    .unwrap();
+    let record = crate::persistence::list_provider_accounts(&connection)
+        .unwrap()
+        .remove(0);
+    let mut usage = AccountUsage {
+        alias: record.alias.clone(),
+        fetched_at: Some(1_000),
+        email: None,
+        plan: None,
+        windows: vec![UsageWindow {
+            id: "third-party".into(),
+            group: "Outros".into(),
+            third_party: true,
+            label: "5h".into(),
+            duration_seconds: Some(18_000.0),
+            remaining_percent: Some(10.0),
+            resets_at: Some(3_000),
+        }],
+        reset_credits: None,
+        error: None,
+    };
+    assert!(alert_notices(&record, &usage, 1_500).is_empty());
+    let mut visible = record.clone();
+    visible.show_third_party_usage = true;
+    assert_eq!(alert_notices(&visible, &usage, 1_500).len(), 1);
+    usage.error = Some("offline".into());
+    assert!(alert_notices(&visible, &usage, 1_500).is_empty());
+}
+
+#[test]
 fn codex_http_probe_is_read_only_and_scopes_requests_to_the_selected_account() {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;

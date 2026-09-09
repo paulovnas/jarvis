@@ -23,12 +23,22 @@ export const providerAccounts = sqliteTable(
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     showUsage: integer("show_usage", { mode: "boolean" }).notNull().default(true),
     showThirdPartyUsage: integer("show_third_party_usage", { mode: "boolean" }).notNull().default(false),
+    usageAlertWindow: text("usage_alert_window"),
+    usageAlertThreshold: integer("usage_alert_threshold"),
     createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
   },
   (table) => [
     check(
       "provider_accounts_provider_kind_check",
       sql`${table.providerKind} IN ('openai-codex', 'antigravity', 'custom')`,
+    ),
+    check(
+      "provider_accounts_usage_alert_window_check",
+      sql`${table.usageAlertWindow} IS NULL OR ${table.usageAlertWindow} IN ('five_hour', 'weekly')`,
+    ),
+    check(
+      "provider_accounts_usage_alert_threshold_check",
+      sql`${table.usageAlertThreshold} IS NULL OR ${table.usageAlertThreshold} BETWEEN 1 AND 100`,
     ),
   ],
 );
@@ -37,6 +47,13 @@ export const customProviderConfigs = sqliteTable("custom_provider_configs", {
   alias: text("alias").primaryKey().references(() => providerAccounts.alias, { onDelete: "cascade" }),
   config: text("config").notNull(),
 });
+
+export const providerUsageAlertDeliveries = sqliteTable("provider_usage_alert_deliveries", {
+  alias: text("alias").notNull().references(() => providerAccounts.alias, { onDelete: "cascade" }),
+  windowId: text("window_id").notNull(),
+  resetsAt: integer("resets_at").notNull(),
+  threshold: integer("threshold").notNull(),
+}, (table) => [primaryKey({ columns: [table.alias, table.windowId] })]);
 
 export const mcpServers = sqliteTable("mcp_servers", {
   id: text("id").primaryKey(),

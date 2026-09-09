@@ -35,6 +35,44 @@ Compaction waited until close to the model's large context limit. Mutable workfl
 state, design briefs, terminal tails, and Beads snapshots also changed request
 prefixes. Cache breakdowns returned by providers were discarded.
 
+### Portal ITA direct-builder audit
+
+A second read-only audit covered the September 9, 2026 direct Builder turn that
+fixed an `ANALYSIS_OUTPUT_INVALID` error for an unknown `criteria.code`. The final
+patch was focused (27 added/changed source lines and 86 test lines) and the
+recorded checks passed, but the path to that patch was longer than the request
+required:
+
+| Measurement | Observed value |
+| --- | ---: |
+| Wall-clock execution | 24m 03s |
+| Inference/tool cycles | 90 |
+| Tool calls | 89 |
+| Time before the first edit | 17m 02s / 70 cycles |
+| Initial + second discovery | 17m 02s / 70.8% of the turn |
+| Implementation | 2m 37s / 8 cycles |
+| Focused checks | 27s / 3 commands |
+| Later research, full check and final review | 3m 53s / 9 cycles |
+| Recorded tool execution time | 2m 43s |
+| Remaining provider/model wait | approximately 21m 15s |
+| Input / cache-read tokens | 6,674,238 / 6,486,016 (97.18%) |
+
+The cache behaved well; it prevented most repeated input from being an uncached
+miss, but it did not shorten the 90 sequential inference cycles. The agent read
+several unchanged ranges more than once and continued broad schema, seed and test
+exploration after it had enough evidence to constrain `criteria.code` to the
+active prompt grid. One explicit OpenAI SDK source read was justified after
+Context7 because it checked the installed helper's exact behavior; ordinary
+dependency discovery should still omit that tree.
+
+The largest single cycle took 309.7 seconds while its successful `read_skill`
+call took 0.1 second, so that delay was provider/model time rather than local I/O.
+The result was correct, but 24 minutes was excessive for this scope. Jarvis now
+instructs agents to reuse Context-mode recall and unchanged excerpts, batch
+independent discovery, stop broad exploration once the root cause and patch scope
+are proven, then validate the focused change. This is guidance rather than a hard
+step or time cap, so a difficult task can still expand when evidence requires it.
+
 ## Runtime behavior
 
 - Context-mode is a runtime invariant, independent of model, role or workflow.
@@ -60,11 +98,14 @@ prefixes. Cache breakdowns returned by providers were discarded.
   All hooks still run. Executable Context-mode tools get an automatic indexing
   `intent` when the model omitted it and the installed tool schema supports it;
   neither the code being executed nor its authorization is changed.
-- Automatic compaction also triggers when estimated conversation replay reaches
-  128,000 tokens, even for models with larger windows. The actual catalog limit
-  and output reserve remain the safety boundary. The existing safe call/result
-  grouping, latest user request, recent tail, summary and visible compaction event
-  are preserved. This is a soft context budget, not a step limit or cancellation.
+- Automatic compaction targets 80% of the model's catalog context window. Jarvis
+  keeps a separate response reserve of at least 15% (and normally at least 16,384
+  tokens), following OMP's reserve provenance. It can compact earlier when the
+  next request plus that reserve would not fit safely. Provider-reported occupancy
+  is floored by the local replay estimate, so a provider transform cannot hide a
+  large stored history. The existing safe call/result grouping, latest user
+  request, recent tail, summary and visible compaction event are preserved. This
+  is a soft context budget, not a step limit or cancellation.
 - Mutable runtime checkpoints are appended only when changed, outside the stable
   system prefix. Session memory and Beads snapshots are also appended as reference
   data instead of replacing the first input on every turn. Runtime records are
@@ -76,6 +117,32 @@ prefixes. Cache breakdowns returned by providers were discarded.
   for nonvisual evidence, reuse captures when appropriate, batch related Vision
   questions, and stop collecting evidence once relevant criteria are satisfied.
   Browser access remains available. There is no screenshot or agent-step hard cap.
+
+## Compaction recovery
+
+Antigravity summary requests select low reasoning when the model advertises a
+supported route. Omitting reasoning can select the gateway's high default; the
+chat's own reasoning choice stays unchanged. Summary instructions mark the
+history as reference data and prohibit continuing its tasks or tools.
+
+Incomplete provider responses use the existing bounded inference retry mechanism.
+Antigravity output-limit and safety responses have separate error codes with the
+reported finish reason. During compaction, an output-limit or context-overflow
+response halves the current history portion and retries it without advancing the
+checkpoint. Partial summaries and partial tool calls are never accepted. The
+original history remains intact until the complete summary is durably saved.
+
+Context-mode recall runs again after both proactive compaction and recovery from
+provider context overflow. The bounded result is appended as runtime reference
+data and counted as an automatic search. Explicit `ctx_search` calls are still
+distinct: a lack of visible model calls does not mean the Core was bypassed.
+
+The September 8 Antigravity incident occurred before the first inference step,
+during compaction. That older error did not retain the finish reason, so its exact
+provider cause cannot be recovered. A separate Gemini session recorded 23 explicit
+`ctx_execute` calls and an automatic recall, followed by a successful manual
+compaction. Regression fixtures verify recovery; live provider acceptance remains
+separate from these tests.
 
 ## Provider cache versus Context-mode
 
@@ -139,8 +206,9 @@ provider sessions; unit fixtures cannot establish a particular provider's saving
 
 ## Sources and implementation references
 
-Validation commands: `bun run check`, Rust Clippy with all targets/features and
-warnings denied, and serial Rust tests. The optional
+Validation gates: frontend lint, typecheck, unit tests and production build;
+Rust formatting, Clippy with all targets/features and warnings denied, and Rust
+tests. The optional
 `installed_core_enforces_budget_and_recalls_in_isolation` test exercises the
 installed Context-mode package with disposable data and no provider inference.
 It verifies empty-memory lookup, mandatory large-read indexing, retrieval and
@@ -151,6 +219,10 @@ run, Windows-native UAT, commit or release was performed as part of this change.
 - [Google generateContent caching](https://ai.google.dev/gemini-api/docs/generate-content/caching)
 - [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
 - [OpenRouter prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching)
+- Primary local behavior references: `docs/omp/docs/compaction.md`,
+  `docs/omp/docs/non-compaction-retry-policy.md`, `docs/omp/docs/session.md`,
+  `docs/omp/packages/agent/src/compaction/compaction.ts`, and
+  `docs/omp/crates/pi-natives/src/grep.rs` (read-only).
 - Local design references: `docs/metis/docs/custom-provider.md` and
   `docs/metis/src/core/model-registry.ts` (read-only).
 - Runtime: `src-tauri/src/core/context.rs`, `src-tauri/src/agent.rs`,

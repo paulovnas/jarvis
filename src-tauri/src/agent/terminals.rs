@@ -874,7 +874,8 @@ impl TerminalState {
                     // Closing a tab removes its entry; global shutdown keeps entries
                     // visible if the app stays open after a failed update/Core repair.
                     entry.info.status = if entry.runtime.closing.load(Ordering::SeqCst)
-                        || (entry.info.command.is_some() && entry.runtime.interrupted.load(Ordering::SeqCst))
+                        || (entry.info.command.is_some()
+                            && entry.runtime.interrupted.load(Ordering::SeqCst))
                         || status.as_ref().is_ok_and(|status| status.success())
                     {
                         "exited".into()
@@ -1257,25 +1258,61 @@ mod tests {
         let state = TerminalState::default();
         for service in [true, false] {
             let script = "printf 'service-ready\\n'; sleep 30";
-            let terminal = state.spawn(Spawn {
-                conversation: "interrupt", root: root.path(), title: None, origin: TerminalOrigin::Agent,
-                call_id: None, initial_input: None, service: service.then_some((script, None)),
-            }, silent_events()).unwrap();
-            if !service { state.write("interrupt", &terminal.id, &format!("{script}\r")).unwrap(); }
+            let terminal = state
+                .spawn(
+                    Spawn {
+                        conversation: "interrupt",
+                        root: root.path(),
+                        title: None,
+                        origin: TerminalOrigin::Agent,
+                        call_id: None,
+                        initial_input: None,
+                        service: service.then_some((script, None)),
+                    },
+                    silent_events(),
+                )
+                .unwrap();
+            if !service {
+                state
+                    .write("interrupt", &terminal.id, &format!("{script}\r"))
+                    .unwrap();
+            }
             wait_for_text(&state, "interrupt", &terminal.id, "service-ready\r\n");
             state.write("interrupt", &terminal.id, "\u{3}").unwrap();
             if service {
                 for _ in 0..100 {
-                    if !state.snapshot("interrupt", &terminal.id).unwrap().terminal.running() { break; }
+                    if !state
+                        .snapshot("interrupt", &terminal.id)
+                        .unwrap()
+                        .terminal
+                        .running()
+                    {
+                        break;
+                    }
                     thread::sleep(std::time::Duration::from_millis(20));
                 }
-                assert!(!state.snapshot("interrupt", &terminal.id).unwrap().terminal.running());
-                assert_eq!(state.snapshot("interrupt", &terminal.id).unwrap().terminal.status, "exited");
+                assert!(!state
+                    .snapshot("interrupt", &terminal.id)
+                    .unwrap()
+                    .terminal
+                    .running());
+                assert_eq!(
+                    state
+                        .snapshot("interrupt", &terminal.id)
+                        .unwrap()
+                        .terminal
+                        .status,
+                    "exited"
+                );
             } else {
-                state.write("interrupt", &terminal.id, "printf 'shell-%s\\n' usable\r").unwrap();
+                state
+                    .write("interrupt", &terminal.id, "printf 'shell-%s\\n' usable\r")
+                    .unwrap();
                 wait_for_text(&state, "interrupt", &terminal.id, "shell-usable");
             }
-            state.close("interrupt", &terminal.id, &silent_events()).unwrap();
+            state
+                .close("interrupt", &terminal.id, &silent_events())
+                .unwrap();
         }
     }
 
@@ -1285,32 +1322,84 @@ mod tests {
         #[derive(Debug)]
         struct Finished;
         impl ChildKiller for Finished {
-            fn kill(&mut self) -> std::io::Result<()> { Ok(()) }
-            fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> { Box::new(Finished) }
+            fn kill(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+            fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+                Box::new(Finished)
+            }
         }
         impl Child for Finished {
-            fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> { Ok(Some(portable_pty::ExitStatus::with_exit_code(130))) }
-            fn wait(&mut self) -> std::io::Result<portable_pty::ExitStatus> { Ok(portable_pty::ExitStatus::with_exit_code(130)) }
-            fn process_id(&self) -> Option<u32> { None }
+            fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
+                Ok(Some(portable_pty::ExitStatus::with_exit_code(130)))
+            }
+            fn wait(&mut self) -> std::io::Result<portable_pty::ExitStatus> {
+                Ok(portable_pty::ExitStatus::with_exit_code(130))
+            }
+            fn process_id(&self) -> Option<u32> {
+                None
+            }
         }
         let state = TerminalState::default();
         let runtime = Arc::new(Runtime {
-            writer: Mutex::new(Box::new(std::io::sink())), master: Mutex::new(None),
-            killer: Killer { killed: AtomicBool::new(false), child: Mutex::new(Box::new(Finished)), group: UnixGroup(None) },
-            alive: AtomicBool::new(true), closing: AtomicBool::new(false), interrupted: AtomicBool::new(true),
+            writer: Mutex::new(Box::new(std::io::sink())),
+            master: Mutex::new(None),
+            killer: Killer {
+                killed: AtomicBool::new(false),
+                child: Mutex::new(Box::new(Finished)),
+                group: UnixGroup(None),
+            },
+            alive: AtomicBool::new(true),
+            closing: AtomicBool::new(false),
+            interrupted: AtomicBool::new(true),
         });
-        state.0.lock().unwrap().insert("terminal".into(), Entry {
-            info: ChatTerminal { id: "terminal".into(), conversation_id: "chat".into(), title: "Service".into(), cwd: "/".into(), pid: 0, started_at: 0, ended_at: None, exit_code: None, status: "running".into(), origin: TerminalOrigin::Agent, command: Some("npm run dev".into()) },
-            call_id: None, output: Arc::new(Mutex::new(Output::default())), runtime: runtime.clone(),
-        });
+        state.0.lock().unwrap().insert(
+            "terminal".into(),
+            Entry {
+                info: ChatTerminal {
+                    id: "terminal".into(),
+                    conversation_id: "chat".into(),
+                    title: "Service".into(),
+                    cwd: "/".into(),
+                    pid: 0,
+                    started_at: 0,
+                    ended_at: None,
+                    exit_code: None,
+                    status: "running".into(),
+                    origin: TerminalOrigin::Agent,
+                    command: Some("npm run dev".into()),
+                },
+                call_id: None,
+                output: Arc::new(Mutex::new(Output::default())),
+                runtime: runtime.clone(),
+            },
+        );
         let (release, drain) = std::sync::mpsc::channel();
-        let reader = thread::spawn(move || { let _ = drain.recv(); });
+        let reader = thread::spawn(move || {
+            let _ = drain.recv();
+        });
         let (changed, notification) = std::sync::mpsc::channel();
-        let events = TerminalEvents { changed: Arc::new(move |_| { let _ = changed.send(()); }), output: Arc::new(|_| {}) };
-        TerminalState::watch_child(state.clone(), Box::new(Finished), runtime, "terminal".into(), "chat".into(), events, Some(reader));
+        let events = TerminalEvents {
+            changed: Arc::new(move |_| {
+                let _ = changed.send(());
+            }),
+            output: Arc::new(|_| {}),
+        };
+        TerminalState::watch_child(
+            state.clone(),
+            Box::new(Finished),
+            runtime,
+            "terminal".into(),
+            "chat".into(),
+            events,
+            Some(reader),
+        );
         let notified = notification.recv_timeout(std::time::Duration::from_secs(1));
         let _ = release.send(());
-        assert!(notified.is_ok(), "completion must not wait for an inherited output pipe");
+        assert!(
+            notified.is_ok(),
+            "completion must not wait for an inherited output pipe"
+        );
         let terminal = state.snapshot("chat", "terminal").unwrap().terminal;
         assert_eq!(terminal.status, "exited");
         assert_eq!(terminal.exit_code, Some(130));

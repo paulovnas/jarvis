@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
+import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 import {
   libraryError,
   readLibrarySnapshot,
@@ -11,13 +12,22 @@ import {
 } from "@/core/library";
 
 export function useLibrary() {
-  const [snapshot, setSnapshot] = useState<LibrarySnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
+  const bootstrap = useBootstrapResources();
+  const updateBootstrapLibrary = bootstrap?.updateLibrary;
+  const [localSnapshot, setLocalSnapshot] = useState<LibrarySnapshot | null>(() => bootstrap?.resources.library ?? null);
+  const snapshot = bootstrap ? bootstrap.resources.library : localSnapshot;
+  const [loading, setLoading] = useState(() => !(bootstrap?.resources.loaded.library ?? false));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
   const mutation = useRef(false);
   const refreshQueued = useRef(false);
+  const loadInitially = useRef(!(bootstrap?.resources.loaded.library ?? false));
+
+  const accept = useCallback((loaded: LibrarySnapshot) => {
+    if (updateBootstrapLibrary) updateBootstrapLibrary(loaded);
+    else setLocalSnapshot(loaded);
+  }, [updateBootstrapLibrary]);
 
   const load = useCallback(() => {
     if (mutation.current) return Promise.resolve();
@@ -25,7 +35,7 @@ export function useLibrary() {
     return invoke<unknown>("get_library_snapshot")
       .then((result) => {
         const loaded = readLibrarySnapshot(result);
-        if (generation.current === request) setSnapshot(loaded);
+        if (generation.current === request) accept(loaded);
       })
       .catch((cause: unknown) => {
         if (generation.current === request)
@@ -36,7 +46,7 @@ export function useLibrary() {
       .finally(() => {
         if (generation.current === request) setLoading(false);
       });
-  }, []);
+  }, [accept]);
 
   const refresh = async () => {
     if (mutation.current) return;
@@ -46,7 +56,7 @@ export function useLibrary() {
   };
 
   useEffect(() => {
-    void load();
+    if (loadInitially.current) void load();
     let active = true;
     let dispose: (() => void) | undefined;
     void listen("library:changed", () => {
@@ -77,7 +87,7 @@ export function useLibrary() {
       const result = await invoke<unknown>(command, args);
       if (generation.current !== request) return false;
       if (command === "add_project" && result === null) return false;
-      setSnapshot(readLibrarySnapshot(result));
+      accept(readLibrarySnapshot(result));
       if (success) toast.success(success);
       return true;
     } catch (cause) {

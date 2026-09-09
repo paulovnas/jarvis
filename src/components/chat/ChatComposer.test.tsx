@@ -84,6 +84,41 @@ describe("ChatComposer model reasoning", () => {
     await user.click(within(reasoning).getByRole("menuitem", { name: "Extra alto" }));
     expect(save).toHaveBeenCalledWith("designer", "designer", { account: "pessoal", model: "compact", reasoning: "xhigh" });
   });
+  it("asks before replacing coordinated-flow agents and pending validations", async () => {
+    const user = userEvent.setup();
+    await renderComposer(<ChatComposer
+      modelGroups={models}
+      onSendMessage={vi.fn()}
+      initialOptions={{ ...chatOptions, account: "pessoal", model: "compact", workflow: "planned" }}
+      workflowSnapshot={{
+        conversationId: "c1",
+        revision: 1,
+        flow: "planned",
+        agents: [{
+          id: "worker", parentId: "main", role: "builder", title: "Implementar ajuste", status: "completed",
+          createdAt: 1, updatedAt: 2, startedAt: 1, durationMs: 1_000, currentThought: null, attempts: 1,
+          options: { ...chatOptions, account: "pessoal", model: "compact", workflow: "planned" }, beadId: null,
+          handoff: null, error: null, activeTurnId: null, pendingApproval: null, pendingQuestion: null,
+        }],
+        validation: null,
+      }}
+    />);
+
+    const flow = screen.getByRole("button", { name: "Selecionar fluxo" });
+    expect(flow).toHaveTextContent("Planejado");
+    await user.click(flow);
+    await user.click(await screen.findByRole("menuitem", { name: "Padrão" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("Trocar para um agente direto?");
+    expect(flow).toHaveTextContent("Planejado");
+    await user.click(screen.getByRole("button", { name: "Manter fluxo atual" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(flow).toHaveTextContent("Planejado");
+
+    await user.click(flow);
+    await user.click(await screen.findByRole("menuitem", { name: "Padrão" }));
+    await user.click(await screen.findByRole("button", { name: "Trocar fluxo" }));
+    expect(flow).toHaveTextContent("Padrão");
+  });
   it("mostra somente provedores e permite navegar pelos três níveis com teclado", async () => {
     const user = userEvent.setup();
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={vi.fn()} />);
@@ -123,17 +158,30 @@ describe("ChatComposer model reasoning", () => {
     expect(screen.getByRole("button", { name: "Interromper execução" })).toBeEnabled();
   });
 
-  it("does not erase text typed while an enqueue acknowledgement is pending", async () => {
+  it("acknowledges a fast Enter immediately and preserves text typed while the request is pending", async () => {
     const user = userEvent.setup(); let resolve!: (value: boolean) => void;
     const send = vi.fn(() => new Promise<boolean>(done => { resolve = done; }));
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} running />);
     const field = screen.getByRole("textbox");
     await user.type(field, "Pedido{Enter}");
+    expect(field).toHaveTextContent(/^$/);
     expect(field).toHaveAttribute("contenteditable", "true");
-    await user.type(field, " ainda digitando");
+    await user.type(field, "Próxima mensagem");
     await act(async () => resolve(true));
-    expect(field).toHaveTextContent("Pedido ainda digitando");
+    expect(field).toHaveTextContent("Próxima mensagem");
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores a rejected submission without erasing the next draft", async () => {
+    const user = userEvent.setup(); let resolve!: (value: boolean) => void;
+    const send = vi.fn(() => new Promise<boolean>(done => { resolve = done; }));
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} />);
+    const field = screen.getByRole("textbox");
+    await user.type(field, "Pedido{Enter}");
+    await user.type(field, "Próxima mensagem");
+    await act(async () => resolve(false));
+    await waitFor(() => expect(field).toHaveTextContent("Pedido"));
+    expect(field).toHaveTextContent("Próxima mensagem");
   });
 
   it("restores removed queued text after the existing draft and offers resume when paused", async () => {
@@ -170,7 +218,7 @@ describe("ChatComposer model reasoning", () => {
     await user.click(await screen.findByRole("menuitem", { name: /Plan/ }));
     await user.type(screen.getByRole("textbox"), "Analise o projeto{Enter}");
     expect(send).toHaveBeenCalledWith("Analise o projeto", { account: "pessoal", model: "compact", reasoning: "medium", mode: "build", workflow: "planned", approvalMode: "yolo" });
-    expect(screen.getByRole("textbox")).toHaveTextContent("Analise o projeto");
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveTextContent("Analise o projeto"));
   });
   it("uses the provider default and offers only this model's levels", async () => {
     const user = userEvent.setup();

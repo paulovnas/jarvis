@@ -57,9 +57,11 @@ describe("App bootstrap and onboarding", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     invokeMock.mockReset();
-    invokeMock.mockImplementation((command) => {
+    invokeMock.mockImplementation((command, args) => {
       if (command === "get_core_status" || command === "check_core_updates") return Promise.resolve(coreFixture());
       if (command === "list_provider_accounts") return Promise.resolve([connectedAccount]);
+      if (command === "get_provider_usage") return Promise.resolve({ alias: (args as { alias: string }).alias, fetchedAt: Date.now(), email: null, plan: "plus", windows: [], error: null, resetCredits: null });
+      if (command === "list_skills") return Promise.resolve({ includeAgents: false, directory: "/home/.jarvis/skills", skills: [], warnings: [] });
       if (command === "get_web_search_config" || command === "get_vision_config") return Promise.resolve({ accountAlias: null, model: null, inheritChat: true });
       if (command === "get_agent_activity") return Promise.resolve([]);
       if (command === "get_library_snapshot")
@@ -113,7 +115,12 @@ describe("App bootstrap and onboarding", () => {
 
   it("mantém loading visível e não mostra onboarding antes da leitura persistida", async () => {
     const config = deferred<AppConfig>();
-    invokeMock.mockReturnValueOnce(config.promise);
+    const fallback = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command, args, options) =>
+      command === "get_app_config"
+        ? config.promise
+        : fallback(command, args, options),
+    );
 
     render(<App />);
 
@@ -134,7 +141,12 @@ describe("App bootstrap and onboarding", () => {
   });
 
   it("posiciona os toasts no topo central da janela", () => {
-    invokeMock.mockResolvedValueOnce({ onboardingCompleted: false });
+    const fallback = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command, args, options) =>
+      command === "get_app_config"
+        ? Promise.resolve({ onboardingCompleted: false })
+        : fallback(command, args, options),
+    );
 
     render(<App />);
 
@@ -142,7 +154,12 @@ describe("App bootstrap and onboarding", () => {
   });
 
   it("leva configuração incompleta ao onboarding com o CTA Avançar", async () => {
-    invokeMock.mockResolvedValueOnce({ onboardingCompleted: false });
+    const fallback = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command, args, options) =>
+      command === "get_app_config"
+        ? Promise.resolve({ onboardingCompleted: false })
+        : fallback(command, args, options),
+    );
 
     render(<App />);
 
@@ -155,7 +172,12 @@ describe("App bootstrap and onboarding", () => {
   });
 
   it("leva configuração concluída diretamente ao Home", async () => {
-    invokeMock.mockResolvedValueOnce({ onboardingCompleted: true });
+    const fallback = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command, args, options) =>
+      command === "get_app_config"
+        ? Promise.resolve({ onboardingCompleted: true })
+        : fallback(command, args, options),
+    );
 
     render(<App />);
 
@@ -166,6 +188,11 @@ describe("App bootstrap and onboarding", () => {
     expect(
       screen.queryByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).not.toBeInTheDocument();
+    expect(invokeMock.mock.calls.filter(([command]) => command === "check_core_updates")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([command]) => command === "get_core_status")).toHaveLength(0);
+    expect(invokeMock.mock.calls.filter(([command]) => command === "list_provider_accounts")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([command]) => command === "get_provider_usage")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([command]) => command === "get_library_snapshot")).toHaveLength(1);
   });
 
   it("bloqueia em erro de carga e permite tentar novamente", async () => {
@@ -256,7 +283,12 @@ describe("App bootstrap and onboarding", () => {
   });
 
   it("apresenta os recursos disponíveis sem detalhes internos de implementação", async () => {
-    invokeMock.mockResolvedValueOnce({ onboardingCompleted: false });
+    const fallback = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command, args, options) =>
+      command === "get_app_config"
+        ? Promise.resolve({ onboardingCompleted: false })
+        : fallback(command, args, options),
+    );
 
     render(<App />);
 

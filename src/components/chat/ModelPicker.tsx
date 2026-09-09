@@ -1,5 +1,6 @@
 import { Check, ChevronDown } from "lucide-react";
-import type { ProviderModel } from "@/core/provider-accounts";
+import type { ProviderAccount, ProviderModel } from "@/core/provider-accounts";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import { reasoningLabel } from "@/core/reasoning";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
@@ -10,6 +11,7 @@ export interface ModelOptionDef extends Pick<ProviderModel, "reasoningLevels" | 
 
 export interface ProviderModelGroup {
   provider: string;
+  providerKind?: ProviderAccount["providerKind"];
   models: ModelOptionDef[];
 }
 
@@ -45,7 +47,8 @@ export function ModelPicker({ modelGroups, selection, onSelect, disabled = false
                 ) : (
                   modelGroups.map((group) => (
                     <DropdownMenuSub key={group.provider}>
-                        <DropdownMenuSubTrigger className="cursor-pointer gap-3 py-2 font-mono text-xs text-[#56b6c2]">
+                        <DropdownMenuSubTrigger className="cursor-pointer gap-2 py-2 font-mono text-xs text-onedark-cyan">
+                          <ProviderIcon kind={group.providerKind ?? "custom"} className="size-4" />
                           {group.provider}
                         </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="max-h-[min(480px,70vh)] min-w-[220px] overflow-y-auto border-border bg-card p-1.5 text-foreground">

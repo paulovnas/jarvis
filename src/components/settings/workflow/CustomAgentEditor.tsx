@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Route, Shuffle, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,6 +16,13 @@ import { agentAppearance } from "@/core/workflow-appearance";
 import { AppearancePicker } from "./AppearancePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AgentToolPermissions } from "./AgentToolPermissions";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+
+const usageOptions = [
+  { value: "solo", label: "Solo", description: "Aparece no seletor e trabalha como agente principal.", icon: UserRound },
+  { value: "mixed", label: "Misto", description: "Pode ser escolhido diretamente e usado em fluxos.", icon: Shuffle },
+  { value: "flow_only", label: "Somente em fluxos", description: "Disponível apenas no construtor de fluxos.", icon: Route },
+] as const;
 
 export function CustomAgentEditor({ initial, accounts, saving, onSave, onClose, creating }: { initial: CustomAgent; accounts: ProviderAccount[]; saving: boolean; onSave: (agent: CustomAgent) => Promise<boolean>; onClose: () => void; creating: boolean }) {
   const [agent, setAgent] = useState(initial);
@@ -39,6 +47,9 @@ export function CustomAgentEditor({ initial, accounts, saving, onSave, onClose, 
               <legend className="sr-only">Identidade e permissões</legend>
               <div className="space-y-1.5"><Label htmlFor="custom-agent-name">Nome</Label><Input id="custom-agent-name" value={agent.name} maxLength={100} required onChange={e => patch({ name: e.target.value })} /></div>
               <div className="space-y-1.5"><Label htmlFor="custom-agent-description">Descrição</Label><Textarea id="custom-agent-description" className="min-h-16 resize-y text-xs" value={agent.description} maxLength={500} onChange={e => patch({ description: e.target.value })} /></div>
+              <div className="space-y-2"><Label id="custom-agent-usage">Onde este agente pode atuar</Label><ToggleGroup orientation="vertical" aria-labelledby="custom-agent-usage" value={[agent.usage]} onValueChange={values => { const usage = values[0]; if (usage) patch({ usage: usage as CustomAgent["usage"] }); }} className="w-full gap-1.5">
+                {usageOptions.map(option => <ToggleGroupItem key={option.value} type="button" value={option.value} aria-label={option.label} className="h-auto w-full cursor-pointer justify-start gap-3 rounded-md border border-border px-3 py-2.5 text-left whitespace-normal data-pressed:border-primary/35 data-pressed:bg-primary/8"><option.icon className="size-4 shrink-0 text-primary" /><span className="min-w-0"><span className="block text-xs font-medium">{option.label}</span><span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">{option.description}</span></span></ToggleGroupItem>)}
+              </ToggleGroup></div>
               <AppearancePicker value={agent.appearance ?? agentAppearance} onChange={appearance => patch({ appearance })} disabled={saving} />
             </fieldset>
             <fieldset disabled={saving} className="flex min-w-0 flex-col gap-4">

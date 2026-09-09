@@ -1,9 +1,11 @@
 //! User-owned definitions. Built-in contracts are never read from this catalog.
 use super::*;
-use std::{collections::BTreeSet, fs};
+use std::{collections::BTreeSet, fs, sync::Mutex};
 mod appearance;
 pub(crate) mod permissions;
 pub use appearance::Appearance;
+
+static CATALOG_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -13,6 +15,25 @@ pub enum Capability {
     Commands,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentUsage {
+    Solo,
+    Mixed,
+    #[default]
+    FlowOnly,
+}
+
+impl AgentUsage {
+    pub(super) fn allows_solo(self) -> bool {
+        matches!(self, Self::Solo | Self::Mixed)
+    }
+
+    pub(super) fn allows_flow(self) -> bool {
+        matches!(self, Self::Mixed | Self::FlowOnly)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentDefinition {
@@ -20,6 +41,8 @@ pub struct AgentDefinition {
     pub name: String,
     pub description: String,
     pub instructions: String,
+    #[serde(default)]
+    pub usage: AgentUsage,
     pub capability: Capability,
     #[serde(default)]
     pub denied_tools: Vec<String>,
@@ -85,7 +108,7 @@ fn unique_ids<'a>(ids: impl Iterator<Item = &'a str>) -> bool {
 }
 
 impl Catalog {
-    fn validate(&self) -> Result<(), AgentError> {
+    pub(crate) fn validate(&self) -> Result<(), AgentError> {
         if self.agents.len() > 64
             || self.flows.len() > 32
             || !unique_ids(self.agents.iter().map(|a| a.id.as_str()))
@@ -133,8 +156,17 @@ impl Catalog {
         }
         let nodes: BTreeMap<_, _> = flow.steps.iter().map(|s| (s.id.as_str(), s)).collect();
         for step in &flow.steps {
-            if !self.agents.iter().any(|a| a.id == step.agent_id)
-                || !text_valid(&step.instructions, 8_000, false)
+            let agent = self
+                .agents
+                .iter()
+                .find(|agent| agent.id == step.agent_id)
+                .ok_or_else(|| invalid("Todas as etapas precisam de agentes existentes."))?;
+            if !agent.usage.allows_flow() {
+                return Err(invalid(
+                    "Agentes Solo não podem fazer parte de fluxos. Altere o uso para Misto ou Somente em fluxos.",
+                ));
+            }
+            if !text_valid(&step.instructions, 8_000, false)
                 || !step.position.x.is_finite()
                 || !step.position.y.is_finite()
                 || step.position.x.abs() > 100_000.0
@@ -197,6 +229,21 @@ impl Catalog {
             .collect();
         Ok(RunDefinition { flow, agents })
     }
+
+    pub(super) fn resolve_agent(&self, id: &str) -> Result<AgentDefinition, AgentError> {
+        let agent = self
+            .agents
+            .iter()
+            .find(|agent| agent.id == id)
+            .ok_or_else(|| invalid("Este agente não existe mais. Escolha outro agente."))?
+            .clone();
+        if !agent.usage.allows_solo() {
+            return Err(invalid(
+                "Este agente está disponível somente dentro de fluxos.",
+            ));
+        }
+        Ok(agent)
+    }
 }
 
 pub(crate) fn read(home: &Path) -> Result<Catalog, AgentError> {
@@ -233,7 +280,7 @@ fn apply_model_bindings(
     Ok(())
 }
 
-pub(super) fn read_configured(
+pub(crate) fn read_configured(
     db: &rusqlite::Connection,
     home: &Path,
 ) -> Result<Catalog, AgentError> {
@@ -279,7 +326,7 @@ fn change(
     Ok(catalog)
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Mutation {
     SaveAgent { agent: AgentDefinition },
@@ -335,6 +382,49 @@ fn apply(catalog: &mut Catalog, mutation: Mutation) -> Result<(), AgentError> {
     Ok(())
 }
 
+pub(crate) fn preview(catalog: &Catalog, mutation: Mutation) -> Result<Catalog, AgentError> {
+    let mut candidate = catalog.clone();
+    apply(&mut candidate, mutation)?;
+    candidate.validate()?;
+    candidate.revision = candidate
+        .revision
+        .checked_add(1)
+        .ok_or_else(AgentError::storage)?;
+    Ok(candidate)
+}
+
+pub(crate) fn mutate_configured(
+    state: &AppState,
+    home: &Path,
+    revision: u64,
+    mutation: Mutation,
+) -> Result<Catalog, AgentError> {
+    let _guard = CATALOG_LOCK.lock().map_err(|_| AgentError::storage())?;
+    state.with_connection(home, |db| {
+        let offset = crate::model_bindings::revision(db)?;
+        let base = revision
+            .checked_sub(offset)
+            .ok_or_else(|| invalid("Os provedores mudaram. Reabra o editor antes de salvar."))?;
+        let edited_agent = match &mutation {
+            Mutation::SaveAgent { agent } => Some(agent.id.clone()),
+            Mutation::DeleteAgent { id } => Some(id.clone()),
+            _ => None,
+        };
+        let mut catalog = change(home, base, |catalog| {
+            apply_model_bindings(db, catalog)?;
+            apply(catalog, mutation)
+        })?;
+        if let Some(id) = edited_agent {
+            crate::model_bindings::forget_item(db, &format!("custom:{id}"))?;
+        }
+        catalog.revision = catalog
+            .revision
+            .checked_add(offset)
+            .ok_or_else(AgentError::storage)?;
+        Ok(catalog)
+    })
+}
+
 #[tauri::command]
 pub async fn get_workflow_catalog(
     app: tauri::AppHandle,
@@ -359,29 +449,7 @@ pub async fn mutate_workflow_catalog(
     let state = state.inner().clone();
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     let result = tauri::async_runtime::spawn_blocking(move || {
-        state.with_connection(&home, |db| {
-            let offset = crate::model_bindings::revision(db)?;
-            let base = revision.checked_sub(offset).ok_or_else(|| {
-                invalid("Os provedores mudaram. Reabra o editor antes de salvar.")
-            })?;
-            let edited_agent = match &mutation {
-                Mutation::SaveAgent { agent } => Some(agent.id.clone()),
-                Mutation::DeleteAgent { id } => Some(id.clone()),
-                _ => None,
-            };
-            let mut catalog = change(&home, base, |catalog| {
-                apply_model_bindings(db, catalog)?;
-                apply(catalog, mutation)
-            })?;
-            if let Some(id) = edited_agent {
-                crate::model_bindings::forget_item(db, &format!("custom:{id}"))?;
-            }
-            catalog.revision = catalog
-                .revision
-                .checked_add(offset)
-                .ok_or_else(AgentError::storage)?;
-            Ok::<_, AgentError>(catalog)
-        })
+        mutate_configured(&state, &home, revision, mutation)
     })
     .await
     .map_err(|_| AgentError::internal())??;
@@ -390,4 +458,4 @@ pub async fn mutate_workflow_catalog(
 }
 
 #[cfg(test)]
-pub(super) mod tests;
+pub(crate) mod tests;

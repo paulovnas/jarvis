@@ -8,6 +8,7 @@ import { SkillsSettings } from "./SkillsSettings";
 import { CoreSettings } from "./CoreSettings";
 import { ChatCleanupSettings } from "./ChatCleanupSettings";
 import { SystemSettings } from "./SystemSettings";
+import { BackupSettings } from "./BackupSettings";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { WorkflowSettings } from "./WorkflowSettings";
 import { skillsSnapshotSchema } from "@/core/skills";
@@ -53,10 +54,11 @@ import { Label } from "@/components/ui/label";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { accountList, type ProviderAccount } from "@/core/provider-accounts";
+import { accountList, type ProviderAccount, type ProviderUsageAlert } from "@/core/provider-accounts";
 import { ProviderAccountCard } from "./ProviderAccountCard";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
+import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 
 
 const SETTINGS_SECTIONS = [
@@ -122,11 +124,13 @@ function SettingsSurface({ embedded, open, onOpenChange, children }: { embedded:
 }
 
 export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedProviders = false, onBusyChange }: SettingsDialogProps) {
+  const bootstrap = useBootstrapResources();
   const { layout, updateLayout } = useDesktopLayout();
   const activeTab = layout.settingsTab;
   const setActiveTab = (value: string) => { if (value === "general" || value === "tools" || value === "providers" || value === "agents" || value === "skills" || value === "mcps" || value === "workspaces") updateLayout({ settingsTab: value }); };
   const [mcpCount, setMcpCount] = useState<number | null>(null);
-  const [skillCount, setSkillCount] = useState<number | null>(null);
+  const [skillCount, setSkillCount] = useState<number | null>(() => bootstrap?.resources.skills?.skills.length ?? null);
+  const visibleSkillCount = skillCount ?? bootstrap?.resources.skills?.skills.length ?? null;
   const skillCountVersion = useRef(0);
   const updateSkillCount = useCallback((count: number) => { skillCountVersion.current += 1; setSkillCount(count); }, []);
   const mcpCountVersion = useRef(0);
@@ -135,8 +139,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
     setMcpCount(count);
   }, []);
   const [view, setView] = useState<SettingsView>("list");
-  const [listState, setListState] = useState<ListState>("loading");
-  const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
+  const [listState, setListState] = useState<ListState>(() => bootstrap?.resources.loaded.accounts ? "ready" : "loading");
+  const [accounts, setAccounts] = useState<ProviderAccount[]>(() => bootstrap?.resources.accounts ?? []);
   const [listError, setListError] = useState<string | null>(null);
   const [suffix, setSuffix] = useState("");
   const [provider, setProvider] = useState("openai-codex");
@@ -160,6 +164,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   const cancellingRef = useRef(false);
   const closeRequestedRef = useRef(false);
   const closingRef = useRef(false);
+  const preloadedAccounts = useRef(bootstrap?.resources.loaded.accounts ?? false);
   const [searchBusy, setSearchBusy] = useState(false);
   const [visionBusy, setVisionBusy] = useState(false);
   useEffect(() => { onBusyChange?.(view !== "list" || editingCustom !== null || listState !== "ready" || toggling || disconnecting !== null || searchBusy || visionBusy); }, [view, editingCustom, listState, toggling, disconnecting, searchBusy, visionBusy, onBusyChange]);
@@ -199,6 +204,10 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
 
   useEffect(() => {
     if (!open) return;
+    if (preloadedAccounts.current) {
+      preloadedAccounts.current = false;
+      return;
+    }
     const requestId = ++listRequestRef.current;
     void invoke<ProviderAccount[]>("list_provider_accounts").then(
       (result) => {
@@ -215,13 +224,14 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
 
   useEffect(() => {
     if (!open || embeddedProviders) return;
+    if (bootstrap?.resources.loaded.skills) return;
     let active = true;
     const version = mcpCountVersion.current;
     void invoke<unknown>("list_mcp_servers").then((value) => {
       if (active && version === mcpCountVersion.current) setMcpCount(mcpServersSchema.parse(value).length);
     }).catch(() => { if (active && version === mcpCountVersion.current) setMcpCount(null); });
     return () => { active = false; };
-  }, [open, embeddedProviders]);
+  }, [open, embeddedProviders, bootstrap?.resources.loaded.skills]);
 
   useEffect(() => {
     if (!open || embeddedProviders) return;
@@ -460,6 +470,16 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
     finally { togglingRef.current = false; setToggling(false); }
   };
 
+  const handleUsageAlertChange = async (alias: string, alert: ProviderUsageAlert | null) => {
+    if (togglingRef.current) return;
+    togglingRef.current = true; setToggling(true);
+    try {
+      await invoke("set_provider_usage_alert", { alias, alert });
+      updateAccounts(accounts.map(account => account.alias === alias ? { ...account, usageAlert: alert } : account));
+    } catch { toast.error("Não foi possível salvar o alerta de limite."); }
+    finally { togglingRef.current = false; setToggling(false); }
+  };
+
   const renderList = () => {
     if (listState === "loading") {
       return (
@@ -541,6 +561,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
                 onEdit={setEditingCustom}
                 onReauthorize={handleReauthorize}
                 onUsageChange={(alias, showUsage, showThirdPartyUsage) => { void handleUsageChange(alias, showUsage, showThirdPartyUsage); }}
+                onUsageAlertChange={(alias, alert) => { void handleUsageAlertChange(alias, alert); }}
                 onEnabledChange={(alias, enabled) => { void handleEnabledChange(alias, enabled); }}
                 onDisconnect={(alias) => {
                   setDisconnectAlias(alias);
@@ -718,7 +739,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
                 {SETTINGS_SECTIONS.map(section => <TabsTrigger key={section.value} value={section.value} title={section.label} className="h-10 flex-none cursor-pointer justify-center gap-2.5 px-2 text-xs sm:justify-start">
                   <section.Icon aria-hidden="true" className="size-4" />
                   <span className="sr-only min-w-0 flex-1 text-left sm:not-sr-only">{section.label}</span>
-                  <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">{section.value === "providers" && listState === "ready" ? accounts.length : section.value === "skills" ? skillCount : section.value === "mcps" ? mcpCount : null}</span>
+                  <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">{section.value === "providers" && listState === "ready" ? accounts.length : section.value === "skills" ? visibleSkillCount : section.value === "mcps" ? mcpCount : null}</span>
                 </TabsTrigger>)}
               </TabsList>
             </div>
@@ -727,13 +748,13 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
                 <h2 className="text-sm font-medium">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.label}</h2>
                 <p className="mt-1 text-xs text-muted-foreground">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.description}</p>
               </div>
-              <TabsContent value="general" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "general" && <div className="max-w-2xl"><SystemSettings /><ChatCleanupSettings /></div>}</TabsContent>
+              <TabsContent value="general" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "general" && <div className="w-full"><SystemSettings /><ChatCleanupSettings /><BackupSettings accounts={accounts} onRestored={summary => { updateSkillCount(summary.skills); updateMcpCount(summary.mcps); }} /></div>}</TabsContent>
               <TabsContent value="workspaces" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "workspaces" && <WorkspaceSettings />}</TabsContent>
               <TabsContent value="tools" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "tools" && <CoreSettings />}</TabsContent>
               <TabsContent value="agents" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "agents" && <WorkflowSettings accounts={accounts} />}</TabsContent>
               <TabsContent value="skills" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</TabsContent>
               <TabsContent value="providers" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{renderList()}</TabsContent>
-              <TabsContent value="mcps" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "mcps" && <div className="max-w-3xl"><McpSettings onCountChange={updateMcpCount} /></div>}</TabsContent>
+              <TabsContent value="mcps" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "mcps" && <div className="w-full"><McpSettings onCountChange={updateMcpCount} /></div>}</TabsContent>
             </div>
           </SettingsTabs.Root></>}
           <Dialog open={open && view !== "list"} onOpenChange={(nextOpen) => { if (!nextOpen && !savingCustom) handleDialogOpenChange(false, false); }}>

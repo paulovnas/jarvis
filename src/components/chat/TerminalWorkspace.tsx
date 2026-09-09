@@ -1,7 +1,8 @@
-import { lazy, Suspense, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useGroupRef } from "react-resizable-panels";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Folder, Pencil, Plus, Terminal as TerminalIcon, X } from "lucide-react";
+import { Folder, PanelBottomClose, PanelBottomOpen, Pencil, Plus, Terminal as TerminalIcon, X } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmationDialogContent } from "@/components/ConfirmationDialogContent";
 import { Input } from "@/components/TextInput";
@@ -71,10 +72,19 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
   const launcherRef = useRef<HTMLButtonElement>(null);
   const { layout, updateLayout } = useDesktopLayout();
   const { open, size: panelSize, activeTerminalId: activeId } = layout.terminalPanels[conversationId ?? ""] ?? DEFAULT_TERMINAL_PANEL;
+  const groupRef = useGroupRef();
+  const [animating, setAnimating] = useState(false);
+  useLayoutEffect(() => { groupRef.current?.setLayout({ conversation: open ? 100 - panelSize : 100, terminals: open ? panelSize : 0 }); }, [groupRef, open, panelSize]);
+  useEffect(() => {
+    if (!animating) return;
+    const timer = setTimeout(() => setAnimating(false), 240);
+    return () => clearTimeout(timer);
+  }, [animating, open]);
   const remember = (update: Partial<TerminalPanelLayout>) => {
     if (conversationId) updateLayout(current => rememberTerminalPanel(current, conversationId, update));
   };
   const setActiveId = (activeTerminalId: string | null) => remember({ activeTerminalId });
+  const togglePanel = () => { setAnimating(true); remember({ open: !open }); };
   const [terminals, setTerminals] = useState<ChatTerminal[]>([]);
   const [loadedConversationId, setLoadedConversationId] = useState<string>();
   const [creating, setCreating] = useState(false);
@@ -180,25 +190,29 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
         title={conversationId ? open ? "Recolher painel de terminais" : triggerLabel : "Abra uma conversa para usar o terminal"}
         aria-label={triggerLabel}
         aria-expanded={open}
-        aria-controls={open ? panelId : undefined}
-        onClick={() => remember({ open: !open })}
+        aria-controls={panelId}
+        onClick={togglePanel}
         className={`relative size-7.5 shrink-0 cursor-pointer rounded-full transition-colors hover:bg-accent hover:text-foreground ${open ? "bg-primary/15 text-primary" : "bg-secondary text-foreground"}`}
       >
-        <TerminalIcon className="size-3.5 stroke-[2.2]" />
+        {open ? <PanelBottomClose className="size-3.5 stroke-[2.2]" /> : <PanelBottomOpen className="size-3.5 stroke-[2.2]" />}
         {count > 0 && <Badge className="absolute -right-1.5 -top-1.5 min-w-4 justify-center border-border bg-primary px-1 py-0 text-[9px] text-primary-foreground">{count}</Badge>}
       </Button>;
 
   return <>
-    <ResizablePanelGroup orientation="vertical" className="min-h-0 min-w-0 flex-1" onLayoutChanged={(panels, meta) => { if (meta.isUserInteraction && panels.terminals && panels.terminals !== panelSize) remember({ size: panels.terminals }); }}>
+    <ResizablePanelGroup groupRef={groupRef} orientation="vertical" className={`min-h-0 min-w-0 flex-1 ${animating ? "panels-animating" : ""}`} onLayoutChanged={(panels, meta) => {
+      if (!meta.isUserInteraction) return;
+      if (panels.terminals === 0) remember({ open: false });
+      else if (panels.terminals !== panelSize) remember({ size: panels.terminals });
+    }}>
       <ResizablePanel id="conversation" defaultSize={`${100 - panelSize}%`} minSize="35%" className="flex min-h-0 min-w-0 flex-col">
         {children(launcher)}
       </ResizablePanel>
-      {open && <><ResizableHandle aria-label="Redimensionar painel de terminais" className="cursor-row-resize bg-border hover:bg-primary/50" />
-      <ResizablePanel id="terminals" defaultSize={`${panelSize}%`} minSize="20%" maxSize="65%" className="min-h-0 min-w-0">
-      <section id={panelId} aria-label="Painel de terminais" className="dark flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-sidebar text-foreground">
+      <ResizableHandle aria-label="Redimensionar painel de terminais" disabled={!open} aria-hidden={!open} inert={!open} className={`cursor-row-resize bg-border hover:bg-primary/50 ${!open ? "invisible h-0 pointer-events-none" : ""}`} />
+      <ResizablePanel id="terminals" collapsible defaultSize={open ? `${panelSize}%` : "0%"} minSize="20%" maxSize="65%" className="min-h-0 min-w-0">
+      <section id={panelId} aria-label="Painel de terminais" inert={!open} aria-hidden={!open} className={`dark flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-sidebar text-foreground transition-transform duration-200 motion-reduce:transition-none ${open ? "" : "translate-y-full"}`}>
         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-3 py-1">
           <span className="flex items-center gap-2 text-xs font-medium"><TerminalIcon className="size-3.5 text-onedark-green" />Terminais{count > 0 && <Badge variant="secondary" className="px-1 py-0 font-mono text-[9px]">{count}</Badge>}</span>
-          <Button type="button" variant="ghost" size="icon" aria-label="Recolher painel de terminais" title="Recolher painel de terminais" className="size-6 shrink-0 cursor-pointer text-muted-foreground" onClick={() => { remember({ open: false }); launcherRef.current?.focus(); }}><X className="size-3.5" /></Button>
+          <Button type="button" variant="ghost" size="icon" aria-label="Recolher painel de terminais" title="Recolher painel de terminais" className="size-6 shrink-0 cursor-pointer text-muted-foreground" onClick={() => { togglePanel(); launcherRef.current?.focus(); }}><PanelBottomClose className="size-3.5" /></Button>
         </div>
         <div className="min-h-0 min-w-0 flex-1">
             {loading ? <div className="flex h-full flex-col gap-3"><Skeleton className="h-8 w-56" /><Skeleton className="min-h-0 flex-1" /></div> : visibleTerminals.length === 0 ? <div className="flex h-full flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-border bg-sidebar/50 text-center">
@@ -235,7 +249,7 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
         </div>
         {active && <div className="flex shrink-0 items-center gap-2 border-t border-border bg-secondary/40 px-5 py-2 font-mono text-[11px] text-muted-foreground"><Folder className="size-3 shrink-0 text-onedark-cyan" /><span className="min-w-0 flex-1 truncate" title={active.command ? `${active.cwd}\n${active.command}` : active.cwd}>{active.cwd}</span><span className={`shrink-0 ${active.status === "failed" ? "text-destructive" : active.status === "running" ? "text-onedark-green" : ""}`}>{TERMINAL_STATUS_LABELS[active.status]}</span></div>}
       </section>
-      </ResizablePanel></>}
+      </ResizablePanel>
     </ResizablePanelGroup>
     <AlertDialog open={closing !== null} onOpenChange={next => { if (!next && !closingPending) setClosing(null); }}>
       <ConfirmationDialogContent aria-describedby={undefined}>

@@ -3,20 +3,36 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { coreDownloadEventSchema, coreError, coreSnapshotSchema, type CoreId, type CoreSnapshot } from "@/core/core-components";
+import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 
 export function useCore() {
-  const [snapshot, setSnapshot] = useState<CoreSnapshot | null>(null);
-  const currentSnapshot = useRef<CoreSnapshot | null>(null);
+  const bootstrap = useBootstrapResources();
+  const updateBootstrapCore = bootstrap?.updateCore;
+  const [localSnapshot, setLocalSnapshot] = useState<CoreSnapshot | null>(() => bootstrap?.resources.core ?? null);
+  const [localChecked, setLocalChecked] = useState(() => bootstrap?.resources.checked.core ?? false);
+  const snapshot = bootstrap ? bootstrap.resources.core : localSnapshot;
+  const checked = bootstrap ? bootstrap.resources.checked.core : localChecked;
+  const currentSnapshot = useRef<CoreSnapshot | null>(snapshot);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
   const mounted = useRef(false);
   const revision = useRef(0);
   const busy = useRef(false);
-  const accept = useCallback((value: unknown) => {
+  const loadInitially = useRef(!(bootstrap?.resources.loaded.core ?? false));
+  const commit = useCallback((parsed: CoreSnapshot, wasChecked?: boolean) => {
+    currentSnapshot.current = parsed;
+    if (updateBootstrapCore) updateBootstrapCore(parsed, wasChecked);
+    else {
+      setLocalSnapshot(parsed);
+      if (wasChecked !== undefined) setLocalChecked(wasChecked);
+    }
+  }, [updateBootstrapCore]);
+  const accept = useCallback((value: unknown, wasChecked?: boolean) => {
     const parsed = coreSnapshotSchema.parse(value);
-    if (mounted.current) { revision.current += 1; currentSnapshot.current = parsed; setSnapshot(parsed); setError(null); }
+    if (mounted.current) { revision.current += 1; commit(parsed, wasChecked); setError(null); }
     return parsed;
-  }, []);
+  }, [commit]);
+  useEffect(() => { currentSnapshot.current = snapshot; }, [snapshot]);
   const refresh = useCallback(async () => {
     const version = ++revision.current;
     try { const value = await invoke("get_core_status"); if (version === revision.current) accept(value); }
@@ -35,27 +51,31 @@ export function useCore() {
         if (disposed || !parsed.success || !current || !current.items.some(item => item.id === parsed.data.id && item.stage !== null)) return;
         revision.current += 1;
         const next = { ...current, items: current.items.map(item => item.id === parsed.data.id ? { ...item, download: parsed.data.download } : item) };
-        currentSnapshot.current = next;
-        setSnapshot(next);
+        commit(next);
       }).then(keep),
-    ]).then(() => { if (!disposed) void refresh(); });
+    ]).then(() => { if (!disposed && loadInitially.current) void refresh(); });
     return () => { disposed = true; mounted.current = false; revision.current += 1; stops.forEach(stop => stop()); };
-  }, [accept, refresh]);
+  }, [accept, commit, refresh]);
   const check = useCallback(async () => {
     const version = ++revision.current;
     try {
       const value = await invoke("check_core_updates");
-      if (version === revision.current) accept(value);
+      if (version === revision.current) accept(value, true);
     }
     catch (cause) { if (mounted.current && version === revision.current) toast.error(coreError(cause)); }
   }, [accept]);
-  const install = useCallback(async (ids: CoreId[]) => {
-    if (busy.current) return;
+  const install = useCallback(async (ids: CoreId[], options: { silent?: boolean } = {}) => {
+    if (busy.current) return false;
     busy.current = true; setInstalling(true);
     try {
       for (const id of ids) accept(await invoke("install_core_component", { id }));
-      toast.success(ids.length > 1 ? "Core instalado" : "Componente instalado");
-    } catch (cause) { toast.error(coreError(cause)); await refresh(); }
+      if (!options.silent) toast.success(ids.length > 1 ? "Core instalado" : "Componente instalado");
+      return true;
+    } catch (cause) {
+      if (!options.silent) toast.error(coreError(cause));
+      await refresh();
+      return false;
+    }
     finally { busy.current = false; if (mounted.current) setInstalling(false); }
   }, [accept, refresh]);
   const diagnose = useCallback(async () => {
@@ -76,6 +96,6 @@ export function useCore() {
     } catch (cause) { toast.error(coreError(cause)); await refresh(); }
     finally { busy.current = false; if (mounted.current) setInstalling(false); }
   }, [accept, refresh]);
-  return { snapshot, error, refresh, check, install, diagnose, repair, busy: installing || snapshot?.items.some(item => item.stage !== null) === true };
+  return { snapshot, error, refresh, check, install, diagnose, repair, checked, busy: installing || snapshot?.items.some(item => item.stage !== null) === true };
 }
 export type CoreController = ReturnType<typeof useCore>;

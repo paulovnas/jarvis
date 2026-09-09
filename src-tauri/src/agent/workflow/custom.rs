@@ -28,7 +28,32 @@ pub(super) fn resolve(
     Ok(definition)
 }
 
-fn apply_model(options: &mut TurnOptions, agent: &catalog::AgentDefinition) {
+pub(super) fn resolve_agent(
+    state: &AppState,
+    oauth: &OpenAiCodexState,
+    home: &Path,
+    options: &TurnOptions,
+) -> Result<catalog::AgentDefinition, AgentError> {
+    let id = options
+        .custom_agent_id
+        .as_deref()
+        .ok_or_else(|| invalid("Escolha um agente individual."))?;
+    let agent = state.with_connection(home, |db| {
+        catalog::read_configured(db, home)?.resolve_agent(id)
+    })?;
+    let mut choice = options.clone();
+    apply_model(&mut choice, &agent);
+    oauth.inference_model(
+        state,
+        home,
+        &choice.account,
+        &choice.model,
+        choice.reasoning.as_deref(),
+    )?;
+    Ok(agent)
+}
+
+pub(super) fn apply_model(options: &mut TurnOptions, agent: &catalog::AgentDefinition) {
     if let Some(choice) = &agent.model {
         options.account.clone_from(&choice.account);
         options.model.clone_from(&choice.model);
@@ -42,8 +67,16 @@ fn apply_model(options: &mut TurnOptions, agent: &catalog::AgentDefinition) {
 }
 
 pub(super) fn allowed(agent: &catalog::AgentDefinition, name: &str) -> bool {
-    if catalog::permissions::required(name) { return true; }
-    if agent.denied_tools.iter().any(|denied| denied == name || (denied == "mcp_*" && name.starts_with("mcp_"))) { return false; }
+    if catalog::permissions::required(name) {
+        return true;
+    }
+    if agent
+        .denied_tools
+        .iter()
+        .any(|denied| denied == name || (denied == "mcp_*" && name.starts_with("mcp_")))
+    {
+        return false;
+    }
     capability_allows(agent.capability, name)
 }
 
@@ -57,7 +90,7 @@ pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
     if matches!(name, "validation_publish" | "design_brief") {
         return false;
     }
-    if matches!(name, "write" | "edit" | "generate_image") {
+    if matches!(name, "write" | "edit" | "apply_patch" | "generate_image") {
         return capability != Capability::ReadOnly;
     }
     if matches!(
@@ -79,6 +112,10 @@ pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
 
 pub(super) fn instructions(agent: &catalog::AgentDefinition) -> String {
     format!("\nUser-defined workflow agent: {}.\n{}\n\n{}\nExecute only this configured step. The native runtime owns routing; do not spawn agents or invent steps. Finish by calling hub_complete with a structured result: completed for successful work, approved for an independent review, rework for concrete corrections, blocked for a missing prerequisite. A verdict must be supported by evidence. A final handoff is not authorization to commit, push or deploy. Follow current user instructions and project rules.\n", agent.name, include_str!("common.md"), agent.instructions)
+}
+
+pub(super) fn direct_instructions(agent: &catalog::AgentDefinition) -> String {
+    format!("\nUser-defined direct agent: {}.\n{}\n\n{}\nWork as the primary agent in this conversation. Use the native task list to organize multi-step work. Do not call hub tools or behave as a delegated workflow step. Follow current user instructions and project rules.\n", agent.name, include_str!("common.md"), agent.instructions)
 }
 
 async fn walk<F, Fut>(
@@ -182,6 +219,7 @@ fn prepare(
         status: Status::Queued,
         created_at: now(),
         updated_at: now(),
+        duration_ms: 0,
         attempts: 1,
         handoff: None,
         error: None,
@@ -231,6 +269,7 @@ pub(super) async fn run(
 ) -> Result<(), AgentError> {
     hub.mutate(|state| {
         state.custom_definition = Some(definition.clone());
+        state.custom_agent = None;
         Ok(())
     })?;
     super::super::skill_input::load(&hub.root, &hub.env.home).await?;

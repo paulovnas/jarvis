@@ -209,7 +209,7 @@ describe("Persistent sidebar", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Jarvis")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Novo" }));
-    expect(await screen.findByRole("menuitem", { name: "Novo projeto" })).toHaveAttribute("aria-disabled", "true");
+    expect(await screen.findByRole("menuitem", { name: "Adicionar projeto" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.queryByRole("menuitem", { name: "Nova conversa" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("menuitem", { name: "Novo workspace" }));
     const dialog = screen.getByRole("dialog", { name: "Novo workspace" });
@@ -243,7 +243,7 @@ describe("Persistent sidebar", () => {
     render(<Harness />);
     await screen.findByText("Nenhum projeto");
     await user.click(screen.getByRole("button", { name: "Novo" }));
-    const add = await screen.findByRole("menuitem", { name: "Novo projeto" });
+    const add = await screen.findByRole("menuitem", { name: "Adicionar projeto" });
     call.mockResolvedValueOnce(null);
     await user.click(add);
     expect(call).toHaveBeenCalledWith("add_project", { workspaceId: "w1" });
@@ -254,7 +254,7 @@ describe("Persistent sidebar", () => {
       selection: { workspaceId: "w1", projectId: "p1", conversationId: null },
     });
     await user.click(screen.getByRole("button", { name: "Novo" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Novo projeto" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Adicionar projeto" }));
     expect(await screen.findByRole("button", { name: "Jarvis" })).toHaveAttribute("title", "/projects/jarvis");
     expect(screen.getByRole("button", { name: "Nova conversa em Jarvis" })).toBeEnabled();
   });
@@ -482,7 +482,7 @@ describe("Persistent sidebar", () => {
     await user.click(project);
     expect(await screen.findByRole("button", { name: "Primeira conversa" })).toHaveAttribute("aria-current", "page");
     await user.click(screen.getByRole("button", { name: "Novo" }));
-    expect((await screen.findAllByRole("menuitem")).map(item => item.textContent)).toEqual(["Novo projeto", "Novo workspace"]);
+    expect((await screen.findAllByRole("menuitem")).map(item => item.textContent)).toEqual(["Adicionar projeto", "Novo workspace"]);
   });
 
   it("offers retry after loading fails and keeps Settings available", async () => {

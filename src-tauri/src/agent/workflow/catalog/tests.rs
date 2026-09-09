@@ -6,6 +6,7 @@ pub(crate) fn example() -> Catalog {
         name: "Researcher".into(),
         description: "Inspect the project".into(),
         instructions: "Read the project and return evidence.".into(),
+        usage: AgentUsage::Mixed,
         capability: Capability::ReadOnly,
         denied_tools: vec![],
         model: None,
@@ -89,6 +90,7 @@ fn appearance_roundtrips_and_old_catalogs_remain_readable() {
         .as_object_mut()
         .unwrap()
         .remove("appearance");
+    legacy["agents"][0].as_object_mut().unwrap().remove("usage");
     legacy["flows"][0]
         .as_object_mut()
         .unwrap()
@@ -96,7 +98,24 @@ fn appearance_roundtrips_and_old_catalogs_remain_readable() {
     let legacy: Catalog = serde_json::from_value(legacy).unwrap();
     legacy.validate().unwrap();
     assert!(legacy.agents[0].appearance.is_none());
+    assert_eq!(legacy.agents[0].usage, AgentUsage::FlowOnly);
     assert!(legacy.flows[0].appearance.is_none());
+}
+
+#[test]
+fn agent_usage_controls_direct_selection_and_flow_membership() {
+    let mut catalog = example();
+    let agent_id = catalog.agents[0].id.clone();
+    assert!(catalog.resolve_agent(&agent_id).is_ok());
+
+    catalog.agents[0].usage = AgentUsage::Solo;
+    assert!(catalog.resolve_agent(&agent_id).is_ok());
+    assert!(catalog.validate().is_err());
+
+    catalog.flows.clear();
+    catalog.validate().unwrap();
+    catalog.agents[0].usage = AgentUsage::FlowOnly;
+    assert!(catalog.resolve_agent(&agent_id).is_err());
 }
 
 #[test]

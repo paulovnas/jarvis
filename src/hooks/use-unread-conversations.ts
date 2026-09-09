@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -45,9 +46,17 @@ export function useUnreadConversations(visibleConversationId: string | null) {
       const stop = await listen<unknown>(event, message => { if (alive) handler(message.payload); });
       if (alive) stops.push(stop); else stop();
     };
+    const subscribeNativeFocus = async () => {
+      const appWindow = getCurrentWindow();
+      const stop = await appWindow.onFocusChanged(({ payload }) => { if (payload) onFocus(); else onBlur(); });
+      if (alive) stops.push(stop); else stop();
+      const focused = await appWindow.isFocused();
+      if (alive) updateFocus(focused);
+    };
     void Promise.all([
       subscribe("unread:changed", value => { try { accept(value); } catch { /* Ignore malformed/stale broadcasts. */ } }),
       subscribe("unread:error", () => toast.error("Não foi possível salvar o estado de leitura.", { id: "unread-sync" })),
+      subscribeNativeFocus().catch(() => { /* DOM and Tauri focus events remain as fallbacks. */ }),
       subscribe("tauri://focus", onFocus),
       subscribe("tauri://blur", onBlur),
     ]).then(async () => {

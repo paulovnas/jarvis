@@ -33,7 +33,7 @@ impl Flow {
             _ => Role::Planner,
         }
     }
-    pub(super) fn direct(self) -> bool {
+    pub(in crate::agent) fn direct(self) -> bool {
         matches!(self, Self::Standard | Self::Designer)
     }
 }
@@ -78,6 +78,9 @@ impl Role {
             return tool != "hub_spawn" || self.coordinator();
         }
         if tool.starts_with("beads_") {
+            if flow.direct() {
+                return false;
+            }
             return !crate::core::beads::needs_approval(tool)
                 || match self {
                     Self::Planner => flow == Flow::Planned || tool == "beads_close",
@@ -88,13 +91,12 @@ impl Role {
                     Self::Writer => tool != "beads_close",
                     Self::Orchestrator => true,
                     Self::Custom => false,
-                }
-                || flow.direct();
+                };
         }
         if tool == "workflow_check" {
             return matches!(self, Self::Builder | Self::Designer | Self::Reviewer);
         }
-        if matches!(tool, "write" | "edit") {
+        if matches!(tool, "write" | "edit" | "apply_patch") {
             return self.writes();
         }
         if matches!(tool, "bash" | "process_start" | "terminal_start") {
@@ -117,7 +119,7 @@ impl Role {
         Self::Writer => "Turn the approved decisions into an executable specification: outcomes, current/desired behavior, scope exclusions, risks, task descriptions, objective acceptance checks and dependency edges. Persist epics/tasks/dependencies with native beads_* tools and return their exact IDs. Consult existing items before creating duplicates. You may write only docs/PLAN-*.md documents; no product code or shell. Do not invent architectural decisions missing from the Planner's dispatch.",
         Self::Orchestrator => "Use Beads as task-state authority. Read the epic and tasks, route dependency-ready work to Builder, Designer for visual changes and Reviewer for independent final assessment. hub_spawn dependencies form an execution DAG; use non-overlapping explicit paths for parallel writers and '.' only for whole-project commands. Wait through hub_wait; never poll logs. Check each structured handoff against the acceptance criteria. Require Reviewer approval before closing implementation Beads in Complete. Findings require focused rework and another review; at most two rework rounds, then report a concrete blocker. Route architecture corrections to Planner. Never implement code yourself or equate technical approval with commit/deploy authorization.",
         Self::Designer => "Read the assigned Bead, existing design system, tokens, components, states and applicable skills. Preserve product identity. Implement only assigned visual scope, critique hierarchy, spacing, typography, accessibility, responsiveness and interaction. Inspect screenshots/reference evidence with available tools; distinguish actual visual validation from static review. Re-read shared files before edits. Run applicable checks; return evidence, outcomes and honest visual-validation limits.",
-        Self::Builder => "Read the assigned task and relevant project instructions before editing. Implement the smallest complete solution within the dispatch scope. Preserve unknown working-tree changes and re-read files before mutation. Use tools/MCP/skills when relevant, execute required lint/tests/build, inspect failures and correct your work. Record task progress and discovered work in Beads. Return implementation outcomes, paths and actual validation evidence. In delegated workflows the coordinator owns final task closure.",
+        Self::Builder => "Read the assigned task and relevant project instructions before editing. Implement the smallest complete solution within the dispatch scope. Preserve unknown working-tree changes and re-read files before mutation. Use tools/MCP/skills when relevant, execute required lint/tests/build, inspect failures and correct your work. In delegated workflows, record progress and discovered work in Beads; direct flows use their native task list instead. Return implementation outcomes, paths and actual validation evidence. In delegated workflows the coordinator owns final task closure.",
         Self::Reviewer => "Independently inspect the implemented files against the original Bead and acceptance rubric. Do not trust the implementation handoff as proof. Look for regressions, edge cases, unmet outcomes and unsafe assumptions; use workflow_check for available project checks. Do not modify product code. Return an approved/rework/blocked verdict with concrete findings, file references, validation results and limitations. Distinguish automated checks, visual review and user acceptance.",
     }
     }
@@ -142,6 +144,12 @@ fn supplemental_instructions(flow: Flow, role: Role) -> Vec<InstructionSection> 
     }
     if flow == Flow::Designer {
         sections.push(InstructionSection { title: "Designer direto", content: "\nYou are the direct Designer and talk to the user yourself. Deliver the requested design outcome end to end. No dispatch or assigned Bead is required to start. Use ask_user when needed; do not call hub tools.\n" });
+    }
+    if flow.direct() {
+        sections.push(InstructionSection {
+            title: "Tarefas do fluxo direto",
+            content: crate::agent::tasks::INSTRUCTIONS,
+        });
     }
     sections
 }

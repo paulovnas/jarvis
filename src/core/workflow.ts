@@ -2,6 +2,7 @@ import { z } from "zod";
 import { turnOptionsSchema, type AgentTool } from "./chat";
 import { pendingQuestionSchema } from "./questions";
 import { workflowAppearanceSchema } from "./workflow-appearance";
+import { pendingAuthoringSchema } from "./authoring";
 
 export type Workflow = "standard" | "designer" | "planned" | "complete" | "custom";
 export const FLOW_LABELS: Record<Workflow, string> = { standard: "Padrão", designer: "Designer", planned: "Planejado", complete: "Completo", custom: "Customizado" };
@@ -12,11 +13,12 @@ export const STATUS_LABELS = { queued: "Na fila", running: "Executando", waiting
 export const agentCardSchema = z.object({
   id: z.string(), parentId: z.string().nullable(), role: z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer", "custom"]),
   title: z.string(), status: z.enum(["queued", "running", "waiting", "completed", "blocked", "failed", "cancelled", "interrupted"]),
-  createdAt: z.number(), updatedAt: z.number(), attempts: z.number(), options: turnOptionsSchema, beadId: z.string().nullable(),
+  createdAt: z.number(), updatedAt: z.number(), startedAt: z.number(), durationMs: z.number().nonnegative(), currentThought: z.string().nullable(), attempts: z.number(), options: turnOptionsSchema, beadId: z.string().nullable(),
   handoff: z.object({ verdict: z.enum(["completed", "approved", "rework", "blocked"]), summary: z.string() }).nullable(),
   error: z.string().nullable(), activeTurnId: z.string().nullable(),
   pendingApproval: z.object({ id: z.string(), name: z.string(), args: z.record(z.string(), z.unknown()), status: z.enum(["pending", "running", "completed", "error"]), output: z.string(), durationMs: z.number() }).nullable() satisfies z.ZodType<AgentTool | null>,
   pendingQuestion: pendingQuestionSchema.nullable(),
+  pendingAuthoring: pendingAuthoringSchema.nullable().optional(),
   identity: z.object({ name: z.string(), appearance: workflowAppearanceSchema.nullish() }).nullish(),
 });
 export const validationItemSchema = z.object({ id: z.string(), title: z.string(), steps: z.array(z.string()), expected: z.string(), decision: z.enum(["pending", "approved", "rejected"]), reason: z.string().nullable() });

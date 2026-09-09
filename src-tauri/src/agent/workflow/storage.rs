@@ -117,6 +117,7 @@ pub(super) fn open(
         .clone();
     let mut manifest = load(&directory_path, &root.id)?.unwrap_or_else(|| Manifest {
         custom_definition: None,
+        custom_agent: None,
         validation: None,
         version: 1,
         conversation_id: root.id.clone(),
@@ -163,6 +164,8 @@ pub(super) fn open(
     }
     manifest.run_id = run_id;
     manifest.flow = flow;
+    manifest.custom_definition = None;
+    manifest.custom_agent = None;
     manifest.root_status = Status::Running;
     manifest.options = options;
     manifest.profiles = profiles;

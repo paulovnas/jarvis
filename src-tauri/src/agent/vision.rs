@@ -209,6 +209,7 @@ pub(super) async fn execute(
             mode: Mode::Plan,
             workflow: None,
             custom_workflow_id: None,
+            custom_agent_id: None,
             approval_mode: ApprovalMode::Yolo,
         };
         let response = provider::stream(&credential, &format!("{conversation}-vision"), &options,
@@ -286,6 +287,7 @@ mod tests {
             mode: Mode::Plan,
             workflow: None,
             custom_workflow_id: None,
+            custom_agent_id: None,
             approval_mode: ApprovalMode::Yolo,
         };
         let (_send, signal) = watch::channel(false);
@@ -359,6 +361,7 @@ mod tests {
             mode: Mode::Plan,
             workflow: None,
             custom_workflow_id: None,
+            custom_agent_id: None,
             approval_mode: ApprovalMode::Yolo,
         };
         let result = execute(&state, &oauth, &home, &conversation, &options, &json!({"ids":[item.id],"question":"Quais cores aparecem na metade esquerda e na metade direita? Responda em uma frase."}), signal).await;
@@ -391,7 +394,12 @@ mod tests {
             .unwrap()
             .starts_with("data:image/png;base64,"));
         assert_eq!(payload[0]["content"][1]["text"], "Quais cores aparecem?");
-        let changed = input(home.path(), &id, &json!({"ids":[item.id],"question":"E o layout?"})).unwrap();
+        let changed = input(
+            home.path(),
+            &id,
+            &json!({"ids":[item.id],"question":"E o layout?"}),
+        )
+        .unwrap();
         assert_eq!(payload[0]["content"][0], changed[0]["content"][0]);
         assert!(input(home.path(), &"b".repeat(32), &args).is_err());
         let doc = attachments::store(home.path(), &id, "notes.txt", b"Hello").unwrap();

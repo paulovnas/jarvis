@@ -51,14 +51,6 @@ fn acknowledge(db: &Connection, id: &str, key: &str) -> Result<(), PersistenceEr
     Ok(())
 }
 
-fn focused(app: &tauri::AppHandle) -> bool {
-    app.get_window("main").is_some_and(|window| {
-        window.is_focused().unwrap_or(false)
-            && window.is_visible().unwrap_or(false)
-            && !window.is_minimized().unwrap_or(true)
-    })
-}
-
 async fn update(
     app: &tauri::AppHandle,
     operation: impl FnOnce(&Connection) -> Result<(), PersistenceError> + Send + 'static,
@@ -139,13 +131,11 @@ pub async fn mark_conversation_read(
     conversation_id: String,
     event_key: String,
 ) -> Result<Snapshot, String> {
-    // Query the native window before taking the database lock: a synchronous
-    // window query must never wait on the UI thread while holding SQLite.
-    let visible = focused(&app);
     update(&app, move |db| {
-        if visible {
-            acknowledge(db, &conversation_id, &event_key)?;
-        }
+        // The transcript only requests this command after it is visible and the
+        // window has focused. The database selection and event cursor remain the
+        // durable guards against stale navigation or acknowledgements.
+        acknowledge(db, &conversation_id, &event_key)?;
         Ok(())
     })
     .await

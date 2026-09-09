@@ -10,34 +10,19 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { coreError, type CoreSnapshot } from "@/core/core-components";
+import { coreError } from "@/core/core-components";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/TextInput";
 import { Label } from "@/components/ui/label";
 import { useCore, type CoreController } from "@/hooks/use-core";
-
-
-export function InstallProgress({ item }: { item: CoreSnapshot["items"][number] }) {
-  const transfer = item.download;
-  const percent = transfer?.totalBytes ? Math.min(100, Math.floor(transfer.receivedBytes / transfer.totalBytes * 100)) : null;
-  const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB`;
-  const amount = transfer ? `${megabytes(transfer.receivedBytes)}${transfer.totalBytes ? ` / ${megabytes(transfer.totalBytes)}` : ""}` : null;
-  return <div className="mt-3 space-y-2 border-t border-border pt-3">
-    <div className="flex items-start justify-between gap-2 text-[11px]">
-      <span role="status" className="text-primary">{item.stage}</span>
-      {percent !== null && <span className="font-mono tabular-nums text-primary">{percent}%</span>}
-    </div>
-    <Progress value={percent} aria-label={`Instalação de ${item.name}`} aria-valuetext={[item.stage, percent !== null ? `${percent}%` : null, amount].filter(Boolean).join(" · ")} className="core-install-progress [&_[data-slot=progress-track]]:h-1.5" />
-    {amount && <p className="text-right font-mono text-[10px] tabular-nums text-muted-foreground">{amount}</p>}
-  </div>;
-}
+import { CoreInstallProgress } from "@/components/core/CoreInstallProgress";
 
 export function CorePanel({ core, setup = false }: { core: CoreController; setup?: boolean }) {
   const { snapshot, error, busy, install, refresh, check } = core;
   const [configuring, setConfiguring] = useState(false);
   const [diagnostics, setDiagnostics] = useState(false);
-  const checked = useRef(false);
-  useEffect(() => { if (snapshot && !checked.current) { checked.current = true; void check(); } }, [snapshot, check]);
+  const checkStarted = useRef(false);
+  useEffect(() => { if (snapshot && !core.checked && !checkStarted.current) { checkStarted.current = true; void check(); } }, [snapshot, core.checked, check]);
   if (!snapshot && !error) return <div role="status" aria-label="Carregando Core" className="space-y-3"><Skeleton className="mb-5 h-5 w-24" /><div className="core-card-grid">{[0, 1, 2, 3, 4].map(id => <Skeleton key={id} className="h-56 w-full rounded-lg" />)}</div></div>;
   if (!snapshot) return <div role="alert" className="space-y-3"><p className="text-sm text-destructive">{error}</p><Button variant="outline" onClick={() => void refresh()}>Tentar novamente</Button></div>;
   const missing = snapshot.items.filter(item => !item.installed).map(item => item.id);
@@ -71,7 +56,7 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
             {(!item.installed || item.updateAvailable) && <Button size="sm" variant={setup ? "default" : "outline"} disabled={busy} onClick={() => void install([item.id])} aria-label={`${action} ${item.name}`} className="w-full text-xs"><Download className="size-3" />{action}</Button>}
             {item.id === "context7" && item.installed && <Button size="sm" variant={item.configured ? "ghost" : "outline"} disabled={busy} onClick={() => setConfiguring(true)} className="w-full text-xs"><KeyRound className="size-3" />{item.configured ? "Alterar chave" : "Configurar Context7"}</Button>}
           </div>
-          {item.stage && <InstallProgress item={item} />}
+          {item.stage && <CoreInstallProgress item={item} />}
           {(item.healthError || item.error) && !item.stage && <p role="alert" className="mt-3 border-t border-border pt-3 text-xs text-destructive">{item.healthError ?? item.error}</p>}
         </CardContent>
       </Card>;

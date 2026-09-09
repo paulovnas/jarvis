@@ -1,29 +1,40 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
+import { BootstrapResourcesProvider } from "@/components/bootstrap/BootstrapResourcesProvider";
+import { JarvisLogo } from "@/components/JarvisLogo";
 import { TitleBar } from "@/components/layout/TitleBar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
-import { BootSkeleton, HomeSkeleton } from "@/components/layout/LoadingSkeletons";
+import { HomeSkeleton } from "@/components/layout/LoadingSkeletons";
 import { DesktopLayoutProvider } from "@/components/layout/DesktopLayoutProvider";
 import { CoreGate } from "@/components/core/CoreGate";
+import {
+  type AppConfig,
+  type BootstrapResources,
+} from "@/core/bootstrap";
+import { initialBootstrapProgress, type BootstrapProgressState } from "@/core/bootstrap-state";
 import { useNotificationFeedback } from "@/hooks/use-notification-feedback";
 
-const LazyHome = lazy(() => import("@/components/layout/Home"));
+const loadHome = () => import("@/components/layout/Home");
+const LazyHome = lazy(loadHome);
+const BootstrapScreen = lazy(() => import("@/components/bootstrap/BootstrapScreen").then(module => ({ default: module.BootstrapScreen })));
 const Onboarding = lazy(() => import("@/components/onboarding/Onboarding").then(module => ({ default: module.Onboarding })));
 
-type AppConfig = {
-  onboardingCompleted: boolean;
-};
-
 type BootstrapState =
-  | { status: "loading" }
-  | { status: "error" }
-  | { status: "onboarding"; saving: boolean }
-  | { status: "home" };
+  | { status: "loading"; steps: BootstrapProgressState }
+  | { status: "error"; steps: BootstrapProgressState }
+  | { status: "onboarding"; saving: boolean; steps: BootstrapProgressState }
+  | { status: "home"; resources: BootstrapResources };
 
+function BootstrapFallback() {
+  return <main role="status" aria-label="Iniciando o Jarvis" className="dark flex min-h-0 flex-1 items-center justify-center bg-background"><div className="flex flex-col items-center gap-3"><JarvisLogo className="size-14 opacity-80" /><span className="micro-label text-muted-foreground">Preparando ambiente</span></div></main>;
+}
 
+function bootstrapScreen(steps: BootstrapProgressState) {
+  return <Suspense fallback={<BootstrapFallback />}><BootstrapScreen steps={steps} /></Suspense>;
+}
 
 export function App() {
   useNotificationFeedback();
@@ -35,28 +46,42 @@ export function App() {
   }, []);
   const [bootstrap, setBootstrap] = useState<BootstrapState>({
     status: "loading",
+    steps: initialBootstrapProgress(),
   });
   const bootstrapRequest = useRef(0);
   const initialLoadStarted = useRef(false);
   const completionInFlight = useRef(false);
 
-  const loadAppConfig = useCallback(() => {
+  const loadAppConfig = useCallback((knownConfig?: AppConfig) => {
     const requestId = ++bootstrapRequest.current;
-    setBootstrap({ status: "loading" });
+    const steps = initialBootstrapProgress();
+    setBootstrap({ status: "loading", steps });
 
-    void invoke<AppConfig>("get_app_config")
-      .then((config) => {
+    void import("@/core/bootstrap").then(({ loadAppBootstrap }) => loadAppBootstrap((event) => {
+      if (requestId !== bootstrapRequest.current) return;
+      setBootstrap((current) => current.status === "loading"
+        ? { status: "loading", steps: { ...current.steps, [event.id]: event } }
+        : current);
+    }, knownConfig))
+      .then(async ({ config, resources }) => {
         if (requestId !== bootstrapRequest.current) return;
-
-        setBootstrap(
-          config.onboardingCompleted === true
-            ? { status: "home" }
-            : { status: "onboarding", saving: false },
-        );
+        if (config.onboardingCompleted && resources) {
+          await loadHome();
+          if (requestId === bootstrapRequest.current) setBootstrap({ status: "home", resources });
+          return;
+        }
+        setBootstrap((current) => ({
+          status: "onboarding",
+          saving: false,
+          steps: current.status === "loading" ? current.steps : steps,
+        }));
       })
       .catch(() => {
         if (requestId === bootstrapRequest.current) {
-          setBootstrap({ status: "error" });
+          setBootstrap((current) => ({
+            status: "error",
+            steps: current.status === "loading" ? current.steps : steps,
+          }));
         }
       });
   }, []);
@@ -77,12 +102,12 @@ export function App() {
     }
 
     completionInFlight.current = true;
-    setBootstrap({ status: "onboarding", saving: true });
+    setBootstrap({ ...bootstrap, saving: true });
 
     try {
       const config = await invoke<AppConfig>("complete_onboarding", { workspaceName });
       if (config.onboardingCompleted === true) {
-        setBootstrap({ status: "home" });
+        loadAppConfig(config);
         return;
       }
     } catch {
@@ -91,7 +116,7 @@ export function App() {
       completionInFlight.current = false;
     }
 
-    setBootstrap({ status: "onboarding", saving: false });
+    setBootstrap({ ...bootstrap, saving: false });
     toast.error("Não foi possível concluir o onboarding", {
       description: "Tente novamente.",
     });
@@ -100,9 +125,7 @@ export function App() {
   const content = (() => {
     switch (bootstrap.status) {
       case "loading":
-        return (
-          <main className="flex min-h-0 flex-1"><BootSkeleton /></main>
-        );
+        return bootstrapScreen(bootstrap.steps);
 
       case "error":
         return (
@@ -121,7 +144,7 @@ export function App() {
               </div>
               <Button
                 type="button"
-                onClick={loadAppConfig}
+                onClick={() => loadAppConfig()}
                 className="cursor-pointer"
               >
                 Tentar novamente
@@ -134,13 +157,15 @@ export function App() {
         return (
           <main className="flex min-h-0 flex-1">
             <Suspense fallback={<HomeSkeleton />}>
-              <CoreGate><DesktopLayoutProvider><LazyHome /></DesktopLayoutProvider></CoreGate>
+              <BootstrapResourcesProvider initial={bootstrap.resources}>
+                <CoreGate><DesktopLayoutProvider><LazyHome /></DesktopLayoutProvider></CoreGate>
+              </BootstrapResourcesProvider>
             </Suspense>
           </main>
         );
 
       case "onboarding":
-        return <Suspense fallback={<main className="flex min-h-0 flex-1"><BootSkeleton /></main>}><Onboarding saving={bootstrap.saving} onComplete={handleCompleteOnboarding} /></Suspense>;
+        return <Suspense fallback={bootstrapScreen(bootstrap.steps)}><Onboarding saving={bootstrap.saving} onComplete={handleCompleteOnboarding} /></Suspense>;
     }
   })();
 
@@ -148,7 +173,7 @@ export function App() {
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground font-sans">
       <TitleBar />
       {content}
-      {bootstrap.status !== "home" && <StatusBar />}
+      {bootstrap.status !== "home" && <StatusBar passive />}
       {/* Global Toast Notification Provider */}
       <Toaster position="top-center" richColors />
     </div>

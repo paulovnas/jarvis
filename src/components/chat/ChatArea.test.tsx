@@ -69,6 +69,22 @@ describe("Persistent live conversation", () => {
     expect(screen.getByRole("button", { name: "Adicionar anexo" })).toBeEnabled();
     expect(call).toHaveBeenCalledWith("get_chat", { conversationId: "c1" });
   });
+  it("uses the vertical brand and moves the same composer into the transcript after the first turn", async () => {
+    render(<TestChat />);
+    const stage = await screen.findByRole("region", { name: "Nova conversa" });
+    const editor = within(stage).getByRole("textbox", { name: "Mensagem" });
+    expect(within(stage).getByRole("img", { name: "Jarvis" })).toHaveAttribute("src", "/logo_vertical.png");
+    expect(within(stage).getByRole("heading", { name: "O que vamos construir?" })).toBeVisible();
+    expect(editor).toBeVisible();
+    expect(stage).toHaveAttribute("data-empty", "true");
+    expect(screen.queryByLabelText("Histórico de mensagens")).not.toBeInTheDocument();
+    await update({ ...emptyChat(), revision: 2, turns: [savedTurn()] });
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Nova conversa" })).not.toBeInTheDocument());
+    expect(stage).toHaveAttribute("data-empty", "false");
+    expect(screen.getByRole("textbox", { name: "Mensagem" })).toBe(editor);
+    expect(screen.queryByRole("heading", { name: "O que vamos construir?" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Histórico de mensagens")).toHaveTextContent("Leia o README");
+  });
   it("restores messages, provider summary and real tool results", async () => {
     const user = userEvent.setup(); call.mockResolvedValue({ ...emptyChat(), turns: [savedTurn()] });
     render(<TestChat />);
@@ -81,6 +97,18 @@ describe("Persistent live conversation", () => {
     await user.click(screen.getByRole("button", { name: /Leitura de arquivo/ }));
     expect(screen.getByText("# Jarvis")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copiar" })).not.toBeInTheDocument();
+  });
+  it("shows elapsed chat time from the turn start while execution is active", async () => {
+    const turn = {
+      ...savedTurn(),
+      createdAt: Date.now() - 11_000,
+      durationMs: 1_000,
+      status: "running" as const,
+      steps: [{ durationMs: 1_000, summary: "Conferindo o contrato", text: "", tools: [], usage: null }],
+    };
+    call.mockResolvedValue({ ...emptyChat(), activeTurnId: turn.id, turns: [turn] });
+    render(<TestChat />);
+    expect(await screen.findByLabelText("Tempo total da execução")).toHaveTextContent(/1[1-3]s/);
   });
   it("restaura os registros de compactação na posição da conversa e não os duplica nos updates", async () => {
     const turn = savedTurn();
@@ -177,6 +205,25 @@ describe("Persistent live conversation", () => {
     await user.click(screen.getByRole("button", { name: "Recusar" }));
     expect(call).toHaveBeenCalledWith("approve_agent_tool", { conversationId: "c1", turnId: "turn1", toolId: "tool1", approved: false });
   });
+  it("opens the supervised authoring drawer and correlates approval to the active turn", async () => {
+    const user = userEvent.setup();
+    const proposal = {
+      turnId: "turn1", toolId: "author-1", action: "create" as const, catalogRevision: 2,
+      summary: "Criar um agente que revise acessibilidade.", agentReferences: [],
+      target: { kind: "agent" as const, before: null, after: {
+        id: "a".repeat(32), name: "Revisor de acessibilidade", description: "Revisa WCAG.",
+        instructions: "## Objetivo\n\nRevisar a interface.", capability: "read_only" as const,
+        deniedTools: [], model: null, appearance: { icon: "shield" as const, color: "cyan" as const },
+      } },
+    };
+    const running = { ...emptyChat(), activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running" as const }], pendingAuthoring: proposal };
+    call.mockImplementation(async command => command === "answer_agent_authoring" ? { ...running, revision: 3, pendingAuthoring: null } : running);
+    render(<TestChat />);
+    expect(await screen.findByRole("heading", { name: "Revisar alteração no Jarvis" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Aprovar e salvar" }));
+    expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "c1", decision: { turnId: "turn1", toolId: "author-1", approved: true, note: null } });
+    expect(await screen.findByRole("textbox", { name: "Mensagem" })).toBeVisible();
+  });
   it("answers questions through native IPC while keeping the composer draft and queue independent", async () => {
     const user = userEvent.setup();
     const pendingQuestion = { turnId: "turn1", toolId: "ask1", questions: [{ id: "theme", question: "Qual tema prefere?", options: [{ label: "Escuro" }, { label: "Claro" }] }] };
@@ -261,7 +308,7 @@ describe("Persistent live conversation", () => {
     const { rerender } = render(<TestChat />); await screen.findByRole("textbox");
     await user.type(screen.getByRole("textbox"), "Meu pedido"); await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
     await waitFor(() => expect(screen.getByRole("textbox")).toHaveAttribute("contenteditable", "true"));
-    expect(screen.getByRole("textbox")).toHaveTextContent("Meu pedido");
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveTextContent("Meu pedido"));
     rerender(<TestChat connected={false} />); expect(screen.getByRole("textbox")).toHaveAttribute("contenteditable", "true");
     expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeDisabled();
   });

@@ -4,6 +4,7 @@ export const skillSchema = z.object({
   id: z.string(), name: z.string(), description: z.string(), origin: z.enum(["jarvis", "agents", "project"]), path: z.string(),
   enabled: z.boolean(), automatic: z.boolean(), source: z.string().nullable(), marketplaceId: z.string().nullable(),
   removalPath: z.string().optional(), linked: z.boolean().optional(),
+  managed: z.boolean().optional(),
   updateAvailable: z.boolean(), updateError: z.string().nullable(),
 });
 export const skillsSnapshotSchema = z.object({ includeAgents: z.boolean(), directory: z.string(), skills: z.array(skillSchema), warnings: z.array(z.string()) });

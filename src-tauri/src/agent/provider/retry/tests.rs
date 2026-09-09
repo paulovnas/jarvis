@@ -5,6 +5,25 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread::JoinHandle;
 
+#[test]
+fn incomplete_inference_is_retryable_but_output_limits_and_refusals_are_not() {
+    assert!(retryable(&AgentError::new(
+        "provider_incomplete",
+        "MALFORMED_FUNCTION_CALL"
+    )));
+    for code in [
+        "provider_output_limit",
+        "provider_blocked",
+        "cancelled",
+        "context_overflow",
+    ] {
+        assert!(!retryable(&AgentError::new(
+            code,
+            "No identical request retry"
+        )));
+    }
+}
+
 fn options() -> TurnOptions {
     TurnOptions {
         account: "synthetic".into(),
@@ -13,6 +32,7 @@ fn options() -> TurnOptions {
         mode: Mode::Build,
         workflow: None,
         custom_workflow_id: None,
+        custom_agent_id: None,
         approval_mode: ApprovalMode::Yolo,
     }
 }
