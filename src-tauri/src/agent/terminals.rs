@@ -1461,6 +1461,7 @@ mod tests {
         )
     }
 
+    #[cfg(unix)]
     fn wait_for_text_occurrences(
         state: &TerminalState,
         conversation: &str,
