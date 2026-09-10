@@ -861,21 +861,22 @@ fn remove_empty_directories(created: &[PathBuf]) {
     }
 }
 
+#[cfg(unix)]
 fn sync_directories(staged: &[StagedChange]) {
-    #[cfg(unix)]
-    {
-        let mut directories: Vec<_> = staged
-            .iter()
-            .flat_map(|change| [change.plan.source.parent(), change.plan.target.parent()])
-            .flatten()
-            .collect();
-        directories.sort();
-        directories.dedup();
-        for directory in directories {
-            let _ = fs::File::open(directory).and_then(|file| file.sync_all());
-        }
+    let mut directories: Vec<_> = staged
+        .iter()
+        .flat_map(|change| [change.plan.source.parent(), change.plan.target.parent()])
+        .flatten()
+        .collect();
+    directories.sort();
+    directories.dedup();
+    for directory in directories {
+        let _ = fs::File::open(directory).and_then(|file| file.sync_all());
     }
 }
+
+#[cfg(not(unix))]
+fn sync_directories(_: &[StagedChange]) {}
 
 fn outcome(staged: &[StagedChange], warnings: Vec<String>) -> Outcome {
     let mut summary = Vec::with_capacity(staged.len());
