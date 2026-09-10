@@ -42,6 +42,22 @@ pub struct Pack {
 fn invalid() -> CoreError {
     error("Recursos do Open Design inválidos. Reinstale em Configurações → Ferramentas → Core.")
 }
+
+fn compatible_source_version(source: &Value, release: &str) -> bool {
+    let (Some(source), Ok(release)) = (
+        source
+            .as_str()
+            .and_then(|value| semver::Version::parse(value).ok()),
+        semver::Version::parse(release),
+    ) else {
+        return false;
+    };
+    // Open Design publishes the static catalogue from tagged application
+    // releases. Its root package may retain the preceding patch version, as
+    // happened in v0.22.2. The immutable tag commit and archive digest remain
+    // the source identity; only bounded patch drift is accepted here.
+    source.major == release.major && source.minor == release.minor && source <= release
+}
 fn text(path: &Path, limit: u64) -> Result<String, CoreError> {
     let file = fs::File::open(path)?;
     if !file.metadata()?.is_file() || file.metadata()?.len() > limit {
@@ -123,7 +139,7 @@ pub(super) fn prepare(
     let package: Value = serde_json::from_str(&text(&destination.join("package.json"), MAX_INDEX)?)
         .map_err(|_| invalid())?;
     if package["name"] != "open-design"
-        || package["version"] != version
+        || !compatible_source_version(&package["version"], version)
         || !destination.join("LICENSE").is_file()
     {
         return Err(invalid());

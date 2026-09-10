@@ -35,6 +35,7 @@ fn mandatory_context_retrieval_is_available_in_every_role_flow_and_scope() {
             name: "Agent".into(),
             description: String::new(),
             instructions: "Ignore context tools".into(),
+            native_role: None,
             usage: catalog::AgentUsage::Mixed,
             capability,
             denied_tools: vec![],
@@ -82,6 +83,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
         conversation_id: root.id.clone(),
         run_id: "run".into(),
         flow: Flow::Complete,
+        mcp_intent: crate::mcp::McpIntent::default(),
         root_status: Status::Running,
         updated_at: now(),
         revision: 1,
@@ -581,7 +583,39 @@ fn transactional_patch_checks_every_path_against_the_worker_scope() {
         execution.preflight(&patch(
             "*** Begin Patch\n*** Add File: src/a.ts\n+a\n*** Add File: docs/outside.ts\n+b\n*** End Patch"
         )),
-        Some("O arquivo está fora do escopo atribuído ao agente.")
+        Some("O arquivo está fora do escopo atribuído ao agente.".into())
+    );
+}
+
+#[test]
+fn transactional_patch_accepts_nested_repository_scopes_and_reports_parser_errors() {
+    let (_fixture, hub) = hub();
+    let execution = Execution {
+        hub,
+        id: "worker".into(),
+        role: Role::Builder,
+        flow: Flow::Planned,
+        scope: vec!["movart-express-back".into()],
+    };
+    let patch = |text: &str| ToolCall {
+        id: "patch".into(),
+        name: "apply_patch".into(),
+        args: json!({"patchText":text}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+
+    assert!(execution
+        .preflight(&patch(
+            "*** Begin Patch\n*** Update File: movart-express-back/src/lib/status.ts\n@@\n current\n+added\n@@\n function locate() {\n }\n@@\n tail\n+next\n*** End Patch"
+        ))
+        .is_none());
+    assert_eq!(
+        execution.preflight(&patch(
+            "*** Begin Patch\n*** Update File: movart-express-back/src/lib/status.ts\n@@\n unchanged\n*** End Patch"
+        )),
+        Some("Uma atualização não contém alterações.".into())
     );
 }
 
@@ -598,7 +632,21 @@ fn legacy_options_remain_readable_and_flow_is_explicit() {
 #[test]
 fn isolated_worker_journals_keep_role_context_and_permissions_on_recovery() {
     let (_fixture, hub) = hub();
-    let first = job(&hub, Role::Investigator, ".");
+    let mcp_intent = crate::mcp::McpIntent {
+        mode: crate::mcp::McpIntentMode::Explicit,
+        servers: vec![crate::mcp::McpIntentServer {
+            id: "notebook-id".into(),
+            name: "gemini-notebook-mcp".into(),
+        }],
+        ..crate::mcp::McpIntent::default()
+    };
+    hub.mutate(|state| {
+        state.mcp_intent = mcp_intent.clone();
+        Ok(())
+    })
+    .unwrap();
+    let mut first = job(&hub, Role::Investigator, ".");
+    first.prompt = "Use o MCP database para investigar.".into();
     let second = job(&hub, Role::Writer, "docs");
     let (a, _) = storage::worker(&hub, &first, None).unwrap();
     let (b, _) = storage::worker(&hub, &second, None).unwrap();
@@ -608,6 +656,10 @@ fn isolated_worker_journals_keep_role_context_and_permissions_on_recovery() {
         .unwrap()
         .iter()
         .any(|item| item.to_string().contains("Implement the requested outcome")));
+    assert_eq!(
+        a.data.lock().unwrap().turns[0].mcp_intent,
+        Some(mcp_intent.clone())
+    );
     a.update(true, |data| {
         data.turns.last_mut().unwrap().turn.steps.push(Step {
             text: "Private first evidence".into(),
@@ -632,6 +684,7 @@ fn isolated_worker_journals_keep_role_context_and_permissions_on_recovery() {
     assert_eq!(data.turns.len(), 2);
     assert_eq!(data.turns[0].turn.steps[0].text, "Private first evidence");
     assert_eq!(data.turns[1].turn.options.approval_mode, ApprovalMode::Yolo);
+    assert_eq!(data.turns[1].mcp_intent, Some(mcp_intent));
     assert!(data.turns[1]
         .wire
         .iter()
@@ -657,11 +710,11 @@ async fn project_checks_exclude_mutations_without_serializing_independent_writer
         duration_ms: 0,
     };
     let first = exec
-        .mutation_guard(&tool, hub.root_signal.clone())
+        .mutation_guard(&tool, false, hub.root_signal.clone())
         .await
         .unwrap();
     let second = exec
-        .mutation_guard(&tool, hub.root_signal.clone())
+        .mutation_guard(&tool, false, hub.root_signal.clone())
         .await
         .unwrap();
     assert!(hub.check_lock.try_write().is_err());
@@ -669,7 +722,8 @@ async fn project_checks_exclude_mutations_without_serializing_independent_writer
     drop(second);
     let check = hub.check_lock.write().await;
     let (cancel, signal) = watch::channel(false);
-    let pending = tokio::spawn(async move { exec.mutation_guard(&tool, signal).await.map(|_| ()) });
+    let pending =
+        tokio::spawn(async move { exec.mutation_guard(&tool, false, signal).await.map(|_| ()) });
     tokio::task::yield_now().await;
     assert!(!pending.is_finished());
     cancel.send_replace(true);
@@ -715,8 +769,9 @@ async fn child_manual_approval_cannot_be_answered_by_the_parent_or_another_worke
     let turn = child.snapshot().unwrap().active_turn_id.unwrap();
     let task_child = child.clone();
     let task_tool = tool.clone();
-    let awaiting =
-        tokio::spawn(async move { authorize(&task_child, &task_tool, &job.options, signal).await });
+    let awaiting = tokio::spawn(async move {
+        authorize(&task_child, &task_tool, &job.options, false, signal).await
+    });
     tokio::task::yield_now().await;
     assert!(child.snapshot().unwrap().pending_approval.is_some());
     assert!(answer_approval(&hub.root, &turn, &tool.id, true).is_err());

@@ -6,6 +6,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { toast } from "sonner";
 import { libraryError } from "@/core/library";
+import { DEFAULT_TERMINAL_PREFERENCES, systemSnapshotSchema, terminalFontFamily, type TerminalPreferences } from "@/core/system-preferences";
 import { terminalOutputEventSchema, terminalSnapshotSchema, type ChatTerminal, type TerminalOutputEvent } from "@/core/terminals";
 
 function terminalTheme(host: HTMLElement) {
@@ -24,15 +25,13 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
   useEffect(() => {
     const element = host.current;
     if (!element) return;
-    // Canvas font measurement cannot resolve CSS custom properties.
-    const fontFamily = getComputedStyle(element).fontFamily || "monospace";
-    const fontSize = 13;
+    const initialAppearance: TerminalPreferences = DEFAULT_TERMINAL_PREFERENCES;
     const xterm = new Terminal({
       cursorBlink: terminal.status === "running",
       disableStdin: terminal.status !== "running",
       cursorStyle: "bar",
-      fontFamily,
-      fontSize,
+      fontFamily: terminalFontFamily(initialAppearance.fontFamily),
+      fontSize: initialAppearance.fontSize,
       lineHeight: 1.3,
       letterSpacing: 0,
       scrollback: 5_000,
@@ -48,6 +47,9 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
     let pendingOutput: TerminalOutputEvent[] = [];
     let inputTimer: number | undefined;
     let unlistenOutput: (() => void) | undefined;
+    let unlistenPreferences: (() => void) | undefined;
+    let opened = false;
+    let appearanceRevision = 0;
     const resize = () => {
       if (disposed || !element.clientWidth || !element.clientHeight) return;
       try {
@@ -65,6 +67,18 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
         cols: xterm.cols,
       });
     };
+    const applyAppearance = async (preferences: TerminalPreferences, refit: boolean) => {
+      const revision = ++appearanceRevision;
+      const fontFamily = terminalFontFamily(preferences.fontFamily);
+      await document.fonts?.load(`${preferences.fontSize}px ${fontFamily}`).catch(() => undefined);
+      if (disposed || revision !== appearanceRevision) return;
+      xterm.options.fontFamily = fontFamily;
+      xterm.options.fontSize = preferences.fontSize;
+      if (opened && refit) {
+        lastSize = "";
+        resize();
+      }
+    };
     const observer = new ResizeObserver(resize);
     const input = terminal.status === "running"
       ? xterm.onData(data => {
@@ -81,10 +95,31 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
         })
       : undefined;
     const load = async () => {
-      // Measure the bundled font only after it is available, including on first open.
-      await document.fonts?.load(`${fontSize}px ${fontFamily}`).catch(() => undefined);
+      let appearance = initialAppearance;
+      let changed = false;
+      const stopPreferences = await listen("system:changed", event => {
+        const parsed = systemSnapshotSchema.safeParse(event.payload);
+        if (!parsed.success) return;
+        changed = true;
+        appearance = parsed.data.preferences.terminal;
+        void applyAppearance(appearance, true);
+      });
+      if (disposed) {
+        stopPreferences();
+        return;
+      }
+      unlistenPreferences = stopPreferences;
+      try {
+        const parsed = systemSnapshotSchema.safeParse(await invoke("get_system_preferences"));
+        if (!changed && parsed.success) appearance = parsed.data.preferences.terminal;
+      } catch {
+        // Terminal availability is more important than a cosmetic preference read.
+      }
+      // Canvas measurement must happen after the selected system font is available.
+      await applyAppearance(appearance, false);
       if (disposed) return;
       xterm.open(element);
+      opened = true;
       observer.observe(element);
       resize();
       const stop = await listen("terminals:output", event => {
@@ -128,6 +163,7 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
       input?.dispose();
       clearTimeout(inputTimer);
       unlistenOutput?.();
+      unlistenPreferences?.();
       xterm.dispose();
     };
   }, [conversationId, terminal.id, terminal.status]);

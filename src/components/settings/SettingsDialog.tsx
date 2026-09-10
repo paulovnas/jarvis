@@ -8,6 +8,7 @@ import { SkillsSettings } from "./SkillsSettings";
 import { CoreSettings } from "./CoreSettings";
 import { ChatCleanupSettings } from "./ChatCleanupSettings";
 import { SystemSettings } from "./SystemSettings";
+import { TerminalSettings } from "./TerminalSettings";
 import { BackupSettings } from "./BackupSettings";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { WorkflowSettings } from "./WorkflowSettings";
@@ -25,6 +26,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Terminal as TerminalIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -63,6 +65,7 @@ import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 
 const SETTINGS_SECTIONS = [
               { value: "general", label: "Geral", Icon: Settings, description: "Preferências do aplicativo e organização das conversas." },
+              { value: "terminal", label: "Terminal", Icon: TerminalIcon, description: "Shell interativo, argumentos e aparência do terminal integrado." },
               { value: "workspaces", label: "Workspaces", Icon: Layers, description: "Projetos, conversas e armazenamento local." },
               { value: "tools", label: "Ferramentas", Icon: Plug, description: "Prepare e acompanhe as ferramentas do ambiente." },
               { value: "agents", label: "Workflow", Icon: Users, description: "Organize fluxos e agentes para o seu jeito de trabalhar." },
@@ -127,7 +130,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   const bootstrap = useBootstrapResources();
   const { layout, updateLayout } = useDesktopLayout();
   const activeTab = layout.settingsTab;
-  const setActiveTab = (value: string) => { if (value === "general" || value === "tools" || value === "providers" || value === "agents" || value === "skills" || value === "mcps" || value === "workspaces") updateLayout({ settingsTab: value }); };
+  const setActiveTab = (value: string) => { if (value === "general" || value === "terminal" || value === "tools" || value === "providers" || value === "agents" || value === "skills" || value === "mcps" || value === "workspaces") updateLayout({ settingsTab: value }); };
   const [mcpCount, setMcpCount] = useState<number | null>(null);
   const [skillCount, setSkillCount] = useState<number | null>(() => bootstrap?.resources.skills?.skills.length ?? null);
   const visibleSkillCount = skillCount ?? bootstrap?.resources.skills?.skills.length ?? null;
@@ -749,6 +752,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
                 <p className="mt-1 text-xs text-muted-foreground">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.description}</p>
               </div>
               <TabsContent value="general" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "general" && <div className="w-full"><SystemSettings /><ChatCleanupSettings /><BackupSettings accounts={accounts} onRestored={summary => { updateSkillCount(summary.skills); updateMcpCount(summary.mcps); }} /></div>}</TabsContent>
+              <TabsContent value="terminal" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "terminal" && <TerminalSettings />}</TabsContent>
               <TabsContent value="workspaces" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "workspaces" && <WorkspaceSettings />}</TabsContent>
               <TabsContent value="tools" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "tools" && <CoreSettings />}</TabsContent>
               <TabsContent value="agents" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "agents" && <WorkflowSettings accounts={accounts} />}</TabsContent>

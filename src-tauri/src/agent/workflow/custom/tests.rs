@@ -152,3 +152,26 @@ fn prepared_workers_freeze_config_and_inherit_conversation_approval_mode() {
     assert!(job.custom_agent.is_some());
     assert!(!job.writes());
 }
+
+#[test]
+fn native_designer_steps_execute_with_the_fixed_design_contract_and_mutation_tools() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let mut catalog = catalog::tests::example();
+    for step in &mut catalog.flows[0].steps {
+        step.agent_id = "builtin:designer".into();
+    }
+    let definition = catalog.resolve(&catalog.flows[0].id).unwrap();
+    let job = prepare(&hub, &definition, &definition.flow.steps[0], &[], 0).unwrap();
+    let agent = job.custom_agent.as_ref().unwrap();
+    assert_eq!(job.role, Role::Designer);
+    assert_eq!(job.options.mode, Mode::Build);
+    assert!(job.writes());
+    for tool in ["write", "edit", "apply_patch", "bash", "workflow_check"] {
+        assert!(allowed(agent, tool), "missing {tool}");
+    }
+    assert!(!allowed(agent, "hub_spawn"));
+    let prompt = instructions(agent);
+    assert!(prompt.contains("immutable role is Designer"));
+    assert!(prompt.contains("embedded in a user-defined workflow"));
+    assert!(prompt.contains("Implement only assigned visual scope"));
+}

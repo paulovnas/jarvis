@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { CustomFlowEditor } from "./CustomFlowEditor";
-import { customAgent, customFlow } from "@/test/workflow-fixtures";
+import { builtinAgent, customAgent, customFlow } from "@/test/workflow-fixtures";
 
 vi.mock("./WorkflowCanvas", () => ({ default: () => <div aria-label="Canvas do fluxo" /> }));
 it("adds blocks, blocks saving disconnected graphs and connects them through keyboard-accessible controls", async () => {
@@ -43,4 +43,14 @@ it("asks before discarding a changed canvas definition", async () => {
   expect(close).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Descartar" }));
   expect(close).toHaveBeenCalledOnce();
+});
+
+it("allows an immutable Jarvis agent to be added as a workflow step", async () => {
+  const user = userEvent.setup(); const save = vi.fn().mockResolvedValue(true);
+  render(<CustomFlowEditor initial={{ ...customFlow, entry: "", steps: [] }} agents={[builtinAgent]} saving={false} creating onSave={save} onClose={vi.fn()} />);
+  expect(screen.getByRole("combobox", { name: "Adicionar agente ao canvas" })).toHaveTextContent("Designer · Jarvis");
+  await user.click(screen.getByRole("button", { name: "Adicionar bloco" }));
+  await user.click(screen.getByRole("button", { name: "Salvar fluxo" }));
+  await waitFor(() => expect(save).toHaveBeenCalledOnce());
+  expect(save.mock.calls[0][0].steps[0].agentId).toBe("builtin:designer");
 });

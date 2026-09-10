@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { flowOptions, flowSelection, validateGraph, workflowCatalogSchema } from "./workflow-catalog";
-import { customAgent, customFlow, customCatalog } from "@/test/workflow-fixtures";
+import { builtinAgent, customAgent, customFlow, customCatalog } from "@/test/workflow-fixtures";
 import { chatOptions } from "@/test/chat-fixtures";
 
 it("retains custom selection through persisted turn options without changing built-ins", () => {
@@ -33,5 +33,6 @@ it("validates entry, references, termination, reachability and bounded correctio
   expect(validateGraph({ ...customFlow, entry: "missing" }, [customAgent])).toMatch(/inicial/);
   expect(validateGraph(customFlow, [])).toMatch(/agente/);
   expect(validateGraph(customFlow, [{ ...customAgent, usage: "solo" }])).toMatch(/Solo/);
+  expect(validateGraph({ ...customFlow, steps: [{ ...customFlow.steps[0], agentId: builtinAgent.id }] }, [builtinAgent])).toBeNull();
   expect(validateGraph({ ...connected, maxSteps: 1 }, [customAgent])).toMatch(/limite/);
 });

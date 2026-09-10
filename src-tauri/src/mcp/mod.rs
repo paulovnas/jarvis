@@ -15,15 +15,92 @@ use std::{
 };
 use tauri::Manager as _;
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpValidationIssue {
+    pub path: String,
+    pub keyword: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct McpIntent {
+    #[serde(default)]
+    pub mode: McpIntentMode,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub servers: Vec<McpIntentServer>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded_servers: Vec<McpIntentServer>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum McpIntentMode {
+    #[default]
+    OnDemand,
+    Explicit,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct McpIntentServer {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpErrorMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    pub retryable: bool,
+    pub outcome_uncertain: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_recovered: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_error_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_error_data: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub validation_errors: Vec<McpValidationIssue>,
+}
+
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpError {
     pub code: &'static str,
     pub message: String,
+    #[serde(flatten)]
+    pub metadata: Box<McpErrorMetadata>,
+}
+impl McpError {
+    pub(crate) fn tool_result(&self) -> String {
+        serde_json::to_string(&serde_json::json!({
+            "ok": false,
+            "error": self,
+        }))
+        .unwrap_or_else(|_| {
+            format!(
+                r#"{{"ok":false,"error":{{"code":"{}","message":"{}"}}}}"#,
+                self.code, "Falha MCP sem detalhes serializáveis."
+            )
+        })
+    }
 }
 pub fn error(message: &str) -> McpError {
+    coded_error("mcp_error", message)
+}
+pub(crate) fn coded_error(code: &'static str, message: &str) -> McpError {
     McpError {
-        code: "mcp_error",
+        code,
         message: message.into(),
+        metadata: Box::default(),
     }
 }
 impl From<PersistenceError> for McpError {
@@ -255,6 +332,7 @@ impl McpState {
         }
         self.list(state, home)
     }
+    #[cfg(test)]
     pub fn active_configs(
         &self,
         state: &AppState,
@@ -282,6 +360,26 @@ impl McpState {
             }
         }
         Ok(active)
+    }
+
+    pub(crate) fn active_config(
+        &self,
+        state: &AppState,
+        home: &Path,
+        expected: &Server,
+    ) -> Result<Option<(Server, Config)>, McpError> {
+        let _guard = self.0.guard.lock().map_err(|_| storage_error())?;
+        let current = self
+            .list(state, home)?
+            .into_iter()
+            .find(|server| server.id == expected.id);
+        let Some(server) = current.filter(|server| {
+            server.enabled && server.configured && server.revision == expected.revision
+        }) else {
+            return Ok(None);
+        };
+        let config = self.config(&server)?;
+        Ok(Some((server, config)))
     }
 
     pub(crate) fn backup_configs(

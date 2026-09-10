@@ -272,7 +272,7 @@ async fn available_in_plan_build_manual_yolo_without_an_approval_prompt() {
                 custom_agent_id: None,
                 approval_mode,
             };
-            assert!(authorize(&session, &tool, &options, signal.clone())
+            assert!(authorize(&session, &tool, &options, false, signal.clone())
                 .await
                 .unwrap());
             assert!(session.snapshot().unwrap().pending_approval.is_none());

@@ -178,9 +178,9 @@ pub(crate) fn builtin_permissions() -> Vec<Permission> {
         (
             "Fluxo",
             [
-                dispatch::definitions(Role::Builder),
-                dispatch::definitions(Role::Planner),
-                dispatch::definitions(Role::Designer),
+                dispatch::definitions(Flow::Complete, Role::Builder),
+                dispatch::definitions(Flow::Complete, Role::Planner),
+                dispatch::definitions(Flow::Complete, Role::Designer),
                 vec![validation::definition()],
             ]
             .concat(),

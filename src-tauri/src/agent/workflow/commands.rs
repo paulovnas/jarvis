@@ -143,10 +143,9 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
         .transpose()?;
     let mut current_jobs: Vec<&Job> = vec![];
     for job in state.jobs.values().filter(|job| job.run_id == state.run_id) {
-        if let Some(index) = current_jobs
-            .iter()
-            .position(|current| current.role == job.role && job.role != Role::Custom)
-        {
+        if let Some(index) = current_jobs.iter().position(|current| {
+            state.flow != Flow::Custom && current.role == job.role && job.role != Role::Custom
+        }) {
             let current = current_jobs[index];
             if (job.created_at, job.updated_at, job.id.as_str())
                 > (current.created_at, current.updated_at, current.id.as_str())
@@ -483,14 +482,17 @@ mod tests {
     #[test]
     fn custom_steps_are_not_collapsed_by_role_in_the_native_snapshot() {
         let (_fixture, hub) = super::super::tests::hub();
-        let first = super::super::tests::job(&hub, Role::Custom, ".");
-        let second = super::super::tests::job(&hub, Role::Custom, ".");
-        let mut state = hub.manifest.lock().unwrap();
-        state.flow = Flow::Custom;
-        state.jobs.insert(first.id.clone(), first);
-        state.jobs.insert(second.id.clone(), second);
-        let result = snapshot(&state, None).unwrap();
-        assert_eq!(result.agents.len(), 3);
+        for role in [Role::Custom, Role::Designer] {
+            let first = super::super::tests::job(&hub, role, ".");
+            let second = super::super::tests::job(&hub, role, ".");
+            let mut state = hub.manifest.lock().unwrap();
+            state.flow = Flow::Custom;
+            state.jobs.clear();
+            state.jobs.insert(first.id.clone(), first);
+            state.jobs.insert(second.id.clone(), second);
+            let result = snapshot(&state, None).unwrap();
+            assert_eq!(result.agents.len(), 3, "{role:?}");
+        }
     }
 
     #[test]

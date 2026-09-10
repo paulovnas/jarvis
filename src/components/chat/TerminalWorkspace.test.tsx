@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -8,6 +9,7 @@ import type { ChatTerminal } from "@/core/terminals";
 import { TerminalWorkspace } from "./TerminalWorkspace";
 import { DesktopLayoutProvider } from "@/components/layout/DesktopLayoutProvider";
 import { DEFAULT_DESKTOP_LAYOUT, type DesktopLayout } from "@/core/desktop-layout";
+import { AUTOMATIC_TERMINAL_FONT_STACK, type SystemSnapshot } from "@/core/system-preferences";
 
 function TestWorkspace({ conversationId }: { conversationId?: string }) {
   return <TerminalWorkspace conversationId={conversationId}>{launcher => <><textarea aria-label="Mensagem" />{launcher}</>}</TerminalWorkspace>;
@@ -19,7 +21,8 @@ const renderer = vi.hoisted(() => ({ create: vi.fn(), open: vi.fn(), fit: vi.fn(
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit() { renderer.fit(); } } }));
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
-    constructor(options: ITerminalOptions) { renderer.create(options); }
+    options: ITerminalOptions;
+    constructor(options: ITerminalOptions) { this.options = options; renderer.create(options); }
     cols = 100;
     rows = 24;
     loadAddon() {}
@@ -38,6 +41,15 @@ const terminals = [
 ] as const;
 
 const service: ChatTerminal = { id: "service", origin: "agent", conversationId: "chat", title: "Vite", command: "bun run dev", cwd: "/project", pid: 123, startedAt: 1, endedAt: null, exitCode: null, status: "running" };
+const systemSnapshot: SystemSnapshot = {
+  preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30, terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 } },
+  sleepInhibited: false,
+  sleepError: null,
+  notificationError: null,
+  availableTerminalShells: ["/bin/zsh", "/bin/bash"],
+  resolvedTerminalShell: "/bin/zsh",
+  terminalError: null,
+};
 
 describe("Integrated terminals", () => {
   it("shows an ended service as read-only and offers a fresh shell without replaying the service", async () => {
@@ -70,10 +82,12 @@ describe("Integrated terminals", () => {
     vi.clearAllMocks();
     let created = 0;
     vi.mocked(invoke).mockReset();
+    vi.mocked(listen).mockReset().mockResolvedValue(vi.fn());
     vi.mocked(invoke).mockImplementation(async command => {
       if (command === "list_chat_terminals") return [];
       if (command === "list_chat_processes") return [];
       if (command === "create_chat_terminal") return terminals[created++];
+      if (command === "get_system_preferences") return systemSnapshot;
       if (command === "read_chat_terminal") {
         return { terminal: terminals[Math.min(created, 1)], output: "", revision: 0, truncated: false };
       }
@@ -172,16 +186,8 @@ describe("Integrated terminals", () => {
     await waitFor(() => expect(handle).toHaveAttribute("aria-valuenow", String(100 - size)));
   });
 
-  it("waits for the resolved monospace font before measuring and fitting the terminal", async () => {
-    const fontFamily = '"JetBrains Mono", Consolas, monospace';
-    const computedStyle = window.getComputedStyle.bind(window);
-    vi.spyOn(window, "getComputedStyle").mockImplementation(element => {
-      const styles = computedStyle(element);
-      if (element.getAttribute("role") === "application") {
-        Object.defineProperty(styles, "fontFamily", { value: fontFamily });
-      }
-      return styles;
-    });
+  it("waits for the configured terminal font before measuring and fitting the terminal", async () => {
+    const fontFamily = AUTOMATIC_TERMINAL_FONT_STACK;
     let resolveFont: (fonts: FontFace[]) => void = () => {};
     const loadFont = vi.fn(() => new Promise<FontFace[]>(resolve => { resolveFont = resolve; }));
     Object.defineProperty(document, "fonts", { configurable: true, value: { load: loadFont } });
@@ -213,6 +219,34 @@ describe("Integrated terminals", () => {
     await waitFor(() => expect(renderer.open).toHaveBeenCalled());
     expect(invoke).toHaveBeenCalledWith("read_chat_terminal", { conversationId: "chat", id: "terminal-1" });
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("applies font changes to an open terminal and refits it", async () => {
+    let changed: EventCallback<unknown> = () => {};
+    vi.mocked(listen).mockImplementation(async (event, callback) => {
+      if (event === "system:changed") changed = callback;
+      return () => {};
+    });
+    const user = userEvent.setup();
+    render(<TestWorkspace conversationId="chat" />);
+    await user.click(screen.getByRole("button", { name: "Abrir terminais" }));
+    await user.click(await screen.findByRole("button", { name: "Novo Terminal" }));
+    await waitFor(() => expect(renderer.open).toHaveBeenCalled());
+    const surface = screen.getByRole("application", { name: "Terminal Terminal 1" });
+    Object.defineProperties(surface, { clientWidth: { value: 1_080 }, clientHeight: { value: 580 } });
+    const before = renderer.fit.mock.calls.length;
+
+    act(() => changed({
+      event: "system:changed",
+      id: 1,
+      payload: {
+        ...systemSnapshot,
+        preferences: { ...systemSnapshot.preferences, terminal: { ...systemSnapshot.preferences.terminal, fontFamily: "MesloLGS NF", fontSize: 16 } },
+      },
+    }));
+
+    await waitFor(() => expect(renderer.create.mock.calls[renderer.create.mock.calls.length - 1]?.[0]).toEqual(expect.objectContaining({ fontFamily: '"MesloLGS NF", "JetBrains Mono", monospace', fontSize: 16 })));
+    expect(renderer.fit.mock.calls.length).toBeGreaterThan(before);
   });
 
   it("does not open or resize a terminal after closing while its font loads", async () => {

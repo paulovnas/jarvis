@@ -1,13 +1,11 @@
 use super::*;
 use flate2::{write::GzEncoder, Compression};
 
-fn archive(extra: &[(&str, &str)]) -> Vec<u8> {
+fn archive_with_version(version: &str, extra: &[(&str, &str)]) -> Vec<u8> {
     let mut archive = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::fast()));
+    let package = format!(r#"{{"name":"open-design","version":"{version}"}}"#);
     for (path, content) in [
-        (
-            "package.json",
-            r#"{"name":"open-design","version":"1.2.3"}"#,
-        ),
+        ("package.json", package.as_str()),
         ("LICENSE", "Apache-2.0"),
         (
             "design-systems/test/manifest.json",
@@ -36,6 +34,10 @@ fn archive(extra: &[(&str, &str)]) -> Vec<u8> {
             .unwrap();
     }
     archive.into_inner().unwrap().finish().unwrap()
+}
+
+fn archive(extra: &[(&str, &str)]) -> Vec<u8> {
+    archive_with_version("1.2.3", extra)
 }
 pub(in crate::core) fn prepare_fixture(
     directory: &Path,
@@ -157,6 +159,30 @@ fn incomplete_or_duplicate_packages_never_validate() {
         "2.0.0",
         &"a".repeat(40),
         &"b".repeat(64)
+    )
+    .is_err());
+}
+
+#[test]
+fn accepts_a_source_manifest_that_lags_the_release_by_one_or_more_patches() {
+    let dir = tempfile::tempdir().unwrap();
+    prepare(
+        std::io::Cursor::new(archive_with_version("1.2.1", &[])),
+        dir.path(),
+        "1.2.3",
+        &"a".repeat(40),
+        &"b".repeat(64),
+    )
+    .unwrap();
+    assert!(Pack::at(dir.path(), "1.2.3").is_ok());
+
+    let incompatible = tempfile::tempdir().unwrap();
+    assert!(prepare(
+        std::io::Cursor::new(archive_with_version("1.1.9", &[])),
+        incompatible.path(),
+        "1.2.3",
+        &"a".repeat(40),
+        &"b".repeat(64),
     )
     .is_err());
 }

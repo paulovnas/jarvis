@@ -74,7 +74,7 @@ function ProjectPlans({ projectId, onOpenKanban }: { projectId: string; onOpenKa
             {tasks.length ? <ul className="divide-y divide-border rounded-md border border-border bg-card/50">{tasks.map(task => <li key={task.id} className="flex items-start gap-3 px-3 py-3"><span className="min-w-0 flex-1 text-xs leading-5">{task.title}</span><Status issue={task} /></li>)}</ul> : <p className="text-xs text-muted-foreground">Nenhuma tarefa vinculada.</p>}
           </section>
         </div>
-        {onOpenKanban && <DialogFooter className="shrink-0 border-t border-border bg-sidebar p-4"><Button variant="outline" size="sm" className="cursor-pointer gap-2 text-xs" onClick={() => { setSelected(null); onOpenKanban(projectId); }}>Ver mais detalhes<ArrowUpRight className="size-3.5" /></Button></DialogFooter>}
+        {onOpenKanban && <DialogFooter className="mx-0 mb-0 shrink-0 border-t border-border bg-sidebar px-5 pt-5 pb-6"><Button variant="outline" size="sm" className="cursor-pointer gap-2 text-xs" onClick={() => { setSelected(null); onOpenKanban(projectId); }}>Ver mais detalhes<ArrowUpRight className="size-3.5" /></Button></DialogFooter>}
       </DialogContent>}
     </Dialog>
   </>;

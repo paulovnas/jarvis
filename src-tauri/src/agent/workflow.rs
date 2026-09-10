@@ -130,6 +130,8 @@ struct Manifest {
     conversation_id: String,
     run_id: String,
     flow: Flow,
+    #[serde(default)]
+    mcp_intent: crate::mcp::McpIntent,
     root_status: Status,
     updated_at: u64,
     revision: u64,
@@ -273,11 +275,12 @@ impl Execution {
     pub(super) async fn mutation_guard(
         &self,
         tool: &ToolCall,
+        mcp_mutating: bool,
         mut signal: watch::Receiver<bool>,
     ) -> Result<Option<tokio::sync::RwLockReadGuard<'_, ()>>, AgentError> {
         let mutation = tools::needs_approval(&tool.name)
             || matches!(tool.name.as_str(), "process_start" | "terminal_start")
-            || tool.name.starts_with("mcp_")
+            || (tool.name.starts_with("mcp_") && mcp_mutating)
             || crate::core::context::needs_approval(&tool.name);
         if !mutation {
             return Ok(None);
@@ -285,7 +288,7 @@ impl Execution {
         let affects_acceptance = matches!(
             tool.name.as_str(),
             "write" | "edit" | "bash" | "process_start" | "terminal_start"
-        ) || tool.name.starts_with("mcp_")
+        ) || (tool.name.starts_with("mcp_") && mcp_mutating)
             || crate::core::context::needs_approval(&tool.name);
         if affects_acceptance
             && self
@@ -428,17 +431,16 @@ impl Execution {
         definitions.extend(terminals::definitions(self.role_mode()));
         definitions.extend(super::browser::definitions(self.role_mode()));
         if self.flow == Flow::Custom && !direct {
-            definitions.extend(dispatch::definitions(Role::Builder));
+            definitions.extend(dispatch::definitions(self.flow, Role::Builder));
+        } else if !direct || self.designer() {
+            definitions.extend(dispatch::definitions(self.flow, self.role));
         }
         if self.id == "main" && self.role == Role::Planner && !direct {
             definitions.push(validation::definition());
         }
-        if !direct || self.designer() {
-            definitions.extend(dispatch::definitions(self.role));
-        }
         definitions.retain(|d| d["name"].as_str().is_some_and(|name| self.allowed(name)));
     }
-    fn allowed(&self, name: &str) -> bool {
+    pub(super) fn allowed(&self, name: &str) -> bool {
         if self.direct() && name.starts_with("hub_") {
             return false;
         }
@@ -472,27 +474,29 @@ impl Execution {
         self.role
             .allows(self.flow, name, self.scope.iter().any(|p| p == "."))
     }
-    pub(super) fn preflight(&self, tool: &ToolCall) -> Option<&'static str> {
+    pub(super) fn preflight(&self, tool: &ToolCall) -> Option<String> {
         if !self.allowed(&tool.name) {
-            return Some("Ferramenta indisponível para o papel deste agente.");
+            return Some("Ferramenta indisponível para o papel deste agente.".into());
         }
         let paths_allowed = if tool.name == "apply_patch" {
-            super::patch::target_paths(&tool.args).is_ok_and(|paths| {
-                !paths.is_empty()
-                    && paths.iter().all(|path| {
-                        dispatch::path_allowed(
-                            &self.hub.root.root,
-                            &json!({"path":path}),
-                            &self.scope,
-                            self.role,
-                        )
-                    })
-            })
+            let paths = match super::patch::target_paths(&tool.args) {
+                Ok(paths) => paths,
+                Err(error) => return Some(error.message),
+            };
+            !paths.is_empty()
+                && paths.iter().all(|path| {
+                    dispatch::path_allowed(
+                        &self.hub.root.root,
+                        &json!({"path":path}),
+                        &self.scope,
+                        self.role,
+                    )
+                })
         } else {
             dispatch::path_allowed(&self.hub.root.root, &tool.args, &self.scope, self.role)
         };
         if matches!(tool.name.as_str(), "write" | "edit" | "apply_patch") && !paths_allowed {
-            return Some("O arquivo está fora do escopo atribuído ao agente.");
+            return Some("O arquivo está fora do escopo atribuído ao agente.".into());
         }
         if matches!(self.role, Role::Investigator | Role::Reviewer)
             && tool.name == "beads_update"
@@ -501,7 +505,9 @@ impl Execution {
                     .any(|key| !matches!(key.as_str(), "id" | "notes"))
             })
         {
-            return Some("Este papel pode registrar notas, mas não alterar o estado da tarefa.");
+            return Some(
+                "Este papel pode registrar notas, mas não alterar o estado da tarefa.".into(),
+            );
         }
         if self.id != "main"
             && matches!(self.role, Role::Builder | Role::Designer | Role::Reviewer)
@@ -511,7 +517,7 @@ impl Execution {
                 .job(&self.id)
                 .is_ok_and(|job| job.bead_id.as_deref() == tool.args["id"].as_str())
         {
-            return Some("Atualize apenas a tarefa atribuída a este agente.");
+            return Some("Atualize apenas a tarefa atribuída a este agente.".into());
         }
         if tool.name == "beads_close" && self.flow == Flow::Complete {
             let reviewed = self.hub.manifest.lock().is_ok_and(|state| {
@@ -536,7 +542,7 @@ impl Execution {
                 })
             });
             if !reviewed {
-                return Some("Conclusão bloqueada: peça ao Revisor que verifique este ID exato e o inclua em taskIds no hub_complete com verdict approved. Aprovar apenas o ID da tarefa de revisão não aprova a implementação ou o épico. Não remova dependências para contornar esta regra.");
+                return Some("Conclusão bloqueada: peça ao Revisor que verifique este ID exato e o inclua em taskIds no hub_complete com verdict approved. Aprovar apenas o ID da tarefa de revisão não aprova a implementação ou o épico. Não remova dependências para contornar esta regra.".into());
             }
         }
         None
@@ -721,7 +727,7 @@ pub(super) fn compaction_context(
             ));
         }
     }
-    let mut definitions = dispatch::definitions(role);
+    let mut definitions = dispatch::definitions(flow, role);
     if flow.direct() {
         definitions.push(super::tasks::definition());
         definitions.retain(|d| {
@@ -784,6 +790,7 @@ pub(super) async fn run(
     app: &tauri::AppHandle,
     signal: watch::Receiver<bool>,
 ) -> Result<(), AgentError> {
+    super::preserve_user_mcp_intent(session, &env.2, &env.0, &env.3, signal.clone()).await?;
     let mut options = session
         .data
         .lock()

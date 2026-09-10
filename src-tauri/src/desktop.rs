@@ -74,6 +74,7 @@ pub enum SettingsTab {
     Tools,
     #[default]
     General,
+    Terminal,
     Providers,
     Agents,
     Skills,

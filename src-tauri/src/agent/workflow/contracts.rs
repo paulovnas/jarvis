@@ -25,6 +25,15 @@ pub enum Role {
 }
 
 impl Flow {
+    pub(in crate::agent) fn id(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Designer => "designer",
+            Self::Planned => "planned",
+            Self::Complete => "complete",
+            Self::Custom => "custom",
+        }
+    }
     pub(in crate::agent) fn root(self) -> Role {
         match self {
             Self::Standard => Role::Builder,
@@ -36,8 +45,70 @@ impl Flow {
     pub(in crate::agent) fn direct(self) -> bool {
         matches!(self, Self::Standard | Self::Designer)
     }
+    pub(super) fn roster(self) -> &'static [Role] {
+        match self {
+            Self::Custom => &[],
+            Self::Standard => &[Role::Builder],
+            Self::Designer => &[Role::Designer],
+            Self::Planned => &[Role::Planner, Role::Builder, Role::Designer],
+            Self::Complete => &[
+                Role::Planner,
+                Role::Investigator,
+                Role::Writer,
+                Role::Orchestrator,
+                Role::Designer,
+                Role::Builder,
+                Role::Reviewer,
+            ],
+        }
+    }
+    pub(super) fn delegations(self) -> &'static [(Role, Role)] {
+        match self {
+            Self::Planned => &[
+                (Role::Planner, Role::Builder),
+                (Role::Planner, Role::Designer),
+            ],
+            Self::Complete => &[
+                (Role::Planner, Role::Investigator),
+                (Role::Planner, Role::Writer),
+                (Role::Planner, Role::Orchestrator),
+                (Role::Orchestrator, Role::Planner),
+                (Role::Orchestrator, Role::Designer),
+                (Role::Orchestrator, Role::Builder),
+                (Role::Orchestrator, Role::Reviewer),
+            ],
+            Self::Standard | Self::Designer | Self::Custom => &[],
+        }
+    }
 }
 impl Role {
+    pub(super) fn id(self) -> &'static str {
+        match self {
+            Self::Planner => "planner",
+            Self::Investigator => "investigator",
+            Self::Writer => "writer",
+            Self::Orchestrator => "orchestrator",
+            Self::Designer => "designer",
+            Self::Builder => "builder",
+            Self::Reviewer => "reviewer",
+            Self::Custom => "custom",
+        }
+    }
+    pub(super) fn from_builtin_id(id: &str) -> Option<Self> {
+        match id {
+            "builtin:planner" => Some(Self::Planner),
+            "builtin:investigator" => Some(Self::Investigator),
+            "builtin:writer" => Some(Self::Writer),
+            "builtin:orchestrator" => Some(Self::Orchestrator),
+            "builtin:designer" => Some(Self::Designer),
+            "builtin:builder" => Some(Self::Builder),
+            "builtin:reviewer" => Some(Self::Reviewer),
+            _ => None,
+        }
+    }
+    pub(super) fn builtin_id(self) -> Option<String> {
+        (self != Self::Custom).then(|| format!("builtin:{}", self.id()))
+    }
     pub(super) fn coordinator(self) -> bool {
         matches!(self, Self::Planner | Self::Orchestrator)
     }
@@ -57,18 +128,7 @@ impl Role {
         }
     }
     pub(super) fn spawns(self, flow: Flow, role: Self) -> bool {
-        match (flow, self) {
-            (Flow::Planned, Self::Planner) => matches!(role, Self::Builder | Self::Designer),
-            (Flow::Complete, Self::Planner) => matches!(
-                role,
-                Self::Investigator | Self::Writer | Self::Orchestrator | Self::Designer
-            ),
-            (Flow::Complete, Self::Orchestrator) => matches!(
-                role,
-                Self::Builder | Self::Designer | Self::Reviewer | Self::Planner
-            ),
-            _ => false,
-        }
+        flow.delegations().contains(&(self, role))
     }
     pub(super) fn allows(self, flow: Flow, tool: &str, broad: bool) -> bool {
         if crate::agent::browser::mutating(tool) {
@@ -140,7 +200,7 @@ fn supplemental_instructions(flow: Flow, role: Role) -> Vec<InstructionSection> 
         });
     }
     if role.coordinator() {
-        sections.push(InstructionSection { title: "Coordenação de design", content: "\nDesign-dependent planning: when layout, brand or interaction decisions are prerequisites for a useful plan, dispatch Designer with phase=discovery BEFORE committing dependent implementation tasks. Discovery is read-only and does not require a Beads ID. Complete Planner may dispatch Designer only for discovery; implementation goes through Orchestrator. Use its evidence and brief to establish visual acceptance criteria and dependencies; do not postpone essential design decisions until after building. For implementation use phase=implementation and an assigned Bead. Delegated Designers cannot question the user. Respond promptly to hub_request_guidance deliveries through hub_respond_guidance with that exact requestId. Resolve from known requirements first; if insufficient, use ask_user or request guidance from your parent. Never hub_wait while an unresolved child guidance request requires your response. Relay the actual decision; do not invent user approval. Pass accepted design decisions/resource IDs to subsequent designers and builders.\n" });
+        sections.push(InstructionSection { title: "Coordenação de design", content: "\nVisual work belongs to Designer as an implementation specialist, with the same ownership expected from Builder inside its assigned frontend/design scope. In Planned, Planner dispatches Designer directly with a real Beads task. In Complete, Planner sends the executable plan to Orchestrator, which dispatches Designer for visual implementation and Builder for other product work. Use Investigator for read-only discovery. Do not ask Designer for an assessment and then duplicate its implementation elsewhere. Give it accepted decisions, resource IDs, explicit paths and observable acceptance criteria. Delegated Designers cannot question the user; respond promptly to hub_request_guidance through hub_respond_guidance with that exact requestId. Resolve from known requirements first; if insufficient, use ask_user or request guidance from your parent. Never hub_wait while an unresolved child guidance request requires your response. Relay the actual decision; do not invent user approval.\n" });
     }
     if flow == Flow::Designer {
         sections.push(InstructionSection { title: "Designer direto", content: "\nYou are the direct Designer and talk to the user yourself. Deliver the requested design outcome end to end. No dispatch or assigned Bead is required to start. Use ask_user when needed; do not call hub tools.\n" });

@@ -9,6 +9,7 @@ export const efficiencySchema = z.object({
   cacheReadInputTokens: count.default(0), cacheReadRequests: count.default(0), cacheWriteRequests: count.default(0),
   auxiliaryRequests: count.default(0), auxiliaryInputTokens: count.default(0), auxiliaryOutputTokens: count.default(0),
   indexedOutputs: count.default(0), originalBytes: count.default(0), retainedBytes: count.default(0),
+  localReadReuses: count.default(0), localReadOriginalBytes: count.default(0), localReadRetainedBytes: count.default(0),
 });
 export const emptyEfficiency = efficiencySchema.parse({});
 export const projectMetricsSchema = z.object({

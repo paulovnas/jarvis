@@ -96,25 +96,21 @@ pub(super) fn open(
     let directory_path = path(&env.home, &root.id)?;
     directory(directory_path.parent().ok_or_else(AgentError::storage)?)?;
     directory(&directory_path)?;
-    let run_id = root
-        .data
-        .lock()
-        .map_err(|_| AgentError::internal())?
-        .active
-        .as_ref()
-        .ok_or_else(AgentError::cancelled)?
-        .id
-        .clone();
-    let options = root
-        .data
-        .lock()
-        .map_err(|_| AgentError::internal())?
-        .turns
-        .last()
-        .ok_or_else(AgentError::internal)?
-        .turn
-        .options
-        .clone();
+    let (run_id, options, mcp_intent) = {
+        let data = root.data.lock().map_err(|_| AgentError::internal())?;
+        let run_id = data
+            .active
+            .as_ref()
+            .ok_or_else(AgentError::cancelled)?
+            .id
+            .clone();
+        let current = data.turns.last().ok_or_else(AgentError::internal)?;
+        (
+            run_id,
+            current.turn.options.clone(),
+            current.mcp_intent.clone().unwrap_or_default(),
+        )
+    };
     let mut manifest = load(&directory_path, &root.id)?.unwrap_or_else(|| Manifest {
         custom_definition: None,
         custom_agent: None,
@@ -123,6 +119,7 @@ pub(super) fn open(
         conversation_id: root.id.clone(),
         run_id: run_id.clone(),
         flow,
+        mcp_intent: mcp_intent.clone(),
         root_status: Status::Running,
         updated_at: now(),
         revision: now(),
@@ -164,6 +161,7 @@ pub(super) fn open(
     }
     manifest.run_id = run_id;
     manifest.flow = flow;
+    manifest.mcp_intent = mcp_intent;
     manifest.custom_definition = None;
     manifest.custom_agent = None;
     manifest.root_status = Status::Running;
@@ -266,13 +264,21 @@ pub(super) fn worker(
         .turn
         .user
         .clone();
+    let mcp_intent = hub
+        .manifest
+        .lock()
+        .map_err(|_| AgentError::internal())?
+        .mcp_intent
+        .clone();
     let wire = format!("Original user request (preserve exact paths, constraints and acceptance; a coordinator cannot silently replace these):\n{original}\n\nNative dispatch from {} (assigned subset of the original request):\n{content}\nBeads: {}\nScope: {}\nAcceptance criteria: {}\nIf the dispatch conflicts with the original request, return the discrepancy to your coordinator before implementing. Return a structured hub_complete handoff when finished.", job.parent_id, job.bead_id.as_deref().unwrap_or("research/planning"), json!(job.scope), json!(job.acceptance));
     let signal = {
         let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
         session.reserve_locked(&mut data, content, job.options.clone(), None, vec![])?
     };
     session.update(true, |data| {
-        data.turns.last_mut().unwrap().wire = vec![json!({"role":"user","content":wire})];
+        let current = data.turns.last_mut().unwrap();
+        current.wire = vec![json!({"role":"user","content":wire})];
+        current.mcp_intent = Some(mcp_intent);
     })?;
     Ok((session, signal))
 }

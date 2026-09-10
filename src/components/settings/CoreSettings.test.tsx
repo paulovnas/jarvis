@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -131,4 +131,26 @@ it("mantém a versão instalada quando uma atualização falha e permite nova te
   expect(await screen.findByText("Download interrompido")).toBeInTheDocument();
   expect(screen.getAllByText("v1.0.0")).toHaveLength(6);
   await waitFor(() => expect(screen.getByRole("button", { name: "Atualizar Context-mode" })).toBeEnabled());
+});
+
+it("oferece reinstalação no card e no diagnóstico após uma atualização falhar", async () => {
+  const state = coreFixture();
+  state.items[3].latestVersion = "1.1.0";
+  state.items[3].updateAvailable = true;
+  state.items[3].error = "Recursos da nova release inválidos";
+  invokeMock.mockResolvedValue(state);
+  render(<CoreSettings />);
+
+  const cardReinstall = await screen.findByRole("button", { name: "Reinstalar Open Design" });
+  expect(screen.getByText("Atenção")).toBeInTheDocument();
+  fireEvent.click(cardReinstall);
+  expect(await screen.findByRole("alertdialog")).toHaveTextContent("baixada e verificada antes de substituir");
+  fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Diagnóstico e Reparo" }));
+  const dialog = await screen.findByRole("dialog", { name: "Diagnóstico e Reparo" });
+  expect(within(dialog).getByText("Core funcional · ação pendente")).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Reinstalar Open Design" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirmar reinstalação" }));
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("repair_core_component", { id: "open-design", reinstall: true }));
 });

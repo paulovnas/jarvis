@@ -72,6 +72,19 @@ it("abre a mesma modal pelo menu nativo e preserva os detalhes da atualização"
   expect(stopListening).toHaveBeenCalledTimes(1);
 });
 
+it("apresenta o apoio voluntário por PIX e copia o código completo", async () => {
+  const user = userEvent.setup();
+  const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  render(<AppUpdate />);
+  await user.click(screen.getByRole("button", { name: /Sobre o Jarvis/ }));
+  expect(screen.getByRole("heading", { name: "Compre-me um açaí 🫐" })).toBeVisible();
+  expect(screen.getByText(/projeto sem fins lucrativos/)).toBeVisible();
+  expect(screen.getByRole("img", { name: "QR Code para apoiar o Jarvis via PIX" })).toHaveAttribute("src", "/acai.png");
+  await user.click(screen.getByRole("button", { name: "Copiar PIX copia e cola" }));
+  expect(copy).toHaveBeenCalledWith("00020101021126540014br.gov.bcb.pix0132nascimento.paulo.vitor@gmail.com5204000053039865802BR5923PAULO V A DE O NASCIMEN6006AMPARO62070503***6304B333");
+  expect(screen.getByRole("button", { name: "PIX copiado" })).toBeVisible();
+});
+
 it("mostra versão e autoria, consulta ao iniciar e não verifica continuamente ao focar", async () => {
   vi.useFakeTimers();
   const { unmount } = render(<AppUpdate />);

@@ -45,7 +45,7 @@ describe("Composer attachments", () => {
     const removed = { content: "Confira", parts: [{ type: "text" as const, text: "Confira" }, { type: "attachment" as const, attachment: file }] };
     render(<ChatComposer modelGroups={modelGroups} onSendMessage={send} draftKey="conversation" running queuedMessages={[{ id: "q", ...removed, options: chatOptions }]} onRemoveQueued={vi.fn().mockResolvedValue(removed)} />);
     await screen.findByRole("textbox", { name: "Mensagem" });
-    await user.click(screen.getByRole("button", { name: "Retirar mensagem 1 e editar" }));
+    await user.click(screen.getByRole("button", { name: "Editar mensagem 1" }));
     expect(screen.getByRole("button", { name: "Remover anexo screen.png" })).toBeVisible();
     await user.upload(screen.getByLabelText("Selecionar anexos"), new File(["another"], "notes.txt", { type: "text/plain" }));
     await waitFor(() => expect(finish).toBeDefined());

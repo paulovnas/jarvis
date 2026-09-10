@@ -368,11 +368,11 @@ mod tests {
             duration_ms: 0,
         };
         let (_send, signal) = watch::channel(false);
-        let (_, revision) =
+        let result =
             tools::execute_with_revision(&fixture.root, &tool, Mode::Build, signal.clone())
                 .await
                 .unwrap();
-        record(&session, revision.unwrap()).await.unwrap();
+        record(&session, result.revision.unwrap()).await.unwrap();
         let summary = session.snapshot().unwrap().file_changes;
         assert_eq!(
             (summary[0].additions, summary[0].deletions),
@@ -384,11 +384,11 @@ mod tests {
             args: json!({"path":"a.txt","content":"one\ntwo\n"}),
             ..tool
         };
-        let (_, revision) =
+        let result =
             tools::execute_with_revision(&fixture.root, &restored, Mode::Build, signal.clone())
                 .await
                 .unwrap();
-        record(&session, revision.unwrap()).await.unwrap();
+        record(&session, result.revision.unwrap()).await.unwrap();
         assert!(session.snapshot().unwrap().file_changes.is_empty());
         assert!(
             tools::execute_with_revision(&fixture.root, &restored, Mode::Plan, signal)

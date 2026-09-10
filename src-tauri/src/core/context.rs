@@ -128,6 +128,7 @@ impl ContextMode {
             environment: environment(package, storage, root, session),
             enabled: true,
             timeout: 120_000,
+            request_timeout: 120_000,
         };
         let server = Server {
             id: "jarvis-core-context-mode".into(),
@@ -253,6 +254,11 @@ impl ContextMode {
             .map_err(|cause| {
                 if *signal.borrow() {
                     super::cancelled_error()
+                } else if name == "ctx_search" {
+                    error(format!(
+                        "A busca no Context-mode não encontrou uma fonte utilizável: {} Não repita a mesma consulta. Para dados novos, use ctx_batch_execute, ctx_execute/ctx_execute_file ou ctx_index primeiro; depois pesquise a fonte criada.",
+                        cause.message
+                    ))
                 } else {
                     error(cause.message)
                 }
@@ -578,6 +584,13 @@ mod tests {
         }
         assert!(allowed("ctx_search", true));
         assert!(allowed("ctx_index", true));
+    }
+
+    #[test]
+    fn context_instructions_explain_how_to_seed_an_empty_knowledge_base() {
+        assert!(INSTRUCTIONS.contains("ctx_batch_execute"));
+        assert!(INSTRUCTIONS.contains("ctx_index"));
+        assert!(INSTRUCTIONS.contains("instead of running the same tool again"));
     }
     #[test]
     fn conversation_memory_is_isolated_and_host_environment_is_explicit() {

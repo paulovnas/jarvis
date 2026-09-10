@@ -8,6 +8,7 @@ fn custom_agent(
         name: "Especialista".into(),
         description: "Analisa o projeto".into(),
         instructions: "Leia o contexto antes de agir.".into(),
+        native_role: None,
         usage: workflow::catalog::AgentUsage::Mixed,
         capability: workflow::catalog::Capability::ReadOnly,
         denied_tools: vec!["write_file".into()],

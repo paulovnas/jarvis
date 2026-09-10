@@ -533,11 +533,19 @@ fn read(
             append(path, turn)?;
         }
     }
-    // A queued message and its turn share an ID. A crash between the durable
-    // turn reservation and the queue update must never replay the same message.
-    extras
-        .queue
-        .retain(|message| !turns.iter().any(|turn| turn.turn.id == message.id));
+    // A queued message and its turn share an ID. Auxiliary messages also carry
+    // their queue ID in the wire. A crash between the durable turn update and
+    // the queue checkpoint must never replay either kind of delivery.
+    let delivered_queue_ids: std::collections::HashSet<_> = turns
+        .iter()
+        .flat_map(|turn| turn.wire.iter())
+        .filter(|message| message["role"] == "user" && message["_jarvis_auxiliary"] == true)
+        .filter_map(|message| message["_jarvis_queue_id"].as_str())
+        .collect();
+    extras.queue.retain(|message| {
+        !turns.iter().any(|turn| turn.turn.id == message.id)
+            && !delivered_queue_ids.contains(message.id.as_str())
+    });
     if let Some(context) = &extras.context {
         context.validate(&turns)?;
     }
@@ -754,6 +762,7 @@ mod tests {
     use std::fs;
     fn turn() -> StoredTurn {
         StoredTurn {
+            mcp_intent: None,
             turn: Turn {
                 id: "turn-1".into(),
                 created_at: 1,
@@ -849,6 +858,54 @@ mod tests {
         let stored: StoredTurn = serde_json::from_value(value).unwrap();
         assert_eq!(stored.turn.context_window, None);
         assert!(stored.turn.tasks.is_empty());
+    }
+
+    #[test]
+    fn mcp_intent_survives_a_compaction_checkpoint_and_journal_reload() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("mcp-intent.jsonl");
+        fs::write(&path, "{\"type\":\"session\"}\n").unwrap();
+        let mut item = turn();
+        let intent = crate::mcp::McpIntent {
+            mode: crate::mcp::McpIntentMode::Explicit,
+            servers: vec![crate::mcp::McpIntentServer {
+                id: "notebook-id".into(),
+                name: "gemini-notebook-mcp".into(),
+            }],
+            excluded_servers: vec![crate::mcp::McpIntentServer {
+                id: "database-id".into(),
+                name: "database".into(),
+            }],
+        };
+        item.mcp_intent = Some(intent.clone());
+        append(&path, &item).unwrap();
+        append_event(
+            &path,
+            "compaction_completed",
+            &CompletedCompaction {
+                context: Checkpoint {
+                    through: 0,
+                    summary: String::new(),
+                    preserved_user: None,
+                    count: 1,
+                    measured: None,
+                },
+                event: CompactionEvent {
+                    id: "compaction-1".into(),
+                    created_at: 2,
+                    turn_id: item.turn.id,
+                    after_turn: false,
+                    automatic: true,
+                    tokens_before: 100,
+                    tokens_after: 40,
+                },
+            },
+        )
+        .unwrap();
+
+        let (turns, extras) = load_all(&path).unwrap();
+        assert_eq!(turns[0].mcp_intent, Some(intent));
+        assert_eq!(extras.compactions.len(), 1);
     }
 
     #[test]

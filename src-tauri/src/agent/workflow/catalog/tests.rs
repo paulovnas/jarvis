@@ -6,6 +6,7 @@ pub(crate) fn example() -> Catalog {
         name: "Researcher".into(),
         description: "Inspect the project".into(),
         instructions: "Read the project and return evidence.".into(),
+        native_role: None,
         usage: AgentUsage::Mixed,
         capability: Capability::ReadOnly,
         denied_tools: vec![],
@@ -64,6 +65,79 @@ fn validates_connected_graph_and_rejects_missing_links_cycles_and_unreachable_st
         modify(&mut invalid);
         assert!(invalid.validate().is_err());
     }
+}
+
+#[test]
+fn custom_flows_accept_immutable_native_agents_and_freeze_their_runtime_contract() {
+    let mut catalog = example();
+    for step in &mut catalog.flows[0].steps {
+        step.agent_id = "builtin:designer".into();
+    }
+    catalog.validate().unwrap();
+    let run = catalog.resolve(&catalog.flows[0].id).unwrap();
+    assert_eq!(run.agents.len(), 1);
+    assert_eq!(run.agents[0].native_role, Some(Role::Designer));
+    assert_eq!(run.agents[0].capability, Capability::Commands);
+    assert!(run.agents[0]
+        .instructions
+        .contains("Implement only assigned visual scope"));
+
+    catalog.flows[0].steps[0].agent_id = "builtin:unknown".into();
+    assert!(catalog.validate().is_err());
+}
+
+#[test]
+fn native_canvas_topology_is_derived_from_the_real_delegation_contract() {
+    let agents = builtin_agents();
+    assert_eq!(agents.len(), 7);
+    assert!(agents.iter().all(|agent| agent.immutable));
+    assert_eq!(
+        agents
+            .iter()
+            .find(|agent| agent.role == Role::Designer)
+            .unwrap()
+            .capability,
+        Capability::Commands
+    );
+
+    let flows = builtin_flows();
+    assert_eq!(flows.len(), 4);
+    let complete = flows.iter().find(|flow| flow.id == Flow::Complete).unwrap();
+    let pairs: Vec<_> = complete
+        .connections
+        .iter()
+        .map(|connection| (connection.source.as_str(), connection.target.as_str()))
+        .collect();
+    assert!(pairs.contains(&("builtin:complete:orchestrator", "builtin:complete:designer")));
+    assert!(!pairs.contains(&("builtin:complete:planner", "builtin:complete:designer")));
+    for flow in &flows {
+        for connection in &flow.connections {
+            let source = flow
+                .steps
+                .iter()
+                .find(|step| step.id == connection.source)
+                .and_then(|step| Role::from_builtin_id(&step.agent_id))
+                .unwrap();
+            let target = flow
+                .steps
+                .iter()
+                .find(|step| step.id == connection.target)
+                .and_then(|step| Role::from_builtin_id(&step.agent_id))
+                .unwrap();
+            assert!(source.spawns(flow.id, target));
+        }
+    }
+}
+
+#[test]
+fn catalog_view_keeps_user_definitions_separate_from_immutable_native_graphs() {
+    let value = serde_json::to_value(CatalogView::from(example())).unwrap();
+    assert_eq!(value["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(value["flows"].as_array().unwrap().len(), 1);
+    assert_eq!(value["builtinAgents"].as_array().unwrap().len(), 7);
+    assert_eq!(value["builtinFlows"].as_array().unwrap().len(), 4);
+    assert_eq!(value["builtinFlows"][3]["immutable"], true);
+    assert_eq!(value["builtinFlows"][3]["id"], "complete");
 }
 
 #[test]

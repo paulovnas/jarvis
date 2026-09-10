@@ -3,6 +3,9 @@ import type { TurnOptions } from "./chat";
 import { workflowAppearanceSchema } from "./workflow-appearance";
 
 const id = z.string().regex(/^[a-f0-9]{32}$/i);
+const builtinRoleSchema = z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer"]);
+const builtinAgentIdSchema = z.string().regex(/^builtin:(planner|investigator|writer|orchestrator|designer|builder|reviewer)$/);
+const agentReferenceIdSchema = z.union([id, builtinAgentIdSchema]);
 export const modelChoiceSchema = z.object({ account: z.string(), model: z.string(), reasoning: z.string().nullable() });
 export const customAgentSchema = z.object({
   id, name: z.string().min(1).max(100), description: z.string().max(500), instructions: z.string().min(1).max(16000),
@@ -12,7 +15,7 @@ export const customAgentSchema = z.object({
   appearance: workflowAppearanceSchema.nullish(),
 });
 export const workflowStepSchema = z.object({
-  id, agentId: id, instructions: z.string().max(8000),
+  id, agentId: agentReferenceIdSchema, instructions: z.string().max(8000),
   position: z.object({ x: z.number(), y: z.number() }), next: id.nullable(), onRework: id.nullable(),
 });
 export const customFlowSchema = z.object({
@@ -20,10 +23,31 @@ export const customFlowSchema = z.object({
   maxSteps: z.number().int().min(1).max(48), steps: z.array(workflowStepSchema).min(1).max(24),
   appearance: workflowAppearanceSchema.nullish(),
 });
-export const workflowCatalogSchema = z.object({ revision: z.number(), agents: z.array(customAgentSchema), flows: z.array(customFlowSchema) });
+export const builtinAgentSchema = z.object({
+  id: builtinAgentIdSchema, name: z.string(), description: z.string(), instructions: z.string(), role: builtinRoleSchema,
+  usage: z.literal("flow_only"), capability: z.enum(["read_only", "write_files", "commands"]),
+  appearance: workflowAppearanceSchema, immutable: z.literal(true),
+});
+export const workflowConnectionSchema = z.object({
+  id: z.string(), source: z.string(), target: z.string(), kind: z.literal("delegation"), label: z.string(),
+});
+export const builtinFlowSchema = z.object({
+  id: z.enum(["standard", "designer", "planned", "complete"]), name: z.string(), description: z.string(), entry: z.string(),
+  maxSteps: z.number().int().positive(), steps: z.array(workflowStepSchema.extend({ id: z.string(), next: z.null(), onRework: z.null() })),
+  connections: z.array(workflowConnectionSchema), appearance: workflowAppearanceSchema, immutable: z.literal(true),
+});
+export const workflowCatalogSchema = z.object({
+  revision: z.number(), agents: z.array(customAgentSchema), flows: z.array(customFlowSchema),
+  builtinAgents: z.array(builtinAgentSchema), builtinFlows: z.array(builtinFlowSchema),
+});
 export type CustomAgent = z.infer<typeof customAgentSchema>;
 export type CustomFlow = z.infer<typeof customFlowSchema>;
 export type WorkflowStep = z.infer<typeof workflowStepSchema>;
+export type BuiltinAgentDefinition = z.infer<typeof builtinAgentSchema>;
+export type BuiltinFlowDefinition = z.infer<typeof builtinFlowSchema>;
+export type WorkflowConnection = z.infer<typeof workflowConnectionSchema>;
+export type FlowAgent = CustomAgent | BuiltinAgentDefinition;
+export type WorkflowGraph = CustomFlow | BuiltinFlowDefinition;
 export type WorkflowCatalog = z.infer<typeof workflowCatalogSchema>;
 export type BuiltinFlow = "standard" | "designer" | "planned" | "complete";
 export type FlowSelection = BuiltinFlow | `custom:${string}` | `agent:${string}`;
@@ -36,8 +60,10 @@ export function flowOptions(selection: FlowSelection): Pick<TurnOptions, "workfl
 }
 export const CAPABILITY_LABELS = { read_only: "Somente leitura", write_files: "Editar arquivos", commands: "Arquivos e comandos" };
 export const AGENT_USAGE_LABELS = { solo: "Solo", mixed: "Misto", flow_only: "Somente em fluxos" };
+export const isBuiltinAgent = (agent: FlowAgent): agent is BuiltinAgentDefinition => agent.id.startsWith("builtin:");
+export const availableFlowAgents = (catalog: WorkflowCatalog): FlowAgent[] => [...catalog.builtinAgents, ...catalog.agents.filter(agent => agent.usage !== "solo")];
 
-export function validateGraph(flow: CustomFlow, agents: CustomAgent[]): string | null {
+export function validateGraph(flow: CustomFlow, agents: FlowAgent[]): string | null {
   if (!flow.name.trim()) return "Dê um nome ao fluxo.";
   if (!flow.steps.length) return "Adicione pelo menos um agente ao canvas.";
   if (flow.steps.length > 24) return "Use até 24 blocos por fluxo.";
@@ -47,7 +73,7 @@ export function validateGraph(flow: CustomFlow, agents: CustomAgent[]): string |
   for (const step of flow.steps) {
     const agent = agents.find(agent => agent.id === step.agentId);
     if (!agent) return "Vincule um agente existente a cada bloco.";
-    if (agent.usage === "solo") return "Agentes Solo não podem fazer parte de fluxos. Altere o uso para Misto ou Somente em fluxos.";
+    if (!isBuiltinAgent(agent) && agent.usage === "solo") return "Agentes Solo não podem fazer parte de fluxos. Altere o uso para Misto ou Somente em fluxos.";
     if ([step.next, step.onRework].some(next => next && !nodes.has(next))) return "Remova as conexões para blocos que não existem mais.";
     const seen = new Set<string>();
     let cursor: string | null = step.id;

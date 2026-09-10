@@ -14,8 +14,17 @@ pub const TEMPLATE: &str = r#"{
 fn enabled() -> bool {
     true
 }
-fn timeout() -> u64 {
-    5_000
+const DEFAULT_STARTUP_TIMEOUT: u64 = 30_000;
+const DEFAULT_REQUEST_TIMEOUT: u64 = 300_000;
+
+fn startup_timeout() -> u64 {
+    DEFAULT_STARTUP_TIMEOUT
+}
+fn request_timeout() -> u64 {
+    DEFAULT_REQUEST_TIMEOUT
+}
+fn default_request_timeout(value: &u64) -> bool {
+    *value == DEFAULT_REQUEST_TIMEOUT
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -29,8 +38,15 @@ pub enum Config {
         environment: BTreeMap<String, String>,
         #[serde(default = "enabled")]
         enabled: bool,
-        #[serde(default = "timeout")]
+        #[serde(default = "startup_timeout")]
         timeout: u64,
+        #[serde(
+            default = "request_timeout",
+            rename = "requestTimeout",
+            alias = "request_timeout",
+            skip_serializing_if = "default_request_timeout"
+        )]
+        request_timeout: u64,
     },
     Remote {
         url: String,
@@ -40,8 +56,15 @@ pub enum Config {
         oauth: Option<bool>,
         #[serde(default = "enabled")]
         enabled: bool,
-        #[serde(default = "timeout")]
+        #[serde(default = "startup_timeout")]
         timeout: u64,
+        #[serde(
+            default = "request_timeout",
+            rename = "requestTimeout",
+            alias = "request_timeout",
+            skip_serializing_if = "default_request_timeout"
+        )]
+        request_timeout: u64,
     },
 }
 
@@ -62,9 +85,19 @@ impl Config {
             Self::Local { enabled, .. } | Self::Remote { enabled, .. } => *enabled = value,
         }
     }
-    pub fn timeout(&self) -> Duration {
+    pub fn startup_timeout(&self) -> Duration {
         Duration::from_millis(match self {
             Self::Local { timeout, .. } | Self::Remote { timeout, .. } => *timeout,
+        })
+    }
+    pub fn request_timeout(&self) -> Duration {
+        Duration::from_millis(match self {
+            Self::Local {
+                request_timeout, ..
+            }
+            | Self::Remote {
+                request_timeout, ..
+            } => *request_timeout,
         })
     }
     pub fn configured(&self) -> bool {
@@ -129,9 +162,14 @@ pub fn parse(raw: &str) -> Result<(String, Config), McpError> {
         ));
     }
     let config: Config = serde_json::from_value(value.clone()).map_err(|_| error("Configuração inválida. Use type local com command (lista), ou remote com url. OAuth ainda não é suportado; use headers para autenticação."))?;
-    if !(1000..=120_000).contains(&(config.timeout().as_millis() as u64)) {
+    if !(1000..=120_000).contains(&(config.startup_timeout().as_millis() as u64)) {
         return Err(error(
             "timeout deve estar entre 1000 e 120000 milissegundos.",
+        ));
+    }
+    if !(1000..=900_000).contains(&(config.request_timeout().as_millis() as u64)) {
+        return Err(error(
+            "requestTimeout deve estar entre 1000 e 900000 milissegundos.",
         ));
     }
     match &config {
@@ -205,7 +243,32 @@ mod tests {
         assert_eq!(name, "context7");
         assert!(config.enabled());
         assert!(!config.configured());
+        assert_eq!(
+            config.startup_timeout(),
+            Duration::from_millis(DEFAULT_STARTUP_TIMEOUT)
+        );
+        assert_eq!(
+            config.request_timeout(),
+            Duration::from_millis(DEFAULT_REQUEST_TIMEOUT)
+        );
         assert_eq!(parse(&config.named(&name)).unwrap().0, name);
+    }
+
+    #[test]
+    fn legacy_timeout_only_controls_startup_and_request_timeout_accepts_both_spellings() {
+        let (_, legacy) =
+            parse(r#"{"docs":{"type":"local","command":["node"],"timeout":5000}}"#).unwrap();
+        assert_eq!(legacy.startup_timeout(), Duration::from_millis(5_000));
+        assert_eq!(
+            legacy.request_timeout(),
+            Duration::from_millis(DEFAULT_REQUEST_TIMEOUT)
+        );
+        for field in ["requestTimeout", "request_timeout"] {
+            let raw =
+                format!(r#"{{"docs":{{"type":"local","command":["node"],"{field}":180000}}}}"#);
+            let (_, config) = parse(&raw).unwrap();
+            assert_eq!(config.request_timeout(), Duration::from_millis(180_000));
+        }
     }
     #[test]
     fn accepts_opencode_local_and_remote_and_rejects_unsupported_fields() {

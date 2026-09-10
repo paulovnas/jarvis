@@ -2,7 +2,7 @@ import { useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkflowCanvas from "./WorkflowCanvas";
-import { customAgent, customFlow } from "@/test/workflow-fixtures";
+import { builtinAgent, builtinFlow, customAgent, customFlow } from "@/test/workflow-fixtures";
 const originalResizeObserver = window.ResizeObserver;
 
 beforeEach(() => {
@@ -17,6 +17,16 @@ beforeEach(() => {
     unobserve() {}
     disconnect() {}
   };
+});
+
+it("renders native flow definitions as a locked delegation canvas", async () => {
+  const onChange = vi.fn();
+  const view = render(<WorkflowCanvas flow={builtinFlow} agents={[builtinAgent]} selected={builtinFlow.entry} onChange={onChange} onSelect={vi.fn()} disabled />);
+  await waitFor(() => expect(view.container.querySelector(".react-flow__node")).toBeVisible());
+  expect(screen.getByText("Jarvis")).toBeVisible();
+  expect(screen.getByText("Delega conforme o escopo →")).toBeVisible();
+  fireEvent.keyDown(view.container.querySelector<HTMLElement>(".react-flow__node")!, { key: "ArrowRight" });
+  expect(onChange).not.toHaveBeenCalled();
 });
 afterEach(() => { window.ResizeObserver = originalResizeObserver; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 

@@ -141,7 +141,7 @@ Jarvis already implements the essential equivalents:
 - no invalid inline markers for OpenAI Responses;
 - cache-read/write telemetry from provider responses.
 
-No additional generic cache layer is recommended. The next cache work should be measurement: cache-hit ratio per provider/model/flow, stable-prefix size, and invalidation reasons such as changing tools, system instructions, or model selection.
+No generic provider or external-result cache layer is recommended. Jarvis separately reuses repeated local file reads within one active turn, but only after hashing the complete protected file again; it clears those references when history is compacted and does not retain file contents in the cache. Provider cache work should remain measurement-focused: cache-hit ratio per provider/model/flow, stable-prefix size, and invalidation reasons such as changing tools, system instructions, or model selection.
 
 ### Model-family prompt overlays
 

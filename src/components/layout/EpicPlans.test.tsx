@@ -36,6 +36,7 @@ describe("Epic plans", () => {
     expect(within(dialog).getByText("Conectar")).toBeInTheDocument();
     expect(within(dialog).getByText("Desconectar")).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /Editar|Excluir/ })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Ver mais detalhes" }).parentElement).toHaveClass("mx-0", "mb-0", "px-5", "pb-6");
     await user.click(within(dialog).getByRole("button", { name: "Ver mais detalhes" }));
     expect(open).toHaveBeenCalledWith("p1");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

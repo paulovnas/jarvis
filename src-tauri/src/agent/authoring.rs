@@ -13,7 +13,7 @@ use tokio::sync::{oneshot, watch};
 pub const INSTRUCTIONS: &str = r#"
 Jarvis product capabilities: Jarvis is a local desktop coding-agent environment organized as workspaces, projects and durable conversations. It provides direct, planned, complete and user-defined workflows; native direct-task tracking; Beads planning for delegated work; Context-mode retrieval and compaction; Context7 documentation; Open Design resources; skills; MCP tools; attachments, Vision and image generation when configured; web search; persistent processes, terminals and an integrated browser; project validation and user notifications. Only capabilities whose tools are present in the current turn are actually available.
 
-Users own custom agents and custom workflows. Custom agents declare where they can run: solo as the primary chat agent, flow_only as a workflow step, or mixed in both contexts. The built-in Jarvis agents and flows are immutable. When the user asks to create or edit an agent or workflow, inspect the current catalog with jarvis_catalog, clarify only material missing choices with ask_user, then submit the smallest complete proposal with jarvis_propose_agent or jarvis_propose_flow. Never write Jarvis configuration files with filesystem or shell tools. A proposal does not change settings until the user explicitly approves it in Jarvis. After rejection, respect the user's note and do not resubmit an unchanged proposal. Re-read the catalog before a dependent or revised proposal because every accepted change advances its revision.
+Users own custom agents and custom workflows. Custom agents declare where they can run: solo as the primary chat agent, flow_only as a workflow step, or mixed in both contexts. Built-in Jarvis agents may be referenced as immutable steps in custom workflows; built-in flows are immutable templates whose real topology is available in the catalog. When the user asks to create or edit an agent or workflow, inspect the current catalog with jarvis_catalog, clarify only material missing choices with ask_user, then submit the smallest complete proposal with jarvis_propose_agent or jarvis_propose_flow. Never write Jarvis configuration files with filesystem or shell tools. A proposal does not change settings until the user explicitly approves it in Jarvis. After rejection, respect the user's note and do not resubmit an unchanged proposal. Re-read the catalog before a dependent or revised proposal because every accepted change advances its revision.
 "#;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -133,7 +133,7 @@ fn flow_schema() -> Value {
             "maxSteps":{"type":"integer","minimum":1,"maximum":48},
             "steps":{"type":"array","minItems":1,"maxItems":24,"items":{"type":"object","additionalProperties":false,"required":["id","agentId","instructions","position","next","onRework"],"properties":{
                 "id":{"type":"string","pattern":"^[a-fA-F0-9]{32}$"},
-                "agentId":{"type":"string","pattern":"^[a-fA-F0-9]{32}$"},
+                "agentId":{"description":"A custom 32-character hexadecimal agent ID or an immutable builtin:* ID returned by jarvis_catalog.","anyOf":[{"type":"string","pattern":"^[a-fA-F0-9]{32}$"},{"type":"string","enum":["builtin:planner","builtin:investigator","builtin:writer","builtin:orchestrator","builtin:designer","builtin:builder","builtin:reviewer"]}]},
                 "instructions":{"type":"string","maxLength":8000},
                 "position":{"type":"object","additionalProperties":false,"required":["x","y"],"properties":{"x":{"type":"number","minimum":-100000,"maximum":100000},"y":{"type":"number","minimum":-100000,"maximum":100000}}},
                 "next":{"anyOf":[{"type":"null"},{"type":"string","pattern":"^[a-fA-F0-9]{32}$"}]},
@@ -160,7 +160,7 @@ pub(super) fn definitions() -> Vec<Value> {
     vec![
         json!({"type":"function","name":"jarvis_catalog","description":"Inspect Jarvis capabilities and the current user-owned agent/workflow catalog before proposing a creation or edit. Use overview first; request one custom agent or flow by its ID for full editable details. Built-in agents and flows are listed as immutable and can never be edited.","parameters":{"type":"object","additionalProperties":false,"required":["view"],"properties":{"view":{"type":"string","enum":["overview","agent","flow"]},"id":{"type":"string","description":"Required for agent or flow detail."}}}}),
         proposal_definition("jarvis_propose_agent", "Propose creating or editing one user-owned Jarvis agent. The call waits for explicit approval in a Jarvis drawer; it never changes built-in agents. Call jarvis_catalog immediately beforehand and use its exact revision. For create, generate a new 32-character hexadecimal ID. For update, preserve the existing ID. Choose whether it runs solo, only in flows, or both. A null model inherits the current chat model.", "agent", agent_schema()),
-        proposal_definition("jarvis_propose_flow", "Propose creating or editing one user-owned Jarvis workflow. The call waits for explicit approval in a Jarvis drawer; it never changes built-in flows. Call jarvis_catalog immediately beforehand and use its exact revision. A flow may reference only mixed or flow_only custom agents from that revision. Generate stable 32-character hexadecimal IDs for a new flow and its steps; preserve existing IDs when editing.", "flow", flow_schema()),
+        proposal_definition("jarvis_propose_flow", "Propose creating or editing one user-owned Jarvis workflow. The call waits for explicit approval in a Jarvis drawer; it never changes built-in flows. Call jarvis_catalog immediately beforehand and use its exact revision. A flow may reference immutable builtin:* agents or mixed/flow_only custom agents from that revision. Generate stable 32-character hexadecimal IDs for a new flow and its steps; preserve existing IDs when editing.", "flow", flow_schema()),
     ]
 }
 
@@ -179,6 +179,22 @@ fn overview(catalog: &workflow::catalog::Catalog) -> Value {
             json!({"id":flow.id,"name":flow.name,"description":flow.description,"steps":flow.steps.len(),"mutable":true})
         })
         .collect();
+    let builtin_agents: Vec<_> = workflow::catalog::builtin_agents()
+        .into_iter()
+        .map(|agent| json!({"id":agent.id,"name":agent.name,"description":agent.description,"role":agent.role,"capability":agent.capability,"mutable":false}))
+        .collect();
+    let builtin_flows: Vec<_> = workflow::catalog::builtin_flows()
+        .into_iter()
+        .map(|flow| json!({
+            "id":flow.id,
+            "name":flow.name,
+            "description":flow.description,
+            "entry":flow.entry,
+            "steps":flow.steps.iter().map(|step| json!({"id":step.id,"agentId":step.agent_id})).collect::<Vec<_>>(),
+            "connections":flow.connections,
+            "mutable":false
+        }))
+        .collect();
     json!({
         "revision":catalog.revision,
         "limits":{"agents":64,"flows":32,"stepsPerFlow":24,"executionsPerFlow":48},
@@ -194,12 +210,7 @@ fn overview(catalog: &workflow::catalog::Catalog) -> Value {
             "flow_only":"Available only as a workflow step. This is the compatibility default for older saved agents."
         },
         "toolCatalog":workflow::catalog::permissions::builtin_permissions(),
-        "builtIn":{"mutable":false,"flows":[
-            {"id":"standard","name":"Padrão","rootAgent":"Construtor"},
-            {"id":"designer","name":"Designer","rootAgent":"Designer"},
-            {"id":"planned","name":"Planejado","rootAgent":"Planejador"},
-            {"id":"complete","name":"Completo","rootAgent":"Planejador"}
-        ],"agents":["Planejador","Investigador","Redator","Orquestrador","Designer","Construtor","Revisor"]},
+        "builtIn":{"mutable":false,"flows":builtin_flows,"agents":builtin_agents},
         "custom":{"agents":agents,"flows":flows},
         "rules":["Built-in definitions are immutable.","Every proposal requires explicit user approval.","Read the latest revision again before a dependent proposal."]
     })
@@ -217,45 +228,64 @@ pub(super) fn catalog_output(
         "agent" => {
             let id = args["id"]
                 .as_str()
-                .ok_or_else(|| invalid("Informe o ID do agente customizado."))?;
-            let agent = catalog
-                .agents
-                .iter()
-                .find(|agent| agent.id == id)
-                .ok_or_else(|| {
-                    invalid(
-                        "Agente customizado não encontrado. Agentes nativos são somente leitura.",
-                    )
-                })?;
-            json!({"revision":catalog.revision,"mutable":true,"agent":agent})
+                .ok_or_else(|| invalid("Informe o ID do agente."))?;
+            if let Some(agent) = catalog.agents.iter().find(|agent| agent.id == id) {
+                json!({"revision":catalog.revision,"mutable":true,"agent":agent})
+            } else {
+                let agent = workflow::catalog::builtin_agents()
+                    .into_iter()
+                    .find(|agent| agent.id == id)
+                    .ok_or_else(|| invalid("Agente não encontrado."))?;
+                json!({"revision":catalog.revision,"mutable":false,"agent":agent})
+            }
         }
         "flow" => {
             let id = args["id"]
                 .as_str()
-                .ok_or_else(|| invalid("Informe o ID do fluxo customizado."))?;
-            let flow = catalog
-                .flows
-                .iter()
-                .find(|flow| flow.id == id)
-                .ok_or_else(|| {
-                    invalid("Fluxo customizado não encontrado. Fluxos nativos são somente leitura.")
-                })?;
-            let references: Vec<_> = flow
-                .steps
-                .iter()
-                .filter_map(|step| {
-                    catalog
-                        .agents
-                        .iter()
-                        .find(|agent| agent.id == step.agent_id)
-                })
-                .map(|agent| json!({"id":agent.id,"name":agent.name}))
-                .collect();
-            json!({"revision":catalog.revision,"mutable":true,"flow":flow,"agents":references})
+                .ok_or_else(|| invalid("Informe o ID do fluxo."))?;
+            if let Some(flow) = catalog.flows.iter().find(|flow| flow.id == id) {
+                json!({"revision":catalog.revision,"mutable":true,"flow":flow,"agents":references_for_flow(catalog, flow)})
+            } else {
+                let flow = workflow::catalog::builtin_flows()
+                    .into_iter()
+                    .find(|flow| flow.id.id() == id)
+                    .ok_or_else(|| invalid("Fluxo não encontrado."))?;
+                json!({"revision":catalog.revision,"mutable":false,"flow":flow,"agents":workflow::catalog::builtin_agents()})
+            }
         }
         _ => return Err(invalid("Visualização do catálogo inválida.")),
     };
     serde_json::to_string(&value).map_err(|_| AgentError::internal())
+}
+
+fn references_for_flow(
+    catalog: &workflow::catalog::Catalog,
+    flow: &workflow::catalog::FlowDefinition,
+) -> Vec<AgentReference> {
+    let ids: BTreeSet<_> = flow
+        .steps
+        .iter()
+        .map(|step| step.agent_id.as_str())
+        .collect();
+    let mut references: Vec<_> = catalog
+        .agents
+        .iter()
+        .filter(|agent| ids.contains(agent.id.as_str()))
+        .map(|agent| AgentReference {
+            id: agent.id.clone(),
+            name: agent.name.clone(),
+        })
+        .collect();
+    references.extend(
+        workflow::catalog::builtin_agents()
+            .into_iter()
+            .filter(|agent| ids.contains(agent.id.as_str()))
+            .map(|agent| AgentReference {
+                id: agent.id,
+                name: agent.name.into(),
+            }),
+    );
+    references
 }
 
 fn references(catalog: &workflow::catalog::Catalog, target: &Target) -> Vec<AgentReference> {
@@ -267,7 +297,7 @@ fn references(catalog: &workflow::catalog::Catalog, target: &Target) -> Vec<Agen
         .iter()
         .map(|step| step.agent_id.as_str())
         .collect();
-    catalog
+    let mut references: Vec<_> = catalog
         .agents
         .iter()
         .filter(|agent| ids.contains(agent.id.as_str()))
@@ -275,7 +305,17 @@ fn references(catalog: &workflow::catalog::Catalog, target: &Target) -> Vec<Agen
             id: agent.id.clone(),
             name: agent.name.clone(),
         })
-        .collect()
+        .collect();
+    references.extend(
+        workflow::catalog::builtin_agents()
+            .into_iter()
+            .filter(|agent| ids.contains(agent.id.as_str()))
+            .map(|agent| AgentReference {
+                id: agent.id,
+                name: agent.name.into(),
+            }),
+    );
+    references
 }
 
 fn prepare(

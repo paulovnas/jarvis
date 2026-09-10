@@ -124,7 +124,11 @@ pub(super) async fn execute(
     let root = root.to_path_buf();
     tauri::async_runtime::spawn_blocking(move || apply(&root, &patch, &signal))
         .await
-        .map_err(|_| AgentError::internal())?
+        .map_err(|_| {
+            error(
+                "O executor de patch foi interrompido inesperadamente. Inspecione e leia novamente os arquivos envolvidos antes de tentar outra alteração; o Jarvis não assume que o patch falhou sem efeitos.",
+            )
+        })?
 }
 
 fn patch_text(args: &Value) -> Result<&str, AgentError> {
@@ -197,6 +201,7 @@ fn parse(patch: &str) -> Result<Vec<Hunk>, AgentError> {
                 None
             };
             let mut updates = Vec::new();
+            let mut has_change = false;
             while index < last && !is_file_header(lines[index]) {
                 if lines[index].trim().is_empty() {
                     index += 1;
@@ -210,7 +215,6 @@ fn parse(patch: &str) -> Result<Vec<Hunk>, AgentError> {
                 index += 1;
                 let mut old_lines = Vec::new();
                 let mut new_lines = Vec::new();
-                let mut changed = false;
                 let mut end_of_file = false;
                 while index < last
                     && !lines[index].starts_with("@@")
@@ -235,11 +239,11 @@ fn parse(patch: &str) -> Result<Vec<Hunk>, AgentError> {
                         }
                         b'-' => {
                             old_lines.push(content);
-                            changed = true;
+                            has_change = true;
                         }
                         b'+' => {
                             new_lines.push(content);
-                            changed = true;
+                            has_change = true;
                         }
                         _ => {
                             return Err(error(
@@ -249,8 +253,8 @@ fn parse(patch: &str) -> Result<Vec<Hunk>, AgentError> {
                     }
                     index += 1;
                 }
-                if !changed {
-                    return Err(error("Um trecho de atualização não contém alterações."));
+                if old_lines.is_empty() && new_lines.is_empty() {
+                    return Err(error("Um trecho de atualização está vazio."));
                 }
                 chunks += 1;
                 if chunks > MAX_CHUNKS {
@@ -267,6 +271,9 @@ fn parse(patch: &str) -> Result<Vec<Hunk>, AgentError> {
                 return Err(error(
                     "Uma atualização precisa conter ao menos um trecho '@@'.",
                 ));
+            }
+            if !has_change && move_to.is_none() {
+                return Err(error("Uma atualização não contém alterações."));
             }
             hunks.push(Hunk::Update {
                 path,
@@ -1056,6 +1063,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn context_only_chunk_can_locate_a_change_inside_a_nested_repository() {
+        let fixture = Fixture::new();
+        let repository = fixture.root.join("movart-express-back");
+        fs::create_dir_all(repository.join(".git")).unwrap();
+        fs::create_dir_all(repository.join("src/lib")).unwrap();
+        let target = repository.join("src/lib/status.ts");
+        fs::write(
+            &target,
+            "import type { Status } from './types';\n\nexport function allowed(\n    status: Status,\n): boolean {\n    return status === 'open';\n}\n",
+        )
+        .unwrap();
+        let patch = r#"*** Begin Patch
+*** Update File: movart-express-back/src/lib/status.ts
+@@
+ import type { Status } from './types';
++import { audit } from './audit';
+@@
+ export function allowed(
+     status: Status,
+ ): boolean {
+@@
+ }
++
++export const audited = audit;
+*** End Patch"#;
+        let (_send, signal) = watch::channel(false);
+
+        let result = execute(&fixture.root, &args(patch), Mode::Build, signal)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(target).unwrap(),
+            "import type { Status } from './types';\nimport { audit } from './audit';\n\nexport function allowed(\n    status: Status,\n): boolean {\n    return status === 'open';\n}\n\nexport const audited = audit;\n"
+        );
+        assert_eq!(
+            result.changed_paths,
+            ["movart-express-back/src/lib/status.ts"]
+        );
+    }
+
+    #[tokio::test]
     async fn rejects_escape_symlink_collisions_and_plan_mode() {
         let fixture = Fixture::new();
         let (_send, signal) = watch::channel(false);
@@ -1104,5 +1153,20 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(paths, ["source.txt", "folder/target.txt"]);
+    }
+
+    #[test]
+    fn context_only_chunks_are_valid_but_an_update_still_needs_a_change() {
+        let paths = target_paths(&args(
+            "*** Begin Patch\n*** Update File: nested-repo/src/file.ts\n@@\n current\n+added\n@@\n function locate() {\n }\n@@\n tail\n+next\n*** End Patch",
+        ))
+        .unwrap();
+        assert_eq!(paths, ["nested-repo/src/file.ts"]);
+
+        let error = target_paths(&args(
+            "*** Begin Patch\n*** Update File: nested-repo/src/file.ts\n@@\n unchanged\n*** End Patch",
+        ))
+        .unwrap_err();
+        assert_eq!(error.message, "Uma atualização não contém alterações.");
     }
 }

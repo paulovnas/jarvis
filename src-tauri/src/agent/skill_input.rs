@@ -73,22 +73,31 @@ pub(super) async fn load(session: &Session, home: &std::path::Path) -> Result<()
         let turn = &data.turns.last().ok_or_else(AgentError::internal)?.turn;
         (turn.user.clone(), turn.parts.clone())
     };
-    let ids = ids(&parts);
-    let attached = attachments::prompt(&parts);
-    if ids.is_empty() && attached.is_empty() {
+    if ids(&parts).is_empty() && attachments::prompt(&parts).is_empty() {
         return Ok(());
     }
+    let rendered = render(home, &session.root, &content, &parts).await?;
+    session.update(true, |data| {
+        data.turns.last_mut().unwrap().wire[0] = json!({"role":"user", "content": rendered});
+    })
+}
+
+pub(super) async fn render(
+    home: &std::path::Path,
+    project: &std::path::Path,
+    content: &str,
+    parts: &[MessagePart],
+) -> Result<String, AgentError> {
+    let ids = ids(parts);
+    let attached = attachments::prompt(parts);
     let expanded = if ids.is_empty() {
         String::new()
     } else {
-        crate::skills::explicit(home, &session.root, ids)
+        crate::skills::explicit(home, project, ids)
             .await
             .map_err(|cause| AgentError::new("skill_error", &cause.message))?
     };
-    session.update(true, |data| {
-        data.turns.last_mut().unwrap().wire[0] =
-            json!({"role":"user", "content": format!("{content}{expanded}{attached}")});
-    })
+    Ok(format!("{content}{expanded}{attached}"))
 }
 
 #[cfg(test)]

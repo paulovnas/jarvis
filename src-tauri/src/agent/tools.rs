@@ -1,5 +1,6 @@
 use super::{cancelled, AgentError, Mode, ToolCall};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 #[cfg(unix)]
 use std::fs::File;
 use std::{
@@ -15,6 +16,38 @@ use tokio::{
 
 const MAX_FILE: u64 = 1024 * 1024;
 const MAX_OUTPUT: usize = 32_000;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) struct ReadIdentity {
+    pub(super) path: PathBuf,
+    pub(super) offset: usize,
+    pub(super) limit: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ReadObservation {
+    pub(super) identity: ReadIdentity,
+    pub(super) fingerprint: [u8; 32],
+    pub(super) output_bytes: u64,
+}
+
+pub(super) struct ExecutionResult {
+    pub(super) output: String,
+    pub(super) revision: Option<super::diffs::FileRevision>,
+    pub(super) read: Option<ReadObservation>,
+}
+
+struct FileToolResult {
+    output: String,
+    read: Option<ReadObservation>,
+}
+
+impl FileToolResult {
+    fn plain(output: String) -> Self {
+        Self { output, read: None }
+    }
+}
+
 fn error(message: &str) -> AgentError {
     AgentError::new("tool_error", message)
 }
@@ -132,7 +165,7 @@ pub(super) fn scoped(root: &Path, value: &str, create: bool) -> Result<PathBuf, 
     }
     Ok(path)
 }
-pub(super) fn read_text(path: &Path) -> Result<String, AgentError> {
+fn read_bytes(path: &Path) -> Result<Vec<u8>, AgentError> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -156,7 +189,18 @@ pub(super) fn read_text(path: &Path) -> Result<String, AgentError> {
     if bytes.len() as u64 > MAX_FILE || bytes.contains(&0) {
         return Err(error("O arquivo é binário ou excede o limite de leitura."));
     }
-    String::from_utf8(bytes).map_err(|_| error("O arquivo não contém texto UTF-8."))
+    Ok(bytes)
+}
+
+pub(super) fn read_text(path: &Path) -> Result<String, AgentError> {
+    String::from_utf8(read_bytes(path)?).map_err(|_| error("O arquivo não contém texto UTF-8."))
+}
+
+fn read_text_observed(path: &Path) -> Result<(String, [u8; 32]), AgentError> {
+    let bytes = read_bytes(path)?;
+    let fingerprint = Sha256::digest(&bytes).into();
+    let text = String::from_utf8(bytes).map_err(|_| error("O arquivo não contém texto UTF-8."))?;
+    Ok((text, fingerprint))
 }
 fn bounded(mut value: String) -> String {
     if value.len() > MAX_OUTPUT {
@@ -253,6 +297,17 @@ pub(super) async fn execute(
     mode: Mode,
     signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
+    execute_observed(root, tool, mode, signal)
+        .await
+        .map(|result| result.output)
+}
+
+async fn execute_observed(
+    root: &Path,
+    tool: &ToolCall,
+    mode: Mode,
+    signal: watch::Receiver<bool>,
+) -> Result<FileToolResult, AgentError> {
     if mode == Mode::Plan && needs_approval(&tool.name) {
         return Err(error("O modo Plan permite apenas leitura."));
     }
@@ -260,7 +315,9 @@ pub(super) async fn execute(
         return Err(AgentError::cancelled());
     }
     if tool.name == "bash" {
-        return shell(root, &tool.args, signal).await;
+        return shell(root, &tool.args, signal)
+            .await
+            .map(FileToolResult::plain);
     }
     let root = root.to_path_buf();
     let tool = tool.clone();
@@ -275,11 +332,15 @@ pub(super) async fn execute_with_revision(
     tool: &ToolCall,
     mode: Mode,
     signal: watch::Receiver<bool>,
-) -> Result<(String, Option<super::diffs::FileRevision>), AgentError> {
+) -> Result<ExecutionResult, AgentError> {
     if !matches!(tool.name.as_str(), "write" | "edit") {
-        return execute(root, tool, mode, signal)
+        return execute_observed(root, tool, mode, signal)
             .await
-            .map(|output| (output, None));
+            .map(|result| ExecutionResult {
+                output: result.output,
+                revision: None,
+                read: result.read,
+            });
     }
     if mode == Mode::Plan {
         return Err(error("O modo Plan permite apenas leitura."));
@@ -296,22 +357,23 @@ pub(super) async fn execute_with_revision(
             Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => None,
             Err(_) => return Err(error("Não foi possível ler o arquivo antes da alteração.")),
         };
-        let output = file_tool(&root, &tool, &signal)?;
+        let output = file_tool(&root, &tool, &signal)?.output;
         let after = read_text(&path)?;
         let relative = path
             .strip_prefix(&root)
             .map_err(|_| error("Caminho fora do projeto."))?
             .to_string_lossy()
             .to_string();
-        Ok((
+        Ok(ExecutionResult {
             output,
-            Some(super::diffs::FileRevision::new(
+            revision: Some(super::diffs::FileRevision::new(
                 relative,
                 before,
                 Some(after),
                 "conversation",
             )),
-        ))
+            read: None,
+        })
     })
     .await
     .map_err(|_| AgentError::internal())?
@@ -320,23 +382,35 @@ fn file_tool(
     root: &Path,
     tool: &ToolCall,
     signal: &watch::Receiver<bool>,
-) -> Result<String, AgentError> {
+) -> Result<FileToolResult, AgentError> {
     if *signal.borrow() {
         return Err(AgentError::cancelled());
     }
     let args = &tool.args;
     let path = scoped(root, argument(args, "path")?, tool.name == "write")?;
+    let mut read = None;
     let result = match tool.name.as_str() {
         "read" => {
-            let text = read_text(&path)?;
+            let (text, fingerprint) = read_text_observed(&path)?;
             let offset = args["offset"].as_u64().unwrap_or(1).max(1) as usize;
             let limit = args["limit"].as_u64().unwrap_or(200).clamp(1, 500) as usize;
-            text.lines()
+            let output = text
+                .lines()
                 .enumerate()
                 .skip(offset - 1)
                 .take(limit)
                 .map(|(index, line)| format!("{}: {}\n", index + 1, line))
-                .collect()
+                .collect();
+            read = Some(ReadObservation {
+                identity: ReadIdentity {
+                    path: path.clone(),
+                    offset,
+                    limit,
+                },
+                fingerprint,
+                output_bytes: 0,
+            });
+            output
         }
         "list" => {
             let mut entries = Vec::new();
@@ -399,7 +473,11 @@ fn file_tool(
         }
         _ => return Err(error("Ferramenta desconhecida.")),
     };
-    Ok(bounded(result))
+    let output = bounded(result);
+    if let Some(observation) = &mut read {
+        observation.output_bytes = output.len() as u64;
+    }
+    Ok(FileToolResult { output, read })
 }
 fn search(
     root: &Path,

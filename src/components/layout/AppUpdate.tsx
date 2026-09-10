@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUpToLine, CircleAlert, CircleCheck, ExternalLink, RefreshCw } from "lucide-react";
+import { ArrowUpToLine, Check, CircleAlert, CircleCheck, Copy, ExternalLink, RefreshCw } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
@@ -17,8 +17,11 @@ import { cn } from "@/lib/utils";
 
 function megabytes(bytes: number): string { return `${(bytes / 1024 / 1024).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB`; }
 
+const PIX_COPY_AND_PASTE = "00020101021126540014br.gov.bcb.pix0132nascimento.paulo.vitor@gmail.com5204000053039865802BR5923PAULO V A DE O NASCIMEN6006AMPARO62070503***6304B333";
+
 export function AppUpdate() {
   const [open, setOpen] = useState(false);
+  const [pixCopied, setPixCopied] = useState(false);
   const { info, checking, busy, progress, error, upToDate, check, install } = useAppUpdate();
   useEffect(() => {
     if (!nativeUpdaterAvailable()) return;
@@ -36,6 +39,15 @@ export function AppUpdate() {
   const percent = total && total > 0 ? Math.min(100, Math.round(downloaded / total * 100)) : null;
   const installed = progress?.stage === "restarting";
   const stage = !progress ? "Preparando atualização" : progress.stage === "downloading" ? "Baixando atualização" : progress.stage === "verifying" ? "Verificando assinatura" : progress.stage === "installing" ? "Instalando atualização" : "Reabrindo o Jarvis";
+  const copyPix = async () => {
+    try {
+      await navigator.clipboard.writeText(PIX_COPY_AND_PASTE);
+      setPixCopied(true);
+      toast.success("PIX copia e cola copiado");
+    } catch {
+      toast.error("Não foi possível copiar o PIX.");
+    }
+  };
   return <Dialog open={open} onOpenChange={next => { if (!busy) setOpen(next); }}>
     <DialogTrigger render={<Button variant="ghost" size="sm" />} className={cn("h-6 shrink-0 cursor-pointer rounded-sm px-1.5 font-mono text-[10px]", release ? "text-onedark-green" : "text-muted-foreground")} aria-label={release ? "Atualização Disponível" : `Sobre o Jarvis ${displayVersion(info.currentVersion)}`}>
       {release ? "Atualização Disponível" : displayVersion(info.currentVersion)}
@@ -55,6 +67,20 @@ export function AppUpdate() {
         </> : <>
           <p className="text-sm text-muted-foreground">Ambiente de desenvolvimento com agentes de IA.</p>
           <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm"><dt className="text-muted-foreground">Criado por</dt><dd>Paulo Vitor Nascimento</dd><dt className="text-muted-foreground">Versão</dt><dd className="font-mono text-xs">{info.currentVersion}</dd></dl>
+          <section aria-labelledby="jarvis-support-title" className="rounded-lg border border-onedark-purple/25 bg-onedark-purple/5 p-4 shadow-[inset_0_1px_0_#ffffff0a]">
+            <h3 id="jarvis-support-title" className="text-sm font-semibold text-foreground">Compre-me um açaí 🫐</h3>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">O Jarvis é um projeto sem fins lucrativos, criado para ajudar quem quer iniciar nessa aventura de desenvolver com assistência de IA da melhor forma possível. Se ele tem ajudado você, uma contribuição é sempre bem-vinda e ajuda a manter o desenvolvimento ativo.</p>
+            <div className="mt-4 flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+              <div className="shrink-0 rounded-lg bg-white p-2 shadow-sm"><img src="/acai.png" alt="QR Code para apoiar o Jarvis via PIX" className="size-36 rounded-md" /></div>
+              <div className="flex min-w-0 flex-1 flex-col items-center gap-3 sm:items-start">
+                <p className="text-center text-xs leading-5 text-muted-foreground sm:text-left">Leia o QR Code no aplicativo do seu banco e escolha o valor da contribuição.</p>
+                <Button type="button" variant="outline" className="w-full cursor-pointer gap-2 sm:w-auto" onClick={() => void copyPix()} onBlur={() => setPixCopied(false)}>
+                  {pixCopied ? <Check aria-hidden="true" className="text-onedark-green" /> : <Copy aria-hidden="true" />}
+                  {pixCopied ? "PIX copiado" : "Copiar PIX copia e cola"}
+                </Button>
+              </div>
+            </div>
+          </section>
           {checking && <div role="status" aria-label="Verificando atualizações" className="flex flex-col gap-2"><Skeleton className="h-3 w-40" /><Skeleton className="h-2 w-full" /></div>}
         </>}
         {busy && progress && <div role="status" aria-live="polite" className="flex flex-col gap-2">

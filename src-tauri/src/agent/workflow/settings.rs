@@ -18,21 +18,7 @@ pub(in crate::agent) fn key(flow: Flow, role: Role) -> String {
     )
 }
 pub(super) fn roster(flow: Flow) -> &'static [Role] {
-    match flow {
-        Flow::Custom => &[],
-        Flow::Standard => &[Role::Builder],
-        Flow::Designer => &[Role::Designer],
-        Flow::Planned => &[Role::Planner, Role::Builder, Role::Designer],
-        Flow::Complete => &[
-            Role::Planner,
-            Role::Investigator,
-            Role::Writer,
-            Role::Orchestrator,
-            Role::Designer,
-            Role::Builder,
-            Role::Reviewer,
-        ],
-    }
+    flow.roster()
 }
 pub(crate) fn read(home: &Path) -> Result<ModelSettings, AgentError> {
     let path = home.join(".jarvis/agents.json");

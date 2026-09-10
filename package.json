@@ -13,6 +13,7 @@
     "release:setup": "bun scripts/release-secrets.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval:harness": "cargo test --manifest-path src-tauri/Cargo.toml harness_evaluation -- --nocapture",
     "test:macos-keychain": "bun scripts/check-macos-keychain.ts",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",

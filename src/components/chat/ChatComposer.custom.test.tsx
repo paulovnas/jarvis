@@ -22,7 +22,7 @@ it("sends the chosen custom graph identity and uses a composer model without mut
 });
 
 it("keeps missing saved flows explicit and refuses to silently execute Standard", async () => {
-  vi.mocked(invoke).mockImplementation(async command => command === "get_workflow_catalog" ? { revision: 3, flows: [], agents: [] } : []);
+  vi.mocked(invoke).mockImplementation(async command => command === "get_workflow_catalog" ? { revision: 3, flows: [], agents: [], builtinAgents: [], builtinFlows: [] } : []);
   const user = userEvent.setup(), send = vi.fn();
   render(<ChatComposer modelGroups={models} onSendMessage={send} initialOptions={{ account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customWorkflowId: customFlow.id, approvalMode: "manual" }} />);
   expect(await screen.findByText(/Este fluxo foi removido/)).toBeVisible();

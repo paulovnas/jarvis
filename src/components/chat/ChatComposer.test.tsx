@@ -7,7 +7,7 @@ import { chatOptions } from "@/test/chat-fixtures";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async command => command === "get_workflow_catalog" ? { revision: 0, agents: [], flows: [] } : undefined) }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async command => command === "get_workflow_catalog" ? { revision: 0, agents: [], flows: [], builtinAgents: [], builtinFlows: [] } : undefined) }));
 
 async function renderComposer(element: React.ReactElement) {
   const result = render(element);
@@ -188,7 +188,7 @@ describe("ChatComposer model reasoning", () => {
     const user = userEvent.setup(); const remove = vi.fn().mockResolvedValue({ content: "Verifique o build" }); const resume = vi.fn().mockResolvedValue(undefined);
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={vi.fn()} queuedMessages={[{ id: "q1", content: "Verifique o build", options: chatOptions }]} onRemoveQueued={remove} onResumeQueue={resume} />);
     await user.type(screen.getByRole("textbox"), "Meu rascunho");
-    await user.click(screen.getByRole("button", { name: "Retirar mensagem 1 e editar" }));
+    await user.click(screen.getByRole("button", { name: "Editar mensagem 1" }));
     expect(remove).toHaveBeenCalledWith("q1");
     expect(screen.getByRole("textbox")).toHaveTextContent("Meu rascunhoVerifique o build");
     expect(screen.getByRole("textbox")).toHaveFocus();
@@ -201,7 +201,7 @@ describe("ChatComposer model reasoning", () => {
     let resolve!: (value: ChatDraft) => void;
     const remove = vi.fn(() => new Promise<ChatDraft>(done => { resolve = done; }));
     const { rerender } = await renderComposer(<ChatComposer key="first" draftKey="first" drafts={drafts} modelGroups={models} onSendMessage={vi.fn()} queuedMessages={[{ id: "q1", content: "Pedido", options: chatOptions }]} onRemoveQueued={remove} />);
-    await user.click(screen.getByRole("button", { name: "Retirar mensagem 1 e editar" }));
+    await user.click(screen.getByRole("button", { name: "Editar mensagem 1" }));
     rerender(<ChatComposer key="second" draftKey="second" drafts={drafts} modelGroups={models} onSendMessage={vi.fn()} />);
     await user.type(screen.getByRole("textbox"), "Outra conversa");
     await act(async () => resolve({ content: "Pedido" }));

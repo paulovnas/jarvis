@@ -70,6 +70,15 @@ pub(super) fn allowed(agent: &catalog::AgentDefinition, name: &str) -> bool {
     if catalog::permissions::required(name) {
         return true;
     }
+    if let Some(role) = agent.native_role {
+        if name.starts_with("hub_") {
+            return name == "hub_complete";
+        }
+        if matches!(name, "validation_publish" | "design_brief") {
+            return false;
+        }
+        return role.allows(Flow::Custom, name, true);
+    }
     if agent
         .denied_tools
         .iter()
@@ -111,6 +120,12 @@ pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
 }
 
 pub(super) fn instructions(agent: &catalog::AgentDefinition) -> String {
+    if let Some(role) = agent.native_role {
+        return format!(
+            "{}\nThis built-in Jarvis agent is embedded in a user-defined workflow. Preserve its native specialization, execute only the current canvas step and finish with hub_complete. The graph runtime owns routing; do not spawn agents or invent steps. A Beads task is required only when the step explicitly assigns one. Follow current user instructions and project rules.\n",
+            contracts::prompt(Flow::Custom, role, &agent.id)
+        );
+    }
     format!("\nUser-defined workflow agent: {}.\n{}\n\n{}\nExecute only this configured step. The native runtime owns routing; do not spawn agents or invent steps. Finish by calling hub_complete with a structured result: completed for successful work, approved for an independent review, rework for concrete corrections, blocked for a missing prerequisite. A verdict must be supported by evidence. A final handoff is not authorization to commit, push or deploy. Follow current user instructions and project rules.\n", agent.name, include_str!("common.md"), agent.instructions)
 }
 
@@ -207,7 +222,7 @@ fn prepare(
         id: library::new_id()?,
         parent_id: "main".into(),
         run_id,
-        role: Role::Custom,
+        role: agent.native_role.unwrap_or(Role::Custom),
         title: format!("{} · {}", index + 1, agent.name),
         prompt,
         acceptance: vec![

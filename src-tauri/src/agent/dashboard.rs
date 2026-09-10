@@ -39,6 +39,9 @@ pub struct Efficiency {
     pub indexed_outputs: u64,
     pub original_bytes: u64,
     pub retained_bytes: u64,
+    pub local_read_reuses: u64,
+    pub local_read_original_bytes: u64,
+    pub local_read_retained_bytes: u64,
 }
 impl Metrics {
     fn usage(&mut self, usage: &Usage, auxiliary: bool) {
@@ -123,6 +126,11 @@ fn summarize(turns: &[StoredTurn], extras: &journal::Extras) -> Metrics {
                 metrics.efficiency.original_bytes += reduction.original_bytes;
                 metrics.efficiency.retained_bytes += reduction.retained_bytes;
             }
+            for reduction in &step.read_reuses {
+                metrics.efficiency.local_read_reuses += 1;
+                metrics.efficiency.local_read_original_bytes += reduction.original_bytes;
+                metrics.efficiency.local_read_retained_bytes += reduction.retained_bytes;
+            }
             for tool in &step.tools {
                 metrics.tool_calls += 1;
                 metrics.tool_errors += u64::from(tool.status == "error");
@@ -194,6 +202,9 @@ fn merge(total: &mut Metrics, metrics: &Metrics) {
     target.indexed_outputs += source.indexed_outputs;
     target.original_bytes += source.original_bytes;
     target.retained_bytes += source.retained_bytes;
+    target.local_read_reuses += source.local_read_reuses;
+    target.local_read_original_bytes += source.local_read_original_bytes;
+    target.local_read_retained_bytes += source.local_read_retained_bytes;
     total.turns += metrics.turns;
     total.input_tokens += metrics.input_tokens;
     total.output_tokens += metrics.output_tokens;
@@ -326,6 +337,7 @@ mod tests {
             "status":"completed","steps":[{
                 "text":"done","summary":"","contextSearches":1,"usage":{"inputTokens":1000,"outputTokens":100,"cacheReadTokens":600,"cacheWriteTokens":200},
                 "contextReductions":[{"callId":"snapshot","originalBytes":10000,"retainedBytes":1000}],
+                "readReuses":[{"callId":"read-again","originalBytes":8000,"retainedBytes":200}],
                 "tools":[{"id":"vision","name":"vision","args":{},"status":"completed","durationMs":1,
                     "output":json!({"usage":{"inputTokens":500,"outputTokens":50,"cacheReadTokens":0}}).to_string()}]
             }],"error":null
@@ -357,6 +369,14 @@ mod tests {
             (e.indexed_outputs, e.original_bytes, e.retained_bytes),
             (1, 10000, 1000)
         );
+        assert_eq!(
+            (
+                e.local_read_reuses,
+                e.local_read_original_bytes,
+                e.local_read_retained_bytes
+            ),
+            (1, 8000, 200)
+        );
         let mut project = Metrics::default();
         merge(&mut project, &metrics);
         merge(&mut project, &metrics);
@@ -365,9 +385,10 @@ mod tests {
             (
                 project.input_tokens,
                 project.efficiency.cache_read_tokens,
-                project.efficiency.indexed_outputs
+                project.efficiency.indexed_outputs,
+                project.efficiency.local_read_reuses
             ),
-            (3000, 1200, 2)
+            (3000, 1200, 2, 2)
         );
     }
 }

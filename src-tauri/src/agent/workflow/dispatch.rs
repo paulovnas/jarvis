@@ -3,7 +3,7 @@ use super::*;
 fn definition(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
     json!({"type":"function","name":name,"description":description,"strict":false,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}})
 }
-pub(super) fn definitions(role: Role) -> Vec<Value> {
+pub(super) fn definitions(flow: Flow, role: Role) -> Vec<Value> {
     let string = json!({"type":"string","minLength":1,"maxLength":16000});
     let strings = json!({"type":"array","maxItems":16,"items":string});
     let mut tools = vec![
@@ -13,10 +13,23 @@ pub(super) fn definitions(role: Role) -> Vec<Value> {
         definition("hub_complete", "Deliver your final structured handoff to the parent and end this agent. Do not use until child work has settled. Reviewer uses approved/rework/blocked; other roles use completed/blocked. Cite actual evidence and validation, and list limitations honestly. taskIds contains exact Beads IDs actually addressed or reviewed (including the epic when reviewed); only approved IDs can be closed in Complete. Use [] for research without a task.", json!({"verdict":{"type":"string","enum":["completed","approved","rework","blocked"]},"summary":string,"outcomes":strings,"evidence":strings,"validation":strings,"limitations":strings,"taskIds":strings}), &["verdict","summary","outcomes","evidence","validation","limitations","taskIds"]),
     ];
     if role.coordinator() {
+        let spawn_roles: Vec<_> = [
+            Role::Planner,
+            Role::Investigator,
+            Role::Writer,
+            Role::Orchestrator,
+            Role::Designer,
+            Role::Builder,
+            Role::Reviewer,
+        ]
+        .into_iter()
+        .filter(|target| role.spawns(flow, *target))
+        .map(|target| serde_json::to_value(target).expect("built-in role serializes"))
+        .collect();
         tools.push(definition("hub_respond_guidance", "Answer a pending child's guidance request using its exact requestId. Resolve from known context or ask_user first; do not invent a user decision. Only its parent can respond.", json!({"requestId":string,"answer":string}), &["requestId","answer"]));
         tools.extend([
             definition("hub_cancel", "Cancel a direct child and its descendants. Wait for completion before replacing its work; cancellation is not successful completion.", json!({"id":string}), &["id"]),
-            definition("hub_spawn", "Start an isolated permitted agent and return its ID immediately. Supply focused context and acceptance criteria. Dependencies are earlier agent IDs and form a DAG. Production roles require a real Beads ID. Designer phase=discovery is read-only, may precede planning and needs no Bead. Complete Planner can spawn Designer only in discovery. Default phase=implementation. Scope is project-relative paths; overlapping writers queue. Use '.' for whole-project shell/MCP access; narrow writers can only read/write their assigned paths and run workflow_check. Up to four independent leaf agents run in parallel.", json!({"role":{"type":"string","enum":["planner","investigator","writer","orchestrator","designer","builder","reviewer"]},"phase":{"type":"string","enum":["implementation","discovery"]},"title":{"type":"string","minLength":1,"maxLength":120},"prompt":string,"acceptance":strings,"scope":strings,"beadId":{"type":["string","null"]},"dependencies":strings}), &["role","title","prompt","acceptance","scope","dependencies"]),
+            definition("hub_spawn", "Start an isolated permitted agent and return its ID immediately. Supply focused context and acceptance criteria. Dependencies are earlier agent IDs and form a DAG. Implementation roles require a real Beads ID. Designer owns and implements assigned frontend/design work; use Investigator for read-only discovery. Scope is project-relative paths; overlapping writers queue. Use '.' for whole-project shell/MCP access; narrow writers can only read/write their assigned paths and run workflow_check. Up to four independent leaf agents run in parallel.", json!({"role":{"type":"string","enum":spawn_roles},"phase":{"type":"string","enum":["implementation"]},"title":{"type":"string","minLength":1,"maxLength":120},"prompt":string,"acceptance":strings,"scope":strings,"beadId":{"type":["string","null"]},"dependencies":strings}), &["role","title","prompt","acceptance","scope","dependencies"]),
             definition("hub_retry", "Continue an existing direct child from its durable context, after inspecting the task/files and uncertain side effects. Use for recovery or focused rework/follow-up. No automatic replay; at most two additional rounds. Role, scope, dependencies and permissions stay fixed.", json!({"id":string,"prompt":string}), &["id","prompt"]),
         ]);
     }
@@ -97,6 +110,38 @@ fn strings(items: &[String], required: bool) -> bool {
     (!required || !items.is_empty()) && items.len() <= 16 && items.iter().all(|text| bounded(text))
 }
 
+fn workflow_command(root: &Path, check: &str) -> Result<&'static str, AgentError> {
+    let (command, script) = match check {
+        "bun_lint" => ("bun run lint", Some("lint")),
+        "bun_typecheck" => ("bun run typecheck", Some("typecheck")),
+        "bun_test" => ("bun run test", Some("test")),
+        "bun_build" => ("bun run build", Some("build")),
+        "bun_check" => ("bun run check", Some("check")),
+        "cargo_check" => ("cargo check", None),
+        "cargo_test" => ("cargo test", None),
+        "cargo_clippy" => ("cargo clippy --all-targets -- -D warnings", None),
+        _ => return Err(invalid("Validação indisponível.")),
+    };
+    if let Some(script) = script {
+        let manifest = std::fs::read(root.join("package.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+        let scripts = manifest
+            .as_ref()
+            .and_then(|manifest| manifest["scripts"].as_object());
+        if !scripts.is_some_and(|scripts| scripts.contains_key(script)) {
+            let available = scripts
+                .map(|scripts| scripts.keys().cloned().collect::<Vec<_>>().join(", "))
+                .filter(|scripts| !scripts.is_empty())
+                .unwrap_or_else(|| "nenhum".into());
+            return Err(invalid(&format!(
+                "O script '{script}' não existe neste package.json. Scripts disponíveis: {available}. Escolha uma verificação existente ou use bash com o comando real do projeto."
+            )));
+        }
+    }
+    Ok(command)
+}
+
 pub(super) async fn execute(
     exec: &Execution,
     tool: &ToolCall,
@@ -105,7 +150,7 @@ pub(super) async fn execute(
     if *signal.borrow() {
         return Err(AgentError::cancelled());
     }
-    let schema = definitions(exec.role)
+    let schema = definitions(exec.flow, exec.role)
         .into_iter()
         .find(|d| d["name"] == tool.name)
         .ok_or_else(|| invalid("Ferramenta de coordenação indisponível."))?;
@@ -205,17 +250,7 @@ pub(super) async fn execute(
             if !root.starts_with(&exec.hub.root.root) {
                 return Err(invalid("A validação precisa ocorrer dentro do projeto."));
             }
-            let command = match tool.args["check"].as_str().unwrap() {
-                "bun_lint" => "bun run lint",
-                "bun_typecheck" => "bun run typecheck",
-                "bun_test" => "bun run test",
-                "bun_build" => "bun run build",
-                "bun_check" => "bun run check",
-                "cargo_check" => "cargo check",
-                "cargo_test" => "cargo test",
-                "cargo_clippy" => "cargo clippy --all-targets -- -D warnings",
-                _ => return Err(invalid("Validação indisponível.")),
-            };
+            let command = workflow_command(&root, tool.args["check"].as_str().unwrap())?;
             let call = ToolCall {
                 name: "bash".into(),
                 args: json!({"command":command,"timeoutSeconds":120}),
@@ -253,15 +288,13 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
     {
         return Err(invalid("O despacho precisa ser mais compacto (até 32 KB)."));
     }
-    if input.phase != Phase::Discovery
-        && matches!(
-            input.role,
-            Role::Builder | Role::Designer | Role::Reviewer | Role::Orchestrator
-        )
-        && input
-            .bead_id
-            .as_deref()
-            .is_none_or(|id| id.trim().is_empty())
+    if matches!(
+        input.role,
+        Role::Builder | Role::Designer | Role::Reviewer | Role::Orchestrator
+    ) && input
+        .bead_id
+        .as_deref()
+        .is_none_or(|id| id.trim().is_empty())
     {
         return Err(invalid(
             "Vincule o trabalho a uma tarefa ou épico real do Beads.",
@@ -335,13 +368,15 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
     Ok(json!({"id":id,"status":"queued"}).to_string())
 }
 fn validate_phase(flow: Flow, parent: Role, role: Role, phase: Phase) -> Result<(), AgentError> {
-    if (phase == Phase::Discovery && role != Role::Designer)
-        || (flow == Flow::Complete
-            && parent == Role::Planner
-            && role == Role::Designer
-            && phase != Phase::Discovery)
-    {
-        return Err(invalid("O Planejador do fluxo Completo delega ao Designer apenas descoberta. A implementação passa pelo Orquestrador."));
+    if phase == Phase::Discovery {
+        return Err(invalid(
+            "Descobertas sem alteração pertencem ao Investigador. O Designer executa o escopo visual atribuído.",
+        ));
+    }
+    if !parent.spawns(flow, role) {
+        return Err(invalid(
+            "O papel solicitado não pertence às delegações deste agente.",
+        ));
     }
     Ok(())
 }

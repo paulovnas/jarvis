@@ -130,6 +130,36 @@ export function useChat(conversationId: string | null) {
       return { content: message.content, ...(message.parts?.length ? { parts: message.parts } : {}) };
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível retirar a mensagem da fila.")); return null; }
   };
+  const deleteQueued = async (messageId: string): Promise<boolean> => {
+    if (!conversationId) return false;
+    const id = conversationId; const request = generation.current;
+    try {
+      const result = await invoke<unknown>("delete_queued_message", { conversationId: id, messageId });
+      if (generation.current === request) accept(result, id);
+      toast.success("Mensagem removida da fila");
+      return true;
+    } catch (cause) { toast.error(libraryError(cause, "Não foi possível excluir a mensagem agendada.")); return false; }
+  };
+  const reorderQueued = async (messageIds: string[]): Promise<boolean> => {
+    if (!conversationId) return false;
+    const id = conversationId; const request = generation.current;
+    try {
+      const result = await invoke<unknown>("reorder_queued_messages", { conversationId: id, messageIds });
+      if (generation.current === request) accept(result, id);
+      return true;
+    } catch (cause) { toast.error(libraryError(cause, "Não foi possível reordenar as mensagens.")); return false; }
+  };
+  const sendQueuedNow = async (messageId: string): Promise<boolean> => {
+    if (!conversationId) return false;
+    const id = conversationId; const request = generation.current;
+    try {
+      const result = await invoke<{ delivered: boolean; snapshot: unknown }>("send_queued_message_now", { conversationId: id, messageId });
+      if (generation.current === request) accept(result.snapshot, id);
+      if (result.delivered) toast.success("Mensagem adicionada à execução atual");
+      else toast.info("A execução já estava finalizando. A mensagem seguirá normalmente na fila.");
+      return result.delivered;
+    } catch (cause) { toast.error(libraryError(cause, "Não foi possível enviar a orientação agora.")); return false; }
+  };
   const answerQuestion = async (question: PendingQuestion, response: QuestionResponse): Promise<boolean> => {
     if (!conversationId || snapshot?.activeTurnId !== question.turnId || snapshot.pendingQuestion?.toolId !== question.toolId) return false;
     const id = conversationId; const request = generation.current;
@@ -169,6 +199,6 @@ export function useChat(conversationId: string | null) {
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível compactar o contexto.")); return false; }
     finally { compactLocks.current.delete(id); setCompactingIds(new Set(compactLocks.current)); }
   };
-  return { snapshot, loadHistory, historyLoading: historyPending === conversationId && conversationId !== null, historyError: historyError?.id === conversationId ? historyError.message : null, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, send, stop, approve, answerQuestion, answerAuthoring, removeQueued, resumeQueue, compact, retry: () => setAttempt(value => value + 1) };
+  return { snapshot, loadHistory, historyLoading: historyPending === conversationId && conversationId !== null, historyError: historyError?.id === conversationId ? historyError.message : null, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, send, stop, approve, answerQuestion, answerAuthoring, removeQueued, deleteQueued, reorderQueued, sendQueuedNow, resumeQueue, compact, retry: () => setAttempt(value => value + 1) };
 }
 export type ChatController = ReturnType<typeof useChat>;

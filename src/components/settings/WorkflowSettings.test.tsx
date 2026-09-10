@@ -7,6 +7,7 @@ import { customAgent, customCatalog } from "@/test/workflow-fixtures";
 
 vi.mock("@/hooks/use-workflow-catalog", () => ({ useWorkflowCatalog: vi.fn() }));
 vi.mock("./workflow/WorkflowCanvas", () => ({ default: () => <div aria-label="Canvas do fluxo" /> }));
+vi.mock("./AgentSettings", () => ({ AgentSettings: () => <div aria-label="Modelos do fluxo" /> }));
 const mutate = vi.fn().mockResolvedValue(true);
 beforeEach(() => { mutate.mockClear(); vi.mocked(useWorkflowCatalog).mockReturnValue({ data: customCatalog, error: null, saving: false, refresh: vi.fn(), mutate }); });
 
@@ -35,6 +36,16 @@ it("edits custom instructions and saves only the selected definition with its or
   await user.click(screen.getByRole("button", { name: "Salvar agente" }));
   await waitFor(() => expect(mutate).toHaveBeenCalledWith({ kind: "save_agent", agent: { ...customAgent, instructions: "Examine os testes.", appearance: { color: "purple", icon: "brain" } } }, 2));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("opens the real native definition in the shared read-only canvas", async () => {
+  const user = userEvent.setup(); render(<WorkflowSettings accounts={[]} />);
+  await user.click(screen.getByRole("button", { name: "Ver fluxo Designer" }));
+  expect(await screen.findByRole("dialog")).toBeVisible();
+  expect(await screen.findByLabelText("Canvas do fluxo")).toBeVisible();
+  expect(screen.getByText("Somente leitura")).toBeVisible();
+  expect(screen.getByText(/topologia executada pelo Jarvis/i)).toBeVisible();
+  expect(screen.getByLabelText("Modelos do fluxo")).toBeVisible();
 });
 
 it("requires a concrete delete confirmation and preserves the editor after save failure", async () => {

@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "id": "movarte-planned-status-selection",
+  "description": "Sanitized production trace of a successful planned flow whose recovery overhead provides the initial efficiency baseline.",
+  "sanitizedInput": "Implement free status selection for a domain workflow and publish the manual validation tasks.",
+  "expectations": {
+    "requiredOutcome": "completed",
+    "forbidOtherMcps": false,
+    "allowedPlannerSpawnRoles": ["designer", "builder"],
+    "baselineViolations": []
+  },
+  "observed": {
+    "wallTimeMs": 2334422,
+    "agents": [
+      {
+        "role": "planner",
+        "outcome": "completed",
+        "providerSteps": 151,
+        "measuredProviderSteps": 151,
+        "toolCalls": 149,
+        "toolErrors": 9,
+        "inputTokens": 14089155,
+        "outputTokens": 20623,
+        "cacheReadTokens": 13695232,
+        "cacheWriteTokens": 0,
+        "durationMs": 2334422,
+        "tools": [
+          { "name": "beads_list", "calls": 2, "errors": 0 },
+          { "name": "list", "calls": 1, "errors": 0 },
+          { "name": "search", "calls": 42, "errors": 7, "errorClasses": { "scoped_instruction_unreadable": 7 } },
+          { "name": "read", "calls": 68, "errors": 0 },
+          { "name": "lsp_references", "calls": 1, "errors": 0 },
+          { "name": "ask_user", "calls": 1, "errors": 0 },
+          { "name": "read_skill", "calls": 1, "errors": 0 },
+          { "name": "beads_create", "calls": 4, "errors": 0 },
+          { "name": "beads_dependency", "calls": 2, "errors": 0 },
+          { "name": "hub_spawn", "calls": 4, "errors": 2, "errorClasses": { "disallowed_role": 2 } },
+          { "name": "hub_wait", "calls": 2, "errors": 0 },
+          { "name": "beads_show", "calls": 2, "errors": 0 },
+          { "name": "hub_list", "calls": 1, "errors": 0 },
+          { "name": "lsp_diagnostics", "calls": 10, "errors": 0 },
+          { "name": "lsp_symbols", "calls": 1, "errors": 0 },
+          { "name": "beads_close", "calls": 4, "errors": 0 },
+          { "name": "beads_claim", "calls": 1, "errors": 0 },
+          { "name": "validation_publish", "calls": 1, "errors": 0 },
+          { "name": "ctx_search", "calls": 1, "errors": 0 }
+        ]
+      },
+      {
+        "role": "builder-a",
+        "outcome": "completed",
+        "providerSteps": 149,
+        "measuredProviderSteps": 149,
+        "toolCalls": 149,
+        "toolErrors": 11,
+        "inputTokens": 12978817,
+        "outputTokens": 27340,
+        "cacheReadTokens": 12743680,
+        "cacheWriteTokens": 0,
+        "durationMs": 1091426,
+        "tools": [
+          { "name": "beads_show", "calls": 1, "errors": 0 },
+          { "name": "beads_claim", "calls": 1, "errors": 0 },
+          { "name": "read_skill", "calls": 1, "errors": 0 },
+          { "name": "list", "calls": 6, "errors": 0 },
+          { "name": "read", "calls": 68, "errors": 0 },
+          { "name": "search", "calls": 7, "errors": 2, "errorClasses": { "scoped_instruction_unreadable": 2 } },
+          { "name": "ctx_search", "calls": 3, "errors": 0 },
+          { "name": "lsp_symbols", "calls": 10, "errors": 0 },
+          { "name": "lsp_references", "calls": 4, "errors": 0 },
+          { "name": "apply_patch", "calls": 21, "errors": 7, "errorClasses": { "stale_edit_context": 3, "agent_execution_failed": 3, "no_op_patch": 1 } },
+          { "name": "edit", "calls": 13, "errors": 1, "errorClasses": { "stale_edit_context": 1 } },
+          { "name": "lsp_diagnostics", "calls": 8, "errors": 0 },
+          { "name": "ctx_index", "calls": 1, "errors": 0 },
+          { "name": "workflow_check", "calls": 3, "errors": 1, "errorClasses": { "missing_package_script": 1 } },
+          { "name": "beads_update", "calls": 1, "errors": 0 },
+          { "name": "hub_complete", "calls": 1, "errors": 0 }
+        ]
+      },
+      {
+        "role": "builder-b",
+        "outcome": "completed",
+        "providerSteps": 109,
+        "measuredProviderSteps": 109,
+        "toolCalls": 109,
+        "toolErrors": 8,
+        "inputTokens": 7954530,
+        "outputTokens": 28358,
+        "cacheReadTokens": 7749632,
+        "cacheWriteTokens": 0,
+        "durationMs": 917849,
+        "tools": [
+          { "name": "ctx_search", "calls": 2, "errors": 1, "errorClasses": { "empty_context_index": 1 } },
+          { "name": "beads_show", "calls": 1, "errors": 0 },
+          { "name": "beads_claim", "calls": 1, "errors": 0 },
+          { "name": "read_skill", "calls": 1, "errors": 0 },
+          { "name": "list", "calls": 3, "errors": 0 },
+          { "name": "read", "calls": 41, "errors": 0 },
+          { "name": "search", "calls": 10, "errors": 2, "errorClasses": { "scoped_instruction_unreadable": 2 } },
+          { "name": "apply_patch", "calls": 2, "errors": 2, "errorClasses": { "agent_execution_failed": 2 } },
+          { "name": "edit", "calls": 28, "errors": 1, "errorClasses": { "stale_edit_context": 1 } },
+          { "name": "lsp_diagnostics", "calls": 8, "errors": 0 },
+          { "name": "workflow_check", "calls": 9, "errors": 2, "errorClasses": { "missing_package_script": 1, "project_check_failed": 1 } },
+          { "name": "beads_update", "calls": 2, "errors": 0 },
+          { "name": "hub_complete", "calls": 1, "errors": 0 }
+        ]
+      }
+    ]
+  }
+}

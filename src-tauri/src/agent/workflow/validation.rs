@@ -627,7 +627,7 @@ mod tests {
             duration_ms: 0,
         };
         let _guard = exec
-            .mutation_guard(&tool, hub.root_signal.clone())
+            .mutation_guard(&tool, false, hub.root_signal.clone())
             .await
             .unwrap();
         assert!(

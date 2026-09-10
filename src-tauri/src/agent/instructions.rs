@@ -46,7 +46,14 @@ impl Resolver {
         match tool.name.as_str() {
             "list" | "search" => {
                 if let Some(path) = tool.args["path"].as_str() {
-                    directories.push(self.safe_path(path)?);
+                    let target = self.safe_path(path)?;
+                    let directory = match fs::symlink_metadata(&target) {
+                        Ok(metadata) if metadata.is_dir() => target,
+                        Ok(_) => target.parent().unwrap_or(&self.root).to_path_buf(),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => target,
+                        Err(_) => return Err(invalid_path()),
+                    };
+                    directories.push(directory);
                 }
             }
             "read" | "write" | "edit" | "lsp_definition" | "lsp_references" | "lsp_symbols"
@@ -253,6 +260,22 @@ mod tests {
         second.append_prompt(&mut prompt);
         assert!(prompt.contains("second"));
         assert!(!prompt.contains("first"));
+    }
+
+    #[test]
+    fn search_on_a_file_uses_its_parent_instruction_scope() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.root.join("packages/app/src")).unwrap();
+        fs::write(fixture.root.join("packages/app/AGENTS.md"), "package rules").unwrap();
+        fs::write(fixture.root.join("packages/app/src/main.ts"), "needle").unwrap();
+        let mut resolver = Resolver::new(&fixture.root).unwrap();
+        assert!(resolver
+            .discover(&tool("search", "packages/app/src/main.ts"))
+            .unwrap());
+        let mut prompt = String::new();
+        resolver.append_prompt(&mut prompt);
+        assert!(prompt.contains("packages/app/AGENTS.md"));
+        assert!(prompt.contains("package rules"));
     }
 
     #[test]

@@ -6,10 +6,17 @@
 use portable_pty::CommandBuilder;
 use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
 use std::{
+    collections::HashSet,
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
     process::Stdio,
     sync::LazyLock,
 };
+
+#[cfg(unix)]
+use std::{ffi::CStr, os::unix::fs::PermissionsExt};
+
+use crate::system::TerminalPreferences;
 
 pub(crate) struct Shell {
     program: PathBuf,
@@ -87,6 +94,190 @@ fn resolve() -> Shell {
     }
 }
 
+fn executable(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    return metadata.permissions().mode() & 0o111 != 0;
+    #[cfg(not(unix))]
+    true
+}
+
+fn executable_from_path(value: &OsStr) -> Option<PathBuf> {
+    let path = Path::new(value);
+    if path.is_absolute() {
+        return executable(path).then(|| path.to_path_buf());
+    }
+    if path.components().count() != 1 {
+        return None;
+    }
+    std::env::split_paths(&crate::mcp::executable::configured_path()).find_map(|directory| {
+        let direct = directory.join(path);
+        if executable(&direct) {
+            return Some(direct);
+        }
+        #[cfg(windows)]
+        {
+            let exe = direct.with_extension("exe");
+            if executable(&exe) {
+                return Some(exe);
+            }
+        }
+        None
+    })
+}
+
+#[cfg(unix)]
+fn account_login_shell() -> Option<PathBuf> {
+    // GUI applications do not necessarily inherit the user's interactive
+    // environment. Read the account database instead of trusting `$SHELL`.
+    unsafe {
+        let requested = libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX);
+        let capacity = if requested <= 0 {
+            16 * 1024
+        } else {
+            usize::try_from(requested)
+                .unwrap_or(16 * 1024)
+                .min(1024 * 1024)
+        };
+        let mut record = std::mem::MaybeUninit::<libc::passwd>::uninit();
+        let mut result = std::ptr::null_mut();
+        let mut buffer = vec![0_u8; capacity];
+        if libc::getpwuid_r(
+            libc::geteuid(),
+            record.as_mut_ptr(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut result,
+        ) != 0
+            || result.is_null()
+        {
+            return None;
+        }
+        let record = record.assume_init();
+        if record.pw_shell.is_null() {
+            return None;
+        }
+        let value = OsString::from(
+            String::from_utf8_lossy(CStr::from_ptr(record.pw_shell).to_bytes()).into_owned(),
+        );
+        executable_from_path(&value)
+    }
+}
+
+#[cfg(not(unix))]
+fn account_login_shell() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(windows)]
+fn automatic_interactive_shell(_account: Option<PathBuf>, _inherited: Option<OsString>) -> PathBuf {
+    SHELL.program.clone()
+}
+
+#[cfg(unix)]
+fn automatic_interactive_shell(account: Option<PathBuf>, inherited: Option<OsString>) -> PathBuf {
+    if let Some(shell) = account.filter(|path| executable(path)) {
+        return shell;
+    }
+    if let Some(shell) = inherited.as_deref().and_then(executable_from_path) {
+        return shell;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        PathBuf::from("/bin/zsh")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        ["/bin/bash", "/bin/sh"]
+            .into_iter()
+            .map(PathBuf::from)
+            .find(|path| executable(path))
+            .unwrap_or_else(|| PathBuf::from("/bin/sh"))
+    }
+}
+
+pub(crate) fn interactive_shell(preferences: &TerminalPreferences) -> Result<PathBuf, String> {
+    if let Some(configured) = preferences.shell.as_deref() {
+        return executable_from_path(OsStr::new(configured.trim())).ok_or_else(|| {
+            format!(
+                "O shell configurado não foi encontrado ou não pode ser executado: {}",
+                configured.trim()
+            )
+        });
+    }
+    Ok(automatic_interactive_shell(
+        account_login_shell(),
+        std::env::var_os("SHELL"),
+    ))
+}
+
+pub(crate) fn interactive_shells() -> Vec<String> {
+    let mut candidates = Vec::<PathBuf>::new();
+    if let Some(shell) = account_login_shell() {
+        candidates.push(shell);
+    }
+    if let Some(shell) = std::env::var_os("SHELL").and_then(|value| executable_from_path(&value)) {
+        candidates.push(shell);
+    }
+    #[cfg(unix)]
+    {
+        if let Ok(contents) = std::fs::read_to_string("/etc/shells") {
+            candidates.extend(
+                contents
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                    .map(PathBuf::from)
+                    .filter(|path| executable(path)),
+            );
+        }
+        candidates.extend(["/bin/zsh", "/bin/bash", "/bin/sh"].map(PathBuf::from));
+    }
+    #[cfg(windows)]
+    {
+        candidates.extend(
+            ["pwsh", "powershell"]
+                .into_iter()
+                .filter_map(|name| executable_from_path(OsStr::new(name))),
+        );
+        if let Some(command) =
+            std::env::var_os("ComSpec").and_then(|value| executable_from_path(&value))
+        {
+            candidates.push(command);
+        }
+    }
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|path| executable(path) && seen.insert(path.clone()))
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
+}
+
+fn default_interactive_arguments(program: &Path) -> Vec<String> {
+    let name = program
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match name.as_str() {
+        "zsh" | "bash" | "ksh" => vec!["-l".into(), "-i".into()],
+        "fish" => vec!["-l".into()],
+        "pwsh" | "powershell" => vec![
+            "-NoLogo".into(),
+            "-NoExit".into(),
+            "-Command".into(),
+            "[Console]::OutputEncoding=[Text.UTF8Encoding]::new()".into(),
+        ],
+        _ => Vec::new(),
+    }
+}
+
 /// Sentence telling the model which shell and syntax it must emit.
 pub(crate) fn prompt() -> String {
     let shell = &*SHELL;
@@ -139,26 +330,29 @@ pub(crate) fn terminal_service_command(root: &Path, script: &str) -> CommandBuil
 }
 
 /// Builds the interactive shell launched inside a PTY.
-pub(crate) fn terminal_command(root: &Path) -> CommandBuilder {
-    let mut command = CommandBuilder::new(&SHELL.program);
-    if SHELL.powershell {
-        command.args([
-            "-NoLogo",
-            "-NoProfile",
-            "-NoExit",
-            "-Command",
-            "[Console]::OutputEncoding=[Text.UTF8Encoding]::new()",
-        ]);
+pub(crate) fn terminal_command(
+    root: &Path,
+    preferences: &TerminalPreferences,
+) -> Result<CommandBuilder, String> {
+    let program = interactive_shell(preferences)?;
+    let mut command = CommandBuilder::new(&program);
+    let arguments = if preferences.arguments.is_empty() {
+        default_interactive_arguments(&program)
     } else {
-        command.args(["--noprofile", "--norc", "-i"]);
-        command.env("TERM", "xterm-256color");
-    }
+        preferences.arguments.clone()
+    };
+    command.args(arguments);
+    #[cfg(unix)]
+    command.env("SHELL", &program);
     configure_terminal(&mut command, root);
-    command
+    Ok(command)
 }
 
 fn configure_terminal(command: &mut CommandBuilder, root: &Path) {
     command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    command.env("TERM_PROGRAM", "Jarvis");
+    command.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
     // Keep canonical paths for backend checks, but give PowerShell a regular
     // Win32/UNC path so its prompt and native child processes resolve the cwd.
     #[cfg(windows)]
@@ -198,7 +392,7 @@ mod tests {
         let project = root.path().join("projeto ação [teste]");
         std::fs::create_dir(&project).unwrap();
         let canonical = std::fs::canonicalize(&project).unwrap();
-        let command = terminal_command(&canonical);
+        let command = terminal_command(&canonical, &TerminalPreferences::default()).unwrap();
         let cwd = command.get_cwd().unwrap();
         assert_eq!(std::fs::canonicalize(cwd).unwrap(), canonical);
         if cfg!(windows) {
@@ -206,6 +400,56 @@ mod tests {
         } else {
             assert_eq!(Path::new(cwd), canonical);
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn automatic_terminal_prefers_the_account_login_shell_without_an_environment() {
+        let account = PathBuf::from("/bin/zsh");
+        assert_eq!(
+            automatic_interactive_shell(Some(account.clone()), None),
+            account
+        );
+    }
+
+    #[test]
+    fn custom_terminal_arguments_remain_separate_argv_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let preferences = TerminalPreferences {
+            shell: Some(SHELL.program.to_string_lossy().into_owned()),
+            arguments: vec!["--first".into(), "two words".into()],
+            ..TerminalPreferences::default()
+        };
+        let command = terminal_command(root.path(), &preferences).unwrap();
+        assert_eq!(
+            command.get_argv(),
+            &[
+                SHELL.program.as_os_str().to_owned(),
+                OsString::from("--first"),
+                OsString::from("two words")
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_custom_terminal_shell_is_rejected() {
+        let preferences = TerminalPreferences {
+            shell: Some("/jarvis/missing/shell".into()),
+            ..TerminalPreferences::default()
+        };
+        assert!(interactive_shell(&preferences)
+            .unwrap_err()
+            .contains("não foi encontrado"));
+    }
+
+    #[test]
+    fn terminal_announces_truecolor_and_jarvis_without_changing_agent_shell() {
+        let root = tempfile::tempdir().unwrap();
+        let command = terminal_command(root.path(), &TerminalPreferences::default()).unwrap();
+        assert_eq!(command.get_env("TERM"), Some(OsStr::new("xterm-256color")));
+        assert_eq!(command.get_env("COLORTERM"), Some(OsStr::new("truecolor")));
+        assert_eq!(command.get_env("TERM_PROGRAM"), Some(OsStr::new("Jarvis")));
+        assert!(prompt().contains(if cfg!(windows) { "PowerShell" } else { "bash" }));
     }
 
     #[cfg(windows)]

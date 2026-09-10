@@ -1,15 +1,72 @@
 use super::super::tests::{hub, job};
 use super::*;
 
+fn planned_flow_evaluation_case() -> Value {
+    serde_json::from_str(include_str!(
+        "../fixtures/evaluations/movarte-planned-flow.json"
+    ))
+    .unwrap()
+}
+
+fn spawn_roles(flow: Flow, role: Role) -> Vec<String> {
+    definitions(flow, role)
+        .into_iter()
+        .find(|definition| definition["name"] == "hub_spawn")
+        .unwrap()["parameters"]["properties"]["role"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect()
+}
+
 #[test]
-fn complete_planner_can_discover_design_before_beads_but_cannot_bypass_orchestrator() {
+fn harness_evaluation_spawn_schema_only_advertises_allowed_roles() {
+    let case = planned_flow_evaluation_case();
+    let expected: Vec<String> = case["expectations"]["allowedPlannerSpawnRoles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|role| role.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(spawn_roles(Flow::Planned, Role::Planner), expected);
+    assert_eq!(
+        spawn_roles(Flow::Complete, Role::Planner),
+        vec!["investigator", "writer", "orchestrator"]
+    );
+    assert_eq!(
+        spawn_roles(Flow::Complete, Role::Orchestrator),
+        vec!["planner", "designer", "builder", "reviewer"]
+    );
+}
+
+#[test]
+fn workflow_check_rejects_missing_bun_scripts_and_lists_real_options() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"scripts":{"test":"vitest","build":"vite build"}}"#,
+    )
+    .unwrap();
+    let error = workflow_command(directory.path(), "bun_typecheck").unwrap_err();
+    assert!(error.message.contains("typecheck"));
+    assert!(error.message.contains("build"));
+    assert!(error.message.contains("test"));
+    assert_eq!(
+        workflow_command(directory.path(), "bun_test").unwrap(),
+        "bun run test"
+    );
+}
+
+#[test]
+fn designer_is_always_an_implementation_role_and_complete_routes_it_through_orchestrator() {
     assert!(validate_phase(
         Flow::Complete,
         Role::Planner,
         Role::Designer,
         Phase::Discovery
     )
-    .is_ok());
+    .is_err());
     assert!(validate_phase(
         Flow::Complete,
         Role::Planner,
@@ -27,10 +84,25 @@ fn complete_planner_can_discover_design_before_beads_but_cannot_bypass_orchestra
     assert!(validate_phase(
         Flow::Planned,
         Role::Planner,
+        Role::Designer,
+        Phase::Implementation
+    )
+    .is_ok());
+    assert!(validate_phase(
+        Flow::Planned,
+        Role::Planner,
         Role::Builder,
         Phase::Discovery
     )
     .is_err());
+    let phases = definitions(Flow::Planned, Role::Planner)
+        .into_iter()
+        .find(|definition| definition["name"] == "hub_spawn")
+        .unwrap()["parameters"]["properties"]["phase"]["enum"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(phases, vec![json!("implementation")]);
 }
 
 #[test]

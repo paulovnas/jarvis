@@ -281,7 +281,10 @@ struct Entry {
 }
 
 #[derive(Default, Clone)]
-pub(crate) struct TerminalState(Arc<Mutex<HashMap<String, Entry>>>);
+pub(crate) struct TerminalState(
+    Arc<Mutex<HashMap<String, Entry>>>,
+    Arc<std::sync::RwLock<crate::system::TerminalPreferences>>,
+);
 
 fn terminal_title(value: Option<&str>, ordinal: usize) -> Result<String, AgentError> {
     let value = value
@@ -370,6 +373,19 @@ pub(super) struct ServiceSpawn<'a> {
     pub port: Option<u16>,
 }
 impl TerminalState {
+    pub(crate) fn set_preferences(&self, preferences: crate::system::TerminalPreferences) {
+        if let Ok(mut current) = self.1.write() {
+            *current = preferences;
+        }
+    }
+
+    fn preferences(&self) -> Result<crate::system::TerminalPreferences, AgentError> {
+        self.1
+            .read()
+            .map(|preferences| preferences.clone())
+            .map_err(|_| AgentError::internal())
+    }
+
     pub(super) fn start_service(
         &self,
         request: ServiceSpawn,
@@ -686,7 +702,8 @@ impl TerminalState {
             .map_err(|_| invalid("Não foi possível criar o terminal."))?;
         let command: CommandBuilder = match service {
             Some((script, _)) => super::shell::terminal_service_command(root, script),
-            None => super::shell::terminal_command(root),
+            None => super::shell::terminal_command(root, &self.preferences()?)
+                .map_err(|message| invalid(&message))?,
         };
         let child = pair
             .slave
@@ -1305,6 +1322,9 @@ mod tests {
                     "exited"
                 );
             } else {
+                // A profile-backed shell may redraw a rich prompt after SIGINT.
+                // Wait for its line editor before entering the next command.
+                thread::sleep(std::time::Duration::from_millis(200));
                 state
                     .write("interrupt", &terminal.id, "printf 'shell-%s\\n' usable\r")
                     .unwrap();

@@ -56,6 +56,7 @@ fn preferences_restore_all_modes_without_touching_layout() {
             prevent_sleep: mode,
             notifications: mode != SleepMode::Off,
             ask_user_timeout_seconds: 45,
+            terminal: TerminalPreferences::default(),
         };
         store.save(preferences.clone()).unwrap();
         assert_eq!(Store::open(path.clone()).unwrap().preferences, preferences);
@@ -82,6 +83,7 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
             prevent_sleep: SleepMode::Open,
             notifications: true,
             ask_user_timeout_seconds: 30,
+            terminal: TerminalPreferences::default(),
         })
         .is_err());
     assert_eq!(store.preferences, Preferences::default());
@@ -97,6 +99,7 @@ fn question_timeout_defaults_for_existing_installs_and_rejects_invalid_values() 
     assert_eq!(ask_user_timeout_seconds(home.path()), 30);
     let mut store = Store::open(path).unwrap();
     assert_eq!(store.preferences.ask_user_timeout_seconds, 30);
+    assert_eq!(store.preferences.terminal, TerminalPreferences::default());
     assert!(store
         .save(Preferences {
             ask_user_timeout_seconds: 0,

@@ -1,5 +1,5 @@
 use super::*;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     fs,
@@ -15,9 +15,11 @@ use tokio::{
 struct MemorySecrets {
     values: Mutex<HashMap<String, String>>,
     fail: AtomicBool,
+    loads: AtomicU64,
 }
 impl Secrets for MemorySecrets {
     fn load(&self, key: &str) -> Result<String, McpError> {
+        self.loads.fetch_add(1, Ordering::Relaxed);
         self.values
             .lock()
             .unwrap()
@@ -67,13 +69,37 @@ impl Fixture {
         }
     }
     fn local(&self, name: &str) -> Server {
-        let raw = json!({name: {"type":"local", "command":["node", fixture_script()], "environment":{"TEST_SECRET":"fixture-sensitive-value", "CALLS_FILE": self.home.join("calls"), "PID_FILE": self.home.join(format!("{name}-pid"))}, "timeout":2000}}).to_string();
+        self.local_with_request_timeout(name, 2000)
+    }
+    fn local_with_request_timeout(&self, name: &str, request_timeout: u64) -> Server {
+        self.local_with_tools(name, request_timeout, 0)
+    }
+    fn local_with_tools(&self, name: &str, request_timeout: u64, extra_tools: usize) -> Server {
+        let raw = json!({name: {"type":"local", "command":["node", fixture_script()], "environment":{"TEST_SECRET":"fixture-sensitive-value", "CALLS_FILE": self.home.join("calls"), "STARTS_FILE": self.home.join("starts"), "SERVER_NAME": name, "PID_FILE": self.home.join(format!("{name}-pid")), "EXTRA_TOOLS":extra_tools.to_string()}, "timeout":2000, "requestTimeout":request_timeout}}).to_string();
         self.mcp
             .save(&self.state, &self.home, None, &raw)
             .unwrap()
             .into_iter()
             .find(|s| s.name == name)
             .unwrap()
+    }
+    fn local_with_dynamic_tools(
+        &self,
+        name: &str,
+        request_timeout: u64,
+        extra_tools: usize,
+    ) -> (Server, PathBuf) {
+        let tools_file = self.home.join(format!("{name}-tools"));
+        fs::write(&tools_file, extra_tools.to_string()).unwrap();
+        let raw = json!({name: {"type":"local", "command":["node", fixture_script()], "environment":{"TEST_SECRET":"fixture-sensitive-value", "CALLS_FILE": self.home.join("calls"), "STARTS_FILE": self.home.join("starts"), "SERVER_NAME": name, "PID_FILE": self.home.join(format!("{name}-pid")), "EXTRA_TOOLS_FILE":&tools_file}, "timeout":2000, "requestTimeout":request_timeout}}).to_string();
+        let server = self
+            .mcp
+            .save(&self.state, &self.home, None, &raw)
+            .unwrap()
+            .into_iter()
+            .find(|server| server.name == name)
+            .unwrap();
+        (server, tools_file)
     }
 }
 impl Drop for Fixture {
@@ -83,6 +109,13 @@ impl Drop for Fixture {
 }
 fn fixture_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/mcp/fixtures/server.mjs")
+}
+
+fn explicit_mcp_evaluation_case() -> Value {
+    serde_json::from_str(include_str!(
+        "../agent/fixtures/evaluations/movarte-explicit-mcp.json"
+    ))
+    .unwrap()
 }
 
 #[tokio::test]
@@ -264,6 +297,1046 @@ fn keychain_cleanup_failure_does_not_block_mcp_removal() {
 }
 
 #[tokio::test]
+async fn harness_evaluation_explicit_mcp_connects_only_the_named_server() {
+    let f = Fixture::new();
+    let case = explicit_mcp_evaluation_case();
+    let required = case["expectations"]["requiredMcp"].as_str().unwrap();
+    let forbidden = case["expectations"]["forbiddenMcps"][0].as_str().unwrap();
+    let notebook = f.local(required);
+    let database = f.local(forbidden);
+    f.secrets.loads.store(0, Ordering::Relaxed);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        case["sanitizedInput"].as_str().unwrap(),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(f.secrets.loads.load(Ordering::Relaxed), 1);
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(definitions.len(), 2);
+    assert!(definitions.iter().all(|definition| {
+        definition["description"]
+            .as_str()
+            .unwrap()
+            .contains(required)
+    }));
+    assert!(clients.instructions().contains("outcomeUncertain"));
+    assert!(clients.requires_explicit_attempt());
+
+    let unrelated = runtime::wire_name(&database, "lookup");
+    let error = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &unrelated,
+            &json!({"query":"status"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "mcp_scope_violation");
+    assert!(clients.requires_explicit_attempt());
+
+    let lookup = runtime::wire_name(&notebook, "lookup");
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":"status"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    assert!(output.contains("status"));
+    assert!(!clients.requires_explicit_attempt());
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\n"
+    );
+}
+
+#[tokio::test]
+async fn harness_evaluation_large_mcp_catalog_loads_individual_tools_with_bounded_growth() {
+    let f = Fixture::new();
+    let server = f.local_with_tools("large-catalog", 2000, 48);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Use o MCP large catalog para consultar o arquivo.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+
+    let initial = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(
+        initial
+            .iter()
+            .map(|definition| definition["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["mcp_search_tools", "mcp_load_tool"]
+    );
+    clients.ensure_scope_visible(&initial).unwrap();
+    assert!(clients.instructions().contains("catalog is deferred"));
+    assert!(clients.requires_explicit_attempt());
+    assert!(!clients.requires_active_task("mcp_search_tools"));
+    assert!(!clients.requires_active_task("mcp_load_tool"));
+
+    let (catalog_tools, catalog_bytes) = clients.complete_catalog_metrics();
+    let initial_bytes = initial
+        .iter()
+        .map(|definition| definition.to_string().len())
+        .sum::<usize>();
+    let reduction_basis_points =
+        10_000usize.saturating_sub(initial_bytes.saturating_mul(10_000) / catalog_bytes);
+    assert_eq!(catalog_tools, 50);
+    assert!(reduction_basis_points >= 8_000);
+    println!(
+        "HARNESS_EVAL case=mcp-individual-tool-demand catalogTools={catalog_tools} fullSchemaBytes={catalog_bytes} initialSchemaBytes={initial_bytes} reductionBasisPoints={reduction_basis_points}"
+    );
+
+    let selected = runtime::wire_name(&server, "catalog_tool_37");
+    let hidden = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &selected,
+            &json!({"query":"archive"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(hidden.code, "mcp_scope_violation");
+
+    let search: Value = serde_json::from_str(
+        &clients
+            .execute(
+                &f.mcp,
+                &f.state,
+                &f.home,
+                "mcp_search_tools",
+                &json!({"query":"catalog tool 37", "server":"large-catalog", "limit":3}),
+                false,
+                signal.clone(),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(search["matches"][0]["tool"], selected);
+    assert_eq!(search["matches"][0]["name"], "catalog_tool_37");
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_load_tool",
+            &json!({"tool":selected}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(clients.requires_explicit_attempt());
+    let loaded = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(loaded.len(), 3);
+    assert_eq!(loaded[2]["name"], selected);
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &selected,
+            &json!({"query":"archive"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(output.contains("archive"));
+    assert!(!clients.requires_explicit_attempt());
+
+    for index in 0..10 {
+        let search: Value = serde_json::from_str(
+            &clients
+                .execute(
+                    &f.mcp,
+                    &f.state,
+                    &f.home,
+                    "mcp_search_tools",
+                    &json!({"query":format!("catalog tool {index}"), "limit":1}),
+                    false,
+                    signal.clone(),
+                )
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let tool = search["matches"][0]["tool"].as_str().unwrap();
+        clients
+            .execute(
+                &f.mcp,
+                &f.state,
+                &f.home,
+                "mcp_load_tool",
+                &json!({"tool":tool}),
+                false,
+                signal.clone(),
+            )
+            .await
+            .unwrap();
+    }
+    let bounded = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(
+        bounded
+            .iter()
+            .filter(|definition| {
+                !matches!(
+                    definition["name"].as_str(),
+                    Some("mcp_search_tools" | "mcp_load_tool")
+                )
+            })
+            .count(),
+        8
+    );
+    let evicted = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &selected,
+            &json!({"query":"archive again"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(evicted.code, "mcp_scope_violation");
+
+    let denied = runtime::wire_name(&server, "catalog_tool_42");
+    clients
+        .definitions_with(&f.mcp, &f.state, &f.home, false, |name| name != denied)
+        .await;
+    let search: Value = serde_json::from_str(
+        &clients
+            .execute(
+                &f.mcp,
+                &f.state,
+                &f.home,
+                "mcp_search_tools",
+                &json!({"query":"catalog tool 42", "limit":8}),
+                false,
+                signal.clone(),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(search["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| item["tool"] != denied));
+    let denied = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_load_tool",
+            &json!({"tool":denied}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(denied.code, "mcp_scope_violation");
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "catalog_tool_37\n"
+    );
+}
+
+#[tokio::test]
+async fn deferred_catalog_controls_fail_closed_and_preserve_plan_read_only_scope() {
+    let f = Fixture::new();
+    let server = f.local_with_tools("large-catalog", 2000, 48);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Use o MCP large catalog apenas para leitura.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+
+    let plan = clients.definitions(&f.mcp, &f.state, &f.home, true).await;
+    assert_eq!(plan.len(), 2);
+    assert_eq!(plan[0]["name"], "mcp_search_tools");
+    assert_eq!(plan[1]["name"], "mcp_load_tool");
+
+    let invalid_search = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_search_tools",
+            &json!({"query":"x"}),
+            true,
+            signal.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(invalid_search.code, "mcp_invalid_arguments");
+    assert_eq!(
+        invalid_search.metadata.validation_errors,
+        vec![McpValidationIssue {
+            path: "$.query".into(),
+            keyword: "catalog".into(),
+            message: "informe de 2 a 160 caracteres".into(),
+        }]
+    );
+
+    let invalid_load = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_load_tool",
+            &json!({"tool":42}),
+            true,
+            signal.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(invalid_load.code, "mcp_invalid_arguments");
+    assert_eq!(invalid_load.metadata.validation_errors[0].path, "$.tool");
+
+    let search: Value = serde_json::from_str(
+        &clients
+            .execute(
+                &f.mcp,
+                &f.state,
+                &f.home,
+                "mcp_search_tools",
+                &json!({"query":"mutate unknown side effect"}),
+                true,
+                signal.clone(),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(search["matches"].as_array().unwrap().is_empty());
+
+    let mutation = runtime::wire_name(&server, "mutate");
+    let hidden_mutation = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_load_tool",
+            &json!({"tool":mutation}),
+            true,
+            signal,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(hidden_mutation.code, "mcp_scope_violation");
+    assert!(!f.home.join("calls").exists());
+}
+
+#[tokio::test]
+async fn activated_large_catalog_waits_for_the_next_provider_step() {
+    let f = Fixture::new();
+    let server = f.local_with_tools("large-catalog", 2000, 48);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Consulte uma integração se for necessário.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        clients.definitions(&f.mcp, &f.state, &f.home, false).await[0]["name"],
+        "mcp_activate"
+    );
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &json!({"server":"large-catalog"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+
+    let guessed = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &runtime::wire_name(&server, "catalog_tool_12"),
+            &json!({"query":"archive"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(guessed.code, "mcp_scope_violation");
+    let premature_search = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_search_tools",
+            &json!({"query":"catalog tool 12"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(premature_search.code, "mcp_scope_violation");
+
+    let next_step = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(next_step[0]["name"], "mcp_search_tools");
+    assert_eq!(next_step[1]["name"], "mcp_load_tool");
+    assert_eq!(next_step.len(), 2);
+    assert!(!f.home.join("calls").exists());
+}
+
+#[tokio::test]
+async fn loaded_deferred_tool_survives_reconnection_when_its_schema_still_exists() {
+    let f = Fixture::new();
+    let server = f.local_with_tools("large-catalog", 1000, 48);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Use o MCP large catalog para ler a documentação.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let lookup = runtime::wire_name(&server, "lookup");
+    let search: Value = serde_json::from_str(
+        &clients
+            .execute(
+                &f.mcp,
+                &f.state,
+                &f.home,
+                "mcp_search_tools",
+                &json!({"query":"read documentation", "limit":1}),
+                false,
+                signal.clone(),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(search["matches"][0]["tool"], lookup);
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_load_tool",
+            &json!({"tool":lookup}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+
+    let timeout = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":"hang"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(timeout.code, "mcp_request_timeout");
+    assert_eq!(timeout.metadata.connection_recovered, Some(true));
+
+    let recovered = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(recovered.iter().any(|tool| tool["name"] == lookup));
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":"status"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    assert!(output.contains("status"));
+    assert_eq!(
+        fs::read_to_string(f.home.join("starts")).unwrap(),
+        "large-catalog\nlarge-catalog\n"
+    );
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\nlookup\n"
+    );
+}
+
+#[tokio::test]
+async fn catalog_refresh_evicts_loaded_tools_that_the_server_removed() {
+    let f = Fixture::new();
+    let (server, tools_file) = f.local_with_dynamic_tools("large-catalog", 2000, 48);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Use o MCP large catalog para consultar o arquivo.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let removed = runtime::wire_name(&server, "catalog_tool_37");
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_search_tools",
+            &json!({"query":"catalog tool 37", "limit":1}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_load_tool",
+            &json!({"tool":removed}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(clients
+        .definitions(&f.mcp, &f.state, &f.home, false)
+        .await
+        .iter()
+        .any(|tool| tool["name"] == removed));
+
+    fs::write(tools_file, "10").unwrap();
+    clients.notify_catalog_changed_for_test();
+    let refreshed = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(!refreshed.iter().any(|tool| tool["name"] == removed));
+    let stale = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &removed,
+            &json!({"query":"archive"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(stale.code, "mcp_scope_violation");
+    assert!(!f.home.join("calls").exists());
+}
+
+#[tokio::test]
+async fn harness_evaluation_mcp_intent_survives_continuations_and_accepts_user_changes() {
+    let f = Fixture::new();
+    let notebook = f.local("gemini-notebook-mcp");
+    let database = f.local("database");
+    let initial = runtime::resolve_user_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &McpIntent::default(),
+        &["Use o MCP Gemini Notebook nesta tarefa.".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(initial.mode, McpIntentMode::Explicit);
+    assert_eq!(initial.servers.len(), 1);
+    assert_eq!(initial.servers[0].id, notebook.id);
+
+    let continued = runtime::resolve_user_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &initial,
+        &["Continue a análise e confirme o resultado.".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(continued, initial);
+
+    let mentioned = runtime::resolve_user_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &continued,
+        &["Por que o MCP database foi usado antes? Continue a análise.".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(mentioned, initial);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp, &f.state, &f.home, &f.home, &continued, signal,
+    )
+    .await
+    .unwrap();
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(definitions.len(), 2);
+    assert!(definitions
+        .iter()
+        .all(|definition| definition["description"]
+            .as_str()
+            .unwrap()
+            .contains("gemini-notebook-mcp")));
+
+    let changed = runtime::resolve_user_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &continued,
+        &["Agora use o database para esta consulta.".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(changed.mode, McpIntentMode::Explicit);
+    assert_eq!(changed.servers.len(), 1);
+    assert_eq!(changed.servers[0].id, database.id);
+
+    let switched = runtime::resolve_user_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &initial,
+        &["Troque do MCP Gemini Notebook para o MCP database.".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(switched.mode, McpIntentMode::Explicit);
+    assert_eq!(switched.servers.len(), 1);
+    assert_eq!(switched.servers[0].id, database.id);
+
+    let excluded = runtime::resolve_user_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &initial,
+        &["Não use mais o MCP Gemini Notebook; escolha outro se necessário.".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(excluded.mode, McpIntentMode::OnDemand);
+    assert!(excluded.servers.is_empty());
+    assert_eq!(excluded.excluded_servers.len(), 1);
+    assert_eq!(excluded.excluded_servers[0].id, notebook.id);
+    let (_sender, signal) = watch::channel(false);
+    let mut excluded_clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp, &f.state, &f.home, &f.home, &excluded, signal,
+    )
+    .await
+    .unwrap();
+    assert!(excluded_clients
+        .instructions()
+        .contains("available on demand"));
+    let definitions = excluded_clients
+        .definitions(&f.mcp, &f.state, &f.home, false)
+        .await;
+    let choices = definitions[0]["parameters"]["properties"]["server"]["enum"]
+        .as_array()
+        .unwrap();
+    assert_eq!(choices, &[json!("database")]);
+
+    let on_demand = runtime::resolve_user_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &changed,
+        &["Pode usar outros MCPs conforme necessário.".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(on_demand, McpIntent::default());
+    let disabled = runtime::resolve_user_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &continued,
+        &["Continue sem nenhum MCP.".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(disabled.mode, McpIntentMode::Disabled);
+    assert!(disabled.servers.is_empty());
+}
+
+#[tokio::test]
+async fn request_timeout_is_independent_from_the_short_startup_timeout() {
+    let f = Fixture::new();
+    let raw = json!({
+        "slow": {
+            "type": "local",
+            "command": ["node", fixture_script()],
+            "environment": {"CALLS_FILE": f.home.join("calls")},
+            "timeout": 1000,
+            "requestTimeout": 2500
+        }
+    })
+    .to_string();
+    let server = f
+        .mcp
+        .save(&f.state, &f.home, None, &raw)
+        .unwrap()
+        .into_iter()
+        .find(|server| server.name == "slow")
+        .unwrap();
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Use o MCP slow para consultar a documentação.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    let lookup = runtime::wire_name(&server, "lookup");
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":"status", "delayMs":1200}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    assert!(output.contains("status"));
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\n"
+    );
+}
+
+#[tokio::test]
+async fn harness_evaluation_timeout_reconnects_only_the_requested_mcp_without_replaying() {
+    let f = Fixture::new();
+    let notebook = f.local_with_request_timeout("gemini-notebook-mcp", 1000);
+    f.local("database");
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Use o MCP Gemini Notebook para consultar as informações.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    let lookup = runtime::wire_name(&notebook, "lookup");
+
+    let timeout = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":"hang"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(timeout.code, "mcp_request_timeout");
+    assert!(timeout.metadata.retryable);
+    assert!(!timeout.metadata.outcome_uncertain);
+    assert_eq!(timeout.metadata.connection_recovered, Some(true));
+    assert_eq!(
+        timeout.metadata.server.as_deref(),
+        Some("gemini-notebook-mcp")
+    );
+    assert_eq!(timeout.metadata.tool.as_deref(), Some("lookup"));
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\n"
+    );
+    assert_eq!(
+        fs::read_to_string(f.home.join("starts")).unwrap(),
+        "gemini-notebook-mcp\ngemini-notebook-mcp\n"
+    );
+
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(definitions.len(), 2);
+    assert!(definitions
+        .iter()
+        .all(|definition| definition["description"]
+            .as_str()
+            .unwrap()
+            .contains("gemini-notebook-mcp")));
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":"status"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    assert!(output.contains("status"));
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\nlookup\n"
+    );
+}
+
+#[tokio::test]
+async fn harness_evaluation_preserves_structured_mcp_server_errors_without_reconnecting() {
+    let f = Fixture::new();
+    let server = f.local("gemini-notebook-mcp");
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Use o MCP Gemini Notebook para consultar as informações.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    let lookup = runtime::wire_name(&server, "lookup");
+
+    let failure = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":"rpc-error"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(failure.code, "mcp_server_error");
+    assert_eq!(failure.metadata.server_error_code, Some(-32602));
+    assert_eq!(
+        failure.metadata.server_error_data,
+        Some(json!({"path":"$.notebook_id", "expected":"string", "diagnostic":"[redigido]"}))
+    );
+    assert!(failure.metadata.retryable);
+    assert!(!failure.metadata.outcome_uncertain);
+    assert_eq!(failure.metadata.connection_recovered, None);
+    assert_eq!(
+        fs::read_to_string(f.home.join("starts")).unwrap(),
+        "gemini-notebook-mcp\n"
+    );
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\n"
+    );
+    let wire: Value = serde_json::from_str(&failure.tool_result()).unwrap();
+    assert_eq!(wire["error"]["serverErrorCode"], -32602);
+    assert_eq!(wire["error"]["serverErrorData"]["path"], "$.notebook_id");
+}
+
+#[tokio::test]
+async fn mutating_timeout_is_uncertain_and_is_never_replayed_during_reconnection() {
+    let f = Fixture::new();
+    let server = f.local_with_request_timeout("writer", 1000);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Use o MCP writer para realizar a operação.",
+        signal,
+    )
+    .await
+    .unwrap();
+    let mutation = runtime::wire_name(&server, "mutate");
+
+    let timeout = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &mutation,
+            &json!({"hang":true}),
+            false,
+            watch::channel(false).1,
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(timeout.code, "mcp_request_timeout");
+    assert!(!timeout.metadata.retryable);
+    assert!(timeout.metadata.outcome_uncertain);
+    assert_eq!(timeout.metadata.connection_recovered, Some(true));
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "mutate\n"
+    );
+    assert_eq!(
+        fs::read_to_string(f.home.join("starts")).unwrap(),
+        "writer\nwriter\n"
+    );
+}
+
+#[tokio::test]
+async fn unavailable_explicit_mcp_fails_before_any_alternative_is_connected() {
+    let f = Fixture::new();
+    let notebook = f.local("gemini-notebook-mcp");
+    f.local("database");
+    f.mcp
+        .set_enabled(&f.state, &f.home, &notebook.id, false)
+        .unwrap();
+    let (_sender, signal) = watch::channel(false);
+    let error = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Preciso que use o MCP Gemini Notebook.",
+        signal,
+    )
+    .await
+    .err()
+    .unwrap();
+    assert_eq!(error.code, "mcp_requested_unavailable");
+    assert!(error.message.contains("gemini-notebook-mcp"));
+    assert!(!f.home.join("calls").exists());
+}
+
+#[tokio::test]
+async fn generic_turn_exposes_a_small_selector_then_only_the_activated_server_tools() {
+    let f = Fixture::new();
+    f.local("docs");
+    f.local("database");
+    f.secrets.loads.store(0, Ordering::Relaxed);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Consulte a documentação se isso for útil.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    let initial = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(f.secrets.loads.load(Ordering::Relaxed), 0);
+    assert_eq!(initial.len(), 1);
+    assert_eq!(initial[0]["name"], "mcp_activate");
+    assert_eq!(
+        initial[0]["parameters"]["properties"]["server"]["enum"],
+        json!(["database", "docs"])
+    );
+    assert!(!clients.requires_active_task("mcp_activate"));
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &json!({"server":"docs"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    assert_eq!(f.secrets.loads.load(Ordering::Relaxed), 1);
+    let active = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(active.len(), 3);
+    let lookup = active
+        .iter()
+        .find(|definition| {
+            definition["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("docs / lookup"))
+        })
+        .unwrap()["name"]
+        .as_str()
+        .unwrap();
+    let mutation = active
+        .iter()
+        .find(|definition| {
+            definition["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("docs / mutate"))
+        })
+        .unwrap()["name"]
+        .as_str()
+        .unwrap();
+    assert!(!clients.requires_active_task(lookup));
+    assert!(clients.requires_active_task(mutation));
+    assert!(active
+        .iter()
+        .filter(|definition| definition["name"] != "mcp_activate")
+        .all(|definition| definition["description"]
+            .as_str()
+            .unwrap()
+            .contains("MCP docs /")));
+}
+
+#[tokio::test]
 async fn stdio_discovery_dispatch_policy_redaction_and_stale_config() {
     let f = Fixture::new();
     let server = f.local("docs");
@@ -292,18 +1365,42 @@ async fn stdio_discovery_dispatch_policy_redaction_and_stale_config() {
         )
         .await
         .is_err());
-    assert!(clients
+    let invalid = clients
         .execute(
             &f.mcp,
             &f.state,
             &f.home,
             lookup,
-            &json!({"query":42}),
+            &json!({"query":42, "unexpected":true}),
             false,
-            signal.clone()
+            signal.clone(),
         )
         .await
-        .is_err());
+        .unwrap_err();
+    assert_eq!(invalid.code, "mcp_invalid_arguments");
+    assert_eq!(invalid.metadata.server.as_deref(), Some("docs"));
+    assert_eq!(invalid.metadata.tool.as_deref(), Some("lookup"));
+    assert!(invalid.metadata.retryable);
+    assert!(!invalid.metadata.outcome_uncertain);
+    assert_eq!(
+        invalid.metadata.validation_errors,
+        vec![
+            McpValidationIssue {
+                path: "$.query".into(),
+                keyword: "type".into(),
+                message: "tipo inválido; esperado texto".into(),
+            },
+            McpValidationIssue {
+                path: "$.unexpected".into(),
+                keyword: "additionalProperties".into(),
+                message: "campo não permitido pelo schema".into(),
+            },
+        ]
+    );
+    let wire: Value = serde_json::from_str(&invalid.tool_result()).unwrap();
+    assert_eq!(wire["ok"], false);
+    assert_eq!(wire["error"]["code"], "mcp_invalid_arguments");
+    assert_eq!(wire["error"]["validationErrors"][0]["path"], "$.query");
     assert!(!f.home.join("calls").exists());
     let text = clients
         .execute(

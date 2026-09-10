@@ -92,6 +92,7 @@ async fn client(
         ]),
         enabled: true,
         timeout: 60_000,
+        request_timeout: 60_000,
     };
     let server = Server {
         id: "jarvis-core-context7".into(),

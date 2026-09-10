@@ -43,6 +43,78 @@ fn custom_agent_turns_are_direct_while_custom_graphs_remain_coordinated() {
     selected.custom_workflow_id = Some("b".repeat(32));
     assert!(!selected.direct());
 }
+
+#[test]
+fn mcp_failures_keep_a_readable_history_and_a_structured_provider_result() {
+    let mut failure = crate::mcp::coded_error(
+        "mcp_invalid_arguments",
+        "MCP 'docs', ferramenta 'lookup': argumentos inválidos.",
+    );
+    failure.metadata.server = Some("docs".into());
+    failure.metadata.tool = Some("lookup".into());
+    failure.metadata.validation_errors = vec![crate::mcp::McpValidationIssue {
+        path: "$.query".into(),
+        keyword: "type".into(),
+        message: "tipo inválido; esperado texto".into(),
+    }];
+
+    let (history, status, provider_result) =
+        settle_tool_result(Err(AgentError::from(failure))).unwrap();
+
+    assert_eq!(status, "error");
+    assert_eq!(
+        history,
+        "MCP 'docs', ferramenta 'lookup': argumentos inválidos."
+    );
+    let provider_result: Value =
+        serde_json::from_str(&provider_result.expect("structured MCP failure")).unwrap();
+    assert_eq!(provider_result["ok"], false);
+    assert_eq!(provider_result["error"]["code"], "mcp_invalid_arguments");
+    assert_eq!(
+        provider_result["error"]["validationErrors"][0]["path"],
+        "$.query"
+    );
+}
+
+#[test]
+fn a_new_user_turn_inherits_the_latest_durable_mcp_intent() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    session
+        .reserve(
+            "Use o MCP Gemini Notebook.".into(),
+            options(ApprovalMode::Yolo),
+        )
+        .unwrap();
+    let intent = crate::mcp::McpIntent {
+        mode: crate::mcp::McpIntentMode::Explicit,
+        servers: vec![crate::mcp::McpIntentServer {
+            id: "notebook-id".into(),
+            name: "gemini-notebook-mcp".into(),
+        }],
+        ..crate::mcp::McpIntent::default()
+    };
+    session
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().mcp_intent = Some(intent.clone());
+        })
+        .unwrap();
+    finish(&session, Ok(()));
+    session
+        .reserve(
+            "Continue e confirme a informação.".into(),
+            options(ApprovalMode::Yolo),
+        )
+        .unwrap();
+
+    let data = session.data.lock().unwrap();
+    let (turn_id, inherited, unresolved) =
+        pending_mcp_intent_resolution(&data.turns).expect("new turn needs resolution");
+    assert_eq!(turn_id, data.turns.last().unwrap().turn.id);
+    assert_eq!(inherited, intent);
+    assert_eq!(unresolved, vec!["Continue e confirme a informação."]);
+}
+
 pub(super) fn session(fixture: &Fixture) -> Arc<Session> {
     let journal = fixture.root.join("session.jsonl");
     fs::write(&journal, "{}\n").unwrap();
@@ -98,6 +170,7 @@ fn direct_recovery_resumes_only_durable_tool_results_and_preserves_new_messages(
     let mut direct = options(ApprovalMode::Yolo);
     direct.workflow = Some(workflow::Flow::Designer);
     let recovered = StoredTurn {
+        mcp_intent: None,
         turn: Turn {
             id: "recovered-turn".into(),
             created_at: 1,
@@ -347,6 +420,7 @@ async fn manual_waits_for_matching_approval_and_yolo_does_not_prompt() {
             &task_session,
             &task_tool,
             &options(ApprovalMode::Manual),
+            false,
             task_signal,
         )
         .await
@@ -367,7 +441,7 @@ async fn manual_waits_for_matching_approval_and_yolo_does_not_prompt() {
     assert!(!pending.await.unwrap().unwrap());
     assert!(session.snapshot().unwrap().pending_approval.is_none());
     assert!(
-        authorize(&session, &tool, &options(ApprovalMode::Yolo), signal)
+        authorize(&session, &tool, &options(ApprovalMode::Yolo), false, signal)
             .await
             .unwrap()
     );
@@ -397,10 +471,9 @@ async fn beads_mutations_require_manual_approval_but_queries_do_not() {
             duration_ms: 0,
         };
         let (s, t, cancel) = (session.clone(), tool.clone(), signal.clone());
-        let pending =
-            tokio::spawn(
-                async move { authorize(&s, &t, &options(ApprovalMode::Manual), cancel).await },
-            );
+        let pending = tokio::spawn(async move {
+            authorize(&s, &t, &options(ApprovalMode::Manual), false, cancel).await
+        });
         tokio::time::timeout(Duration::from_secs(1), async {
             while session.snapshot().unwrap().pending_approval.is_none() {
                 tokio::task::yield_now().await;
@@ -416,6 +489,7 @@ async fn beads_mutations_require_manual_approval_but_queries_do_not() {
             &session,
             &tool,
             &options(ApprovalMode::Yolo),
+            false,
             signal.clone()
         )
         .await
@@ -435,6 +509,7 @@ async fn beads_mutations_require_manual_approval_but_queries_do_not() {
             &session,
             &tool,
             &options(ApprovalMode::Manual),
+            false,
             signal.clone()
         )
         .await
@@ -444,7 +519,7 @@ async fn beads_mutations_require_manual_approval_but_queries_do_not() {
 }
 
 #[tokio::test]
-async fn mcp_calls_require_manual_approval_even_in_plan() {
+async fn read_only_mcp_calls_do_not_prompt_but_mutations_still_require_approval() {
     let fixture = Fixture::new();
     let session = session(&fixture);
     let mut plan = options(ApprovalMode::Manual);
@@ -460,8 +535,12 @@ async fn mcp_calls_require_manual_approval_even_in_plan() {
         output: String::new(),
         duration_ms: 0,
     };
+    assert!(authorize(&session, &tool, &plan, false, signal.clone())
+        .await
+        .unwrap());
+    assert!(session.snapshot().unwrap().pending_approval.is_none());
     let (s, t, p, cancel) = (session.clone(), tool.clone(), plan.clone(), signal.clone());
-    let pending = tokio::spawn(async move { authorize(&s, &t, &p, cancel).await });
+    let pending = tokio::spawn(async move { authorize(&s, &t, &p, true, cancel).await });
     tokio::time::timeout(Duration::from_secs(1), async {
         while session.snapshot().unwrap().pending_approval.is_none() {
             tokio::task::yield_now().await;
@@ -474,7 +553,9 @@ async fn mcp_calls_require_manual_approval_even_in_plan() {
     answer_approval(&session, &turn, &tool.id, false).unwrap();
     assert!(!pending.await.unwrap().unwrap());
     plan.approval_mode = ApprovalMode::Yolo;
-    assert!(authorize(&session, &tool, &plan, signal).await.unwrap());
+    assert!(authorize(&session, &tool, &plan, true, signal)
+        .await
+        .unwrap());
 }
 
 #[test]
@@ -494,6 +575,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                 approval: None,
                 question: None,
                 authoring: None,
+                accepting_auxiliary: true,
             }),
             recovery: None,
             storage_failed: false,
@@ -503,6 +585,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
             manual_compaction: false,
             turns: vec![StoredTurn {
                 wire: vec![json!({"encrypted_content":"private-replay"})],
+                mcp_intent: None,
                 turn: Turn {
                     id: "turn".into(),
                     user: "hello".into(),

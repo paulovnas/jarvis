@@ -40,11 +40,46 @@ describe("Persistent live conversation", () => {
     render(<TestChat />); await screen.findByRole("textbox");
     await user.type(screen.getByRole("textbox"), "Depois rode os testes{Enter}");
     expect(await screen.findByRole("region", { name: "Mensagens agendadas" })).toHaveTextContent("Depois rode os testes");
-    await user.click(screen.getByRole("button", { name: "Retirar mensagem 1 e editar" }));
+    await user.click(screen.getByRole("button", { name: "Editar mensagem 1" }));
     expect(call).toHaveBeenCalledWith("remove_queued_message", { conversationId: "c1", messageId: "q1" });
     expect(screen.queryByRole("region", { name: "Mensagens agendadas" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox")).toHaveTextContent("Depois rode os testes");
   }, 15000);
+
+  it("delivers a queued message to the active turn without cancelling it", async () => {
+    const user = userEvent.setup();
+    const turn = { ...savedTurn(), status: "running" as const };
+    const queued = { id: "q1", content: "Considere também o modo escuro", options: turn.options };
+    const running = { ...emptyChat(), revision: 1, turns: [turn], activeTurnId: turn.id, queuedMessages: [queued] };
+    call.mockImplementation(async command => {
+      if (command === "send_queued_message_now") return { delivered: true, snapshot: { ...running, revision: 2, queuedMessages: [] } };
+      return running;
+    });
+
+    render(<TestChat />);
+    await user.click(await screen.findByRole("button", { name: "Enviar mensagem 1 agora" }));
+
+    expect(call).toHaveBeenCalledWith("send_queued_message_now", { conversationId: "c1", messageId: "q1" });
+    expect(call).not.toHaveBeenCalledWith("cancel_agent_turn", expect.anything());
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Mensagens agendadas" })).not.toBeInTheDocument());
+  });
+
+  it("deletes a queued message only after confirmation", async () => {
+    const user = userEvent.setup();
+    const queued = { id: "q1", content: "Mensagem que não será enviada", options: savedTurn().options };
+    const paused = { ...emptyChat(), revision: 1, queuedMessages: [queued] };
+    call.mockImplementation(async command => command === "delete_queued_message"
+      ? { ...paused, revision: 2, queuedMessages: [] }
+      : paused);
+
+    render(<TestChat />);
+    await user.click(await screen.findByRole("button", { name: "Excluir mensagem 1" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("não voltará para o campo de texto");
+    await user.click(screen.getByRole("button", { name: "Excluir mensagem" }));
+
+    await waitFor(() => expect(call).toHaveBeenCalledWith("delete_queued_message", { conversationId: "c1", messageId: "q1" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Mensagens agendadas" })).not.toBeInTheDocument());
+  });
 
   it("locks and restores typing during automatic compaction events", async () => {
     const user = userEvent.setup(); render(<TestChat />);

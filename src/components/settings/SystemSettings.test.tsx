@@ -11,7 +11,15 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 const call = vi.mocked(invoke);
-const initial: SystemSnapshot = { preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30 }, sleepInhibited: false, sleepError: null, notificationError: null };
+const initial: SystemSnapshot = {
+  preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30, terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 } },
+  sleepInhibited: false,
+  sleepError: null,
+  notificationError: null,
+  availableTerminalShells: ["/bin/zsh", "/bin/bash"],
+  resolvedTerminalShell: "/bin/zsh",
+  terminalError: null,
+};
 
 describe("system preferences", () => {
   beforeEach(() => {
@@ -21,14 +29,14 @@ describe("system preferences", () => {
   });
   it.each([["open", "Enquanto Jarvis aberto"], ["off", "Desligado"], ["active", "Enquanto houver agentes/chats ativos"]])("saves sleep mode %s without changing notifications", async (value, label) => {
     const user = userEvent.setup();
-    call.mockResolvedValue({ ...initial, preferences: { preventSleep: value === "active" ? "off" : "active", notifications: true, askUserTimeoutSeconds: 30 } });
+    call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, preventSleep: value === "active" ? "off" : "active", notifications: true } });
     render(<SystemSettings />);
     const select = await screen.findByRole("combobox", { name: "Impedir repouso" });
     expect(select).toHaveTextContent(value === "active" ? "Desligado" : "Enquanto houver agentes/chats ativos");
     expect(screen.getByRole("switch", { name: "Notificações do sistema" })).toBeChecked();
-      call.mockResolvedValue({ ...initial, preferences: { preventSleep: value, notifications: true, askUserTimeoutSeconds: 30 } });
+      call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, preventSleep: value, notifications: true } });
       await user.click(select); await user.click(await screen.findByRole("option", { name: label }));
-      await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { preventSleep: value, notifications: true, askUserTimeoutSeconds: 30 } }));
+      await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { ...initial.preferences, preventSleep: value, notifications: true } }));
       expect(select).toHaveTextContent(label);
   });
   it("enables notifications before testing and can turn them off", async () => {
@@ -38,7 +46,7 @@ describe("system preferences", () => {
     call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, notifications: true } });
     await user.click(toggle);
     await waitFor(() => expect(toggle).toBeChecked());
-    expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { preventSleep: "off", notifications: true, askUserTimeoutSeconds: 30 } });
+    expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { ...initial.preferences, notifications: true } });
     await user.click(screen.getByRole("button", { name: "Testar" }));
     expect(call).toHaveBeenLastCalledWith("test_system_notification");
     expect(toast.success).toHaveBeenCalledWith("Notificação enviada ao sistema", expect.objectContaining({ description: expect.stringContaining("Não incomodar") }));

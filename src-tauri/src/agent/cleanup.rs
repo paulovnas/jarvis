@@ -324,6 +324,7 @@ mod tests {
                 approval_mode: ApprovalMode::Manual,
             },
             parts: vec![],
+            auxiliary_for: None,
         };
         let path = fixture
             .root

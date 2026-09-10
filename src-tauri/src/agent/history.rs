@@ -848,6 +848,7 @@ mod tests {
     use std::fs;
     fn stored(index: usize) -> StoredTurn {
         StoredTurn {
+            mcp_intent: None,
             turn: Turn {
                 id: format!("t{index}"),
                 created_at: index as u64,

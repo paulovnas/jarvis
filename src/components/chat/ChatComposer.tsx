@@ -1,5 +1,5 @@
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
-import { ArrowUp, Plus, Square, ListOrdered, X } from "lucide-react";
+import { ArrowUp, Plus, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/TextInput";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -9,7 +9,6 @@ import { attachmentSchema, uploadFile } from "@/core/attachments";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { FlowPicker } from "./FlowPicker";
 import { ComposerSkeleton } from "@/components/layout/LoadingSkeletons";
-import { MessageContent } from "./MessageContent";
 import { ModelPicker, type ProviderModelGroup, type ModelSelection } from "./ModelPicker";
 export type { ProviderModelGroup } from "./ModelPicker";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
@@ -23,6 +22,7 @@ import { mergeDrafts, type ChatDraft, type MessagePart, type QueuedMessage, type
 import type { WorkflowSnapshot } from "@/core/workflow";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
+import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
 
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
@@ -42,6 +42,9 @@ interface ChatComposerProps {
   drafts?: Map<string, ChatDraft>;
   queuedMessages?: QueuedMessage[];
   onRemoveQueued?: (id: string) => Promise<ChatDraft | null>;
+  onDeleteQueued?: (id: string) => Promise<boolean>;
+  onSendQueuedNow?: (id: string) => Promise<boolean>;
+  onReorderQueued?: (ids: string[]) => Promise<boolean>;
   onResumeQueue?: () => Promise<void>;
   workflowSnapshot?: WorkflowSnapshot | null;
 }
@@ -62,6 +65,9 @@ export function ChatComposer({
   drafts,
   queuedMessages = [],
   onRemoveQueued,
+  onDeleteQueued,
+  onSendQueuedNow,
+  onReorderQueued,
   onResumeQueue,
   workflowSnapshot,
 }: ChatComposerProps) {
@@ -73,9 +79,7 @@ export function ChatComposer({
   const importing = useRef(false);
   const [uploading, setUploading] = useState(false);
   const attachments = draft.parts?.filter(part => part.type === "attachment") ?? [];
-  const [removing, setRemoving] = useState<string[]>([]);
   const removeLocks = useRef(new Set<string>());
-  const [resuming, setResuming] = useState(false);
   const setDraft = (value: ChatDraft) => {
     draftRef.current = value;
     if (draftKey) { if (value.content || value.parts?.length) drafts?.set(draftKey, value); else drafts?.delete(draftKey); }
@@ -96,7 +100,7 @@ export function ChatComposer({
   }
   const removeQueued = async (id: string) => {
     if (!onRemoveQueued || removeLocks.current.has(id)) return;
-    removeLocks.current.add(id); setRemoving([...removeLocks.current]);
+    removeLocks.current.add(id);
     try {
       const restored = await onRemoveQueued(id);
       if (restored !== null) {
@@ -104,7 +108,7 @@ export function ChatComposer({
         setDraft(mergeDrafts(current, restored));
         input.current?.focus();
       }
-    } finally { removeLocks.current.delete(id); setRemoving([...removeLocks.current]); }
+    } finally { removeLocks.current.delete(id); }
   };
   const [sending, setSending] = useState(false);
   const sendLock = useRef(false);
@@ -214,15 +218,16 @@ export function ChatComposer({
     <div className="w-full">
       {modelError && <p role="alert" className="px-4 py-2 text-xs text-destructive">{modelError}</p>}
       {customUnavailable && <p role="alert" className="px-4 py-2 text-xs text-destructive">{customUnavailableMessage}</p>}
-      {queuedMessages.length > 0 && <section aria-label="Mensagens agendadas" className="mx-3 rounded-t-xl border border-b-0 border-border bg-card px-3 py-2">
-        <div className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground"><ListOrdered className="size-3.5" /><span>{running ? "Após a resposta atual" : "Fila pausada"} · {queuedMessages.length}</span>
-          {!running && <Button variant="ghost" size="sm" className="ml-auto h-6 cursor-pointer text-[11px]" disabled={resuming || compacting} onClick={() => { setResuming(true); void onResumeQueue?.().finally(() => setResuming(false)); }}>Continuar fila</Button>}
-        </div>
-        <div className="max-h-36 overflow-y-auto">{queuedMessages.map((message, index) => <div key={message.id} className="flex items-center gap-2 border-t border-border/50 py-1.5 text-xs">
-          <span className="text-muted-foreground tabular-nums">{index + 1}</span><p className="min-w-0 flex-1 truncate" title={message.content}><MessageContent content={message.content} parts={message.parts} /></p>
-          <Button variant="ghost" size="icon" className="size-6 shrink-0 cursor-pointer text-muted-foreground" aria-label={`Retirar mensagem ${index + 1} e editar`} title="Cancelar envio e devolver ao campo de texto" disabled={compacting || removing.includes(message.id)} onClick={() => { void removeQueued(message.id); }}><X className="size-3.5" /></Button>
-        </div>)}</div>
-      </section>}
+      {queuedMessages.length > 0 && <QueuedMessagesPanel
+        messages={queuedMessages}
+        running={running}
+        compacting={compacting}
+        onEdit={removeQueued}
+        onDelete={onDeleteQueued}
+        onSendNow={onSendQueuedNow}
+        onReorder={onReorderQueued}
+        onResume={onResumeQueue}
+      />}
       <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} onFiles={files => { void addFiles(files); }} attachments={(attachments.length > 0 || uploading) && <div className="flex flex-wrap gap-1 px-5 pt-4" aria-label="Anexos da mensagem">{attachments.map(part => <AttachmentPreview key={part.attachment.id} attachment={part.attachment} disabled={disabled || compacting || sending} onRemove={() => { const current = draftRef.current; setDraft({ ...current, parts: current.parts?.filter(item => item.type !== "attachment" || item.attachment.id !== part.attachment.id) }); }} />)}{uploading && <Skeleton className="mb-2 size-20 rounded-lg" role="status" aria-label="Preparando anexos" />}</div>} onSend={() => { void handleSend(); }} disabled={disabled || compacting} compacting={compacting} working={running || compacting}>
 
         {/* Linha de controles inferior no padrão Metis */}

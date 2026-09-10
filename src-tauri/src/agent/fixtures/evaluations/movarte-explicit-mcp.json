@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "movarte-explicit-mcp-fidelity",
+  "description": "Sanitized production trace in which an explicit Gemini Notebook request drifted to an unrelated Database MCP after a timeout.",
+  "sanitizedInput": "Use the Gemini Notebook MCP to find domain status information in the project's notebook.",
+  "expectations": {
+    "requiredOutcome": "completed",
+    "requiredMcp": "gemini-notebook-mcp",
+    "forbidOtherMcps": true,
+    "forbiddenMcps": ["database"],
+    "baselineViolations": [
+      { "code": "incomplete_run", "count": 1 },
+      { "code": "unrequested_mcp", "count": 8 }
+    ]
+  },
+  "observed": {
+    "wallTimeMs": 128755,
+    "agents": [
+      {
+        "role": "direct-builder",
+        "outcome": "cancelled",
+        "providerSteps": 15,
+        "measuredProviderSteps": 14,
+        "toolCalls": 14,
+        "toolErrors": 2,
+        "inputTokens": 395516,
+        "outputTokens": 1955,
+        "cacheReadTokens": 331520,
+        "cacheWriteTokens": 0,
+        "durationMs": 128755,
+        "tools": [
+          { "name": "notebook_list", "mcp": "gemini-notebook-mcp", "calls": 2, "errors": 1, "errorClasses": { "missing_active_task": 1 } },
+          { "name": "notebook_query", "mcp": "gemini-notebook-mcp", "calls": 1, "errors": 1, "errorClasses": { "request_timeout": 1 } },
+          { "name": "list_open_connections", "mcp": "database", "calls": 4, "errors": 0 },
+          { "name": "disconnect", "mcp": "database", "calls": 1, "errors": 0 },
+          { "name": "list_connections", "mcp": "database", "calls": 3, "errors": 0 },
+          { "name": "update_tasks", "calls": 2, "errors": 0 },
+          { "name": "ctx_search", "calls": 1, "errors": 0 }
+        ]
+      }
+    ]
+  }
+}

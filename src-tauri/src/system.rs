@@ -33,10 +33,63 @@ pub(crate) const DEFAULT_ASK_USER_TIMEOUT_SECONDS: u16 = 30;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub(crate) struct TerminalPreferences {
+    /// `None` follows the account login shell. A configured value is passed
+    /// directly to the PTY and is never interpreted by another shell.
+    pub shell: Option<String>,
+    /// Empty uses conservative shell-specific interactive/login defaults.
+    pub arguments: Vec<String>,
+    /// `None` lets the UI prefer installed Nerd Fonts before its bundled mono font.
+    pub font_family: Option<String>,
+    pub font_size: u16,
+}
+
+impl Default for TerminalPreferences {
+    fn default() -> Self {
+        Self {
+            shell: None,
+            arguments: Vec::new(),
+            font_family: None,
+            font_size: 13,
+        }
+    }
+}
+
+impl TerminalPreferences {
+    fn validate(&self) -> Result<(), String> {
+        if self.shell.as_ref().is_some_and(|shell| {
+            let shell = shell.trim();
+            shell.is_empty() || shell.len() > 4096 || shell.contains('\0')
+        }) {
+            return Err("Informe um executável de shell válido.".into());
+        }
+        if self.arguments.len() > 16
+            || self.arguments.iter().any(|argument| {
+                argument.is_empty() || argument.len() > 512 || argument.contains('\0')
+            })
+        {
+            return Err("Use até 16 argumentos de shell válidos, um por linha.".into());
+        }
+        if self.font_family.as_ref().is_some_and(|font| {
+            let font = font.trim();
+            font.is_empty() || font.len() > 160 || font.chars().any(char::is_control)
+        }) {
+            return Err("Informe uma família de fonte válida.".into());
+        }
+        if !(9..=32).contains(&self.font_size) {
+            return Err("O tamanho da fonte deve ficar entre 9 e 32 pixels.".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Preferences {
     pub prevent_sleep: SleepMode,
     pub notifications: bool,
     pub ask_user_timeout_seconds: u16,
+    pub(crate) terminal: TerminalPreferences,
 }
 
 impl Default for Preferences {
@@ -45,6 +98,7 @@ impl Default for Preferences {
             prevent_sleep: SleepMode::Off,
             notifications: false,
             ask_user_timeout_seconds: DEFAULT_ASK_USER_TIMEOUT_SECONDS,
+            terminal: TerminalPreferences::default(),
         }
     }
 }
@@ -54,6 +108,7 @@ impl Preferences {
         if !(1..=3600).contains(&self.ask_user_timeout_seconds) {
             return Err("O tempo das perguntas deve ficar entre 1 e 3.600 segundos.".into());
         }
+        self.terminal.validate()?;
         Ok(())
     }
 }
@@ -65,6 +120,9 @@ pub struct Snapshot {
     sleep_inhibited: bool,
     sleep_error: Option<String>,
     notification_error: Option<String>,
+    available_terminal_shells: Vec<String>,
+    resolved_terminal_shell: Option<String>,
+    terminal_error: Option<String>,
 }
 
 struct Store {
@@ -194,6 +252,11 @@ impl SystemState {
     }
     fn snapshot(&self) -> Result<Snapshot, String> {
         let preferences = self.preferences()?;
+        let (resolved_terminal_shell, terminal_error) =
+            match crate::agent::shell::interactive_shell(&preferences.terminal) {
+                Ok(path) => (Some(path.to_string_lossy().into_owned()), None),
+                Err(error) => (None, Some(error)),
+            };
         let sleep = self
             .sleep
             .lock()
@@ -207,6 +270,9 @@ impl SystemState {
                 .lock()
                 .map_err(|_| "Notificações indisponíveis.")?
                 .clone(),
+            available_terminal_shells: crate::agent::shell::interactive_shells(),
+            resolved_terminal_shell,
+            terminal_error,
         })
     }
     fn changed(&self, app: &tauri::AppHandle) {
@@ -235,10 +301,14 @@ impl SystemState {
         home: &Path,
     ) -> Result<(), String> {
         let store = Store::open(home.join(".jarvis/system.json"))?;
+        let terminal = store.preferences.terminal.clone();
         *self
             .store
             .lock()
             .map_err(|_| "Preferências indisponíveis.")? = Some(Ok(store));
+        app.state::<crate::agent::AgentState>()
+            .terminals
+            .set_preferences(terminal);
         if let Ok(worker) = self.worker.lock() {
             if let Some((wake, _)) = worker.as_ref() {
                 let _ = wake.send(false);
@@ -256,12 +326,16 @@ pub(crate) fn backup_preferences(home: &Path) -> Result<Preferences, String> {
 // The assertion is created and dropped on one dedicated thread (required on Windows).
 pub fn setup(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let state = app.state::<SystemState>();
+    let store = Store::open(app.path().home_dir()?.join(".jarvis/system.json"));
+    if let Ok(store) = &store {
+        app.state::<crate::agent::AgentState>()
+            .terminals
+            .set_preferences(store.preferences.terminal.clone());
+    }
     *state
         .store
         .lock()
-        .map_err(|_| "System preferences lock poisoned")? = Some(Store::open(
-        app.path().home_dir()?.join(".jarvis/system.json"),
-    ));
+        .map_err(|_| "System preferences lock poisoned")? = Some(store);
     if let Err(error) = notifications::setup(app) {
         *state
             .notification_error
@@ -413,6 +487,11 @@ pub async fn save_system_preferences(
 ) -> Result<Snapshot, String> {
     let _edit = state.edit.lock().await;
     preferences.validate()?;
+    // Fail a stale or misspelled custom executable before persisting it. Any
+    // already-running PTY remains alive because only future spawns read this value.
+    if preferences.terminal.shell != state.preferences()?.terminal.shell {
+        crate::agent::shell::interactive_shell(&preferences.terminal)?;
+    }
     if preferences.notifications && !state.preferences()?.notifications {
         let result = notifications::authorize().await;
         state.notification_result(&app, &result);
@@ -428,8 +507,11 @@ pub async fn save_system_preferences(
             .ok_or("Preferências ainda não carregadas.")?
             .as_mut()
             .map_err(|error| error.clone())?
-            .save(preferences)?;
+            .save(preferences.clone())?;
     }
+    app.state::<crate::agent::AgentState>()
+        .terminals
+        .set_preferences(preferences.terminal);
     if let Ok(worker) = state.worker.lock() {
         if let Some((wake, _)) = worker.as_ref() {
             let _ = wake.send(false);

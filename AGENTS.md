@@ -70,6 +70,23 @@ Ou simplesmente `bun run check` (roda os quatro). Se tocou em `src-tauri`, rode 
 - UI em pt-BR quando houver texto visível ao usuário final; código, comentários e docs em inglês, salvo seção de regras deste arquivo.
 - Não commitar nem fazer push sem autorização explícita (ver perfil Beads abaixo).
 
+### Skills contextuais para o harness de IA
+
+As skills abaixo estão instaladas em `~/.skills-manager/skills`. Carregue somente o conjunto pertinente ao problema atual; não injete todas em cada tarefa ou prompt, pois isso aumenta o contexto e reduz a precisão.
+
+- **Seleção, schemas e loops de ferramentas:** `ai-patterns-tool-use-patterns` e `prompt-agents-and-tools`.
+- **Arquitetura, papéis e handoffs multiagente:** `agent-architect`.
+- **Contexto, compactação e cache de prompt:** `context-engineering`.
+- **Construção geral de prompts:** `prompt-engineering`; use `prompt-clarity-and-structure` para contratos ambíguos e formatos inconsistentes.
+- **Encadeamento, retries e recuperação:** `prompt-reasoning-and-chaining`.
+- **Grounding, RAG e fontes não confiáveis:** `prompt-grounding-and-rag`.
+- **Regressões e avaliação de comportamento:** `prompt-evaluation`; transforme falhas reais de produção em fixtures versionadas.
+- **Segurança, menor privilégio e produção:** `prompt-security-and-production`.
+- **Integrações por provedor:** `ai-provider-openai-sdk`, `ai-provider-anthropic-sdk` e `ai-provider-google-gemini-sdk`, conforme o protocolo em análise.
+- **Áudio e transcrição:** `ai-provider-openai-whisper`, somente quando o escopo envolver entrada ou saída de áudio.
+
+Ao alterar o harness, preserve a intenção explícita do usuário, exponha o menor catálogo de ferramentas necessário, valide nomes e argumentos antes da execução, retorne erros estruturados e não repita automaticamente ações com resultado incerto. Mantenha conteúdo estático no início do prompt e estado dinâmico no final para favorecer cache hit.
+
 > **Architecture in one line:** Issues live in a local Dolt database
 > (`.beads/dolt/`); cross-machine sync uses `bd dolt push/pull` (a
 > git-compatible protocol), stored under `refs/dolt/data` on your git

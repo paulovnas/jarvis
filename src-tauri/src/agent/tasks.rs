@@ -159,8 +159,7 @@ pub(super) fn requires_active_task(name: &str) -> bool {
             | "terminal_start"
             | "terminal_write"
             | "terminal_close"
-    ) || name.starts_with("mcp_")
-        || super::browser::mutating(name)
+    ) || super::browser::mutating(name)
         || crate::core::context::needs_approval(name)
 }
 
@@ -225,7 +224,6 @@ mod tests {
             "terminal_write",
             "browser_click",
             "ctx_execute",
-            "mcp_external_action",
         ] {
             assert!(requires_active_task(name), "{name} should require a task");
         }
@@ -235,6 +233,7 @@ mod tests {
             "lsp_definition",
             "web_search",
             "update_tasks",
+            "mcp_external_lookup",
         ] {
             assert!(
                 !requires_active_task(name),

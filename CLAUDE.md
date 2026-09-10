@@ -2,6 +2,21 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
+## Contextual AI harness skills
+
+The installed skills under `~/.skills-manager/skills` are a contextual reference set, not a prompt bundle. Load only what the current work needs:
+
+- Tool routing and schemas: `ai-patterns-tool-use-patterns`, `prompt-agents-and-tools`
+- Multi-agent roles and handoffs: `agent-architect`
+- Context, compaction, and prompt caching: `context-engineering`
+- Prompt construction and contracts: `prompt-engineering`, `prompt-clarity-and-structure`, `prompt-reasoning-and-chaining`
+- Grounding and evaluations: `prompt-grounding-and-rag`, `prompt-evaluation`
+- Security and production hardening: `prompt-security-and-production`
+- Provider adapters: `ai-provider-openai-sdk`, `ai-provider-anthropic-sdk`, `ai-provider-google-gemini-sdk`
+- Audio only: `ai-provider-openai-whisper`
+
+For harness changes, preserve explicit user intent, expose the smallest relevant tool catalog, validate tool arguments, return structured errors, avoid replaying uncertain effects, and keep static prompt content before dynamic state for cache reuse. Record real production failures as regression fixtures.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker
 
