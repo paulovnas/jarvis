@@ -407,7 +407,9 @@ mod tests {
         let changed = original.replacen("line 080: aaaa", "line 080: bbbb", 1);
         assert_eq!(changed.len(), original.len());
         fs::write(&path, changed).unwrap();
-        fs::File::open(&path)
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
             .unwrap()
             .set_times(std::fs::FileTimes::new().set_modified(modified_at))
             .unwrap();
