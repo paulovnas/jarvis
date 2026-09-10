@@ -26,7 +26,15 @@ export interface ToolActivityGroup {
   tools: ToolCallItem[];
   summary: string;
   failures: number;
+  warnings: number;
   active: boolean;
+}
+
+const TASK_REMINDER = "Atualize a lista com update_tasks e mantenha uma tarefa em andamento";
+
+export function isTaskReminder(tool: ToolCallItem): boolean {
+  return tool.status === "error" && [tool.output, tool.error]
+    .some(message => message?.includes(TASK_REMINDER));
 }
 
 function actionKind(name: string): ActionKind {
@@ -68,7 +76,8 @@ export function groupToolActivity(tools: ToolCallItem[]): ToolActivityGroup[] {
       id: `${batch[0].id}:${batch[batch.length - 1]?.id}`,
       tools: batch,
       summary: summarizeToolActivity(batch),
-      failures: batch.filter(tool => tool.status === "error").length,
+      failures: batch.filter(tool => tool.status === "error" && !isTaskReminder(tool)).length,
+      warnings: batch.filter(isTaskReminder).length,
       active: batch.some(tool => tool.status === "running" || tool.status === "pending"),
     });
   }

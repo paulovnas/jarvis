@@ -250,6 +250,7 @@ struct Active {
 }
 struct SessionData {
     turns: Vec<StoredTurn>,
+    durable_turn: Option<StoredTurn>,
     active: Option<Active>,
     recovery: Option<String>,
     revision: u64,
@@ -286,6 +287,31 @@ impl Session {
         journal::append_event(&self.journal, kind, value).inspect_err(|_| {
             data.storage_failed = true;
         })
+    }
+    fn persist_turn(
+        &self,
+        data: &mut SessionData,
+        candidate: &StoredTurn,
+    ) -> Result<(), AgentError> {
+        if data.storage_failed {
+            return Err(AgentError::storage());
+        }
+        let result = data.durable_turn.as_ref().map_or_else(
+            || journal::append(&self.journal, candidate),
+            |durable| {
+                if durable.turn.id == candidate.turn.id {
+                    journal::append_update(&self.journal, durable, candidate)
+                } else {
+                    journal::append(&self.journal, candidate)
+                }
+            },
+        );
+        if result.is_err() {
+            data.storage_failed = true;
+            return Err(AgentError::storage());
+        }
+        data.durable_turn = Some(candidate.clone());
+        Ok(())
     }
     #[cfg(test)]
     fn reserve(
@@ -336,6 +362,7 @@ impl Session {
             data.storage_failed = true;
             return Err(AgentError::storage());
         }
+        data.durable_turn = Some(turn.clone());
         let (cancel, signal) = watch::channel(false);
         data.active = Some(Active {
             id,
@@ -378,6 +405,7 @@ impl Session {
                 data.storage_failed = true;
                 return Err(AgentError::storage());
             }
+            data.durable_turn = Some(current.clone());
         }
         let (cancel, signal) = watch::channel(false);
         data.active = Some(Active {
@@ -450,7 +478,11 @@ impl Session {
         if data.storage_failed {
             return Err(AgentError::storage());
         }
-        let current = data.turns.last().ok_or_else(AgentError::internal)?;
+        let current = data
+            .turns
+            .last()
+            .cloned()
+            .ok_or_else(AgentError::internal)?;
         if !data
             .active
             .as_ref()
@@ -458,12 +490,9 @@ impl Session {
         {
             return Err(AgentError::cancelled());
         }
-        let mut next = current.clone();
+        let mut next = current;
         next.turn.tasks = tasks;
-        if journal::append_update(&self.journal, current, &next).is_err() {
-            data.storage_failed = true;
-            return Err(AgentError::storage());
-        }
+        self.persist_turn(&mut data, &next)?;
         *data.turns.last_mut().unwrap() = next;
         data.revision = next_revision();
         data.last_emit = std::time::Instant::now();
@@ -499,22 +528,16 @@ impl Session {
         change: impl FnOnce(&mut SessionData),
     ) -> Result<(), AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
-        let before = durable.then(|| data.turns.last().cloned()).flatten();
+        if durable && data.storage_failed {
+            return Err(AgentError::storage());
+        }
         change(&mut data);
         data.revision = next_revision();
         if durable {
-            if data.storage_failed {
-                return Err(AgentError::storage());
-            }
-            if let Some(last) = data.turns.last() {
-                let result = before.as_ref().map_or_else(
-                    || journal::append(&self.journal, last),
-                    |previous| journal::append_update(&self.journal, previous, last),
-                );
-                if result.is_err() {
-                    data.storage_failed = true;
-                    return Err(AgentError::storage());
-                }
+            if let Some(last) = data.turns.last().cloned() {
+                self.persist_turn(&mut data, &last)?;
+            } else {
+                data.durable_turn = None;
             }
         }
         let should_emit = durable || data.last_emit.elapsed() >= Duration::from_millis(50);
@@ -699,12 +722,14 @@ impl AgentState {
             journal::append_event(&path, "file_checkpoint", file)?;
         }
         let handle = app.clone();
+        let durable_turn = turns.last().cloned();
         let session = Arc::new(Session {
             id: id.into(),
             journal: path,
             root,
             data: Mutex::new(SessionData {
                 turns,
+                durable_turn,
                 active: None,
                 recovery,
                 revision: next_revision(),
@@ -1265,7 +1290,7 @@ fn run_turn<'a>(
         let mut tasks_reminded = false;
         let mut repeated_tools = tool_loop::Guard::default();
         let mut project_instructions = instructions::Resolver::new(&session.root)?;
-        let mut lsp = lsp::Registry::new(&session.root)?;
+        let mut lsp = lsp::Registry::new(&session.root, home)?;
         let task_snapshot = direct_tasks
             .then(|| session.task_context())
             .transpose()?

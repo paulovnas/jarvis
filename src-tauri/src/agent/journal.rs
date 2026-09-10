@@ -407,6 +407,7 @@ fn read(
     let mut extras = Extras::default();
     let mut ids = std::collections::HashSet::new();
     let mut turn_checkpoints = 0usize;
+    let mut damaged_turn: Option<String> = None;
     let valid_end = scan(path, 0, |_, _, record| {
         match record.r#type.as_str() {
             "compaction_completed" => {
@@ -433,10 +434,27 @@ fn read(
                 return Ok(());
             }
             "turn_delta" => {
-                let delta: TurnDelta =
-                    serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
-                let turn = turns.last_mut().ok_or_else(AgentError::storage)?;
-                apply_delta(turn, delta)?;
+                let current_id = turns
+                    .last()
+                    .map(|turn| turn.turn.id.clone())
+                    .ok_or_else(AgentError::storage)?;
+                let delta = serde_json::from_value::<TurnDelta>(record.data);
+                if let Some(damaged) = &damaged_turn {
+                    if delta.as_ref().is_ok_and(|delta| delta.turn_id != *damaged) {
+                        return Err(AgentError::storage());
+                    }
+                    return Ok(());
+                }
+                let Ok(delta) = delta else {
+                    damaged_turn = Some(current_id);
+                    return Ok(());
+                };
+                let mut candidate = turns.last().cloned().ok_or_else(AgentError::storage)?;
+                if apply_delta(&mut candidate, delta).is_err() {
+                    damaged_turn = Some(current_id);
+                    return Ok(());
+                }
+                *turns.last_mut().ok_or_else(AgentError::storage)? = candidate;
                 return Ok(());
             }
             "turn_checkpoint" => turn_checkpoints += 1,
@@ -444,6 +462,17 @@ fn read(
         }
         let turn: StoredTurn =
             serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+        if let Some(damaged) = damaged_turn.take() {
+            if turn.turn.id != damaged
+                || !turns
+                    .last()
+                    .is_some_and(|current| current.turn.id == damaged)
+            {
+                return Err(AgentError::storage());
+            }
+            *turns.last_mut().ok_or_else(AgentError::storage)? = turn;
+            return Ok(());
+        }
         if turns
             .last()
             .is_some_and(|last| last.turn.id == turn.turn.id)
@@ -457,6 +486,9 @@ fn read(
         }
         Ok(())
     })?;
+    if damaged_turn.is_some() {
+        return Err(AgentError::storage());
+    }
     if repair
         && valid_end
             < open(path, false)?
@@ -888,6 +920,47 @@ mod tests {
             serde_json::to_value(&loaded[0]).unwrap(),
             serde_json::to_value(&current).unwrap()
         );
+    }
+
+    #[test]
+    fn later_checkpoint_recovers_a_turn_from_a_superseded_invalid_delta() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("superseded-delta.jsonl");
+        fs::write(&path, "{\"type\":\"session\"}\n").unwrap();
+        let initial = turn();
+        append(&path, &initial).unwrap();
+        append_event(
+            &path,
+            "turn_delta",
+            &TurnDelta {
+                turn_id: initial.turn.id.clone(),
+                operations: vec![DeltaOperation::Set {
+                    path: vec![
+                        DeltaPathPart::Key("turn".into()),
+                        DeltaPathPart::Key("steps".into()),
+                        DeltaPathPart::Index(0),
+                        DeltaPathPart::Key("durationMs".into()),
+                    ],
+                    value: json!(42),
+                }],
+            },
+        )
+        .unwrap();
+        assert!(read_only(&path).is_err());
+
+        let mut completed = initial;
+        completed.turn.steps.push(Step {
+            text: "Resposta preservada".into(),
+            duration_ms: 42,
+            ..Step::default()
+        });
+        completed.turn.status = TurnStatus::Completed;
+        append(&path, &completed).unwrap();
+
+        let (loaded, _) = read_only(&path).unwrap();
+        assert_eq!(loaded[0].turn.status, TurnStatus::Completed);
+        assert_eq!(loaded[0].turn.steps[0].text, "Resposta preservada");
+        assert_eq!(loaded[0].turn.steps[0].duration_ms, 42);
     }
 
     #[test]

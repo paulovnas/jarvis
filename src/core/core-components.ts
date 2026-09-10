@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const coreIdSchema = z.enum(["context-mode", "ponytail", "beads", "open-design", "context7"]);
+export const coreIdSchema = z.enum(["context-mode", "ponytail", "beads", "open-design", "context7", "lsp"]);
 export type CoreId = z.infer<typeof coreIdSchema>;
 export const coreDownloadSchema = z.object({
   receivedBytes: z.number().int().nonnegative(), totalBytes: z.number().int().positive().nullable(),
@@ -15,7 +15,7 @@ export const coreSnapshotSchema = z.object({
     download: coreDownloadSchema.nullable(),
     healthError: z.string().nullable().default(null),
     diagnostics: z.array(z.object({ label: z.string(), passed: z.boolean(), message: z.string() })).default([]),
-  })).length(5).refine(items => new Set(items.map(item => item.id)).size === 5),
+  })).length(6).refine(items => new Set(items.map(item => item.id)).size === 6),
 }).refine(value => value.ready === value.items.every(item => item.installed && item.configured && !item.healthError));
 export type CoreSnapshot = z.infer<typeof coreSnapshotSchema>;
 export function coreError(cause: unknown): string {

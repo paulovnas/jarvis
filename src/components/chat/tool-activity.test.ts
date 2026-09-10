@@ -22,7 +22,14 @@ describe("grouped tool activity", () => {
     const groups = groupToolActivity([
       tool("read", 1), tool("read", 2, "error"), tool("bash", 3, "running"), tool("edit", 4), tool("ctx_search", 5),
     ]);
-    expect(groups[0]).toMatchObject({ failures: 1, active: true });
+    expect(groups[0]).toMatchObject({ failures: 1, warnings: 0, active: true });
+  });
+
+  it("treats the direct-task preflight as an expected warning", () => {
+    const reminder = tool("ctx_execute", 1, "error");
+    reminder.output = "Atualize a lista com update_tasks e mantenha uma tarefa em andamento antes de executar alterações.";
+    const groups = groupToolActivity([reminder, tool("read", 2), tool("read", 3), tool("read", 4), tool("read", 5)]);
+    expect(groups[0]).toMatchObject({ failures: 0, warnings: 1, active: false });
   });
 
   it("leaves short histories ungrouped", () => {

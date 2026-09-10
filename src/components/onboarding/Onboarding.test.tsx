@@ -14,14 +14,14 @@ beforeEach(() => {
   invokeMock.mockReset(); changed = undefined;
   vi.mocked(listen).mockImplementation(async (name, callback) => { if (name === "core:changed") changed = callback; return () => {}; });
 });
-it("requires all five configured tools before providers and a connected provider before the final step", async () => {
+it("requires all six configured tools before providers and a connected provider before the final step", async () => {
   let state = coreFixture(); state.ready = false; state.items[4].configured = false;
   invokeMock.mockImplementation(async command => command === "get_core_status" || command === "check_core_updates" ? state : []);
   const user = userEvent.setup(); const complete = vi.fn();
   render(<Onboarding saving={false} onComplete={complete} />);
   expect(screen.getByRole("heading", { name: "Bem-vindo ao Jarvis" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Avançar" }));
-  await screen.findByText("4/5");
+  await screen.findByText("5/6");
   expect(screen.getByRole("button", { name: "Avançar" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Configurar Context7" })).toBeEnabled();
   state = coreFixture();

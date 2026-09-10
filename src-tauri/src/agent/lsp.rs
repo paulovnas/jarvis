@@ -38,25 +38,25 @@ pub(super) fn definitions() -> Vec<Value> {
     vec![
         tools::definition(
             "lsp_definition",
-            "Find the definition of the symbol at a source position using the project's installed language server. Prefer this over text search for code navigation. No server is downloaded automatically.",
+            "Find the definition of the symbol at a source position using a project-local or Jarvis-managed language server. Prefer this over text search for code navigation.",
             json!({"path":path,"line":line,"column":column}),
             &["path", "line", "column"],
         ),
         tools::definition(
             "lsp_references",
-            "Find references to the symbol at a source position using the project's installed language server. Results outside the project are omitted.",
+            "Find references to the symbol at a source position using a project-local or Jarvis-managed language server. Results outside the project are omitted.",
             json!({"path":path,"line":line,"column":column,"includeDeclaration":{"type":"boolean","default":true}}),
             &["path", "line", "column"],
         ),
         tools::definition(
             "lsp_symbols",
-            "List structural symbols in one source file using the project's installed language server. Optionally filter the bounded result by name.",
+            "List structural symbols in one source file using a project-local or Jarvis-managed language server. Optionally filter the bounded result by name.",
             json!({"path":path,"query":{"type":"string","maxLength":200}}),
             &["path"],
         ),
         tools::definition(
             "lsp_diagnostics",
-            "Read current compiler and language-server diagnostics for one source file. Opening the file may start its installed language server.",
+            "Read current compiler and language-server diagnostics for one source file. Opening the file may start a project-local or Jarvis-managed server.",
             json!({"path":path}),
             &["path"],
         ),
@@ -124,14 +124,10 @@ impl ServerKind {
 
     fn install_hint(self) -> &'static str {
         match self {
-            Self::TypeScript => {
-                "Instale typescript-language-server no projeto ou disponibilize-o no PATH."
-            }
+            Self::TypeScript => "Repare Servidores LSP em Configurações → Ferramentas → Core.",
             Self::Rust => "Instale rust-analyzer e disponibilize-o no PATH.",
             Self::Go => "Instale gopls e disponibilize-o no PATH.",
-            Self::Python => {
-                "Instale pyright no projeto ou disponibilize pyright-langserver no PATH."
-            }
+            Self::Python => "Repare Servidores LSP em Configurações → Ferramentas → Core.",
         }
     }
 }
@@ -166,9 +162,8 @@ impl Drop for Server {
 }
 
 impl Server {
-    async fn start(root: &Path, kind: ServerKind) -> Result<Self, AgentError> {
-        let program = local_program(root, kind.program());
-        let mut argv = vec![program.to_string_lossy().into_owned()];
+    async fn start(root: &Path, home: &Path, kind: ServerKind) -> Result<Self, AgentError> {
+        let mut argv = server_command(root, home, kind);
         argv.extend(kind.arguments().iter().map(|value| (*value).to_owned()));
         let mut command = crate::mcp::executable::local_command(&argv, &BTreeMap::new(), root)
             .map_err(|_| {
@@ -427,11 +422,12 @@ impl Server {
 
 pub(super) struct Registry {
     root: PathBuf,
+    home: PathBuf,
     servers: HashMap<ServerKind, Server>,
 }
 
 impl Registry {
-    pub(super) fn new(root: &Path) -> Result<Self, AgentError> {
+    pub(super) fn new(root: &Path, home: &Path) -> Result<Self, AgentError> {
         if std::fs::canonicalize(root).ok().as_deref() != Some(root) || !root.is_dir() {
             return Err(error(
                 "A pasta original do projeto não está disponível para o LSP.",
@@ -439,6 +435,7 @@ impl Registry {
         }
         Ok(Self {
             root: root.to_path_buf(),
+            home: home.to_path_buf(),
             servers: HashMap::new(),
         })
     }
@@ -453,9 +450,10 @@ impl Registry {
         let kind = ServerKind::for_path(&path)?;
         if !self.servers.contains_key(&kind) {
             let root = self.root.clone();
+            let home = self.home.clone();
             let server = tokio::select! {
                 _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-                result = Server::start(&root, kind) => result?,
+                result = Server::start(&root, &home, kind) => result?,
             };
             self.servers.insert(kind, server);
         }
@@ -621,6 +619,15 @@ fn local_program(root: &Path, name: &str) -> PathBuf {
         }
     }
     PathBuf::from(name)
+}
+
+fn server_command(root: &Path, home: &Path, kind: ServerKind) -> Vec<String> {
+    let local = local_program(root, kind.program());
+    if local != Path::new(kind.program()) {
+        return vec![local.to_string_lossy().into_owned()];
+    }
+    crate::core::lsp::command(home, kind.program())
+        .unwrap_or_else(|| vec![kind.program().to_owned()])
 }
 
 fn file_uri(path: &Path) -> Result<String, AgentError> {
@@ -916,6 +923,65 @@ mod tests {
         assert_eq!(
             local_program(&fixture.root, "typescript-language-server"),
             executable
+        );
+    }
+
+    #[test]
+    fn resolves_project_then_managed_then_path_language_servers() {
+        let fixture = Fixture::new();
+        let home = tempfile::tempdir().unwrap();
+        let package = crate::core::root(home.path()).join("lsp/fixture");
+        let node_relative = if cfg!(windows) {
+            "runtime/node.exe"
+        } else {
+            "runtime/bin/node"
+        };
+        let server_relative = "node_modules/typescript-language-server/lib/cli.mjs";
+        for relative in [node_relative, server_relative] {
+            let path = package.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "fixture").unwrap();
+        }
+        std::fs::write(
+            crate::core::root(home.path()).join("manifest.json"),
+            serde_json::to_vec(&json!({
+                "installations": {
+                    "lsp": {
+                        "version": "1.0.0",
+                        "directory": "lsp/fixture",
+                        "files": [node_relative, server_relative]
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let managed = server_command(&fixture.root, home.path(), ServerKind::TypeScript);
+        assert_eq!(
+            managed,
+            vec![
+                package.join(node_relative).to_string_lossy().into_owned(),
+                package.join(server_relative).to_string_lossy().into_owned(),
+            ]
+        );
+
+        let bin = fixture.root.join("node_modules/.bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        #[cfg(windows)]
+        let local = bin.join("typescript-language-server.cmd");
+        #[cfg(not(windows))]
+        let local = bin.join("typescript-language-server");
+        std::fs::write(&local, "fixture").unwrap();
+        assert_eq!(
+            server_command(&fixture.root, home.path(), ServerKind::TypeScript),
+            vec![local.to_string_lossy().into_owned()]
+        );
+
+        let empty_home = tempfile::tempdir().unwrap();
+        assert_eq!(
+            server_command(&fixture.root, empty_home.path(), ServerKind::Rust),
+            vec!["rust-analyzer"]
         );
     }
 

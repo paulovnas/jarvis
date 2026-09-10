@@ -1,4 +1,4 @@
-import { AlertCircle, BookOpen, Bot, Braces, Check, ChevronRight, Eye, FilePenLine, FileText, FolderSearch, GitBranch, Globe, ImagePlus, Layers3, ListTodo, Search, Stethoscope, Terminal, Wrench } from "lucide-react";
+import { AlertCircle, BookOpen, Bot, Braces, Check, ChevronRight, Eye, FilePenLine, FileText, FolderSearch, GitBranch, Globe, ImagePlus, Layers3, ListTodo, Search, Stethoscope, Terminal, TriangleAlert, Wrench } from "lucide-react";
 import { readWebSearchResult } from "@/core/web-search";
 import { readVisionResult } from "@/core/attachments";
 import { agentToolSchema } from "@/core/chat";
@@ -12,6 +12,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Spinner } from "@/components/ui/spinner";
 import type { ToolCallItem } from "./types";
 import { QuestionHistory } from "./QuestionHistory";
+import { isTaskReminder } from "./tool-activity";
 
 const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
 const DEFERRED_DETAIL_KEY = "_jarvisHistoryDetailsDeferred";
@@ -113,7 +114,9 @@ export function ToolCallCard({ tool, detailContext }: { tool: ToolCallItem; deta
   const detail = current.name === "read_skill" ? current.output?.match(/^Skill: (.+)/)?.[1] ?? current.args?.path : current.args?.title ?? current.args?.path ?? current.args?.command ?? current.args?.query ?? current.args?.question ?? current.args?.url;
   const searchResult = current.name === "web_search" && current.output ? readWebSearchResult(current.output) : null;
   const visionResult = current.name === "vision" && current.output ? readVisionResult(current.output) : null;
-  const status = { pending: "Aguardando autorização", running: "Executando", completed: "Concluída", error: "Não concluída" }[current.status];
+  const warning = isTaskReminder(current);
+  const status = warning ? "Atenção" : { pending: "Aguardando autorização", running: "Executando", completed: "Concluída", error: "Não concluída" }[current.status];
+  const mutation = ["write", "edit", "apply_patch"].includes(current.name);
   const requestDetails = () => {
     if (!deferred || !detailContext || loading) return;
     setLoading(true); setLoadError(null);
@@ -122,12 +125,12 @@ export function ToolCallCard({ tool, detailContext }: { tool: ToolCallItem; deta
   return (
     <Collapsible open={open} onOpenChange={next => { setOpen(next); if (next) requestDetails(); }} data-testid={`tool-call-${tool.id}`} className="tool-slot min-w-0">
       <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group flex h-auto min-h-9 w-full cursor-pointer justify-start gap-2 px-2.5 text-left text-[11px]">
-        <Icon aria-hidden="true" data-icon="inline-start" className={`size-3.5 shrink-0 ${current.name === "bash" ? "text-onedark-green" : current.name.includes("skill") ? "text-onedark-purple" : current.name === "web_search" || current.name.startsWith("ctx_") ? "text-onedark-cyan" : "text-primary"}`} />
+        <Icon aria-hidden="true" data-icon="inline-start" className={`size-3.5 shrink-0 ${mutation ? "text-onedark-yellow" : current.name === "bash" ? "text-onedark-green" : current.name.includes("skill") ? "text-onedark-purple" : current.name === "web_search" || current.name.startsWith("ctx_") ? "text-onedark-cyan" : "text-primary"}`} />
         <span className="min-w-0 flex-1 truncate" title={typeof detail === "string" ? detail : undefined}>
           <span className="text-muted-foreground">{label}</span>{typeof detail === "string" && <> <span className="mx-1 text-muted-foreground/50">/</span> <span className="font-mono text-[10px] text-foreground">{detail}</span></>}
         </span>
         <span className="sr-only">{status}</span>
-        {loading || current.status === "running" || current.status === "pending" ? <Spinner aria-hidden="true" className="motion-reduce:animate-none" /> : current.status === "error" ? <AlertCircle aria-hidden="true" className="text-destructive" /> : <Check aria-hidden="true" className="text-onedark-green" />}
+        {loading || current.status === "running" || current.status === "pending" ? <Spinner aria-hidden="true" className="motion-reduce:animate-none" /> : warning ? <TriangleAlert aria-hidden="true" className="text-onedark-yellow" /> : current.status === "error" ? <AlertCircle aria-hidden="true" className="text-destructive" /> : <Check aria-hidden="true" className="text-onedark-green" />}
         <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
       </CollapsibleTrigger>
       <CollapsibleContent className="flex min-w-0 flex-col gap-3 border-t border-border p-3 text-xs">
@@ -141,7 +144,7 @@ export function ToolCallCard({ tool, detailContext }: { tool: ToolCallItem; deta
           <p className="font-medium">Fontes</p>
           {searchResult.sources.map((source) => <Button key={source.url} variant="link" className="h-auto cursor-pointer justify-start whitespace-normal px-0 text-left text-xs" onClick={() => { void openUrl(source.url).catch(() => toast.error("Não foi possível abrir o link")); }}>{source.title}</Button>)}
         </div> : visionResult ? <div className="flex max-h-80 flex-col gap-3 overflow-auto rounded-md bg-muted p-3 text-foreground"><p className="font-mono text-[10px] text-muted-foreground">{visionResult.accountAlias} · {visionResult.model}</p><Suspense fallback={<Skeleton className="h-8 w-full" />}><ChatMarkdown content={visionResult.analysis} /></Suspense></div> : current.output && <div><p className="mb-1">Resultado</p><pre className="max-h-64 overflow-auto rounded-md bg-muted p-3 text-foreground">{current.output}</pre></div>}
-        {current.error && <p role="alert" className="whitespace-pre-wrap text-destructive">{current.error}</p>}
+        {current.error && <p role={warning ? "status" : "alert"} className={`whitespace-pre-wrap ${warning ? "text-onedark-yellow" : "text-destructive"}`}>{current.error}</p>}
       </CollapsibleContent>
     </Collapsible>
   );

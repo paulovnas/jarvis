@@ -23,7 +23,7 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
   const [diagnostics, setDiagnostics] = useState(false);
   const checkStarted = useRef(false);
   useEffect(() => { if (snapshot && !core.checked && !checkStarted.current) { checkStarted.current = true; void check(); } }, [snapshot, core.checked, check]);
-  if (!snapshot && !error) return <div role="status" aria-label="Carregando Core" className="space-y-3"><Skeleton className="mb-5 h-5 w-24" /><div className="core-card-grid">{[0, 1, 2, 3, 4].map(id => <Skeleton key={id} className="h-56 w-full rounded-lg" />)}</div></div>;
+  if (!snapshot && !error) return <div role="status" aria-label="Carregando Core" className="space-y-3"><Skeleton className="mb-5 h-5 w-24" /><div className="core-card-grid">{[0, 1, 2, 3, 4, 5].map(id => <Skeleton key={id} className="h-56 w-full rounded-lg" />)}</div></div>;
   if (!snapshot) return <div role="alert" className="space-y-3"><p className="text-sm text-destructive">{error}</p><Button variant="outline" onClick={() => void refresh()}>Tentar novamente</Button></div>;
   const missing = snapshot.items.filter(item => !item.installed).map(item => item.id);
   return <TooltipProvider delay={150}><section aria-label="Core" className="space-y-4">

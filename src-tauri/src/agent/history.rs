@@ -132,6 +132,7 @@ struct Index {
     compactions: Vec<compaction::CompactionEvent>,
     files: BTreeMap<String, (u64, usize, diffs::FileSummary)>,
     tail: Option<StoredTurn>,
+    damaged_turn: Option<String>,
 }
 
 fn indexed_entry(
@@ -194,6 +195,17 @@ impl Index {
                 "turn_checkpoint" => {
                     let turn: StoredTurn =
                         serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+                    if let Some(damaged) = self.damaged_turn.as_deref() {
+                        if turn.turn.id != damaged
+                            || !self
+                                .entries
+                                .last()
+                                .is_some_and(|last| last.excerpt.id == damaged)
+                        {
+                            return Err(AgentError::storage());
+                        }
+                        self.damaged_turn = None;
+                    }
                     let replacing = self
                         .entries
                         .last()
@@ -208,18 +220,36 @@ impl Index {
                     self.entries.push(entry);
                 }
                 "turn_delta" => {
-                    let delta: journal::TurnDelta =
-                        serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
-                    let turn = self.tail.as_mut().ok_or_else(AgentError::storage)?;
-                    journal::apply_delta(turn, delta)?;
+                    let current_id = self
+                        .tail
+                        .as_ref()
+                        .map(|turn| turn.turn.id.clone())
+                        .ok_or_else(AgentError::storage)?;
+                    let delta = serde_json::from_value::<journal::TurnDelta>(record.data);
+                    if let Some(damaged) = &self.damaged_turn {
+                        if delta.as_ref().is_ok_and(|delta| delta.turn_id != *damaged) {
+                            return Err(AgentError::storage());
+                        }
+                        return Ok(());
+                    }
+                    let Ok(delta) = delta else {
+                        self.damaged_turn = Some(current_id);
+                        return Ok(());
+                    };
+                    let mut candidate = self.tail.clone().ok_or_else(AgentError::storage)?;
+                    if journal::apply_delta(&mut candidate, delta).is_err() {
+                        self.damaged_turn = Some(current_id);
+                        return Ok(());
+                    }
                     let entry = self.entries.last().ok_or_else(AgentError::storage)?;
                     let replacement = indexed_entry(
-                        turn,
+                        &candidate,
                         self.entries.len().saturating_sub(1),
                         entry.offset,
                         entry.length,
                     )?;
                     *self.entries.last_mut().ok_or_else(AgentError::storage)? = replacement;
+                    self.tail = Some(candidate);
                 }
                 "queue_checkpoint" => {
                     self.queue =
@@ -622,6 +652,7 @@ impl AgentState {
             emit: Arc::new(|_| {}),
             data: Mutex::new(SessionData {
                 turns: vec![],
+                durable_turn: None,
                 active: None,
                 recovery: None,
                 revision: 0,
@@ -920,6 +951,45 @@ mod tests {
         let mut restarted = Index::default();
         restarted.refresh(&path).unwrap();
         assert_eq!(restarted.context().tokens, index.context().tokens);
+    }
+
+    #[test]
+    fn live_index_waits_for_a_checkpoint_that_supersedes_an_invalid_delta() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("recoverable-delta.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        let mut initial = stored(0);
+        initial.turn.status = TurnStatus::Running;
+        initial.turn.steps.clear();
+        initial.wire.truncate(1);
+        journal::append(&path, &initial).unwrap();
+        journal::append_event(
+            &path,
+            "turn_delta",
+            &journal::TurnDelta {
+                turn_id: initial.turn.id.clone(),
+                operations: vec![journal::DeltaOperation::Set {
+                    path: vec![
+                        journal::DeltaPathPart::Key("turn".into()),
+                        journal::DeltaPathPart::Key("steps".into()),
+                        journal::DeltaPathPart::Index(0),
+                        journal::DeltaPathPart::Key("durationMs".into()),
+                    ],
+                    value: json!(42),
+                }],
+            },
+        )
+        .unwrap();
+
+        let mut index = Index::default();
+        index.refresh(&path).unwrap();
+        assert_eq!(index.damaged_turn.as_deref(), Some("t0"));
+
+        journal::append(&path, &stored(0)).unwrap();
+        index.refresh(&path).unwrap();
+        assert!(index.damaged_turn.is_none());
+        let page = index.page(&path, "conversation", None, None, None).unwrap();
+        assert_eq!(page.turns[0].steps[0].text, "Resposta 0");
     }
 
     #[test]

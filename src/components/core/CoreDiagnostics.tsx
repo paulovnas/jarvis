@@ -23,12 +23,12 @@ export default function CoreDiagnostics({ core, onClose }: { core: CoreControlle
   return <>
     <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }}>
       <DialogContent showCloseButton={!busy} className="dark instrument-panel flex max-h-[85dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
-        <DialogHeader className="shrink-0 border-b border-border px-6 py-5"><DialogTitle className="flex items-center gap-2 text-base"><Wrench className="size-4 text-primary" />Diagnóstico e Reparo</DialogTitle><DialogDescription>Verificação local dos cinco componentes do Jarvis.</DialogDescription></DialogHeader>
+        <DialogHeader className="shrink-0 border-b border-border px-6 py-5"><DialogTitle className="flex items-center gap-2 text-base"><Wrench className="size-4 text-primary" />Diagnóstico e Reparo</DialogTitle><DialogDescription>Verificação local dos seis componentes do Jarvis.</DialogDescription></DialogHeader>
         <div className="min-h-0 overflow-y-auto p-6">
           {core.error && <p role="alert" className="mb-4 text-sm text-destructive">{core.error}</p>}
           <div className="mb-4 flex items-center justify-between gap-3"><Badge variant="outline" className={snapshot?.ready ? "border-onedark-green/30 text-onedark-green" : "border-onedark-yellow/30 text-onedark-yellow"}>{snapshot?.ready ? "Core pronto" : "Atenção necessária"}</Badge><Button size="sm" variant="ghost" disabled={busy} onClick={() => void diagnose()}><RefreshCw className="size-3.5" />Analisar novamente</Button></div>
           <div className="grid gap-3 sm:grid-cols-2">
-            {!snapshot && Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-40" />)}
+            {!snapshot && Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-40" />)}
             {snapshot?.items.map(item => {
               const { icon: Icon, color, tint } = CORE_DETAILS[item.id];
               const ready = item.installed && item.configured && !item.healthError;

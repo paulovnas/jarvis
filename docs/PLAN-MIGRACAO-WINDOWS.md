@@ -2,7 +2,7 @@
 
 > Documento de preparação para implementar e validar o suporte **em um ambiente Windows real**. A auditoria foi feita no macOS; não representa compilação, instalação ou homologação do Jarvis no Windows.
 
-**Navegação:** [prioridades](#2-resultado-principal-e-prioridades) · [dados e caminhos](#6-pasta-de-configuração-dados-e-caminhos) · [PowerShell](#8-powershell-e-execução-de-comandos) · [Core](#11-auditoria-dos-cinco-componentes-do-core) · [interface Windows](#14-janela-menus-e-acabamento-windows) · [atualizações](#18-build-instalador-assinatura-e-atualização) · [fases](#19-sequência-de-implementação-recomendada) · [validação manual](#21-matriz-de-validação-manual-windows) · [comandos iniciais](#22-comandos-para-começar-na-máquina-windows).
+**Navegação:** [prioridades](#2-resultado-principal-e-prioridades) · [dados e caminhos](#6-pasta-de-configuração-dados-e-caminhos) · [PowerShell](#8-powershell-e-execução-de-comandos) · [Core](#11-auditoria-dos-seis-componentes-do-core) · [interface Windows](#14-janela-menus-e-acabamento-windows) · [atualizações](#18-build-instalador-assinatura-e-atualização) · [fases](#19-sequência-de-implementação-recomendada) · [validação manual](#21-matriz-de-validação-manual-windows) · [comandos iniciais](#22-comandos-para-começar-na-máquina-windows).
 
 ## 1. Escopo e referência da auditoria
 
@@ -18,7 +18,7 @@
 
 As referências de arquivo são relativas à raiz do repositório. Linhas citadas são pontos de entrada da fotografia acima e podem se deslocar. Na máquina Windows, registre o SHA que efetivamente recebeu essas alterações antes de começar.
 
-A intenção é manter o mesmo produto: cinco componentes obrigatórios do Core, provedores e modelos existentes, fluxos, histórico, anexos, perguntas, validação manual, uso de skills/MCPs, aparência industrial e preferências persistentes. Não criar uma edição reduzida para Windows nem exigir WSL para executar o Jarvis.
+A intenção é manter o mesmo produto: seis componentes obrigatórios do Core, provedores e modelos existentes, fluxos, histórico, anexos, perguntas, validação manual, uso de skills/MCPs, aparência industrial e preferências persistentes. Não criar uma edição reduzida para Windows nem exigir WSL para executar o Jarvis.
 
 Nesta primeira migração, implementar e testar localmente no Windows. **Adicionar Windows ao CI de release somente depois da adaptação e da validação manual**, preservando o pipeline atual de macOS.
 
@@ -42,7 +42,7 @@ O frontend e boa parte da persistência podem ser reaproveitados. Os principais 
 | P0 | Processos persistentes | [`agent/processes.rs`](../src-tauri/src/agent/processes.rs), `start`: `/bin/bash`; `Group::stop` não encerra grupo em não Unix | Trocar o lançador e garantir encerramento da árvore de processos pertencente ao Jarvis |
 | P0 | Validações dos fluxos | [`workflow/dispatch.rs`](../src-tauri/src/agent/workflow/dispatch.rs), `workflow_check`, linhas 97–107: cria chamada `bash` | Lint/testes/build também dependem do shell atual, embora os comandos de Bun/Cargo sejam portáveis |
 | P0 | Resolução de executáveis | [`mcp/executable.rs`](../src-tauri/src/mcp/executable.rs): `HOME`, Homebrew, nvm Unix, `node` sem extensão | MCPs como `npx`, `npm` e ferramentas instaladas pelo usuário precisam de resolução nativa Windows |
-| P0 | Integridade do Core | [`core/install.rs`](../src-tauri/src/core/install.rs), [`core/health.rs`](../src-tauri/src/core/health.rs) | Existe preparação Windows, mas o onboarding só pode liberar uso após os cinco componentes passarem por instalação e diagnóstico reais |
+| P0 | Integridade do Core | [`core/install.rs`](../src-tauri/src/core/install.rs), [`core/health.rs`](../src-tauri/src/core/health.rs) | Existe preparação Windows, mas o onboarding só pode liberar uso após os seis componentes passarem por instalação e diagnóstico reais |
 | P1 | Caminhos e diffs Git | [`agent/diffs/working.rs`](../src-tauri/src/agent/diffs/working.rs), `Repository`; [`agent/diffs.rs`](../src-tauri/src/agent/diffs.rs) | Tratar prefixos canônicos Windows, separadores de caminho de Git, CRLF e arquivos efetivamente pendentes da sessão |
 | P1 | Arquivos e transações | `library`, `agent/journal`, `skills/store`, Core | Revalidar ACLs, links/reparse points, arquivos abertos, substituições e exclusões no NTFS |
 | P1 | Título/controles | [`TitleBar.tsx`](../src/components/layout/TitleBar.tsx), linhas 81–102 | Os botões continuam como bolinhas à esquerda em todas as plataformas; Windows precisa de título/logo à esquerda e controles à direita |
@@ -388,7 +388,7 @@ Preservar a regra dos fluxos: nos diretos, servidor persistente somente quando s
 
 ### 10.1 Estado e contratos compartilhados
 
-Todos os cinco componentes continuam obrigatórios. Não contornar o onboarding ou a barra de bloqueio para declarar Windows funcional.
+Todos os seis componentes continuam obrigatórios. Não contornar o onboarding ou a barra de bloqueio para declarar Windows funcional.
 
 O instalador já verifica hashes dos downloads, valida pacotes, extrai em gerações e usa lock. A saúde local não deve ser confundida com acesso momentâneo à internet. Estar offline não torna um runtime íntegro “corrompido”; pacote ausente, executável incompatível ou credencial obrigatória inacessível exigem reparo.
 
@@ -415,7 +415,7 @@ Reparo/desinstalação deve atingir somente a geração do pacote problemático.
 
 As ações de diagnóstico e Solucionar continuam acessíveis quando o Core bloqueia o chat. Não criar um bloqueio do qual o próprio usuário não consegue sair para reparar.
 
-## 11. Auditoria dos cinco componentes do Core
+## 11. Auditoria dos seis componentes do Core
 
 ### 11.1 Context-mode
 
@@ -510,7 +510,15 @@ Dependências e testes:
 6. Reinstalar pacote preservando a referência segura da credencial quando ela continua válida.
 7. Não recriar o antigo MCP manual duplicado do Context7.
 
-### 11.6 Disponibilidade de artefatos consultada
+### 11.6 Servidores LSP
+
+**Pontos de entrada:** [`core/lsp.rs`](../src-tauri/src/core/lsp.rs), instalação em [`core/install.rs`](../src-tauri/src/core/install.rs) e resolução em [`agent/lsp.rs`](../src-tauri/src/agent/lsp.rs).
+
+O Jarvis instala `typescript-language-server`, `typescript` e `pyright` com um Node privado. Binários do próprio projeto continuam prioritários. Rust usa `rust-analyzer` e Go usa `gopls` das respectivas toolchains/PATH, pois esses servidores acompanham melhor a versão e a configuração do projeto.
+
+No Windows, validar `runtime/node.exe`, as entradas JavaScript instaladas pelo npm privado e projetos em caminhos com espaços e acentos. O diagnóstico precisa executar os CLIs, não apenas confirmar os arquivos. Testar definições, referências, símbolos e diagnósticos em TypeScript/JavaScript e Python, além do fallback claro quando `rust-analyzer` ou `gopls` não estiverem disponíveis.
+
+### 11.7 Disponibilidade de artefatos consultada
 
 Consulta somente de metadados/checksums em 07/09/2026; **os ZIPs não foram instalados nem homologados no Windows**.
 
@@ -876,7 +884,7 @@ Esta sequência serve para decompor o trabalho em Beads no ambiente de implement
 | W1 — Plataforma e build | Compilação MSVC, capacidades nativas, configuração de bundle local, adaptação dos testes exclusivos de Unix | W0 | App abre em WebView2; checks que independem de Core/contas funcionam; nenhum erro Windows é escondido por skip genérico |
 | W2 — Paths e cofre | Home `.jarvis`, caminhos canônicos, backend seguro e contratos de exclusão | W1 | Preferências e credenciais sobrevivem ao restart em conta de teste; segredos não aparecem em arquivos legíveis |
 | W3 — Shell/processos | PowerShell, argv, PATH/shims, Job Objects, timeout, cancelamento e `workflow_check` | W1/W2 para os recursos que persistem estado | Comando finito e servidor com descendentes executam/encerram sem vazamento e sem fechar processos externos |
-| W4 — Core e onboarding | Instalar/verificar/reparar os cinco componentes, metadados de plataforma e contrato de hooks | W2/W3 | Perfil limpo conclui onboarding; cada componente executa sua função essencial; pacote inválido bloqueia e pode ser reparado |
+| W4 — Core e onboarding | Instalar/verificar/reparar os seis componentes, metadados de plataforma e contrato de hooks | W2/W3 | Perfil limpo conclui onboarding; cada componente executa sua função essencial; pacote inválido bloqueia e pode ser reparado |
 | W5 — Integrações e projetos | MCPs, Marketplace, atalhos, Git/diffs, anexos, providers/OAuth e leitura paginada | W2/W3/W4 | Fluxos reais podem trabalhar no projeto com histórico/arquivos corretos |
 | W6 — Desktop Windows | Titlebar, menus/atalhos, DPI, persistência, taskbar/notificações e repouso | W1; notificações de fluxo usam W5 | Validação manual da matriz desktop, inclusive background e duas conversas concorrentes |
 | W7 — Instalador/update local | NSIS, identidade, assinatura, manifests e reabertura Windows | W2–W6 | Instalação limpa e atualização de versão A para B comprovadas em Windows |
@@ -966,7 +974,7 @@ Esta é uma matriz de aceite a executar pelo usuário/testador na máquina Windo
 | ID | Cenário | Resultado esperado |
 | --- | --- | --- |
 | MAN-01 | Instalar em usuário padrão com perfil contendo espaço e acento | App abre sem exigir administrador no uso diário; dados na `.jarvis` correta |
-| MAN-02 | Onboarding em perfil limpo | Apresentação → cinco componentes com progresso → provedores/ferramentas → workspace |
+| MAN-02 | Onboarding em perfil limpo | Apresentação → seis componentes com progresso → provedores/ferramentas → workspace |
 | MAN-03 | Tentar avançar com componente ausente/Context7 sem chave | Não libera uso; ações de configuração continuam acessíveis |
 | MAN-04 | Interromper download e abrir o app novamente | Estado recuperável; nenhuma geração parcial marcada pronta |
 | MAN-05 | Tornar um runtime de teste indisponível | Barra de alerta, bloqueio do chat, Solucionar e diagnóstico do componente correto |
@@ -1183,7 +1191,7 @@ Além das páginas oficiais, foram inspecionados no cache local os fontes de `pr
 O suporte Windows só deve ser apresentado como concluído quando existir evidência conjunta de:
 
 1. Compilação/gates nativos sem erros ou warnings, com cobertura Windows dos casos essenciais.
-2. Instalação limpa como usuário padrão e onboarding completo com os cinco componentes.
+2. Instalação limpa como usuário padrão e onboarding completo com os seis componentes.
 3. Credenciais persistentes, shell/processos/MCPs e fluxos de trabalho funcionais.
 4. Histórico, arquivos, Beads, skills e anexos sem regressão/perda de dados.
 5. Acabamento Windows, notificações, badge e retomada de background validados manualmente.
@@ -1224,7 +1232,7 @@ The installed Portuguese MSVC linker emits informational `linker_messages` warni
 | Evidence still required | Beads |
 | --- | --- |
 | Clean current-user NSIS installation and a signed, installed A-to-B update with automatic reopening and retained user data; failure recovery and uninstallation. | `jarvis-o5o` |
-| Manual Windows Core/desktop matrix: all five Core components, install/repair, Explorer associations, DPI, notifications, taskbar, sleep/resume and native MCP lifecycle. | `jarvis-dnf` |
+| Manual Windows Core/desktop matrix: all six Core components, install/repair, Explorer associations, DPI, notifications, taskbar, sleep/resume and native MCP lifecycle. | `jarvis-dnf` |
 | Native macOS regression checks for paths, terminals, providers, MCP discovery and updater reopening. | `jarvis-wgi` |
 | Eliminate the localized MSVC informational warning without hiding actual linker errors. | `jarvis-9au` |
 

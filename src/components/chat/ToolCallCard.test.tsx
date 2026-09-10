@@ -24,6 +24,19 @@ describe("ToolCallCard Web Search", () => {
     render(<ToolCallCard tool={{ id: "tasks", name: "update_tasks", status: "completed", args: { tasks: [{ id: "build", title: "Implementar", status: "in_progress" }] }, output: "{\"updated\":1}" }} />);
     expect(screen.getByRole("button", { name: /Atualizar tarefas.*Concluída/ })).toBeVisible();
   });
+  it("shows the direct-task preflight as attention instead of an execution failure", () => {
+    const reminder = "Atualize a lista com update_tasks e mantenha uma tarefa em andamento antes de executar alterações.";
+    render(<ToolCallCard tool={{ id: "task-reminder", name: "ctx_execute", status: "error", args: {}, output: reminder, error: reminder }} />);
+    const trigger = screen.getByRole("button", { name: /Context Mode · Processamento.*Atenção/ });
+    expect(trigger.querySelector(".text-onedark-yellow")).toBeInTheDocument();
+    expect(trigger.querySelector(".text-destructive")).not.toBeInTheDocument();
+  });
+  it("distinguishes file mutations from blue read-only actions", () => {
+    const { rerender } = render(<ToolCallCard tool={{ id: "write", name: "write", status: "completed", args: { path: "src/app.ts" }, output: "ok" }} />);
+    expect(screen.getByRole("button", { name: /Escrita de arquivo/ }).querySelector(".text-onedark-yellow")).toBeInTheDocument();
+    rerender(<ToolCallCard tool={{ id: "read", name: "read", status: "completed", args: { path: "src/app.ts" }, output: "ok" }} />);
+    expect(screen.getByRole("button", { name: /Leitura de arquivo/ }).querySelector(".text-primary")).toBeInTheDocument();
+  });
   it.each([
     ["apply_patch", "Patch transacional"],
     ["lsp_definition", "Código · Definição"],

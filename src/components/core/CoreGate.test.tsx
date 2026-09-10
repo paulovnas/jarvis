@@ -25,7 +25,7 @@ it("bloqueia o chat com skeleton até confirmar o Core, inclusive em falhas", as
   expect(screen.queryByText("Chat liberado")).not.toBeInTheDocument();
 });
 
-it("analisa ao solucionar e só libera o chat com os cinco componentes prontos", async () => {
+it("analisa ao solucionar e só libera o chat com os seis componentes prontos", async () => {
   invokeMock.mockResolvedValue(coreFixture(false));
   render(<CoreGate><div>Chat liberado</div></CoreGate>);
   fireEvent.click(await screen.findByRole("button", { name: "Solucionar" }));

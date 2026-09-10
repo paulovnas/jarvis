@@ -14,7 +14,7 @@ beforeEach(() => {
   vi.mocked(listen).mockImplementation(async (name, callback) => { events.set(name, callback); return () => { events.delete(name); }; });
 });
 
-it.each([0, 1, 2, 3, 4])("updates real download progress for Core item %i and resets it between stages", async index => {
+it.each([0, 1, 2, 3, 4, 5])("updates real download progress for Core item %i and resets it between stages", async index => {
   const state = coreFixture(false);
   state.items[index].stage = "Baixando recursos";
   invokeMock.mockResolvedValue(state);
@@ -87,7 +87,7 @@ it("offers Open Design installation alongside the other Core resources", async (
   render(<CoreSettings />);
   fireEvent.click(await screen.findByRole("button", { name: "Instalar Open Design" }));
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "open-design" }));
-  expect(screen.getByText("4/5")).toBeInTheDocument();
+  expect(screen.getByText("5/6")).toBeInTheDocument();
 });
 
 it("mostra versões e só oferece atualização quando há release maior", async () => {
@@ -129,6 +129,6 @@ it("mantém a versão instalada quando uma atualização falha e permite nova te
   render(<CoreSettings />);
   fireEvent.click(await screen.findByRole("button", { name: "Atualizar Context-mode" }));
   expect(await screen.findByText("Download interrompido")).toBeInTheDocument();
-  expect(screen.getAllByText("v1.0.0")).toHaveLength(5);
+  expect(screen.getAllByText("v1.0.0")).toHaveLength(6);
   await waitFor(() => expect(screen.getByRole("button", { name: "Atualizar Context-mode" })).toBeEnabled());
 });

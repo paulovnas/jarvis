@@ -229,6 +229,7 @@ pub(super) fn worker(
         file.sync_all().map_err(|_| AgentError::storage())?;
         (vec![], journal::Extras::default())
     };
+    let durable_turn = turns.last().cloned();
     let weak = Arc::downgrade(hub);
     let session = Arc::new(Session {
         id: job.id.clone(),
@@ -236,6 +237,7 @@ pub(super) fn worker(
         root: hub.root.root.clone(),
         data: Mutex::new(SessionData {
             turns,
+            durable_turn,
             extras,
             active: None,
             recovery: None,

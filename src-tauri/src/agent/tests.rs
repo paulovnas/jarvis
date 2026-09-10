@@ -53,6 +53,7 @@ pub(super) fn session(fixture: &Fixture) -> Arc<Session> {
         emit: Arc::new(|_| {}),
         data: Mutex::new(SessionData {
             turns: vec![],
+            durable_turn: None,
             active: None,
             recovery: None,
             revision: 1,
@@ -196,6 +197,33 @@ fn direct_tasks_are_durable_and_reset_for_each_new_turn() {
         .reserve("Próxima solicitação".into(), direct)
         .unwrap();
     assert!(session.snapshot().unwrap().turns[0].tasks.is_empty());
+}
+
+#[test]
+fn durable_updates_include_transient_streaming_state_in_the_journal_delta() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    session
+        .reserve("Analisar o design".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+
+    session
+        .update(false, |data| {
+            data.turns.last_mut().unwrap().turn.steps.push(Step {
+                text: "Análise parcial".into(),
+                ..Step::default()
+            });
+        })
+        .unwrap();
+    session
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().turn.steps[0].duration_ms = 42;
+        })
+        .unwrap();
+
+    let (persisted, _) = journal::read_only(&session.journal).unwrap();
+    assert_eq!(persisted[0].turn.steps[0].text, "Análise parcial");
+    assert_eq!(persisted[0].turn.steps[0].duration_ms, 42);
 }
 
 #[test]
@@ -498,6 +526,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                     error: None,
                 },
             }],
+            durable_turn: None,
         }),
     };
     let snapshot = serde_json::to_string(&session.snapshot().unwrap()).unwrap();

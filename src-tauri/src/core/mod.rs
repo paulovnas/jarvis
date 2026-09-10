@@ -6,6 +6,7 @@ pub mod design;
 pub mod health;
 pub mod hooks;
 mod install;
+pub mod lsp;
 pub mod ponytail;
 
 use serde::{Deserialize, Serialize};
@@ -26,14 +27,16 @@ pub enum ComponentId {
     Beads,
     OpenDesign,
     Context7,
+    Lsp,
 }
 impl ComponentId {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::ContextMode,
         Self::Ponytail,
         Self::Beads,
         Self::OpenDesign,
         Self::Context7,
+        Self::Lsp,
     ];
     pub fn key(self) -> &'static str {
         match self {
@@ -42,6 +45,7 @@ impl ComponentId {
             Self::Beads => "beads",
             Self::OpenDesign => "open-design",
             Self::Context7 => "context7",
+            Self::Lsp => "lsp",
         }
     }
     fn name(self) -> &'static str {
@@ -51,6 +55,7 @@ impl ComponentId {
             Self::Beads => "Beads",
             Self::OpenDesign => "Open Design",
             Self::Context7 => "Context7",
+            Self::Lsp => "Servidores LSP",
         }
     }
     fn repository(self) -> &'static str {
@@ -60,6 +65,7 @@ impl ComponentId {
             Self::Beads => "gastownhall/beads",
             Self::OpenDesign => "nexu-io/open-design",
             Self::Context7 => "upstash/context7",
+            Self::Lsp => "typescript-language-server/typescript-language-server",
         }
     }
 }

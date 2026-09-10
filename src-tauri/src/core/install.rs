@@ -489,6 +489,19 @@ async fn registry_package(
     }
     Ok(bytes)
 }
+async fn latest_registry_version(name: &str) -> Result<String, CoreError> {
+    let metadata = json(&format!("https://registry.npmjs.org/{name}/latest")).await?;
+    let version = metadata["version"]
+        .as_str()
+        .filter(|_| metadata["name"] == name)
+        .ok_or_else(|| error("O registro npm não retornou um pacote LSP válido."))?;
+    let parsed = semver::Version::parse(version)
+        .map_err(|_| error("O pacote LSP não possui uma versão válida."))?;
+    if !parsed.pre.is_empty() {
+        return Err(error("Nenhuma versão estável do pacote LSP disponível."));
+    }
+    Ok(version.to_owned())
+}
 async fn install_bun(
     destination: &Path,
     stage: &(impl Fn(&str) + Sync),
@@ -630,6 +643,63 @@ pub(super) async fn install(
             );
             stage("Validando ferramentas");
             context7::verify(destination).await?;
+        }
+        ComponentId::Lsp => {
+            stage("Baixando runtime Node");
+            install_node(destination, &stage, &progress).await?;
+            stage("Baixando servidor TypeScript");
+            let server =
+                registry_package("typescript-language-server", &version, &progress).await?;
+            fs::write(destination.join("typescript-language-server.tgz"), server)?;
+            stage("Baixando TypeScript");
+            // TypeScript 7 no longer ships tsserver.js. The current language
+            // server requires the classic tsserver runtime, so the managed
+            // bundle uses the latest verified compatible major.
+            let typescript_version = lsp::TYPESCRIPT_VERSION;
+            let typescript = registry_package("typescript", typescript_version, &progress).await?;
+            fs::write(destination.join("typescript.tgz"), typescript)?;
+            stage("Baixando servidor Python");
+            let pyright_version = latest_registry_version("pyright").await?;
+            let pyright = registry_package("pyright", &pyright_version, &progress).await?;
+            fs::write(destination.join("pyright.tgz"), pyright)?;
+            fs::write(
+                destination.join("package.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "name":"jarvis-core-lsp",
+                    "private":true,
+                    "dependencies":{
+                        "typescript-language-server":"file:typescript-language-server.tgz",
+                        "typescript":"file:typescript.tgz",
+                        "pyright":"file:pyright.tgz"
+                    }
+                }))
+                .map_err(|_| error("Configuração do pacote LSP inválida."))?,
+            )?;
+            fs::write(destination.join("empty.npmrc"), b"")?;
+            stage("Instalando servidores de linguagem");
+            let mut cmd = tokio::process::Command::new(node_path(destination));
+            cmd.arg(npm_path(destination))
+                .args([
+                    "install",
+                    "--ignore-scripts",
+                    "--omit=dev",
+                    "--no-audit",
+                    "--no-fund",
+                    "--package-lock=true",
+                    "--global=false",
+                    "--workspaces=false",
+                    "--registry=https://registry.npmjs.org",
+                ])
+                .arg("--prefix")
+                .arg(destination)
+                .current_dir(destination)
+                .env("NODE_OPTIONS", "")
+                .env("npm_config_cache", root(home).join("cache/npm"))
+                .env("npm_config_userconfig", destination.join("empty.npmrc"));
+            command(cmd, 240).await?;
+            required.extend(lsp::required_files());
+            stage("Validando servidores LSP");
+            lsp::verify(destination).await?;
         }
         ComponentId::OpenDesign => {
             stage("Baixando recursos de design");
@@ -1011,6 +1081,25 @@ mod tests {
         assert!(node_path(&record.path(home.path()).unwrap()).is_file());
         assert!(!context7::configured(home.path()));
         eprintln!("Context7 {version}: official package and documentation tools verified");
+    }
+    #[tokio::test]
+    #[ignore = "Downloads and verifies the official language-server packages with a private Node runtime"]
+    async fn official_lsp_install() {
+        let home = tempfile::tempdir().unwrap();
+        let version = install(
+            home.path(),
+            ComponentId::Lsp,
+            |stage| eprintln!("{stage}"),
+            |_| {},
+        )
+        .await
+        .unwrap();
+        let record = installed(home.path(), ComponentId::Lsp).unwrap();
+        assert_eq!(record.version, version);
+        lsp::verify(&record.path(home.path()).unwrap())
+            .await
+            .unwrap();
+        eprintln!("Servidores LSP {version}: TypeScript, JavaScript e Python verificados");
     }
     #[test]
     fn rejects_archive_traversal_and_bad_checksums() {

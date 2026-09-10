@@ -52,7 +52,7 @@ A execução de ferramentas é automática, dentro das permissões de cada papel
 
 ## Core
 
-O Core integra cinco ferramentas ao funcionamento do Jarvis. A instalação e a configuração iniciais são obrigatórias e guiadas pelo aplicativo. Depois, os componentes podem ser gerenciados em **Configurações → Ferramentas → Core**. Tudo fica em `~/.jarvis`, com versão instalada, progresso de instalação e indicação de atualizações.
+O Core integra seis ferramentas ao funcionamento do Jarvis. A instalação e a configuração iniciais são obrigatórias e guiadas pelo aplicativo. Depois, os componentes podem ser gerenciados em **Configurações → Ferramentas → Core**. Tudo fica em `~/.jarvis`, com versão instalada, progresso de instalação e indicação de atualizações.
 
 | Componente | Papel no Jarvis |
 | --- | --- |
@@ -61,11 +61,12 @@ O Core integra cinco ferramentas ao funcionamento do Jarvis. A instalação e a 
 | [Beads](https://github.com/gastownhall/beads) | Acompanhamento de épicos, tarefas, dependências e comentários, com visualização no Kanban e nos planos do projeto. |
 | [Open Design](https://github.com/nexu-io/open-design) | Recursos de design, como referências, templates, sistemas de design e skills, usados pelo Designer. |
 | [Context7](https://github.com/upstash/context7) | Documentação e exemplos atualizados de bibliotecas, consultados pelos agentes quando necessário. Pacote instalado via npm com Node próprio; chave validada e armazenada no Keychain. |
+| [Servidores LSP](https://github.com/typescript-language-server/typescript-language-server) | Navegação estrutural de código e diagnósticos para TypeScript, JavaScript e Python, com runtime gerenciado pelo Jarvis. Rust e Go usam os servidores da toolchain do projeto quando disponíveis. |
 
 ## Primeiros passos
 
 1. Baixe o `.dmg` em [Releases](https://github.com/paulovnas/jarvis/releases), abra-o e copie o Jarvis para **Aplicativos**.
-2. Siga as boas-vindas, instale os cinco componentes e configure a chave do Context7. O download dos recursos de design pode levar alguns minutos.
+2. Siga as boas-vindas, instale os seis componentes e configure a chave do Context7. O download dos recursos de design pode levar alguns minutos.
 3. Conecte um provedor e configure Web Search e Vision; ambos podem herdar o modelo do chat.
 4. Defina o nome do workspace padrão e clique em **Começar**. Adicione o primeiro projeto selecionando sua pasta local.
 5. Inicie uma conversa, escolha o fluxo e descreva o que deseja fazer.
