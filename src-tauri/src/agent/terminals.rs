@@ -1273,6 +1273,18 @@ mod tests {
     fn ctrl_c_ends_agent_service_and_interactive_shell_remains_usable() {
         let root = tempfile::tempdir().unwrap();
         let state = TerminalState::default();
+        let bashrc = root.path().join("terminal-test.bashrc");
+        std::fs::write(&bashrc, "PS1='jarvis-shell-ready> '\n").unwrap();
+        state.set_preferences(crate::system::TerminalPreferences {
+            shell: Some("/bin/bash".into()),
+            arguments: vec![
+                "--noprofile".into(),
+                "--rcfile".into(),
+                bashrc.to_string_lossy().into_owned(),
+                "-i".into(),
+            ],
+            ..Default::default()
+        });
         for service in [true, false] {
             let script = "printf 'service-ready\\n'; sleep 30";
             let terminal = state
@@ -1290,6 +1302,7 @@ mod tests {
                 )
                 .unwrap();
             if !service {
+                wait_for_text(&state, "interrupt", &terminal.id, "jarvis-shell-ready> ");
                 state
                     .write("interrupt", &terminal.id, &format!("{script}\r"))
                     .unwrap();
@@ -1322,9 +1335,13 @@ mod tests {
                     "exited"
                 );
             } else {
-                // A profile-backed shell may redraw a rich prompt after SIGINT.
-                // Wait for its line editor before entering the next command.
-                thread::sleep(std::time::Duration::from_millis(200));
+                wait_for_text_occurrences(
+                    &state,
+                    "interrupt",
+                    &terminal.id,
+                    "jarvis-shell-ready> ",
+                    2,
+                );
                 state
                     .write("interrupt", &terminal.id, "printf 'shell-%s\\n' usable\r")
                     .unwrap();
@@ -1440,6 +1457,26 @@ mod tests {
         }
         panic!(
             "terminal did not produce output: {}",
+            serde_json::to_string(&state.snapshot(conversation, id).unwrap()).unwrap()
+        )
+    }
+
+    fn wait_for_text_occurrences(
+        state: &TerminalState,
+        conversation: &str,
+        id: &str,
+        expected: &str,
+        occurrences: usize,
+    ) -> TerminalSnapshot {
+        for _ in 0..80 {
+            let snapshot = state.snapshot(conversation, id).unwrap();
+            if terminal_text(&snapshot.output).matches(expected).count() >= occurrences {
+                return snapshot;
+            }
+            thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!(
+            "terminal did not produce {occurrences} occurrences of {expected:?}: {}",
             serde_json::to_string(&state.snapshot(conversation, id).unwrap()).unwrap()
         )
     }

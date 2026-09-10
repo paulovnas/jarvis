@@ -455,7 +455,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn terminal_preserves_unc_network_roots() {
-        let command = terminal_command(Path::new(r"\\?\UNC\server\share\projeto ação"));
+        let command = terminal_command(
+            Path::new(r"\\?\UNC\server\share\projeto ação"),
+            &TerminalPreferences::default(),
+        )
+        .unwrap();
         assert_eq!(command.get_cwd().unwrap(), r"\\server\share\projeto ação");
     }
 
