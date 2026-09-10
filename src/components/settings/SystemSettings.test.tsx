@@ -17,8 +17,10 @@ const initial: SystemSnapshot = {
   sleepError: null,
   notificationError: null,
   availableTerminalShells: ["/bin/zsh", "/bin/bash"],
+  availableTerminalFonts: ["NotoSansM Nerd Font Mono", "JetBrains Mono"],
   resolvedTerminalShell: "/bin/zsh",
   terminalError: null,
+  terminalFontError: null,
 };
 
 describe("system preferences", () => {

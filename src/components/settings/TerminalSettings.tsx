@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { libraryError } from "@/core/library";
 import {
   DEFAULT_TERMINAL_PREFERENCES,
+  resolveTerminalFont,
   systemSnapshotSchema,
   terminalFontFamily,
   type SystemSnapshot,
@@ -21,13 +22,6 @@ import {
 
 const CUSTOM_VALUE = "__custom__";
 const AUTOMATIC_VALUE = "__automatic__";
-const FONT_PRESETS = [
-  "MesloLGS NF",
-  "MesloLGS Nerd Font Mono",
-  "Hack Nerd Font Mono",
-  "FiraCode Nerd Font",
-  "JetBrains Mono",
-] as const;
 
 const terminalError = (cause: unknown, fallback: string) => typeof cause === "string" ? cause : libraryError(cause, fallback);
 
@@ -49,12 +43,12 @@ function createDraft(snapshot: SystemSnapshot): Draft {
   const configuredShell = preferences.shell;
   const knownShell = configuredShell && snapshot.availableTerminalShells.includes(configuredShell);
   const configuredFont = preferences.fontFamily;
-  const knownFont = configuredFont && FONT_PRESETS.includes(configuredFont as typeof FONT_PRESETS[number]);
+  const knownFont = configuredFont && snapshot.availableTerminalFonts.find(font => font.toLowerCase() === configuredFont.toLowerCase());
   return {
     shellChoice: configuredShell ? knownShell ? configuredShell : CUSTOM_VALUE : AUTOMATIC_VALUE,
     customShell: configuredShell && !knownShell ? configuredShell : "",
     arguments: preferences.arguments.join("\n"),
-    fontChoice: configuredFont ? knownFont ? configuredFont : CUSTOM_VALUE : AUTOMATIC_VALUE,
+    fontChoice: configuredFont ? knownFont ?? CUSTOM_VALUE : AUTOMATIC_VALUE,
     customFont: configuredFont && !knownFont ? configuredFont : "",
     fontSize: String(preferences.fontSize),
   };
@@ -177,6 +171,11 @@ export function TerminalSettings() {
   const automaticLabel = snapshot.resolvedTerminalShell
     ? `Automático · ${shellName(snapshot.resolvedTerminalShell)}`
     : "Automático";
+  const automaticFont = resolveTerminalFont(null, snapshot.availableTerminalFonts) ?? "JetBrains Mono";
+  const fontWarning = typeof proposed !== "string" && proposed.fontFamily
+    && !snapshot.availableTerminalFonts.some(font => font.toLowerCase() === proposed.fontFamily?.toLowerCase())
+    ? `A fonte '${proposed.fontFamily}' não foi encontrada no sistema. Instale-a ou escolha uma das fontes detectadas.`
+    : !changed ? snapshot.terminalFontError : null;
 
   return <TooltipProvider><form className="space-y-5" onSubmit={save}>
     <div className="grid gap-4 lg:grid-cols-2">
@@ -211,16 +210,17 @@ export function TerminalSettings() {
           <p className="mt-1 text-xs leading-5 text-muted-foreground">A fonte é aplicada aos terminais já abertos e aos próximos.</p>
         </div>
         <div className="space-y-2">
-          <div className="flex items-center gap-1"><Label htmlFor="terminal-font" className="text-xs">Fonte</Label><Help label="Fonte do terminal">A opção automática prioriza fontes Nerd Font usadas por temas como Powerlevel10k e usa a JetBrains Mono do Jarvis como fallback.</Help></div>
+          <div className="flex items-center gap-1"><Label htmlFor="terminal-font" className="text-xs">Fonte</Label><Help label="Fonte do terminal">O Jarvis lista as fontes monoespaçadas detectadas no sistema. A opção automática prioriza uma Nerd Font para temas como Powerlevel10k e usa a JetBrains Mono do Jarvis como fallback.</Help></div>
           <Select value={draft.fontChoice} disabled={busy} onValueChange={value => { if (value) patchDraft({ fontChoice: value }); }}>
-            <SelectTrigger id="terminal-font" aria-label="Fonte do terminal" className="w-full cursor-pointer text-xs"><SelectValue>{draft.fontChoice === AUTOMATIC_VALUE ? "Automática · Nerd Font" : draft.fontChoice === CUSTOM_VALUE ? "Personalizada" : draft.fontChoice}</SelectValue></SelectTrigger>
+            <SelectTrigger id="terminal-font" aria-label="Fonte do terminal" className="w-full cursor-pointer text-xs"><SelectValue>{draft.fontChoice === AUTOMATIC_VALUE ? `Automática · ${automaticFont}` : draft.fontChoice === CUSTOM_VALUE ? "Personalizada" : draft.fontChoice}</SelectValue></SelectTrigger>
             <SelectContent>
-              <SelectItem value={AUTOMATIC_VALUE} className="cursor-pointer text-xs">Automática · Nerd Font</SelectItem>
-              {FONT_PRESETS.map(font => <SelectItem key={font} value={font} className="cursor-pointer text-xs">{font}</SelectItem>)}
+              <SelectItem value={AUTOMATIC_VALUE} className="cursor-pointer text-xs">Automática · {automaticFont}</SelectItem>
+              {snapshot.availableTerminalFonts.map(font => <SelectItem key={font} value={font} className="cursor-pointer text-xs">{font}</SelectItem>)}
               <SelectItem value={CUSTOM_VALUE} className="cursor-pointer text-xs">Personalizada…</SelectItem>
             </SelectContent>
           </Select>
           {draft.fontChoice === CUSTOM_VALUE && <Input aria-label="Família de fonte personalizada" value={draft.customFont} disabled={busy} maxLength={160} placeholder="Nome da fonte instalada" className="text-xs" onChange={event => patchDraft({ customFont: event.target.value })} />}
+          {fontWarning && <p role="status" className="text-[10px] leading-4 text-onedark-yellow">{fontWarning}</p>}
         </div>
         <div className="space-y-2">
           <Label htmlFor="terminal-font-size" className="text-xs">Tamanho da fonte</Label>
@@ -229,7 +229,7 @@ export function TerminalSettings() {
             <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-3 flex items-center font-mono text-[10px] text-muted-foreground">px</span>
           </div>
         </div>
-        <div aria-label="Prévia da fonte do terminal" className="overflow-hidden rounded-md border border-border bg-sidebar p-4 text-onedark-green shadow-inner" style={{ fontFamily: terminalFontFamily(preview.fontFamily), fontSize: `${preview.fontSize}px` }}>
+        <div aria-label="Prévia da fonte do terminal" className="overflow-hidden rounded-md border border-border bg-sidebar p-4 text-onedark-green shadow-inner" style={{ fontFamily: terminalFontFamily(resolveTerminalFont(preview.fontFamily, snapshot.availableTerminalFonts)), fontSize: `${preview.fontSize}px` }}>
           <p className="truncate"><span className="text-onedark-purple"></span><span className="bg-onedark-purple px-1 text-background">Jarvis</span><span className="text-onedark-purple"></span> <span className="text-onedark-cyan">~/projeto</span> <span className="text-onedark-yellow"> main</span></p>
           <p className="mt-2 text-foreground"><Sparkles aria-hidden="true" className="mr-2 inline size-3.5 text-onedark-yellow" />cores reais · símbolos do prompt · UTF-8</p>
         </div>

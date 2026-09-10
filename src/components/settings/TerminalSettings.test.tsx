@@ -23,8 +23,10 @@ const initial: SystemSnapshot = {
   sleepError: null,
   notificationError: null,
   availableTerminalShells: ["/bin/zsh", "/bin/bash"],
+  availableTerminalFonts: ["NotoSansM Nerd Font Mono", "JetBrains Mono"],
   resolvedTerminalShell: "/bin/zsh",
   terminalError: null,
+  terminalFontError: null,
 };
 
 describe("terminal preferences", () => {
@@ -53,7 +55,7 @@ describe("terminal preferences", () => {
     await user.type(screen.getByRole("textbox", { name: "Argumentos de inicialização do shell" }), "-l\n-i");
     const font = screen.getByRole("combobox", { name: "Fonte do terminal" });
     await user.click(font);
-    await user.click(await screen.findByRole("option", { name: "MesloLGS NF" }));
+    await user.click(await screen.findByRole("option", { name: "NotoSansM Nerd Font Mono" }));
     const size = screen.getByRole("spinbutton", { name: "Tamanho da fonte do terminal" });
     await user.clear(size);
     await user.type(size, "15");
@@ -62,10 +64,24 @@ describe("terminal preferences", () => {
     await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", {
       preferences: {
         ...initial.preferences,
-        terminal: { shell: "/bin/bash", arguments: ["-l", "-i"], fontFamily: "MesloLGS NF", fontSize: 15 },
+        terminal: { shell: "/bin/bash", arguments: ["-l", "-i"], fontFamily: "NotoSansM Nerd Font Mono", fontSize: 15 },
       },
     }));
     expect(toast.success).toHaveBeenCalledWith("Preferências do terminal salvas", expect.objectContaining({ description: expect.stringContaining("terminais") }));
+  });
+
+  it("shows which installed font automatic mode will use and warns about an unknown custom family", async () => {
+    const user = userEvent.setup();
+    render(<TerminalSettings />);
+
+    const font = await screen.findByRole("combobox", { name: "Fonte do terminal" });
+    expect(font).toHaveTextContent("Automática · NotoSansM Nerd Font Mono");
+    await user.click(font);
+    expect(await screen.findByRole("option", { name: "NotoSansM Nerd Font Mono" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "MesloLGS NF" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: "Personalizada…" }));
+    await user.type(screen.getByRole("textbox", { name: "Família de fonte personalizada" }), "Fonte Inexistente");
+    expect(screen.getByRole("status")).toHaveTextContent("não foi encontrada no sistema");
   });
 
   it("keeps a rejected custom shell visible so the user can correct it", async () => {

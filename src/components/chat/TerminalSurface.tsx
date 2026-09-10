@@ -6,7 +6,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { toast } from "sonner";
 import { libraryError } from "@/core/library";
-import { DEFAULT_TERMINAL_PREFERENCES, systemSnapshotSchema, terminalFontFamily, type TerminalPreferences } from "@/core/system-preferences";
+import { DEFAULT_TERMINAL_PREFERENCES, resolveTerminalFont, systemSnapshotSchema, terminalFontFamily, type TerminalPreferences } from "@/core/system-preferences";
 import { terminalOutputEventSchema, terminalSnapshotSchema, type ChatTerminal, type TerminalOutputEvent } from "@/core/terminals";
 
 function terminalTheme(host: HTMLElement) {
@@ -67,14 +67,18 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
         cols: xterm.cols,
       });
     };
-    const applyAppearance = async (preferences: TerminalPreferences, refit: boolean) => {
+    const applyAppearance = async (preferences: TerminalPreferences, availableFonts: string[], refit: boolean) => {
       const revision = ++appearanceRevision;
-      const fontFamily = terminalFontFamily(preferences.fontFamily);
+      const fontFamily = terminalFontFamily(resolveTerminalFont(preferences.fontFamily, availableFonts));
       await document.fonts?.load(`${preferences.fontSize}px ${fontFamily}`).catch(() => undefined);
       if (disposed || revision !== appearanceRevision) return;
       xterm.options.fontFamily = fontFamily;
       xterm.options.fontSize = preferences.fontSize;
       if (opened && refit) {
+        // The canvas renderer caches glyphs. Drop that atlas so changing a
+        // system font also replaces already-rendered Powerlevel10k symbols.
+        xterm.clearTextureAtlas();
+        if (xterm.rows > 0) xterm.refresh(0, xterm.rows - 1);
         lastSize = "";
         resize();
       }
@@ -96,13 +100,15 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
       : undefined;
     const load = async () => {
       let appearance = initialAppearance;
+      let availableFonts: string[] = [];
       let changed = false;
       const stopPreferences = await listen("system:changed", event => {
         const parsed = systemSnapshotSchema.safeParse(event.payload);
         if (!parsed.success) return;
         changed = true;
         appearance = parsed.data.preferences.terminal;
-        void applyAppearance(appearance, true);
+        availableFonts = parsed.data.availableTerminalFonts;
+        void applyAppearance(appearance, availableFonts, true);
       });
       if (disposed) {
         stopPreferences();
@@ -111,12 +117,15 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
       unlistenPreferences = stopPreferences;
       try {
         const parsed = systemSnapshotSchema.safeParse(await invoke("get_system_preferences"));
-        if (!changed && parsed.success) appearance = parsed.data.preferences.terminal;
+        if (!changed && parsed.success) {
+          appearance = parsed.data.preferences.terminal;
+          availableFonts = parsed.data.availableTerminalFonts;
+        }
       } catch {
         // Terminal availability is more important than a cosmetic preference read.
       }
       // Canvas measurement must happen after the selected system font is available.
-      await applyAppearance(appearance, false);
+      await applyAppearance(appearance, availableFonts, false);
       if (disposed) return;
       xterm.open(element);
       opened = true;

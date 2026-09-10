@@ -31,14 +31,37 @@ export const systemSnapshotSchema = z.object({
   sleepError: z.string().nullable(),
   notificationError: z.string().nullable(),
   availableTerminalShells: z.array(z.string()).default([]),
+  availableTerminalFonts: z.array(z.string()).default([]),
   resolvedTerminalShell: z.string().nullable().default(null),
   terminalError: z.string().nullable().default(null),
+  terminalFontError: z.string().nullable().default(null),
 });
 export type SystemSnapshot = z.infer<typeof systemSnapshotSchema>;
 export type SystemPreferences = SystemSnapshot["preferences"];
 export type TerminalPreferences = SystemPreferences["terminal"];
 
-export const AUTOMATIC_TERMINAL_FONT_STACK = '"MesloLGS NF", "MesloLGS Nerd Font Mono", "Hack Nerd Font Mono", "FiraCode Nerd Font", "JetBrains Mono", monospace';
+export const TERMINAL_FONT_PRIORITY = [
+  "MesloLGS NF",
+  "MesloLGS Nerd Font Mono",
+  "NotoSansM Nerd Font Mono",
+  "NotoMono Nerd Font Mono",
+  "JetBrainsMono Nerd Font",
+  "CaskaydiaCove Nerd Font Mono",
+  "Hack Nerd Font Mono",
+  "FiraCode Nerd Font",
+  "JetBrains Mono",
+] as const;
+
+export const AUTOMATIC_TERMINAL_FONT_STACK = TERMINAL_FONT_PRIORITY.map(font => `"${font}"`).join(", ") + ", monospace";
+
+export function resolveTerminalFont(font: string | null, available: string[]): string | null {
+  if (font) return available.find(candidate => candidate.toLocaleLowerCase() === font.toLocaleLowerCase()) ?? font;
+  for (const preferred of TERMINAL_FONT_PRIORITY) {
+    const installed = available.find(candidate => candidate.toLocaleLowerCase() === preferred.toLocaleLowerCase());
+    if (installed) return installed;
+  }
+  return available.find(candidate => /nerd font/i.test(candidate)) ?? available[0] ?? null;
+}
 
 export function terminalFontFamily(font: string | null): string {
   if (!font) return AUTOMATIC_TERMINAL_FONT_STACK;

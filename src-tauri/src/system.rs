@@ -6,11 +6,11 @@ pub(crate) mod unread;
 
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     fs,
     io::Write,
     path::{Path, PathBuf},
-    sync::{mpsc, Mutex},
+    sync::{mpsc, Mutex, OnceLock},
     time::Duration,
 };
 use tauri::{Emitter, Manager};
@@ -30,6 +30,78 @@ impl SleepMode {
 }
 
 pub(crate) const DEFAULT_ASK_USER_TIMEOUT_SECONDS: u16 = 30;
+const BUNDLED_TERMINAL_FONT: &str = "JetBrains Mono";
+const TERMINAL_FONT_PRIORITY: &[&str] = &[
+    "MesloLGS NF",
+    "MesloLGS Nerd Font Mono",
+    "NotoSansM Nerd Font Mono",
+    "NotoMono Nerd Font Mono",
+    "JetBrainsMono Nerd Font",
+    "CaskaydiaCove Nerd Font Mono",
+    "Hack Nerd Font Mono",
+    "FiraCode Nerd Font",
+    BUNDLED_TERMINAL_FONT,
+];
+
+fn order_terminal_fonts(fonts: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut unique = BTreeMap::new();
+    for font in fonts
+        .into_iter()
+        .chain(std::iter::once(BUNDLED_TERMINAL_FONT.to_string()))
+    {
+        let font = font.trim();
+        if font.is_empty() || font.len() > 160 || font.chars().any(char::is_control) {
+            continue;
+        }
+        unique
+            .entry(font.to_lowercase())
+            .or_insert_with(|| font.to_string());
+    }
+    let mut fonts: Vec<_> = unique.into_values().collect();
+    fonts.sort_by(|left, right| {
+        let rank = |font: &str| {
+            TERMINAL_FONT_PRIORITY
+                .iter()
+                .position(|candidate| candidate.eq_ignore_ascii_case(font))
+                .unwrap_or_else(|| {
+                    TERMINAL_FONT_PRIORITY.len()
+                        + usize::from(!font.to_lowercase().contains("nerd font"))
+                })
+        };
+        rank(left)
+            .cmp(&rank(right))
+            .then_with(|| left.to_lowercase().cmp(&right.to_lowercase()))
+    });
+    fonts.truncate(256);
+    fonts
+}
+
+fn available_terminal_fonts() -> &'static [String] {
+    static FONTS: OnceLock<Vec<String>> = OnceLock::new();
+    FONTS.get_or_init(|| {
+        let mut database = fontdb::Database::new();
+        database.load_system_fonts();
+        order_terminal_fonts(
+            database
+                .faces()
+                .filter(|face| face.monospaced)
+                .filter_map(|face| face.families.first().map(|(family, _)| family.clone())),
+        )
+    })
+}
+
+fn terminal_font_error(font: Option<&str>, fonts: &[String]) -> Option<String> {
+    font.filter(|font| {
+        !fonts
+            .iter()
+            .any(|available| available.eq_ignore_ascii_case(font))
+    })
+    .map(|font| {
+        format!(
+            "A fonte '{font}' não foi encontrada no sistema. Instale-a ou escolha uma das fontes detectadas."
+        )
+    })
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
@@ -121,8 +193,10 @@ pub struct Snapshot {
     sleep_error: Option<String>,
     notification_error: Option<String>,
     available_terminal_shells: Vec<String>,
+    available_terminal_fonts: Vec<String>,
     resolved_terminal_shell: Option<String>,
     terminal_error: Option<String>,
+    terminal_font_error: Option<String>,
 }
 
 struct Store {
@@ -252,6 +326,11 @@ impl SystemState {
     }
     fn snapshot(&self) -> Result<Snapshot, String> {
         let preferences = self.preferences()?;
+        let available_terminal_fonts = available_terminal_fonts().to_vec();
+        let terminal_font_error = terminal_font_error(
+            preferences.terminal.font_family.as_deref(),
+            &available_terminal_fonts,
+        );
         let (resolved_terminal_shell, terminal_error) =
             match crate::agent::shell::interactive_shell(&preferences.terminal) {
                 Ok(path) => (Some(path.to_string_lossy().into_owned()), None),
@@ -271,8 +350,10 @@ impl SystemState {
                 .map_err(|_| "Notificações indisponíveis.")?
                 .clone(),
             available_terminal_shells: crate::agent::shell::interactive_shells(),
+            available_terminal_fonts,
             resolved_terminal_shell,
             terminal_error,
+            terminal_font_error,
         })
     }
     fn changed(&self, app: &tauri::AppHandle) {

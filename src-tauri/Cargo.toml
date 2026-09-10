@@ -58,6 +58,7 @@ pdf-extract = "0.12"
 quick-xml = "0.42"
 time = { version = "0.3.55", default-features = false, features = ["parsing"] }
 portable-pty = "0.9"
+fontdb = "0.24.0"
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "3.7", default-features = false }
 objc2 = "0.6"

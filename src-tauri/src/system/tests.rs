@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn terminal_fonts_prioritize_nerd_fonts_and_report_missing_configurations() {
+    let fonts = order_terminal_fonts([
+        "Menlo".to_string(),
+        "NotoSansM Nerd Font Mono".to_string(),
+        "menlo".to_string(),
+    ]);
+    assert_eq!(fonts[0], "NotoSansM Nerd Font Mono");
+    assert!(fonts.iter().any(|font| font == BUNDLED_TERMINAL_FONT));
+    assert_eq!(
+        fonts
+            .iter()
+            .filter(|font| font.eq_ignore_ascii_case("Menlo"))
+            .count(),
+        1
+    );
+    assert!(terminal_font_error(Some("NotoSansM Nerd Font Mono"), &fonts).is_none());
+    assert!(terminal_font_error(Some("MesloLGS NF"), &fonts)
+        .is_some_and(|error| error.contains("não foi encontrada")));
+}
+
+#[test]
 fn application_exit_waits_for_the_power_worker_and_is_repeatable() {
     let system = SystemState::default();
     let agent = crate::agent::AgentState::default();

@@ -9,7 +9,7 @@ import type { ChatTerminal } from "@/core/terminals";
 import { TerminalWorkspace } from "./TerminalWorkspace";
 import { DesktopLayoutProvider } from "@/components/layout/DesktopLayoutProvider";
 import { DEFAULT_DESKTOP_LAYOUT, type DesktopLayout } from "@/core/desktop-layout";
-import { AUTOMATIC_TERMINAL_FONT_STACK, type SystemSnapshot } from "@/core/system-preferences";
+import { terminalFontFamily, type SystemSnapshot } from "@/core/system-preferences";
 
 function TestWorkspace({ conversationId }: { conversationId?: string }) {
   return <TerminalWorkspace conversationId={conversationId}>{launcher => <><textarea aria-label="Mensagem" />{launcher}</>}</TerminalWorkspace>;
@@ -17,7 +17,7 @@ function TestWorkspace({ conversationId }: { conversationId?: string }) {
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
-const renderer = vi.hoisted(() => ({ create: vi.fn(), open: vi.fn(), fit: vi.fn(), write: vi.fn(), dispose: vi.fn(), input: vi.fn<(data: string) => void>() as (data: string) => void }));
+const renderer = vi.hoisted(() => ({ create: vi.fn(), open: vi.fn(), fit: vi.fn(), write: vi.fn(), refresh: vi.fn(), clearTextureAtlas: vi.fn(), dispose: vi.fn(), input: vi.fn<(data: string) => void>() as (data: string) => void }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit() { renderer.fit(); } } }));
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
@@ -29,6 +29,8 @@ vi.mock("@xterm/xterm", () => ({
     open(element: HTMLElement) { renderer.open(element); }
     onData(callback: (data: string) => void) { renderer.input = callback; return { dispose() { renderer.input = () => {}; } }; }
     write(data: string) { renderer.write(data); }
+    refresh(start: number, end: number) { renderer.refresh(start, end); }
+    clearTextureAtlas() { renderer.clearTextureAtlas(); }
     reset() {}
     focus() {}
     dispose() { renderer.dispose(); }
@@ -47,8 +49,10 @@ const systemSnapshot: SystemSnapshot = {
   sleepError: null,
   notificationError: null,
   availableTerminalShells: ["/bin/zsh", "/bin/bash"],
+  availableTerminalFonts: ["NotoSansM Nerd Font Mono", "JetBrains Mono"],
   resolvedTerminalShell: "/bin/zsh",
   terminalError: null,
+  terminalFontError: null,
 };
 
 describe("Integrated terminals", () => {
@@ -187,7 +191,7 @@ describe("Integrated terminals", () => {
   });
 
   it("waits for the configured terminal font before measuring and fitting the terminal", async () => {
-    const fontFamily = AUTOMATIC_TERMINAL_FONT_STACK;
+    const fontFamily = terminalFontFamily("NotoSansM Nerd Font Mono");
     let resolveFont: (fonts: FontFace[]) => void = () => {};
     const loadFont = vi.fn(() => new Promise<FontFace[]>(resolve => { resolveFont = resolve; }));
     Object.defineProperty(document, "fonts", { configurable: true, value: { load: loadFont } });
@@ -241,11 +245,14 @@ describe("Integrated terminals", () => {
       id: 1,
       payload: {
         ...systemSnapshot,
+        availableTerminalFonts: ["MesloLGS NF", ...systemSnapshot.availableTerminalFonts],
         preferences: { ...systemSnapshot.preferences, terminal: { ...systemSnapshot.preferences.terminal, fontFamily: "MesloLGS NF", fontSize: 16 } },
       },
     }));
 
     await waitFor(() => expect(renderer.create.mock.calls[renderer.create.mock.calls.length - 1]?.[0]).toEqual(expect.objectContaining({ fontFamily: '"MesloLGS NF", "JetBrains Mono", monospace', fontSize: 16 })));
+    expect(renderer.clearTextureAtlas).toHaveBeenCalledOnce();
+    expect(renderer.refresh).toHaveBeenCalledWith(0, 23);
     expect(renderer.fit.mock.calls.length).toBeGreaterThan(before);
   });
 
