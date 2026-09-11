@@ -127,7 +127,7 @@ fn failure(status: u16) -> AgentError {
     match status {
         401 | 403 => AgentError::new("provider_auth", "O provedor recusou o acesso. Verifique a assinatura e reconecte esta conta nas configurações."),
         429 => AgentError::new("provider_limit", "O limite da conta foi atingido. Aguarde a renovação ou selecione outra conta."),
-        400 => AgentError::new("provider_request", "O provedor recusou a solicitação. Verifique o modelo e o nível de raciocínio selecionados."),
+        400 => AgentError::new("provider_request", "O provedor recusou a estrutura desta solicitação. O progresso foi preservado; tente continuar. Se a falha persistir, revise o modelo e o nível de raciocínio."),
         408 | 425 | 500..=599 => AgentError::new("provider_unavailable", &format!("HTTP {status} — {}. O provedor está temporariamente indisponível.", reqwest::StatusCode::from_u16(status).ok().and_then(|code| code.canonical_reason()).unwrap_or("Falha no servidor"))),
         _ => AgentError::new("provider_request", &format!("O provedor recusou a solicitação (HTTP {status}). Verifique o endpoint e a configuração do modelo.")),
     }
@@ -253,19 +253,26 @@ pub(super) async fn stream(
         session_id,
         options,
         instructions,
-        input: input
-            .into_iter()
-            .map(|mut item| {
-                if let Some(map) = item.as_object_mut() {
-                    map.remove("_jarvis_runtime");
-                }
-                item
-            })
-            .collect(),
+        input: provider_input(input),
         tools: ordered_tools(tools),
     }
     .run(signal, on_delta, Duration::from_secs(2))
     .await
+}
+
+fn provider_input(input: Vec<Value>) -> Vec<Value> {
+    input
+        .into_iter()
+        .map(|mut item| {
+            if let Some(map) = item.as_object_mut() {
+                // These fields make journal recovery and queued-message
+                // deduplication durable, but provider input schemas reject
+                // application-private properties on conversation items.
+                map.retain(|key, _| !key.starts_with("_jarvis_"));
+            }
+            item
+        })
+        .collect()
 }
 
 fn ordered_tools(mut tools: Vec<Value>) -> Vec<Value> {
@@ -563,6 +570,27 @@ pub(super) fn tool_calls(output: &[Value]) -> Result<Vec<ToolCall>, AgentError> 
 mod tests {
     use super::*;
     use crate::agent::{ApprovalMode, Mode};
+    #[test]
+    fn provider_input_strips_all_jarvis_journal_metadata() {
+        let input = provider_input(vec![json!({
+            "role": "user",
+            "content": "Orientação adicional",
+            "_jarvis_runtime": true,
+            "_jarvis_auxiliary": true,
+            "_jarvis_queue_id": "queued-message",
+            "_custom": true,
+            "_antigravity_model": "gemini-example"
+        })]);
+
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[0]["content"], "Orientação adicional");
+        assert!(input[0].get("_jarvis_runtime").is_none());
+        assert!(input[0].get("_jarvis_auxiliary").is_none());
+        assert!(input[0].get("_jarvis_queue_id").is_none());
+        assert_eq!(input[0]["_custom"], true);
+        assert_eq!(input[0]["_antigravity_model"], "gemini-example");
+    }
+
     #[test]
     fn codex_lean_terminal_uses_only_completed_streamed_items() {
         let mut output = StreamOutput::default();

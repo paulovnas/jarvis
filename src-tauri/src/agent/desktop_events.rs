@@ -92,7 +92,7 @@ mod tests {
             tool_id: "proposal".into(),
             action: authoring::Action::Create,
             summary: "Criar agente".into(),
-            catalog_revision: 1,
+            catalog_revision: Some(1),
             target: authoring::Target::Agent {
                 before: None,
                 after: workflow::catalog::tests::example().agents[0].clone(),

@@ -77,6 +77,11 @@ fn preferences_restore_all_modes_without_touching_layout() {
             prevent_sleep: mode,
             notifications: mode != SleepMode::Off,
             ask_user_timeout_seconds: 45,
+            response_language: if mode == SleepMode::Active {
+                ResponseLanguage::English
+            } else {
+                ResponseLanguage::PortugueseBrazil
+            },
             terminal: TerminalPreferences::default(),
         };
         store.save(preferences.clone()).unwrap();
@@ -104,6 +109,7 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
             prevent_sleep: SleepMode::Open,
             notifications: true,
             ask_user_timeout_seconds: 30,
+            response_language: ResponseLanguage::Spanish,
             terminal: TerminalPreferences::default(),
         })
         .is_err());
@@ -120,6 +126,14 @@ fn question_timeout_defaults_for_existing_installs_and_rejects_invalid_values() 
     assert_eq!(ask_user_timeout_seconds(home.path()), 30);
     let mut store = Store::open(path).unwrap();
     assert_eq!(store.preferences.ask_user_timeout_seconds, 30);
+    assert_eq!(
+        store.preferences.response_language,
+        ResponseLanguage::PortugueseBrazil
+    );
+    assert_eq!(
+        response_language(home.path()),
+        ResponseLanguage::PortugueseBrazil
+    );
     assert_eq!(store.preferences.terminal, TerminalPreferences::default());
     assert!(store
         .save(Preferences {

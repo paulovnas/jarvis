@@ -27,6 +27,7 @@ describe("Project Dashboard", () => {
       if (command === "get_project_metrics") return projectMetrics();
       if (command === "get_project_beads") return [bead()];
       if (command === "get_core_status") return coreFixture();
+      if (command === "get_project_publication_settings") return { projectId: "p1", publishPrompt: "Review changes", prMode: "disabled", prPrompt: "Write a PR", ghAvailable: true };
       if (command === "get_bead_detail") return { issue: bead(), comments: [] };
       if (command === "open_project_directory") return;
       throw new Error(`Unexpected command ${command}`);
@@ -36,7 +37,7 @@ describe("Project Dashboard", () => {
   it("loads real metrics and navigates from overview to sessions and board", async () => {
     const user = userEvent.setup(); const select = vi.fn();
     render(<ProjectDashboard project={project} onSelectSession={select} />);
-    expect(screen.getByRole("status", { name: "Carregando Dashboard" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Carregando detalhes" })).toBeInTheDocument();
     await screen.findByText("gpt-6-astra");
     expect(screen.getByText("1.500")).toBeInTheDocument();
     expect(screen.getByText("0/1")).toBeInTheDocument();
@@ -51,6 +52,15 @@ describe("Project Dashboard", () => {
     await user.click(screen.getByRole("button", { name: "Abrir pasta do projeto Jarvis" }));
     expect(call).toHaveBeenCalledWith("open_project_directory", { projectId: "p1" });
   });
+  it("presents General, Kanban and project-scoped Options inside Details", async () => {
+    const user = userEvent.setup();
+    render(<ProjectDashboard project={project} onSelectSession={vi.fn()} />);
+    expect(screen.getByRole("main", { name: "Detalhes de Jarvis" })).toBeVisible();
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    await user.click(screen.getByRole("tab", { name: "Opções" }));
+    expect(await screen.findByRole("textbox", { name: "Instrução de publicação" })).toHaveValue("Review changes");
+    expect(call).toHaveBeenCalledWith("get_project_publication_settings", { projectId: "p1" });
+  });
   it("reports an unavailable project directory without losing the dashboard", async () => {
     const report = vi.spyOn(toast, "error");
     const fallback = call.getMockImplementation();
@@ -60,7 +70,7 @@ describe("Project Dashboard", () => {
     render(<ProjectDashboard project={project} onSelectSession={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: "Abrir pasta do projeto Jarvis" }));
     await waitFor(() => expect(report).toHaveBeenCalledWith("A pasta do projeto não está disponível."));
-    expect(screen.getByRole("main", { name: "Dashboard de Jarvis" })).toBeVisible();
+    expect(screen.getByRole("main", { name: "Detalhes de Jarvis" })).toBeVisible();
     report.mockRestore();
   });
   it("shows all statuses on demand, filters cards and opens readonly details", async () => {
@@ -108,6 +118,6 @@ describe("Project Dashboard", () => {
     view.rerender(<ProjectDashboard key="p2" project={{ ...project, id: "p2", name: "Outro" }} onSelectSession={vi.fn()} />);
     await act(async () => old(projectMetrics()));
     expect(screen.queryByText("gpt-6-astra")).not.toBeInTheDocument();
-    expect(screen.getByRole("main", { name: "Dashboard de Outro" })).toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Detalhes de Outro" })).toBeInTheDocument();
   });
 });

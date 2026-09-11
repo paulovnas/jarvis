@@ -175,7 +175,7 @@ export function useChat(conversationId: string | null) {
     try {
       const result = await invoke<unknown>("answer_agent_authoring", { conversationId: id, decision: { turnId: proposal.turnId, toolId: proposal.toolId, approved, note } });
       if (generation.current === request) accept(result, id);
-      toast.success(approved ? "Configuração aprovada e salva" : "Proposta recusada");
+      toast.success(approved ? proposal.target.kind === "publication" ? "Publicação processada" : "Configuração aprovada e salva" : "Proposta recusada");
       return true;
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível responder à proposta.")); return false; }
   };

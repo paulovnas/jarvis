@@ -1060,6 +1060,22 @@ impl TurnClients {
             .is_none_or(|tool| !tool.read_only)
     }
 
+    pub(crate) fn tool_metadata(&self, name: &str) -> Option<(&str, &str, &str)> {
+        self.clients.iter().find_map(|client| {
+            client
+                .tools
+                .iter()
+                .find(|tool| tool.definition["name"] == name)
+                .map(|tool| {
+                    (
+                        client.server.name.as_str(),
+                        tool.original.as_str(),
+                        tool.description.as_str(),
+                    )
+                })
+        })
+    }
+
     async fn reconnect_client(
         &mut self,
         client_index: usize,

@@ -14,7 +14,7 @@ beforeEach(() => {
   mock.listen.mockImplementation(async (name: string, callback: typeof emit) => { if (name === "system:changed") emit = callback; return mock.stop; });
 });
 const snapshot = (notificationError: string | null, notifications = true) => ({ payload: {
-  preferences: { notifications, preventSleep: "off", askUserTimeoutSeconds: 30 }, sleepInhibited: false, sleepError: null, notificationError,
+  preferences: { notifications, preventSleep: "off", askUserTimeoutSeconds: 30, responseLanguage: "pt-BR" }, sleepInhibited: false, sleepError: null, notificationError,
 } });
 
 it("surfaces failed OS deliveries outside settings without repeating unrelated updates", async () => {

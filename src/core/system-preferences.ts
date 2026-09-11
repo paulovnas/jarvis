@@ -6,6 +6,18 @@ export const sleepModes = {
   open: "Enquanto Jarvis aberto",
 } as const;
 
+export const responseLanguageValues = ["pt-BR", "en", "es", "fr", "de", "it", "ja", "zh-CN"] as const;
+export const responseLanguages: Record<(typeof responseLanguageValues)[number], string> = {
+  "pt-BR": "Português (Brasil)",
+  en: "English",
+  es: "Español",
+  fr: "Français",
+  de: "Deutsch",
+  it: "Italiano",
+  ja: "日本語",
+  "zh-CN": "简体中文",
+};
+
 export const DEFAULT_TERMINAL_PREFERENCES = {
   shell: null,
   arguments: [] as string[],
@@ -25,6 +37,7 @@ export const systemSnapshotSchema = z.object({
     preventSleep: z.enum(["off", "active", "open"]),
     notifications: z.boolean(),
     askUserTimeoutSeconds: z.number().int().min(1).max(3600),
+    responseLanguage: z.enum(responseLanguageValues).default("pt-BR"),
     terminal: terminalPreferencesSchema.default(DEFAULT_TERMINAL_PREFERENCES),
   }),
   sleepInhibited: z.boolean(),

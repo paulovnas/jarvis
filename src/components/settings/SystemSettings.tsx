@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Bell, Monitor, Moon, Send, TimerReset } from "lucide-react";
+import { Bell, Languages, Monitor, Moon, Send, TimerReset } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/TextInput";
 import { libraryError } from "@/core/library";
-import { sleepModes, systemSnapshotSchema, type SystemPreferences, type SystemSnapshot } from "@/core/system-preferences";
+import { responseLanguages, sleepModes, systemSnapshotSchema, type SystemPreferences, type SystemSnapshot } from "@/core/system-preferences";
 
 const systemError = (cause: unknown, fallback: string) => typeof cause === "string" ? cause : libraryError(cause, fallback);
 
@@ -70,8 +70,16 @@ export function SystemSettings() {
   const problem = error ?? snapshot?.sleepError ?? snapshot?.notificationError;
   return <section aria-labelledby="system-settings-title" className="space-y-3">
     <h2 id="system-settings-title" className="micro-label flex items-center gap-2 text-muted-foreground"><Monitor className="size-3.5" />Sistema</h2>
-    {!snapshot ? error ? <div className="space-y-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button size="sm" variant="outline" className="cursor-pointer" onClick={() => { setError(null); setAttempt(n => n + 1); }}>Tentar novamente</Button></div> : <div role="status" aria-label="Carregando preferências do sistema" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{[0, 1, 2].map(key => <Card key={key} className="gap-3 p-4"><Skeleton className="h-4 w-32" /><Skeleton className="h-9 w-full" /></Card>)}</div> : <>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    {!snapshot ? error ? <div className="space-y-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button size="sm" variant="outline" className="cursor-pointer" onClick={() => { setError(null); setAttempt(n => n + 1); }}>Tentar novamente</Button></div> : <div role="status" aria-label="Carregando preferências do sistema" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[0, 1, 2, 3].map(key => <Card key={key} className="gap-3 p-4"><Skeleton className="h-4 w-32" /><Skeleton className="h-9 w-full" /></Card>)}</div> : <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Card className="min-w-0 gap-3 p-4">
+          <Label htmlFor="response-language" className="flex items-center gap-2 text-xs"><Languages className="size-4 text-onedark-purple" />Idioma dos agentes</Label>
+          <Select value={snapshot.preferences.responseLanguage} disabled={busy} onValueChange={value => { if (value && value in responseLanguages) void save({ responseLanguage: value as SystemPreferences["responseLanguage"] }); }}>
+            <SelectTrigger id="response-language" className="w-full cursor-pointer text-xs"><SelectValue>{responseLanguages[snapshot.preferences.responseLanguage]}</SelectValue></SelectTrigger>
+            <SelectContent>{Object.entries(responseLanguages).map(([value, label]) => <SelectItem key={value} value={value} className="cursor-pointer text-xs">{label}</SelectItem>)}</SelectContent>
+          </Select>
+          <p className="text-[10px] leading-relaxed text-muted-foreground">Define a resposta dos agentes. A interface permanece em pt-BR.</p>
+        </Card>
         <Card className="min-w-0 gap-4 p-4">
           <Label htmlFor="prevent-sleep" className="flex items-center gap-2 text-xs"><Moon className="size-4 text-onedark-yellow" />Impedir repouso</Label>
           <Select value={snapshot.preferences.preventSleep} disabled={busy} onValueChange={value => { if (value && value in sleepModes) void save({ preventSleep: value as SystemPreferences["preventSleep"] }); }}>

@@ -28,9 +28,15 @@ export const terminalOutputEventSchema = z.object({
   revision: z.number(),
 });
 
+export const terminalConversationActivitySchema = z.object({
+  conversationId: z.string(),
+  count: z.number().int().positive(),
+});
+
 export type ChatTerminal = z.infer<typeof terminalSchema>;
 export type TerminalSnapshot = z.infer<typeof terminalSnapshotSchema>;
 export type TerminalOutputEvent = z.infer<typeof terminalOutputEventSchema>;
+export type TerminalConversationActivity = z.infer<typeof terminalConversationActivitySchema>;
 
 export const TERMINAL_STATUS_LABELS = {
   running: "Em execução",

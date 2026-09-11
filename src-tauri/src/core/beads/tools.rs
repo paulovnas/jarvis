@@ -14,7 +14,7 @@ pub fn definitions(plan: bool) -> Vec<Value> {
     let mut tools = vec![
         definition("beads_list", "List this project's durable tasks. Optionally filter by status, parent or title substring. Use beads_show for full requirements and progress notes.", json!({"status":{"type":"string","enum":["active","all","open","in_progress","blocked","deferred","closed"]},"parent":id,"query":text,"limit":limit}), &[]),
         definition("beads_ready", "Find unblocked, claimable tasks in this project's Beads tracker.", json!({"parent":id,"limit":limit}), &[]),
-        definition("beads_show", "Read full task requirements, status, progress notes and dependencies by exact ID.", json!({"id":id}), &["id"]),
+        definition("beads_show", "Read full task requirements, status, progress notes, dependencies and current comments by exact ID.", json!({"id":id}), &["id"]),
     ];
     if !plan {
         tools.extend([

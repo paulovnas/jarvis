@@ -26,7 +26,7 @@ export const beadSchema = z.object({
   status: z.string(), priority: count, issue_type: z.string(), assignee: z.string(), created_by: z.string(),
   created_at: z.string(), updated_at: z.string(), closed_at: z.string().nullable(), close_reason: z.string(),
   labels: z.array(z.string()), dependencies: z.array(relation), dependents: z.array(relation), comment_count: count,
-  parent: z.string().nullable(),
+  parent: z.string().nullable(), metadata: z.record(z.string(), z.unknown()).default({}),
 });
 export const commentSchema = z.object({ id: z.string().min(1), author: z.string(), text: z.string(), created_at: z.string() });
 export const detailSchema = z.object({ issue: beadSchema, comments: z.array(commentSchema) });

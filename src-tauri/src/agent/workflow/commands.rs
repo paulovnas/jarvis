@@ -364,7 +364,7 @@ pub fn answer_workflow_question(
 }
 
 #[tauri::command]
-pub fn answer_workflow_authoring(
+pub async fn answer_workflow_authoring(
     app: tauri::AppHandle,
     persistence: tauri::State<'_, AppState>,
     agent: tauri::State<'_, AgentState>,
@@ -374,8 +374,14 @@ pub fn answer_workflow_authoring(
 ) -> Result<(), AgentError> {
     use tauri::Manager;
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
-    let session = active_worker(&agent, &conversation_id, &agent_id)?;
-    authoring::answer(&app, persistence.inner(), &home, &session, decision).map(|_| ())
+    let persistence = persistence.inner().clone();
+    let agent = agent.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let session = active_worker(&agent, &conversation_id, &agent_id)?;
+        authoring::answer(&app, &persistence, &home, &session, decision).map(|_| ())
+    })
+    .await
+    .map_err(|_| AgentError::internal())?
 }
 
 #[cfg(test)]

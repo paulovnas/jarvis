@@ -44,7 +44,7 @@ const terminals = [
 
 const service: ChatTerminal = { id: "service", origin: "agent", conversationId: "chat", title: "Vite", command: "bun run dev", cwd: "/project", pid: 123, startedAt: 1, endedAt: null, exitCode: null, status: "running" };
 const systemSnapshot: SystemSnapshot = {
-  preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30, terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 } },
+  preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30, responseLanguage: "pt-BR", terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 } },
   sleepInhibited: false,
   sleepError: null,
   notificationError: null,

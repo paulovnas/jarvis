@@ -156,11 +156,12 @@ impl ProcessState {
         }
         self.0.remove_service(conversation, id)
     }
-    async fn start(
+    async fn start_owned(
         &self,
         conversation: &str,
         root: &Path,
         call_id: &str,
+        owner_id: &str,
         args: &Value,
         events: TerminalEvents,
     ) -> Result<ProcessInfo, AgentError> {
@@ -191,6 +192,7 @@ impl ProcessState {
                 conversation,
                 root,
                 call_id,
+                owner_id,
                 title: &args.title,
                 command: &args.command,
                 port,
@@ -199,16 +201,31 @@ impl ProcessState {
         )?;
         self.info(conversation, &terminal.id)
     }
+
+    #[cfg(test)]
+    async fn start(
+        &self,
+        conversation: &str,
+        root: &Path,
+        call_id: &str,
+        args: &Value,
+        events: TerminalEvents,
+    ) -> Result<ProcessInfo, AgentError> {
+        self.start_owned(conversation, root, call_id, call_id, args, events)
+            .await
+    }
+
     pub(super) async fn execute(
         &self,
         conversation: &str,
         root: &Path,
+        owner_id: &str,
         call: &ToolCall,
         events: TerminalEvents,
     ) -> Result<String, AgentError> {
         let result = match call.name.as_str() {
             "process_start" => serde_json::to_value(
-                self.start(conversation, root, &call.id, &call.args, events)
+                self.start_owned(conversation, root, &call.id, owner_id, &call.args, events)
                     .await?,
             )
             .map_err(|_| AgentError::internal())?,
@@ -328,10 +345,11 @@ mod tests {
         let command = cmd("echo input-ready; read value; printf 'received:%s' \"$value\"", "Write-Output input-ready; $value = Read-Host; [Console]::Out.Write(('received:' + $value))");
         let service = agent
             .processes
-            .start(
+            .start_owned(
                 "chat",
                 root.path(),
                 "input",
+                "run:builder",
                 &json!({"title":"Interactive service", "command":command}),
                 super::super::terminals::silent_events(),
             )
@@ -341,6 +359,15 @@ mod tests {
         assert_eq!(terminals.len(), 1);
         assert_eq!(terminals[0].id, service.id);
         assert_eq!(terminals[0].command.as_deref(), Some(command.as_str()));
+        let close = json!({"id":service.id,"reason":"Teste concluído."});
+        assert!(!agent
+            .terminals
+            .close_requires_approval("chat", "run:builder", &close)
+            .unwrap());
+        assert!(agent
+            .terminals
+            .close_requires_approval("chat", "run:designer", &close)
+            .unwrap());
         assert!(agent
             .terminals
             .write("other", &service.id, "wrong\r")

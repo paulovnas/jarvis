@@ -247,6 +247,74 @@ fn beads_dispatch_checks_real_status_and_blocking_dependencies() {
 }
 
 #[test]
+fn bead_checkpoint_tracks_requirements_and_comments_without_progress_noise() {
+    let source = json!([{
+        "id":"jproject-task",
+        "title":"Implement feature",
+        "description":"Keep the existing contract",
+        "status":"in_progress",
+        "assignee":"jarvis-conversation",
+        "notes":"Started",
+        "updated_at":"2026-09-11T10:00:00Z",
+        "dependencies":[],
+        "comments":[{"id":1,"author":"Você","text":"Preserve the API"}]
+    }]);
+    let initial = bead_checkpoint(&source).unwrap();
+    let mut progress = source.clone();
+    progress[0]["notes"] = json!("Validation passed");
+    progress[0]["updated_at"] = json!("2026-09-11T11:00:00Z");
+    assert_eq!(
+        initial.fingerprint,
+        bead_checkpoint(&progress).unwrap().fingerprint
+    );
+
+    let mut commented = progress.clone();
+    commented[0]["comments"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":2,"author":"Você","text":"Also cover the empty state"}));
+    let refreshed = bead_checkpoint(&commented).unwrap();
+    assert_ne!(initial.fingerprint, refreshed.fingerprint);
+    let error = bead_changed_error(&refreshed);
+    assert_eq!(error.code, "beads_changed");
+    assert!(error
+        .tool_result
+        .unwrap()
+        .contains("Also cover the empty state"));
+
+    let mut changed_requirement = source;
+    changed_requirement[0]["description"] = json!("Keep the API and add pagination");
+    assert_ne!(
+        initial.fingerprint,
+        bead_checkpoint(&changed_requirement).unwrap().fingerprint
+    );
+}
+
+#[test]
+fn assigned_bead_comments_are_injected_before_worker_execution() {
+    let (_fixture, hub) = hub();
+    let child = job(&hub, Role::Builder, "src");
+    let (session, _) = storage::worker(&hub, &child, None).unwrap();
+    let checkpoint = bead_checkpoint(&json!([{
+        "id":"jproject-task",
+        "title":"Implement feature",
+        "status":"open",
+        "comments":[{"id":3,"author":"Você","text":"Use the shared component"}]
+    }]))
+    .unwrap();
+    inject_bead_checkpoint(&session, "jproject-task", &checkpoint).unwrap();
+    let input = session.input().unwrap();
+    let content = input
+        .iter()
+        .filter_map(|item| item["content"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(content.contains("Assigned Beads task snapshot"));
+    assert!(content.contains("Use the shared component"));
+    assert!(content.contains("re-read this task and its comments"));
+}
+
+#[test]
 fn review_admits_completed_implementation_without_removing_its_beads_dependency() {
     let (_fixture, hub) = hub();
     let mut builder = job(&hub, Role::Builder, "src");

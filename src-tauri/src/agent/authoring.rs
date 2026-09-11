@@ -1,7 +1,7 @@
 //! Supervised authoring for user-owned Jarvis agents and workflows.
 use super::{
-    cancelled, journal, next_revision, workflow, AgentError, AgentState, ChatSnapshot, Session,
-    ToolCall,
+    cancelled, journal, next_revision, publication, workflow, AgentError, AgentState, ChatSnapshot,
+    Session, ToolCall,
 };
 use crate::{openai_codex::OpenAiCodexState, persistence::AppState};
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,7 @@ Users own custom agents and custom workflows. Custom agents declare where they c
 pub enum Action {
     Create,
     Update,
+    Publish,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +42,9 @@ pub enum Target {
         before: Option<workflow::catalog::FlowDefinition>,
         after: workflow::catalog::FlowDefinition,
     },
+    Publication {
+        after: publication::Proposal,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,16 +54,22 @@ pub struct PendingProposal {
     pub(super) tool_id: String,
     pub(super) action: Action,
     pub(super) summary: String,
-    pub(super) catalog_revision: u64,
+    pub(super) catalog_revision: Option<u64>,
     pub(super) target: Target,
     pub(super) agent_references: Vec<AgentReference>,
 }
 
 pub(super) struct Pending {
     pub request: PendingProposal,
-    mutation: workflow::catalog::Mutation,
+    mutation: Mutation,
     started: std::time::Instant,
     reply: oneshot::Sender<String>,
+}
+
+#[derive(Clone)]
+enum Mutation {
+    Catalog(workflow::catalog::Mutation),
+    Publication(publication::Proposal),
 }
 
 #[derive(Debug, Deserialize)]
@@ -377,6 +387,7 @@ fn prepare(
     let exists = match &target {
         Target::Agent { before, .. } => before.is_some(),
         Target::Flow { before, .. } => before.is_some(),
+        Target::Publication { .. } => false,
     };
     match (action, exists) {
         (Action::Create, true) => {
@@ -399,7 +410,7 @@ fn prepare(
             tool_id: tool.id.clone(),
             action,
             summary,
-            catalog_revision: revision,
+            catalog_revision: Some(revision),
             target,
             agent_references,
         },
@@ -412,14 +423,55 @@ pub(super) async fn execute(
     state: &AppState,
     oauth: &OpenAiCodexState,
     home: &Path,
+    project_id: &str,
     tool: &ToolCall,
     mut signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
-    let catalog = state.with_connection(home, |db| workflow::catalog::read_configured(db, home))?;
-    if tool.name == "jarvis_catalog" {
-        return catalog_output(&catalog, &tool.args);
-    }
-    let (mut request, mutation) = prepare(&catalog, tool)?;
+    let (mut request, mutation) = if tool.name == "jarvis_propose_publication" {
+        let question_answered = session
+            .data
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .turns
+            .last()
+            .is_some_and(|turn| {
+                turn.turn
+                    .steps
+                    .iter()
+                    .flat_map(|step| &step.tools)
+                    .any(publication::answered_publication_question)
+            });
+        let proposal = publication::prepare(
+            state,
+            home,
+            project_id,
+            &session.root,
+            question_answered,
+            tool,
+        )?;
+        (
+            PendingProposal {
+                turn_id: String::new(),
+                tool_id: tool.id.clone(),
+                action: Action::Publish,
+                summary: proposal.summary.clone(),
+                catalog_revision: None,
+                target: Target::Publication {
+                    after: proposal.clone(),
+                },
+                agent_references: vec![],
+            },
+            Mutation::Publication(proposal),
+        )
+    } else {
+        let catalog =
+            state.with_connection(home, |db| workflow::catalog::read_configured(db, home))?;
+        if tool.name == "jarvis_catalog" {
+            return catalog_output(&catalog, &tool.args);
+        }
+        let (request, mutation) = prepare(&catalog, tool)?;
+        (request, Mutation::Catalog(mutation))
+    };
     if let Target::Agent { after, .. } = &request.target {
         if let Some(model) = &after.model {
             oauth.inference_model(
@@ -462,7 +514,7 @@ fn answer_with(
     tool_id: &str,
     approved: bool,
     note: Option<String>,
-    apply: impl FnOnce(u64, workflow::catalog::Mutation) -> Result<u64, AgentError>,
+    apply: impl FnOnce(Mutation, Option<u64>, Option<&str>) -> Result<(String, bool), AgentError>,
 ) -> Result<(ChatSnapshot, bool), AgentError> {
     let note = note
         .map(|note| note.trim().to_owned())
@@ -490,20 +542,22 @@ fn answer_with(
             )
         })?;
     let mutation = pending.mutation.clone();
-    let revision = pending.request.catalog_revision;
+    let catalog_revision = pending.request.catalog_revision;
     let elapsed = pending.started.elapsed().as_millis() as u64;
-    let catalog_revision = if approved {
-        Some(apply(revision, mutation)?)
+    let (output, changed) = if approved {
+        apply(mutation, catalog_revision, note.as_deref())?
     } else {
-        None
+        (
+            json!({
+                "approved":false,
+                "status":"rejected",
+                "note":note,
+                "catalogRevision":Value::Null,
+            })
+            .to_string(),
+            false,
+        )
     };
-    let output = json!({
-        "approved": approved,
-        "status": if approved { "applied" } else { "rejected" },
-        "note": note,
-        "catalogRevision": catalog_revision,
-    })
-    .to_string();
     let previous = data
         .turns
         .last()
@@ -520,7 +574,7 @@ fn answer_with(
             tool.id == tool_id
                 && matches!(
                     tool.name.as_str(),
-                    "jarvis_propose_agent" | "jarvis_propose_flow"
+                    "jarvis_propose_agent" | "jarvis_propose_flow" | "jarvis_propose_publication"
                 )
         })
         .ok_or_else(AgentError::internal)?;
@@ -548,7 +602,7 @@ fn answer_with(
     drop(data);
     (session.emit)(snapshot.clone());
     let _ = pending.reply.send(output);
-    Ok((snapshot, approved))
+    Ok((snapshot, changed))
 }
 
 pub(super) fn answer(
@@ -570,9 +624,19 @@ pub(super) fn answer(
         &tool_id,
         approved,
         note,
-        |revision, mutation| {
-            workflow::catalog::mutate_configured(state, home, revision, mutation)
-                .map(|catalog| catalog.revision)
+        |mutation, catalog_revision, note| match mutation {
+            Mutation::Catalog(mutation) => {
+                let revision = catalog_revision.ok_or_else(AgentError::internal)?;
+                let revision =
+                    workflow::catalog::mutate_configured(state, home, revision, mutation)?.revision;
+                Ok((
+                    json!({"approved":true,"status":"applied","note":note,"catalogRevision":revision}).to_string(),
+                    true,
+                ))
+            }
+            Mutation::Publication(proposal) => {
+                Ok((publication::apply(&session.root, &proposal, note), false))
+            }
         },
     )?;
     if changed {
@@ -582,7 +646,7 @@ pub(super) fn answer(
 }
 
 #[tauri::command]
-pub fn answer_agent_authoring(
+pub async fn answer_agent_authoring(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     agent: tauri::State<'_, AgentState>,
@@ -590,8 +654,14 @@ pub fn answer_agent_authoring(
     decision: Decision,
 ) -> Result<ChatSnapshot, AgentError> {
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
-    let session = agent.existing(&conversation_id)?;
-    answer(&app, state.inner(), &home, &session, decision)
+    let state = state.inner().clone();
+    let agent = agent.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let session = agent.existing(&conversation_id)?;
+        answer(&app, &state, &home, &session, decision)
+    })
+    .await
+    .map_err(|_| AgentError::internal())?
 }
 
 #[cfg(test)]

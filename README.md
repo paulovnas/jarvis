@@ -4,12 +4,13 @@
 
 <p align="center">
   <strong>Seus projetos, modelos e agentes em um só lugar.</strong><br />
-  Um aplicativo desktop para desenvolver software com inteligência artificial.
+  Um aplicativo desktop para desenvolver software de forma assistida por inteligência artificial.
 </p>
 
 <p align="center">
   <a href="https://github.com/paulovnas/jarvis/releases"><img src="https://img.shields.io/github/v/release/paulovnas/jarvis?include_prereleases&label=vers%C3%A3o&color=61afef&style=flat-square" alt="Versão do Jarvis" /></a>
-  <img src="https://img.shields.io/badge/plataforma-macOS-969eac?style=flat-square&logo=apple&logoColor=white" alt="Disponível para macOS" />
+  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-969eac?style=flat-square&logo=apple&logoColor=white" alt="Disponível para macOS com Apple Silicon" />
+  <img src="https://img.shields.io/badge/Windows-x64-61afef?style=flat-square&logo=windows&logoColor=white" alt="Disponível para Windows x64" />
   <img src="https://img.shields.io/badge/idioma-pt--BR-98c379?style=flat-square" alt="Interface em português do Brasil" />
 </p>
 
@@ -21,107 +22,136 @@
 
 ## O que é o Jarvis
 
-O Jarvis reúne conversas com IA, arquivos do projeto, planejamento e acompanhamento de tarefas em uma interface nativa. Você conecta seus provedores, escolhe os modelos de cada agente e acompanha o trabalho sem alternar entre várias ferramentas.
+O Jarvis reúne conversas com IA, arquivos, terminais, navegador, planejamento e acompanhamento de tarefas em uma interface desktop. Você conecta seus próprios provedores, escolhe os modelos de cada agente e acompanha o trabalho em vários projetos sem perder o contexto.
 
-Os agentes podem ler e editar arquivos, executar comandos e realizar verificações como testes unitários, lint, checagem de tipos e compilação. A validação final da experiência fica com você: nos fluxos Planejado e Completo, o aplicativo apresenta os itens para testar, registra sua aprovação ou reprovação e encaminha o resultado aos agentes.
+Os agentes podem investigar o projeto, consultar documentação, editar arquivos, executar comandos, navegar pelo código, usar MCPs e realizar verificações. Operações sensíveis, validações e publicações podem ser apresentadas para sua revisão antes da execução.
 
-**Versão atual: 0.8.2 Beta.** Disponível para **macOS com Apple Silicon**. O aplicativo está em evolução; problemas podem ser relatados nas [issues do projeto](https://github.com/paulovnas/jarvis/issues).
+O Jarvis está em beta e evolui continuamente. Relate problemas e sugestões nas [issues do projeto](https://github.com/paulovnas/jarvis/issues).
 
-## O que você encontra
+## Principais recursos
 
-- **Organização por Workspace → Projeto → Conversa.** Agrupe seus projetos, escolha suas pastas locais e retome as conversas de onde parou.
-- **Chat com contexto.** Anexe imagens e documentos, selecione skills com `/`, responda perguntas interativas e deixe mensagens na fila enquanto o agente trabalha.
-- **Histórico sob demanda.** Navegue por conversas longas sem carregar tudo de uma vez. A compactação automática ajuda a manter o contexto dentro do limite do modelo e fica registrada no histórico.
-- **Acompanhamento do projeto.** Veja indicadores no Dashboard, tarefas no Kanban, planos, subagentes e a janela de contexto. Os arquivos alterados mostram diferenças de linhas da sessão que ainda não foram commitadas.
-- **Ferramentas configuráveis.** Use pesquisa na web, análise de imagens, servidores MCP e skills instaladas localmente ou pelo Marketplace.
-- **Processos persistentes.** Acompanhe servidores e comandos que continuam em execução e encerre-os pelo chat quando necessário.
-- **Seu espaço preservado.** Posição da janela, painéis e preferências são restaurados ao reabrir. A limpeza de conversas antigas mantém pelo menos a mais recente de cada projeto.
+| Área | O que o Jarvis oferece |
+| --- | --- |
+| **Organização** | Workspaces, projetos e conversas persistentes, reordenação por arrastar e soltar, rascunhos por chat e indicadores de atividade, mensagens não lidas e terminais abertos. |
+| **Chat** | Raciocínio em tempo real, chamadas de ferramentas agrupadas, blocos de código destacados, anexos, imagens geradas, perguntas interativas e fila de mensagens que pode ser reordenada, editada ou enviada durante a execução. |
+| **Agentes e fluxos** | Agentes nativos e personalizados, uso individual ou em fluxos, permissões por ferramenta e editor visual em canvas. Alterações de agentes e fluxos feitas pela IA exigem aprovação. |
+| **Planejamento** | Tasks para agentes diretos e planos persistentes com épicos, tarefas, dependências, comentários e validações nos fluxos Planejado e Completo. |
+| **Ambiente** | Explorer, visualização de arquivos, diff das alterações, terminal configurável, processos persistentes, navegador integrado, LSP e patch transacional. |
+| **Detalhes do projeto** | Métricas de uso, atividade dos agentes, Kanban e opções próprias de publicação para cada projeto. |
+| **Desktop** | Notificações do sistema, badges de mensagens não lidas, prevenção de repouso, atalhos controlados, backup de configurações e atualização automática do aplicativo e dos recursos. |
 
-## Fluxos de trabalho
+## Fluxos e agentes
+
+Os fluxos nativos cobrem diferentes níveis de coordenação:
 
 | Fluxo | Para que serve |
 | --- | --- |
-| **Padrão** | Trabalhar diretamente com o Construtor em uma implementação ou ajuste. |
-| **Designer** | Definir a direção visual com perguntas, referências, sistemas de design e recursos de interface. |
-| **Planejado** | Planejar com o Planejador e delegar a execução ao Construtor e ao Designer conforme a necessidade. |
-| **Completo** | Coordenar planejamento, investigação, documentação, design, construção e revisão com agentes especializados. |
+| **Padrão** | Trabalhar diretamente com o Construtor em implementações e ajustes gerais. |
+| **Designer** | Investigar, projetar e implementar interfaces com foco em experiência e acabamento visual. |
+| **Planejado** | Criar um plano persistente e delegar a execução aos agentes adequados. |
+| **Completo** | Coordenar planejamento, investigação, documentação, design, construção e revisão. |
 
-Em **Configurações → Agentes**, escolha o provedor, modelo e nível de raciocínio de cada papel. Os nomes e as instruções dos agentes são definidos pelo Jarvis. Os fluxos Planejado e Completo exigem que os modelos dos seus agentes estejam configurados antes de começar.
+Em **Configurações → Workflow**, você pode consultar as instruções dos agentes nativos, selecionar provedor, modelo e raciocínio e criar seus próprios agentes e fluxos. Agentes personalizados podem ser individuais, exclusivos de fluxos ou mistos. Os fluxos nativos também podem ser visualizados no canvas em modo somente leitura.
 
-A execução de ferramentas é automática, dentro das permissões de cada papel. Revise o trabalho pelos arquivos alterados e pelas tarefas de validação antes de considerar uma entrega concluída.
+Nos fluxos Planejado e Completo, o Inspector acompanha o agente em atividade, o plano da conversa, os itens de validação e os arquivos alterados. Nos modos diretos, a lista de tasks mostra o trabalho concluído, atual e pendente.
 
 ## Core
 
-O Core integra seis ferramentas ao funcionamento do Jarvis. A instalação e a configuração iniciais são obrigatórias e guiadas pelo aplicativo. Depois, os componentes podem ser gerenciados em **Configurações → Ferramentas → Core**. Tudo fica em `~/.jarvis`, com versão instalada, progresso de instalação e indicação de atualizações.
+O Core integra seis recursos essenciais ao harness do Jarvis. A instalação inicial é obrigatória e guiada; depois, versões, integridade, atualizações, diagnóstico e reparo ficam em **Configurações → Ferramentas → Core**. Os pacotes gerenciados são armazenados em `~/.jarvis`.
 
 | Componente | Papel no Jarvis |
 | --- | --- |
-| [Context-mode](https://github.com/mksglu/context-mode) | Indexação e busca de conteúdo para trabalhar com grandes volumes de informação e reduzir o conteúdo necessário no contexto. |
-| [Ponytail](https://github.com/DietrichGebert/ponytail) | Orientações de execução para os agentes, integradas às regras do fluxo de trabalho. |
-| [Beads](https://github.com/gastownhall/beads) | Acompanhamento de épicos, tarefas, dependências e comentários, com visualização no Kanban e nos planos do projeto. |
-| [Open Design](https://github.com/nexu-io/open-design) | Recursos de design, como referências, templates, sistemas de design e skills, usados pelo Designer. |
-| [Context7](https://github.com/upstash/context7) | Documentação e exemplos atualizados de bibliotecas, consultados pelos agentes quando necessário. Pacote instalado via npm com Node próprio; chave validada e armazenada no Keychain. |
-| [Servidores LSP](https://github.com/typescript-language-server/typescript-language-server) | Navegação estrutural de código e diagnósticos para TypeScript, JavaScript e Python, com runtime gerenciado pelo Jarvis. Rust e Go usam os servidores da toolchain do projeto quando disponíveis. |
+| [Context-mode](https://github.com/mksglu/context-mode) | Indexa e recupera conteúdo sob demanda para economizar contexto em leituras, buscas e análises extensas. |
+| [Ponytail](https://github.com/DietrichGebert/ponytail) | Fornece diretrizes de execução e revisão de código para reduzir ruído e retrabalho. |
+| [Beads](https://github.com/gastownhall/beads) | Mantém épicos, tarefas, dependências e comentários persistentes por projeto. |
+| [Open Design](https://github.com/nexu-io/open-design) | Disponibiliza sistemas visuais, referências, templates e recursos usados pelo Designer. |
+| [Context7](https://github.com/upstash/context7) | Consulta documentação e exemplos atualizados de bibliotecas. A chave fica no armazenamento seguro do sistema. |
+| [Servidores LSP](https://github.com/typescript-language-server/typescript-language-server) | Localiza definições, referências, símbolos e diagnósticos em projetos TypeScript, JavaScript e Python. Rust e Go usam a toolchain do projeto quando disponível. |
 
-## Primeiros passos
+Se um componente obrigatório estiver ausente ou inválido, o Jarvis bloqueia novas interações e abre o fluxo de **Diagnóstico e Reparo** para corrigir ou reinstalar o recurso.
 
-1. Baixe o `.dmg` em [Releases](https://github.com/paulovnas/jarvis/releases), abra-o e copie o Jarvis para **Aplicativos**.
-2. Siga as boas-vindas, instale os seis componentes e configure a chave do Context7. O download dos recursos de design pode levar alguns minutos.
-3. Conecte um provedor e configure Web Search e Vision; ambos podem herdar o modelo do chat.
-4. Defina o nome do workspace padrão e clique em **Começar**. Adicione o primeiro projeto selecionando sua pasta local.
-5. Inicie uma conversa, escolha o fluxo e descreva o que deseja fazer.
+## Provedores, ferramentas e extensões
 
-Esta primeira beta tem assinatura do aplicativo e das atualizações, mas **ainda não possui notarização Apple**. O macOS pode pedir uma autorização adicional para abri-la; consulte **Ajustes do Sistema → Privacidade e Segurança** se isso acontecer.
-
-### Provedores e modelos
-
-O Jarvis permite conectar várias contas e ativá-las ou desativá-las sem perder a configuração:
+O Jarvis aceita várias contas, que podem ser ativadas ou desativadas sem perder a configuração:
 
 | Provedor | Conexão |
 | --- | --- |
-| **OpenAI Codex** | Login com sua conta ChatGPT pelo navegador. |
-| **Antigravity** | Login pelo navegador, com o catálogo de modelos disponível para sua conta. |
-| **Custom** | Alias próprio, URL base, chave de API e um dos protocolos: OpenAI Chat Completions, OpenAI Responses ou Anthropic Messages. |
+| **OpenAI Codex** | Login com a conta ChatGPT pelo navegador. |
+| **Antigravity** | Login pelo navegador e catálogo compatível com a conta conectada. |
+| **Custom** | Alias próprio, URL base, chave de API e protocolo OpenAI Chat Completions, OpenAI Responses ou Anthropic Messages. |
 
-O seletor do chat organiza as opções por provedor, modelo e raciocínio. Para modelos Custom do OpenRouter, informar o ID exato permite buscar dados do catálogo, como janela de contexto e capacidades; quando necessário, os campos também podem ser preenchidos manualmente.
+Modelos Custom podem receber contexto, capacidades e níveis de raciocínio do catálogo quando o ID é reconhecido, ou ser configurados manualmente. O seletor do chat organiza provedor, modelo e raciocínio e preserva a escolha por conversa.
 
-Na statusbar, acompanhe os limites das contas compatíveis, o tempo até a renovação e a reserva ou o déficit de uso. A visibilidade desses dados pode ser configurada por conta.
+Em **Configurações → Provedores → Ferramentas**, Web Search e Vision podem herdar o modelo do chat ou usar outra seleção. A geração de imagens usa um provedor Antigravity compatível e apresenta progresso e resultado diretamente na conversa.
 
-### Pesquisa, imagens, MCPs e skills
+Outras extensões ficam disponíveis sob demanda:
 
-Em **Configurações → Provedores → Ferramentas**, **Web Search** e **Vision** podem herdar o provedor e o modelo do chat ou usar uma seleção própria. Assim, uma ferramenta pode usar um modelo diferente daquele que conduz a conversa. A disponibilidade depende das capacidades do provedor e do modelo; pesquisa hospedada não é presumida para endpoints Custom.
+- **MCPs:** servidores locais ou remotos, teste de conexão, descoberta de ferramentas e ativação individual.
+- **Skills:** instruções locais, pastas `.agents/skills` e atalhos simbólicos, Marketplace, detalhes em Markdown, atualização, ativação e remoção.
+- **Ferramentas dos agentes:** busca de arquivos, terminal, processos, navegador, LSP, Context-mode, patch, perguntas, tarefas, leitura de skills e MCPs. Cada agente personalizado pode receber somente as permissões necessárias.
 
-Na aba **MCPs**, adicione servidores locais ou remotos, confira as ferramentas descobertas e ative ou desative cada integração. O Context7 já faz parte do Core e dispensa cadastro nessa aba. Outros servidores executados com `npx` precisam de Node.js e npm disponíveis no computador.
+O catálogo enviado ao modelo é reduzido de acordo com a intenção e as permissões do agente. Resultados de leitura local podem ser reutilizados enquanto o arquivo não mudar, reduzindo chamadas e tokens desperdiçados.
 
-Na aba **Skills**, consulte os detalhes, instale pelo Marketplace, atualize, desative ou exclua skills. O Jarvis lê sua pasta de skills em `~/.jarvis` e pode incluir `.agents/skills` global e do projeto, inclusive pastas vinculadas por atalhos simbólicos. As skills ativas ficam disponíveis para descoberta pelos agentes e podem ser selecionadas explicitamente com `/` no chat.
+## Detalhes e publicação assistida
 
-### Repouso e notificações
+A tela **Detalhes** possui três abas:
 
-Em **Configurações → Geral → Sistema**, escolha se o Jarvis deve impedir o repouso automático durante chats ativos ou enquanto estiver aberto. A tela continua podendo apagar normalmente.
+- **Geral:** métricas do projeto, conversas, tokens, cache, ferramentas e atividade recente.
+- **Kanban:** tarefas persistentes, filtros, comentários e detalhes dos planos.
+- **Opções:** instruções de commit e política de pull request próprias do projeto.
 
-Ative as **notificações do sistema** para receber avisos com o projeto e a conversa ao concluir um trabalho, precisar de uma resposta ou parar por erro. Nos fluxos Planejado e Completo, a conclusão é avisada pelo fluxo inteiro; subagentes só notificam quando precisam da sua resposta. A validação manual também gera um aviso. O botão **Testar** envia uma notificação de exemplo.
+O botão **Publicar** no Inspector pede que a IA prepare uma proposta com os arquivos exatos, mensagens de commit, branches, pull requests e merges. A proposta aceita repositórios Git aninhados e só executa o que você aprovar. A opção de perguntar sobre PR ou PR e merge exige o [GitHub CLI](https://cli.github.com/) instalado e autenticado; cada autorização é explícita e descartável.
 
-As duas opções começam desligadas e ficam salvas em `~/.jarvis/system.json`. No macOS, a permissão é solicitada ao ativar as notificações; os testes de entrega devem ser feitos pelo aplicativo `.app`, com a permissão habilitada em **Ajustes do Sistema → Notificações → Jarvis**.
+## Primeiros passos
 
-## Dados e privacidade
+Baixe a versão mais recente em [Releases](https://github.com/paulovnas/jarvis/releases):
 
-Configurações, histórico e dados locais ficam em `~/.jarvis`. As credenciais dos provedores são protegidas pelo **Acesso às Chaves do macOS (Keychain)**. A comunicação com os modelos usa as contas que você configurou; prompts, anexos e conteúdo necessário das ferramentas são enviados aos serviços utilizados na conversa.
+- **macOS Apple Silicon:** abra o `.dmg` e copie o Jarvis para **Aplicativos**.
+- **Windows x64:** execute o instalador `-setup.exe`. O Windows pode exibir um aviso de editor desconhecido enquanto o projeto não possui assinatura Authenticode.
 
-Excluir um projeto no Jarvis remove seu registro e histórico no aplicativo, após confirmação. **A pasta e os arquivos do projeto no disco não são apagados.**
+O onboarding conduz cinco etapas:
+
+1. Conhecer os recursos principais do Jarvis.
+2. Instalar e configurar os seis componentes obrigatórios do Core.
+3. Verificar **Git** e **GitHub CLI**. Os dois são opcionais; quando ausentes, o Jarvis oferece Homebrew no macOS, WinGet no Windows ou instruções oficiais compatíveis com o sistema.
+4. Conectar ao menos um provedor e configurar as ferramentas de IA.
+5. Dar um nome ao workspace padrão e adicionar a pasta do primeiro projeto.
+
+Git é necessário para versionamento e publicação. O GitHub CLI é necessário somente para criar ou mesclar pull requests pelo Jarvis; autentique-o com `gh auth login` antes do primeiro uso.
+
+O macOS pode pedir autorização adicional porque as versões atuais ainda não possuem notarização Apple. Use **Ajustes do Sistema → Privacidade e Segurança** se necessário. Atualmente não são distribuídos pacotes para macOS Intel, Windows ARM64 ou Linux.
+
+## Conversas e experiência desktop
+
+- O histórico é carregado sob demanda, e a compactação automática preserva o contexto quando a conversa se aproxima do limite configurado.
+- O andamento mostra tempo de execução, raciocínio e grupos de ferramentas; ao finalizar, o painel recolhe para destacar a resposta.
+- Mensagens escritas ficam salvas por conversa. Se o agente estiver trabalhando, novas mensagens podem entrar na fila ou ser enviadas imediatamente como orientação adicional.
+- Notificações avisam sobre conclusão, perguntas, validações e falhas. Em fluxos coordenados, a conclusão pertence ao fluxo inteiro.
+- Alertas de uso podem ser configurados por conta e janela de limite. A statusbar mostra consumo, reserva ou déficit, tempo até a renovação e a posição esperada pelo tempo decorrido.
+- O terminal integrado respeita shell, argumentos, fonte e tamanho definidos pelo usuário. Terminais e processos pertencem à conversa que os criou.
+- A opção de repouso pode ficar desligada, acompanhar execuções ativas ou permanecer ligada enquanto o Jarvis estiver aberto.
+
+## Backup, dados e privacidade
+
+Configurações, conversas, recursos e dados locais ficam em `~/.jarvis`. Credenciais são protegidas pelo **Acesso às Chaves** no macOS e pelo armazenamento seguro do Windows. Prompts, anexos e o conteúdo necessário das ferramentas são enviados somente aos provedores e serviços usados na conversa.
+
+Em **Configurações → Geral → Exportar e importar**, um arquivo de backup reúne preferências, workspaces, agentes, fluxos, skills e MCPs. Provedores e credenciais não são exportados; após a importação, o Jarvis orienta o novo vínculo dos modelos.
+
+Excluir um projeto remove seu registro e o histórico do Jarvis após confirmação. **A pasta e os arquivos do projeto no disco não são apagados.** Excluir um workspace também preserva as pastas dos projetos, mas remove seu histórico de conversas.
 
 ## Atualizações
 
-O rodapé mostra a versão instalada. Quando existe uma versão compatível mais recente, aparece **Atualização Disponível**. Ao clicar, você pode ler as notas e escolher **Atualizar e reiniciar**.
+Antes de abrir a interface principal, a tela de inicialização verifica configuração, Core, provedores e recursos necessários. Verificações não essenciais podem ser ignoradas; a consulta de atualizações de skills acontece fora desse caminho para manter a abertura rápida.
 
-O aplicativo mostra o progresso do download, verifica a assinatura e reabre após a instalação. Se a nova janela não confirmar a abertura, a anterior permanece aberta e permite tentar novamente. Aguarde as execuções e encerre os processos ativos antes de atualizar.
+A statusbar informa quando há uma nova versão do aplicativo ou atualizações de recursos. A janela correspondente mostra notas, itens disponíveis e progresso, inclusive downloads sem tamanho total conhecido. Atualizações do app têm assinatura verificada e reiniciam o Jarvis automaticamente. Atualizações do Core e das skills são instaladas separadamente.
 
-A primeira versão com esse recurso precisa ser instalada manualmente. Versões beta recebem novas prévias e versões estáveis; instalações estáveis recebem apenas versões estáveis.
+Versões beta recebem novas betas e versões estáveis; instalações estáveis recebem somente versões estáveis.
 
 ## Desenvolvimento
 
-O projeto usa **Tauri v2 e Rust** no backend, com **React 19, TypeScript, Tailwind CSS v4 e shadcn/ui** na interface. A direção visual combina painéis de grafite, componentes compactos, Roboto e JetBrains Mono, com a borda neon do chat indicando execução.
+O projeto usa **Tauri v2 e Rust** no backend, com **React 19, TypeScript estrito, Tailwind CSS v4, shadcn/ui e Bun** na interface.
 
-Para desenvolver no macOS, instale [Bun](https://bun.sh/), [Rust](https://www.rust-lang.org/tools/install), Git e as ferramentas de desenvolvimento do Xcode. Confira também os [pré-requisitos do Tauri](https://v2.tauri.app/start/prerequisites/).
+Instale [Bun](https://bun.sh/), [Rust](https://www.rust-lang.org/tools/install), Git e os [pré-requisitos do Tauri](https://v2.tauri.app/start/prerequisites/) para o seu sistema. No macOS, isso inclui as ferramentas do Xcode; no Windows, WebView2 e as ferramentas C++ do Visual Studio.
 
 ```bash
 git clone https://github.com/paulovnas/jarvis.git
@@ -130,41 +160,41 @@ bun install
 bun run tauri dev
 ```
 
-Os comandos `bun run tauri dev` e `bun run tauri build` usam uma identidade Apple de assinatura estável, para preservar a identidade do aplicativo no Keychain entre compilações. Configure um certificado **Apple Development** no Xcode para desenvolvimento local. Se houver mais de um certificado, indique qual usar:
+Para visualizar apenas a interface, execute `bun run dev` e abra `http://localhost:1420`. Recursos nativos exigem o aplicativo Tauri.
+
+No macOS, as compilações de desenvolvimento usam uma identidade Apple estável para preservar o acesso ao Keychain. Se houver mais de um certificado **Apple Development**, informe qual deve ser usado:
 
 ```bash
 security find-identity -v -p codesigning
-export APPLE_SIGNING_IDENTITY="<hash do certificado escolhido>"
+export APPLE_SIGNING_IDENTITY="<hash do certificado>"
 bun run tauri dev
 ```
-
-Para visualizar apenas a interface, use `bun run dev` e acesse `http://localhost:1420`. As funções nativas exigem o aplicativo Tauri.
 
 ### Verificações
 
 ```bash
-# Lint, checagem de tipos, testes e compilação da interface.
+# Lint, tipos, testes da interface e build de produção.
 bun run check
 
-# Verificações do backend nativo.
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml
+# Backend nativo.
+cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
 
 ### Publicar uma versão
 
-Com as alterações commitadas e a branch `main` sincronizada com o GitHub:
+Com todas as alterações commitadas e `main` sincronizada com o GitHub:
 
 ```bash
-# Simular sem alterar arquivos nem publicar.
-bun run release 0.8.4-beta --dry-run
+# Validar o fluxo sem alterar arquivos.
+bun run release 0.9.10-beta --dry-run
 
-# Iniciar a compilação assinada e publicação no GitHub Actions.
-bun run release 0.8.4-beta --notes-file /caminho/notas-da-versao.md
+# Atualizar a versão, criar commit e tag e iniciar o GitHub Actions.
+bun run release 0.9.10-beta
 ```
 
-O comando prepara o commit e a tag e dispara o GitHub Actions, que executa as verificações, compila e assina o app/DMG para macOS Apple Silicon e publica a release. Pode ser iniciado no macOS, Windows ou Linux, com Bun, Git e GitHub CLI autenticado; as chaves ficam nos secrets do CI. Consulte o [guia de publicação](docs/RELEASING.md) para acompanhar a execução, validar sem publicar e configurar as assinaturas.
+O pipeline valida frontend e Rust no macOS e no Windows, gera DMG e NSIS, assina os pacotes do atualizador e só então publica a release e os manifestos de ambas as plataformas. O comando pode ser iniciado no macOS, Windows ou Linux; Bun, Git e GitHub CLI autenticado são necessários apenas na máquina que dispara o release. As chaves permanecem nos secrets do CI. Consulte [docs/RELEASING.md](docs/RELEASING.md) para configuração, recuperação e limites de distribuição.
 
 ## Autoria
 
-Criado por **[Paulo Vitor Nascimento](https://github.com/paulovnas)**.
+Criado por **[Paulo Vitor Nascimento](https://github.com/paulovnas)**. O Jarvis é desenvolvido sem fins lucrativos para ajudar pessoas que desejam criar software de forma assistida por IA.

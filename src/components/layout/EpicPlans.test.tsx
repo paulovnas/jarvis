@@ -23,7 +23,7 @@ describe("Epic plans", () => {
       bead({ id: "unrelated", title: "Outra tarefa", dependencies: [{ id: "epic", title: epic.title, status: "in_progress", dependency_type: "blocks" }] }),
     ]);
     const open = vi.fn(); const user = userEvent.setup();
-    render(<EpicPlans projectId="p1" onOpenKanban={open} />);
+    render(<EpicPlans projectId="p1" conversationId="c1" onOpenKanban={open} />);
     expect(screen.getByRole("status", { name: "Carregando planos" })).toBeInTheDocument();
     const card = await screen.findByRole("button", { name: `Plano: ${epic.title}` });
     expect(card).toHaveTextContent("1/2 tarefas");
@@ -41,9 +41,30 @@ describe("Epic plans", () => {
     expect(open).toHaveBeenCalledWith("p1");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
+  it("keeps plans scoped to the selected conversation and closes its open tasks after confirmation", async () => {
+    const child = bead({ id: "task", title: "Implementar", parent: epic.id, status: "blocked" });
+    const other = bead({ id: "other", title: "Plano de outro chat", issue_type: "epic", metadata: { jarvis_conversation: "c2" } });
+    call.mockImplementation(async command => {
+      if (command === "get_project_beads") return [epic, child, other];
+      if (command === "close_conversation_plan") return [{ ...epic, status: "closed" }, { ...child, status: "closed" }, other];
+      return [];
+    });
+    const user = userEvent.setup();
+    render(<EpicPlans projectId="p1" conversationId="c1" />);
+    expect(await screen.findByRole("button", { name: `Plano: ${epic.title}` })).toBeInTheDocument();
+    expect(screen.queryByText(other.title)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: `Plano: ${epic.title}` }));
+    await user.click(screen.getByRole("button", { name: "Encerrar plano" }));
+    const confirmation = screen.getByRole("alertdialog", { name: "Encerrar este plano?" });
+    expect(confirmation).toHaveTextContent("1 tarefas ainda abertas");
+    await user.click(within(confirmation).getByRole("button", { name: "Encerrar plano" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("close_conversation_plan", {
+      projectId: "p1", conversationId: "c1", issueId: epic.id,
+    }));
+  });
   it("removes a closed epic and its open modal after refreshing on focus", async () => {
     call.mockResolvedValue([epic]);
-    render(<EpicPlans projectId="p1" />);
+    render(<EpicPlans projectId="p1" conversationId="c1" />);
     fireEvent.click(await screen.findByRole("button", { name: `Plano: ${epic.title}` }));
     await screen.findByRole("dialog", { name: epic.title });
     call.mockResolvedValue([{ ...epic, status: "closed" }]);
@@ -64,7 +85,7 @@ describe("Epic plans", () => {
   });
   it("does not celebrate missing or initially closed epics and cancels the animation when reopened", async () => {
     call.mockResolvedValue([epic, { ...epic, id: "old", title: "Antigo", status: "closed" }]);
-    render(<EpicPlans projectId="p1" />);
+    render(<EpicPlans projectId="p1" conversationId="c1" />);
     await screen.findByRole("button", { name: `Plano: ${epic.title}` });
     expect(screen.queryByText("FINALIZADO")).not.toBeInTheDocument();
     call.mockResolvedValue([]);
@@ -87,10 +108,10 @@ describe("Epic plans", () => {
   it("does not leak a late response from another project", async () => {
     let resolve!: (value: unknown) => void;
     call.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
-    const view = render(<EpicPlans key="p1" projectId="p1" />);
+    const view = render(<EpicPlans key="p1" projectId="p1" conversationId="c1" />);
     await waitFor(() => expect(call).toHaveBeenCalledWith("get_project_beads", { projectId: "p1" }));
     call.mockResolvedValue([]);
-    view.rerender(<EpicPlans key="p2" projectId="p2" />);
+    view.rerender(<EpicPlans key="p2" projectId="p2" conversationId="c1" />);
     await act(async () => resolve([epic]));
     await screen.findByText("Nenhum plano em aberto.");
     expect(screen.queryByText(epic.title)).not.toBeInTheDocument();

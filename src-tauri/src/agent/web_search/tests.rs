@@ -188,6 +188,7 @@ async fn disabled_search_never_resolves_credentials_or_uses_the_chat_account() {
         &OpenAiCodexState::default(),
         &home,
         &options,
+        crate::system::ResponseLanguage::PortugueseBrazil,
         &json!({"query":"Tauri"}),
         signal,
     )
@@ -261,12 +262,19 @@ fn search_requests_the_configured_model_independently_of_the_chat() {
         default_reasoning_level: None,
     });
     require_search_model(&catalog, "gpt-5.5").unwrap();
-    let body = search_body("Tauri docs", "gpt-5.5");
+    let body = search_body(
+        "Tauri docs",
+        "gpt-5.5",
+        crate::system::ResponseLanguage::Spanish,
+    );
     assert_eq!(body["model"], "gpt-5.5");
     assert_eq!(body["input"].as_array().unwrap().len(), 1);
     assert_eq!(body["input"][0]["content"][0]["text"], "Tauri docs");
     assert_eq!(body["tool_choice"], json!({"type":"web_search"}));
     assert_eq!(body["store"], false);
+    assert!(body["instructions"]
+        .as_str()
+        .is_some_and(|text| text.contains("Use Spanish for user-facing prose")));
 }
 
 #[test]
@@ -335,7 +343,11 @@ fn mock_request(
     let mut request = provider::authenticated_request(
         &credential,
         "search-session",
-        &search_body("Tauri docs", "gpt-5.6-luna"),
+        &search_body(
+            "Tauri docs",
+            "gpt-5.6-luna",
+            crate::system::ResponseLanguage::PortugueseBrazil,
+        ),
         TIMEOUT,
     )
     .unwrap()

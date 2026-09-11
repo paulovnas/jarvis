@@ -34,12 +34,19 @@ const SkillToken = Node.create({
   addNodeView: () => ReactNodeViewRenderer(SkillNode),
 });
 
+// AppKit reserves U+F700–U+F747 for function and navigation keys. WKWebView can
+// occasionally surface those key codes as text input, which renders as tofu.
+const MACOS_FUNCTION_KEY_TEXT = /[\uF700-\uF747\uFFFC]/gu;
+function sanitizeComposerText(text: string): string {
+  return text.replace(MACOS_FUNCTION_KEY_TEXT, "");
+}
+
 function inputDocument(draft: ChatDraft): JSONContent {
   const parts = draft.parts?.length ? draft.parts : [{ type: "text" as const, text: draft.content }];
   const content: JSONContent[] = [];
   for (const part of parts) {
     if (part.type === "skill") content.push({ type: "skill", attrs: { id: part.id, name: part.name } });
-    else if (part.type === "text") part.text.split("\n").forEach((text, index) => {
+    else if (part.type === "text") sanitizeComposerText(part.text).split("\n").forEach((text, index) => {
       if (index) content.push({ type: "hardBreak" });
       if (text) content.push({ type: "text", text });
     });
@@ -59,7 +66,7 @@ function readDraft(editor: Editor): ChatDraft {
     block.forEach(node => {
       if (node.type.name === "skill") parts.push({ type: "skill", id: String(node.attrs.id), name: String(node.attrs.name) });
       else if (node.type.name === "hardBreak") append("\n");
-      else if (node.text) append(node.text);
+      else if (node.text) append(sanitizeComposerText(node.text));
     });
   });
   return { content: draftText(parts), ...(parts.some(part => part.type === "skill") ? { parts } : {}) };
@@ -79,8 +86,27 @@ const editorProps = {
   handlePaste: (view: Editor["view"], event: ClipboardEvent) => {
     const text = event.clipboardData?.getData("text/plain");
     if (text === undefined) return false;
-    view.dispatch(view.state.tr.insertText(text));
+    view.dispatch(view.state.tr.insertText(sanitizeComposerText(text)));
     return true;
+  },
+  handleTextInput: (view: Editor["view"], from: number, to: number, text: string) => {
+    const sanitized = sanitizeComposerText(text);
+    if (sanitized === text) return false;
+    if (sanitized) view.dispatch(view.state.tr.insertText(sanitized, from, to));
+    return true;
+  },
+  handleDOMEvents: {
+    beforeinput: (view: Editor["view"], event: InputEvent) => {
+      if (event.inputType !== "insertText" || typeof event.data !== "string") return false;
+      const sanitized = sanitizeComposerText(event.data);
+      if (sanitized === event.data) return false;
+      event.preventDefault();
+      if (sanitized) {
+        const { from, to } = view.state.selection;
+        view.dispatch(view.state.tr.insertText(sanitized, from, to));
+      }
+      return true;
+    },
   },
 };
 

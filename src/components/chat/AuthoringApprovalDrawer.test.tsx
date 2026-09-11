@@ -67,3 +67,28 @@ it("shows flow routing with readable agent names and returns a rejection note", 
   await user.click(within(dialog).getByRole("button", { name: "Recusar" }));
   expect(answer).toHaveBeenCalledWith(false, "Troque o nome antes de salvar");
 });
+
+it("shows the exact commit, PR and merge scope before publishing", async () => {
+  const user = userEvent.setup();
+  const answer = vi.fn().mockResolvedValue(true);
+  const request: PendingAuthoring = {
+    turnId: "turn-3", toolId: "tool-3", action: "publish", catalogRevision: null,
+    summary: "Publicar frontend e backend em propostas separadas.",
+    agentReferences: [],
+    target: { kind: "publication", after: { summary: "Publicar frontend e backend em propostas separadas.", repositories: [
+      { path: "frontend", files: ["src/App.tsx"], branch: "feat/new-home", commitMessage: "feat(home): improve hero", pullRequest: { base: "main", title: "Melhora a página inicial", body: "## Alterações\n\nAtualiza a hero.", draft: false, merge: { method: "squash", deleteBranch: true } } },
+      { path: "backend", files: ["src/server.ts"], branch: null, commitMessage: "fix(api): validate request", pullRequest: null },
+    ] } },
+  };
+  render(<AuthoringApprovalDrawer request={request} onAnswer={answer} />);
+  const dialog = screen.getByRole("dialog", { name: "Revisar publicação" });
+  expect(within(dialog).getByText("frontend")).toBeVisible();
+  expect(within(dialog).getByText("backend")).toBeVisible();
+  expect(within(dialog).getByText("feat(home): improve hero")).toBeVisible();
+  expect(within(dialog).getByText("src/App.tsx")).toBeVisible();
+  expect(await within(dialog).findByRole("heading", { name: "Alterações" })).toBeVisible();
+  expect(within(dialog).getByText(/Merge após criar · squash/)).toBeVisible();
+  expect(answer).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Aprovar e publicar" }));
+  expect(answer).toHaveBeenCalledWith(true, null);
+});

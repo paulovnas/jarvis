@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { emptyLibrary, populatedLibrary } from "@/test/library-fixtures";
@@ -9,6 +10,25 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => { vi.mocked(invoke).mockResolvedValue([]); });
 
 describe("Inspector", () => {
+  it("offers AI-assisted publication only for an idle conversation with changes", async () => {
+    const publish = vi.fn().mockResolvedValue(true);
+    vi.mocked(invoke).mockImplementation(async command => command === "get_agent_file_changes" ? [{ path: "src/main.ts", additions: 1, deletions: 0, base: "conversation" }] : []);
+    const chat = { ...emptyChat(), turns: [savedTurn()] };
+    const view = render(<Inspector library={populatedLibrary()} chat={chat} onPublish={publish} />);
+    const button = await screen.findByRole("button", { name: "Publicar" });
+    await userEvent.click(button);
+    expect(publish).toHaveBeenCalledTimes(1);
+    view.rerender(<Inspector library={populatedLibrary()} chat={{ ...chat, activeTurnId: chat.turns[0].id }} onPublish={publish} />);
+    expect(screen.getByRole("button", { name: "Publicar" })).toBeDisabled();
+  });
+  it("keeps publication available when Git changes came from a terminal and are absent from the file tracker", async () => {
+    const publish = vi.fn().mockResolvedValue(true);
+    render(<Inspector library={populatedLibrary()} chat={{ ...emptyChat(), turns: [savedTurn()] }} onPublish={publish} />);
+    const button = await screen.findByRole("button", { name: "Publicar" });
+    expect(button).toBeEnabled();
+    await userEvent.click(button);
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
   it("shows native tasks for direct flows and keeps Beads plans for larger flows", async () => {
     const chat = emptyChat();
     const turn = savedTurn();

@@ -10,6 +10,7 @@ mod library;
 mod mcp;
 mod model_bindings;
 mod openai_codex;
+mod optional_tools;
 mod persistence;
 mod secrets;
 mod skills;
@@ -73,6 +74,8 @@ pub fn run() {
                 system::get_system_preferences,
                 system::save_system_preferences,
                 system::test_system_notification,
+                optional_tools::get_optional_tools_status,
+                optional_tools::install_optional_tool,
                 backup::export_settings_backup,
                 backup::inspect_settings_backup,
                 backup::import_settings_backup,
@@ -111,6 +114,8 @@ pub fn run() {
                 agent::vision::set_vision_config,
                 agent::image_generation::get_image_generation_config,
                 agent::image_generation::set_image_generation_config,
+                agent::publication::get_project_publication_settings,
+                agent::publication::save_project_publication_settings,
                 agent::attachments::import_chat_attachments,
                 agent::attachments::get_chat_attachment_image,
                 agent::attachments::save_chat_image,
@@ -135,11 +140,13 @@ pub fn run() {
                 core::beads::dashboard::get_project_beads,
                 core::beads::dashboard::get_bead_detail,
                 core::beads::dashboard::add_bead_comment,
+                core::beads::dashboard::close_conversation_plan,
                 agent::get_chat,
                 agent::processes::list_chat_processes,
                 agent::processes::read_chat_process,
                 agent::processes::stop_chat_process,
                 agent::processes::remove_chat_process,
+                agent::terminals::get_terminal_activity,
                 agent::terminals::list_chat_terminals,
                 agent::terminals::create_chat_terminal,
                 agent::terminals::read_chat_terminal,

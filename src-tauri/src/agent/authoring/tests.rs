@@ -217,7 +217,7 @@ async fn approval_is_correlated_durable_and_cannot_be_replayed() {
             request.turn_id.clone_from(&active.id);
             active.authoring = Some(Pending {
                 request,
-                mutation,
+                mutation: Mutation::Catalog(mutation),
                 started: std::time::Instant::now(),
                 reply,
             });
@@ -236,7 +236,7 @@ async fn approval_is_correlated_durable_and_cannot_be_replayed() {
         &pending.tool_id,
         true,
         None,
-        |_, _| Ok(1)
+        |_, _, _| Ok((String::new(), false))
     )
     .is_err());
     let applied = Arc::new(AtomicBool::new(false));
@@ -247,14 +247,19 @@ async fn approval_is_correlated_durable_and_cannot_be_replayed() {
         &pending.tool_id,
         true,
         Some("Aprovado para este catálogo".into()),
-        move |revision, mutation| {
-            assert_eq!(revision, 0);
+        move |mutation, revision, note| {
+            assert_eq!(revision, Some(0));
+            assert_eq!(note, Some("Aprovado para este catálogo"));
             assert!(matches!(
                 mutation,
-                workflow::catalog::Mutation::SaveAgent { .. }
+                Mutation::Catalog(workflow::catalog::Mutation::SaveAgent { .. })
             ));
             marker.store(true, Ordering::SeqCst);
-            Ok(1)
+            Ok((
+                json!({"approved":true,"status":"applied","note":note,"catalogRevision":1})
+                    .to_string(),
+                true,
+            ))
         },
     )
     .unwrap();
@@ -282,7 +287,7 @@ async fn approval_is_correlated_durable_and_cannot_be_replayed() {
         &pending.tool_id,
         true,
         None,
-        |_, _| Ok(2)
+        |_, _, _| Ok((String::new(), false))
     )
     .unwrap_err()
     .message
@@ -307,7 +312,7 @@ async fn rejection_never_applies_the_catalog_mutation() {
             request.turn_id.clone_from(&active.id);
             active.authoring = Some(Pending {
                 request,
-                mutation,
+                mutation: Mutation::Catalog(mutation),
                 started: std::time::Instant::now(),
                 reply,
             });
@@ -324,7 +329,7 @@ async fn rejection_never_applies_the_catalog_mutation() {
         &pending.tool_id,
         false,
         Some("Prefiro um nome mais curto".into()),
-        |_, _| panic!("a rejected proposal must not mutate the catalog"),
+        |_, _, _| panic!("a rejected proposal must not mutate the catalog"),
     )
     .unwrap();
     assert!(!changed);

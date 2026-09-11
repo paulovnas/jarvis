@@ -20,6 +20,7 @@ import { useWorkflow } from "@/hooks/use-workflow";
 import { useAgentModels } from "@/hooks/use-agent-models";
 import { useProviderReferences } from "@/hooks/use-provider-references";
 import { useAgentActivity } from "@/hooks/use-agent-activity";
+import { useTerminalActivity } from "@/hooks/use-terminal-activity";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
 import { EmptyWorkspace } from "./EmptyWorkspace";
@@ -63,6 +64,16 @@ export function Home() {
   const workflow = useWorkflow(library.snapshot?.selection.conversationId ?? null);
   const agentModels = useAgentModels();
   const runningConversationIds = useAgentActivity();
+  const terminalCounts = useTerminalActivity();
+  const publishChanges = useCallback(async () => {
+    const turns = chat.snapshot?.turns ?? [];
+    const options = chat.snapshot?.latestOptions ?? turns[turns.length - 1]?.options;
+    if (!options) return false;
+    return chat.send(
+      "Prepare a publicação das alterações atuais deste projeto. Siga as opções configuradas em Detalhes → Opções, revise o diff e as validações, e apresente a proposta completa no painel para minha aprovação. Não execute commit, push, pull request ou merge por outro caminho.",
+      { account: options.account, model: options.model, reasoning: options.reasoning, mode: "build", workflow: "standard", approvalMode: "yolo" },
+    );
+  }, [chat]);
   const dashboardProject = !library.snapshot?.selection.conversationId
     ? library.snapshot?.projects.find(project => project.id === library.snapshot?.selection.projectId)
     : undefined;
@@ -136,7 +147,7 @@ export function Home() {
 
   const workspace = library.snapshot?.workspaces.find(item => item.id === library.snapshot?.selection.workspaceId);
   if (workspace && !library.snapshot?.projects.some(project => project.workspaceId === workspace.id)) {
-    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground"><div className="flex min-h-0 flex-1"><div className="w-64 shrink-0"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} /></div><EmptyWorkspace workspace={workspace} library={library} /></div><StatusBar accounts={accounts} onOpenSettings={() => setSettingsOpen(true)} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;
+    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground"><div className="flex min-h-0 flex-1"><div className="w-64 shrink-0"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} /></div><EmptyWorkspace workspace={workspace} library={library} /></div><StatusBar accounts={accounts} onOpenSettings={() => setSettingsOpen(true)} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;
   }
 
   return (
@@ -161,7 +172,7 @@ export function Home() {
           maxSize="500px"
           className="h-full min-h-0 min-w-0"
         >
-          <div id="workspace-panel-content" inert={layout.sidebarCollapsed} aria-hidden={layout.sidebarCollapsed} className={`h-full min-w-[220px] transition-transform duration-200 motion-reduce:transition-none ${layout.sidebarCollapsed ? "-translate-x-full" : ""}`}><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} /></div>
+          <div id="workspace-panel-content" inert={layout.sidebarCollapsed} aria-hidden={layout.sidebarCollapsed} className={`h-full min-w-[220px] transition-transform duration-200 motion-reduce:transition-none ${layout.sidebarCollapsed ? "-translate-x-full" : ""}`}><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} /></div>
         </ResizablePanel>
 
         {/* Keep each separator in geometric order: display:none breaks the panel
@@ -197,7 +208,7 @@ export function Home() {
           maxSize="550px"
           className="h-full min-h-0 min-w-0"
         >
-          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} files={files} /></div>
+          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onPublish={publishChanges} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} files={files} /></div>
         </ResizablePanel></>}
       </ResizablePanelGroup>
       <StatusBar accounts={accounts} onOpenSettings={() => setSettingsOpen(true)} />

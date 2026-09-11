@@ -104,7 +104,13 @@ pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
     }
     if matches!(
         name,
-        "bash" | "process_start" | "terminal_start" | "terminal_write" | "workflow_check"
+        "bash"
+            | "process_start"
+            | "terminal_start"
+            | "terminal_write"
+            | "terminal_close"
+            | "workflow_check"
+            | "jarvis_propose_publication"
     ) || crate::core::context::needs_approval(name)
     {
         return capability == Capability::Commands;
@@ -230,6 +236,7 @@ fn prepare(
         ],
         scope: vec![".".into()],
         bead_id: None,
+        bead_fingerprint: None,
         dependencies: vec![],
         status: Status::Queued,
         created_at: now(),

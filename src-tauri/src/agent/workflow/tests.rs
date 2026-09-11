@@ -133,6 +133,7 @@ pub(super) fn job(hub: &Hub, role: Role, scope: &str) -> Job {
         acceptance: vec!["Observable outcome".into()],
         scope: vec![scope.into()],
         bead_id: None,
+        bead_fingerprint: None,
         dependencies: vec![],
         status: Status::Queued,
         created_at: now(),

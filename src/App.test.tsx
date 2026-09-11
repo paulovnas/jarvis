@@ -37,8 +37,18 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const connectedAccount = { alias: "openai-codex-test", providerKind: "openai-codex", enabled: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, models: [{ id: "test", name: "Test", reasoningLevels: [], defaultReasoningLevel: null }] };
+const optionalTools = {
+  platform: "macos",
+  platformLabel: "macOS",
+  tools: [
+    { id: "git", name: "Git", description: "Versionamento", installed: true, version: "git version 2.51.0", automaticInstall: true, installWith: "Homebrew", helpUrl: "https://git-scm.com/download/mac" },
+    { id: "gh", name: "GitHub CLI", description: "Pull requests", installed: true, version: "gh version 2.80.0", automaticInstall: true, installWith: "Homebrew", helpUrl: "https://cli.github.com/" },
+  ],
+};
 async function reachFinish(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: "Avançar" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Avançar" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Avançar" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
@@ -59,6 +69,7 @@ describe("App bootstrap and onboarding", () => {
     invokeMock.mockReset();
     invokeMock.mockImplementation((command, args) => {
       if (command === "get_core_status" || command === "check_core_updates") return Promise.resolve(coreFixture());
+      if (command === "get_optional_tools_status") return Promise.resolve(optionalTools);
       if (command === "list_provider_accounts") return Promise.resolve([connectedAccount]);
       if (command === "get_provider_usage") return Promise.resolve({ alias: (args as { alias: string }).alias, fetchedAt: Date.now(), email: null, plan: "plus", windows: [], error: null, resetCredits: null });
       if (command === "list_skills") return Promise.resolve({ includeAgents: false, directory: "/home/.jarvis/skills", skills: [], warnings: [] });

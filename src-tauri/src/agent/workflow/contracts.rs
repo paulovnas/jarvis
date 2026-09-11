@@ -159,7 +159,10 @@ impl Role {
         if matches!(tool, "write" | "edit" | "apply_patch") {
             return self.writes();
         }
-        if matches!(tool, "bash" | "process_start" | "terminal_start") {
+        if matches!(
+            tool,
+            "bash" | "process_start" | "terminal_start" | "terminal_close"
+        ) {
             return broad && matches!(self, Self::Builder | Self::Designer);
         }
         if tool.starts_with("ctx_") && crate::core::context::needs_approval(tool) {

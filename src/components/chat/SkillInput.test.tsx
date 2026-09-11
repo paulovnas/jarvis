@@ -108,6 +108,20 @@ describe("Explicit skill input", () => {
     await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
     expect(send).toHaveBeenCalledWith("ação opção português\nsegunda linha", expect.any(Object));
   });
+  it("move o cursor com ArrowRight sem inserir códigos privados do WebKit", async () => {
+    const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(false);
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} />);
+    const field = screen.getByRole("textbox", { name: "Mensagem" });
+    await user.type(field, "Texto");
+    await user.keyboard("{ArrowLeft}{ArrowRight}");
+    const privateKeyInput = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "\uF703" });
+    expect(field.dispatchEvent(privateKeyInput)).toBe(false);
+    expect(privateKeyInput.defaultPrevented).toBe(true);
+    expect(field).toHaveTextContent("Texto");
+    await user.paste(" válido\uF703\uFFFC");
+    await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
+    expect(send).toHaveBeenCalledWith("Texto válido", expect.any(Object));
+  });
   it("oculta o placeholder na mesma transação de colar e restaura ao apagar ou enviar", async () => {
     const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} />);

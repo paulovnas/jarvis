@@ -29,6 +29,42 @@ impl SleepMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) enum ResponseLanguage {
+    #[default]
+    #[serde(rename = "pt-BR")]
+    PortugueseBrazil,
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "es")]
+    Spanish,
+    #[serde(rename = "fr")]
+    French,
+    #[serde(rename = "de")]
+    German,
+    #[serde(rename = "it")]
+    Italian,
+    #[serde(rename = "ja")]
+    Japanese,
+    #[serde(rename = "zh-CN")]
+    ChineseSimplified,
+}
+
+impl ResponseLanguage {
+    pub(crate) fn prompt_instruction(self) -> &'static str {
+        match self {
+            Self::PortugueseBrazil => "Use Brazilian Portuguese (pt-BR) for user-facing prose unless the user explicitly requests another language.",
+            Self::English => "Use English for user-facing prose unless the user explicitly requests another language.",
+            Self::Spanish => "Use Spanish for user-facing prose unless the user explicitly requests another language.",
+            Self::French => "Use French for user-facing prose unless the user explicitly requests another language.",
+            Self::German => "Use German for user-facing prose unless the user explicitly requests another language.",
+            Self::Italian => "Use Italian for user-facing prose unless the user explicitly requests another language.",
+            Self::Japanese => "Use Japanese for user-facing prose unless the user explicitly requests another language.",
+            Self::ChineseSimplified => "Use Simplified Chinese for user-facing prose unless the user explicitly requests another language.",
+        }
+    }
+}
+
 pub(crate) const DEFAULT_ASK_USER_TIMEOUT_SECONDS: u16 = 30;
 const BUNDLED_TERMINAL_FONT: &str = "JetBrains Mono";
 const TERMINAL_FONT_PRIORITY: &[&str] = &[
@@ -161,6 +197,7 @@ pub struct Preferences {
     pub prevent_sleep: SleepMode,
     pub notifications: bool,
     pub ask_user_timeout_seconds: u16,
+    pub(crate) response_language: ResponseLanguage,
     pub(crate) terminal: TerminalPreferences,
 }
 
@@ -170,6 +207,7 @@ impl Default for Preferences {
             prevent_sleep: SleepMode::Off,
             notifications: false,
             ask_user_timeout_seconds: DEFAULT_ASK_USER_TIMEOUT_SECONDS,
+            response_language: ResponseLanguage::default(),
             terminal: TerminalPreferences::default(),
         }
     }
@@ -235,6 +273,12 @@ pub(crate) fn ask_user_timeout_seconds(home: &Path) -> u16 {
     Store::open(home.join(".jarvis/system.json"))
         .map(|store| store.preferences.ask_user_timeout_seconds)
         .unwrap_or(DEFAULT_ASK_USER_TIMEOUT_SECONDS)
+}
+
+pub(crate) fn response_language(home: &Path) -> ResponseLanguage {
+    Store::open(home.join(".jarvis/system.json"))
+        .map(|store| store.preferences.response_language)
+        .unwrap_or_default()
 }
 
 #[derive(Default)]

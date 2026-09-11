@@ -19,6 +19,7 @@ mod patch;
 pub(crate) mod processes;
 mod provider;
 pub(crate) mod provider_links;
+pub(crate) mod publication;
 pub(crate) mod questions;
 pub(crate) mod queue;
 pub(crate) mod shell;
@@ -1180,23 +1181,38 @@ fn answer_approval(
     Ok(())
 }
 
+#[cfg(test)]
 async fn authorize(
     session: &Session,
     tool: &ToolCall,
     options: &TurnOptions,
     mcp_mutating: bool,
+    signal: watch::Receiver<bool>,
+) -> Result<bool, AgentError> {
+    authorize_with_policy(session, tool, options, mcp_mutating, false, signal).await
+}
+
+async fn authorize_with_policy(
+    session: &Session,
+    tool: &ToolCall,
+    options: &TurnOptions,
+    mcp_mutating: bool,
+    force_manual: bool,
     mut signal: watch::Receiver<bool>,
 ) -> Result<bool, AgentError> {
     if *signal.borrow() {
         return Err(AgentError::cancelled());
     }
-    if (!tools::needs_approval(&tool.name)
-        && tool.name != "workflow_check"
-        && (!tool.name.starts_with("mcp_") || !mcp_mutating)
-        && !crate::core::context::needs_approval(&tool.name)
-        && !crate::core::beads::needs_approval(&tool.name))
-        || options.approval_mode == ApprovalMode::Yolo
-        || (options.mode == Mode::Plan && (!tool.name.starts_with("mcp_") || !mcp_mutating))
+    let ordinarily_requires_approval = tools::needs_approval(&tool.name)
+        || tool.name == "workflow_check"
+        || (tool.name.starts_with("mcp_") && mcp_mutating)
+        || crate::core::context::needs_approval(&tool.name)
+        || crate::core::beads::needs_approval(&tool.name);
+    if (!ordinarily_requires_approval && !force_manual)
+        || (!force_manual && options.approval_mode == ApprovalMode::Yolo)
+        || (!force_manual
+            && options.mode == Mode::Plan
+            && (!tool.name.starts_with("mcp_") || !mcp_mutating))
     {
         return Ok(true);
     }
@@ -1353,6 +1369,7 @@ fn run_turn<'a>(
         )
         .await?;
         let owner = execution.as_ref().map_or(session, |exec| exec.root());
+        let publication_settings = publication::load(state, home, owner.project_id()?)?;
         let direct_tasks = options.direct() && owner.id == session.id;
         let design = if execution
             .as_ref()
@@ -1376,6 +1393,11 @@ fn run_turn<'a>(
                 &owner.id,
                 options.mode == Mode::Plan,
             )?)
+        };
+        let project_beads = if direct_tasks {
+            crate::core::beads::ProjectBeads::open(home, &session.root)?
+        } else {
+            None
         };
         let check_beads_project = || {
             library::agent_location(state, home, &owner.id)
@@ -1404,6 +1426,7 @@ fn run_turn<'a>(
         let mut repeated_tools = tool_loop::Guard::default();
         let mut read_reuse = tool_loop::ReadReuseCache::default();
         let mut project_instructions = instructions::Resolver::new(&session.root)?;
+        let response_language = crate::system::response_language(home);
         let mut lsp = lsp::Registry::new(&session.root, home)?;
         let task_snapshot = direct_tasks
             .then(|| session.task_context())
@@ -1451,12 +1474,18 @@ fn run_turn<'a>(
             instructions.push_str(crate::core::context::INSTRUCTIONS);
             if direct_tasks {
                 instructions.push_str(tasks::INSTRUCTIONS);
+                if project_beads.is_some() {
+                    instructions.push_str(crate::core::beads::PROJECT_INSTRUCTIONS);
+                }
             } else {
                 instructions.push_str(crate::core::beads::INSTRUCTIONS);
             }
             instructions.push_str(web_search::instructions(search_enabled));
             instructions.push_str(crate::core::context7::INSTRUCTIONS);
             instructions.push_str(authoring::INSTRUCTIONS);
+            if options.mode == Mode::Build {
+                instructions.push_str(&publication::instructions(&publication_settings));
+            }
             model_instructions::append(
                 &mut instructions,
                 credential.project_id.is_some(),
@@ -1464,6 +1493,9 @@ fn run_turn<'a>(
             );
             let mut definitions = tools::definitions(options.mode);
             definitions.extend(authoring::definitions());
+            if options.mode == Mode::Build {
+                definitions.push(publication::definition());
+            }
             definitions.push(attachments::definition());
             if vision::enabled(state, home, &options) {
                 definitions.push(vision::definition());
@@ -1483,6 +1515,9 @@ fn run_turn<'a>(
             definitions.extend(crate::core::context7::definitions());
             if direct_tasks {
                 definitions.push(tasks::definition());
+                if project_beads.is_some() {
+                    definitions.extend(crate::core::beads::project_definitions());
+                }
             } else {
                 definitions.extend(crate::core::beads::definitions(options.mode == Mode::Plan));
             }
@@ -1520,6 +1555,7 @@ fn run_turn<'a>(
                 .map_err(|error| AgentError::new(error.code, &error.message))?;
             crate::core::context::ContextMode::require_retrieval(&definitions)?;
             context.hooks.before_agent(&mut instructions);
+            tools::append_response_language(&mut instructions, response_language);
             let overhead =
                 compaction::estimate(&json!({"instructions":instructions,"tools":definitions}));
             let compacted = compaction::ensure(
@@ -1771,20 +1807,37 @@ fn run_turn<'a>(
                 } else {
                     None
                 };
+                let (terminal_preflight, terminal_requires_approval) = match &execution {
+                    Some(exec) => match exec.terminal_close_requires_approval(&tool) {
+                        Ok(required) => (None, required),
+                        Err(error) => (Some(error.message), false),
+                    },
+                    None => (None, false),
+                };
                 let preflight = execution
                     .as_ref()
                     .and_then(|exec| exec.preflight(&tool))
                     .or_else(|| {
                         crate::core::hooks::pre_tool(&tool.name, &tool.args).map(str::to_owned)
                     })
+                    .or_else(|| publication::blocks_unsupervised_tool(&tool))
+                    .or_else(|| {
+                        mcp_clients.tool_metadata(&tool.name).and_then(
+                            |(server, original, description)| {
+                                publication::blocks_unsupervised_mcp(server, original, description)
+                            },
+                        )
+                    })
                     .or(instruction_preflight)
+                    .or(terminal_preflight)
                     .or_else(|| task_preflight.map(str::to_owned));
                 let permitted = preflight.is_none()
-                    && authorize(
+                    && authorize_with_policy(
                         session,
                         &tool,
                         &options,
                         tool.name.starts_with("mcp_") && requires_task,
+                        terminal_requires_approval,
                         signal.clone(),
                     )
                     .await?;
@@ -1882,8 +1935,28 @@ fn run_turn<'a>(
                             },
                             Err(error) => Err(error),
                         }
+                    } else if tool.name.starts_with("project_beads_") {
+                        match &project_beads {
+                            Some(beads) => beads
+                                .execute(&tool.name, &tool.args, signal.clone())
+                                .await
+                                .map_err(AgentError::from),
+                            None => Err(AgentError::new(
+                                "tool_unavailable",
+                                "Este projeto não possui um tracker .beads local disponível.",
+                            )),
+                        }
                     } else if tool.name.starts_with("jarvis_") {
-                        authoring::execute(session, state, oauth, home, &tool, signal.clone()).await
+                        authoring::execute(
+                            session,
+                            state,
+                            oauth,
+                            home,
+                            owner.project_id()?,
+                            &tool,
+                            signal.clone(),
+                        )
+                        .await
                     } else if tool.name.starts_with("context7_") {
                         crate::core::context7::execute(
                             home,
@@ -1954,6 +2027,7 @@ fn run_turn<'a>(
                             oauth,
                             home,
                             &options,
+                            response_language,
                             &tool.args,
                             signal.clone(),
                         )
@@ -2221,7 +2295,7 @@ async fn generate_title(
         .map(|step| step.text.as_str())
         .collect();
     let input = vec![
-        json!({"role":"user", "content":format!("Pedido: {}\nResposta: {}", first.turn.user.chars().take(2000).collect::<String>(), reply.chars().take(3000).collect::<String>())}),
+        json!({"role":"user", "content":format!("Request: {}\nResponse: {}", first.turn.user.chars().take(2000).collect::<String>(), reply.chars().take(3000).collect::<String>())}),
     ];
     let (_sender, signal) = watch::channel(false);
     let result = tokio::time::timeout(

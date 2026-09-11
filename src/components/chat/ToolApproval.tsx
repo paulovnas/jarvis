@@ -11,14 +11,15 @@ export function ToolApproval({ tool, projectPath, onAnswer }: { tool: AgentTool;
     const accepted = await onAnswer(approved);
     if (!accepted) setPending(false);
   };
+  const subject = tool.name.startsWith("browser_") ? "ação no navegador" : tool.name.startsWith("beads_") ? "alteração de tarefa" : tool.name === "bash" ? "comando" : tool.name === "terminal_close" ? "fechamento de terminal" : "alteração de arquivo";
   return <Card role="region" aria-label="Autorização de ferramenta" className="mb-3 border border-primary/40" size="sm">
     <CardHeader>
-      <CardTitle>Autorizar {tool.name.startsWith("browser_") ? "ação no navegador" : tool.name.startsWith("beads_") ? "alteração de tarefa" : tool.name === "bash" ? "comando" : "alteração de arquivo"}?</CardTitle>
+      <CardTitle>Autorizar {subject}?</CardTitle>
       <CardDescription className="break-all">{projectPath}</CardDescription>
     </CardHeader>
     <CardContent>
       {Object.entries(tool.args).map(([key, value]) => <div key={key} className="mb-2">
-        <p className="mb-1 text-xs text-muted-foreground">{({ path: "Arquivo", command: "Comando", content: "Conteúdo proposto", oldText: "Trecho original", newText: "Substituição", timeoutSeconds: "Tempo limite (segundos)" } as Record<string, string>)[key] ?? key}</p>
+        <p className="mb-1 text-xs text-muted-foreground">{({ path: "Arquivo", command: "Comando", content: "Conteúdo proposto", oldText: "Trecho original", newText: "Substituição", timeoutSeconds: "Tempo limite (segundos)", id: "Terminal", reason: "Motivo" } as Record<string, string>)[key] ?? key}</p>
         <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded-md bg-background p-2 text-xs">{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre>
       </div>)}
     </CardContent>

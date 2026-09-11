@@ -72,7 +72,31 @@ pub(super) fn search_path(inherited: &OsStr, home: &Path, prefixes: &[&Path]) ->
             paths.push(PathBuf::from(appdata).join("npm"));
         }
         if let Some(program_files) = std::env::var_os("ProgramFiles") {
-            paths.push(PathBuf::from(program_files).join("nodejs"));
+            let program_files = PathBuf::from(program_files);
+            paths.extend([
+                program_files.join("nodejs"),
+                program_files.join("Git/cmd"),
+                program_files.join("Git/bin"),
+                program_files.join("GitHub CLI"),
+            ]);
+        }
+        if let Some(program_files) = std::env::var_os("ProgramFiles(x86)") {
+            let program_files = PathBuf::from(program_files);
+            paths.extend([
+                program_files.join("Git/cmd"),
+                program_files.join("Git/bin"),
+                program_files.join("GitHub CLI"),
+            ]);
+        }
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            let local_app_data = PathBuf::from(local_app_data);
+            paths.extend([
+                local_app_data.join("Programs/Git/cmd"),
+                local_app_data.join("Programs/Git/bin"),
+                local_app_data.join("Programs/GitHub CLI"),
+                local_app_data.join("Microsoft/WinGet/Links"),
+                local_app_data.join("Microsoft/WindowsApps"),
+            ]);
         }
     }
     let mut seen = HashSet::new();

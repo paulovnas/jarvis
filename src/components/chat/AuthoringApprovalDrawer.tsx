@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Bot, GitCompareArrows, LockKeyhole, Route, ShieldCheck, Sparkles, X } from "lucide-react";
+import { Bot, FileCode2, FolderGit2, GitCommitHorizontal, GitCompareArrows, GitMerge, GitPullRequest, LockKeyhole, Route, ShieldCheck, Sparkles, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,11 +14,13 @@ import { LazyChatMarkdown } from "./LazyChatMarkdown";
 import { AGENT_USAGE_LABELS, CAPABILITY_LABELS, type CustomAgent, type CustomFlow } from "@/core/workflow-catalog";
 import { agentAppearance, flowAppearance } from "@/core/workflow-appearance";
 import type { PendingAuthoring } from "@/core/authoring";
+import type { PublicationProposal } from "@/core/publication";
 
 type Decision = (approved: boolean, note: string | null) => Promise<boolean>;
 
 function changedFields(request: PendingAuthoring): string[] {
   const target = request.target;
+  if (target.kind === "publication") return [];
   if (target.kind === "agent") {
     if (!target.before) return [];
     const before = target.before;
@@ -100,13 +102,44 @@ function FlowReview({ flow, references }: { flow: CustomFlow; references: Pendin
   </div>;
 }
 
+function PublicationReview({ proposal }: { proposal: PublicationProposal }) {
+  return <div className="space-y-4">
+    {proposal.repositories.map(repository => <Card key={repository.path} className="gap-0 overflow-hidden border-border bg-card/80 p-0">
+      <CardHeader className="flex flex-row items-start gap-3 border-b border-border bg-sidebar/45 p-4">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-background"><FolderGit2 className="size-4 text-onedark-cyan" /></div>
+        <div className="min-w-0 flex-1"><p className="micro-label text-muted-foreground">Repositório</p><CardTitle className="mt-1 break-all font-mono text-sm">{repository.path === "." ? "Raiz do projeto" : repository.path}</CardTitle></div>
+        {repository.branch && <Badge variant="outline" className="max-w-52 shrink truncate font-mono text-[10px] text-primary" title={repository.branch}>{repository.branch}</Badge>}
+      </CardHeader>
+      <CardContent className="space-y-4 p-4">
+        <section>
+          <p className="micro-label mb-2 flex items-center gap-2 text-muted-foreground"><GitCommitHorizontal className="size-3.5 text-onedark-green" />Commit</p>
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs leading-5 text-foreground">{repository.commitMessage}</pre>
+        </section>
+        <section>
+          <p className="micro-label mb-2 flex items-center gap-2 text-muted-foreground"><FileCode2 className="size-3.5 text-primary" />Arquivos · {repository.files.length}</p>
+          <div className="max-h-44 overflow-y-auto rounded-md border border-border bg-background/70 py-1">
+            {repository.files.map(file => <p key={file} className="border-b border-border/50 px-3 py-1.5 font-mono text-[11px] last:border-b-0">{file}</p>)}
+          </div>
+        </section>
+        {repository.pullRequest && <section className="rounded-md border border-primary/20 bg-primary/5 p-3">
+          <div className="mb-2 flex flex-wrap items-center gap-2"><p className="micro-label flex items-center gap-2 text-primary"><GitPullRequest className="size-3.5" />Pull request</p><Badge variant="outline" className="font-mono text-[9px]">base: {repository.pullRequest.base}</Badge>{repository.pullRequest.draft && <Badge variant="secondary" className="text-[9px]">Rascunho</Badge>}</div>
+          <p className="text-sm font-medium text-foreground">{repository.pullRequest.title}</p>
+          <div className="bead-prose mt-3 max-h-64 overflow-y-auto rounded-md border border-border bg-background p-3 text-xs"><LazyChatMarkdown content={repository.pullRequest.body} /></div>
+          {repository.pullRequest.merge && <div className="mt-3 flex items-center gap-2 rounded-md border border-onedark-yellow/25 bg-onedark-yellow/5 p-2 text-xs text-onedark-yellow"><GitMerge className="size-3.5" /><span>Merge após criar · {repository.pullRequest.merge.method}{repository.pullRequest.merge.deleteBranch ? " · excluir branch" : ""}</span></div>}
+        </section>}
+      </CardContent>
+    </Card>)}
+  </div>;
+}
+
 export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request: PendingAuthoring; owner?: string; onAnswer: Decision }) {
   const [note, setNote] = useState("");
   const [pending, setPending] = useState(false);
   const changes = useMemo(() => changedFields(request), [request]);
   const isAgent = request.target.kind === "agent";
-  const action = request.action === "create" ? "Criar" : "Editar";
-  const target = isAgent ? "agente" : "fluxo";
+  const isPublication = request.target.kind === "publication";
+  const action = request.action === "create" ? "Criar" : request.action === "update" ? "Editar" : "Publicar";
+  const target = isPublication ? "alterações" : isAgent ? "agente" : "fluxo";
   const answer = async (approved: boolean) => {
     if (pending) return;
     setPending(true);
@@ -116,28 +149,28 @@ export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request:
   return <Sheet open onOpenChange={open => { if (!open && !pending) void answer(false); }}>
     <SheetContent showCloseButton={false} className="dark gap-0 border-border bg-background data-[side=right]:w-[min(720px,94vw)] data-[side=right]:sm:max-w-[720px]">
       <SheetHeader className="shrink-0 border-b border-border bg-card/55 p-5 pr-6">
-        <div className="mb-3 flex items-center gap-2"><Badge variant="outline" className="gap-1.5 border-primary/30 text-primary">{isAgent ? <Bot className="size-3" /> : <Route className="size-3" />}{action} {target}</Badge><Badge variant="secondary" className="font-mono text-[9px]">revisão {request.catalogRevision}</Badge>{owner && <span className="ml-auto truncate text-xs text-muted-foreground">Solicitado por {owner}</span>}</div>
-        <SheetTitle className="text-xl">Revisar alteração no Jarvis</SheetTitle>
+        <div className="mb-3 flex items-center gap-2"><Badge variant="outline" className="gap-1.5 border-primary/30 text-primary">{isPublication ? <Sparkles className="size-3" /> : isAgent ? <Bot className="size-3" /> : <Route className="size-3" />}{action} {target}</Badge>{request.catalogRevision !== null && <Badge variant="secondary" className="font-mono text-[9px]">revisão {request.catalogRevision}</Badge>}{owner && <span className="ml-auto truncate text-xs text-muted-foreground">Solicitado por {owner}</span>}</div>
+        <SheetTitle className="text-xl">{isPublication ? "Revisar publicação" : "Revisar alteração no Jarvis"}</SheetTitle>
         <SheetDescription className="mt-1 max-w-2xl leading-5">{request.summary}</SheetDescription>
       </SheetHeader>
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
         <Alert className="mb-5 border-onedark-green/25 bg-onedark-green/5 text-onedark-green">
           <ShieldCheck aria-hidden="true" />
           <AlertTitle>Você mantém o controle</AlertTitle>
-          <AlertDescription className="text-foreground">A configuração ainda não foi alterada. O Jarvis salvará esta proposta somente se você aprovar.</AlertDescription>
+          <AlertDescription className="text-foreground">{isPublication ? "Nenhum commit, push, pull request ou merge foi executado. O Jarvis publicará somente o escopo exibido após sua aprovação." : "A configuração ainda não foi alterada. O Jarvis salvará esta proposta somente se você aprovar."}</AlertDescription>
         </Alert>
         {request.action === "update" && <section className="mb-5 rounded-md border border-border bg-card/60 p-4">
           <p className="micro-label mb-2 flex items-center gap-2 text-muted-foreground"><GitCompareArrows className="size-3.5" />Campos alterados</p>
           <div className="flex flex-wrap gap-1.5">{changes.length ? changes.map(field => <Badge key={field} variant="outline" className="text-[10px] text-onedark-yellow">{fieldLabels[field] ?? field}</Badge>) : <span className="text-xs text-muted-foreground">A proposta não altera nenhum campo.</span>}</div>
         </section>}
-        {request.target.kind === "agent" ? <AgentReview agent={request.target.after} /> : <FlowReview flow={request.target.after} references={request.agentReferences} />}
+        {request.target.kind === "agent" ? <AgentReview agent={request.target.after} /> : request.target.kind === "flow" ? <FlowReview flow={request.target.after} references={request.agentReferences} /> : <PublicationReview proposal={request.target.after} />}
         <Separator className="my-5" />
         <div className="space-y-2"><Label htmlFor={`authoring-note-${request.toolId}`}>Orientação para o agente <span className="font-normal text-muted-foreground">(opcional)</span></Label><Textarea id={`authoring-note-${request.toolId}`} value={note} onChange={event => setNote(event.target.value)} maxLength={2000} disabled={pending} placeholder="Explique um ajuste se preferir recusar ou deixe uma observação para a aprovação." className="min-h-20 resize-y" /></div>
-        <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-sidebar/55 p-3 text-xs leading-5 text-muted-foreground"><LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-yellow" /><span>Agentes e fluxos nativos permanecem protegidos. Esta autorização vale apenas para a proposta exibida, neste turno.</span></div>
+        <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-sidebar/55 p-3 text-xs leading-5 text-muted-foreground"><LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-yellow" /><span>{isPublication ? "A autorização vale uma vez e somente para os repositórios, arquivos e operações exibidos. Uma falha parcial precisa ser revisada antes de qualquer nova tentativa." : "Agentes e fluxos nativos permanecem protegidos. Esta autorização vale apenas para a proposta exibida, neste turno."}</span></div>
       </div>
       <SheetFooter className="shrink-0 flex-row items-center justify-end gap-3 border-t border-border bg-card/70 p-4">
         <Button variant="outline" className="cursor-pointer" disabled={pending} onClick={() => { void answer(false); }}><X />Recusar</Button>
-        <Button className="cursor-pointer" disabled={pending || (request.action === "update" && changes.length === 0)} onClick={() => { void answer(true); }}>{pending ? <Spinner /> : <Sparkles />}Aprovar e salvar</Button>
+        <Button className="cursor-pointer" disabled={pending || (request.action === "update" && changes.length === 0)} onClick={() => { void answer(true); }}>{pending ? <Spinner /> : <Sparkles />}{isPublication ? "Aprovar e publicar" : "Aprovar e salvar"}</Button>
       </SheetFooter>
     </SheetContent>
   </Sheet>;

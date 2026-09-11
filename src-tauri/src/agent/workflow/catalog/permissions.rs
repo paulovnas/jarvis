@@ -1,8 +1,8 @@
 //! Tool visibility and dispatch share the same capability intersection.
 use super::*;
 use crate::agent::{
-    attachments, authoring, browser, image_generation, processes, terminals, tools, vision,
-    web_search,
+    attachments, authoring, browser, image_generation, processes, publication, terminals, tools,
+    vision, web_search,
 };
 
 pub(crate) fn required(name: &str) -> bool {
@@ -64,6 +64,9 @@ fn description(name: &str) -> &'static str {
         "jarvis_propose_flow" => {
             "Propor a criação ou edição supervisionada de um fluxo customizado."
         }
+        "jarvis_propose_publication" => {
+            "Propor commits, pull requests e merges para aprovação explícita."
+        }
         "web_search" => "Pesquisar na web com a conta configurada.",
         "read_attachment" => "Ler documentos anexados à conversa.",
         "vision" => "Analisar imagens usando Vision.",
@@ -84,6 +87,7 @@ fn description(name: &str) -> &'static str {
         "terminal_start" => "Abrir um terminal interativo.",
         "terminal_list" => "Listar os terminais da conversa.",
         "terminal_output" => "Ler a saída de um terminal.",
+        "terminal_close" => "Fechar ou cancelar um terminal que não é mais necessário.",
         "browser_list" => "Listar abas do navegador.",
         "browser_open" => "Abrir uma aba no navegador.",
         "browser_navigate" => "Navegar para uma URL.",
@@ -101,6 +105,9 @@ fn description(name: &str) -> &'static str {
         "beads_claim" => "Assumir uma tarefa.",
         "beads_close" => "Concluir uma tarefa validada.",
         "beads_dependency" => "Gerenciar dependências entre tarefas.",
+        "project_beads_list" => "Listar o histórico do Beads existente na pasta do projeto.",
+        "project_beads_ready" => "Consultar tarefas disponíveis no Beads do projeto.",
+        "project_beads_show" => "Ler uma tarefa do Beads do projeto sem alterá-la.",
         "design_search" => "Pesquisar recursos do Open Design.",
         "design_read" => "Consultar templates, sistemas e skills de design.",
         "context7_resolve_library_id" => "Encontrar uma biblioteca no Context7.",
@@ -146,7 +153,10 @@ pub(crate) fn builtin_permissions() -> Vec<Permission> {
     let mut result = BTreeMap::new();
     let groups = [
         ("Projeto", tools::definitions(Mode::Build)),
-        ("Jarvis", authoring::definitions()),
+        (
+            "Jarvis",
+            [authoring::definitions(), vec![publication::definition()]].concat(),
+        ),
         (
             "Pesquisa e mídia",
             vec![
@@ -173,6 +183,10 @@ pub(crate) fn builtin_permissions() -> Vec<Permission> {
         ),
         ("Navegador", browser::definitions(Mode::Build)),
         ("Beads · Core", crate::core::beads::definitions(false)),
+        (
+            "Beads do projeto · leitura",
+            crate::core::beads::project_definitions(),
+        ),
         ("Open Design · Core", crate::core::design::definitions()),
         ("Context7 · Core", crate::core::context7::definitions()),
         (
@@ -252,6 +266,7 @@ mod tests {
             "lsp_definition",
             "ctx_search",
             "terminal_start",
+            "terminal_close",
             "browser_screenshot",
             "beads_show",
             "hub_complete",

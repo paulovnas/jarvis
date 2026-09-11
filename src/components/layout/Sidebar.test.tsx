@@ -18,8 +18,8 @@ import { DEFAULT_DESKTOP_LAYOUT } from "@/core/desktop-layout";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
-function Harness({ runningIds, unreadIds }: { runningIds?: ReadonlySet<string>; unreadIds?: ReadonlySet<string> }) {
-  return <AppSidebar library={useLibrary()} runningConversationIds={runningIds} unreadConversationIds={unreadIds} />;
+function Harness({ runningIds, unreadIds, terminalCounts }: { runningIds?: ReadonlySet<string>; unreadIds?: ReadonlySet<string>; terminalCounts?: ReadonlyMap<string, number> }) {
+  return <AppSidebar library={useLibrary()} runningConversationIds={runningIds} unreadConversationIds={unreadIds} terminalCounts={terminalCounts} />;
 }
 
 describe("Persistent sidebar", () => {
@@ -61,8 +61,8 @@ describe("Persistent sidebar", () => {
     expect(website).not.toHaveAttribute("aria-current");
     expect(within(jarvis).getByRole("button", { name: "Primeira conversa" })).toHaveAttribute("aria-current", "page");
     call.mockResolvedValue({ ...stored, selection: { ...stored.selection, conversationId: null } });
-    await user.click(within(jarvis).getByRole("button", { name: "Dashboard" }));
-    await waitFor(() => expect(within(jarvis).getByRole("button", { name: "Dashboard" })).toHaveAttribute("aria-current", "page"));
+    await user.click(within(jarvis).getByRole("button", { name: "Detalhes" }));
+    await waitFor(() => expect(within(jarvis).getByRole("button", { name: "Detalhes" })).toHaveAttribute("aria-current", "page"));
     expect(jarvis).toHaveAttribute("aria-current", "true");
     call.mockResolvedValue({ ...stored, selection: { ...stored.selection, projectId: "p3", conversationId: null } });
     await user.click(within(website).getByRole("button", { name: "Website" }));
@@ -84,14 +84,22 @@ describe("Persistent sidebar", () => {
     expect(within(selected).queryByRole("img", { name:"Mensagem não lida" })).not.toBeInTheDocument();
     expect(within(screen.getByTitle("/projects/website")).getByRole("img", { name:"Projeto com mensagens não lidas" })).toBeVisible();
   });
-  it("opens the Dashboard first and reveals recent sessions three then ten at a time", async () => {
+
+  it("shows which conversations own open terminal tabs", async () => {
+    call.mockResolvedValue(populatedLibrary());
+    render(<Harness terminalCounts={new Map([["c1", 2]])} />);
+    const conversation = await screen.findByRole("button", { name: /^(?!Excluir).*Primeira conversa/ });
+    expect(within(conversation).getByRole("img", { name: "2 terminais abertos" })).toBeVisible();
+    expect(screen.queryByRole("img", { name: /terminal aberto$/ })).not.toBeInTheDocument();
+  });
+  it("opens project Details first and reveals recent sessions three then ten at a time", async () => {
     const user = userEvent.setup();
     const stored = populatedLibrary();
     stored.conversations = Array.from({ length: 25 }, (_, index) => ({ id: `chat${index}`, projectId: "p1", title: `Sessão ${index}`, createdAt: index, lastActivityAt: index === 0 ? 100 : index }));
     stored.selection.conversationId = "chat0";
     call.mockResolvedValue(stored);
     render(<Harness />);
-    const dashboard = await screen.findByRole("button", { name: "Dashboard" });
+    const dashboard = await screen.findByRole("button", { name: "Detalhes" });
     const menu = screen.getByRole("list", { name: "Conversas do projeto" });
     expect(within(menu).getAllByRole("button", { name: /^Sessão/ }).map(button => button.textContent)).toEqual(["Sessão 0", "Sessão 24", "Sessão 23"]);
     await user.click(screen.getByRole("button", { name: /Ver mais/ }));

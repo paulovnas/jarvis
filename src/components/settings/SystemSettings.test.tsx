@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 const call = vi.mocked(invoke);
 const initial: SystemSnapshot = {
-  preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30, terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 } },
+  preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30, responseLanguage: "pt-BR", terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 } },
   sleepInhibited: false,
   sleepError: null,
   notificationError: null,
@@ -63,6 +63,16 @@ describe("system preferences", () => {
     await user.click(toggle);
     expect(await screen.findByRole("alert")).toHaveTextContent("Notificações bloqueadas");
     expect(toggle).not.toBeChecked(); expect(toggle).toBeEnabled();
+  });
+  it("uses pt-BR by default and saves the agents response language", async () => {
+    const user = userEvent.setup(); render(<SystemSettings />);
+    const select = await screen.findByRole("combobox", { name: "Idioma dos agentes" });
+    expect(select).toHaveTextContent("Português (Brasil)");
+    call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, responseLanguage: "en" } });
+    await user.click(select); await user.click(await screen.findByRole("option", { name: "English" }));
+    await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { ...initial.preferences, responseLanguage: "en" } }));
+    expect(select).toHaveTextContent("English");
+    expect(screen.getByText(/A interface permanece em pt-BR\./)).toBeVisible();
   });
   it("saves the ask_user countdown in seconds and rejects out-of-range values", async () => {
     const user = userEvent.setup(); render(<SystemSettings />);

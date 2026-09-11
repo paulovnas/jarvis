@@ -134,6 +134,10 @@ pub async fn compact_agent_context(
     } else {
         beads_snapshot
     };
+    tools::append_response_language(
+        &mut instructions,
+        crate::system::response_language(&skill_home),
+    );
     let overhead = compaction::estimate(
         &json!({"instructions": instructions, "tools": definitions, "runtime_state": runtime_state}),
     );

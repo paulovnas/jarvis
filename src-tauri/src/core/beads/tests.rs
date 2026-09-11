@@ -19,6 +19,18 @@ fn store(beads: &Beads) {
 }
 
 #[test]
+fn task_details_keep_comments_in_the_same_agent_snapshot() {
+    let value = attach_comments(
+        json!([{"id":"jproject-a","title":"Implement feature"}]),
+        json!([{"id":7,"author":"Você","text":"Preserve the existing API"}]),
+    )
+    .unwrap();
+    assert_eq!(value[0]["comments"][0]["id"], 7);
+    assert_eq!(value[0]["comments"][0]["text"], "Preserve the existing API");
+    assert!(attach_comments(json!([]), json!({"invalid":true})).is_err());
+}
+
+#[test]
 fn strict_tools_reject_cross_project_ids_invalid_fields_and_plan_writes() {
     let home = tempfile::tempdir().unwrap();
     let beads = fixture(home.path());
@@ -389,6 +401,7 @@ async fn installed_beads_lifecycle_smoke() {
     let shown = call(&beads, "beads_show", json!({"id":a}), "show").await;
     assert_eq!(task(&shown)["status"], "in_progress");
     assert_eq!(task(&shown)["notes"], "Validated synthetic progress");
+    assert!(task(&shown)["comments"].is_array());
     call(
         &beads,
         "beads_close",

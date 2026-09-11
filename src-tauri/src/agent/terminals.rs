@@ -8,7 +8,7 @@ use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, Master
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     io::{Read, Write},
     path::Path,
     sync::{
@@ -56,6 +56,13 @@ pub(crate) struct ChatTerminal {
     pub(super) status: String,
     origin: TerminalOrigin,
     pub(super) command: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TerminalConversationActivity {
+    conversation_id: String,
+    count: usize,
 }
 
 impl ChatTerminal {
@@ -276,6 +283,7 @@ impl Runtime {
 struct Entry {
     info: ChatTerminal,
     call_id: Option<String>,
+    owner_id: Option<String>,
     output: Arc<Mutex<Output>>,
     runtime: Arc<Runtime>,
 }
@@ -298,6 +306,29 @@ fn terminal_title(value: Option<&str>, ordinal: usize) -> Result<String, AgentEr
         ));
     }
     Ok(value)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CloseArgs {
+    id: String,
+    reason: String,
+}
+
+fn close_args(value: &Value) -> Result<CloseArgs, AgentError> {
+    let args: CloseArgs = serde_json::from_value(value.clone())
+        .map_err(|_| invalid("Informe o terminal e o motivo do encerramento."))?;
+    if args.id.trim() != args.id
+        || args.id.is_empty()
+        || args.id.len() > 128
+        || args.id.chars().any(char::is_control)
+        || args.reason.trim().is_empty()
+        || args.reason.chars().count() > 300
+        || args.reason.chars().any(char::is_control)
+    {
+        return Err(invalid("Informe um terminal válido e um motivo curto."));
+    }
+    Ok(args)
 }
 
 fn bounded_tail(value: &str, limit: usize) -> (String, bool) {
@@ -360,6 +391,7 @@ struct Spawn<'a> {
     title: Option<&'a str>,
     origin: TerminalOrigin,
     call_id: Option<&'a str>,
+    owner_id: Option<&'a str>,
     initial_input: Option<&'a str>,
     service: Option<(&'a str, Option<u16>)>,
 }
@@ -370,6 +402,7 @@ pub(super) struct ServiceSpawn<'a> {
     pub title: &'a str,
     pub command: &'a str,
     pub call_id: &'a str,
+    pub owner_id: &'a str,
     pub port: Option<u16>,
 }
 impl TerminalState {
@@ -398,6 +431,7 @@ impl TerminalState {
                 title: Some(request.title),
                 origin: TerminalOrigin::Agent,
                 call_id: Some(request.call_id),
+                owner_id: Some(request.owner_id),
                 initial_input: None,
                 service: Some((request.command, request.port)),
             },
@@ -513,6 +547,24 @@ impl TerminalState {
             .collect::<Vec<_>>();
         terminals.sort_by_key(|terminal| terminal.started_at);
         Ok(terminals)
+    }
+
+    pub(crate) fn conversation_activity(
+        &self,
+    ) -> Result<Vec<TerminalConversationActivity>, AgentError> {
+        let mut counts = BTreeMap::<String, usize>::new();
+        for entry in self.0.lock().map_err(|_| AgentError::internal())?.values() {
+            *counts
+                .entry(entry.info.conversation_id.clone())
+                .or_default() += 1;
+        }
+        Ok(counts
+            .into_iter()
+            .map(|(conversation_id, count)| TerminalConversationActivity {
+                conversation_id,
+                count,
+            })
+            .collect())
     }
 
     fn snapshot(&self, conversation: &str, id: &str) -> Result<TerminalSnapshot, AgentError> {
@@ -631,6 +683,22 @@ impl TerminalState {
         (events.changed)(conversation);
         Ok(())
     }
+
+    pub(super) fn close_requires_approval(
+        &self,
+        conversation: &str,
+        owner_id: &str,
+        args: &Value,
+    ) -> Result<bool, AgentError> {
+        let args = close_args(args)?;
+        let entries = self.0.lock().map_err(|_| AgentError::internal())?;
+        let entry = entries
+            .get(&args.id)
+            .filter(|entry| entry.info.conversation_id == conversation)
+            .ok_or_else(|| invalid("Terminal não encontrado nesta conversa."))?;
+        Ok(entry.owner_id.as_deref() != Some(owner_id))
+    }
+
     fn spawn(&self, request: Spawn, events: TerminalEvents) -> Result<ChatTerminal, AgentError> {
         let Spawn {
             conversation,
@@ -638,6 +706,7 @@ impl TerminalState {
             title,
             origin,
             call_id,
+            owner_id,
             initial_input,
             service,
         } = request;
@@ -770,6 +839,7 @@ impl TerminalState {
             Entry {
                 info: info.clone(),
                 call_id: call_id.map(str::to_owned),
+                owner_id: owner_id.map(str::to_owned),
                 output: output.clone(),
                 runtime: runtime.clone(),
             },
@@ -962,6 +1032,7 @@ impl TerminalState {
         &self,
         conversation: &str,
         root: &Path,
+        owner_id: &str,
         call: &ToolCall,
         events: TerminalEvents,
     ) -> Result<String, AgentError> {
@@ -1003,12 +1074,18 @@ impl TerminalState {
                         title: args.title.as_deref(),
                         origin: TerminalOrigin::Agent,
                         call_id: Some(&call.id),
+                        owner_id: Some(owner_id),
                         initial_input: input.as_deref(),
                         service: None,
                     },
                     events,
                 )?)
                 .map_err(|_| AgentError::internal())?
+            }
+            "terminal_close" => {
+                let args = close_args(&call.args)?;
+                self.close(conversation, &args.id, &events)?;
+                json!({ "closed": true, "id": args.id })
             }
             _ => return Err(invalid("Ferramenta de terminal inválida.")),
         };
@@ -1023,6 +1100,7 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
     ];
     if mode == Mode::Build {
         values.push(json!({"type":"function","name":"terminal_start","description":"Open a new visible terminal tab owned by this agent in the project root. Use only when the user benefits from a persistent, observable shell; use bash for ordinary finite commands. command, when provided, is sent only to the newly created terminal, never to a user-created tab. This requires user approval.","parameters":{"type":"object","properties":{"title":{"type":"string"},"command":{"type":"string"}},"additionalProperties":false}}));
+        values.push(json!({"type":"function","name":"terminal_close","description":"Close or cancel one integrated terminal when it is no longer needed. A terminal opened by this agent during the current execution closes directly; a user terminal or one from another agent or execution requires explicit user approval. Close temporary test terminals before finishing, but keep development services needed for the user's manual validation. Use the exact id returned by terminal_list and explain the reason briefly.","parameters":{"type":"object","properties":{"id":{"type":"string","minLength":1,"maxLength":128},"reason":{"type":"string","minLength":1,"maxLength":300}},"required":["id","reason"],"additionalProperties":false}}));
     }
     values
 }
@@ -1046,6 +1124,16 @@ pub async fn list_chat_terminals(
 }
 
 #[tauri::command]
+pub async fn get_terminal_activity(
+    agent: tauri::State<'_, AgentState>,
+) -> Result<Vec<TerminalConversationActivity>, AgentError> {
+    let terminals = agent.terminals.clone();
+    tauri::async_runtime::spawn_blocking(move || terminals.conversation_activity())
+        .await
+        .map_err(|_| AgentError::internal())?
+}
+
+#[tauri::command]
 pub async fn create_chat_terminal(
     app: tauri::AppHandle,
     persistence: tauri::State<'_, AppState>,
@@ -1065,6 +1153,7 @@ pub async fn create_chat_terminal(
                 title: None,
                 origin: TerminalOrigin::User,
                 call_id: None,
+                owner_id: None,
                 initial_input: None,
                 service: None,
             },
@@ -1219,6 +1308,57 @@ mod tests {
         }
     }
 
+    #[test]
+    fn terminal_activity_groups_open_tabs_by_conversation() {
+        let root = tempfile::tempdir().unwrap();
+        let state = TerminalState::default();
+        let spawn = |conversation: &str| {
+            state
+                .spawn(
+                    Spawn {
+                        conversation,
+                        root: root.path(),
+                        title: None,
+                        origin: TerminalOrigin::User,
+                        call_id: None,
+                        owner_id: None,
+                        initial_input: Some(command()),
+                        service: None,
+                    },
+                    silent_events(),
+                )
+                .unwrap()
+        };
+        let first = spawn("conversation-a");
+        let second = spawn("conversation-a");
+        let third = spawn("conversation-b");
+
+        assert_eq!(
+            state.conversation_activity().unwrap(),
+            vec![
+                TerminalConversationActivity {
+                    conversation_id: "conversation-a".into(),
+                    count: 2,
+                },
+                TerminalConversationActivity {
+                    conversation_id: "conversation-b".into(),
+                    count: 1,
+                },
+            ]
+        );
+
+        state
+            .close("conversation-a", &first.id, &silent_events())
+            .unwrap();
+        assert_eq!(state.conversation_activity().unwrap()[0].count, 1);
+        state
+            .close("conversation-a", &second.id, &silent_events())
+            .unwrap();
+        state
+            .close("conversation-b", &third.id, &silent_events())
+            .unwrap();
+    }
+
     #[cfg(windows)]
     #[test]
     fn powershell_prompt_uses_a_regular_path_for_canonical_project_roots() {
@@ -1233,6 +1373,7 @@ mod tests {
             title: None,
             origin: TerminalOrigin::User,
             call_id: None,
+            owner_id: None,
             initial_input: Some("Write-Output ([string]::Concat('cwd=', (Get-Location).Path)); Write-Output ('terminal-' + 'ready')\r\n"),
             service: None,
         }, silent_events()).unwrap();
@@ -1295,6 +1436,7 @@ mod tests {
                         title: None,
                         origin: TerminalOrigin::Agent,
                         call_id: None,
+                        owner_id: None,
                         initial_input: None,
                         service: service.then_some((script, None)),
                     },
@@ -1407,6 +1549,7 @@ mod tests {
                     command: Some("npm run dev".into()),
                 },
                 call_id: None,
+                owner_id: None,
                 output: Arc::new(Mutex::new(Output::default())),
                 runtime: runtime.clone(),
             },
@@ -1496,6 +1639,7 @@ mod tests {
                         title: None,
                         origin: TerminalOrigin::User,
                         call_id: None,
+                        owner_id: None,
                         initial_input: Some(&input),
                         service: None,
                     },
@@ -1532,6 +1676,7 @@ mod tests {
                     title: Some("Verificação"),
                     origin: TerminalOrigin::Agent,
                     call_id: Some("call"),
+                    owner_id: Some("run:builder"),
                     initial_input: Some(&initial_input),
                     service: None,
                 },
@@ -1567,6 +1712,7 @@ mod tests {
             .execute(
                 "conversation-a",
                 root.path(),
+                "run:builder",
                 &ToolCall {
                     id: "agent-call".into(),
                     name: "terminal_start".into(),
@@ -1585,7 +1731,83 @@ mod tests {
         assert_eq!(terminal["title"], "Terminal do agente");
         let snapshot = wait_for_output(&state, "conversation-a", id);
         assert!(terminal_text(&snapshot.output).contains("terminal-ready"));
-        state.close("conversation-a", id, &silent_events()).unwrap();
+        let close_args = json!({"id":id,"reason":"A verificação terminou."});
+        assert!(!state
+            .close_requires_approval("conversation-a", "run:builder", &close_args)
+            .unwrap());
+        assert!(state
+            .close_requires_approval("conversation-a", "run:designer", &close_args)
+            .unwrap());
+        let result = state
+            .execute(
+                "conversation-a",
+                root.path(),
+                "run:builder",
+                &ToolCall {
+                    id: "close-call".into(),
+                    name: "terminal_close".into(),
+                    args: close_args,
+                    status: "pending".into(),
+                    output: String::new(),
+                    duration_ms: 0,
+                },
+                silent_events(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&result).unwrap()["closed"],
+            true
+        );
+        assert!(state.list("conversation-a").unwrap().is_empty());
+    }
+
+    #[test]
+    fn user_terminal_requires_approval_and_close_arguments_are_strict() {
+        let root = tempfile::tempdir().unwrap();
+        let state = TerminalState::default();
+        let terminal = state
+            .spawn(
+                Spawn {
+                    conversation: "conversation-a",
+                    root: root.path(),
+                    title: Some("Terminal do usuário"),
+                    origin: TerminalOrigin::User,
+                    call_id: None,
+                    owner_id: None,
+                    initial_input: None,
+                    service: None,
+                },
+                silent_events(),
+            )
+            .unwrap();
+        let args = json!({"id":terminal.id,"reason":"Não é mais necessário."});
+        assert!(state
+            .close_requires_approval("conversation-a", "run:builder", &args)
+            .unwrap());
+        assert!(state
+            .close_requires_approval("conversation-b", "run:builder", &args)
+            .is_err());
+        assert!(state
+            .close_requires_approval(
+                "conversation-a",
+                "run:builder",
+                &json!({"id":terminal.id,"reason":" "}),
+            )
+            .is_err());
+        state
+            .close("conversation-a", &terminal.id, &silent_events())
+            .unwrap();
+    }
+
+    #[test]
+    fn close_tool_is_only_exposed_in_build_mode() {
+        assert!(definitions(Mode::Build)
+            .iter()
+            .any(|tool| tool["name"] == "terminal_close"));
+        assert!(!definitions(Mode::Plan)
+            .iter()
+            .any(|tool| tool["name"] == "terminal_close"));
     }
 
     #[test]

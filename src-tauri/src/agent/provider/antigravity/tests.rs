@@ -14,10 +14,27 @@ fn options(model: &str) -> TurnOptions {
 
 #[test]
 fn grounding_uses_selected_gemini_and_only_verified_source_metadata() {
-    let body = grounded_body(&credential(), "session", "gemini-3.8-flash", "Tauri docs").unwrap();
+    let body = grounded_body(
+        &credential(),
+        "session",
+        "gemini-3.8-flash",
+        "Tauri docs",
+        crate::system::ResponseLanguage::English,
+    )
+    .unwrap();
     assert_eq!(body["model"], "gemini-3.8-flash");
     assert_eq!(body["request"]["tools"], json!([{"googleSearch":{}}]));
-    assert!(grounded_body(&credential(), "session", "claude-opus", "Tauri docs").is_err());
+    assert!(grounded_body(
+        &credential(),
+        "session",
+        "claude-opus",
+        "Tauri docs",
+        crate::system::ResponseLanguage::English
+    )
+    .is_err());
+    assert!(body["request"]["systemInstruction"]["parts"][0]["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("Use English for user-facing prose")));
     let mut output = Output::default();
     output.event(&json!({"response":{"candidates":[{"content":{"parts":[{"text":"Documentação"}]},"groundingMetadata":{"groundingChunks":[{"web":{"uri":"https://v2.tauri.app/","title":"Tauri"}}]},"finishReason":"STOP"}]}}), &mut |_| Ok(())).unwrap();
     let response = output.finish("gemini-3.8-flash").unwrap();

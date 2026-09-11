@@ -3,6 +3,7 @@
 use super::*;
 use crate::{library, persistence::AppState};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use tauri::{Emitter, Manager, State};
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -28,6 +29,7 @@ pub struct Issue {
     pub dependents: Vec<Relation>,
     pub comment_count: u64,
     pub parent: Option<String>,
+    pub metadata: Value,
 }
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
@@ -73,6 +75,68 @@ fn decode<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, CoreError> 
 fn live(state: &AppState, home: &Path, project: &str) -> Result<(), CoreError> {
     library::dashboard::check_project(state, home, project)
         .map_err(|_| failure("Este projeto não está mais disponível."))
+}
+
+fn child_of(issue: &Issue, parent: &Issue) -> bool {
+    issue.parent.as_deref() == Some(parent.id.as_str())
+        || issue
+            .dependencies
+            .iter()
+            .any(|relation| relation.id == parent.id && relation.dependency_type == "parent-child")
+        || parent
+            .dependents
+            .iter()
+            .any(|relation| relation.id == issue.id && relation.dependency_type == "parent-child")
+}
+
+fn cancellation_args(
+    issues: &[Issue],
+    conversation_id: &str,
+    epic_id: &str,
+) -> Result<Vec<String>, CoreError> {
+    let epic = issues
+        .iter()
+        .find(|issue| {
+            issue.id == epic_id
+                && issue.issue_type == "epic"
+                && issue.metadata["jarvis_conversation"] == conversation_id
+        })
+        .ok_or_else(|| failure("Este plano não pertence à conversa atual."))?;
+    if epic.status == "closed" {
+        return Err(failure("Este plano já foi encerrado."));
+    }
+    let mut descendants = HashSet::from([epic.id.as_str()]);
+    loop {
+        let before = descendants.len();
+        for issue in issues {
+            if descendants.contains(issue.id.as_str()) {
+                continue;
+            }
+            if issues
+                .iter()
+                .any(|parent| descendants.contains(parent.id.as_str()) && child_of(issue, parent))
+            {
+                descendants.insert(issue.id.as_str());
+            }
+        }
+        if descendants.len() == before {
+            break;
+        }
+    }
+    let mut args = vec!["close".into()];
+    args.extend(
+        issues
+            .iter()
+            .filter(|issue| issue.id != epic.id)
+            .filter(|issue| descendants.contains(issue.id.as_str()) && issue.status != "closed")
+            .map(|issue| issue.id.clone()),
+    );
+    args.push(epic.id.clone());
+    args.extend([
+        "--force".into(),
+        "--reason=Encerrado manualmente pelo usuário no Jarvis.".into(),
+    ]);
+    Ok(args)
 }
 
 impl Beads {
@@ -208,6 +272,32 @@ pub async fn add_bead_comment(
     Ok(comment)
 }
 
+#[tauri::command]
+pub async fn close_conversation_plan(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+    conversation_id: String,
+    issue_id: String,
+) -> Result<Vec<Issue>, CoreError> {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|_| failure("Pasta pessoal indisponível."))?;
+    let beads = Beads::new(&home, &project_id, &conversation_id, false)?;
+    let (_sender, signal) = watch::channel(false);
+    let _lock = beads.lock(signal.clone()).await?;
+    live(&state, &home, &project_id)?;
+    library::dashboard::check_conversation_project(&state, &home, &project_id, &conversation_id)
+        .map_err(|_| failure("A conversa não pertence a este projeto."))?;
+    let issues = beads.board(signal.clone()).await?;
+    let args = cancellation_args(&issues, &conversation_id, &issue_id)?;
+    beads.run(&args, true, signal.clone()).await?;
+    let board = beads.board(signal).await?;
+    let _ = app.emit("beads:changed", &project_id);
+    Ok(board)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,6 +309,40 @@ mod tests {
         let args = comment_args("j123-1", "--delete $(touch file)\nOlá", "j123").unwrap();
         assert_eq!(args.last().unwrap(), "--delete $(touch file)\nOlá");
         assert_eq!(args[3], "--");
+    }
+
+    #[test]
+    fn manual_plan_closure_targets_open_descendants_before_the_owned_epic() {
+        let issue = |id: &str, kind: &str, status: &str, parent: Option<&str>, owner: &str| Issue {
+            id: id.into(),
+            issue_type: kind.into(),
+            status: status.into(),
+            parent: parent.map(str::to_owned),
+            metadata: json!({"jarvis_conversation":owner}),
+            ..Issue::default()
+        };
+        let issues = vec![
+            issue("epic", "epic", "blocked", None, "chat"),
+            issue("task", "task", "in_progress", Some("epic"), "chat"),
+            issue("nested", "task", "open", Some("task"), "chat"),
+            issue("done", "task", "closed", Some("epic"), "chat"),
+            issue("other", "epic", "open", None, "other-chat"),
+        ];
+        let args = cancellation_args(&issues, "chat", "epic").unwrap();
+        assert_eq!(
+            args,
+            [
+                "close",
+                "task",
+                "nested",
+                "epic",
+                "--force",
+                "--reason=Encerrado manualmente pelo usuário no Jarvis."
+            ]
+        );
+        assert!(cancellation_args(&issues, "other-chat", "epic").is_err());
+        assert!(!args.contains(&"done".into()));
+        assert!(!args.contains(&"other".into()));
     }
 
     #[tokio::test]

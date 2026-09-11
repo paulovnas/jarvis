@@ -17,6 +17,7 @@ const initial: SystemSnapshot = {
     preventSleep: "active",
     notifications: true,
     askUserTimeoutSeconds: 45,
+    responseLanguage: "pt-BR",
     terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 },
   },
   sleepInhibited: true,

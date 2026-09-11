@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Home from "./Home";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { populatedLibrary } from "@/test/library-fixtures";
-import { emptyChat } from "@/test/chat-fixtures";
+import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { bead, projectMetrics } from "@/test/dashboard-fixtures";
 import { coreFixture } from "@/test/core-fixtures";
 import { DEFAULT_DESKTOP_LAYOUT } from "@/core/desktop-layout";
@@ -22,6 +22,23 @@ const invokeMock = vi.mocked(invoke);
 const accountsMock = vi.fn<() => Promise<ProviderAccount[]>>();
 
 describe("Home shell", () => {
+  it("starts a supervised publication turn with the conversation model", async () => {
+    const user = userEvent.setup();
+    const chat = { ...emptyChat(), turns: [savedTurn()] };
+    const original = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation(async (command, args, options) => {
+      if (command === "get_chat" || command === "start_agent_turn") return chat;
+      if (command === "get_agent_file_changes") return [{ path: "src/main.ts", additions: 1, deletions: 0, base: "conversation" }];
+      return original(command, args, options);
+    });
+    render(<Home />);
+    await user.click(await screen.findByRole("button", { name: "Publicar" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("start_agent_turn", {
+      conversationId: "c1",
+      content: expect.stringContaining("apresente a proposta completa no painel"),
+      options: { account: "openai-codex-pessoal", model: "model", reasoning: "medium", mode: "build", workflow: "standard", approvalMode: "yolo" },
+    }));
+  });
   it("keeps independent drafts through dashboard and empty-workspace navigation", async () => {
     const user = userEvent.setup();
     let library = populatedLibrary();
@@ -43,7 +60,7 @@ describe("Home shell", () => {
     render(<Home />);
     const field = await screen.findByRole("textbox", { name: "Mensagem" });
     field.focus(); await user.paste("Rascunho pessoal");
-    await user.click(screen.getByRole("button", { name: "Dashboard" }));
+    await user.click(screen.getByRole("button", { name: "Detalhes" }));
     expect(await screen.findByRole("tab", { name: /Kanban/ })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Primeira conversa" }));
     expect(await screen.findByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho pessoal");
@@ -145,6 +162,7 @@ describe("Home shell", () => {
       if (command === "get_library_snapshot") return Promise.resolve(populatedLibrary());
       if (command === "get_chat") return Promise.resolve(emptyChat());
       if (command === "get_agent_activity") return Promise.resolve([]);
+      if (command === "get_terminal_activity") return Promise.resolve([]);
       if (command === "get_project_beads" || command === "get_agent_file_changes") return Promise.resolve([]);
       if (command === "list_provider_accounts") return accountsMock();
       return Promise.reject(new Error(`Unexpected command: ${command}`));

@@ -7,6 +7,7 @@ import {
   FolderPlus,
   MessageSquare,
   Plus,
+  SquareTerminal,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -64,10 +65,12 @@ export function AppSidebar({
   library,
   runningConversationIds,
   unreadConversationIds,
+  terminalCounts,
 }: {
   library: LibraryController;
   runningConversationIds?: ReadonlySet<string>;
   unreadConversationIds?: ReadonlySet<string>;
+  terminalCounts?: ReadonlyMap<string, number>;
 }) {
   const [dialog, setDialog] = useState<NameDialog | null>(null);
   const [moving, setMoving] = useState<Project | null>(null);
@@ -116,6 +119,7 @@ export function AppSidebar({
             >
               {runningConversationIds?.has(item.id) ? <Spinner aria-label="Conversa em execução" className="text-primary motion-reduce:animate-none" /> : <MessageSquare className={item.id === selected?.conversationId ? "text-primary" : "text-muted-foreground/55"} />}
               <span className="min-w-0 flex-1 truncate">{item.title}</span>
+              {(terminalCounts?.get(item.id) ?? 0) > 0 && <span role="img" aria-label={`${terminalCounts?.get(item.id)} ${terminalCounts?.get(item.id) === 1 ? "terminal aberto" : "terminais abertos"}`} title={`${terminalCounts?.get(item.id)} ${terminalCounts?.get(item.id) === 1 ? "terminal aberto" : "terminais abertos"}`} className="flex shrink-0 items-center gap-0.5 font-mono text-[9px] text-onedark-green"><SquareTerminal aria-hidden="true" className="size-3.5" />{(terminalCounts?.get(item.id) ?? 0) > 1 && terminalCounts?.get(item.id)}</span>}
               {unreadConversationIds?.has(item.id) && <Badge role="img" aria-label="Mensagem não lida" title="Mensagem não lida" className="size-2 shrink-0 rounded-full border-0 bg-primary p-0 shadow-[0_0_6px_#61afef44]" />}
             </SidebarMenuButton>
           </LibraryItemMenu>
@@ -291,7 +295,7 @@ export function AppSidebar({
                                       isActive={selected?.projectId === item.id && !selected.conversationId}
                                       aria-current={selected?.projectId === item.id && !selected.conversationId ? "page" : undefined}
                                       onClick={() => { void library.select({ kind: "project", id: item.id }); }}>
-                                      <LayoutDashboard className={selected?.projectId === item.id && !selected.conversationId ? "text-onedark-cyan" : "text-muted-foreground/55"} /><span>Dashboard</span>
+                                      <LayoutDashboard className={selected?.projectId === item.id && !selected.conversationId ? "text-onedark-cyan" : "text-muted-foreground/55"} /><span>Detalhes</span>
                                     </SidebarMenuButton>
                                   </SidebarMenuItem>
                                 </SidebarMenu>

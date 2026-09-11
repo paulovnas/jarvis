@@ -42,6 +42,29 @@ pub(crate) fn check_project(state: &AppState, home: &Path, id: &str) -> Result<(
     })
 }
 
+pub(crate) fn check_conversation_project(
+    state: &AppState,
+    home: &Path,
+    project_id: &str,
+    conversation_id: &str,
+) -> Result<(), LibraryError> {
+    state.with_connection(home, |connection| {
+        let exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1 AND project_id = ?2)",
+            params![conversation_id, project_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if exists {
+            Ok(())
+        } else {
+            Err(LibraryError::new(
+                "conversation_not_found",
+                "A conversa não pertence a este projeto.",
+            ))
+        }
+    })
+}
+
 pub(crate) struct SessionSource {
     pub id: String,
     pub title: String,

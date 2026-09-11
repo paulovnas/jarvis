@@ -110,6 +110,14 @@ export const projects = sqliteTable("projects", {
   createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
 }, (table) => [index("projects_workspace_idx").on(table.workspaceId)]);
 
+export const projectPublicationSettings = sqliteTable("project_publication_settings", {
+  projectId: text("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
+  publishPrompt: text("publish_prompt").notNull(),
+  prMode: text("pr_mode", { enum: ["disabled", "ask_pr", "ask_pr_merge"] }).notNull().default("disabled"),
+  prPrompt: text("pr_prompt").notNull(),
+  updatedAt: integer("updated_at").notNull().default(sql`(unixepoch())`),
+}, (table) => [check("project_publication_pr_mode", sql`${table.prMode} IN ('disabled', 'ask_pr', 'ask_pr_merge')`)]);
+
 export const conversations = sqliteTable("conversations", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull().references(() => projects.id),

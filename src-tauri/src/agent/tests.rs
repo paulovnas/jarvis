@@ -449,6 +449,49 @@ async fn manual_waits_for_matching_approval_and_yolo_does_not_prompt() {
 }
 
 #[tokio::test]
+async fn ownership_sensitive_actions_still_prompt_in_automatic_mode() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let automatic = options(ApprovalMode::Yolo);
+    let signal = session
+        .reserve("Fechar terminal".into(), automatic.clone())
+        .unwrap();
+    let tool = ToolCall {
+        id: "terminal-close".into(),
+        name: "terminal_close".into(),
+        args: json!({"id":"terminal-user","reason":"A verificação terminou."}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    let (task_session, task_tool, task_options) =
+        (session.clone(), tool.clone(), automatic.clone());
+    let pending = tokio::spawn(async move {
+        authorize_with_policy(
+            &task_session,
+            &task_tool,
+            &task_options,
+            false,
+            true,
+            signal,
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while session.snapshot().unwrap().pending_approval.is_none() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!pending.is_finished());
+    let turn = session.snapshot().unwrap().active_turn_id.unwrap();
+    answer_approval(&session, &turn, &tool.id, true).unwrap();
+    assert!(pending.await.unwrap().unwrap());
+    assert!(session.snapshot().unwrap().pending_approval.is_none());
+}
+
+#[tokio::test]
 async fn beads_mutations_require_manual_approval_but_queries_do_not() {
     let fixture = Fixture::new();
     let session = session(&fixture);

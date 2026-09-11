@@ -86,6 +86,8 @@ struct Job {
     acceptance: Vec<String>,
     scope: Vec<String>,
     bead_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bead_fingerprint: Option<String>,
     dependencies: Vec<String>,
     status: Status,
     created_at: u64,
@@ -464,6 +466,7 @@ impl Execution {
                     | "bash"
                     | "process_start"
                     | "terminal_start"
+                    | "terminal_close"
                     | "workflow_check"
             ) || crate::core::beads::needs_approval(name)
                 || super::browser::mutating(name)
@@ -609,6 +612,32 @@ impl Execution {
             .handoff
             .map(|handoff| handoff.summary)
     }
+
+    fn terminal_owner_id(&self) -> Result<String, AgentError> {
+        let run_id = self
+            .hub
+            .manifest
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .run_id
+            .clone();
+        Ok(format!("{run_id}:{}", self.id))
+    }
+
+    pub(super) fn terminal_close_requires_approval(
+        &self,
+        tool: &ToolCall,
+    ) -> Result<bool, AgentError> {
+        if tool.name != "terminal_close" {
+            return Ok(false);
+        }
+        self.hub.env.terminals.close_requires_approval(
+            &self.hub.root.id,
+            &self.terminal_owner_id()?,
+            &tool.args,
+        )
+    }
+
     pub(super) async fn execute(
         &self,
         tool: &ToolCall,
@@ -635,17 +664,9 @@ impl Execution {
             if !self.allowed(&tool.name) {
                 return Err(invalid("Processo indisponível para este agente."));
             }
+            let owner_id = self.terminal_owner_id()?;
             let mut call = tool.clone();
-            call.id = format!(
-                "{}:{}:{}",
-                self.hub
-                    .manifest
-                    .lock()
-                    .map_err(|_| AgentError::internal())?
-                    .run_id,
-                self.id,
-                tool.id
-            );
+            call.id = format!("{owner_id}:{}", tool.id);
             return self
                 .hub
                 .env
@@ -653,6 +674,7 @@ impl Execution {
                 .execute(
                     &self.hub.root.id,
                     &self.hub.root.root,
+                    &owner_id,
                     &call,
                     self.hub.env.terminal_events.clone(),
                 )
@@ -662,17 +684,9 @@ impl Execution {
             if !self.allowed(&tool.name) {
                 return Err(invalid("Terminal indisponível para este agente."));
             }
+            let owner_id = self.terminal_owner_id()?;
             let mut call = tool.clone();
-            call.id = format!(
-                "{}:{}:{}",
-                self.hub
-                    .manifest
-                    .lock()
-                    .map_err(|_| AgentError::internal())?
-                    .run_id,
-                self.id,
-                tool.id
-            );
+            call.id = format!("{owner_id}:{}", tool.id);
             return self
                 .hub
                 .env
@@ -680,6 +694,7 @@ impl Execution {
                 .execute(
                     &self.hub.root.id,
                     &self.hub.root.root,
+                    &owner_id,
                     &call,
                     self.hub.env.terminal_events.clone(),
                 )
