@@ -218,6 +218,7 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
             workflow::Flow::Planned => "Planejado",
             workflow::Flow::Complete => "Completo",
             workflow::Flow::Custom => "Customizado",
+            workflow::Flow::Publication => "Publicação",
         };
         references.push(reference(
             db,

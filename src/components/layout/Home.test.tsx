@@ -22,12 +22,13 @@ const invokeMock = vi.mocked(invoke);
 const accountsMock = vi.fn<() => Promise<ProviderAccount[]>>();
 
 describe("Home shell", () => {
-  it("starts a supervised publication turn with the conversation model", async () => {
+  it("starts a supervised publication turn with the dedicated GitHub agent model", async () => {
     const user = userEvent.setup();
     const chat = { ...emptyChat(), turns: [savedTurn()] };
     const original = invokeMock.getMockImplementation()!;
     invokeMock.mockImplementation(async (command, args, options) => {
       if (command === "get_chat" || command === "start_agent_turn") return chat;
+      if (command === "get_agent_models") return { "publication/github": { account: "openai-codex-economico", model: "gpt-5.6-luna", reasoning: "medium" } };
       if (command === "get_agent_file_changes") return [{ path: "src/main.ts", additions: 1, deletions: 0, base: "conversation" }];
       return original(command, args, options);
     });
@@ -36,7 +37,7 @@ describe("Home shell", () => {
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("start_agent_turn", {
       conversationId: "c1",
       content: expect.stringContaining("todos os repositórios afetados em uma única proposta"),
-      options: { account: "openai-codex-pessoal", model: "model", reasoning: "medium", mode: "build", workflow: "standard", approvalMode: "yolo" },
+      options: { account: "openai-codex-economico", model: "gpt-5.6-luna", reasoning: "medium", mode: "build", workflow: "publication", approvalMode: "yolo" },
     }));
     const publicationCall = invokeMock.mock.calls.find(([command]) => command === "start_agent_turn");
     const content = (publicationCall?.[1] as { content?: string } | undefined)?.content;

@@ -53,7 +53,7 @@ export type BuiltinFlow = "standard" | "designer" | "planned" | "complete";
 export type FlowSelection = BuiltinFlow | `custom:${string}` | `agent:${string}`;
 export type CatalogMutation = { kind: "save_agent"; agent: CustomAgent } | { kind: "save_flow"; flow: CustomFlow } | { kind: "delete_agent" | "delete_flow"; id: string };
 export const customId = () => crypto.randomUUID().replace(/-/g, "");
-export const flowSelection = (options?: TurnOptions): FlowSelection => options?.workflow === "custom" && options.customAgentId ? `agent:${options.customAgentId}` : options?.workflow === "custom" && options.customWorkflowId ? `custom:${options.customWorkflowId}` : options?.workflow && options.workflow !== "custom" ? options.workflow : "standard";
+export const flowSelection = (options?: TurnOptions): FlowSelection => options?.workflow === "custom" && options.customAgentId ? `agent:${options.customAgentId}` : options?.workflow === "custom" && options.customWorkflowId ? `custom:${options.customWorkflowId}` : options?.workflow && options.workflow !== "custom" && options.workflow !== "publication" ? options.workflow : "standard";
 export function flowOptions(selection: FlowSelection): Pick<TurnOptions, "workflow" | "customWorkflowId" | "customAgentId"> {
   if (selection.startsWith("agent:")) return { workflow: "custom", customAgentId: selection.slice(6) };
   return selection.startsWith("custom:") ? { workflow: "custom", customWorkflowId: selection.slice(7) } : { workflow: selection as BuiltinFlow };

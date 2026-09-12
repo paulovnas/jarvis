@@ -5,6 +5,7 @@ mod contracts;
 mod custom;
 mod dispatch;
 mod guidance;
+mod publishing;
 pub(crate) mod settings;
 mod storage;
 #[cfg(test)]
@@ -431,12 +432,18 @@ impl Execution {
     pub(super) fn designer(&self) -> bool {
         self.role == Role::Designer
     }
+    pub(super) fn publication(&self) -> bool {
+        self.flow == Flow::Publication && self.role == Role::Github
+    }
     pub(super) fn design_resources(&self) -> bool {
         self.designer()
             || (self.flow == Flow::Custom
                 && (self.allowed("design_search") || self.allowed("design_read")))
     }
     pub(super) fn role_mode(&self) -> Mode {
+        if self.publication() {
+            return Mode::Build;
+        }
         if self.flow == Flow::Custom {
             return if self
                 .custom_agent()
@@ -1187,7 +1194,9 @@ pub(super) async fn run(
         flow,
         scope: vec![".".into()],
     };
-    let result = if let Some(definition) = custom_definition {
+    let result = if flow == Flow::Publication {
+        publishing::run(hub.clone(), signal).await
+    } else if let Some(definition) = custom_definition {
         custom::run(hub.clone(), definition, signal).await
     } else {
         super::run_turn(

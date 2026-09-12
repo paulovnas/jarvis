@@ -162,7 +162,9 @@ impl TurnOptions {
         match self.workflow {
             Some(workflow::Flow::Standard | workflow::Flow::Designer) => true,
             Some(workflow::Flow::Custom) => self.custom_agent_id.is_some(),
-            Some(workflow::Flow::Planned | workflow::Flow::Complete) => false,
+            Some(
+                workflow::Flow::Planned | workflow::Flow::Complete | workflow::Flow::Publication,
+            ) => false,
             None => self.mode == Mode::Build,
         }
     }
@@ -1600,6 +1602,9 @@ fn run_turn<'a>(
             .turn
             .options
             .clone();
+        let publication_agent = execution
+            .as_ref()
+            .is_some_and(workflow::Execution::publication);
         let user = session
             .data
             .lock()
@@ -1642,10 +1647,14 @@ fn run_turn<'a>(
         session.update(true, |data| {
             data.turns.last_mut().unwrap().turn.context_window = model.context_window;
         })?;
-        let discovery_signal = signal.clone();
-        let mut mcp_clients = tokio::select! {
-            _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-            clients = crate::mcp::runtime::TurnClients::discover_for_intent(mcp, state, home, &session.root, &mcp_intent, discovery_signal) => clients.map_err(AgentError::from)?,
+        let mut mcp_clients = if publication_agent {
+            crate::mcp::runtime::TurnClients::default()
+        } else {
+            let discovery_signal = signal.clone();
+            tokio::select! {
+                _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+                clients = crate::mcp::runtime::TurnClients::discover_for_intent(mcp, state, home, &session.root, &mcp_intent, discovery_signal) => clients.map_err(AgentError::from)?,
+            }
         };
         let mut context = crate::core::context::ContextMode::open(
             home,
@@ -1670,7 +1679,7 @@ fn run_turn<'a>(
             .map_or(options.mode == Mode::Plan, |exec| {
                 exec.role_mode() == Mode::Plan
             });
-        let beads = if direct_tasks {
+        let beads = if direct_tasks || publication_agent {
             None
         } else {
             Some(crate::core::beads::Beads::new(
@@ -1724,7 +1733,9 @@ fn run_turn<'a>(
             || !recall.is_empty()
             || !task_snapshot.is_empty()
         {
-            let state_reference = if direct_tasks {
+            let state_reference = if publication_agent {
+                "Publication worker: inspect the current Git working trees and use the supervised publication proposal; Beads is outside this isolated task.".into()
+            } else if direct_tasks {
                 format!("{task_snapshot}\nUse update_tasks to keep this list current; Beads is not used in direct flows.")
             } else {
                 format!("Beads project snapshot:\n{beads_snapshot}\nUse beads_show/ready to refresh before acting.")
@@ -1752,7 +1763,7 @@ fn run_turn<'a>(
             if *signal.borrow() {
                 return Err(AgentError::cancelled());
             }
-            let search_enabled = web_search::enabled(state, home, &options);
+            let search_enabled = !publication_agent && web_search::enabled(state, home, &options);
             let mut instructions = tools::instructions(&session.root, options.mode);
             project_instructions.append_prompt(&mut instructions);
             if let Some(exec) = &execution {
@@ -1764,12 +1775,14 @@ fn run_turn<'a>(
                 if project_beads.is_some() {
                     instructions.push_str(crate::core::beads::PROJECT_INSTRUCTIONS);
                 }
-            } else {
+            } else if !publication_agent {
                 instructions.push_str(crate::core::beads::INSTRUCTIONS);
             }
-            instructions.push_str(web_search::instructions(search_enabled));
-            instructions.push_str(crate::core::context7::INSTRUCTIONS);
-            instructions.push_str(authoring::INSTRUCTIONS);
+            if !publication_agent {
+                instructions.push_str(web_search::instructions(search_enabled));
+                instructions.push_str(crate::core::context7::INSTRUCTIONS);
+                instructions.push_str(authoring::INSTRUCTIONS);
+            }
             if options.mode == Mode::Build {
                 instructions.push_str(&publication::instructions(&publication_settings));
             }
@@ -1779,14 +1792,16 @@ fn run_turn<'a>(
                 &options.model,
             );
             let mut definitions = tools::definitions(options.mode);
-            definitions.extend(authoring::definitions());
+            if !publication_agent {
+                definitions.extend(authoring::definitions());
+            }
             if options.mode == Mode::Build {
                 definitions.push(publication::definition());
             }
             definitions.push(attachments::definition());
-            if vision::enabled(state, home, &options) {
+            if !publication_agent && vision::enabled(state, home, &options) {
                 definitions.push(vision::definition());
-            } else {
+            } else if !publication_agent {
                 instructions.push_str(" Vision is disabled or unavailable for the selected provider/model. You cannot inspect images; ask the user to configure Vision if their request requires image analysis. Documents remain readable through read_attachment.");
             }
             if owner.id != session.id {
@@ -1799,29 +1814,37 @@ fn run_turn<'a>(
                 definitions.extend(crate::core::design::definitions());
             }
             definitions.extend(context.definitions(restricted));
-            definitions.extend(crate::core::context7::definitions());
+            if !publication_agent {
+                definitions.extend(crate::core::context7::definitions());
+            }
             if direct_tasks {
                 definitions.push(tasks::definition());
                 if project_beads.is_some() {
                     definitions.extend(crate::core::beads::project_definitions());
                 }
-            } else {
+            } else if !publication_agent {
                 definitions.extend(crate::core::beads::definitions(options.mode == Mode::Plan));
             }
-            let skills = tokio::select! {
-                _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-                skills = crate::skills::active(home, &session.root) => skills.map_err(|cause| AgentError::new("skill_error", &cause.message))?,
-            };
-            instructions.push_str(&crate::skills::prompt(&skills));
-            if !skills.is_empty() {
-                definitions.extend([
-                    crate::skills::definition(),
-                    crate::skills::search_definition(),
-                ]);
+            if !publication_agent {
+                let skills = tokio::select! {
+                    _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+                    skills = crate::skills::active(home, &session.root) => skills.map_err(|cause| AgentError::new("skill_error", &cause.message))?,
+                };
+                instructions.push_str(&crate::skills::prompt(&skills));
+                if !skills.is_empty() {
+                    definitions.extend([
+                        crate::skills::definition(),
+                        crate::skills::search_definition(),
+                    ]);
+                }
             }
-            let mcp_definitions = tokio::select! {
-                _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-                definitions = mcp_clients.definitions_with(mcp, state, home, restricted, |name| execution.as_ref().is_none_or(|exec| exec.allowed(name))) => definitions,
+            let mcp_definitions = if publication_agent {
+                Vec::new()
+            } else {
+                tokio::select! {
+                    _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+                    definitions = mcp_clients.definitions_with(mcp, state, home, restricted, |name| execution.as_ref().is_none_or(|exec| exec.allowed(name))) => definitions,
+                }
             };
             if !mcp_definitions.is_empty() {
                 instructions.push_str(&mcp_clients.instructions());
@@ -1830,7 +1853,7 @@ fn run_turn<'a>(
             if search_enabled {
                 definitions.push(web_search::definition());
             }
-            if image_generation::enabled(state, home) {
+            if !publication_agent && image_generation::enabled(state, home) {
                 definitions.push(image_generation::definition());
                 instructions.push_str(" Use generate_image for requested image creation. It uses the independently configured Antigravity account. The resulting images are displayed directly in chat and stored as conversation attachments; do not embed base64 or repeat their preview in Markdown. Never claim an image was created without a successful tool result.");
             }

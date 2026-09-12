@@ -33,18 +33,20 @@ function ActivitySection({ title, icon, count, children }: { title: string; icon
   </Collapsible>;
 }
 
-export function Inspector({ library, chat, workflow, accounts = [], onCompact, onOpenKanban, onPublish, compacting = false, pending = false, files: fileWorkspace }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; workflow?: WorkflowController; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; onOpenKanban?: (projectId: string) => void; onPublish?: () => Promise<boolean>; compacting?: boolean; pending?: boolean; files?: ProjectFilesController }) {
+export function Inspector({ library, chat, workflow, accounts = [], onCompact, onOpenKanban, onPublish, canPublish, compacting = false, pending = false, files: fileWorkspace }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; workflow?: WorkflowController; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; onOpenKanban?: (projectId: string) => void; onPublish?: () => Promise<boolean>; canPublish?: boolean; compacting?: boolean; pending?: boolean; files?: ProjectFilesController }) {
   const { layout, updateLayout } = useDesktopLayout();
   const selectedChat = chat?.conversationId === library?.selection.conversationId ? chat : null;
   const [explorerVisited, setExplorerVisited] = useState(layout.inspectorTab === "explorer");
   const [publishing, setPublishing] = useState(false);
   const turns = selectedChat?.turns ?? [];
   const latestTurn = turns[turns.length - 1];
-  const hasPublishModel = Boolean(selectedChat?.latestOptions ?? latestTurn?.options);
+  const hasPublishModel = canPublish ?? turns.some(turn => turn.options.workflow !== "publication");
   const liveFlow = selectedChat && workflow?.data?.conversationId === selectedChat.conversationId ? workflow.data.flow : undefined;
-  const flow = liveFlow ?? latestTurn?.options.workflow ?? (latestTurn?.options.mode === "plan" ? "planned" : "standard");
+  const latestFlow = latestTurn?.options.workflow ?? (latestTurn?.options.mode === "plan" ? "planned" : "standard");
+  const publishingFlow = latestFlow === "publication";
+  const flow = liveFlow === "publication" && !publishingFlow ? latestFlow : liveFlow ?? latestFlow;
   const individualAgent = latestTurn?.options.workflow === "custom" && Boolean(latestTurn.options.customAgentId);
-  const directFlow = flow === "standard" || flow === "designer" || individualAgent;
+  const directFlow = !publishingFlow && (flow === "standard" || flow === "designer" || individualAgent);
   const manualValidation = Boolean(latestTurn?.options.manualValidation || workflow?.data?.validation && !workflow.data.validation.stale);
   const tools = turns.flatMap(turn => turn.steps.flatMap(step => step.tools));
   const changes = useSessionFiles(selectedChat?.conversationId ?? null);
@@ -60,17 +62,17 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
       <TabsContent value="activities" keepMounted className={`min-h-0 flex-1 flex-col ${section === "activities" ? "flex" : "hidden"}`}>
     <div className="min-h-0 flex-1">
         <ScrollArea className="h-full"><div key={selectedChat?.conversationId ?? "empty"} className="px-2">
-          {directFlow ? <ActivitySection title="Tarefas" icon={<ListTodo aria-hidden="true" style={flow === "designer" ? { color: ROLE_COLORS.designer } : undefined} className={`size-4 ${flow === "standard" ? "text-primary" : ""}`} />} count={latestTurn?.tasks.length}>
+          {!publishingFlow && (directFlow ? <ActivitySection title="Tarefas" icon={<ListTodo aria-hidden="true" style={flow === "designer" ? { color: ROLE_COLORS.designer } : undefined} className={`size-4 ${flow === "standard" ? "text-primary" : ""}`} />} count={latestTurn?.tasks.length}>
             <DirectTasks tasks={latestTurn?.tasks ?? []} active={!!latestTurn && selectedChat?.activeTurnId === latestTurn.id} flow={flow === "designer" ? "designer" : flow === "custom" ? "custom" : "standard"} />
           </ActivitySection> : <ActivitySection title="Plano" icon={<ListChecks aria-hidden="true" className="size-4 text-[#c678dd]" />}>
             {projectId && selectedChat ? <EpicPlans key={`${projectId}:${selectedChat.conversationId}`} projectId={projectId} conversationId={selectedChat.conversationId} active={Boolean(selectedChat.activeTurnId)} onOpenKanban={onOpenKanban} /> : <p className="text-xs text-muted-foreground">Nenhum plano em aberto.</p>}
-          </ActivitySection>}
+          </ActivitySection>)}
           <ActivitySection title="Arquivos alterados" icon={<Files aria-hidden="true" className="size-4 text-primary" />} count={files.length}>
             {changes.loading ? <div role="status" aria-label="Conferindo alterações" className="space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-4/5" /></div> : changes.error ? <p role="alert" className="text-xs text-destructive">{changes.error}</p> : files.length && selectedChat ? <ChangedFiles key={selectedChat.conversationId} files={files} conversationId={selectedChat.conversationId} projectPath={projectPath} /> : <p className="text-xs text-muted-foreground">Nenhuma alteração pendente.</p>}
             {tools.some(tool => tool.name === "bash" || tool.name.startsWith("mcp_")) && <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">Alterações feitas pelo terminal ou por MCPs ainda não entram nesta lista.</p>}
           </ActivitySection>
-          {selectedChat && <div className="border-b border-border px-2 py-3"><Button variant="outline" className="w-full cursor-pointer gap-2 border-primary/25 bg-primary/5 text-primary hover:bg-primary/10" disabled={!onPublish || !hasPublishModel || !!selectedChat.activeTurnId || compacting || pending || publishing} title={!hasPublishModel ? "Envie uma mensagem antes de preparar a publicação" : selectedChat.activeTurnId ? "Aguarde a execução atual terminar" : "Preparar uma publicação com IA"} onClick={() => { if (!onPublish || publishing) return; setPublishing(true); void onPublish().finally(() => setPublishing(false)); }}><Sparkles aria-hidden="true" className="size-4" />{publishing ? "Preparando…" : "Publicar"}</Button></div>}
-          {selectedChat && !individualAgent && workflow?.data?.conversationId === selectedChat.conversationId && ["planned", "complete", "custom"].includes(workflow.data.flow) && <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-onedark-yellow" />}>
+          {selectedChat && files.length > 0 && <div className="border-b border-border px-2 py-3"><Button variant="outline" className="w-full cursor-pointer gap-2 border-primary/25 bg-primary/5 text-primary hover:bg-primary/10" disabled={!onPublish || !hasPublishModel || !!selectedChat.activeTurnId || compacting || pending || publishing} title={!hasPublishModel ? "Configure o modelo do agente GitHub em Configurações → Agentes" : selectedChat.activeTurnId ? "Aguarde a execução atual terminar" : "Preparar uma publicação com o agente GitHub"} onClick={() => { if (!onPublish || publishing) return; setPublishing(true); void onPublish().finally(() => setPublishing(false)); }}><Sparkles aria-hidden="true" className="size-4" />{publishing ? "Preparando…" : "Publicar"}</Button></div>}
+          {selectedChat && workflow?.data?.conversationId === selectedChat.conversationId && (publishingFlow || !individualAgent && ["planned", "complete", "custom"].includes(workflow.data.flow)) && <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-onedark-yellow" />}>
             <WorkflowAgents workflow={workflow} conversationId={selectedChat?.conversationId} />
           </ActivitySection>}
           {selectedChat && manualValidation && !directFlow && workflow?.data?.conversationId === selectedChat.conversationId && ["planned", "complete", "custom"].includes(workflow.data.flow) && <ActivitySection title="Validação" icon={<ClipboardCheck aria-hidden="true" className="size-4 text-onedark-green" />} count={workflow.data.validation?.items.length}>

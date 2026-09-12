@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, CircleAlert } from "lucide-react";
 import { AGENT_ICONS } from "@/components/agents/agent-presentation";
 import { aliasSuffix } from "@/core/provider-usage";
 import { reasoningLabel } from "@/core/reasoning";
@@ -58,7 +58,7 @@ function AgentHistory({ conversationId, agent }: { conversationId: string; agent
 }
 export function WorkflowAgents({ workflow, conversationId }: { workflow?: WorkflowController; conversationId?: string }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const agents = workflow?.data?.agents ?? [];
+  const agents = (workflow?.data?.agents ?? []).filter(agent => workflow?.data?.flow !== "publication" || agent.id !== "main");
   const now = useRunningClock(agents.some(timingActive));
   const latestByRole = new Map<WorkflowAgent["role"], WorkflowAgent>();
   const currentAgents = agents.filter(agent => {
@@ -80,8 +80,9 @@ export function WorkflowAgents({ workflow, conversationId }: { workflow?: Workfl
         const { Icon, color, label } = presentation(agent);
         const duration = executionDuration(agent.startedAt, agent.durationMs, timingActive(agent), now);
         const thought = agent.currentThought ? reasoningPreview(agent.currentThought) : "";
+        const requiresAttention = Boolean(agent.pendingApproval || agent.pendingQuestion || agent.pendingAuthoring);
         return <Button key={agent.id} variant="ghost" data-status={agent.status} style={agent.status === "waiting" || agent.status === "queued" ? { borderColor: agent.role === "custom" ? `color-mix(in srgb, ${color} 50%, transparent)` : `${color}80` } : undefined} onClick={() => setSelected(agent.id)} aria-label={`Abrir agente ${label}: ${agent.title}`} className="agent-execution relative isolate h-auto w-full cursor-pointer flex-col items-stretch gap-2 rounded-md border border-border bg-card/60 p-3 text-left whitespace-normal shadow-[inset_0_1px_0_#ffffff0a] hover:border-primary/40">
-          <span className="flex items-center gap-2"><Icon aria-hidden="true" className="size-3.5 shrink-0" style={{ color }} /><span className="flex-1 text-xs font-medium">{label}</span>{agent.status === "running" && <span aria-label="Em execução" className="size-1.5 animate-pulse rounded-full motion-reduce:animate-none" style={{ backgroundColor: color }} />}<ChevronRight className="size-3 text-muted-foreground" /></span>
+          <span className="flex items-center gap-2"><Icon aria-hidden="true" className="size-3.5 shrink-0" style={{ color }} /><span className="flex-1 text-xs font-medium">{label}</span>{requiresAttention && selected !== agent.id && <span aria-label="Aguardando sua resposta" title="Aguardando sua resposta" className="flex size-5 items-center justify-center rounded-full border border-onedark-yellow/30 bg-onedark-yellow/10 text-onedark-yellow"><CircleAlert aria-hidden="true" className="size-3" /></span>}{agent.status === "running" && <span aria-label="Em execução" className="size-1.5 animate-pulse rounded-full motion-reduce:animate-none" style={{ backgroundColor: color }} />}<ChevronRight className="size-3 text-muted-foreground" /></span>
           {agent.title !== label && <span className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{agent.title}</span>}
           {thought && <span title={thought} className={`line-clamp-2 text-[10px] italic leading-4 text-muted-foreground ${agent.status === "running" ? "reasoning-shimmer" : ""}`}>{thought}</span>}
           <span className="flex items-center gap-2"><StatusBadge agent={agent} /><span aria-label="Tempo de execução" className="font-mono text-[9px] tabular-nums text-muted-foreground">{formatExecutionDuration(duration)}</span></span>

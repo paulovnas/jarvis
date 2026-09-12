@@ -65,15 +65,18 @@ export function Home() {
   const agentModels = useAgentModels();
   const runningConversationIds = useAgentActivity();
   const terminalCounts = useTerminalActivity();
+  const turns = chat.snapshot?.turns ?? [];
+  const previousChatOptions = [...turns].reverse().find(turn => turn.options.workflow !== "publication")?.options;
+  const publicationOptions = agentModels.data === null
+    ? undefined
+    : agentModels.data["publication/github"] ?? previousChatOptions;
   const publishChanges = useCallback(async () => {
-    const turns = chat.snapshot?.turns ?? [];
-    const options = chat.snapshot?.latestOptions ?? turns[turns.length - 1]?.options;
-    if (!options) return false;
+    if (!publicationOptions) return false;
     return chat.send(
       "Prepare a publicação das alterações atuais deste projeto. A pasta do projeto pode agrupar um ou mais repositórios Git independentes: descubra cada raiz Git que contenha alterações e trate separadamente seu status, diff, validações, branch, commit, push e eventual pull request ou merge. Siga as opções configuradas em Detalhes → Opções e reúna todos os repositórios afetados em uma única proposta completa no painel para minha aprovação. Use jarvis_propose_publication para propor e, depois da aprovação, executar as ações de cada repositório.",
-      { account: options.account, model: options.model, reasoning: options.reasoning, mode: "build", workflow: "standard", approvalMode: "yolo" },
+      { account: publicationOptions.account, model: publicationOptions.model, reasoning: publicationOptions.reasoning, mode: "build", workflow: "publication", approvalMode: "yolo" },
     );
-  }, [chat]);
+  }, [chat, publicationOptions]);
   const dashboardProject = !library.snapshot?.selection.conversationId
     ? library.snapshot?.projects.find(project => project.id === library.snapshot?.selection.projectId)
     : undefined;
@@ -208,7 +211,7 @@ export function Home() {
           maxSize="550px"
           className="h-full min-h-0 min-w-0"
         >
-          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onPublish={publishChanges} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} files={files} /></div>
+          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onPublish={publishChanges} canPublish={Boolean(publicationOptions)} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} files={files} /></div>
         </ResizablePanel></>}
       </ResizablePanelGroup>
       <StatusBar accounts={accounts} onOpenSettings={() => setSettingsOpen(true)} />

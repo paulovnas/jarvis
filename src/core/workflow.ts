@@ -4,14 +4,14 @@ import { pendingQuestionSchema } from "./questions";
 import { workflowAppearanceSchema } from "./workflow-appearance";
 import { pendingAuthoringSchema } from "./authoring";
 
-export type Workflow = "standard" | "designer" | "planned" | "complete" | "custom";
-export const FLOW_LABELS: Record<Workflow, string> = { standard: "Padrão", designer: "Designer", planned: "Planejado", complete: "Completo", custom: "Customizado" };
-export const rootRole = (flow: Workflow) => flow === "custom" ? "custom" : flow === "standard" ? "builder" : flow === "designer" ? "designer" : "planner";
-export const ROLE_LABELS = { planner: "Planejador", investigator: "Investigador", writer: "Redator", orchestrator: "Orquestrador", designer: "Designer", builder: "Construtor", reviewer: "Revisor", custom: "Customizado" };
-export const ROLE_COLORS = { planner: "#c678dd", investigator: "#56b6c2", writer: "#e08a78", orchestrator: "#e5c07b", designer: "#ef8fba", builder: "#61afef", reviewer: "#98c379", custom: "#969eac" };
+export type Workflow = "standard" | "designer" | "planned" | "complete" | "publication" | "custom";
+export const FLOW_LABELS: Record<Workflow, string> = { standard: "Padrão", designer: "Designer", planned: "Planejado", complete: "Completo", publication: "Publicação", custom: "Customizado" };
+export const rootRole = (flow: Workflow) => flow === "custom" ? "custom" : flow === "standard" ? "builder" : flow === "designer" ? "designer" : flow === "publication" ? "github" : "planner";
+export const ROLE_LABELS = { planner: "Planejador", investigator: "Investigador", writer: "Redator", orchestrator: "Orquestrador", designer: "Designer", builder: "Construtor", reviewer: "Revisor", github: "GitHub", custom: "Customizado" };
+export const ROLE_COLORS = { planner: "#c678dd", investigator: "#56b6c2", writer: "#e08a78", orchestrator: "#e5c07b", designer: "#ef8fba", builder: "#61afef", reviewer: "#98c379", github: "#d7dce5", custom: "#969eac" };
 export const STATUS_LABELS = { queued: "Na fila", running: "Executando", waiting: "Aguardando", completed: "Concluído", blocked: "Bloqueado", failed: "Falhou", cancelled: "Cancelado", interrupted: "Interrompido" };
 export const agentCardSchema = z.object({
-  id: z.string(), parentId: z.string().nullable(), role: z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer", "custom"]),
+  id: z.string(), parentId: z.string().nullable(), role: z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer", "github", "custom"]),
   title: z.string(), status: z.enum(["queued", "running", "waiting", "completed", "blocked", "failed", "cancelled", "interrupted"]),
   createdAt: z.number(), updatedAt: z.number(), startedAt: z.number(), durationMs: z.number().nonnegative(), currentThought: z.string().nullable(), attempts: z.number(), options: turnOptionsSchema, beadId: z.string().nullable(),
   handoff: z.object({ verdict: z.enum(["completed", "approved", "rework", "blocked"]), summary: z.string() }).nullable(),
@@ -30,7 +30,7 @@ export const workflowRecoverySchema = z.object({
   affectedAgents: z.number().int().positive(),
   uncertainActions: z.array(z.object({ agentId: z.string(), agentTitle: z.string(), tool: z.string() })),
 });
-export const workflowSchema = z.object({ conversationId: z.string(), revision: z.number(), flow: z.enum(["standard", "designer", "planned", "complete", "custom"]), agents: z.array(agentCardSchema), validation: validationSchema.nullable().optional(), recovery: workflowRecoverySchema.nullable().optional() });
+export const workflowSchema = z.object({ conversationId: z.string(), revision: z.number(), flow: z.enum(["standard", "designer", "planned", "complete", "publication", "custom"]), agents: z.array(agentCardSchema), validation: validationSchema.nullable().optional(), recovery: workflowRecoverySchema.nullable().optional() });
 export type WorkflowAgent = z.infer<typeof agentCardSchema>;
 export type WorkflowSnapshot = z.infer<typeof workflowSchema>;
 export type WorkflowRecovery = z.infer<typeof workflowRecoverySchema>;

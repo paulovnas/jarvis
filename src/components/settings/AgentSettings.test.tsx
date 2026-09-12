@@ -14,16 +14,19 @@ const save = vi.fn().mockResolvedValue(true);
 const accounts: ProviderAccount[] = [{ alias:"openai-codex-personal",providerKind:"openai-codex",enabled:true,createdAt:0,email:null,accountType:"personal",modelsAvailable:true,models:[{ id:"gpt-5.6-sol",name:"GPT 5.6 Sol",reasoningLevels:["high","xhigh"],defaultReasoningLevel:"high" }] }];
 beforeEach(() => { call.mockReset(); save.mockClear(); vi.mocked(useAgentModels).mockReturnValue({ data:{},error:null,saving:false,save,refresh:vi.fn() }); });
 
-it("groups the twelve immutable agents by flow and offers useful role-specific model guidance", async () => {
+it("groups the thirteen immutable agents by flow and offers useful role-specific model guidance", async () => {
   const user = userEvent.setup(); render(<AgentSettings accounts={accounts} />);
   const standard = screen.getByRole("region",{ name:"Agentes do fluxo Padrão" });
   const designer = screen.getByRole("region",{ name:"Agentes do fluxo Designer" });
   const planned = screen.getByRole("region",{ name:"Agentes do fluxo Planejado" });
   const complete = screen.getByRole("region",{ name:"Agentes do fluxo Completo" });
+  const publication = screen.getByRole("region",{ name:"Agentes do fluxo Publicação" });
   expect(within(standard).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
   expect(within(designer).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
   expect(within(planned).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(3);
   expect(within(complete).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(7);
+  expect(within(publication).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
+  expect(within(publication).getByText(/Prepara commits, pull requests e merges/i)).toBeInTheDocument();
   expect(within(complete).getByText(/Transforma o plano em uma especificação executável/)).toBeInTheDocument();
   expect(within(complete).getByText(/Revisa a implementação em um contexto independente/)).toBeInTheDocument();
   await user.hover(screen.getByRole("button",{name:"Como escolher o modelo de Revisor no fluxo Completo"}));
@@ -89,7 +92,7 @@ it("lets the user retry an instruction load failure without changing the model",
 
 it("gives every agent a distinct accent within each flow", () => {
   render(<AgentSettings accounts={accounts} />);
-  for (const flow of ["Padrão", "Designer", "Planejado", "Completo"]) {
+  for (const flow of ["Padrão", "Designer", "Planejado", "Completo", "Publicação"]) {
     const group = screen.getByRole("region", { name: `Agentes do fluxo ${flow}` });
     const colors = Object.values(ROLE_LABELS).flatMap(label => {
       const name = within(group).queryByText(label, { selector: "[data-slot=card-title]" });

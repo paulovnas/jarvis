@@ -162,13 +162,14 @@ fn role_description(role: Role) -> &'static str {
         Role::Designer => "Implementa interfaces e interações dentro do sistema visual e valida o escopo de frontend.",
         Role::Builder => "Implementa o comportamento solicitado, executa verificações e corrige o próprio trabalho.",
         Role::Reviewer => "Revisa a implementação de forma independente e decide se há correções pendentes.",
+        Role::Github => "Prepara e executa publicações Git e GitHub somente após a aprovação explícita do usuário.",
         Role::Custom => "Agente definido pelo usuário.",
     }
 }
 
 fn role_capability(role: Role) -> Capability {
     match role {
-        Role::Designer | Role::Builder => Capability::Commands,
+        Role::Designer | Role::Builder | Role::Github => Capability::Commands,
         Role::Writer => Capability::WriteFiles,
         Role::Planner | Role::Investigator | Role::Orchestrator | Role::Reviewer | Role::Custom => {
             Capability::ReadOnly
@@ -206,6 +207,10 @@ fn role_appearance(role: Role) -> Appearance {
         Role::Reviewer => Appearance {
             icon: Icon::Shield,
             color: Color::Green,
+        },
+        Role::Github => Appearance {
+            icon: Icon::Rocket,
+            color: Color::Neutral,
         },
         Role::Custom => Appearance {
             icon: Icon::Bot,
@@ -294,6 +299,14 @@ fn flow_identity(flow: Flow) -> (&'static str, &'static str, Appearance) {
                 color: Color::Yellow,
             },
         ),
+        Flow::Publication => (
+            "Publicação",
+            "Publicação supervisionada com Git e GitHub.",
+            Appearance {
+                icon: Icon::Rocket,
+                color: Color::Green,
+            },
+        ),
         Flow::Custom => (
             "Customizado",
             "Fluxo definido pelo usuário.",
@@ -336,6 +349,7 @@ fn delegation_label(role: Role) -> &'static str {
         Role::Designer => "Implementar interface",
         Role::Builder => "Implementar",
         Role::Reviewer => "Revisar",
+        Role::Github => "Publicar",
         Role::Custom => "Delegar",
     }
 }

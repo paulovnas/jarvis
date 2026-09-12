@@ -46,7 +46,9 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, ch
   }, [snapshot?.pendingQuestion, context.conversation.id, questionDrafts]);
   if (chat.error) return <Empty><EmptyHeader><EmptyTitle>Não foi possível abrir a conversa</EmptyTitle><EmptyDescription role="alert">{chat.error}</EmptyDescription></EmptyHeader><Button className="cursor-pointer" variant="outline" onClick={chat.retry}>Tentar novamente</Button></Empty>;
   if (!snapshot) return <ConversationSkeleton />;
-  const last = snapshot.turns[snapshot.turns.length - 1];
+  const composerOptions = [...snapshot.turns]
+    .reverse()
+    .find(turn => turn.options.workflow !== "publication")?.options;
   const outsideChat = !!files?.tabs.activePath || !!browser.snapshot.activeId;
   const isNewConversation = (snapshot.history?.total ?? snapshot.turns.length) === 0
     && snapshot.activeTurnId === null
@@ -61,7 +63,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, ch
     {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} />}
     {snapshot.pendingAuthoring && <AuthoringApprovalDrawer key={snapshot.pendingAuthoring.toolId} request={snapshot.pendingAuthoring} onAnswer={(approved, note) => chat.answerAuthoring(snapshot.pendingAuthoring!, approved, note)} />}
     <WorkerRequests conversationId={context.conversation.id} projectPath={context.project.path} agents={workflow?.data?.agents ?? []} drafts={questionDrafts} />
-    <ChatComposer terminalLauncher={outsideChat ? undefined : <>{terminalLauncher}{browserLauncher}</>} agentModels={agentModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} initialOptions={snapshot.latestOptions ?? last?.options} workflowSnapshot={workflow?.data} />
+    <ChatComposer terminalLauncher={outsideChat ? undefined : <>{terminalLauncher}{browserLauncher}</>} agentModels={agentModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
     {modelGroups.length === 0 && <p className="mt-2 text-center text-xs text-muted-foreground">Conecte uma conta em Configurações para enviar mensagens.</p>}
   </footer>;
   return <TerminalWorkspace conversationId={context.conversation.id}>{terminalLauncher => <FileWorkspace files={files} browser={browser} terminalLauncher={outsideChat ? <>{terminalLauncher}{browserLauncher}</> : undefined}>

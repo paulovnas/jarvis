@@ -178,6 +178,7 @@ fn builtin_target(key: &str) -> Option<ModelTarget> {
                 ("reviewer", "Revisor"),
             ],
         ),
+        "publication" => ("Publicação", &[("github", "GitHub")]),
         _ => return None,
     };
     let role_label = roles
@@ -901,6 +902,7 @@ fn prepare_import(
         "complete/designer",
         "complete/builder",
         "complete/reviewer",
+        "publication/github",
     ] {
         bindings.insert(format!("builtin:{key}"));
     }

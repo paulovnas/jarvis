@@ -10,6 +10,7 @@ it("retains custom selection through persisted turn options without changing bui
   expect(flowSelection({ ...chatOptions, ...flowOptions(agentSelection) })).toBe(agentSelection);
   expect(flowOptions(agentSelection)).toEqual({ workflow: "custom", customAgentId: customAgent.id });
   expect(flowOptions("complete")).toEqual({ workflow: "complete" });
+  expect(flowSelection({ ...chatOptions, workflow: "publication" })).toBe("standard");
   expect(flowSelection()).toBe("standard");
   expect(workflowCatalogSchema.parse(customCatalog)).toEqual(customCatalog);
 });

@@ -48,7 +48,10 @@ pub(super) fn definitions(flow: Flow, role: Role) -> Vec<Value> {
     if role == Role::Designer {
         tools.push(definition("design_brief", "Read or replace your durable design brief. Record accepted answers, direction, assumptions, constraints, selected resource IDs and pending decisions. This survives compaction/restart and is isolated per agent. Omit text to read.", json!({"text":{"type":"string","maxLength":4000}}), &[]));
     }
-    if matches!(role, Role::Builder | Role::Designer | Role::Reviewer) {
+    if matches!(
+        role,
+        Role::Builder | Role::Designer | Role::Reviewer | Role::Github
+    ) {
         tools.push(definition("workflow_check", "Run one supported project validation command, serialized with other checks. The command must exist in this project. Reports actual output, never implies user acceptance. Use path for a nested package.", json!({"check":{"type":"string","enum":["bun_lint","bun_typecheck","bun_test","bun_build","bun_check","cargo_check","cargo_test","cargo_clippy"]},"path":{"type":"string"}}), &["check","path"]));
     }
     tools

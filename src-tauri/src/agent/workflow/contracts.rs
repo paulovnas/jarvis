@@ -8,6 +8,7 @@ pub enum Flow {
     Designer,
     Planned,
     Complete,
+    Publication,
     Custom,
 }
 
@@ -21,6 +22,7 @@ pub enum Role {
     Designer,
     Builder,
     Reviewer,
+    Github,
     Custom,
 }
 
@@ -31,6 +33,7 @@ impl Flow {
             Self::Designer => "designer",
             Self::Planned => "planned",
             Self::Complete => "complete",
+            Self::Publication => "publication",
             Self::Custom => "custom",
         }
     }
@@ -38,6 +41,7 @@ impl Flow {
         match self {
             Self::Standard => Role::Builder,
             Self::Designer => Role::Designer,
+            Self::Publication => Role::Github,
             Self::Custom => Role::Custom,
             _ => Role::Planner,
         }
@@ -50,6 +54,7 @@ impl Flow {
             Self::Custom => &[],
             Self::Standard => &[Role::Builder],
             Self::Designer => &[Role::Designer],
+            Self::Publication => &[Role::Github],
             Self::Planned => &[Role::Planner, Role::Builder, Role::Designer],
             Self::Complete => &[
                 Role::Planner,
@@ -77,7 +82,7 @@ impl Flow {
                 (Role::Orchestrator, Role::Builder),
                 (Role::Orchestrator, Role::Reviewer),
             ],
-            Self::Standard | Self::Designer | Self::Custom => &[],
+            Self::Standard | Self::Designer | Self::Publication | Self::Custom => &[],
         }
     }
 }
@@ -91,6 +96,7 @@ impl Role {
             Self::Designer => "designer",
             Self::Builder => "builder",
             Self::Reviewer => "reviewer",
+            Self::Github => "github",
             Self::Custom => "custom",
         }
     }
@@ -103,6 +109,7 @@ impl Role {
             "builtin:designer" => Some(Self::Designer),
             "builtin:builder" => Some(Self::Builder),
             "builtin:reviewer" => Some(Self::Reviewer),
+            "builtin:github" => Some(Self::Github),
             _ => None,
         }
     }
@@ -124,6 +131,7 @@ impl Role {
             Self::Designer => "Designer",
             Self::Builder => "Construtor",
             Self::Reviewer => "Revisor",
+            Self::Github => "GitHub",
             Self::Custom => "Customizado",
         }
     }
@@ -131,6 +139,24 @@ impl Role {
         flow.delegations().contains(&(self, role))
     }
     pub(super) fn allows(self, flow: Flow, tool: &str, broad: bool) -> bool {
+        if self == Self::Github {
+            return flow == Flow::Publication
+                && matches!(
+                    tool,
+                    "read"
+                        | "list"
+                        | "search"
+                        | "bash"
+                        | "ask_user"
+                        | "jarvis_propose_publication"
+                        | "hub_complete"
+                        | "hub_list"
+                        | "workflow_check"
+                        | "ctx_search"
+                        | "ctx_index"
+                        | "ctx_stats"
+                );
+        }
         if crate::agent::browser::mutating(tool) {
             return broad && matches!(self, Self::Builder | Self::Designer);
         }
@@ -150,7 +176,7 @@ impl Role {
                     }
                     Self::Writer => tool != "beads_close",
                     Self::Orchestrator => true,
-                    Self::Custom => false,
+                    Self::Github | Self::Custom => false,
                 };
         }
         if tool == "workflow_check" {
@@ -184,6 +210,7 @@ impl Role {
         Self::Designer => "Read the assigned Bead, existing design system, tokens, components, states and applicable skills. Preserve product identity. Implement only assigned visual scope, critique hierarchy, spacing, typography, accessibility, responsiveness and interaction. Inspect screenshots/reference evidence with available tools; distinguish actual visual validation from static review. Re-read shared files before edits. Run applicable checks; return evidence, outcomes and honest visual-validation limits.",
         Self::Builder => "Read the assigned task and relevant project instructions before editing. Implement the smallest complete solution within the dispatch scope. Preserve unknown working-tree changes and re-read files before mutation. Use tools/MCP/skills when relevant, execute required lint/tests/build, inspect failures and correct your work. In delegated workflows, record progress and discovered work in Beads; direct flows use their native task list instead. Return implementation outcomes, paths and actual validation evidence. In delegated workflows the coordinator owns final task closure.",
         Self::Reviewer => "Independently inspect the implemented files against the original Bead and acceptance rubric. Do not trust the implementation handoff as proof. Look for regressions, edge cases, unmet outcomes and unsafe assumptions; use workflow_check for available project checks. Do not modify product code. Return an approved/rework/blocked verdict with concrete findings, file references, validation results and limitations. Distinguish automated checks, visual review and user acceptance.",
+        Self::Github => "Act as Jarvis's dedicated GitHub publication agent. Inspect every Git repository with changed files under the project root, including independent nested repositories. Do not edit product files or publish through shell, terminals, processes or MCPs. Use read-only Git commands and the smallest relevant project checks, follow the project publication and pull-request instructions, ask the configured pull-request question when required, and submit one complete multi-repository proposal through jarvis_propose_publication. After the user decides, verify the resulting Git and GitHub state with read-only commands and finish with hub_complete. Never infer permission for a commit, push, pull request or merge from prior conversation activity.",
     }
     }
 }

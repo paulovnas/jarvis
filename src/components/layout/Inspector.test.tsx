@@ -21,13 +21,26 @@ describe("Inspector", () => {
     view.rerender(<Inspector library={populatedLibrary()} chat={{ ...chat, activeTurnId: chat.turns[0].id }} onPublish={publish} />);
     expect(screen.getByRole("button", { name: "Publicar" })).toBeDisabled();
   });
-  it("keeps publication available when Git changes came from a terminal and are absent from the file tracker", async () => {
+  it("hides publication when the changed-files section has no items", () => {
     const publish = vi.fn().mockResolvedValue(true);
     render(<Inspector library={populatedLibrary()} chat={{ ...emptyChat(), turns: [savedTurn()] }} onPublish={publish} />);
-    const button = await screen.findByRole("button", { name: "Publicar" });
-    expect(button).toBeEnabled();
-    await userEvent.click(button);
-    expect(publish).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Publicar" })).not.toBeInTheDocument();
+  });
+  it("shows the GitHub subagent only while publication is the latest conversation turn", () => {
+    const chat = emptyChat();
+    const publication = savedTurn();
+    publication.options.workflow = "publication";
+    const workflow = { data: { conversationId: chat.conversationId, revision: 1, flow: "publication" as const, agents: [], validation: null }, error: null, loading: false, retry: vi.fn() };
+    const view = render(<Inspector library={populatedLibrary()} chat={{ ...chat, turns: [publication] }} workflow={workflow} />);
+    expect(screen.getByRole("button", { name: "Subagentes" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Tarefas/ })).not.toBeInTheDocument();
+
+    const next = savedTurn();
+    next.id = "next-turn";
+    next.options.workflow = "standard";
+    view.rerender(<Inspector library={populatedLibrary()} chat={{ ...chat, turns: [publication, next] }} workflow={workflow} />);
+    expect(screen.getByRole("button", { name: /Tarefas/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Subagentes" })).not.toBeInTheDocument();
   });
   it("shows native tasks for direct flows and keeps Beads plans for larger flows", async () => {
     const chat = emptyChat();

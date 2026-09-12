@@ -18,6 +18,7 @@ type Role = WorkflowAgent["role"];
 const GROUPS: { flow: Workflow; roles: Role[] }[] = [
   { flow: "standard", roles: ["builder"] }, { flow: "designer", roles: ["designer"] }, { flow: "planned", roles: ["planner", "builder", "designer"] },
   { flow: "complete", roles: ["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer"] },
+  { flow: "publication", roles: ["github"] },
 ];
 const GUIDANCE: Record<Role, string> = {
   custom: "Use o editor de agentes customizados para escolher o modelo.",
@@ -28,6 +29,7 @@ const GUIDANCE: Record<Role, string> = {
   designer: "Prefira um modelo capaz de analisar referências visuais e implementar interfaces. Exemplo: GPT 5.6 Sol com Alto ou Terra com Alto. A inspeção visual também depende das ferramentas disponíveis.",
   builder: "Equilibre capacidade de programação e volume de trabalho. Exemplo: GPT 5.6 Terra com Alto; Sol com Extra alto para alterações complexas; Luna com Alto para tarefas menores.",
   reviewer: "Priorize análise crítica independente. Exemplo: GPT 5.6 Sol com Extra alto. Usar um modelo diferente do Construtor pode trazer outra perspectiva, sem garantir a detecção de todos os problemas.",
+  github: "Um modelo rápido e econômico costuma ser suficiente para inspecionar diffs, executar checks e preparar commits e pull requests. Use raciocínio maior em projetos com vários repositórios.",
 };
 export function AgentSettings({ accounts, flowFilter }: { accounts: ProviderAccount[]; flowFilter?: Workflow }) {
   const models = useAgentModels();

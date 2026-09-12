@@ -33,13 +33,14 @@ pub(crate) fn read(home: &Path) -> Result<ModelSettings, AgentError> {
     let settings: ModelSettings =
         serde_json::from_slice(&fs::read(path).map_err(|_| AgentError::storage())?)
             .map_err(|_| AgentError::storage())?;
-    if settings.len() > 12
+    if settings.len() > 13
         || settings.keys().any(|name| {
             ![
                 Flow::Standard,
                 Flow::Designer,
                 Flow::Planned,
                 Flow::Complete,
+                Flow::Publication,
             ]
             .iter()
             .any(|flow| roster(*flow).iter().any(|role| key(*flow, *role) == *name))
@@ -62,7 +63,7 @@ fn configured(db: &rusqlite::Connection, home: &Path) -> Result<ModelSettings, A
         .collect()
 }
 pub(in crate::agent) fn validate(flow: Flow, profiles: &ModelSettings) -> Result<(), AgentError> {
-    if flow.direct() {
+    if flow.direct() || flow == Flow::Publication {
         return Ok(());
     }
     let missing: Vec<_> = roster(flow)
@@ -177,6 +178,7 @@ mod instruction_tests {
             Flow::Designer,
             Flow::Planned,
             Flow::Complete,
+            Flow::Publication,
         ] {
             for role in roster(flow) {
                 let sections = get_agent_instructions(flow, *role).unwrap();
@@ -218,5 +220,6 @@ mod instruction_tests {
         assert!(get_agent_instructions(Flow::Standard, Role::Reviewer).is_err());
         assert!(get_agent_instructions(Flow::Planned, Role::Orchestrator).is_err());
         assert!(get_agent_instructions(Flow::Designer, Role::Builder).is_err());
+        assert!(get_agent_instructions(Flow::Publication, Role::Github).is_ok());
     }
 }
