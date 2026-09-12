@@ -197,7 +197,7 @@ impl Lease {
         let path = root.join(LEASE_FILE);
         let mut file = open_lease(&path)?;
         FileExt::try_lock_exclusive(&file).map_err(|error| {
-            if error.kind() == io::ErrorKind::WouldBlock {
+            if error.kind() == fs2::lock_contended_error().kind() {
                 io::Error::new(
                     io::ErrorKind::AlreadyExists,
                     format!(
