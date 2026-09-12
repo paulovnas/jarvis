@@ -122,6 +122,7 @@ pub(super) fn session(fixture: &Fixture) -> Arc<Session> {
         id: "conversation".into(),
         journal,
         root: fixture.root.clone(),
+        journal_maintenance: Default::default(),
         emit: Arc::new(|_| {}),
         data: Mutex::new(SessionData {
             turns: vec![],
@@ -240,6 +241,79 @@ fn direct_recovery_resumes_only_durable_tool_results_and_preserves_new_messages(
 }
 
 #[test]
+fn coordinated_recovery_is_explicit_and_pairs_an_uncertain_tool_without_replaying_it() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let mut coordinated = options(ApprovalMode::Yolo);
+    coordinated.workflow = Some(workflow::Flow::Complete);
+    let turn = StoredTurn {
+        mcp_intent: None,
+        turn: Turn {
+            id: "workflow-turn".into(),
+            created_at: 1,
+            duration_ms: 0,
+            user: "Execute o fluxo".into(),
+            parts: vec![],
+            options: coordinated,
+            context_window: Some(128_000),
+            status: TurnStatus::Interrupted,
+            tasks: vec![],
+            steps: vec![Step {
+                tools: vec![ToolCall {
+                    id: "write-1".into(),
+                    name: "write".into(),
+                    args: json!({"path":"src/app.ts","content":"changed"}),
+                    status: "running".into(),
+                    output: String::new(),
+                    duration_ms: 0,
+                }],
+                ..Step::default()
+            }],
+            error: Some(AgentError::new(
+                "interrupted",
+                "O Jarvis foi encerrado durante esta execução.",
+            )),
+        },
+        wire: vec![
+            json!({"role":"user","content":"Execute o fluxo"}),
+            json!({"type":"function_call","call_id":"write-1","name":"write","arguments":"{}"}),
+        ],
+    };
+    journal::append(&session.journal, &turn).unwrap();
+    {
+        let mut data = session.data.lock().unwrap();
+        data.turns.push(turn.clone());
+        data.durable_turn = Some(turn);
+    }
+
+    assert!(session.resume_recovered_turn().unwrap().is_none());
+    let (signal, uncertain) = session.resume_interrupted_workflow_turn().unwrap();
+    assert_eq!(uncertain, vec!["write"]);
+    assert!(!*signal.borrow());
+    let snapshot = session.snapshot().unwrap();
+    assert_eq!(snapshot.active_turn_id.as_deref(), Some("workflow-turn"));
+    assert_eq!(snapshot.turns[0].status, TurnStatus::Running);
+    let (stored, _) = journal::read_only(&session.journal).unwrap();
+    let recovered = stored.last().unwrap();
+    assert_eq!(recovered.turn.steps[0].tools[0].status, "error");
+    assert!(recovered.turn.steps[0].tools[0]
+        .output
+        .contains("resultado desconhecido"));
+    assert_eq!(
+        recovered
+            .wire
+            .iter()
+            .filter(|item| item["call_id"] == "write-1" && item["type"] == "function_call_output")
+            .count(),
+        1
+    );
+    assert!(recovered
+        .wire
+        .iter()
+        .any(|item| item["_jarvis_workflow_recovery"] == true));
+}
+
+#[test]
 fn direct_tasks_are_durable_and_reset_for_each_new_turn() {
     let fixture = Fixture::new();
     let session = session(&fixture);
@@ -330,9 +404,8 @@ fn deletion_blocks_active_turns_evicts_idle_sessions_and_rejects_late_writes() {
         Ok::<_, library::LibraryError>(())
     }).unwrap();
     let mut session = session(&fixture);
-    let path = fixture
-        .root
-        .join(".jarvis/sessions")
+    let path = crate::data_dir::root(&fixture.root)
+        .join("sessions")
         .join(&project_id)
         .join(format!("{id}.jsonl"));
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -609,6 +682,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
         id: "conversation".into(),
         journal: fixture.root.join("session.jsonl"),
         root: fixture.root.clone(),
+        journal_maintenance: Default::default(),
         emit: Arc::new(|_| {}),
         data: Mutex::new(SessionData {
             revision: 3,

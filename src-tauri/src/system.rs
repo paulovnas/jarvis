@@ -270,13 +270,13 @@ impl Store {
 }
 
 pub(crate) fn ask_user_timeout_seconds(home: &Path) -> u16 {
-    Store::open(home.join(".jarvis/system.json"))
+    Store::open(crate::data_dir::root(home).join("system.json"))
         .map(|store| store.preferences.ask_user_timeout_seconds)
         .unwrap_or(DEFAULT_ASK_USER_TIMEOUT_SECONDS)
 }
 
 pub(crate) fn response_language(home: &Path) -> ResponseLanguage {
-    Store::open(home.join(".jarvis/system.json"))
+    Store::open(crate::data_dir::root(home).join("system.json"))
         .map(|store| store.preferences.response_language)
         .unwrap_or_default()
 }
@@ -425,7 +425,7 @@ impl SystemState {
         app: &tauri::AppHandle,
         home: &Path,
     ) -> Result<(), String> {
-        let store = Store::open(home.join(".jarvis/system.json"))?;
+        let store = Store::open(crate::data_dir::root(home).join("system.json"))?;
         let terminal = store.preferences.terminal.clone();
         *self
             .store
@@ -445,13 +445,13 @@ impl SystemState {
 }
 
 pub(crate) fn backup_preferences(home: &Path) -> Result<Preferences, String> {
-    Store::open(home.join(".jarvis/system.json")).map(|store| store.preferences)
+    Store::open(crate::data_dir::root(home).join("system.json")).map(|store| store.preferences)
 }
 
 // The assertion is created and dropped on one dedicated thread (required on Windows).
 pub fn setup(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let state = app.state::<SystemState>();
-    let store = Store::open(app.path().home_dir()?.join(".jarvis/system.json"));
+    let store = Store::open(crate::data_dir::root(&app.path().home_dir()?).join("system.json"));
     if let Ok(store) = &store {
         app.state::<crate::agent::AgentState>()
             .terminals

@@ -427,7 +427,11 @@ pub async fn submit_workflow_validation(
             app.state::<crate::mcp::McpState>().inner().clone(),
             home,
             app,
-            (signal, activity),
+            RunControl {
+                signal,
+                activity,
+                workflow_recovery: None,
+            },
         );
     }
     Ok(())

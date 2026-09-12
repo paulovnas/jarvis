@@ -917,7 +917,7 @@ fn apply_import(
     mappings: Vec<ModelMapping>,
 ) -> Result<BackupImportResult, BackupError> {
     let (catalog, native, bindings) = prepare_import(&loaded, home, state, oauth, mappings)?;
-    let jarvis = home.join(".jarvis");
+    let jarvis = crate::data_dir::root(home);
     fs::create_dir_all(&jarvis)
         .map_err(|_| error("Não foi possível acessar a pasta de configuração do Jarvis."))?;
     let staging = tempfile::Builder::new()

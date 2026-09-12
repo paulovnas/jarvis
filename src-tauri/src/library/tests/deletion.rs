@@ -11,7 +11,9 @@ fn workflow_and_worker_memory_follow_the_owning_conversation_without_touching_so
         .conversations[0]
         .clone();
     let worker = new_id().unwrap();
-    let directory = home.0.join(".jarvis/workflows").join(&conversation.id);
+    let directory = crate::data_dir::root(&home.0)
+        .join("workflows")
+        .join(&conversation.id);
     fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join(format!("{worker}.jsonl")), "worker history").unwrap();
     let context = crate::core::context::storage(&home.0, &worker);
@@ -19,7 +21,9 @@ fn workflow_and_worker_memory_follow_the_owning_conversation_without_touching_so
     fs::write(context.join("memory"), "worker context").unwrap();
     let source = Path::new(&project.path).join("source.txt");
     fs::write(&source, "source stays").unwrap();
-    let attachments = home.0.join(".jarvis/attachments").join(&conversation.id);
+    let attachments = crate::data_dir::root(&home.0)
+        .join("attachments")
+        .join(&conversation.id);
     fs::create_dir_all(&attachments).unwrap();
     fs::write(attachments.join("source"), "attachment data").unwrap();
     recover(&db, &home.0).unwrap();
@@ -80,7 +84,7 @@ fn beads_busy_cleanup_recovers_after_committed_project_deletion() {
     let private = crate::core::beads::storage(&home.0, &project.id);
     fs::create_dir_all(&private).unwrap();
     fs::write(private.join("tasks.db"), "private tasks").unwrap();
-    let locks = home.0.join(".jarvis/beads/locks");
+    let locks = crate::data_dir::root(&home.0).join("beads/locks");
     fs::create_dir_all(&locks).unwrap();
     let lock = fs::File::create(locks.join(format!("{}.lock", project.id))).unwrap();
     FileExt::lock_exclusive(&lock).unwrap();
@@ -193,7 +197,10 @@ fn selected_project_deletion_keeps_workspace_and_works_when_source_is_unavailabl
     assert_eq!(result.selection.workspace_id, Some(project.workspace_id));
     assert!(result.selection.project_id.is_none());
     assert!(result.selection.conversation_id.is_none());
-    assert!(!home.0.join(".jarvis/sessions").join(project.id).exists());
+    assert!(!crate::data_dir::root(&home.0)
+        .join("sessions")
+        .join(project.id)
+        .exists());
 }
 
 #[test]

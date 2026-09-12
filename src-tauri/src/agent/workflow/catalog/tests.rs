@@ -143,7 +143,7 @@ fn catalog_view_keeps_user_definitions_separate_from_immutable_native_graphs() {
 #[test]
 fn appearance_roundtrips_and_old_catalogs_remain_readable() {
     let home = tempfile::tempdir().unwrap();
-    fs::create_dir(home.path().join(".jarvis")).unwrap();
+    fs::create_dir(crate::data_dir::root(home.path())).unwrap();
     let mut catalog = example();
     let appearance: Appearance =
         serde_json::from_value(serde_json::json!({ "icon": "shield", "color": "purple" })).unwrap();
@@ -206,7 +206,7 @@ fn appearance_rejects_unregistered_icons_colors_and_extra_fields() {
 #[test]
 fn catalog_crud_is_atomic_revisioned_and_preserves_referenced_agents() {
     let home = tempfile::tempdir().unwrap();
-    fs::create_dir(home.path().join(".jarvis")).unwrap();
+    fs::create_dir(crate::data_dir::root(home.path())).unwrap();
     let initial = example();
     let agent = initial.agents[0].clone();
     let flow = initial.flows[0].clone();
@@ -290,8 +290,8 @@ fn builtins_cannot_be_overridden_or_deleted_and_corruption_is_not_overwritten() 
         assert!(apply(&mut catalog, Mutation::DeleteFlow { id: id.into() }).is_err());
     }
     let home = tempfile::tempdir().unwrap();
-    fs::create_dir(home.path().join(".jarvis")).unwrap();
-    let file = home.path().join(".jarvis/workflow-catalog.json");
+    fs::create_dir(crate::data_dir::root(home.path())).unwrap();
+    let file = crate::data_dir::root(home.path()).join("workflow-catalog.json");
     fs::write(&file, b"invalid JSON").unwrap();
     assert!(change(home.path(), 0, |_| Ok(())).is_err());
     assert_eq!(fs::read(file).unwrap(), b"invalid JSON");

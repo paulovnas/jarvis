@@ -7,9 +7,11 @@ use super::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, RwLock, Weak},
 };
 
 const MAX_RECORD: usize = 10 * 1024 * 1024;
@@ -17,8 +19,13 @@ const MAX_RECORD: usize = 10 * 1024 * 1024;
 const VACUUM_MIN_BYTES: u64 = 16 * 1024 * 1024;
 #[cfg(test)]
 const VACUUM_MIN_BYTES: u64 = 64 * 1024;
+const VACUUM_MIN_RECOVERABLE_BYTES: u64 = VACUUM_MIN_BYTES / 4;
+const VACUUM_MIN_AMPLIFICATION_BPS: u64 = 150;
+const VACUUM_MIN_STALE_RECORDS: usize = 128;
 const UNKNOWN_TOOL_OUTPUT: &str =
     "Execução interrompida; resultado desconhecido. Verifique o estado atual antes de repetir a operação.";
+#[cfg(test)]
+static FAIL_VACUUM_PATH: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Record {
@@ -69,8 +76,42 @@ pub(super) struct Extras {
     pub files: std::collections::BTreeMap<String, FileRevision>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Analysis {
+    pub bytes: u64,
+    pub live_bytes: u64,
+    pub recoverable_bytes: u64,
+    pub records: usize,
+    pub obsolete_records: usize,
+    pub repeated_revisions: usize,
+    pub delta_records: usize,
+    pub amplification_bps: u64,
+    pub compactable: bool,
+}
+
+#[derive(Default)]
+struct ReplayStats {
+    valid_end: u64,
+    file_bytes: u64,
+    records: usize,
+    repeated_revisions: usize,
+    delta_records: usize,
+}
+
+fn journal_lock(path: &Path) -> Result<Arc<RwLock<()>>, AgentError> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<RwLock<()>>>>> = OnceLock::new();
+    let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut locks = locks.lock().map_err(|_| AgentError::internal())?;
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(path).and_then(Weak::upgrade) {
+        return Ok(lock);
+    }
+    let lock = Arc::new(RwLock::new(()));
+    locks.insert(path.to_path_buf(), Arc::downgrade(&lock));
+    Ok(lock)
+}
+
 fn open(path: &Path, write: bool) -> Result<File, AgentError> {
-    recover_swap(path)?;
     let mut options = OpenOptions::new();
     options.read(true).write(write).append(write);
     #[cfg(unix)]
@@ -306,6 +347,17 @@ pub(super) fn append_event(
     kind: &str,
     value: &impl Serialize,
 ) -> Result<(), AgentError> {
+    let lock = journal_lock(path)?;
+    let _guard = lock.write().map_err(|_| AgentError::internal())?;
+    recover_swap(path)?;
+    append_event_unlocked(path, kind, value)
+}
+
+fn append_event_unlocked(
+    path: &Path,
+    kind: &str,
+    value: &impl Serialize,
+) -> Result<(), AgentError> {
     let bytes = event_bytes(kind, value)?;
     let mut file = open(path, true)?;
     file.write_all(&bytes)
@@ -332,6 +384,20 @@ fn event_bytes(kind: &str, value: &impl Serialize) -> Result<Vec<u8>, AgentError
 
 // Scan one bounded record at a time. The journal itself can grow beyond memory.
 pub(super) fn scan(
+    path: &Path,
+    start: u64,
+    visit: impl FnMut(u64, usize, Record) -> Result<(), AgentError>,
+) -> Result<u64, AgentError> {
+    let lock = journal_lock(path)?;
+    {
+        let _guard = lock.write().map_err(|_| AgentError::internal())?;
+        recover_swap(path)?;
+    }
+    let _guard = lock.read().map_err(|_| AgentError::internal())?;
+    scan_unlocked(path, start, visit)
+}
+
+fn scan_unlocked(
     path: &Path,
     start: u64,
     mut visit: impl FnMut(u64, usize, Record) -> Result<(), AgentError>,
@@ -374,6 +440,12 @@ pub(super) fn record_at(path: &Path, offset: u64, length: usize) -> Result<Recor
     if length > MAX_RECORD {
         return Err(AgentError::storage());
     }
+    let lock = journal_lock(path)?;
+    {
+        let _guard = lock.write().map_err(|_| AgentError::internal())?;
+        recover_swap(path)?;
+    }
+    let _guard = lock.read().map_err(|_| AgentError::internal())?;
     let mut file = open(path, false)?;
     file.seek(SeekFrom::Start(offset))
         .map_err(|_| AgentError::storage())?;
@@ -403,26 +475,67 @@ fn read(
     repair: bool,
     interrupt_running: bool,
 ) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
+    let lock = journal_lock(path)?;
+    if repair {
+        let _guard = lock.write().map_err(|_| AgentError::internal())?;
+        recover_swap(path)?;
+        return read_unlocked(path, repair, interrupt_running)
+            .map(|(turns, extras, _)| (turns, extras));
+    }
+    {
+        let _guard = lock.write().map_err(|_| AgentError::internal())?;
+        recover_swap(path)?;
+    }
+    let _guard = lock.read().map_err(|_| AgentError::internal())?;
+    read_unlocked(path, repair, interrupt_running).map(|(turns, extras, _)| (turns, extras))
+}
+
+fn read_unlocked(
+    path: &Path,
+    repair: bool,
+    interrupt_running: bool,
+) -> Result<(Vec<StoredTurn>, Extras, ReplayStats), AgentError> {
+    let file_bytes = open(path, false)?
+        .metadata()
+        .map_err(|_| AgentError::storage())?
+        .len();
     let mut turns: Vec<StoredTurn> = vec![];
     let mut extras = Extras::default();
     let mut ids = std::collections::HashSet::new();
-    let mut turn_checkpoints = 0usize;
     let mut damaged_turn: Option<String> = None;
-    let valid_end = scan(path, 0, |_, _, record| {
+    let mut records = 0usize;
+    let mut repeated_revisions = 0usize;
+    let mut delta_records = 0usize;
+    let mut has_queue_checkpoint = false;
+    let mut has_context_checkpoint = false;
+    let valid_end = scan_unlocked(path, 0, |_, _, record| {
+        records += 1;
         match record.r#type.as_str() {
             "compaction_completed" => {
                 let completed: CompletedCompaction =
                     serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+                if has_context_checkpoint {
+                    repeated_revisions += 1;
+                }
+                has_context_checkpoint = true;
                 extras.context = Some(completed.context);
                 extras.compactions.push(completed.event);
                 return Ok(());
             }
             "queue_checkpoint" => {
+                if has_queue_checkpoint {
+                    repeated_revisions += 1;
+                }
+                has_queue_checkpoint = true;
                 extras.queue =
                     serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
                 return Ok(());
             }
             "context_checkpoint" => {
+                if has_context_checkpoint {
+                    repeated_revisions += 1;
+                }
+                has_context_checkpoint = true;
                 extras.context =
                     Some(serde_json::from_value(record.data).map_err(|_| AgentError::storage())?);
                 return Ok(());
@@ -430,10 +543,13 @@ fn read(
             "file_checkpoint" => {
                 let file: FileRevision =
                     serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
-                extras.files.insert(file.path.clone(), file);
+                if extras.files.insert(file.path.clone(), file).is_some() {
+                    repeated_revisions += 1;
+                }
                 return Ok(());
             }
             "turn_delta" => {
+                delta_records += 1;
                 let current_id = turns
                     .last()
                     .map(|turn| turn.turn.id.clone())
@@ -457,7 +573,7 @@ fn read(
                 *turns.last_mut().ok_or_else(AgentError::storage)? = candidate;
                 return Ok(());
             }
-            "turn_checkpoint" => turn_checkpoints += 1,
+            "turn_checkpoint" => {}
             _ => return Err(AgentError::storage()),
         }
         let turn: StoredTurn =
@@ -477,6 +593,7 @@ fn read(
             .last()
             .is_some_and(|last| last.turn.id == turn.turn.id)
         {
+            repeated_revisions += 1;
             *turns.last_mut().unwrap() = turn;
         } else {
             if !ids.insert(turn.turn.id.clone()) {
@@ -489,13 +606,7 @@ fn read(
     if damaged_turn.is_some() {
         return Err(AgentError::storage());
     }
-    if repair
-        && valid_end
-            < open(path, false)?
-                .metadata()
-                .map_err(|_| AgentError::storage())?
-                .len()
-    {
+    if repair && valid_end < file_bytes {
         // Preserve crash debris before repairing only an incomplete final line.
         let backup = path.with_extension(format!("recovery-{}.jsonl", crate::library::new_id()?));
         let mut options = OpenOptions::new();
@@ -530,7 +641,9 @@ fn read(
     for turn in &mut turns {
         if repair && interrupt_running && turn.turn.status == TurnStatus::Running {
             mark_interrupted(turn);
-            append(path, turn)?;
+            append_event_unlocked(path, "turn_checkpoint", turn)?;
+            records += 1;
+            repeated_revisions += 1;
         }
     }
     // A queued message and its turn share an ID. Auxiliary messages also carry
@@ -549,27 +662,148 @@ fn read(
     if let Some(context) = &extras.context {
         context.validate(&turns)?;
     }
-    if repair && valid_end >= VACUUM_MIN_BYTES && turn_checkpoints > turns.len().saturating_mul(3) {
-        // Vacuum is best effort: the validated original remains authoritative
-        // if the replacement cannot be completed on this filesystem.
-        let _ = vacuum(path, &turns, &extras);
-    }
-    Ok((turns, extras))
+    let file_bytes = if repair && valid_end < file_bytes {
+        valid_end
+    } else {
+        file_bytes
+    };
+    Ok((
+        turns,
+        extras,
+        ReplayStats {
+            valid_end,
+            file_bytes,
+            records,
+            repeated_revisions,
+            delta_records,
+        },
+    ))
 }
 
-fn vacuum(path: &Path, turns: &[StoredTurn], extras: &Extras) -> Result<(), AgentError> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| AgentError::storage())?;
-    if !metadata.is_file() || metadata.is_symlink() {
-        return Err(AgentError::storage());
-    }
+fn header(path: &Path) -> Result<Vec<u8>, AgentError> {
     let mut source = BufReader::new(open(path, false)?);
     let mut header = Vec::new();
-    source
+    (&mut source)
+        .take(MAX_RECORD as u64 + 1)
         .read_until(b'\n', &mut header)
         .map_err(|_| AgentError::storage())?;
     if header.is_empty() || !header.ends_with(b"\n") || header.len() > MAX_RECORD {
         return Err(AgentError::storage());
     }
+    Ok(header)
+}
+
+fn canonical_size(
+    path: &Path,
+    turns: &[StoredTurn],
+    extras: &Extras,
+) -> Result<(u64, usize), AgentError> {
+    let mut bytes = header(path)?.len() as u64;
+    let mut records = 0usize;
+    let mut add = |event: Vec<u8>| -> Result<(), AgentError> {
+        bytes = bytes
+            .checked_add(event.len() as u64)
+            .ok_or_else(AgentError::storage)?;
+        records = records.saturating_add(1);
+        Ok(())
+    };
+    for turn in turns {
+        add(event_bytes("turn_checkpoint", turn)?)?;
+    }
+    if let Some(context) = &extras.context {
+        for event in &extras.compactions {
+            add(event_bytes(
+                "compaction_completed",
+                &CompletedCompaction {
+                    context: context.clone(),
+                    event: event.clone(),
+                },
+            )?)?;
+        }
+    }
+    add(event_bytes("queue_checkpoint", &extras.queue)?)?;
+    if let Some(context) = &extras.context {
+        add(event_bytes("context_checkpoint", context)?)?;
+    }
+    for revision in extras.files.values() {
+        add(event_bytes("file_checkpoint", revision)?)?;
+    }
+    Ok((bytes, records))
+}
+
+fn analysis(
+    path: &Path,
+    turns: &[StoredTurn],
+    extras: &Extras,
+    stats: ReplayStats,
+) -> Result<Analysis, AgentError> {
+    if stats.valid_end != stats.file_bytes {
+        return Err(AgentError::new(
+            "invalid_history",
+            "O histórico termina com um registro incompleto. O arquivo original foi preservado.",
+        ));
+    }
+    let (live_bytes, live_records) = canonical_size(path, turns, extras)?;
+    let recoverable_bytes = stats.file_bytes.saturating_sub(live_bytes);
+    let obsolete_records = stats.records.saturating_sub(live_records);
+    let amplification_bps = if live_bytes == 0 {
+        100
+    } else {
+        ((u128::from(stats.file_bytes) * 100) / u128::from(live_bytes))
+            .clamp(100, u128::from(u64::MAX)) as u64
+    };
+    let compactable = stats.file_bytes >= VACUUM_MIN_BYTES
+        && recoverable_bytes >= VACUUM_MIN_RECOVERABLE_BYTES
+        && (amplification_bps >= VACUUM_MIN_AMPLIFICATION_BPS
+            || obsolete_records >= VACUUM_MIN_STALE_RECORDS
+            || stats.repeated_revisions >= VACUUM_MIN_STALE_RECORDS
+            || stats.delta_records >= VACUUM_MIN_STALE_RECORDS);
+    Ok(Analysis {
+        bytes: stats.file_bytes,
+        live_bytes,
+        recoverable_bytes,
+        records: stats.records,
+        obsolete_records,
+        repeated_revisions: stats.repeated_revisions,
+        delta_records: stats.delta_records,
+        amplification_bps,
+        compactable,
+    })
+}
+
+pub(super) fn analyze(path: &Path) -> Result<Analysis, AgentError> {
+    let lock = journal_lock(path)?;
+    {
+        let _guard = lock.write().map_err(|_| AgentError::internal())?;
+        recover_swap(path)?;
+    }
+    let _guard = lock.read().map_err(|_| AgentError::internal())?;
+    let (turns, extras, stats) = read_unlocked(path, false, false)?;
+    analysis(path, &turns, &extras, stats)
+}
+
+pub(super) fn compact(path: &Path) -> Result<u64, AgentError> {
+    let lock = journal_lock(path)?;
+    let _guard = lock.write().map_err(|_| AgentError::internal())?;
+    recover_swap(path)?;
+    let (turns, extras, stats) = read_unlocked(path, false, false)?;
+    let before = analysis(path, &turns, &extras, stats)?;
+    if !before.compactable {
+        return Ok(0);
+    }
+    vacuum_unlocked(path, &turns, &extras)?;
+    let after = fs::symlink_metadata(path)
+        .map_err(|_| AgentError::storage())?
+        .len();
+    Ok(before.bytes.saturating_sub(after))
+}
+
+fn vacuum_unlocked(path: &Path, turns: &[StoredTurn], extras: &Extras) -> Result<(), AgentError> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| AgentError::storage())?;
+    if !metadata.is_file() || metadata.is_symlink() {
+        return Err(AgentError::storage());
+    }
+    let header = header(path)?;
     let temp = path.with_extension(format!("vacuum-{}.tmp", crate::library::new_id()?));
     let result = (|| {
         let mut options = OpenOptions::new();
@@ -630,6 +864,15 @@ fn vacuum(path: &Path, turns: &[StoredTurn], extras: &Extras) -> Result<(), Agen
                 != serde_json::to_value(&extras.files).map_err(|_| AgentError::storage())?
         {
             return Err(AgentError::storage());
+        }
+        #[cfg(test)]
+        {
+            let failure = FAIL_VACUUM_PATH.get_or_init(|| Mutex::new(None));
+            let mut failure = failure.lock().map_err(|_| AgentError::internal())?;
+            if failure.as_deref() == Some(path) {
+                *failure = None;
+                return Err(AgentError::storage());
+            }
         }
         replace_file(path, &temp)?;
         Ok(())
@@ -693,6 +936,38 @@ pub(super) fn interrupt_tools(turn: &mut StoredTurn) {
             }
         }
     }
+}
+
+pub(super) fn uncertain_tool_names(turn: &StoredTurn) -> Vec<String> {
+    let outputs: std::collections::HashSet<_> = turn
+        .wire
+        .iter()
+        .filter(|item| item["type"] == "function_call_output")
+        .filter_map(|item| item["call_id"].as_str())
+        .collect();
+    let mut names = Vec::new();
+    for tool in turn.turn.steps.iter().flat_map(|step| &step.tools) {
+        if (!outputs.contains(tool.id.as_str()) || tool.output == UNKNOWN_TOOL_OUTPUT)
+            && !names.contains(&tool.name)
+        {
+            names.push(tool.name.clone());
+        }
+    }
+    for item in &turn.wire {
+        if item["type"] != "function_call" {
+            continue;
+        }
+        let Some(id) = item["call_id"].as_str() else {
+            continue;
+        };
+        let Some(name) = item["name"].as_str() else {
+            continue;
+        };
+        if !outputs.contains(id) && !names.iter().any(|known| known == name) {
+            names.push(name.to_owned());
+        }
+    }
+    names
 }
 
 pub(super) fn all_tool_results_durable(turn: &StoredTurn) -> bool {
@@ -1038,6 +1313,12 @@ mod tests {
         }
         let cumulative_size = fs::metadata(&path).unwrap().len();
         let (loaded, _) = load_all(&path).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().len(), cumulative_size);
+        let analysis = analyze(&path).unwrap();
+        assert!(analysis.compactable);
+        assert_eq!(analysis.repeated_revisions, 11);
+        assert!(analysis.amplification_bps > 300);
+        assert!(compact(&path).unwrap() > 0);
         let compacted_size = fs::metadata(&path).unwrap().len();
         assert!(compacted_size * 3 < cumulative_size);
         assert_eq!(
@@ -1046,6 +1327,71 @@ mod tests {
         );
         assert_eq!(loaded[0].turn.duration_ms, 11);
         assert_eq!(read_only(&path).unwrap().0.len(), 1);
+    }
+
+    #[test]
+    fn modern_delta_journal_uses_live_state_amplification() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("modern-large.jsonl");
+        fs::write(&path, "{\"type\":\"session\"}\n").unwrap();
+        let mut current = turn();
+        current.turn.steps.push(Step {
+            text: "x".repeat(32 * 1024),
+            ..Step::default()
+        });
+        append(&path, &current).unwrap();
+        for duration in 1..=180 {
+            let previous = current.clone();
+            current.turn.duration_ms = duration;
+            append_update(&path, &previous, &current).unwrap();
+        }
+        let previous = current.clone();
+        current.turn.status = TurnStatus::Completed;
+        append_update(&path, &previous, &current).unwrap();
+
+        let before = analyze(&path).unwrap();
+        assert!(before.compactable);
+        assert_eq!(before.delta_records, 180);
+        assert!(before.obsolete_records >= 180);
+        assert!(before.recoverable_bytes >= VACUUM_MIN_RECOVERABLE_BYTES);
+        compact(&path).unwrap();
+
+        let (loaded, _) = read_only(&path).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].turn.duration_ms, 180);
+        assert_eq!(loaded[0].turn.status, TurnStatus::Completed);
+        assert!(!analyze(&path).unwrap().compactable);
+    }
+
+    #[test]
+    fn failed_validated_swap_preserves_the_original_journal() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("swap-failure.jsonl");
+        fs::write(&path, "{\"type\":\"session\"}\n").unwrap();
+        let mut current = turn();
+        current.turn.status = TurnStatus::Completed;
+        current.turn.steps.push(Step {
+            text: "x".repeat(8 * 1024),
+            ..Step::default()
+        });
+        for duration in 0..12 {
+            current.turn.duration_ms = duration;
+            append(&path, &current).unwrap();
+        }
+        let original = fs::read(&path).unwrap();
+        *FAIL_VACUUM_PATH
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap() = Some(path.clone());
+
+        assert!(compact(&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert!(analyze(&path).unwrap().compactable);
+        assert!(!fixture.root.read_dir().unwrap().any(|entry| entry
+            .unwrap()
+            .path()
+            .to_string_lossy()
+            .contains("vacuum-")));
     }
 
     #[test]
@@ -1063,6 +1409,8 @@ mod tests {
             .write_all(b"{broken")
             .unwrap();
         let original = fs::read(&path).unwrap();
+        assert!(analyze(&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
         assert_eq!(load(&path).unwrap().len(), 1);
         let backup = fs::read_dir(&fixture.root)
             .unwrap()
@@ -1078,6 +1426,7 @@ mod tests {
             .unwrap();
         let corrupt = fs::read(&path).unwrap();
         assert!(load(&path).is_err());
+        assert!(compact(&path).is_err());
         assert_eq!(fs::read(&path).unwrap(), corrupt);
     }
 }

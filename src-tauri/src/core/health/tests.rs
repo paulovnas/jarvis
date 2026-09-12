@@ -69,7 +69,7 @@ fn recovers_damaged_manifest_from_receipts_without_erasing_data() {
     let home = tempfile::tempdir().unwrap();
     fixture(home.path());
     let config = fs::read(root(home.path()).join("context7.json")).unwrap();
-    let journal = home.path().join(".jarvis/conversations");
+    let journal = crate::data_dir::root(home.path()).join("conversations");
     fs::create_dir_all(&journal).unwrap();
     fs::write(journal.join("history.jsonl"), "user data").unwrap();
     fs::write(root(home.path()).join("manifest.json"), "{broken").unwrap();

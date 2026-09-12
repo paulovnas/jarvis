@@ -235,7 +235,9 @@ mod tests {
             for id in &ids { connection.execute("INSERT INTO conversations (id, project_id, title, created_at, last_activity_at) VALUES (?1, ?2, 'Old', ?3, ?3)", rusqlite::params![id, project, seconds() - 20 * 86_400])?; }
             Ok::<_, LibraryError>(())
         }).unwrap();
-        let root = fixture.root.join(".jarvis/sessions").join(&project);
+        let root = crate::data_dir::root(&fixture.root)
+            .join("sessions")
+            .join(&project);
         fs::create_dir_all(&root).unwrap();
         for id in &ids {
             fs::write(root.join(format!("{id}.jsonl")), "{}\n").unwrap();
@@ -290,9 +292,8 @@ mod tests {
         assert_eq!(cleaned.bytes, preview.bytes);
         assert_eq!(fs::read_to_string(source).unwrap(), "keep source");
         assert!(!context.exists());
-        assert!(fixture
-            .root
-            .join(".jarvis/sessions")
+        assert!(crate::data_dir::root(&fixture.root)
+            .join("sessions")
             .join(project)
             .join(format!("{}.jsonl", ids[3]))
             .exists());
@@ -326,9 +327,8 @@ mod tests {
             parts: vec![],
             auxiliary_for: None,
         };
-        let path = fixture
-            .root
-            .join(".jarvis/sessions")
+        let path = crate::data_dir::root(&fixture.root)
+            .join("sessions")
             .join(&project)
             .join(format!("{}.jsonl", ids[1]));
         journal::append_event(&path, "queue_checkpoint", &vec![queued]).unwrap();

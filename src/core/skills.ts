@@ -11,10 +11,13 @@ export const skillsSnapshotSchema = z.object({ includeAgents: z.boolean(), direc
 export const skillDetailSchema = z.object({ name: z.string(), description: z.string(), content: z.string(), path: z.string().nullable(), source: z.string().nullable(), files: z.array(z.string()) });
 export const marketplaceSchema = z.array(z.object({ id: z.string(), skillId: z.string(), name: z.string(), source: z.string(), installs: z.number().nonnegative() }));
 export const skillUpdateSchema = z.object({ snapshot: skillsSnapshotSchema, updated: z.number().int().nonnegative(), errors: z.array(z.string()) });
+export const skillCacheStatusSchema = z.object({ bytes: z.number().nonnegative(), repositories: z.number().int().nonnegative(), residues: z.number().int().nonnegative() });
+export const skillCacheCleanupSchema = z.object({ freedBytes: z.number().nonnegative(), removedRepositories: z.number().int().nonnegative(), removedResidues: z.number().int().nonnegative(), status: skillCacheStatusSchema });
 export type Skill = z.infer<typeof skillSchema>;
 export type SkillSnapshot = z.infer<typeof skillsSnapshotSchema>;
 export type SkillDetail = z.infer<typeof skillDetailSchema>;
 export type MarketplaceSkill = z.infer<typeof marketplaceSchema>[number];
+export type SkillCacheStatus = z.infer<typeof skillCacheStatusSchema>;
 export function skillError(cause: unknown): string {
   if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "skill_error" && "message" in cause && typeof cause.message === "string") return cause.message;
   return "Não foi possível concluir a operação da skill.";

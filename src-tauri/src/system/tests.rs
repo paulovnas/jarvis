@@ -69,7 +69,7 @@ fn native_power_assertion_is_visible_and_released() {
 #[test]
 fn preferences_restore_all_modes_without_touching_layout() {
     let home = tempfile::tempdir().unwrap();
-    let path = home.path().join(".jarvis/system.json");
+    let path = crate::data_dir::root(home.path()).join("system.json");
     let mut store = Store::open(path.clone()).unwrap();
     assert_eq!(store.preferences, Preferences::default());
     for mode in [SleepMode::Active, SleepMode::Open, SleepMode::Off] {
@@ -87,7 +87,9 @@ fn preferences_restore_all_modes_without_touching_layout() {
         store.save(preferences.clone()).unwrap();
         assert_eq!(Store::open(path.clone()).unwrap().preferences, preferences);
     }
-    assert!(!home.path().join(".jarvis/desktop.json").exists());
+    assert!(!crate::data_dir::root(home.path())
+        .join("desktop.json")
+        .exists());
 }
 
 #[test]
@@ -119,7 +121,7 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
 #[test]
 fn question_timeout_defaults_for_existing_installs_and_rejects_invalid_values() {
     let home = tempfile::tempdir().unwrap();
-    let directory = home.path().join(".jarvis");
+    let directory = crate::data_dir::root(home.path());
     fs::create_dir_all(&directory).unwrap();
     let path = directory.join("system.json");
     fs::write(&path, r#"{"preventSleep":"off","notifications":true}"#).unwrap();
@@ -143,7 +145,7 @@ fn question_timeout_defaults_for_existing_installs_and_rejects_invalid_values() 
         .is_err());
     assert_eq!(store.preferences.ask_user_timeout_seconds, 30);
     fs::write(
-        home.path().join(".jarvis/system.json"),
+        crate::data_dir::root(home.path()).join("system.json"),
         r#"{"preventSleep":"off","notifications":true,"askUserTimeoutSeconds":0}"#,
     )
     .unwrap();

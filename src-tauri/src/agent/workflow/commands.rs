@@ -14,6 +14,22 @@ struct AgentIdentity {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct RecoveryEffect {
+    agent_id: String,
+    agent_title: String,
+    tool: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecoverySummary {
+    run_id: String,
+    affected_agents: usize,
+    uncertain_actions: Vec<RecoveryEffect>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentCard {
     id: String,
     parent_id: Option<String>,
@@ -44,6 +60,8 @@ pub struct Snapshot {
     flow: Flow,
     agents: Vec<AgentCard>,
     validation: Option<validation::Batch>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery: Option<RecoverySummary>,
 }
 
 fn live_telemetry(data: &SessionData) -> (u64, u64, Option<String>) {
@@ -233,7 +251,71 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
             .validation
             .clone()
             .filter(|batch| !state.flow.direct() && batch.flow == state.flow),
+        recovery: None,
     })
+}
+
+fn recovery_summary(
+    state: &Manifest,
+    root_journal: &Path,
+    directory: &Path,
+) -> Result<Option<RecoverySummary>, AgentError> {
+    if state.root_status != Status::Interrupted
+        || !matches!(state.flow, Flow::Planned | Flow::Complete)
+    {
+        return Ok(None);
+    }
+    let Some(root) = journal::read_only(root_journal)?.0.pop() else {
+        return Ok(None);
+    };
+    if !super::super::resumable_workflow_turn(&root) || root.turn.id != state.run_id {
+        return Ok(None);
+    }
+    let mut affected_agents = 1;
+    let mut uncertain_actions = journal::uncertain_tool_names(&root)
+        .into_iter()
+        .take(32)
+        .map(|tool| RecoveryEffect {
+            agent_id: "main".into(),
+            agent_title: state.flow.root().label().into(),
+            tool,
+        })
+        .collect::<Vec<_>>();
+    for job in state
+        .jobs
+        .values()
+        .filter(|job| job.run_id == state.run_id && job.status == Status::Interrupted)
+    {
+        let path = directory.join(format!("{}.jsonl", job.id));
+        if !path.exists() {
+            affected_agents += 1;
+            continue;
+        }
+        let Some(turn) = journal::read_only(&path)?.0.pop() else {
+            affected_agents += 1;
+            continue;
+        };
+        if !super::super::resumable_workflow_turn(&turn) {
+            continue;
+        }
+        affected_agents += 1;
+        let remaining = 32usize.saturating_sub(uncertain_actions.len());
+        uncertain_actions.extend(
+            journal::uncertain_tool_names(&turn)
+                .into_iter()
+                .take(remaining)
+                .map(|tool| RecoveryEffect {
+                    agent_id: job.id.clone(),
+                    agent_title: job.title.clone(),
+                    tool,
+                }),
+        );
+    }
+    Ok(Some(RecoverySummary {
+        run_id: state.run_id.clone(),
+        affected_agents,
+        uncertain_actions,
+    }))
 }
 fn active_hub(agent: &AgentState, id: &str) -> Result<Arc<Hub>, AgentError> {
     agent
@@ -284,7 +366,9 @@ pub async fn get_workflow(
                 if let Some(batch) = &mut state.validation {
                     batch.submitted |= agent.histories.has_turn(&journal, &batch.id)?;
                 }
-                snapshot(&state, None)
+                let mut view = snapshot(&state, None)?;
+                view.recovery = recovery_summary(&state, &journal, &directory)?;
+                Ok(view)
             })
             .transpose()
     })
@@ -387,6 +471,55 @@ pub async fn answer_workflow_authoring(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_summary_counts_a_worker_with_only_a_journal_header() {
+        let (_fixture, hub) = super::super::tests::hub();
+        let mut worker = super::super::tests::job(&hub, Role::Builder, "src");
+        worker.status = Status::Interrupted;
+        let worker_path = hub.directory.join(format!("{}.jsonl", worker.id));
+        std::fs::write(
+            worker_path,
+            format!(
+                "{}\n",
+                json!({"type":"agent", "version":1,"id":worker.id,"conversationId":hub.root.id})
+            ),
+        )
+        .unwrap();
+        let run_id = hub
+            .root
+            .data
+            .lock()
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .turn
+            .id
+            .clone();
+        hub.root
+            .update(true, |data| {
+                let turn = &mut data.turns.last_mut().unwrap().turn;
+                turn.status = TurnStatus::Interrupted;
+                turn.error = Some(AgentError::new(
+                    "interrupted",
+                    "O Jarvis foi encerrado durante esta execução.",
+                ));
+            })
+            .unwrap();
+        let mut state = hub.manifest.lock().unwrap();
+        state.run_id = run_id.clone();
+        state.root_status = Status::Interrupted;
+        worker.run_id = run_id;
+        state.jobs.insert(worker.id.clone(), worker);
+
+        let summary = recovery_summary(&state, &hub.root.journal, &hub.directory)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(summary.affected_agents, 2);
+    }
+
     #[test]
     fn a_new_run_hides_prior_agents_without_deleting_their_history() {
         let (_fixture, hub) = super::super::tests::hub();

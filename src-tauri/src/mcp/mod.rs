@@ -143,23 +143,26 @@ pub(crate) trait Secrets: Send + Sync {
 }
 pub(crate) struct Keychain;
 #[cfg(target_os = "macos")]
+fn keychain_service() -> &'static str {
+    crate::data_dir::keychain_service("com.foxtag.jarvis.mcp", "com.foxtag.jarvis.dev.mcp")
+}
+#[cfg(target_os = "macos")]
 impl Secrets for Keychain {
     fn load(&self, key: &str) -> Result<String, McpError> {
-        let bytes =
-            security_framework::passwords::get_generic_password("com.foxtag.jarvis.mcp", key)
-                .map_err(|_| error("Não foi possível ler a configuração no Keychain."))?;
+        let bytes = security_framework::passwords::get_generic_password(keychain_service(), key)
+            .map_err(|_| error("Não foi possível ler a configuração no Keychain."))?;
         String::from_utf8(bytes).map_err(|_| storage_error())
     }
     fn store(&self, key: &str, value: &str) -> Result<(), McpError> {
         security_framework::passwords::set_generic_password(
-            "com.foxtag.jarvis.mcp",
+            keychain_service(),
             key,
             value.as_bytes(),
         )
         .map_err(|_| error("Não foi possível salvar a configuração no Keychain."))
     }
     fn delete(&self, key: &str) -> Result<(), McpError> {
-        match security_framework::passwords::delete_generic_password("com.foxtag.jarvis.mcp", key) {
+        match security_framework::passwords::delete_generic_password(keychain_service(), key) {
             Ok(()) => Ok(()),
             Err(err) if err.code() == -25300 => Ok(()),
             Err(_) => Err(error(

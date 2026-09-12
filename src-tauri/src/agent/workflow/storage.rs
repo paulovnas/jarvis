@@ -28,7 +28,7 @@ pub(super) fn path(home: &Path, id: &str) -> Result<PathBuf, AgentError> {
     if !valid_id(id) {
         return Err(invalid("Identidade da conversa inválida."));
     }
-    Ok(home.join(".jarvis/workflows").join(id))
+    Ok(crate::data_dir::root(home).join("workflows").join(id))
 }
 pub(super) fn valid_id(id: &str) -> bool {
     id.len() == 32 && id.bytes().all(|c| c.is_ascii_hexdigit())
@@ -115,6 +115,7 @@ pub(super) fn open(
         custom_definition: None,
         custom_agent: None,
         validation: None,
+        root_recovery: None,
         version: 1,
         conversation_id: root.id.clone(),
         run_id: run_id.clone(),
@@ -164,6 +165,7 @@ pub(super) fn open(
     manifest.mcp_intent = mcp_intent;
     manifest.custom_definition = None;
     manifest.custom_agent = None;
+    manifest.root_recovery = None;
     manifest.root_status = Status::Running;
     manifest.options = options;
     manifest.profiles = profiles;
@@ -198,6 +200,193 @@ pub(super) fn open(
     (hub.emit)(&hub.root.id);
     Ok(hub)
 }
+
+pub(super) fn recover(
+    root: Arc<Session>,
+    env: Environment,
+    app: tauri::AppHandle,
+    flow: Flow,
+    signal: watch::Receiver<bool>,
+    root_uncertain: Vec<String>,
+) -> Result<(Arc<Hub>, Vec<Job>), AgentError> {
+    if !matches!(flow, Flow::Planned | Flow::Complete) {
+        return Err(invalid(
+            "A retomada está disponível apenas para fluxos Planejado e Completo.",
+        ));
+    }
+    let directory_path = path(&env.home, &root.id)?;
+    directory(directory_path.parent().ok_or_else(AgentError::storage)?)?;
+    directory(&directory_path)?;
+    let run_id = root
+        .data
+        .lock()
+        .map_err(|_| AgentError::internal())?
+        .active
+        .as_ref()
+        .ok_or_else(AgentError::cancelled)?
+        .id
+        .clone();
+    let manifest = load(&directory_path, &root.id)?
+        .ok_or_else(|| invalid("Checkpoint do fluxo não encontrado."))?;
+    let (manifest, resumed) =
+        prepare_recovery(&directory_path, manifest, flow, &run_id, root_uncertain)?;
+    save(&directory_path, &manifest)?;
+    let (changed, _) = watch::channel(manifest.revision);
+    let notification_app = app.clone();
+    let conversation = root.id.clone();
+    let attention = Arc::new(move |snapshot: &ChatSnapshot| {
+        super::super::desktop_events::attention(&notification_app, &conversation, snapshot);
+    });
+    let hub = Arc::new(Hub {
+        root,
+        env,
+        directory: directory_path,
+        manifest: Mutex::new(manifest),
+        live: Mutex::new(HashMap::new()),
+        changed,
+        emit: Arc::new(move |id| {
+            let _ = app.emit("workflow:changed", json!({"conversationId":id}));
+        }),
+        attention,
+        check_lock: AsyncRwLock::new(()),
+        root_signal: signal,
+    });
+    (hub.emit)(&hub.root.id);
+    Ok((hub, resumed))
+}
+
+pub(super) fn prepare_recovery(
+    directory: &Path,
+    mut manifest: Manifest,
+    flow: Flow,
+    run_id: &str,
+    root_uncertain: Vec<String>,
+) -> Result<(Manifest, Vec<Job>), AgentError> {
+    if manifest.flow != flow
+        || manifest.run_id != run_id
+        || manifest.root_status != Status::Interrupted
+    {
+        return Err(invalid(
+            "O checkpoint não corresponde ao fluxo interrompido desta conversa.",
+        ));
+    }
+    manifest.root_status = Status::Running;
+    manifest.root_recovery = Some(RecoveryCheckpoint::new(root_uncertain));
+    let mut resumed = Vec::new();
+    for job in manifest
+        .jobs
+        .values_mut()
+        .filter(|job| job.run_id == run_id && job.status == Status::Interrupted)
+    {
+        let journal_path = directory.join(format!("{}.jsonl", job.id));
+        let tail = if journal_path.exists() {
+            journal::read_only(&journal_path)?.0.pop()
+        } else {
+            None
+        };
+        match tail {
+            Some(turn) if super::super::resumable_workflow_turn(&turn) => {
+                job.status = Status::Queued;
+                job.error = None;
+                job.recovery = Some(RecoveryCheckpoint::new(journal::uncertain_tool_names(
+                    &turn,
+                )));
+                job.updated_at = now();
+                resumed.push(job.clone());
+            }
+            Some(turn) if turn.turn.status == TurnStatus::Completed => {
+                job.status = if job.handoff.as_ref().is_some_and(|handoff| {
+                    matches!(handoff.verdict, Verdict::Completed | Verdict::Approved)
+                }) {
+                    Status::Completed
+                } else {
+                    Status::Blocked
+                };
+                job.error = None;
+                job.recovery = None;
+                job.duration_ms = turn.turn.duration_ms;
+                job.updated_at = now();
+            }
+            Some(turn) if turn.turn.status == TurnStatus::Cancelled => {
+                job.status = Status::Cancelled;
+                job.error = turn.turn.error.map(|error| error.message);
+                job.recovery = None;
+                job.duration_ms = turn.turn.duration_ms;
+                job.updated_at = now();
+            }
+            Some(turn) if turn.turn.status == TurnStatus::Error => {
+                job.status = Status::Failed;
+                job.error =
+                    turn.turn.error.map(|error| error.message).or_else(|| {
+                        Some("O agente terminou com erro antes da interrupção.".into())
+                    });
+                job.recovery = None;
+                job.duration_ms = turn.turn.duration_ms;
+                job.updated_at = now();
+            }
+            Some(_) => {
+                return Err(invalid(
+                    "O histórico de um agente não corresponde ao checkpoint interrompido.",
+                ));
+            }
+            None => {
+                job.status = Status::Queued;
+                job.error = None;
+                job.recovery = Some(RecoveryCheckpoint::new(vec![]));
+                job.updated_at = now();
+                resumed.push(job.clone());
+            }
+        }
+    }
+    let active: std::collections::HashSet<_> = manifest
+        .jobs
+        .values()
+        .filter(|job| job.status.active())
+        .map(|job| job.id.clone())
+        .collect();
+    manifest
+        .guidance
+        .retain(|_, request| request.run_id == run_id && active.contains(&request.from));
+    manifest.updated_at = now();
+    manifest.revision += 1;
+    Ok((manifest, resumed))
+}
+
+fn worker_session(
+    hub: &Arc<Hub>,
+    job: &Job,
+    path: PathBuf,
+    turns: Vec<StoredTurn>,
+    extras: journal::Extras,
+) -> Arc<Session> {
+    let durable_turn = turns.last().cloned();
+    let weak = Arc::downgrade(hub);
+    Arc::new(Session {
+        id: job.id.clone(),
+        journal: path,
+        root: hub.root.root.clone(),
+        journal_maintenance: hub.root.journal_maintenance.clone(),
+        data: Mutex::new(SessionData {
+            turns,
+            durable_turn,
+            extras,
+            active: None,
+            recovery: None,
+            revision: next_revision(),
+            storage_failed: false,
+            last_emit: std::time::Instant::now(),
+            compacting: false,
+            manual_compaction: false,
+        }),
+        emit: Arc::new(move |snapshot| {
+            if let Some(hub) = weak.upgrade() {
+                (hub.attention)(&snapshot);
+                (hub.emit)(&hub.root.id);
+            }
+        }),
+    })
+}
+
 pub(super) fn worker(
     hub: &Arc<Hub>,
     job: &Job,
@@ -227,31 +416,7 @@ pub(super) fn worker(
         file.sync_all().map_err(|_| AgentError::storage())?;
         (vec![], journal::Extras::default())
     };
-    let durable_turn = turns.last().cloned();
-    let weak = Arc::downgrade(hub);
-    let session = Arc::new(Session {
-        id: job.id.clone(),
-        journal: path,
-        root: hub.root.root.clone(),
-        data: Mutex::new(SessionData {
-            turns,
-            durable_turn,
-            extras,
-            active: None,
-            recovery: None,
-            revision: next_revision(),
-            storage_failed: false,
-            last_emit: std::time::Instant::now(),
-            compacting: false,
-            manual_compaction: false,
-        }),
-        emit: Arc::new(move |snapshot| {
-            if let Some(hub) = weak.upgrade() {
-                (hub.attention)(&snapshot);
-                (hub.emit)(&hub.root.id);
-            }
-        }),
-    });
+    let session = worker_session(hub, job, path, turns, extras);
     let content = resume.unwrap_or_else(|| job.prompt.clone());
     let original = hub
         .root
@@ -280,5 +445,30 @@ pub(super) fn worker(
         current.wire = vec![json!({"role":"user","content":wire})];
         current.mcp_intent = Some(mcp_intent);
     })?;
+    Ok((session, signal))
+}
+
+pub(super) fn resume_worker(
+    hub: &Arc<Hub>,
+    job: &Job,
+) -> Result<(Arc<Session>, watch::Receiver<bool>), AgentError> {
+    let path = hub.directory.join(format!("{}.jsonl", job.id));
+    if !path.exists() {
+        return worker(
+            hub,
+            job,
+            Some("The previous runtime stopped before this worker created a durable turn. Inspect current Beads and project state, then continue the assigned work without assuming that no external state changed.".into()),
+        );
+    }
+    let (turns, extras) = journal::load_for_recovery(&path)?;
+    if turns.is_empty() {
+        return worker(
+            hub,
+            job,
+            Some("The previous runtime stopped before this worker created a durable turn. Inspect current Beads and project state, then continue the assigned work without assuming that no external state changed.".into()),
+        );
+    }
+    let session = worker_session(hub, job, path, turns, extras);
+    let (signal, _) = session.resume_interrupted_workflow_turn()?;
     Ok((session, signal))
 }

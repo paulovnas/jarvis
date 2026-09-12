@@ -174,7 +174,7 @@ impl From<std::io::Error> for PersistenceError {
 }
 
 pub(crate) fn database_path(home_dir: &Path) -> PathBuf {
-    home_dir.join(".jarvis").join("jarvis.db")
+    crate::data_dir::root(home_dir).join("jarvis.db")
 }
 
 fn open_database(path: &Path) -> Result<Connection, PersistenceError> {
@@ -628,7 +628,7 @@ mod tests {
     fn resolves_the_exact_native_database_path() {
         assert_eq!(
             database_path(Path::new("/Users/example")),
-            PathBuf::from("/Users/example/.jarvis/jarvis.db")
+            crate::data_dir::root(Path::new("/Users/example")).join("jarvis.db")
         );
     }
 

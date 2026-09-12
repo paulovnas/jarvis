@@ -40,7 +40,7 @@ pub(crate) fn directory(home: &Path, conversation: &str) -> Result<PathBuf, Agen
     if !valid_id(conversation) {
         return Err(invalid("Conversa inválida."));
     }
-    let root = home.join(".jarvis/attachments");
+    let root = crate::data_dir::root(home).join("attachments");
     let dir = root.join(conversation);
     for path in [&root, &dir] {
         if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {

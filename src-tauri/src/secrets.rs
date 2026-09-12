@@ -2,7 +2,7 @@
 //!
 //! One primitive serves every consumer (MCP/Context7 configs and the provider
 //! credentials for OpenAI Codex, Antigravity and Custom): blobs are encrypted
-//! with `CryptProtectData` and stored under `~/.jarvis/<namespace>/`, keyed by a
+//! with `CryptProtectData` and stored under the active Jarvis data root, keyed by a
 //! hash of the logical key so the plaintext key never names a file. The blob is
 //! bound to the Windows user: copying it to another machine or account does not
 //! decrypt it, which is the intended property, not a migration path.
@@ -34,7 +34,7 @@ pub(crate) enum VaultError {
 fn directory(namespace: &str) -> Result<PathBuf, VaultError> {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
-        .map(|home| PathBuf::from(home).join(".jarvis").join(namespace))
+        .map(|home| crate::data_dir::root(&PathBuf::from(home)).join(namespace))
         .ok_or(VaultError::Unavailable)
 }
 

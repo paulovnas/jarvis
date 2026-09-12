@@ -13,6 +13,9 @@ impl Drop for CompactionLease {
 
 fn begin(session: Arc<Session>) -> Result<(CompactionLease, TurnOptions), AgentError> {
     let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
+    if session.journal_maintenance.load(Ordering::Acquire) {
+        return Err(journal_maintenance::maintenance_error());
+    }
     if data.active.is_some() || data.compacting || data.manual_compaction {
         return Err(AgentError::new(
             "already_running",

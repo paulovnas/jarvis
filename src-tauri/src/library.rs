@@ -458,9 +458,11 @@ pub(crate) fn session_path(
     if !valid_id(project_id) || !valid_id(conversation_id) {
         return Err(LibraryError::invalid_session());
     }
-    let mut directory = home.to_path_buf();
-    for component in [".jarvis", "sessions", project_id] {
-        directory.push(component);
+    let mut directory = crate::data_dir::root(home);
+    for component in [None, Some("sessions"), Some(project_id)] {
+        if let Some(component) = component {
+            directory.push(component);
+        }
         if create {
             #[cfg(unix)]
             let mut builder = fs::DirBuilder::new();

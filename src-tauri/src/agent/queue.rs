@@ -39,6 +39,9 @@ impl Session {
         parts: Vec<skill_input::MessagePart>,
     ) -> Result<Option<watch::Receiver<bool>>, AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
+        if self.journal_maintenance.load(Ordering::Acquire) {
+            return Err(journal_maintenance::maintenance_error());
+        }
         if data.storage_failed {
             return Err(AgentError::storage());
         }

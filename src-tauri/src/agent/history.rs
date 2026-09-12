@@ -649,6 +649,7 @@ impl AgentState {
             id: id.into(),
             journal: path,
             root,
+            journal_maintenance: Default::default(),
             emit: Arc::new(|_| {}),
             data: Mutex::new(SessionData {
                 turns: vec![],
@@ -1119,9 +1120,8 @@ mod tests {
             connection.execute("INSERT INTO conversations(id,project_id,title,created_at) VALUES (?1,?2,'Test',1)", rusqlite::params![id, project])?;
             Ok::<_, library::LibraryError>(())
         }).unwrap();
-        let path = fixture
-            .root
-            .join(".jarvis/sessions")
+        let path = crate::data_dir::root(&fixture.root)
+            .join("sessions")
             .join(&project)
             .join(format!("{id}.jsonl"));
         fs::create_dir_all(path.parent().unwrap()).unwrap();

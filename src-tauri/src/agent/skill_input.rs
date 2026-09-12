@@ -109,7 +109,7 @@ mod tests {
     async fn explicit_skills_are_user_input_keep_badges_and_survive_queue_restart() {
         let fixture = super::super::tests::Fixture::new();
         let session = super::super::tests::session(&fixture);
-        let dir = fixture.root.join(".jarvis/skills/manual");
+        let dir = crate::data_dir::root(&fixture.root).join("skills/manual");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("SKILL.md"), "---\nname: manual\ndescription: Only when requested\ndisable-model-invocation: true\n---\nUse the fixture workflow.").unwrap();
         let available = crate::skills::active(&fixture.root, &fixture.root)

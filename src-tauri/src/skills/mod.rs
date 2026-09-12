@@ -1,4 +1,5 @@
 mod builtin;
+mod cache;
 mod catalog;
 mod marketplace;
 mod store;
@@ -112,6 +113,23 @@ pub struct Snapshot {
     warnings: Vec<String>,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCacheStatus {
+    bytes: u64,
+    repositories: usize,
+    residues: usize,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCacheCleanup {
+    freed_bytes: u64,
+    removed_repositories: usize,
+    removed_residues: usize,
+    status: SkillCacheStatus,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Detail {
@@ -125,11 +143,13 @@ pub struct Detail {
 }
 
 pub(crate) fn root(home: &Path) -> PathBuf {
-    home.join(".jarvis")
+    crate::data_dir::root(home)
 }
 
 pub(crate) fn setup(home: &Path) -> Result<(), SkillError> {
-    builtin::sync(home)
+    builtin::sync(home)?;
+    cache::start_maintenance(home);
+    Ok(())
 }
 pub(crate) fn read_config(home: &Path) -> Result<Config, SkillError> {
     match fs::read(root(home).join("skills.json")) {
@@ -547,6 +567,32 @@ pub async fn get_marketplace_skill(
     tauri::async_runtime::spawn_blocking(move || store::preview(&home, &source, &skill_id))
         .await
         .map_err(|_| error("Não foi possível carregar os detalhes da skill."))?
+}
+#[tauri::command]
+pub async fn get_skill_cache_status(app: tauri::AppHandle) -> Result<SkillCacheStatus, SkillError> {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|_| error("Pasta pessoal indisponível."))?;
+    tauri::async_runtime::spawn_blocking(move || cache::status(&home))
+        .await
+        .map_err(|_| error("Não foi possível analisar o cache de skills."))?
+}
+#[tauri::command]
+pub async fn clear_skill_cache(
+    app: tauri::AppHandle,
+    confirmed: bool,
+) -> Result<SkillCacheCleanup, SkillError> {
+    if !confirmed {
+        return Err(error("Confirme a limpeza do cache de skills."));
+    }
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|_| error("Pasta pessoal indisponível."))?;
+    tauri::async_runtime::spawn_blocking(move || cache::clear(&home))
+        .await
+        .map_err(|_| error("Não foi possível limpar o cache de skills."))?
 }
 #[tauri::command]
 pub async fn install_marketplace_skill(

@@ -33,7 +33,7 @@ fn is_directory(path: &Path) -> Result<bool, LibraryError> {
 }
 
 fn history_root(home: &Path) -> Result<Option<PathBuf>, LibraryError> {
-    let root = home.join(".jarvis");
+    let root = crate::data_dir::root(home);
     if !is_directory(&root)? {
         return Ok(None);
     }
@@ -155,7 +155,7 @@ pub(super) fn recover(connection: &Connection, home: &Path) -> Result<(), Librar
 fn cleanup_context_memory(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
     cleanup_attachments(connection, home)?;
     let workers = cleanup_workflows(connection, home)?;
-    let directory = home.join(".jarvis/context-mode");
+    let directory = crate::data_dir::root(home).join("context-mode");
     if !is_directory(&directory)? {
         return Ok(());
     }
@@ -194,7 +194,7 @@ fn cleanup_context_memory(connection: &Connection, home: &Path) -> Result<(), Li
 // Workflow artifacts belong to their conversation, never to the source checkout.
 // Retain worker Context-mode stores while the owning conversation still exists.
 fn cleanup_attachments(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
-    let root = home.join(".jarvis/attachments");
+    let root = crate::data_dir::root(home).join("attachments");
     if !is_directory(&root)? {
         return Ok(());
     }
@@ -213,7 +213,7 @@ fn cleanup_attachments(connection: &Connection, home: &Path) -> Result<(), Libra
 }
 
 fn cleanup_workflows(connection: &Connection, home: &Path) -> Result<Vec<String>, LibraryError> {
-    let root = home.join(".jarvis/workflows");
+    let root = crate::data_dir::root(home).join("workflows");
     if !is_directory(&root)? {
         return Ok(vec![]);
     }
@@ -248,7 +248,7 @@ fn cleanup_workflows(connection: &Connection, home: &Path) -> Result<Vec<String>
 }
 
 fn cleanup_beads_projects(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
-    let base = home.join(".jarvis/beads");
+    let base = crate::data_dir::root(home).join("beads");
     if !is_directory(&base)? {
         return Ok(());
     }
@@ -406,7 +406,11 @@ pub(crate) fn delete(
     if !matches!(target, DeleteTarget::Conversation(_)) {
         // Remove an empty history directory only; unknown files and project source are never traversed.
         for project_id in project_ids {
-            let _ = fs::remove_dir(home.join(".jarvis").join("sessions").join(project_id));
+            let _ = fs::remove_dir(
+                crate::data_dir::root(home)
+                    .join("sessions")
+                    .join(project_id),
+            );
         }
     }
     cleanup_context_memory(connection, home)?;

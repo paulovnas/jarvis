@@ -7,7 +7,7 @@ use std::{
 const AUTHORING: &str = include_str!("builtin/jarvis-authoring.md");
 
 pub(super) fn root(home: &Path) -> PathBuf {
-    home.join(".jarvis/builtin-skills")
+    crate::data_dir::root(home).join("builtin-skills")
 }
 
 pub(super) fn sync(home: &Path) -> Result<(), SkillError> {

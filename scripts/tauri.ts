@@ -2,7 +2,14 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { localSigningIdentity, projectIdentifier, signedDevArguments, signingCommand } from "./macos-signing";
+import {
+  developmentArguments,
+  localSigningIdentity,
+  projectIdentifier,
+  signedDevArguments,
+  signingCommand,
+  usesDevelopmentProfile,
+} from "./macos-signing";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -10,11 +17,16 @@ let args = process.argv.slice(2);
 
 try {
   const command = signingCommand(args);
+  const development = usesDevelopmentProfile(args);
+  if (development) {
+    process.env.JARVIS_RUNTIME_PROFILE = "development";
+    args = developmentArguments(args, projectRoot);
+  }
   if (process.platform === "darwin" && command) {
     const identity = localSigningIdentity();
     // Scope the certificate to this invocation, including Tauri's bundler and Cargo children.
     process.env.APPLE_SIGNING_IDENTITY = identity.hash;
-    process.env.JARVIS_SIGNING_IDENTIFIER = projectIdentifier(projectRoot);
+    process.env.JARVIS_SIGNING_IDENTIFIER = projectIdentifier(projectRoot, development);
     if (command === "dev") {
       process.env.JARVIS_DEV_APP_BUNDLE = "1";
       args = signedDevArguments(args, projectRoot);

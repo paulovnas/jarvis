@@ -13,17 +13,17 @@ fn fixture() -> (Connection, tempfile::TempDir) {
     let mut db = Connection::open_in_memory().unwrap();
     persistence::initialize_database(&mut db).unwrap();
     let home = tempfile::tempdir().unwrap();
-    std::fs::create_dir(home.path().join(".jarvis")).unwrap();
+    std::fs::create_dir(crate::data_dir::root(home.path())).unwrap();
     for name in ["old", "new", "third"] {
         persistence::insert_provider_account(&db, &format!("openai-codex-{name}"), name).unwrap();
     }
     db.execute("INSERT INTO web_search_config(id,account_alias,model,inherit_chat) VALUES(1,'openai-codex-old','old-model',0)", []).unwrap();
     std::fs::write(
-        home.path().join(".jarvis/agents.json"),
+        crate::data_dir::root(home.path()).join("agents.json"),
         json!({"complete/planner":choice("openai-codex-old", "old-model")}).to_string(),
     )
     .unwrap();
-    std::fs::write(home.path().join(".jarvis/workflow-catalog.json"), json!({"revision":2,"agents":[{"id":"a".repeat(32),"name":"Analista","description":"","instructions":"Analyze","capability":"read_only","model":choice("openai-codex-old", "old-model")}],"flows":[{"id":"b".repeat(32),"name":"Meu fluxo","description":"","entry":"c".repeat(32),"maxSteps":1,"steps":[{"id":"c".repeat(32),"agentId":"a".repeat(32),"instructions":"","position":{"x":0,"y":0},"next":null,"onRework":null}]}]}).to_string()).unwrap();
+    std::fs::write(crate::data_dir::root(home.path()).join("workflow-catalog.json"), json!({"revision":2,"agents":[{"id":"a".repeat(32),"name":"Analista","description":"","instructions":"Analyze","capability":"read_only","model":choice("openai-codex-old", "old-model")}],"flows":[{"id":"b".repeat(32),"name":"Meu fluxo","description":"","entry":"c".repeat(32),"maxSteps":1,"steps":[{"id":"c".repeat(32),"agentId":"a".repeat(32),"instructions":"","position":{"x":0,"y":0},"next":null,"onRework":null}]}]}).to_string()).unwrap();
     (db, home)
 }
 
@@ -166,8 +166,9 @@ fn explicit_model_edits_can_reselect_a_recreated_alias_without_stale_remapping()
 #[test]
 fn remaps_tools_and_agents_atomically_without_rewriting_builtin_or_custom_definitions() {
     let (mut db, home) = fixture();
-    let agents = std::fs::read(home.path().join(".jarvis/agents.json")).unwrap();
-    let catalog = std::fs::read(home.path().join(".jarvis/workflow-catalog.json")).unwrap();
+    let agents = std::fs::read(crate::data_dir::root(home.path()).join("agents.json")).unwrap();
+    let catalog =
+        std::fs::read(crate::data_dir::root(home.path()).join("workflow-catalog.json")).unwrap();
     let preview = plan(&db, home.path(), "openai-codex-old").unwrap();
     let replacements: Vec<_> = preview
         .items
@@ -196,11 +197,11 @@ fn remaps_tools_and_agents_atomically_without_rewriting_builtin_or_custom_defini
         .all(|item| item.choice == choice("openai-codex-new", "new-model")));
     assert_eq!(
         agents,
-        std::fs::read(home.path().join(".jarvis/agents.json")).unwrap()
+        std::fs::read(crate::data_dir::root(home.path()).join("agents.json")).unwrap()
     );
     assert_eq!(
         catalog,
-        std::fs::read(home.path().join(".jarvis/workflow-catalog.json")).unwrap()
+        std::fs::read(crate::data_dir::root(home.path()).join("workflow-catalog.json")).unwrap()
     );
     assert_eq!(
         model_bindings::resolve(

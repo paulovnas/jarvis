@@ -129,7 +129,7 @@ fn usage_preferences_migrate_and_remain_isolated_by_alias() {
 }
 
 #[test]
-fn usage_alerts_persist_and_only_match_the_configured_available_window() {
+fn usage_alerts_persist_and_notify_once_per_runtime() {
     let mut connection = rusqlite::Connection::open_in_memory().unwrap();
     crate::persistence::initialize_database(&mut connection).unwrap();
     let account =
@@ -181,10 +181,20 @@ fn usage_alerts_persist_and_only_match_the_configured_available_window() {
     assert_eq!(notices.len(), 1);
     assert!(notices[0].body.contains("7d: restam 20%"));
     assert_eq!(notices[0].window_id, "codex/secondary_window");
-    assert_eq!(notices[0].resets_at, 3_000);
-    assert_eq!(notices[0].threshold, 20);
-    assert!(claim_alert_delivery(&connection, &record.alias, &notices[0]).unwrap());
-    assert!(!claim_alert_delivery(&connection, &record.alias, &notices[0]).unwrap());
+    let runtime = UsageCache::default();
+    let mut before_threshold = usage.clone();
+    before_threshold.windows[1].remaining_percent = Some(21.0);
+    assert!(
+        claim_alert_notice(&runtime, &record, &before_threshold, 1_500)
+            .unwrap()
+            .is_none()
+    );
+    assert!(claim_alert_notice(&runtime, &record, &usage, 1_500)
+        .unwrap()
+        .is_some());
+    assert!(claim_alert_notice(&runtime, &record, &usage, 1_500)
+        .unwrap()
+        .is_none());
     let next_cycle = AccountUsage {
         windows: usage
             .windows
@@ -199,9 +209,14 @@ fn usage_alerts_persist_and_only_match_the_configured_available_window() {
             .collect(),
         ..usage
     };
-    let next_notice = alert_notices(&record, &next_cycle, 1_500).remove(0);
-    assert_eq!(next_notice.resets_at, 4_000);
-    assert!(claim_alert_delivery(&connection, &record.alias, &next_notice).unwrap());
+    assert!(claim_alert_notice(&runtime, &record, &next_cycle, 1_500)
+        .unwrap()
+        .is_none());
+    assert!(
+        claim_alert_notice(&UsageCache::default(), &record, &next_cycle, 1_500)
+            .unwrap()
+            .is_some()
+    );
 
     save_alert(&connection, &record.alias, None).unwrap();
     assert!(
@@ -228,6 +243,76 @@ fn usage_alerts_persist_and_only_match_the_configured_available_window() {
         })
     )
     .is_err());
+}
+
+#[test]
+fn concurrent_refreshes_choose_the_most_depleted_bucket_and_notify_once() {
+    let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+    crate::persistence::initialize_database(&mut connection).unwrap();
+    let account =
+        crate::persistence::insert_provider_account(&connection, "antigravity-a", "one").unwrap();
+    save_alert(
+        &connection,
+        &account.alias,
+        Some(crate::openai_codex::UsageAlert {
+            window: crate::openai_codex::UsageAlertWindow::Weekly,
+            remaining_percent: 20,
+        }),
+    )
+    .unwrap();
+    let record = crate::persistence::list_provider_accounts(&connection)
+        .unwrap()
+        .remove(0);
+    let usage = AccountUsage {
+        alias: record.alias.clone(),
+        fetched_at: Some(1_000),
+        email: None,
+        plan: None,
+        windows: vec![
+            UsageWindow {
+                id: "gemini-weekly".into(),
+                group: "Gemini".into(),
+                third_party: false,
+                label: "7d".into(),
+                duration_seconds: Some(604_800.0),
+                remaining_percent: Some(15.0),
+                resets_at: Some(3_000),
+            },
+            UsageWindow {
+                id: "gemini-flash-weekly".into(),
+                group: "Gemini Flash".into(),
+                third_party: false,
+                label: "7d".into(),
+                duration_seconds: Some(604_800.0),
+                remaining_percent: Some(4.0),
+                resets_at: Some(3_500),
+            },
+        ],
+        reset_credits: None,
+        error: None,
+    };
+    let runtime = Arc::new(UsageCache::default());
+    let barrier = Arc::new(std::sync::Barrier::new(8));
+    let threads: Vec<_> = (0..8)
+        .map(|_| {
+            let runtime = runtime.clone();
+            let barrier = barrier.clone();
+            let record = record.clone();
+            let usage = usage.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                claim_alert_notice(&runtime, &record, &usage, 1_500).unwrap()
+            })
+        })
+        .collect();
+    let notices: Vec<_> = threads
+        .into_iter()
+        .filter_map(|thread| thread.join().unwrap())
+        .collect();
+
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].window_id, "gemini-flash-weekly");
+    assert!(notices[0].body.contains("restam 4%"));
 }
 
 #[test]

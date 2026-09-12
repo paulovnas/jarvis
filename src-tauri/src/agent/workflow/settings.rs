@@ -21,7 +21,7 @@ pub(super) fn roster(flow: Flow) -> &'static [Role] {
     flow.roster()
 }
 pub(crate) fn read(home: &Path) -> Result<ModelSettings, AgentError> {
-    let path = home.join(".jarvis/agents.json");
+    let path = crate::data_dir::root(home).join("agents.json");
     let meta = match fs::symlink_metadata(&path) {
         Ok(meta) => meta,
         Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
@@ -142,7 +142,7 @@ pub async fn set_agent_model(
             }
             let mut config = configured(db, &home)?;
             config.insert(key(flow, role), choice);
-            let directory = home.join(".jarvis");
+            let directory = crate::data_dir::root(&home);
             let mut file =
                 tempfile::NamedTempFile::new_in(&directory).map_err(|_| AgentError::storage())?;
             serde_json::to_writer(file.as_file_mut(), &config)

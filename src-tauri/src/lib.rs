@@ -5,6 +5,7 @@ mod app_menu;
 mod background;
 mod backup;
 mod core;
+mod data_dir;
 mod desktop;
 mod library;
 mod mcp;
@@ -40,7 +41,17 @@ fn greet(name: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        use tauri::Manager;
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }));
+    builder
         .manage(desktop::DesktopState::default())
         .manage(core::CoreState::default())
         .manage(persistence::AppState::default())
@@ -56,8 +67,17 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             use tauri::Manager;
-            desktop::setup(app)?;
             let home = app.path().home_dir()?;
+            let profile = data_dir::configure(&app.config().identifier)?;
+            let lease = data_dir::Lease::acquire(&home, profile)?;
+            debug_assert_eq!(lease.root(), data_dir::root(&home));
+            if !app.manage(lease) {
+                return Err(std::io::Error::other(
+                    "O controle exclusivo do diretório de dados já foi configurado.",
+                )
+                .into());
+            }
+            desktop::setup(app)?;
             skills::setup(&home).map_err(|error| std::io::Error::other(error.message))?;
             core::health::start_monitor(app.handle());
             system::setup(app.handle())
@@ -98,6 +118,8 @@ pub fn run() {
                 skills::get_skill_detail,
                 skills::browse_skill_marketplace,
                 skills::get_marketplace_skill,
+                skills::get_skill_cache_status,
+                skills::clear_skill_cache,
                 skills::install_marketplace_skill,
                 skills::check_skill_updates,
                 skills::update_skills,
@@ -170,9 +192,12 @@ pub fn run() {
                 agent::history::get_chat_tool_call,
                 agent::cleanup::preview_chat_cleanup,
                 agent::cleanup::cleanup_old_chats,
+                agent::journal_maintenance::get_journal_maintenance_status,
+                agent::journal_maintenance::optimize_journals,
                 agent::get_agent_activity,
                 agent::start_agent_turn,
                 agent::resume_agent_queue,
+                agent::resume_interrupted_workflow,
                 agent::maintenance::compact_agent_context,
                 agent::queue::remove_queued_message,
                 agent::queue::delete_queued_message,

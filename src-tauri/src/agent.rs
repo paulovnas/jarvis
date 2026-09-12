@@ -12,6 +12,7 @@ pub(crate) mod history;
 pub(crate) mod image_generation;
 mod instructions;
 mod journal;
+pub(crate) mod journal_maintenance;
 mod lsp;
 pub(crate) mod maintenance;
 mod model_instructions;
@@ -39,7 +40,10 @@ use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager};
@@ -287,6 +291,7 @@ struct Session {
     id: String,
     journal: PathBuf,
     root: PathBuf,
+    journal_maintenance: Arc<AtomicBool>,
     data: Mutex<SessionData>,
     emit: Arc<dyn Fn(ChatSnapshot) + Send + Sync>,
 }
@@ -403,6 +408,9 @@ impl Session {
     fn resume_recovered_turn(&self) -> Result<Option<watch::Receiver<bool>>, AgentError> {
         const NOTICE: &str = "The Jarvis runtime restarted during this direct execution. All persisted tool results are valid and already applied. Continue from those results without repeating prior tool calls. Inspect the current project state before any new mutation.";
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
+        if self.journal_maintenance.load(Ordering::Acquire) {
+            return Err(journal_maintenance::maintenance_error());
+        }
         if data.active.is_some() || data.storage_failed {
             return Ok(None);
         }
@@ -444,6 +452,71 @@ impl Session {
         data.recovery = None;
         data.revision = next_revision();
         Ok(Some(signal))
+    }
+
+    fn resume_interrupted_workflow_turn(
+        &self,
+    ) -> Result<(watch::Receiver<bool>, Vec<String>), AgentError> {
+        let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
+        if self.journal_maintenance.load(Ordering::Acquire) {
+            return Err(journal_maintenance::maintenance_error());
+        }
+        if data.active.is_some() {
+            return Err(AgentError::new(
+                "already_running",
+                "Esta conversa já possui uma execução em andamento.",
+            ));
+        }
+        if data.storage_failed {
+            return Err(AgentError::storage());
+        }
+        let index = data
+            .turns
+            .len()
+            .checked_sub(1)
+            .ok_or_else(AgentError::internal)?;
+        let mut current = data.turns[index].clone();
+        if !resumable_workflow_turn(&current) {
+            return Err(AgentError::new(
+                "workflow_recovery_unavailable",
+                "Esta conversa não possui um fluxo Planejado ou Completo interrompido que possa ser retomado.",
+            ));
+        }
+        let uncertain = journal::uncertain_tool_names(&current);
+        journal::interrupt_tools(&mut current);
+        current.turn.status = TurnStatus::Running;
+        current.turn.error = None;
+        let notice = format!(
+            "Jarvis workflow recovery checkpoint (runtime instructions, not a new user request). The previous process stopped during this Planned/Complete flow. Reconstruct the same plan from durable workflow, worker, Beads and validation checkpoints. Never replay a previous tool call automatically. Before any new mutation, inspect the current project and task state. Calls whose result was not durably observed: {}.",
+            serde_json::to_string(&uncertain).map_err(|_| AgentError::internal())?
+        );
+        if !current
+            .wire
+            .iter()
+            .any(|item| item["_jarvis_workflow_recovery"] == true)
+        {
+            current.wire.push(json!({
+                "role": "user",
+                "_jarvis_runtime": true,
+                "_jarvis_workflow_recovery": true,
+                "content": notice,
+            }));
+        }
+        self.persist_turn(&mut data, &current)?;
+        data.turns[index] = current;
+        let id = data.turns[index].turn.id.clone();
+        let (cancel, signal) = watch::channel(false);
+        data.active = Some(Active {
+            id,
+            cancel,
+            approval: None,
+            question: None,
+            authoring: None,
+            accepting_auxiliary: true,
+        });
+        data.recovery = None;
+        data.revision = next_revision();
+        Ok((signal, uncertain))
     }
     fn snapshot_data(&self, data: &SessionData) -> ChatSnapshot {
         ChatSnapshot {
@@ -606,6 +679,7 @@ pub struct AgentState {
     sessions: Arc<Mutex<HashMap<String, Arc<Session>>>>,
     histories: history::HistoryState,
     workflows: workflow::Registry,
+    journal_maintenance: Arc<AtomicBool>,
 }
 impl Default for AgentState {
     fn default() -> Self {
@@ -616,6 +690,7 @@ impl Default for AgentState {
             sessions: Default::default(),
             histories: Default::default(),
             workflows: Default::default(),
+            journal_maintenance: Default::default(),
         }
     }
 }
@@ -725,6 +800,9 @@ impl AgentState {
         id: &str,
     ) -> Result<Arc<Session>, AgentError> {
         let mut sessions = self.sessions.lock().map_err(|_| AgentError::internal())?;
+        if self.journal_maintenance.load(Ordering::Acquire) {
+            return Err(journal_maintenance::maintenance_error());
+        }
         if let Some(session) = sessions.get(id) {
             return Ok(session.clone());
         }
@@ -771,6 +849,7 @@ impl AgentState {
             id: id.into(),
             journal: path,
             root,
+            journal_maintenance: self.journal_maintenance.clone(),
             data: Mutex::new(SessionData {
                 turns,
                 durable_turn,
@@ -872,6 +951,21 @@ fn resumable_direct_turn(turn: &StoredTurn) -> bool {
                 .is_some_and(|error| error.code == "interrupted"));
     recoverable_status && turn.turn.options.direct() && journal::safe_to_resume(turn)
 }
+
+fn resumable_workflow_turn(turn: &StoredTurn) -> bool {
+    let recoverable_status = turn.turn.status == TurnStatus::Running
+        || (turn.turn.status == TurnStatus::Interrupted
+            && turn
+                .turn
+                .error
+                .as_ref()
+                .is_some_and(|error| error.code == "interrupted"));
+    recoverable_status
+        && matches!(
+            turn.turn.options.workflow,
+            Some(workflow::Flow::Planned | workflow::Flow::Complete)
+        )
+}
 async fn cancelled(signal: &mut watch::Receiver<bool>) {
     loop {
         if *signal.borrow_and_update() {
@@ -952,7 +1046,11 @@ pub async fn get_chat(
             mcp,
             home,
             app,
-            (signal, activity),
+            RunControl {
+                signal,
+                activity,
+                workflow_recovery: None,
+            },
         );
     } else {
         agent.release_idle(&session);
@@ -1021,10 +1119,20 @@ pub async fn start_agent_turn(
             mcp,
             run_home,
             run_app,
-            (signal, activity),
+            RunControl {
+                signal,
+                activity,
+                workflow_recovery: None,
+            },
         );
     }
     Ok(initial)
+}
+
+struct RunControl {
+    signal: watch::Receiver<bool>,
+    activity: crate::updater::ActivityLease,
+    workflow_recovery: Option<Vec<String>>,
 }
 
 fn spawn_run(
@@ -1034,8 +1142,13 @@ fn spawn_run(
     mcp: crate::mcp::McpState,
     home: PathBuf,
     app: tauri::AppHandle,
-    (mut signal, activity): (watch::Receiver<bool>, crate::updater::ActivityLease),
+    control: RunControl,
 ) {
+    let RunControl {
+        mut signal,
+        activity,
+        mut workflow_recovery,
+    } = control;
     tauri::async_runtime::spawn(async move {
         let _activity = activity;
         loop {
@@ -1048,6 +1161,7 @@ fn spawn_run(
                         (state.clone(), oauth.clone(), mcp.clone(), home.clone()),
                         &app,
                         signal,
+                        workflow_recovery.take(),
                     )
                     .await
                 }
@@ -1120,9 +1234,56 @@ pub async fn resume_agent_queue(
             mcp,
             home,
             app,
-            (signal, activity),
+            RunControl {
+                signal,
+                activity,
+                workflow_recovery: None,
+            },
         );
     }
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn resume_interrupted_workflow(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
+    oauth: tauri::State<'_, OpenAiCodexState>,
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+) -> Result<ChatSnapshot, AgentError> {
+    let activity = crate::updater::begin_activity(&app)
+        .map_err(|message| AgentError::new("app_updating", &message))?;
+    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    app.state::<crate::core::CoreState>().require_ready(&home)?;
+    library::agent_location(&persistence, &home, &conversation_id)?;
+    let session = agent
+        .runtime_session(&app, &persistence, &conversation_id)
+        .await?;
+    let prepared = session.clone();
+    let recovery_home = home.clone();
+    let (signal, uncertain) = tauri::async_runtime::spawn_blocking(move || {
+        workflow::validate_recovery_checkpoint(&recovery_home, &prepared)?;
+        prepared.resume_interrupted_workflow_turn()
+    })
+    .await
+    .map_err(|_| AgentError::internal())??;
+    let snapshot = session.snapshot()?;
+    (session.emit)(snapshot.clone());
+    let mcp = app.state::<crate::mcp::McpState>().inner().clone();
+    spawn_run(
+        session,
+        persistence.inner().clone(),
+        oauth.inner().clone(),
+        mcp,
+        home,
+        app,
+        RunControl {
+            signal,
+            activity,
+            workflow_recovery: Some(uncertain),
+        },
+    );
     Ok(snapshot)
 }
 
@@ -2189,6 +2350,13 @@ fn run_turn<'a>(
                         }));
                     }
                 })?;
+                if let Some(exec) = &execution {
+                    exec.observe_recovery_inspection(
+                        &tool,
+                        tool.name.starts_with("mcp_") && requires_task,
+                        status == "completed",
+                    )?;
+                }
                 // The actual action and original output are durable even if a Core hook failed.
                 if let Some(cause) = hook_error {
                     return Err(cause.into());

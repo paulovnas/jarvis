@@ -1,4 +1,4 @@
-use super::{catalog, error, root, Detail, Skill, SkillError};
+use super::{cache, catalog, error, root, Detail, Skill, SkillError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -6,20 +6,10 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    process::Stdio,
-    sync::Mutex,
-    time::{Duration, Instant},
 };
 
 const META: &str = ".jarvis-source.json";
 const MAX_PACKAGE: u64 = 32 * 1024 * 1024;
-static REPOS: Mutex<BTreeMap<String, CachedRepo>> = Mutex::new(BTreeMap::new());
-struct CachedRepo {
-    _directory: tempfile::TempDir,
-    path: PathBuf,
-    checked: Instant,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Metadata {
@@ -96,109 +86,6 @@ fn save_metadata(dir: &Path, meta: &Metadata) -> Result<(), SkillError> {
         &dir.join(META),
         &serde_json::to_vec_pretty(meta).map_err(|_| error("Registro inválido."))?,
     )
-}
-fn repository(home: &Path, source: &str, force: bool) -> Result<PathBuf, SkillError> {
-    validate(source, "skill")?;
-    let key = format!("{}:{source}", home.display());
-    {
-        let mut cache = REPOS
-            .lock()
-            .map_err(|_| error("Cache de skills indisponível."))?;
-        if !force {
-            if let Some(repo) = cache.get(&key) {
-                if repo.checked.elapsed() < Duration::from_secs(120) {
-                    return Ok(repo.path.clone());
-                }
-            }
-        }
-        cache.retain(|_, repo| repo.checked.elapsed() < Duration::from_secs(120));
-    }
-    let cache_path = root(home).join("cache/skills");
-    fs::create_dir_all(&cache_path)?;
-    let temporary = tempfile::Builder::new()
-        .prefix("repo-")
-        .tempdir_in(&cache_path)?;
-    let path = temporary.path().join("checkout");
-    let url = format!("https://github.com/{source}.git");
-    let mut child = crate::background::command("git")
-        .args([
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "credential.helper=",
-            "-c",
-            "protocol.file.allow=never",
-            "-c",
-            "protocol.ext.allow=never",
-            "clone",
-            "--quiet",
-            "--depth",
-            "1",
-            "--no-recurse-submodules",
-            "--",
-            &url,
-        ])
-        .arg(&path)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_LFS_SKIP_SMUDGE", "1")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_CONFIG_COUNT")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| error("Instale o Git para baixar skills do Marketplace."))?;
-    let started = Instant::now();
-    loop {
-        if let Some(status) = child.try_wait()? {
-            if !status.success() {
-                return Err(error(
-                    "Não foi possível baixar o repositório público da skill.",
-                ));
-            }
-            break;
-        }
-        if started.elapsed() > Duration::from_secs(90) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error("O download da skill excedeu o tempo limite."));
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    // Git and the network must never hold the shared cache mutex. A detail
-    // request closed by the user may still finish in the background, and it
-    // must not freeze every later Marketplace request while cloning.
-    let mut cache = REPOS
-        .lock()
-        .map_err(|_| error("Cache de skills indisponível."))?;
-    if !force {
-        if let Some(repo) = cache.get(&key) {
-            if repo.checked.elapsed() < Duration::from_secs(120) {
-                return Ok(repo.path.clone());
-            }
-        }
-    }
-    if cache.len() >= 8 {
-        if let Some(oldest) = cache
-            .iter()
-            .min_by_key(|(_, repo)| repo.checked)
-            .map(|(key, _)| key.clone())
-        {
-            cache.remove(&oldest);
-        }
-    }
-    cache.insert(
-        key,
-        CachedRepo {
-            _directory: temporary,
-            path: path.clone(),
-            checked: Instant::now(),
-        },
-    );
-    Ok(path)
 }
 pub(super) fn resolve(repo: &Path, skill_id: &str) -> Result<PathBuf, SkillError> {
     fn matches(dir: &Path, skill_id: &str) -> bool {
@@ -443,17 +330,18 @@ pub(super) fn replace(
 }
 pub(super) fn preview(home: &Path, source: &str, skill_id: &str) -> Result<Detail, SkillError> {
     validate(source, skill_id)?;
-    let repo = repository(home, source, false)?;
-    let dir = resolve(&repo, skill_id)?;
-    let file = catalog::skill_file(&dir).ok_or_else(|| error("SKILL.md ausente."))?;
-    let (name, description, _) = catalog::parse(&file)?;
-    Ok(Detail {
-        name,
-        description,
-        content: catalog::text(&file)?,
-        source: Some(source.into()),
-        path: None,
-        files: catalog::files(&dir)?,
+    cache::with_repository(home, source, false, |repo| {
+        let dir = resolve(repo, skill_id)?;
+        let file = catalog::skill_file(&dir).ok_or_else(|| error("SKILL.md ausente."))?;
+        let (name, description, _) = catalog::parse(&file)?;
+        Ok(Detail {
+            name,
+            description,
+            content: catalog::text(&file)?,
+            source: Some(source.into()),
+            path: None,
+            files: catalog::files(&dir)?,
+        })
     })
 }
 pub(super) fn install(home: &Path, source: &str, skill_id: &str) -> Result<(), SkillError> {
@@ -462,46 +350,65 @@ pub(super) fn install(home: &Path, source: &str, skill_id: &str) -> Result<(), S
     if destination.exists() {
         return Err(error("Esta skill já está instalada."));
     }
-    let repo = repository(home, source, false)?;
-    let dir = resolve(&repo, skill_id)?;
-    let meta = Metadata {
-        source: source.into(),
-        skill_id: skill_id.into(),
-        subpath: dir
-            .strip_prefix(&repo)
-            .map_err(|_| error("Origem inválida."))?
-            .to_path_buf(),
-        digest: digest(&dir)?,
-        update_available: false,
-        update_error: None,
-    };
-    replace(home, &dir, &destination, &meta)
+    cache::with_repository(home, source, false, |repo| {
+        let dir = resolve(repo, skill_id)?;
+        let meta = Metadata {
+            source: source.into(),
+            skill_id: skill_id.into(),
+            subpath: dir
+                .strip_prefix(repo)
+                .map_err(|_| error("Origem inválida."))?
+                .to_path_buf(),
+            digest: digest(&dir)?,
+            update_available: false,
+            update_error: None,
+        };
+        replace(home, &dir, &destination, &meta)
+    })
 }
 pub(super) fn check(home: &Path) -> Result<(), SkillError> {
     let config = super::read_config(home)?;
     let (skills, _) = catalog::discover(home, None, &config)?;
-    let mut repos: BTreeMap<String, Result<PathBuf, SkillError>> = BTreeMap::new();
+    let mut repos: BTreeMap<String, Vec<(PathBuf, Metadata)>> = BTreeMap::new();
     for skill in skills
         .into_iter()
         .filter(|s| s.origin == "jarvis" && s.source.is_some())
     {
-        let Some(mut meta) = metadata(&skill.path)? else {
+        let Some(meta) = metadata(&skill.path)? else {
             continue;
         };
-        let result = repos
+        repos
             .entry(meta.source.clone())
-            .or_insert_with(|| repository(home, &meta.source, true))
-            .clone()
-            .and_then(|repo| resolve(&repo, &meta.skill_id))
-            .and_then(|dir| digest(&dir));
-        match result {
-            Ok(remote) => {
-                meta.update_available = remote != meta.digest;
-                meta.update_error = None;
+            .or_default()
+            .push((skill.path, meta));
+    }
+    for (source, mut skills) in repos {
+        let results = cache::with_repository(home, &source, true, |repo| {
+            Ok(skills
+                .iter()
+                .map(|(_, meta)| resolve(repo, &meta.skill_id).and_then(|dir| digest(&dir)))
+                .collect::<Vec<_>>())
+        });
+        match results {
+            Ok(results) => {
+                for ((path, mut meta), result) in skills.drain(..).zip(results) {
+                    match result {
+                        Ok(remote) => {
+                            meta.update_available = remote != meta.digest;
+                            meta.update_error = None;
+                        }
+                        Err(cause) => meta.update_error = Some(cause.message),
+                    }
+                    save_metadata(&path, &meta)?;
+                }
             }
-            Err(cause) => meta.update_error = Some(cause.message),
+            Err(cause) => {
+                for (path, mut meta) in skills {
+                    meta.update_error = Some(cause.message.clone());
+                    save_metadata(&path, &meta)?;
+                }
+            }
         }
-        save_metadata(&skill.path, &meta)?;
     }
     Ok(())
 }
@@ -524,14 +431,16 @@ pub(super) fn update(home: &Path, skill: &Skill) -> Result<(), SkillError> {
             skill.name
         )));
     }
-    let repo = repository(home, &meta.source, false)?;
-    let dir = resolve(&repo, &meta.skill_id)?;
-    meta.digest = digest(&dir)?;
-    meta.subpath = dir
-        .strip_prefix(&repo)
-        .map_err(|_| error("Origem inválida."))?
-        .to_path_buf();
-    meta.update_available = false;
-    meta.update_error = None;
-    replace(home, &dir, &skill.path, &meta)
+    let source = meta.source.clone();
+    cache::with_repository(home, &source, false, |repo| {
+        let dir = resolve(repo, &meta.skill_id)?;
+        meta.digest = digest(&dir)?;
+        meta.subpath = dir
+            .strip_prefix(repo)
+            .map_err(|_| error("Origem inválida."))?
+            .to_path_buf();
+        meta.update_available = false;
+        meta.update_error = None;
+        replace(home, &dir, &skill.path, &meta)
+    })
 }

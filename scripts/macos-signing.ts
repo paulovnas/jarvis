@@ -47,6 +47,22 @@ export function signingCommand(args: string[]): "dev" | "build" | "bundle" | und
   return options.find((arg) => arg === "dev" || arg === "build" || arg === "bundle");
 }
 
+export function usesDevelopmentProfile(args: string[]): boolean {
+  const command = signingCommand(args);
+  if (command === "dev") return true;
+  const separator = args.indexOf("--");
+  const options = separator < 0 ? args : args.slice(0, separator);
+  return (command === "build" || command === "bundle") && options.includes("--debug");
+}
+
+export function developmentArguments(args: string[], projectRoot: string): string[] {
+  if (!usesDevelopmentProfile(args)) return args;
+  const separator = args.indexOf("--");
+  const index = separator < 0 ? args.length : separator;
+  const config = path.join(projectRoot, "src-tauri/tauri.dev.conf.json");
+  return [...args.slice(0, index), "--config", config, ...args.slice(index)];
+}
+
 export function signedDevArguments(args: string[], projectRoot: string): string[] {
   const separator = args.indexOf("--");
   const options = separator < 0 ? args : args.slice(0, separator);
@@ -71,8 +87,9 @@ export function signedDevArguments(args: string[], projectRoot: string): string[
   return [...args.slice(0, index), "--config", config, ...args.slice(index)];
 }
 
-export function projectIdentifier(projectRoot: string): string {
-  const config: unknown = JSON.parse(readFileSync(path.join(projectRoot, "src-tauri/tauri.conf.json"), "utf8"));
+export function projectIdentifier(projectRoot: string, development = false): string {
+  const filename = development ? "tauri.dev.conf.json" : "tauri.conf.json";
+  const config: unknown = JSON.parse(readFileSync(path.join(projectRoot, "src-tauri", filename), "utf8"));
   if (typeof config !== "object" || config === null || !("identifier" in config) || typeof config.identifier !== "string") {
     throw new Error("O identificador do aplicativo está ausente em tauri.conf.json.");
   }

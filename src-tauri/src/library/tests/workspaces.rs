@@ -58,7 +58,9 @@ fn workspace_storage_counts_owned_history_and_attachments_not_project_source() {
         .clone();
     let path = session_path(&home.0, &project.id, &chat.id, false).unwrap();
     let journal = fs::metadata(path).unwrap().len();
-    let attachments = home.0.join(".jarvis/attachments").join(&chat.id);
+    let attachments = crate::data_dir::root(&home.0)
+        .join("attachments")
+        .join(&chat.id);
     fs::create_dir_all(&attachments).unwrap();
     fs::write(attachments.join("file.txt"), "0123456789").unwrap();
     let memory = crate::core::context::storage(&home.0, &chat.id);
@@ -133,9 +135,8 @@ fn workspace_deletion_removes_all_histories_and_keeps_other_workspaces_and_sourc
     );
     assert!(deleted.selection.conversation_id.is_none());
     assert_eq!(fs::read_to_string(source).unwrap(), "preserve");
-    assert!(!home
-        .0
-        .join(".jarvis/sessions")
+    assert!(!crate::data_dir::root(&home.0)
+        .join("sessions")
         .join(&project.id)
         .join(format!("{first_chat}.jsonl"))
         .exists());

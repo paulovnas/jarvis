@@ -84,6 +84,12 @@ bun run dev     # vite dev server
 bun run tauri dev
 ```
 
+### Rust build artifact maintenance
+
+- Periodically measure `src-tauri/target` with `du -sh src-tauri/target`, especially after large Rust development cycles or before gates/releases when disk space is constrained.
+- If `src-tauri/target` reaches **30 GiB** or the volume has less than **15% free space**, run `cargo clean` inside `src-tauri`. This directory has previously exceeded 120 GiB in this project.
+- Never clean while Jarvis, `cargo`, `rustc`, or `tauri dev` is using the target directory. The next Rust build will be a full rebuild.
+
 ## Architecture Overview
 
 Jarvis is a coding agent GUI: **Tauri v2 (Rust backend in `src-tauri`) + React 19/TypeScript frontend**. Heavy logic (agent loop, tools, providers) belongs in Rust commands; the frontend stays thin. `docs/metis`, `docs/opencode`, and `docs/omp` are the mandatory reference projects — study the sources relevant to a feature, compare their trade-offs when they overlap, and treat all three trees as read-only.

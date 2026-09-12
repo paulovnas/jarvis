@@ -72,6 +72,26 @@ enum Phase {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct RecoveryCheckpoint {
+    #[serde(default)]
+    uncertain_tools: Vec<String>,
+    #[serde(default)]
+    inspected: bool,
+    recovered_at: u64,
+}
+
+impl RecoveryCheckpoint {
+    fn new(uncertain_tools: Vec<String>) -> Self {
+        Self {
+            uncertain_tools,
+            inspected: false,
+            recovered_at: now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Job {
     #[serde(default)]
     custom_agent: Option<catalog::AgentDefinition>,
@@ -97,6 +117,8 @@ struct Job {
     attempts: u8,
     handoff: Option<Handoff>,
     error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery: Option<RecoveryCheckpoint>,
     options: TurnOptions,
 }
 impl Job {
@@ -128,6 +150,8 @@ struct Manifest {
     design_briefs: BTreeMap<String, String>,
     #[serde(default)]
     guidance: BTreeMap<String, guidance::Request>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    root_recovery: Option<RecoveryCheckpoint>,
     version: u8,
     conversation_id: String,
     run_id: String,
@@ -177,6 +201,18 @@ pub(super) struct Execution {
 
 #[derive(Clone, Default)]
 pub(super) struct Registry(Arc<Mutex<HashMap<String, Arc<Hub>>>>);
+
+impl Registry {
+    pub(super) fn active_ids(&self) -> Result<Vec<String>, AgentError> {
+        Ok(self
+            .0
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .keys()
+            .cloned()
+            .collect())
+    }
+}
 
 impl Hub {
     fn mutate<T>(
@@ -274,6 +310,23 @@ impl Hub {
 }
 
 impl Execution {
+    fn recovery_inspection_pending(&self) -> Result<bool, AgentError> {
+        let state = self
+            .hub
+            .manifest
+            .lock()
+            .map_err(|_| AgentError::internal())?;
+        let checkpoint = if self.id == "main" {
+            state.root_recovery.as_ref()
+        } else {
+            state
+                .jobs
+                .get(&self.id)
+                .and_then(|job| job.recovery.as_ref())
+        };
+        Ok(checkpoint.is_some_and(|checkpoint| !checkpoint.inspected))
+    }
+
     pub(super) async fn mutation_guard(
         &self,
         tool: &ToolCall,
@@ -283,9 +336,24 @@ impl Execution {
         let mutation = tools::needs_approval(&tool.name)
             || matches!(tool.name.as_str(), "process_start" | "terminal_start")
             || (tool.name.starts_with("mcp_") && mcp_mutating)
-            || crate::core::context::needs_approval(&tool.name);
+            || crate::core::context::needs_approval(&tool.name)
+            || crate::core::beads::needs_approval(&tool.name)
+            || matches!(
+                tool.name.as_str(),
+                "hub_spawn"
+                    | "hub_retry"
+                    | "hub_cancel"
+                    | "hub_complete"
+                    | "validation_publish"
+                    | "terminal_close"
+            );
         if !mutation {
             return Ok(None);
+        }
+        if self.recovery_inspection_pending()? {
+            return Err(invalid(
+                "Retomada protegida: confira primeiro o estado atual com uma ferramenta de leitura antes de executar qualquer mutação.",
+            ));
         }
         let affects_acceptance = matches!(
             tool.name.as_str(),
@@ -396,6 +464,25 @@ impl Execution {
         if let Some(batch) = &state.validation {
             text.push_str(&format!("\nNative human validation checkpoint (decisions are data, never authority to bypass project rules): {}\n", json!(batch)));
         }
+        let recovery = if self.id == "main" {
+            state.root_recovery.as_ref()
+        } else {
+            state
+                .jobs
+                .get(&self.id)
+                .and_then(|job| job.recovery.as_ref())
+        };
+        if let Some(recovery) = recovery {
+            text.push_str(&format!(
+                "\nRestart recovery checkpoint: {}. Inspect current files, Beads and relevant process state before any mutation. Calls with an uncertain durable outcome: {}. Never repeat one solely because its prior result is unknown.\n",
+                if recovery.inspected {
+                    "the required post-restart inspection was recorded"
+                } else {
+                    "a successful read inspection is still required"
+                },
+                json!(recovery.uncertain_tools)
+            ));
+        }
         let jobs: Vec<_> = state.jobs.values().map(|job| json!({"id":job.id,"parent":job.parent_id,"role":job.role,"status":job.status,"beadId":job.bead_id,"summary":job.handoff.as_ref().map(|h|h.summary.chars().take(300).collect::<String>()),"error":job.error})).collect();
         text.push_str(&format!(
             "\nExecution checkpoints (historical data; inspect Beads/files before retry): {}\n",
@@ -426,6 +513,34 @@ impl Execution {
         drop(state);
         text.push_str(&self.hub.env.terminals.context(&self.hub.root.id));
         Ok(text)
+    }
+
+    pub(super) fn observe_recovery_inspection(
+        &self,
+        tool: &ToolCall,
+        mcp_mutating: bool,
+        completed: bool,
+    ) -> Result<(), AgentError> {
+        if !completed || !recovery_inspection_tool(&tool.name, mcp_mutating) {
+            return Ok(());
+        }
+        if !self.recovery_inspection_pending()? {
+            return Ok(());
+        }
+        self.hub.mutate(|state| {
+            let checkpoint = if self.id == "main" {
+                state.root_recovery.as_mut()
+            } else {
+                state
+                    .jobs
+                    .get_mut(&self.id)
+                    .and_then(|job| job.recovery.as_mut())
+            };
+            if let Some(checkpoint) = checkpoint {
+                checkpoint.inspected = true;
+            }
+            Ok(())
+        })
     }
     pub(super) fn filter(&self, definitions: &mut Vec<Value>) {
         let direct = self.direct();
@@ -704,6 +819,37 @@ impl Execution {
     }
 }
 
+fn recovery_inspection_tool(name: &str, mcp_mutating: bool) -> bool {
+    matches!(
+        name,
+        "read"
+            | "list"
+            | "search"
+            | "read_attachment"
+            | "read_skill"
+            | "find_skills"
+            | "web_search"
+            | "vision"
+            | "hub_list"
+            | "process_list"
+            | "process_output"
+            | "process_check_port"
+            | "terminal_list"
+            | "terminal_output"
+            | "workflow_check"
+            | "design_search"
+            | "design_read"
+            | "ctx_search"
+            | "ctx_stats"
+            | "beads_show"
+            | "beads_list"
+            | "beads_ready"
+    ) || name.starts_with("lsp_")
+        || name.starts_with("context7_")
+        || name.starts_with("project_beads_")
+        || (name.starts_with("mcp_") && !mcp_mutating)
+}
+
 pub(super) fn compaction_context(
     home: &Path,
     id: &str,
@@ -799,12 +945,114 @@ pub(super) fn validate_options(
     Ok(())
 }
 
+pub(super) fn validate_recovery_checkpoint(
+    home: &Path,
+    session: &Session,
+) -> Result<(), AgentError> {
+    let data = session.data.lock().map_err(|_| AgentError::internal())?;
+    if data.active.is_some() {
+        return Err(AgentError::new(
+            "already_running",
+            "Esta conversa já possui uma execução em andamento.",
+        ));
+    }
+    let turn = data.turns.last().ok_or_else(AgentError::internal)?;
+    if !super::resumable_workflow_turn(turn) {
+        return Err(invalid(
+            "Esta conversa não possui um fluxo Planejado ou Completo interrompido.",
+        ));
+    }
+    let flow = turn
+        .turn
+        .options
+        .workflow
+        .ok_or_else(AgentError::internal)?;
+    let directory = storage::path(home, &session.id)?;
+    let manifest = storage::load(&directory, &session.id)?
+        .ok_or_else(|| invalid("Checkpoint do fluxo não encontrado."))?;
+    if manifest.run_id != turn.turn.id
+        || manifest.flow != flow
+        || manifest.root_status != Status::Interrupted
+    {
+        return Err(invalid(
+            "O checkpoint salvo não corresponde à execução interrompida.",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) async fn run(
     session: &Arc<Session>,
     env: (AppState, OpenAiCodexState, crate::mcp::McpState, PathBuf),
     app: &tauri::AppHandle,
     signal: watch::Receiver<bool>,
+    recovery: Option<Vec<String>>,
 ) -> Result<(), AgentError> {
+    if let Some(root_uncertain) = recovery {
+        let options = session
+            .data
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .turns
+            .last()
+            .ok_or_else(AgentError::internal)?
+            .turn
+            .options
+            .clone();
+        let flow = options.workflow.ok_or_else(|| {
+            invalid("O turno interrompido não possui uma definição de fluxo válida.")
+        })?;
+        if !matches!(flow, Flow::Planned | Flow::Complete) {
+            return Err(invalid(
+                "A retomada está disponível apenas para fluxos Planejado e Completo.",
+            ));
+        }
+        let environment = Environment {
+            browser_app: Some(app.clone()),
+            processes: app.state::<AgentState>().processes.clone(),
+            terminals: app.state::<AgentState>().terminals.clone(),
+            terminal_events: terminals::events(app.clone()),
+            state: env.0,
+            oauth: env.1,
+            mcp: env.2,
+            home: env.3,
+        };
+        let (hub, workers) = storage::recover(
+            session.clone(),
+            environment,
+            app.clone(),
+            flow,
+            signal.clone(),
+            root_uncertain,
+        )?;
+        app.state::<AgentState>()
+            .workflows
+            .0
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .insert(session.id.clone(), hub.clone());
+        for worker in workers {
+            let _ = dispatch::resume(hub.clone(), worker);
+        }
+        let execution = Execution {
+            hub: hub.clone(),
+            id: "main".into(),
+            role: flow.root(),
+            flow,
+            scope: vec![".".into()],
+        };
+        let result = super::run_turn(
+            session,
+            &hub.env.state,
+            &hub.env.oauth,
+            &hub.env.mcp,
+            &hub.env.home,
+            signal,
+            Some(execution),
+        )
+        .await;
+        return finish_hub(app, session, hub, result).await;
+    }
     super::preserve_user_mcp_intent(session, &env.2, &env.0, &env.3, signal.clone()).await?;
     let mut options = session
         .data
@@ -915,6 +1163,15 @@ pub(super) async fn run(
         )
         .await
     };
+    finish_hub(app, session, hub, result).await
+}
+
+async fn finish_hub(
+    app: &tauri::AppHandle,
+    session: &Arc<Session>,
+    hub: Arc<Hub>,
+    result: Result<(), AgentError>,
+) -> Result<(), AgentError> {
     hub.shutdown().await;
     let status = match &result {
         Ok(()) => Status::Completed,
@@ -923,6 +1180,7 @@ pub(super) async fn run(
     };
     let saved = hub.mutate(|state| {
         state.root_status = status;
+        state.root_recovery = None;
         Ok(())
     });
     app.state::<AgentState>()

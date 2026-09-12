@@ -28,6 +28,7 @@ required-features = ["browser-probe"]
 tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
@@ -77,7 +78,7 @@ notify-rust = "4"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading"] }
 windows = { version = "0.61", features = ["UI_Notifications", "Win32_System_WinRT", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_UI_Shell_PropertiesSystem", "Win32_Storage_EnhancedStorage"] }
 windows-registry = "0.6"
 

@@ -34,11 +34,18 @@ define_class!(
     }
 );
 
+fn valid_bundle_identifier(identifier: &str) -> bool {
+    matches!(
+        identifier,
+        crate::data_dir::PRODUCTION_IDENTIFIER | crate::data_dir::DEVELOPMENT_IDENTIFIER
+    )
+}
+
 fn center() -> Result<Retained<UNUserNotificationCenter>, String> {
     // UserNotifications raises an ObjC exception outside a valid app bundle.
     if NSBundle::mainBundle()
         .bundleIdentifier()
-        .is_none_or(|id| id.to_string() != "com.foxtag.jarvis")
+        .is_none_or(|id| !valid_bundle_identifier(&id.to_string()))
     {
         return Err("Teste as notificações pelo aplicativo Jarvis (.app). O executável de desenvolvimento não tem identidade no macOS.".into());
     }
@@ -148,4 +155,20 @@ pub(crate) async fn show(title: &str, body: &str) -> Result<(), String> {
         center.addNotificationRequest_withCompletionHandler(&request, Some(&completion));
     }
     receive(received, 10).await?
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::valid_bundle_identifier;
+
+    #[test]
+    fn installed_and_development_bundles_have_notification_identity() {
+        assert!(valid_bundle_identifier(
+            crate::data_dir::PRODUCTION_IDENTIFIER
+        ));
+        assert!(valid_bundle_identifier(
+            crate::data_dir::DEVELOPMENT_IDENTIFIER
+        ));
+        assert!(!valid_bundle_identifier("com.foxtag.jarvis.preview"));
+    }
 }

@@ -15,9 +15,15 @@ use windows_registry::CURRENT_USER;
 
 mod shortcut;
 
-pub(super) const APP_ID: &str = "com.foxtag.jarvis";
+pub(super) const APP_ID: &str = crate::data_dir::PRODUCTION_IDENTIFIER;
+const DEVELOPMENT_APP_ID: &str = crate::data_dir::DEVELOPMENT_IDENTIFIER;
 const ICON: &[u8] = include_bytes!("../../../icons/128x128.png");
 static ICON_PATH: OnceLock<PathBuf> = OnceLock::new();
+static ACTIVE_APP_ID: OnceLock<String> = OnceLock::new();
+
+fn valid_app_id(app_id: &str) -> bool {
+    matches!(app_id, APP_ID | DEVELOPMENT_APP_ID)
+}
 
 // Keep the apartment on the same blocking thread as the WinRT calls.
 pub(super) struct Apartment;
@@ -91,7 +97,7 @@ fn authorize_identity(app_id: &str, icon: &Path) -> Result<(), String> {
     let _apartment = Apartment::new()?;
     let executable = std::env::current_exe()
         .map_err(|_| "Não foi possível localizar o executável do Jarvis.".to_string())?;
-    shortcut::register(&executable)?;
+    shortcut::register(&executable, app_id)?;
     let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id))
         .map_err(|error| native_error("consultar as notificações", error.code().0))?;
     ensure_allowed(
@@ -102,12 +108,14 @@ fn authorize_identity(app_id: &str, icon: &Path) -> Result<(), String> {
 }
 
 pub(super) fn setup(app: &tauri::AppHandle) -> Result<(), String> {
-    if app.config().identifier != APP_ID {
+    let app_id = app.config().identifier.clone();
+    if !valid_app_id(&app_id) {
         return Err(
             "O identificador do aplicativo não corresponde às notificações do Jarvis.".into(),
         );
     }
-    unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(APP_ID)) }
+    let _ = ACTIVE_APP_ID.set(app_id.clone());
+    unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(app_id.as_str())) }
         .map_err(|error| native_error("identificar o aplicativo Jarvis", error.code().0))?;
     let icon = app
         .path()
@@ -119,9 +127,9 @@ pub(super) fn setup(app: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|_| "Não foi possível localizar o executável do Jarvis.".to_string())?;
     // Tauri owns the UI thread's COM apartment. Register shell objects separately.
     std::thread::spawn(move || {
-        register(APP_ID, icon)?;
+        register(&app_id, icon)?;
         let _apartment = Apartment::new()?;
-        shortcut::register(&executable)
+        shortcut::register(&executable, &app_id)
     })
     .join()
     .map_err(|_| "Não foi possível preparar as notificações do Windows.".to_string())?
@@ -132,7 +140,11 @@ pub(super) async fn authorize() -> Result<(), String> {
         .get()
         .cloned()
         .ok_or("A identidade das notificações não foi inicializada. Reabra o Jarvis.")?;
-    tauri::async_runtime::spawn_blocking(move || authorize_identity(APP_ID, &icon))
+    let app_id = ACTIVE_APP_ID
+        .get()
+        .cloned()
+        .ok_or("A identidade das notificações não foi inicializada. Reabra o Jarvis.")?;
+    tauri::async_runtime::spawn_blocking(move || authorize_identity(&app_id, &icon))
         .await
         .map_err(|_| "Não foi possível consultar as notificações do Windows.".to_string())?
 }

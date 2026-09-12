@@ -245,6 +245,7 @@ fn prepare(
         attempts: 1,
         handoff: None,
         error: None,
+        recovery: None,
         options,
     })
 }

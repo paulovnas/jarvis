@@ -7,7 +7,7 @@ use crate::persistence::{AppState, ProviderAccountRecord};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::Read,
     path::Path,
     sync::{Arc, Mutex},
@@ -51,10 +51,17 @@ pub struct AccountUsage {
 #[derive(Debug, PartialEq, Eq)]
 struct AlertNotice {
     window_id: String,
-    resets_at: i64,
-    threshold: u8,
+    remaining_percent: u8,
     title: String,
     body: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct AlertDelivery {
+    alias: String,
+    account_id: String,
+    created_at: i64,
+    window: UsageAlertWindow,
 }
 
 fn alert_notices(
@@ -97,12 +104,10 @@ fn alert_notices(
                 && (!window.third_party || record.show_third_party_usage)
         })
         .filter_map(|window| {
-            let reset = window.resets_at?;
             let remaining = window.remaining_percent?.round().clamp(0.0, 100.0) as u8;
             Some(AlertNotice {
                 window_id: window.id.clone(),
-                resets_at: reset,
-                threshold: alert.remaining_percent,
+                remaining_percent: remaining,
                 title: format!("Limite do {provider}"),
                 body: format!(
                     "{alias} · {} · {}: restam {remaining}% do limite.",
@@ -113,32 +118,21 @@ fn alert_notices(
         .collect()
 }
 
-fn claim_alert_delivery(
-    connection: &rusqlite::Connection,
-    alias: &str,
-    notice: &AlertNotice,
-) -> Result<bool, ProviderError> {
-    connection
-        .execute(
-            "INSERT INTO provider_usage_alert_deliveries(alias, window_id, resets_at, threshold) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(alias, window_id) DO UPDATE SET resets_at=excluded.resets_at, threshold=excluded.threshold
-             WHERE provider_usage_alert_deliveries.resets_at <> excluded.resets_at OR provider_usage_alert_deliveries.threshold <> excluded.threshold",
-            rusqlite::params![alias, notice.window_id, notice.resets_at, notice.threshold],
-        )
-        .map(|changed| changed == 1)
-        .map_err(|_| ProviderError::database())
-}
-
 #[derive(Default)]
 struct Cached {
     attempted: Option<Instant>,
     value: Option<AccountUsage>,
 }
 #[derive(Default)]
-pub(super) struct UsageCache(Mutex<HashMap<String, Arc<Mutex<Cached>>>>);
+pub(super) struct UsageCache {
+    entries: Mutex<HashMap<String, Arc<Mutex<Cached>>>>,
+    // Reset timestamps can drift between provider probes. Process-local delivery
+    // state guarantees one alert per app run and deliberately resets on restart.
+    alert_deliveries: Mutex<HashSet<AlertDelivery>>,
+}
 impl UsageCache {
     pub(super) fn invalidate(&self, alias: &str) {
-        if let Ok(mut entries) = self.0.lock() {
+        if let Ok(mut entries) = self.entries.lock() {
             let prefix = format!("{alias}/");
             entries.retain(|key, _| !key.starts_with(&prefix));
         }
@@ -149,9 +143,48 @@ impl UsageCache {
             "{}/{}/{}",
             record.alias, record.account_id, record.created_at
         );
-        let mut entries = self.0.lock().map_err(|_| ProviderError::internal())?;
+        let mut entries = self.entries.lock().map_err(|_| ProviderError::internal())?;
         Ok(entries.entry(key).or_default().clone())
     }
+
+    fn claim_alert(
+        &self,
+        record: &ProviderAccountRecord,
+        alert: UsageAlert,
+    ) -> Result<bool, ProviderError> {
+        let delivery = AlertDelivery {
+            alias: record.alias.clone(),
+            account_id: record.account_id.clone(),
+            created_at: record.created_at,
+            window: alert.window,
+        };
+        self.alert_deliveries
+            .lock()
+            .map_err(|_| ProviderError::internal())
+            .map(|mut deliveries| deliveries.insert(delivery))
+    }
+}
+
+fn claim_alert_notice(
+    cache: &UsageCache,
+    record: &ProviderAccountRecord,
+    usage: &AccountUsage,
+    now: i64,
+) -> Result<Option<AlertNotice>, ProviderError> {
+    let Some(alert) = UsageAlert::from_record(record) else {
+        return Ok(None);
+    };
+    let notice = alert_notices(record, usage, now)
+        .into_iter()
+        .min_by(|left, right| {
+            left.remaining_percent
+                .cmp(&right.remaining_percent)
+                .then_with(|| left.window_id.cmp(&right.window_id))
+        });
+    let Some(notice) = notice else {
+        return Ok(None);
+    };
+    Ok(cache.claim_alert(record, alert)?.then_some(notice))
 }
 
 fn unavailable() -> ProviderError {
@@ -386,10 +419,11 @@ pub async fn get_provider_usage(
     let home = super::home_dir(&app)?;
     let state = persistence_state.inner().clone();
     let oauth = oauth_state.inner().clone();
+    let query_oauth = oauth.clone();
     let query_state = state.clone();
     let query_home = home.clone();
     let (usage, record) = tauri::async_runtime::spawn_blocking(move || {
-        let usage = oauth.account_usage(&query_state, &query_home, &alias)?;
+        let usage = query_oauth.account_usage(&query_state, &query_home, &alias)?;
         let record = query_state
             .list_provider_accounts(&query_home)
             .map_err(|_| ProviderError::database())?
@@ -401,26 +435,9 @@ pub async fn get_provider_usage(
     .await
     .map_err(|_| ProviderError::internal())??;
     let now = current_time_millis()?;
-    let notices = alert_notices(&record, &usage, now);
-    if crate::system::notifications_enabled(&app) && !notices.is_empty() {
-        let account = record.alias.clone();
-        let claimed = tauri::async_runtime::spawn_blocking(move || {
-            state.with_connection(&home, |connection| {
-                notices
-                    .into_iter()
-                    .filter_map(|notice| {
-                        match claim_alert_delivery(connection, &account, &notice) {
-                            Ok(true) => Some(Ok(notice)),
-                            Ok(false) => None,
-                            Err(error) => Some(Err(error)),
-                        }
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-            })
-        })
-        .await
-        .map_err(|_| ProviderError::internal())??;
-        for notice in claimed {
+    if crate::system::notifications_enabled(&app) {
+        if let Some(notice) = claim_alert_notice(&oauth.manager.usage_cache, &record, &usage, now)?
+        {
             crate::system::notify_usage_limit(&app, &notice.title, &notice.body);
         }
     }

@@ -194,13 +194,13 @@ export function BackupSettings({ accounts, onRestored }: { accounts: ProviderAcc
     }
   }
 
-  return <section aria-labelledby="backup-settings-title" className="mt-6 space-y-3 border-t border-border pt-6">
+  return <section aria-labelledby="backup-settings-title" className="mt-8 space-y-4 border-t border-border pt-7">
     <div className="space-y-1">
       <h2 id="backup-settings-title" className="micro-label flex items-center gap-2 text-muted-foreground"><Archive aria-hidden="true" className="size-3.5" />Backup e restauração</h2>
       <p className="text-xs leading-relaxed text-muted-foreground">Proteja suas preferências, agentes, fluxos, skills e MCPs em um único arquivo portátil.</p>
     </div>
-    <div className="grid gap-3 sm:grid-cols-2">
-      <Card className="min-w-0 gap-4 p-4">
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Card className="min-w-0 gap-5 p-5">
         <div className="flex items-start gap-3">
           <span className="rounded-md border border-onedark-green/20 bg-onedark-green/10 p-2 text-onedark-green"><Download aria-hidden="true" className="size-4" /></span>
           <div className="min-w-0 space-y-1"><h3 className="text-sm font-medium">Criar backup</h3><p className="text-[11px] leading-relaxed text-muted-foreground">Escolha onde salvar um ZIP com as configurações atuais do Jarvis.</p></div>
@@ -209,7 +209,7 @@ export function BackupSettings({ accounts, onRestored }: { accounts: ProviderAcc
         <p className="flex items-start gap-2 text-[10px] leading-relaxed text-onedark-yellow"><CircleAlert aria-hidden="true" className="mt-0.5 size-3 shrink-0" />MCPs podem incluir chaves de acesso. Guarde o ZIP em um local seguro.</p>
         <Button type="button" variant="outline" disabled={busy} onClick={() => void createBackup()} className="mt-auto w-full cursor-pointer gap-2">{exporting ? <><Spinner aria-hidden="true" />Criando backup…</> : <><Download aria-hidden="true" />Escolher destino</>}</Button>
       </Card>
-      <Card className="min-w-0 gap-4 p-4">
+      <Card className="min-w-0 gap-5 p-5">
         <div className="flex items-start gap-3">
           <span className="rounded-md border border-onedark-cyan/20 bg-onedark-cyan/10 p-2 text-onedark-cyan"><Upload aria-hidden="true" className="size-4" /></span>
           <div className="min-w-0 space-y-1"><h3 className="text-sm font-medium">Restaurar backup</h3><p className="text-[11px] leading-relaxed text-muted-foreground">Inspecione o conteúdo e associe os agentes aos modelos disponíveis antes de aplicar.</p></div>

@@ -286,7 +286,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "macos")]
     crate::app_menu::install(app)?;
     let state = app.state::<DesktopState>();
-    let path = app.path().home_dir()?.join(".jarvis/desktop.json");
+    let path = crate::data_dir::root(&app.path().home_dir()?).join("desktop.json");
     let window = app.get_window("main").ok_or("Missing main window")?;
     match Store::open(path) {
         Ok(store) => {
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn layout_and_window_survive_atomic_round_trip() {
         let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join(".jarvis/desktop.json");
+        let path = crate::data_dir::root(temp.path()).join("desktop.json");
         let mut store = Store::open(path.clone()).unwrap();
         store.preferences.window = WindowPreferences {
             normal: Some(Bounds {

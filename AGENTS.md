@@ -63,6 +63,12 @@ bun run build        # typecheck + vite build
 
 Ou simplesmente `bun run check` (roda os quatro). Se tocou em `src-tauri`, rode também `cargo clippy -- -D warnings` e `cargo test` lá dentro.
 
+### Manutenção dos artefatos Rust
+
+- Meça periodicamente o tamanho de `src-tauri/target` com `du -sh src-tauri/target`, especialmente após ciclos grandes de desenvolvimento Rust ou antes de gates/release quando houver pressão de disco.
+- Se `src-tauri/target` atingir **30 GiB** ou o volume tiver menos de **15% de espaço livre**, execute `cargo clean` dentro de `src-tauri` antes que os artefatos cresçam sem controle. Essa pasta já ultrapassou 120 GiB neste projeto.
+- Nunca execute `cargo clean` enquanto Jarvis, `cargo`, `rustc` ou `tauri dev` estiver usando o diretório. A limpeza remove somente artefatos recompiláveis, mas o próximo build será completo e mais demorado.
+
 ### Outras regras
 
 - Sem `any`, sem `@ts-ignore`/`@ts-expect-error` sem comentário justificando. TS strict vale para testes também.

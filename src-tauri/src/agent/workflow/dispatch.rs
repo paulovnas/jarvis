@@ -374,6 +374,7 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
             attempts: 1,
             handoff: None,
             error: None,
+            recovery: None,
             options,
         };
         state.jobs.insert(id.clone(), job.clone());
@@ -403,7 +404,7 @@ fn retry(exec: &Execution, id: &str, prompt: &str) -> Result<String, AgentError>
         let job = state.jobs.get_mut(id).ok_or_else(|| invalid("Agente não encontrado."))?;
         if job.parent_id != exec.id || !exec.role.spawns(exec.flow, job.role) || job.status.active() || job.attempts >= 3 { return Err(invalid("Retomada indisponível: confira o responsável, o estado e o limite de duas revisões.")); }
         validate_phase(exec.flow, exec.role, job.role, job.phase)?;
-        job.attempts += 1; job.status = Status::Queued; job.handoff = None; job.error = None; job.updated_at = now(); job.duration_ms = 0; job.run_id = state.run_id.clone();
+        job.attempts += 1; job.status = Status::Queued; job.handoff = None; job.error = None; job.recovery = None; job.updated_at = now(); job.duration_ms = 0; job.run_id = state.run_id.clone();
         job.options = state.options.clone();
         settings::apply(&mut job.options, &state.profiles, exec.flow, job.role);
         Ok(job.clone())
@@ -779,7 +780,24 @@ fn validate_bead(value: &Value, review_ready: &[String]) -> Result<(), AgentErro
 }
 
 pub(super) fn launch(hub: Arc<Hub>, job: Job, resume: Option<String>) -> Result<(), AgentError> {
-    let prepared = storage::worker(&hub, &job, resume);
+    launch_inner(hub, job, resume, false)
+}
+
+pub(super) fn resume(hub: Arc<Hub>, job: Job) -> Result<(), AgentError> {
+    launch_inner(hub, job, None, true)
+}
+
+fn launch_inner(
+    hub: Arc<Hub>,
+    job: Job,
+    prompt: Option<String>,
+    recovery: bool,
+) -> Result<(), AgentError> {
+    let prepared = if recovery {
+        storage::resume_worker(&hub, &job)
+    } else {
+        storage::worker(&hub, &job, prompt)
+    };
     let (session, signal) = match prepared {
         Ok(value) => value,
         Err(error) => {
@@ -936,7 +954,7 @@ fn settle(
             Err(error) if error.code == "cancelled" => Status::Cancelled,
             Err(_) => Status::Failed,
         };
-        job.updated_at = now(); job.duration_ms = duration_ms.unwrap_or_else(|| job.updated_at.saturating_sub(original.updated_at)); job.error = result.as_ref().err().map(|error| error.message.clone());
+        job.updated_at = now(); job.duration_ms = duration_ms.unwrap_or_else(|| job.updated_at.saturating_sub(original.updated_at)); job.error = result.as_ref().err().map(|error| error.message.clone()); job.recovery = None;
         let text = json!({"agent":job.id,"role":job.role,"status":job.status,"beadId":job.bead_id,"handoff":job.handoff,"error":job.error}).to_string();
         state.messages.push(Message { from: job.id.clone(), to: job.parent_id.clone(), text });
         Ok(())

@@ -187,6 +187,19 @@ export function useChat(conversationId: string | null) {
       if (generation.current === request) accept(result, id);
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível continuar a fila.")); }
   };
+  const resumeWorkflow = async (): Promise<boolean> => {
+    if (!conversationId) return false;
+    const id = conversationId; const request = generation.current;
+    try {
+      const result = await invoke<unknown>("resume_interrupted_workflow", { conversationId: id });
+      if (generation.current === request) accept(result, id);
+      toast.success("Fluxo retomado", { description: "O estado salvo será verificado antes de novas alterações." });
+      return true;
+    } catch (cause) {
+      toast.error(libraryError(cause, "Não foi possível retomar o fluxo interrompido."));
+      return false;
+    }
+  };
   const compact = async (): Promise<boolean> => {
     if (!conversationId || !snapshot || snapshot.activeTurnId || snapshot.context?.compacting || compactLocks.current.has(conversationId) || sending.current) return false;
     const id = conversationId; const request = generation.current;
@@ -199,6 +212,6 @@ export function useChat(conversationId: string | null) {
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível compactar o contexto.")); return false; }
     finally { compactLocks.current.delete(id); setCompactingIds(new Set(compactLocks.current)); }
   };
-  return { snapshot, loadHistory, historyLoading: historyPending === conversationId && conversationId !== null, historyError: historyError?.id === conversationId ? historyError.message : null, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, send, stop, approve, answerQuestion, answerAuthoring, removeQueued, deleteQueued, reorderQueued, sendQueuedNow, resumeQueue, compact, retry: () => setAttempt(value => value + 1) };
+  return { snapshot, loadHistory, historyLoading: historyPending === conversationId && conversationId !== null, historyError: historyError?.id === conversationId ? historyError.message : null, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, send, stop, approve, answerQuestion, answerAuthoring, removeQueued, deleteQueued, reorderQueued, sendQueuedNow, resumeQueue, resumeWorkflow, compact, retry: () => setAttempt(value => value + 1) };
 }
 export type ChatController = ReturnType<typeof useChat>;

@@ -21,6 +21,7 @@ import { FileWorkspace } from "@/components/files/FileWorkspace";
 import { useBrowser } from "@/hooks/use-browser";
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { AuthoringApprovalDrawer } from "./AuthoringApprovalDrawer";
+import { WorkflowRecoveryAlert } from "./WorkflowRecoveryAlert";
 
 function ConversationView({ context, modelGroups, modelBindings, modelsReady, chat, workflow, agentModels, drafts, questionDrafts, onLatestVisibility, files }: { context: ConversationDetails; modelGroups: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; drafts: Map<string, ChatDraft>; questionDrafts: Map<string, QuestionDraft>; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController }) {
   const footer = useRef<HTMLElement>(null);
@@ -55,6 +56,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, ch
     && !snapshot.queuedMessages?.length;
   const browserLauncher = <Button type="button" variant="ghost" size="icon" aria-label="Abrir navegador" title="Abrir navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-7 cursor-pointer text-muted-foreground hover:text-onedark-cyan"><Globe className="size-3.5" /></Button>;
   const composer = (terminalLauncher: ReactNode) => <footer ref={footer} aria-label="Área de composição" className="chat-footer mx-auto max-h-[65dvh] w-full max-w-4xl min-w-0 shrink-0 overflow-y-auto overscroll-none px-5 pb-4 pt-3">
+    {workflow?.data?.recovery && <WorkflowRecoveryAlert recovery={workflow.data.recovery} onResume={chat.resumeWorkflow} />}
     {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.id} tool={snapshot.pendingApproval} projectPath={context.project.path} onAnswer={chat.approve} />}
     {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} />}
     {snapshot.pendingAuthoring && <AuthoringApprovalDrawer key={snapshot.pendingAuthoring.toolId} request={snapshot.pendingAuthoring} onAnswer={(approved, note) => chat.answerAuthoring(snapshot.pendingAuthoring!, approved, note)} />}

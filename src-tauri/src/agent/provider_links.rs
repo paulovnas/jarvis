@@ -263,7 +263,11 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
     for row in rows {
         let (id, project, title, project_name) = row.map_err(storage)?;
         // Deleted local histories have no reusable model choice to migrate.
-        if !home.join(".jarvis/sessions").join(&project).exists() {
+        if !crate::data_dir::root(home)
+            .join("sessions")
+            .join(&project)
+            .exists()
+        {
             continue;
         }
         let path = library::session_path(home, &project, &id, false).map_err(storage)?;

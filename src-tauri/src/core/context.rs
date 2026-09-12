@@ -35,7 +35,8 @@ fn recall_args(user: &str) -> Value {
     json!({"queries":[if query.is_empty() { "pending work".to_owned() } else { query }],"sort":"timeline","limit":1})
 }
 pub fn storage(home: &Path, session: &str) -> PathBuf {
-    home.join(".jarvis/context-mode")
+    crate::data_dir::root(home)
+        .join("context-mode")
         .join(format!("{:x}", Sha256::digest(session.as_bytes())))
 }
 pub(super) fn environment(
@@ -596,11 +597,16 @@ mod tests {
     fn conversation_memory_is_isolated_and_host_environment_is_explicit() {
         let home = Path::new("/home/test");
         assert_ne!(storage(home, "a"), storage(home, "b"));
-        assert!(storage(home, "../../escape").starts_with(home.join(".jarvis/context-mode")));
+        assert!(storage(home, "../../escape")
+            .starts_with(crate::data_dir::root(home).join("context-mode")));
         let env = environment(home, &storage(home, "a"), Path::new("/project"), "a");
         assert_eq!(env["CONTEXT_MODE_PROJECT_DIR"], "/project");
         assert_eq!(env["CONTEXT_MODE_PLATFORM"], "claude-code");
         assert_eq!(env["CLAUDE_PROJECT_DIR"], "/project");
-        assert!(env["CLAUDE_CONFIG_DIR"].contains(".jarvis/context-mode"));
+        let expected = crate::data_dir::root(home)
+            .join("context-mode")
+            .to_string_lossy()
+            .into_owned();
+        assert!(env["CLAUDE_CONFIG_DIR"].contains(&expected));
     }
 }

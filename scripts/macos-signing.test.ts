@@ -3,7 +3,15 @@ import path from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { localSigningIdentity, projectIdentifier, selectSigningIdentity, signedDevArguments, signingCommand } from "./macos-signing";
+import {
+  developmentArguments,
+  localSigningIdentity,
+  projectIdentifier,
+  selectSigningIdentity,
+  signedDevArguments,
+  signingCommand,
+  usesDevelopmentProfile,
+} from "./macos-signing";
 
 const firstHash = "A".repeat(40);
 const secondHash = "B".repeat(40);
@@ -44,6 +52,11 @@ describe("macOS signing setup", () => {
     expect(signingCommand(["dev", "--", "--", "--help"])).toBe("dev");
     expect(signingCommand(["build", "--debug"])).toBe("build");
     expect(signingCommand(["bundle", "--bundles", "app"])).toBe("bundle");
+    expect(usesDevelopmentProfile(["dev"])).toBe(true);
+    expect(usesDevelopmentProfile(["build", "--debug"])).toBe(true);
+    expect(usesDevelopmentProfile(["bundle", "--debug"])).toBe(true);
+    expect(usesDevelopmentProfile(["build", "--", "--debug"])).toBe(false);
+    expect(usesDevelopmentProfile(["build"])).toBe(false);
   });
 
   it("preserves Cargo and app arguments and checkout paths containing spaces", () => {
@@ -59,6 +72,28 @@ describe("macOS signing setup", () => {
     expect(() => signedDevArguments(["dev", "--runner", "custom"], "/tmp")).toThrow("remova a opção");
   });
 
+  it("applies the isolated development config before Cargo and app arguments", () => {
+    const original = ["dev", "--no-watch", "--", "--locked", "--", "hello world"];
+    const prepared = developmentArguments(original, "/tmp/Jarvis Project");
+    expect(prepared).toEqual([
+      "dev",
+      "--no-watch",
+      "--config",
+      "/tmp/Jarvis Project/src-tauri/tauri.dev.conf.json",
+      "--",
+      "--locked",
+      "--",
+      "hello world",
+    ]);
+    expect(developmentArguments(["build"], "/tmp/Jarvis Project")).toEqual(["build"]);
+    expect(developmentArguments(["build", "--debug"], "/tmp/Jarvis Project")).toEqual([
+      "build",
+      "--debug",
+      "--config",
+      "/tmp/Jarvis Project/src-tauri/tauri.dev.conf.json",
+    ]);
+  });
+
   it.skipIf(process.platform === "win32")("refuses to launch an executable without signing configuration", () => {
     const result = spawnSync("/bin/sh", [path.resolve("scripts/run-signed-macos.sh"), "/untrusted/executable"], {
       env: { PATH: process.env.PATH }, encoding: "utf8",
@@ -69,6 +104,7 @@ describe("macOS signing setup", () => {
 
   it("uses the application's configured identifier", () => {
     expect(projectIdentifier(process.cwd())).toBe("com.foxtag.jarvis");
+    expect(projectIdentifier(process.cwd(), true)).toBe("com.foxtag.jarvis.dev");
   });
 
   it.skipIf(process.platform !== "darwin" || process.env.JARVIS_TEST_MACOS_BUNDLE !== "1")("runs signed development inside a native notification-capable bundle", () => {
@@ -77,11 +113,11 @@ describe("macOS signing setup", () => {
       const binary = path.join(temporary, "probe");
       execFileSync("/usr/bin/clang", ["-Wall", "-Wextra", "-Werror", "-fobjc-arc", "scripts/fixtures/notification-bundle.m", "-framework", "Foundation", "-framework", "UserNotifications", "-o", binary]);
       const result = spawnSync("/bin/sh", [path.resolve("scripts/run-signed-macos.sh"), binary, "argument with spaces"], {
-        env: { ...process.env, APPLE_SIGNING_IDENTITY: localSigningIdentity().hash, JARVIS_SIGNING_IDENTIFIER: projectIdentifier(process.cwd()), JARVIS_DEV_APP_BUNDLE: "1" }, encoding: "utf8",
+        env: { ...process.env, APPLE_SIGNING_IDENTITY: localSigningIdentity().hash, JARVIS_SIGNING_IDENTIFIER: projectIdentifier(process.cwd(), true), JARVIS_DEV_APP_BUNDLE: "1" }, encoding: "utf8",
       });
       expect(result.stderr, "native runner failed").not.toMatch(/error:/i);
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout.trim().split("\n")).toEqual(["com.foxtag.jarvis", "Jarvis", "argument with spaces"]);
+      expect(result.stdout.trim().split("\n")).toEqual(["com.foxtag.jarvis.dev", "Jarvis", "argument with spaces"]);
     } finally { rmSync(temporary, { recursive: true, force: true }); }
   });
 

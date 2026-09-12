@@ -25,7 +25,13 @@ export const validationItemSchema = z.object({ id: z.string(), title: z.string()
 export const validationSchema = z.object({ id: z.string(), flow: z.enum(["planned", "complete"]), runId: z.string(), epicIds: z.array(z.string()), items: z.array(validationItemSchema), submitted: z.boolean(), stale: z.boolean(), createdAt: z.number() });
 export type ValidationBatch = z.infer<typeof validationSchema>;
 export type ValidationItem = z.infer<typeof validationItemSchema>;
-export const workflowSchema = z.object({ conversationId: z.string(), revision: z.number(), flow: z.enum(["standard", "designer", "planned", "complete", "custom"]), agents: z.array(agentCardSchema), validation: validationSchema.nullable().optional() });
+export const workflowRecoverySchema = z.object({
+  runId: z.string(),
+  affectedAgents: z.number().int().positive(),
+  uncertainActions: z.array(z.object({ agentId: z.string(), agentTitle: z.string(), tool: z.string() })),
+});
+export const workflowSchema = z.object({ conversationId: z.string(), revision: z.number(), flow: z.enum(["standard", "designer", "planned", "complete", "custom"]), agents: z.array(agentCardSchema), validation: validationSchema.nullable().optional(), recovery: workflowRecoverySchema.nullable().optional() });
 export type WorkflowAgent = z.infer<typeof agentCardSchema>;
 export type WorkflowSnapshot = z.infer<typeof workflowSchema>;
+export type WorkflowRecovery = z.infer<typeof workflowRecoverySchema>;
 export const activeAgent = (agent: WorkflowAgent) => ["queued", "running", "waiting"].includes(agent.status);

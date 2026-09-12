@@ -84,17 +84,19 @@ pub(crate) fn size(home: &Path, item: &Candidate) -> Result<u64, LibraryError> {
 }
 
 pub(super) fn related_size(home: &Path, id: &str) -> Result<u64, LibraryError> {
-    let attachment_root = home.join(".jarvis/attachments");
+    let data_root = crate::data_dir::root(home);
+    let attachment_root = data_root.join("attachments");
     if fs::symlink_metadata(&attachment_root).is_ok_and(|meta| meta.is_symlink()) {
         return Err(LibraryError::storage());
     }
     let mut bytes = directory_bytes(&attachment_root.join(id))?;
-    let context_root = home.join(".jarvis/context-mode");
+    let context_root = data_root.join("context-mode");
     if fs::symlink_metadata(&context_root).is_ok_and(|meta| meta.is_symlink()) {
         return Err(LibraryError::storage());
     }
-    let workflow = home.join(".jarvis/workflows").join(id);
-    if fs::symlink_metadata(home.join(".jarvis/workflows")).is_ok_and(|meta| meta.is_symlink()) {
+    let workflow_root = data_root.join("workflows");
+    let workflow = workflow_root.join(id);
+    if fs::symlink_metadata(&workflow_root).is_ok_and(|meta| meta.is_symlink()) {
         return Err(LibraryError::storage());
     }
     bytes += directory_bytes(&workflow)?;

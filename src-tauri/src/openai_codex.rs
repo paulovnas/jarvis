@@ -9,7 +9,10 @@ pub(crate) mod usage;
 
 pub(crate) const OPENAI_CODEX_ALIAS_PREFIX: &str = "openai-codex-";
 #[cfg(target_os = "macos")]
-pub(crate) const KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.openai-codex";
+const KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.openai-codex";
+const DEVELOPMENT_KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.dev.openai-codex";
+const ANTIGRAVITY_KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.antigravity";
+const DEVELOPMENT_ANTIGRAVITY_KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.dev.antigravity";
 pub(crate) const OPENAI_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
 pub(crate) const OPENAI_CODEX_CLIENT_VERSION: &str = "0.153.0";
 const OPENAI_CODEX_PROFILE_CLAIM: &str = "https://api.openai.com/profile";
@@ -34,7 +37,7 @@ pub(crate) enum ProviderAccountType {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum UsageAlertWindow {
     FiveHour,
@@ -420,9 +423,12 @@ impl SecretStore for KeychainSecretStore {
 #[cfg(target_os = "macos")]
 fn secret_service(alias: &str) -> &'static str {
     if alias.starts_with("antigravity-") {
-        "com.foxtag.jarvis.antigravity"
+        crate::data_dir::keychain_service(
+            ANTIGRAVITY_KEYCHAIN_SERVICE,
+            DEVELOPMENT_ANTIGRAVITY_KEYCHAIN_SERVICE,
+        )
     } else {
-        KEYCHAIN_SERVICE
+        crate::data_dir::keychain_service(KEYCHAIN_SERVICE, DEVELOPMENT_KEYCHAIN_SERVICE)
     }
 }
 

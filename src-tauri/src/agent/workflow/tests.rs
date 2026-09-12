@@ -79,6 +79,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
         custom_definition: None,
         custom_agent: None,
         validation: None,
+        root_recovery: None,
         version: 1,
         conversation_id: root.id.clone(),
         run_id: "run".into(),
@@ -142,6 +143,7 @@ pub(super) fn job(hub: &Hub, role: Role, scope: &str) -> Job {
         attempts: 1,
         handoff: None,
         error: None,
+        recovery: None,
         options: hub.manifest.lock().unwrap().options.clone(),
     }
 }
@@ -752,6 +754,181 @@ fn persisted_manifest_marks_unfinished_work_interrupted_without_changing_complet
     assert_eq!(restored.jobs[&pending.id].status, Status::Interrupted);
     assert_eq!(restored.jobs[&finished.id].status, Status::Completed);
     assert_eq!(hub.job(&pending.id).unwrap().status, Status::Running);
+}
+
+#[test]
+fn recovery_reconciles_completed_workers_and_resumes_only_interrupted_turns() {
+    let (_fixture, hub) = hub();
+    let mut interrupted = job(&hub, Role::Builder, "src");
+    interrupted.status = Status::Running;
+    let (interrupted_session, _) = storage::worker(&hub, &interrupted, None).unwrap();
+    interrupted_session
+        .update(true, |data| {
+            let turn = data.turns.last_mut().unwrap();
+            turn.turn.steps.push(Step {
+                tools: vec![ToolCall {
+                    id: "patch-1".into(),
+                    name: "apply_patch".into(),
+                    args: json!({"patchText":"*** Begin Patch"}),
+                    status: "running".into(),
+                    output: String::new(),
+                    duration_ms: 0,
+                }],
+                ..Step::default()
+            });
+            turn.wire.push(json!({
+                "type":"function_call",
+                "call_id":"patch-1",
+                "name":"apply_patch",
+                "arguments":"{}"
+            }));
+        })
+        .unwrap();
+
+    let mut completed = job(&hub, Role::Investigator, ".");
+    completed.status = Status::Running;
+    completed.handoff = Some(Handoff {
+        verdict: Verdict::Completed,
+        summary: "Análise concluída".into(),
+        outcomes: vec!["Estado identificado".into()],
+        evidence: vec![],
+        validation: vec![],
+        limitations: vec![],
+        task_ids: vec![],
+    });
+    let (completed_session, _) = storage::worker(&hub, &completed, None).unwrap();
+    finish(&completed_session, Ok(()));
+    hub.mutate(|state| {
+        state
+            .jobs
+            .insert(interrupted.id.clone(), interrupted.clone());
+        state.jobs.insert(completed.id.clone(), completed.clone());
+        Ok(())
+    })
+    .unwrap();
+
+    let loaded = storage::load(&hub.directory, &hub.root.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.jobs[&interrupted.id].status, Status::Interrupted);
+    assert_eq!(loaded.jobs[&completed.id].status, Status::Interrupted);
+    let (recovered, resumed) = storage::prepare_recovery(
+        &hub.directory,
+        loaded,
+        Flow::Complete,
+        "run",
+        vec!["hub_wait".into()],
+    )
+    .unwrap();
+
+    assert_eq!(recovered.root_status, Status::Running);
+    assert_eq!(
+        recovered.root_recovery.unwrap().uncertain_tools,
+        vec!["hub_wait"]
+    );
+    assert_eq!(recovered.jobs[&interrupted.id].status, Status::Queued);
+    assert_eq!(
+        recovered.jobs[&interrupted.id]
+            .recovery
+            .as_ref()
+            .unwrap()
+            .uncertain_tools,
+        vec!["apply_patch"]
+    );
+    assert_eq!(recovered.jobs[&completed.id].status, Status::Completed);
+    assert!(recovered.jobs[&completed.id].recovery.is_none());
+    assert_eq!(resumed.len(), 1);
+    assert_eq!(resumed[0].id, interrupted.id);
+}
+
+#[test]
+fn recovery_restarts_a_worker_that_only_created_its_journal_header() {
+    let (_fixture, hub) = hub();
+    let mut interrupted = job(&hub, Role::Builder, "src");
+    interrupted.status = Status::Interrupted;
+    interrupted.recovery = Some(RecoveryCheckpoint::new(vec![]));
+    let path = hub.directory.join(format!("{}.jsonl", interrupted.id));
+    std::fs::write(
+        &path,
+        format!(
+            "{}\n",
+            json!({"type":"agent", "version":1,"id":interrupted.id,"conversationId":hub.root.id})
+        ),
+    )
+    .unwrap();
+    hub.mutate(|state| {
+        state
+            .jobs
+            .insert(interrupted.id.clone(), interrupted.clone());
+        Ok(())
+    })
+    .unwrap();
+
+    let (session, signal) = storage::resume_worker(&hub, &interrupted).unwrap();
+    let snapshot = session.snapshot().unwrap();
+
+    assert!(!*signal.borrow());
+    assert!(snapshot.active_turn_id.is_some());
+    assert_eq!(snapshot.turns.len(), 1);
+    assert!(snapshot.turns[0]
+        .user
+        .contains("previous runtime stopped before this worker created a durable turn"));
+}
+
+#[tokio::test]
+async fn recovered_agents_must_complete_a_read_before_any_new_mutation() {
+    let (_fixture, hub) = hub();
+    hub.mutate(|state| {
+        state.root_recovery = Some(RecoveryCheckpoint::new(vec!["write".into()]));
+        Ok(())
+    })
+    .unwrap();
+    let execution = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::Planner,
+        flow: Flow::Complete,
+        scope: vec![".".into()],
+    };
+    let write = ToolCall {
+        id: "write-2".into(),
+        name: "write".into(),
+        args: json!({"path":"src/app.ts","content":"updated"}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    assert!(execution
+        .mutation_guard(&write, false, hub.root_signal.clone())
+        .await
+        .unwrap_err()
+        .message
+        .contains("confira primeiro"));
+
+    let read = ToolCall {
+        id: "read-2".into(),
+        name: "read".into(),
+        args: json!({"path":"src/app.ts"}),
+        status: "completed".into(),
+        output: "current".into(),
+        duration_ms: 1,
+    };
+    execution
+        .observe_recovery_inspection(&read, false, true)
+        .unwrap();
+    assert!(
+        hub.manifest
+            .lock()
+            .unwrap()
+            .root_recovery
+            .as_ref()
+            .unwrap()
+            .inspected
+    );
+    assert!(execution
+        .mutation_guard(&write, false, hub.root_signal.clone())
+        .await
+        .is_ok());
 }
 
 #[tokio::test]

@@ -13,6 +13,8 @@ vi.mock("@tauri-apps/api/core", () => ({
     ? Promise.resolve({ accountAlias: null })
     : command === "list_mcp_servers" ? Promise.resolve([])
     : command === "list_skills" ? Promise.resolve({ includeAgents: false, directory: "/home/.jarvis/skills", skills: [], warnings: [] })
+    : command === "get_skill_cache_status" ? Promise.resolve({ bytes: 0, repositories: 0, residues: 0 })
+    : command === "get_journal_maintenance_status" ? Promise.resolve({ files: 0, conversationJournals: 0, workerJournals: 0, protectedFiles: 0, invalidFiles: 0, candidates: 0, currentBytes: 0, liveBytes: 0, recoverableBytes: 0, obsoleteRecords: 0, maxAmplificationBps: 100 })
     : command === "get_core_status" || command === "check_core_updates" ? Promise.resolve(coreFixture())
     : args === undefined ? invokeMock(command) : invokeMock(command, args),
 }));

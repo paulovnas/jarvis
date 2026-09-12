@@ -16,13 +16,18 @@ use windows::{
 
 // The shell discovers desktop notification senders through a Start Menu shortcut.
 // Its AUMID must be the same as the notifier and installer, including in development.
-pub(super) fn register(executable: &Path) -> Result<(), String> {
+pub(super) fn register(executable: &Path, app_id: &str) -> Result<(), String> {
     let result = (|| -> windows::core::Result<()> {
         let programs = unsafe { SHGetKnownFolderPath(&FOLDERID_Programs, KF_FLAG_DEFAULT, None)? };
         let path = unsafe { programs.to_string() };
         unsafe { CoTaskMemFree(Some(programs.0.cast())) };
-        let shortcut = Path::new(&path?).join("Jarvis").join("Jarvis.lnk");
-        ensure(&shortcut, executable, super::APP_ID)
+        let name = if app_id == super::APP_ID {
+            "Jarvis"
+        } else {
+            "Jarvis Dev"
+        };
+        let shortcut = Path::new(&path?).join(name).join(format!("{name}.lnk"));
+        ensure(&shortcut, executable, app_id)
     })();
     result.map_err(|error| super::native_error("registrar o atalho do Jarvis", error.code().0))
 }

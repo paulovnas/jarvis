@@ -1,6 +1,13 @@
 use super::*;
 
 #[test]
+fn installed_and_development_identifiers_are_supported() {
+    assert!(valid_app_id(APP_ID));
+    assert!(valid_app_id(DEVELOPMENT_APP_ID));
+    assert!(!valid_app_id("com.foxtag.jarvis.preview"));
+}
+
+#[test]
 fn registers_identity_idempotently_without_changing_existing_values_or_preferences() {
     let id = format!("{APP_ID}.test.{}", crate::library::new_id().unwrap());
     let path = format!(r"Software\Classes\AppUserModelId\{id}");
@@ -59,7 +66,7 @@ async fn native_jarvis_notification_reaches_windows_history() {
     {
         let _apartment = Apartment::new().unwrap();
         let executable = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/release/jarvis.exe");
-        shortcut::register(&executable).unwrap();
+        shortcut::register(&executable, APP_ID).unwrap();
     }
     let marker = format!("Teste Windows {}", crate::library::new_id().unwrap());
     super::super::show("Jarvis · Notificação de teste", &marker)

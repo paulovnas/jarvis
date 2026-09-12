@@ -89,7 +89,7 @@ pub fn cancelled_error() -> CoreError {
 }
 impl From<std::io::Error> for CoreError {
     fn from(_: std::io::Error) -> Self {
-        error("Não foi possível acessar ~/.jarvis/core. Confira o espaço e as permissões.")
+        error("Não foi possível acessar os arquivos do Core. Confira o espaço e as permissões.")
     }
 }
 
@@ -104,13 +104,12 @@ pub struct Manifest {
     pub installations: BTreeMap<ComponentId, Installation>,
 }
 pub fn root(home: &Path) -> PathBuf {
-    home.join(".jarvis/core")
+    crate::data_dir::root(home).join("core")
 }
 fn read_manifest(home: &Path) -> Result<Manifest, CoreError> {
     match fs::read(root(home).join("manifest.json")) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| {
-            error("O registro do Core está inválido. Restaure ~/.jarvis/core/manifest.json.")
-        }),
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|_| error("O registro do Core está inválido. Use o Diagnóstico e Reparo.")),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Manifest::default()),
         Err(e) => Err(e.into()),
     }
@@ -157,7 +156,9 @@ impl Installation {
         let path = fs::canonicalize(&plain)?;
         let base = fs::canonicalize(root(home))?;
         if !path.starts_with(&base) {
-            return Err(error("O Core precisa estar dentro de ~/.jarvis."));
+            return Err(error(
+                "O Core precisa estar dentro da pasta privada do Jarvis.",
+            ));
         }
         for file in &self.files {
             if !plain.join(file).is_file()

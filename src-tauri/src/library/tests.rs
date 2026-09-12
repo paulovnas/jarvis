@@ -574,10 +574,10 @@ fn filesystem_failure_rolls_back_index_and_database_failure_removes_new_file() {
     let mut connection = database();
     let project = setup_project(&mut connection, &home);
     let before = snapshot(&connection).unwrap();
-    fs::write(home.0.join(".jarvis"), "occupied").unwrap();
+    fs::write(crate::data_dir::root(&home.0), "occupied").unwrap();
     assert!(insert_conversation(&mut connection, &home.0, &project.id, "Test").is_err());
     assert_eq!(snapshot(&connection).unwrap(), before);
-    fs::remove_file(home.0.join(".jarvis")).unwrap();
+    fs::remove_file(crate::data_dir::root(&home.0)).unwrap();
     connection.execute_batch("CREATE TRIGGER fail_selection BEFORE UPDATE ON navigation_selection BEGIN SELECT RAISE(ABORT, 'injected failure'); END;").unwrap();
     assert_eq!(
         insert_conversation(&mut connection, &home.0, &project.id, "Test")
@@ -587,9 +587,13 @@ fn filesystem_failure_rolls_back_index_and_database_failure_removes_new_file() {
     );
     assert_eq!(snapshot(&connection).unwrap(), before);
     assert_eq!(
-        fs::read_dir(home.0.join(".jarvis/sessions").join(&project.id))
-            .unwrap()
-            .count(),
+        fs::read_dir(
+            crate::data_dir::root(&home.0)
+                .join("sessions")
+                .join(&project.id),
+        )
+        .unwrap()
+        .count(),
         0
     );
 }
@@ -646,7 +650,7 @@ fn session_files_are_private_and_symlinks_are_not_read_or_written() {
         "invalid_session"
     );
     fs::remove_file(&path).unwrap();
-    let sessions = home.0.join(".jarvis/sessions");
+    let sessions = crate::data_dir::root(&home.0).join("sessions");
     let relocated = home.0.join("relocated");
     fs::rename(&sessions, &relocated).unwrap();
     symlink(&relocated, &sessions).unwrap();
