@@ -131,12 +131,19 @@ fn ensure_directory(path: &Path) -> io::Result<()> {
         Err(error) => return Err(error),
     }
 
-    let mut builder = fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
+    let builder = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut builder = fs::DirBuilder::new();
+            builder.mode(0o700);
+            builder
+        }
+        #[cfg(not(unix))]
+        {
+            fs::DirBuilder::new()
+        }
+    };
     match builder.create(path) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}

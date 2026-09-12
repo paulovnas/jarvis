@@ -10,8 +10,11 @@ pub(crate) mod usage;
 pub(crate) const OPENAI_CODEX_ALIAS_PREFIX: &str = "openai-codex-";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.openai-codex";
+#[cfg(target_os = "macos")]
 const DEVELOPMENT_KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.dev.openai-codex";
+#[cfg(target_os = "macos")]
 const ANTIGRAVITY_KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.antigravity";
+#[cfg(target_os = "macos")]
 const DEVELOPMENT_ANTIGRAVITY_KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.dev.antigravity";
 pub(crate) const OPENAI_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
 pub(crate) const OPENAI_CODEX_CLIENT_VERSION: &str = "0.153.0";
