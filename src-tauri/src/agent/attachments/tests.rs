@@ -124,6 +124,7 @@ async fn attachment_references_survive_queue_and_journal_and_never_inline_binary
         custom_workflow_id: None,
         custom_agent_id: None,
         approval_mode: ApprovalMode::Yolo,
+        manual_validation: false,
     };
     session
         .submit_message("first".into(), options.clone(), vec![])

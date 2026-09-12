@@ -104,6 +104,7 @@ impl LibraryError {
     }
 
     fn storage() -> Self {
+        crate::diagnostics::record_storage_failure("conversation_history", None);
         Self::new("session_storage", "Não foi possível acessar o histórico da conversa. Verifique as permissões e tente novamente.")
     }
 
@@ -123,6 +124,7 @@ impl From<PersistenceError> for LibraryError {
 
 impl From<rusqlite::Error> for LibraryError {
     fn from(_: rusqlite::Error) -> Self {
+        crate::diagnostics::record_storage_failure("library_sqlite", None);
         Self::new(
             "database",
             "Não foi possível salvar ou consultar os dados do Jarvis. Tente novamente.",

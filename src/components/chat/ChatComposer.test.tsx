@@ -84,6 +84,21 @@ describe("ChatComposer model reasoning", () => {
     await user.click(within(reasoning).getByRole("menuitem", { name: "Extra alto" }));
     expect(save).toHaveBeenCalledWith("designer", "designer", { account: "pessoal", model: "compact", reasoning: "xhigh" });
   });
+  it("offers final manual validation only for coordinated flows and sends the enabled choice", async () => {
+    const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} />);
+    expect(screen.queryByRole("switch", { name: "Validação manual" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Planejado" }));
+    const validation = screen.getByRole("switch", { name: "Validação manual" });
+    expect(validation).not.toBeChecked();
+    await user.click(validation);
+    await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Implemente o ajuste{Enter}");
+    expect(send).toHaveBeenCalledWith("Implemente o ajuste", expect.objectContaining({
+      workflow: "planned",
+      manualValidation: true,
+    }));
+  });
   it("asks before replacing coordinated-flow agents and pending validations", async () => {
     const user = userEvent.setup();
     await renderComposer(<ChatComposer

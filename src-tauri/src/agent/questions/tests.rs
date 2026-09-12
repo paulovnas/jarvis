@@ -33,6 +33,7 @@ fn prepare(fixture: &Fixture) -> (Arc<Session>, ToolCall, watch::Receiver<bool>)
                 custom_workflow_id: None,
                 custom_agent_id: None,
                 approval_mode: ApprovalMode::Manual,
+                manual_validation: false,
             },
         )
         .unwrap();
@@ -271,6 +272,7 @@ async fn available_in_plan_build_manual_yolo_without_an_approval_prompt() {
                 custom_workflow_id: None,
                 custom_agent_id: None,
                 approval_mode,
+                manual_validation: false,
             };
             assert!(authorize(&session, &tool, &options, false, signal.clone())
                 .await

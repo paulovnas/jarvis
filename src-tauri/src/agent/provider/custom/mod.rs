@@ -1,6 +1,7 @@
 use super::{
-    cancelled, context_overflow, http_failure, overflow_error, protocol_error, AgentError,
-    CodexCredential, Delta, Response, Sse, TurnOptions, Usage, MAX_STREAM,
+    cancelled, context_overflow, http_failure, overflow_error, protocol_error, request_id,
+    upstream_code, with_provider_metadata, AgentError, CodexCredential, Delta, Response, Sse,
+    TurnOptions, Usage, MAX_STREAM,
 };
 use crate::openai_codex::custom::{AuthMode, Config, Model, Protocol};
 use serde_json::{json, Value};
@@ -144,18 +145,17 @@ pub(super) async fn stream(
     let request = session_request(credential, config, body, session_id)?;
     let scope = request::scope(config, options);
     if config.protocol == Protocol::OpenaiResponses {
-        let mut response = super::receive(request, signal, on_delta)
-            .await
-            .map_err(|error| {
-                if error.code == "provider_auth" {
-                    AgentError::new(
-                        "provider_auth",
-                        "O endpoint recusou o acesso. Verifique a chave do provedor Custom.",
-                    )
-                } else {
+        let mut response =
+            super::receive(request, signal, on_delta)
+                .await
+                .map_err(|mut error| {
+                    if error.code == "provider_auth" {
+                        error.message =
+                            "O endpoint recusou o acesso. Verifique a chave do provedor Custom."
+                                .into();
+                    }
                     error
-                }
-            })?;
+                })?;
         for item in &mut response.output {
             if item["type"] == "reasoning" {
                 item["_custom"] = json!({"scope":scope});
@@ -188,19 +188,33 @@ async fn receive(
                 }
                 bytes.extend_from_slice(&chunk);
             }
-            serde_json::from_slice::<Value>(&bytes).is_ok_and(|error| context_overflow(&error))
+            let value = serde_json::from_slice::<Value>(&bytes).ok();
+            (
+                value.as_ref().is_some_and(context_overflow),
+                value.as_ref().and_then(upstream_code),
+            )
         };
-        let overflow = tokio::select! {
+        let (overflow, upstream_code) = tokio::select! {
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-            value = tokio::time::timeout(Duration::from_secs(5), read) => value.unwrap_or(false),
+            value = tokio::time::timeout(Duration::from_secs(5), read) => value.unwrap_or((false, None)),
         };
         if overflow {
-            return Err(overflow_error());
+            return Err(with_provider_metadata(
+                overflow_error(),
+                Some(status),
+                upstream_code.as_deref(),
+                request_id(&response),
+            ));
         }
         if matches!(status, 401 | 403) {
-            return Err(AgentError::new("provider_auth", "O endpoint recusou o acesso. Verifique a chave e o tipo de autenticação do provedor Custom."));
+            return Err(with_provider_metadata(
+                AgentError::new("provider_auth", "O endpoint recusou o acesso. Verifique a chave e o tipo de autenticação do provedor Custom."),
+                Some(status),
+                upstream_code.as_deref(),
+                request_id(&response),
+            ));
         }
-        return Err(http_failure(&response));
+        return Err(http_failure(&response, upstream_code.as_deref()));
     }
     let mut parser = Sse::default();
     let mut completions = completions::Stream::default();
@@ -233,7 +247,7 @@ async fn receive(
         for event in parser.push(&chunk)? {
             if event.get("error").is_some_and(|error| !error.is_null()) || event["type"] == "error"
             {
-                return Err(failed(&event));
+                return Err(super::with_response_request_id(failed(&event), &response));
             }
             if protocol == Protocol::OpenaiCompletions {
                 completions.event(&event, &mut on_delta)?;

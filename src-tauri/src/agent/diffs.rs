@@ -14,7 +14,7 @@ pub(super) struct FileRevision {
     #[serde(default)]
     pub revision: u64,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileSummary {
     pub path: String,

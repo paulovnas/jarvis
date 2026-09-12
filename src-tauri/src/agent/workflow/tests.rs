@@ -69,6 +69,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
         custom_workflow_id: None,
         custom_agent_id: None,
         approval_mode: ApprovalMode::Manual,
+        manual_validation: false,
     };
     let signal = root
         .reserve("Implement the requested outcome".into(), options.clone())
@@ -627,9 +628,14 @@ fn legacy_options_remain_readable_and_flow_is_explicit() {
     let legacy: TurnOptions = serde_json::from_value(json!({"account":"test","model":"test","reasoning":null,"mode":"plan","approvalMode":"manual"})).unwrap();
     assert_eq!(legacy.workflow, None);
     assert_eq!(legacy.mode, Mode::Plan);
+    assert!(!legacy.manual_validation);
+    assert!(!legacy.manual_validation());
     let modern: TurnOptions = serde_json::from_value(json!({"account":"test","model":"test","reasoning":null,"mode":"build","approvalMode":"manual","workflow":"complete"})).unwrap();
     assert_eq!(modern.workflow, Some(Flow::Complete));
     assert_eq!(modern.approval_mode, ApprovalMode::Manual);
+    assert!(!modern.manual_validation());
+    let enabled: TurnOptions = serde_json::from_value(json!({"account":"test","model":"test","reasoning":null,"mode":"build","approvalMode":"yolo","workflow":"complete","manualValidation":true})).unwrap();
+    assert!(enabled.manual_validation());
 }
 
 #[test]

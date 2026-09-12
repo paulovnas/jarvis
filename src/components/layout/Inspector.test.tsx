@@ -59,29 +59,34 @@ describe("Inspector", () => {
     expect(screen.queryByRole("button", { name: /Tarefas/ })).not.toBeInTheDocument();
   });
 
-  it("shows subagents and manual validation only in the selected Planned and Complete workflows", async () => {
-    const chat = emptyChat(); const library = populatedLibrary();
+  it("shows manual validation only when enabled for the selected coordinated workflow", async () => {
+    const chat = emptyChat(); const library = populatedLibrary(); const turn = savedTurn();
+    turn.options.workflow = "planned";
+    turn.options.manualValidation = true;
+    const coordinatedChat = { ...chat, turns: [turn] };
     const workflow = { data: { conversationId: chat.conversationId, revision: 1, flow: "planned" as const, agents: [], validation: null }, error: null, loading: false, retry: vi.fn() };
-    const view = render(<Inspector library={library} chat={chat} workflow={workflow} />);
+    const view = render(<Inspector library={library} chat={coordinatedChat} workflow={workflow} />);
     expect(screen.getByRole("button", { name: "Validação" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Subagentes" })).toBeVisible();
-    view.rerender(<Inspector library={library} chat={chat} workflow={{ ...workflow, data: { ...workflow.data, flow: "complete" } }} />);
+    view.rerender(<Inspector library={library} chat={coordinatedChat} workflow={{ ...workflow, data: { ...workflow.data, flow: "complete" } }} />);
     expect(screen.getByRole("button", { name: "Validação" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Subagentes" })).toBeVisible();
     for (const flow of ["standard", "designer"] as const) {
-      view.rerender(<Inspector library={library} chat={chat} workflow={{ ...workflow, data: { ...workflow.data, flow } }} />);
+      view.rerender(<Inspector library={library} chat={coordinatedChat} workflow={{ ...workflow, data: { ...workflow.data, flow } }} />);
       expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Subagentes" })).not.toBeInTheDocument();
     }
-    view.rerender(<Inspector library={library} chat={chat} workflow={{ ...workflow, data: { ...workflow.data, flow: "custom" } }} />);
-    expect(screen.getByRole("button", { name: "Subagentes" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
-    const turn = savedTurn();
     turn.options.workflow = "custom";
+    turn.options.customWorkflowId = "b".repeat(32);
+    view.rerender(<Inspector library={library} chat={{ ...chat, turns: [{ ...turn }] }} workflow={{ ...workflow, data: { ...workflow.data, flow: "custom" } }} />);
+    expect(screen.getByRole("button", { name: "Subagentes" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Validação" })).toBeVisible();
+    delete turn.options.customWorkflowId;
     turn.options.customAgentId = "a".repeat(32);
     view.rerender(<Inspector library={library} chat={{ ...chat, turns: [turn] }} workflow={{ ...workflow, data: { ...workflow.data, flow: "custom" } }} />);
     expect(screen.getByRole("button", { name: /Tarefas/ })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Subagentes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
     view.rerender(<Inspector library={library} chat={chat} workflow={{ ...workflow, data: { ...workflow.data, conversationId: "other" } }} />);
     expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Subagentes" })).not.toBeInTheDocument();

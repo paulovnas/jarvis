@@ -132,7 +132,64 @@ fn failure(status: u16) -> AgentError {
         _ => AgentError::new("provider_request", &format!("O provedor recusou a solicitação (HTTP {status}). Verifique o endpoint e a configuração do modelo.")),
     }
 }
-fn http_failure(response: &reqwest::Response) -> AgentError {
+fn request_id(response: &reqwest::Response) -> Option<&str> {
+    [
+        "x-request-id",
+        "request-id",
+        "openai-request-id",
+        "x-goog-request-id",
+        "cf-ray",
+    ]
+    .into_iter()
+    .find_map(|name| response.headers().get(name)?.to_str().ok())
+}
+fn upstream_code(value: &Value) -> Option<String> {
+    let error = value
+        .get("error")
+        .or_else(|| {
+            value
+                .get("response")
+                .and_then(|response| response.get("error"))
+        })
+        .unwrap_or(value);
+    error["code"]
+        .as_str()
+        .or_else(|| error["type"].as_str())
+        .map(str::to_owned)
+        .or_else(|| error["code"].as_u64().map(|code| code.to_string()))
+}
+fn with_provider_metadata(
+    mut error: AgentError,
+    status: Option<u16>,
+    upstream_code: Option<&str>,
+    request_id: Option<&str>,
+) -> AgentError {
+    error.provider_metadata = Some(Box::new(crate::diagnostics::ProviderMetadata::new(
+        status,
+        upstream_code,
+        request_id,
+    )));
+    error
+}
+fn with_response_request_id(mut error: AgentError, response: &reqwest::Response) -> AgentError {
+    let Some(value) = request_id(response) else {
+        return error;
+    };
+    let request_id = crate::diagnostics::ProviderMetadata::new(None, None, Some(value)).request_id;
+    if let Some(metadata) = error.provider_metadata.as_mut() {
+        if metadata.request_id.is_none() {
+            metadata.request_id = request_id;
+        }
+    } else {
+        error.provider_metadata = Some(Box::new(crate::diagnostics::ProviderMetadata {
+            http_status: None,
+            upstream_code: None,
+            request_id,
+        }));
+    }
+    error
+}
+fn http_failure(response: &reqwest::Response, upstream_code: Option<&str>) -> AgentError {
     let mut error = failure(response.status().as_u16());
     error.retry_after = response
         .headers()
@@ -141,7 +198,12 @@ fn http_failure(response: &reqwest::Response) -> AgentError {
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|seconds| *seconds <= 86_400)
         .map(Duration::from_secs);
-    error
+    with_provider_metadata(
+        error,
+        Some(response.status().as_u16()),
+        upstream_code,
+        request_id(response),
+    )
 }
 fn context_overflow(value: &Value) -> bool {
     let error = value
@@ -170,8 +232,9 @@ fn overflow_error() -> AgentError {
     )
 }
 fn event_failure(value: &Value) -> AgentError {
+    let upstream_code = upstream_code(value);
     if context_overflow(value) {
-        return overflow_error();
+        return with_provider_metadata(overflow_error(), None, upstream_code.as_deref(), None);
     }
     let error = value
         .get("error")
@@ -185,23 +248,35 @@ fn event_failure(value: &Value) -> AgentError {
         .as_u64()
         .and_then(|code| u16::try_from(code).ok())
     {
-        return failure(status);
+        return with_provider_metadata(
+            failure(status),
+            Some(status),
+            upstream_code.as_deref(),
+            None,
+        );
     }
-    match error["code"]
+    let mapped_status = match error["code"]
         .as_str()
         .or_else(|| error["type"].as_str())
         .unwrap_or_default()
     {
-        "invalid_request" | "invalid_request_error" | "invalid_argument" => failure(400),
-        "authentication_error" | "invalid_api_key" => failure(401),
-        "permission_error" | "permission_denied" => failure(403),
-        "rate_limit_error" | "rate_limit_exceeded" => failure(429),
-        "overloaded_error" | "server_error" | "internal_error" => failure(503),
-        _ => AgentError::new(
-            "provider_failed",
-            "O provedor não conseguiu concluir esta resposta. O progresso foi preservado.",
-        ),
-    }
+        "invalid_request" | "invalid_request_error" | "invalid_argument" => Some(400),
+        "authentication_error" | "invalid_api_key" => Some(401),
+        "permission_error" | "permission_denied" => Some(403),
+        "rate_limit_error" | "rate_limit_exceeded" => Some(429),
+        "overloaded_error" | "server_error" | "internal_error" => Some(503),
+        _ => None,
+    };
+    let failure = mapped_status.map_or_else(
+        || {
+            AgentError::new(
+                "provider_failed",
+                "O provedor não conseguiu concluir esta resposta. O progresso foi preservado.",
+            )
+        },
+        failure,
+    );
+    with_provider_metadata(failure, mapped_status, upstream_code.as_deref(), None)
 }
 fn request_body(
     options: &TurnOptions,
@@ -303,8 +378,15 @@ async fn stream_once(
     signal: watch::Receiver<bool>,
     on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
-    if let Some(config) = &credential.custom {
-        return custom::stream(
+    let provider = if credential.custom.is_some() {
+        "custom"
+    } else if credential.project_id.is_some() {
+        "antigravity"
+    } else {
+        "openai_codex"
+    };
+    let result = if let Some(config) = &credential.custom {
+        custom::stream(
             credential,
             config,
             session_id,
@@ -315,10 +397,9 @@ async fn stream_once(
             signal,
             on_delta,
         )
-        .await;
-    }
-    if credential.project_id.is_some() {
-        return antigravity::stream(
+        .await
+    } else if credential.project_id.is_some() {
+        antigravity::stream(
             credential,
             session_id,
             options,
@@ -328,11 +409,25 @@ async fn stream_once(
             signal,
             on_delta,
         )
-        .await;
+        .await
+    } else {
+        let body = request_body(options, instructions, input, tools, session_id);
+        match authenticated_request(credential, session_id, &body, Duration::from_secs(600)) {
+            Ok(request) => receive(request, signal, on_delta).await,
+            Err(error) => Err(error),
+        }
+    };
+    if let Err(error) = &result {
+        if error.code == "context_overflow" || error.code.starts_with("provider_") {
+            crate::diagnostics::record_provider_failure(
+                provider,
+                session_id,
+                &error.code,
+                error.provider_metadata.as_deref(),
+            );
+        }
     }
-    let body = request_body(options, instructions, input, tools, session_id);
-    let request = authenticated_request(credential, session_id, &body, Duration::from_secs(600))?;
-    receive(request, signal, on_delta).await
+    result
 }
 
 pub(super) fn authenticated_request(
@@ -387,30 +482,42 @@ pub(super) async fn receive(
                     bytes.extend_from_slice(&chunk);
                 }
                 let detail = String::from_utf8_lossy(&bytes).to_lowercase();
+                let value = serde_json::from_slice::<Value>(&bytes).ok();
                 (
                     detail.contains("model")
                         && (detail.contains("model is not supported")
                             || detail
                                 .contains("not supported when using codex with a chatgpt account")),
-                    serde_json::from_slice::<Value>(&bytes)
-                        .is_ok_and(|value| context_overflow(&value)),
+                    value.as_ref().is_some_and(context_overflow),
+                    value.as_ref().and_then(upstream_code),
                 )
             };
-            let (unsupported, overflow) = tokio::select! {
+            let (unsupported, overflow, upstream_code) = tokio::select! {
                 _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-                result = tokio::time::timeout(Duration::from_secs(5), read_error) => result.unwrap_or((false, false)),
+                result = tokio::time::timeout(Duration::from_secs(5), read_error) => result.unwrap_or((false, false, None)),
             };
             if overflow {
-                return Err(overflow_error());
-            }
-            if unsupported {
-                return Err(AgentError::new(
-                    "provider_model_unsupported",
-                    "O modelo não é compatível com esta conta ChatGPT.",
+                return Err(with_provider_metadata(
+                    overflow_error(),
+                    Some(response.status().as_u16()),
+                    upstream_code.as_deref(),
+                    request_id(&response),
                 ));
             }
+            if unsupported {
+                return Err(with_provider_metadata(
+                    AgentError::new(
+                        "provider_model_unsupported",
+                        "O modelo não é compatível com esta conta ChatGPT.",
+                    ),
+                    Some(response.status().as_u16()),
+                    upstream_code.as_deref(),
+                    request_id(&response),
+                ));
+            }
+            return Err(http_failure(&response, upstream_code.as_deref()));
         }
-        return Err(http_failure(&response));
+        return Err(http_failure(&response, None));
     }
     let mut parser = Sse::default();
     let mut output = StreamOutput::default();
@@ -459,7 +566,9 @@ pub(super) async fn receive(
                 Some("response.completed" | "response.done") => {
                     return output.finish(event["response"].clone())
                 }
-                Some("response.failed" | "error") => return Err(event_failure(&event)),
+                Some("response.failed" | "error") => {
+                    return Err(with_response_request_id(event_failure(&event), &response))
+                }
                 Some("response.incomplete") => return Err(protocol_error()),
                 _ => {}
             }
@@ -622,6 +731,7 @@ mod tests {
             custom_workflow_id: None,
             custom_agent_id: None,
             approval_mode: ApprovalMode::Manual,
+            manual_validation: false,
         };
         let auth_options = options.clone();
         let credential = tokio::task::spawn_blocking(move || {
@@ -686,6 +796,7 @@ mod tests {
             custom_workflow_id: None,
             custom_agent_id: None,
             approval_mode: ApprovalMode::Manual,
+            manual_validation: false,
         };
         let body = request_body(
             &options,
@@ -715,12 +826,17 @@ mod tests {
             let server = std::thread::spawn(move || {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut bytes = [0; 4096]; let _ = stream.read(&mut bytes);
-                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nX-Request-ID: req-safe-123\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
             });
             let (_send, signal) = watch::channel(false);
             let error = receive(request, signal, |_| Ok(())).await.err().unwrap();
             assert_eq!(error.code, expected);
             assert!(!error.message.contains("private"));
+            let metadata = error.provider_metadata.as_deref().unwrap();
+            assert_eq!(metadata.request_id.as_deref(), Some("req-safe-123"));
+            if status != 200 {
+                assert_eq!(metadata.http_status, Some(status));
+            }
             server.join().unwrap();
         }
     }

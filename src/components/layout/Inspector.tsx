@@ -45,6 +45,7 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
   const flow = liveFlow ?? latestTurn?.options.workflow ?? (latestTurn?.options.mode === "plan" ? "planned" : "standard");
   const individualAgent = latestTurn?.options.workflow === "custom" && Boolean(latestTurn.options.customAgentId);
   const directFlow = flow === "standard" || flow === "designer" || individualAgent;
+  const manualValidation = Boolean(latestTurn?.options.manualValidation || workflow?.data?.validation && !workflow.data.validation.stale);
   const tools = turns.flatMap(turn => turn.steps.flatMap(step => step.tools));
   const changes = useSessionFiles(selectedChat?.conversationId ?? null);
   const files = changes.files;
@@ -72,7 +73,7 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
           {selectedChat && !individualAgent && workflow?.data?.conversationId === selectedChat.conversationId && ["planned", "complete", "custom"].includes(workflow.data.flow) && <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-onedark-yellow" />}>
             <WorkflowAgents workflow={workflow} conversationId={selectedChat?.conversationId} />
           </ActivitySection>}
-          {selectedChat && workflow?.data?.conversationId === selectedChat.conversationId && ["planned", "complete"].includes(workflow.data.flow) && <ActivitySection title="Validação" icon={<ClipboardCheck aria-hidden="true" className="size-4 text-onedark-green" />} count={workflow.data.validation?.items.length}>
+          {selectedChat && manualValidation && !directFlow && workflow?.data?.conversationId === selectedChat.conversationId && ["planned", "complete", "custom"].includes(workflow.data.flow) && <ActivitySection title="Validação" icon={<ClipboardCheck aria-hidden="true" className="size-4 text-onedark-green" />} count={workflow.data.validation?.items.length}>
             <WorkflowValidation key={`${selectedChat.conversationId}/${workflow.data.validation?.id ?? "empty"}`} conversationId={selectedChat.conversationId} batch={workflow.data.validation} busy={!!selectedChat.activeTurnId || compacting || pending || (selectedChat.queuedMessages?.length ?? 0) > 0 || workflow.data.agents.some(activeAgent)} onRefresh={workflow.retry} />
           </ActivitySection>}
         </div></ScrollArea>

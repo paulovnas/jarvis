@@ -22,7 +22,7 @@ export const agentCardSchema = z.object({
   identity: z.object({ name: z.string(), appearance: workflowAppearanceSchema.nullish() }).nullish(),
 });
 export const validationItemSchema = z.object({ id: z.string(), title: z.string(), steps: z.array(z.string()), expected: z.string(), decision: z.enum(["pending", "approved", "rejected"]), reason: z.string().nullable() });
-export const validationSchema = z.object({ id: z.string(), flow: z.enum(["planned", "complete"]), runId: z.string(), epicIds: z.array(z.string()), items: z.array(validationItemSchema), submitted: z.boolean(), stale: z.boolean(), createdAt: z.number() });
+export const validationSchema = z.object({ id: z.string(), flow: z.enum(["planned", "complete", "custom"]), runId: z.string(), epicIds: z.array(z.string()), items: z.array(validationItemSchema), submitted: z.boolean(), stale: z.boolean(), createdAt: z.number() });
 export type ValidationBatch = z.infer<typeof validationSchema>;
 export type ValidationItem = z.infer<typeof validationItemSchema>;
 export const workflowRecoverySchema = z.object({

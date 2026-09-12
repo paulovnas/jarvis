@@ -112,7 +112,9 @@ fn removes_only_selected_conversation_and_its_recovery_copies() {
         .clone();
     let path = session_path(&home.0, &project.id, &second.id, false).unwrap();
     let backup = path.with_extension(format!("recovery-{}.jsonl", new_id().unwrap()));
+    let sidecar = path.with_extension("jarvis-index.json");
     fs::write(&backup, "private recovery").unwrap();
+    fs::write(&sidecar, "disposable index").unwrap();
     let context_memory = crate::core::context::storage(&home.0, &second.id);
     let retained_memory = crate::core::context::storage(&home.0, &first.id);
     for path in [&context_memory, &retained_memory] {
@@ -134,6 +136,7 @@ fn removes_only_selected_conversation_and_its_recovery_copies() {
     assert!(result.selection.conversation_id.is_none());
     assert!(!path.exists());
     assert!(!backup.exists());
+    assert!(!sidecar.exists());
     assert!(!context_memory.exists());
     assert!(retained_memory.join("private.db").exists());
     assert!(read_conversation(&db, &home.0, &first.id).is_ok());

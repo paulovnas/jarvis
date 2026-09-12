@@ -44,6 +44,7 @@ fn reserve() -> (Fixture, Arc<Session>, watch::Receiver<bool>) {
                 custom_workflow_id: None,
                 custom_agent_id: None,
                 approval_mode: ApprovalMode::Yolo,
+                manual_validation: false,
             },
         )
         .unwrap();

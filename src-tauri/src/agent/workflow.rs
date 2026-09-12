@@ -24,6 +24,16 @@ fn invalid(message: &str) -> AgentError {
     AgentError::new("workflow_error", message)
 }
 
+fn manual_validation_instructions(flow: Flow, enabled: bool) -> &'static str {
+    match (flow, enabled) {
+        (Flow::Planned | Flow::Complete, true) => "\nFinal manual validation is ENABLED for this run. Preserve concrete user-checkable steps in worker handoffs. The root Planner must publish the final checklist with validation_publish and wait for the user's decisions before closing the epic.\n",
+        (Flow::Planned | Flow::Complete, false) => "\nFinal manual validation is DISABLED for this run. Do not call validation_publish or wait for user acceptance. Finish from technical evidence and close eligible Beads; all normal tool permissions, required questions and destructive-action approvals still apply.\n",
+        (Flow::Custom, true) => "\nFinal manual validation is ENABLED for this custom workflow. Include concise user-checkable steps in hub_complete.validation. The runtime will aggregate them and present the final checklist after the graph finishes.\n",
+        (Flow::Custom, false) => "\nFinal manual validation is DISABLED for this custom workflow. Finish the assigned step normally; all normal tool permissions, required questions and destructive-action approvals still apply.\n",
+        _ => "",
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum Status {
@@ -405,6 +415,12 @@ impl Execution {
                     .lock()
                     .is_ok_and(|state| state.custom_agent.is_some()))
     }
+    fn manual_validation(&self) -> bool {
+        self.hub
+            .manifest
+            .lock()
+            .is_ok_and(|state| state.options.manual_validation())
+    }
     fn discovery(&self) -> bool {
         self.id != "main"
             && self
@@ -448,6 +464,10 @@ impl Execution {
         } else {
             contracts::prompt(self.flow, self.role, &self.id)
         };
+        text.push_str(manual_validation_instructions(
+            self.flow,
+            self.manual_validation(),
+        ));
         if self.id != "main" && self.hub.job(&self.id)?.phase == Phase::Discovery {
             text.push_str("\nThis dispatch is DESIGN DISCOVERY: read-only investigation and a design brief/handoff. No product edits, shell, MCP mutations, validation commands or Beads mutations. Return accepted decisions, options and unresolved dependencies to your parent.\n");
         }
@@ -552,7 +572,7 @@ impl Execution {
         } else if !direct || self.designer() {
             definitions.extend(dispatch::definitions(self.flow, self.role));
         }
-        if self.id == "main" && self.role == Role::Planner && !direct {
+        if self.id == "main" && self.role == Role::Planner && !direct && self.manual_validation() {
             definitions.push(validation::definition());
         }
         definitions.retain(|d| d["name"].as_str().is_some_and(|name| self.allowed(name)));
@@ -567,7 +587,10 @@ impl Execution {
                 .is_ok_and(|agent| custom::allowed(&agent, name));
         }
         if name == "validation_publish" {
-            return self.id == "main" && self.role == Role::Planner && !self.direct();
+            return self.id == "main"
+                && self.role == Role::Planner
+                && !self.direct()
+                && self.manual_validation();
         }
         if name == "ask_user" && self.designer() && self.id != "main" {
             return false;
@@ -869,12 +892,22 @@ pub(super) fn compaction_context(
             ));
         }
         if options.custom_workflow_id.is_some() {
-            return Ok(("The native runtime routes this user-defined workflow using its saved execution definition.".into(), vec![]));
+            return Ok((
+                format!(
+                    "The native runtime routes this user-defined workflow using its saved execution definition.{}",
+                    manual_validation_instructions(flow, options.manual_validation())
+                ),
+                vec![],
+            ));
         }
         return Err(invalid("Seleção de agente ou fluxo customizado ausente."));
     }
     let role = flow.root();
     let mut text = contracts::prompt(flow, role, "main");
+    text.push_str(manual_validation_instructions(
+        flow,
+        options.manual_validation(),
+    ));
     if let Some(state) = storage::load(&storage::path(home, id)?, id)? {
         if let Some(batch) = &state.validation {
             text.push_str(&format!(
@@ -909,6 +942,11 @@ pub(super) fn validate_options(
     home: &Path,
     options: &TurnOptions,
 ) -> Result<(), AgentError> {
+    if options.manual_validation && !options.manual_validation() {
+        return Err(invalid(
+            "A validação manual final está disponível somente em fluxos com múltiplos agentes.",
+        ));
+    }
     if options.workflow == Some(Flow::Custom) {
         match (
             options.custom_workflow_id.as_ref(),
@@ -1172,16 +1210,70 @@ async fn finish_hub(
     hub: Arc<Hub>,
     result: Result<(), AgentError>,
 ) -> Result<(), AgentError> {
+    let progress_pause = result
+        .as_ref()
+        .err()
+        .filter(|error| error.code == "progress_paused")
+        .map(|error| error.message.clone());
+    let paused_workers = if progress_pause.is_some() {
+        hub.live
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .iter()
+            .map(|(id, worker)| (id.clone(), worker.clone()))
+            .collect::<Vec<_>>()
+    } else {
+        vec![]
+    };
     hub.shutdown().await;
+    let workers_paused = if let Some(message) = &progress_pause {
+        paused_workers.iter().try_for_each(|(_, worker)| {
+            worker.update(true, |data| {
+                if let Some(turn) = data
+                    .turns
+                    .last_mut()
+                    .filter(|turn| turn.turn.status == TurnStatus::Cancelled)
+                {
+                    turn.turn.status = TurnStatus::Interrupted;
+                    turn.turn.error = Some(AgentError::new("progress_paused", message));
+                }
+            })
+        })
+    } else {
+        Ok(())
+    };
     let status = match &result {
         Ok(()) => Status::Completed,
         Err(error) if error.code == "cancelled" => Status::Cancelled,
+        Err(error) if error.code == "progress_paused" => Status::Interrupted,
         Err(_) => Status::Failed,
     };
-    let saved = hub.mutate(|state| {
-        state.root_status = status;
-        state.root_recovery = None;
-        Ok(())
+    let saved = workers_paused.and_then(|()| {
+        hub.mutate(|state| {
+            state.root_status = status;
+            state.root_recovery = progress_pause
+                .as_ref()
+                .map(|_| RecoveryCheckpoint::new(vec![]));
+            if let Some(message) = &progress_pause {
+                let paused_ids: HashSet<_> =
+                    paused_workers.iter().map(|(id, _)| id.as_str()).collect();
+                state.messages.retain(|event| {
+                    !paused_ids.contains(event.from.as_str())
+                        || serde_json::from_str::<Value>(&event.text)
+                            .ok()
+                            .is_none_or(|value| value["status"] != "cancelled")
+                });
+                for (id, _) in &paused_workers {
+                    if let Some(job) = state.jobs.get_mut(id) {
+                        job.status = Status::Interrupted;
+                        job.error = Some(message.clone());
+                        job.recovery = Some(RecoveryCheckpoint::new(vec![]));
+                        job.updated_at = now();
+                    }
+                }
+            }
+            Ok(())
+        })
     });
     app.state::<AgentState>()
         .workflows
@@ -1189,7 +1281,10 @@ async fn finish_hub(
         .lock()
         .map_err(|_| AgentError::internal())?
         .remove(&session.id);
-    result.and(saved)
+    match saved {
+        Ok(()) => result,
+        Err(error) => Err(error),
+    }
 }
 
 pub(super) fn awaiting_validation(home: &Path, id: &str, turn: &str) -> bool {

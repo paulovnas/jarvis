@@ -189,7 +189,7 @@ pub async fn check_app_update(
         let exit_app = app.clone();
         let updater = app
             .updater_builder()
-            .on_before_exit(move || crate::prepare_exit(&exit_app))
+            .on_before_exit(move || crate::prepare_exit_for_update(&exit_app))
             .endpoints(vec![endpoint])
             .map_err(|_| "Endereço de atualização inválido.")?
             .timeout(Duration::from_secs(20))
@@ -298,6 +298,7 @@ pub async fn install_app_update(
     crate::desktop::flush(&app);
     relaunch::launch_updated(&app, &version).await?;
     // The successor has shown its window. Never exit merely because spawning was attempted.
+    crate::prepare_exit_for_update(&app);
     app.exit(0);
     Ok(())
 }

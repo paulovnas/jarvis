@@ -38,13 +38,13 @@ export function WorkflowValidation({ conversationId, batch, busy, onRefresh }: {
   async function submit() {
     if (!batch || disabled || !allReviewed || lock.current) return;
     lock.current = true; setPending(true);
-    try { await invoke("submit_workflow_validation", { conversationId, batchId: batch.id }); setSent(true); onRefresh(); toast.success("Resultados encaminhados ao Planejador."); }
+    try { await invoke("submit_workflow_validation", { conversationId, batchId: batch.id }); setSent(true); onRefresh(); toast.success(batch.flow === "custom" ? "Validação do fluxo concluída." : "Resultados encaminhados ao Planejador."); }
     catch (cause) { toast.error(libraryError(cause, "Não foi possível encaminhar os resultados.")); }
     finally { lock.current = false; setPending(false); }
   }
   return <div className="space-y-2">
     {batch.stale && <Badge variant="outline" className="text-[10px] text-onedark-yellow">Aguardando nova rodada</Badge>}
-    {submitted && !batch.stale && <Badge variant="outline" className="text-[10px] text-primary">Encaminhado ao Planejador</Badge>}
+    {submitted && !batch.stale && <Badge variant="outline" className="text-[10px] text-primary">{batch.flow === "custom" ? "Validação concluída" : "Encaminhado ao Planejador"}</Badge>}
     <ul className="space-y-1">{items.map(item => <li key={item.id}><Button variant="ghost" onClick={() => { setSelected(item.id); setReason(item.reason ?? ""); setRejectOpen(false); }} aria-label={`${item.title}: ${item.decision === "approved" ? "aprovado" : item.decision === "rejected" ? "reprovado" : "pendente"}`} className={`h-auto w-full cursor-pointer justify-start gap-2 rounded-md border px-2.5 py-2 text-left text-xs whitespace-normal ${item.decision === "approved" ? "border-onedark-green/15 text-onedark-green" : item.decision === "rejected" ? "border-destructive/40 bg-destructive/5 text-destructive" : "border-border text-foreground"}`}>
       {item.decision === "approved" ? <Check aria-hidden="true" className="size-3.5 shrink-0" /> : item.decision === "rejected" ? <CircleX aria-hidden="true" className="size-3.5 shrink-0" /> : <Circle aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />}
       <span className={`min-w-0 flex-1 leading-5 ${item.decision === "approved" ? "line-through decoration-onedark-green/60" : ""}`}>{item.title}</span><ChevronRight aria-hidden="true" className="size-3 shrink-0 opacity-50" />

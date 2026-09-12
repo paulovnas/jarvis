@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::evaluation::{assert_runtime_report, RuntimeReport};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -362,6 +363,88 @@ async fn harness_evaluation_explicit_mcp_connects_only_the_named_server() {
     assert_eq!(
         fs::read_to_string(f.home.join("calls")).unwrap(),
         "lookup\n"
+    );
+    assert_runtime_report(
+        "mcp-explicit-selection",
+        RuntimeReport::new("completed", [("errors", 1), ("steps", 2), ("toolCalls", 2)]),
+    );
+}
+
+#[tokio::test]
+async fn harness_evaluation_invalid_mcp_arguments_are_precise_and_recoverable() {
+    let f = Fixture::new();
+    let server = f.local("docs");
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Use o MCP docs para consultar a documentação.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    let lookup = runtime::wire_name(&server, "lookup");
+
+    let invalid = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":42, "unexpected":true}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(invalid.code, "mcp_invalid_arguments");
+    assert_eq!(
+        invalid.metadata.validation_errors,
+        vec![
+            McpValidationIssue {
+                path: "$.query".into(),
+                keyword: "type".into(),
+                message: "tipo inválido; esperado texto".into(),
+            },
+            McpValidationIssue {
+                path: "$.unexpected".into(),
+                keyword: "additionalProperties".into(),
+                message: "campo não permitido pelo schema".into(),
+            },
+        ]
+    );
+    assert!(!f.home.join("calls").exists());
+
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":"status"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    assert!(output.contains("status"));
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\n"
+    );
+    assert_runtime_report(
+        "mcp-invalid-arguments",
+        RuntimeReport::new(
+            "completed",
+            [
+                ("errors", 1),
+                ("serverDispatches", 1),
+                ("steps", 2),
+                ("toolCalls", 2),
+            ],
+        ),
     );
 }
 
@@ -1014,6 +1097,13 @@ async fn harness_evaluation_mcp_intent_survives_continuations_and_accepts_user_c
     .unwrap();
     assert_eq!(disabled.mode, McpIntentMode::Disabled);
     assert!(disabled.servers.is_empty());
+    assert_runtime_report(
+        "mcp-intent-continuation",
+        RuntimeReport::new(
+            "completed",
+            [("intentChanges", 4), ("intentResolutions", 8), ("steps", 8)],
+        ),
+    );
 }
 
 #[tokio::test]
@@ -1140,6 +1230,20 @@ async fn harness_evaluation_timeout_reconnects_only_the_requested_mcp_without_re
     assert_eq!(
         fs::read_to_string(f.home.join("calls")).unwrap(),
         "lookup\nlookup\n"
+    );
+    assert_runtime_report(
+        "mcp-timeout-reconnect",
+        RuntimeReport::new(
+            "completed",
+            [
+                ("errors", 1),
+                ("logicalTimeMs", 1000),
+                ("recoveries", 1),
+                ("serverDispatches", 2),
+                ("steps", 2),
+                ("toolCalls", 2),
+            ],
+        ),
     );
 }
 

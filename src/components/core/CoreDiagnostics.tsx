@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Skeleton } from "@/components/ui/skeleton";
 import { CoreInstallProgress } from "@/components/core/CoreInstallProgress";
 import { CoreReinstallDialog } from "@/components/core/CoreReinstallDialog";
+import { DiagnosticEvidence } from "@/components/core/DiagnosticEvidence";
 import { Context7Configuration } from "@/components/settings/CoreSettings";
 import { CORE_DETAILS } from "@/core/core-presentation";
 import type { CoreId } from "@/core/core-components";
@@ -46,6 +47,7 @@ export default function CoreDiagnostics({ core, onClose }: { core: CoreControlle
               </CardContent></Card>;
             })}
           </div>
+          <DiagnosticEvidence />
         </div>
         <div className="flex shrink-0 justify-end border-t border-border px-6 py-4"><Button variant={snapshot?.ready ? "default" : "outline"} disabled={busy} onClick={onClose}>{snapshot?.ready ? "Voltar ao Jarvis" : "Fechar"}</Button></div>
       </DialogContent>

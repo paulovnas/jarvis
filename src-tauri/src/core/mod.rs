@@ -89,6 +89,7 @@ pub fn cancelled_error() -> CoreError {
 }
 impl From<std::io::Error> for CoreError {
     fn from(_: std::io::Error) -> Self {
+        crate::diagnostics::record_storage_failure("core_filesystem", None);
         error("Não foi possível acessar os arquivos do Core. Confira o espaço e as permissões.")
     }
 }

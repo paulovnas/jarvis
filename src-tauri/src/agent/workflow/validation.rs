@@ -102,10 +102,103 @@ impl Batch {
                     .map_or(String::new(), |reason| format!("\n  Motivo: {reason}"))
             ));
         }
-        text.push_str(&format!("\nÉpicos: {}.\n", self.epic_ids.join(", ")));
-        text.push_str(if self.items.iter().all(|item| item.decision == Decision::Approved) { "Planejador: confira as evidências técnicas e finalize os épicos aprovados, se não houver outras pendências. Esta aprovação não autoriza commit, push ou publicação." } else { "Planejador: analise as reprovações, encaminhe as correções pelo mesmo fluxo, execute as verificações técnicas e publique uma nova rodada de validação manual." });
+        if !self.epic_ids.is_empty() {
+            text.push_str(&format!("\nÉpicos: {}.\n", self.epic_ids.join(", ")));
+        }
+        text.push_str(match (
+            self.flow,
+            self.items
+                .iter()
+                .all(|item| item.decision == Decision::Approved),
+        ) {
+            (Flow::Custom, true) => "A validação do fluxo customizado foi concluída. Esta aprovação não autoriza commit, push ou publicação.",
+            (Flow::Custom, false) => "Refaça somente os pontos reprovados, execute as verificações técnicas e produza uma nova rodada de validação manual.",
+            (_, true) => "Planejador: confira as evidências técnicas e finalize os épicos aprovados, se não houver outras pendências. Esta aprovação não autoriza commit, push ou publicação.",
+            (_, false) => "Planejador: analise as reprovações, encaminhe as correções pelo mesmo fluxo, execute as verificações técnicas e publique uma nova rodada de validação manual.",
+        });
         text
     }
+}
+
+fn truncate(value: &str, max: usize) -> String {
+    value.trim().chars().take(max).collect()
+}
+
+pub(super) fn publish_custom(hub: &Hub, handoffs: &[Handoff]) -> Result<(), AgentError> {
+    let mut steps = Vec::new();
+    for step in handoffs.iter().flat_map(|handoff| &handoff.validation) {
+        let step = truncate(step, 1000);
+        if !step.is_empty() && !steps.contains(&step) {
+            steps.push(step);
+        }
+        if steps.len() == 12 {
+            break;
+        }
+    }
+    if steps.is_empty() {
+        steps.push(
+            "Confira no projeto se o resultado final corresponde ao pedido enviado ao Jarvis."
+                .into(),
+        );
+    }
+    let mut outcomes = Vec::new();
+    for outcome in handoffs.iter().flat_map(|handoff| &handoff.outcomes) {
+        let outcome = truncate(outcome, 500);
+        if !outcome.is_empty() && !outcomes.contains(&outcome) {
+            outcomes.push(outcome);
+        }
+        if outcomes.len() == 4 {
+            break;
+        }
+    }
+    let fallback = handoffs
+        .last()
+        .map(|handoff| handoff.summary.as_str())
+        .unwrap_or("O fluxo concluiu o resultado solicitado.");
+    let expected_source = if outcomes.is_empty() {
+        fallback.to_owned()
+    } else {
+        outcomes.join("\n")
+    };
+    let expected = truncate(&expected_source, 2000);
+    hub.mutate(|state| {
+        if state.flow != Flow::Custom || !state.options.manual_validation() {
+            return Ok(());
+        }
+        if state
+            .validation
+            .as_ref()
+            .is_some_and(|batch| !batch.submitted && !batch.stale)
+        {
+            return Err(invalid(
+                "Já existe uma rodada aguardando o usuário. Não substitua suas decisões.",
+            ));
+        }
+        let name = state
+            .custom_definition
+            .as_ref()
+            .map(|definition| definition.flow.name.as_str())
+            .unwrap_or("fluxo customizado")
+            .to_owned();
+        state.validation = Some(Batch {
+            id: library::new_id()?,
+            flow: Flow::Custom,
+            run_id: state.run_id.clone(),
+            epic_ids: vec![],
+            items: vec![Item {
+                id: library::new_id()?,
+                title: truncate(&format!("Validar {name}"), 120),
+                steps,
+                expected,
+                decision: Decision::Pending,
+                reason: None,
+            }],
+            submitted: false,
+            stale: false,
+            created_at: now(),
+        });
+        Ok(())
+    })
 }
 
 pub(super) fn definition() -> Value {
@@ -160,7 +253,11 @@ pub(super) async fn publish(
     args: &Value,
     signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
-    if exec.id != "main" || exec.role != Role::Planner || exec.flow.direct() {
+    if exec.id != "main"
+        || exec.role != Role::Planner
+        || exec.flow.direct()
+        || !exec.manual_validation()
+    {
         return Err(invalid(
             "Somente o Planejador deste fluxo pode publicar a validação.",
         ));
@@ -265,7 +362,10 @@ pub(in crate::agent) async fn closure(
         .as_str()
         .ok_or_else(|| invalid("Informe a tarefa."))?;
     let item = bead(exec, id, signal).await?;
-    if item["issue_type"] == "epic" {
+    if item["issue_type"] == "epic"
+        && matches!(exec.flow, Flow::Planned | Flow::Complete)
+        && exec.manual_validation()
+    {
         let state = exec
             .hub
             .manifest
@@ -364,6 +464,7 @@ fn reserve(
     let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
     let (directory, mut state) = load(session, home)?;
     let exists = histories.has_turn(&session.journal, id)?;
+    let flow = state.flow;
     let batch = current(&mut state, id)?;
     // An active Hub may already have advanced state.json. Duplicate delivery must
     // never write an offline snapshot over that live manifest.
@@ -376,9 +477,21 @@ fn reserve(
             "Valide todos os itens da rodada atual antes de encaminhar.",
         ));
     }
+    if flow == Flow::Custom
+        && batch
+            .items
+            .iter()
+            .all(|item| item.decision == Decision::Approved)
+    {
+        batch.submitted = true;
+        state.revision += 1;
+        storage::save(&directory, &state)?;
+        return Ok(None);
+    }
     let content = batch.feedback();
     let mut options = state.options.clone();
     options.workflow = Some(state.flow);
+    options.manual_validation = true;
     let signal = session.reserve_locked(&mut data, content, options, Some(id.into()), vec![])?;
     state.validation.as_mut().unwrap().submitted = true;
     state.revision += 1;
@@ -584,6 +697,23 @@ mod tests {
     #[tokio::test]
     async fn tools_are_exclusive_to_root_planner_and_product_mutation_invalidates_acceptance() {
         let (_fixture, hub) = super::super::tests::hub();
+        let disabled = Execution {
+            hub: hub.clone(),
+            id: "main".into(),
+            role: Role::Planner,
+            flow: Flow::Complete,
+            scope: vec![".".into()],
+        };
+        let mut tools = vec![];
+        disabled.filter(&mut tools);
+        assert!(!tools
+            .iter()
+            .any(|tool| tool["name"] == "validation_publish"));
+        hub.mutate(|state| {
+            state.options.manual_validation = true;
+            Ok(())
+        })
+        .unwrap();
         for (role, flow, id, available) in [
             (Role::Planner, Flow::Planned, "main", true),
             (Role::Planner, Flow::Complete, "main", true),
@@ -641,6 +771,77 @@ mod tests {
                 .validation
                 .unwrap()
                 .stale
+        );
+    }
+
+    #[test]
+    fn custom_workflow_aggregates_handoff_checks_into_one_manual_round() {
+        let (_fixture, hub) = super::super::tests::hub();
+        hub.mutate(|state| {
+            state.flow = Flow::Custom;
+            state.options.workflow = Some(Flow::Custom);
+            state.options.custom_workflow_id = Some("flow".into());
+            state.options.manual_validation = true;
+            Ok(())
+        })
+        .unwrap();
+        let handoffs = vec![Handoff {
+            verdict: Verdict::Completed,
+            summary: "Implementação concluída".into(),
+            outcomes: vec!["O novo comportamento está disponível.".into()],
+            evidence: vec![],
+            validation: vec![
+                "Abra a tela alterada.".into(),
+                "Confirme o novo comportamento.".into(),
+            ],
+            limitations: vec![],
+            task_ids: vec![],
+        }];
+        publish_custom(&hub, &handoffs).unwrap();
+        let state = hub.manifest.lock().unwrap();
+        let batch = state.validation.as_ref().unwrap();
+        assert_eq!(batch.flow, Flow::Custom);
+        assert_eq!(batch.items.len(), 1);
+        assert_eq!(batch.items[0].steps, handoffs[0].validation);
+        assert!(batch.items[0].expected.contains("novo comportamento"));
+    }
+
+    #[test]
+    fn approved_custom_validation_finishes_without_running_the_graph_again() {
+        let (fixture, hub) = super::super::tests::hub();
+        finish(&hub.root, Ok(()));
+        let directory = storage::path(&fixture.root, &hub.root.id).unwrap();
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut state = hub.manifest.lock().unwrap().clone();
+        state.flow = Flow::Custom;
+        state.options.workflow = Some(Flow::Custom);
+        state.options.custom_workflow_id = Some("flow".into());
+        state.options.manual_validation = true;
+        let mut custom_batch = batch();
+        custom_batch.flow = Flow::Custom;
+        custom_batch
+            .decide("test", Decision::Approved, None)
+            .unwrap();
+        let id = custom_batch.id.clone();
+        state.validation = Some(custom_batch);
+        storage::save(&directory, &state).unwrap();
+        let turns = hub.root.data.lock().unwrap().turns.len();
+        assert!(reserve(
+            &hub.root,
+            &fixture.root,
+            &history::HistoryState::default(),
+            &id
+        )
+        .unwrap()
+        .is_none());
+        assert_eq!(hub.root.data.lock().unwrap().turns.len(), turns);
+        assert!(
+            storage::load(&directory, &hub.root.id)
+                .unwrap()
+                .unwrap()
+                .validation
+                .unwrap()
+                .submitted
         );
     }
 }

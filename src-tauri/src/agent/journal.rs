@@ -6,15 +6,18 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, RwLock, Weak},
+    time::SystemTime,
 };
 
 const MAX_RECORD: usize = 10 * 1024 * 1024;
+const FINGERPRINT_WINDOW: u64 = 4 * 1024;
 #[cfg(not(test))]
 const VACUUM_MIN_BYTES: u64 = 16 * 1024 * 1024;
 #[cfg(test)]
@@ -32,6 +35,20 @@ pub(super) struct Record {
     pub r#type: String,
     pub version: u8,
     pub data: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct PrefixFingerprint {
+    pub length: u64,
+    pub digest: [u8; 32],
+}
+
+pub(super) struct ScanSnapshot {
+    pub end: u64,
+    pub file_length: u64,
+    pub modified: Option<SystemTime>,
+    pub fingerprint: PrefixFingerprint,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -388,13 +405,89 @@ pub(super) fn scan(
     start: u64,
     visit: impl FnMut(u64, usize, Record) -> Result<(), AgentError>,
 ) -> Result<u64, AgentError> {
+    Ok(scan_snapshot(path, start, visit)?.end)
+}
+
+pub(super) fn scan_snapshot(
+    path: &Path,
+    start: u64,
+    visit: impl FnMut(u64, usize, Record) -> Result<(), AgentError>,
+) -> Result<ScanSnapshot, AgentError> {
+    scan_snapshot_with_prefix(path, start, None, visit)?.ok_or_else(AgentError::storage)
+}
+
+pub(super) fn scan_snapshot_after_verified_prefix(
+    path: &Path,
+    start: u64,
+    expected: &PrefixFingerprint,
+    visit: impl FnMut(u64, usize, Record) -> Result<(), AgentError>,
+) -> Result<Option<ScanSnapshot>, AgentError> {
+    scan_snapshot_with_prefix(path, start, Some(expected), visit)
+}
+
+fn scan_snapshot_with_prefix(
+    path: &Path,
+    start: u64,
+    expected: Option<&PrefixFingerprint>,
+    visit: impl FnMut(u64, usize, Record) -> Result<(), AgentError>,
+) -> Result<Option<ScanSnapshot>, AgentError> {
     let lock = journal_lock(path)?;
     {
         let _guard = lock.write().map_err(|_| AgentError::internal())?;
         recover_swap(path)?;
     }
     let _guard = lock.read().map_err(|_| AgentError::internal())?;
-    scan_unlocked(path, start, visit)
+    if let Some(expected) = expected {
+        let metadata = fs::symlink_metadata(path).map_err(|_| AgentError::storage())?;
+        if !metadata.is_file()
+            || metadata.is_symlink()
+            || metadata.len() < expected.length
+            || fingerprint_unlocked(path, expected.length)? != *expected
+        {
+            return Ok(None);
+        }
+    }
+    let end = scan_unlocked(path, start, visit)?;
+    let metadata = fs::symlink_metadata(path).map_err(|_| AgentError::storage())?;
+    if !metadata.is_file() || metadata.is_symlink() {
+        return Err(AgentError::storage());
+    }
+    Ok(Some(ScanSnapshot {
+        end,
+        file_length: metadata.len(),
+        modified: metadata.modified().ok(),
+        fingerprint: fingerprint_unlocked(path, end)?,
+    }))
+}
+
+fn fingerprint_unlocked(path: &Path, length: u64) -> Result<PrefixFingerprint, AgentError> {
+    let mut file = open(path, false)?;
+    if file.metadata().map_err(|_| AgentError::storage())?.len() < length {
+        return Err(AgentError::storage());
+    }
+    let window = length.min(FINGERPRINT_WINDOW) as usize;
+    let mut digest = Sha256::new();
+    digest.update(length.to_le_bytes());
+    if window > 0 {
+        let mut head = vec![0; window];
+        file.read_exact(&mut head)
+            .map_err(|_| AgentError::storage())?;
+        digest.update(b"head");
+        digest.update(&head);
+
+        let tail_start = length.saturating_sub(window as u64);
+        file.seek(SeekFrom::Start(tail_start))
+            .map_err(|_| AgentError::storage())?;
+        let mut tail = vec![0; window];
+        file.read_exact(&mut tail)
+            .map_err(|_| AgentError::storage())?;
+        digest.update(b"tail");
+        digest.update(&tail);
+    }
+    Ok(PrefixFingerprint {
+        length,
+        digest: digest.finalize().into(),
+    })
 }
 
 fn scan_unlocked(
@@ -1054,6 +1147,7 @@ mod tests {
                     custom_workflow_id: None,
                     custom_agent_id: None,
                     approval_mode: ApprovalMode::Manual,
+                    manual_validation: false,
                 },
                 status: TurnStatus::Running,
                 tasks: vec![],
@@ -1063,6 +1157,40 @@ mod tests {
             wire: vec![json!({"role":"user", "content":"Read"})],
         }
     }
+
+    #[test]
+    fn verified_prefix_is_rechecked_before_the_suffix_is_scanned() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("verified-prefix.jsonl");
+        fs::write(&path, "{\"type\":\"session\"}\n").unwrap();
+        let mut item = turn();
+        item.turn.status = TurnStatus::Completed;
+        append(&path, &item).unwrap();
+        let snapshot = scan_snapshot(&path, 0, |_, _, _| Ok(())).unwrap();
+        let mut replacement = fs::read(&path).unwrap();
+        let changed = replacement
+            .iter()
+            .position(|byte| *byte == b'R')
+            .expect("fixture contains a replaceable byte");
+        replacement[changed] = b'W';
+        fs::write(&path, replacement).unwrap();
+
+        let mut visited = false;
+        let result = scan_snapshot_after_verified_prefix(
+            &path,
+            snapshot.end,
+            &snapshot.fingerprint,
+            |_, _, _| {
+                visited = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(result.is_none());
+        assert!(!visited);
+    }
+
     #[test]
     fn restart_preserves_messages_and_repairs_missing_tool_result_without_execution() {
         let fixture = Fixture::new();
@@ -1136,7 +1264,7 @@ mod tests {
     }
 
     #[test]
-    fn mcp_intent_survives_a_compaction_checkpoint_and_journal_reload() {
+    fn harness_evaluation_mcp_intent_survives_compaction_and_journal_reload() {
         let fixture = Fixture::new();
         let path = fixture.root.join("mcp-intent.jsonl");
         fs::write(&path, "{\"type\":\"session\"}\n").unwrap();
@@ -1181,6 +1309,18 @@ mod tests {
         let (turns, extras) = load_all(&path).unwrap();
         assert_eq!(turns[0].mcp_intent, Some(intent));
         assert_eq!(extras.compactions.len(), 1);
+        crate::agent::evaluation::assert_runtime_report(
+            "mcp-intent-journal-compaction",
+            crate::agent::evaluation::RuntimeReport::new(
+                "resumed",
+                [
+                    ("compactions", extras.compactions.len() as u64),
+                    ("persistedEvents", 2),
+                    ("recoveries", 1),
+                    ("servers", 2),
+                ],
+            ),
+        );
     }
 
     #[test]

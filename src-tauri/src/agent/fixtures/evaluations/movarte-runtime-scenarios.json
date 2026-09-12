@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "id": "movarte-runtime-regressions",
+  "description": "Deterministic harness scenarios distilled from provider, MCP, compaction, recovery and looping incidents observed in the Movarte conversations.",
+  "scenarios": [
+    {
+      "id": "mcp-explicit-selection",
+      "incident": "An explicit Gemini Notebook request must reject an unrelated MCP and continue through the requested server.",
+      "expected": {
+        "state": "completed",
+        "metrics": { "errors": 1, "steps": 2, "toolCalls": 2 }
+      }
+    },
+    {
+      "id": "mcp-invalid-arguments",
+      "incident": "Invalid MCP arguments must identify every schema path without dispatching the malformed call, then permit a corrected call.",
+      "expected": {
+        "state": "completed",
+        "metrics": { "errors": 1, "serverDispatches": 1, "steps": 2, "toolCalls": 2 }
+      }
+    },
+    {
+      "id": "mcp-timeout-reconnect",
+      "incident": "A read-only MCP timeout reconnects only the selected server and never replays the uncertain call.",
+      "expected": {
+        "state": "completed",
+        "metrics": { "errors": 1, "logicalTimeMs": 1000, "recoveries": 1, "serverDispatches": 2, "steps": 2, "toolCalls": 2 }
+      }
+    },
+    {
+      "id": "mcp-intent-continuation",
+      "incident": "Explicit MCP intent survives neutral continuation text and changes only when the user gives a new MCP instruction.",
+      "expected": {
+        "state": "completed",
+        "metrics": { "intentChanges": 4, "intentResolutions": 8, "steps": 8 }
+      }
+    },
+    {
+      "id": "mcp-intent-journal-compaction",
+      "incident": "Selected and excluded MCP servers survive a compaction checkpoint and a journal reload.",
+      "expected": {
+        "state": "resumed",
+        "metrics": { "compactions": 1, "persistedEvents": 2, "recoveries": 1, "servers": 2 }
+      }
+    },
+    {
+      "id": "provider-transient-recovery",
+      "incident": "Gateway failure and disconnect sequences retry the identical inference request across every custom provider protocol.",
+      "expected": {
+        "state": "completed",
+        "metrics": { "errors": 6, "inputTokens": 30, "outputTokens": 12, "providerRequests": 9, "recoveries": 3, "retries": 6, "steps": 9 }
+      }
+    },
+    {
+      "id": "provider-late-request-error",
+      "incident": "A provider_request returned after a durable tool result must not retry or discard that result.",
+      "expected": {
+        "state": "error",
+        "metrics": { "errors": 1, "persistedToolResults": 1, "providerRequests": 1, "retries": 0, "steps": 1, "toolCalls": 1 }
+      }
+    },
+    {
+      "id": "compaction-reload",
+      "incident": "Automatic compaction preserves the current request and replay context when the journal is reloaded.",
+      "expected": {
+        "state": "completed",
+        "metrics": { "compactions": 1, "inputTokens": 30000, "outputTokens": 1000, "persistedEvents": 1, "recoveries": 1, "toolCalls": 1 }
+      }
+    },
+    {
+      "id": "direct-turn-resume",
+      "incident": "A direct turn resumes only after every completed tool result is durable and keeps newly queued user guidance.",
+      "expected": {
+        "state": "resumed",
+        "metrics": { "persistedToolResults": 1, "queuedMessages": 1, "recoveries": 1, "toolCalls": 1 }
+      }
+    },
+    {
+      "id": "workflow-turn-resume",
+      "incident": "A coordinated flow pairs an uncertain mutation with one durable error result before it resumes.",
+      "expected": {
+        "state": "resumed",
+        "metrics": { "errors": 1, "persistedToolResults": 1, "recoveries": 1, "toolCalls": 1, "uncertainCalls": 1 }
+      }
+    },
+    {
+      "id": "stagnation-guard",
+      "incident": "Five identical results steer the model once and a sixth identical attempt pauses before executing the tool again.",
+      "expected": {
+        "state": "paused",
+        "metrics": { "blockedCalls": 1, "executedCalls": 5, "steps": 6, "steers": 1, "toolCalls": 6 }
+      }
+    },
+    {
+      "id": "progress-long-run",
+      "incident": "A long execution with recurring confirmed mutations continues without a fixed total step limit.",
+      "expected": {
+        "state": "completed",
+        "metrics": { "checkpoints": 0, "evidenceEvents": 315, "progressEvents": 5, "toolCalls": 320 }
+      }
+    },
+    {
+      "id": "progress-first-checkpoint",
+      "incident": "The first period without material progress requires a structured objective and evidence checkpoint before another tool.",
+      "expected": {
+        "state": "checkpointed",
+        "metrics": { "checkpoints": 1, "evidenceEvents": 64, "steps": 65, "toolCalls": 65 }
+      }
+    },
+    {
+      "id": "progress-second-stagnation",
+      "incident": "A second stagnation after an accepted checkpoint pauses durably without executing or replaying another action.",
+      "expected": {
+        "state": "paused",
+        "metrics": { "checkpoints": 1, "evidenceEvents": 128, "pausedCalls": 0, "steps": 129, "toolCalls": 129 }
+      }
+    },
+    {
+      "id": "progress-pause-resume",
+      "incident": "Opening a paused direct chat is passive; a new user message explicitly resumes the durable turn and preserves its queue.",
+      "expected": {
+        "state": "resumed",
+        "metrics": { "passiveResumes": 0, "pauses": 1, "queuedMessages": 1, "recoveries": 1 }
+      }
+    }
+  ]
+}

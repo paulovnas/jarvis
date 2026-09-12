@@ -303,6 +303,13 @@ impl AgentState {
             }
         }
         drop(sessions);
+        protected.extend(
+            self.loading_sessions
+                .lock()
+                .map_err(|_| AgentError::internal())?
+                .iter()
+                .cloned(),
+        );
         protected.extend(self.workflows.active_ids()?);
         Ok(protected)
     }
@@ -416,6 +423,7 @@ mod tests {
             custom_workflow_id: None,
             custom_agent_id: None,
             approval_mode: ApprovalMode::Yolo,
+            manual_validation: false,
         }
     }
 
@@ -553,6 +561,33 @@ mod tests {
             .submit("Agora pode iniciar".into(), options())
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn loading_conversation_is_protected_and_failed_load_registration_is_released() {
+        let agent = AgentState::default();
+        let loading = agent.begin_session_load("conversation-loading").unwrap();
+        assert!(agent
+            .protected_journals()
+            .unwrap()
+            .contains("conversation-loading"));
+        drop(loading);
+        assert!(!agent
+            .protected_journals()
+            .unwrap()
+            .contains("conversation-loading"));
+
+        let maintenance = agent.begin_journal_maintenance().unwrap();
+        let error = agent
+            .begin_session_load("conversation-blocked")
+            .unwrap_err();
+        assert_eq!(error.code, "journal_maintenance");
+        assert!(!agent
+            .loading_sessions
+            .lock()
+            .unwrap()
+            .contains("conversation-blocked"));
+        drop(maintenance);
     }
 
     #[test]

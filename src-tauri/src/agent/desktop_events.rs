@@ -21,6 +21,7 @@ fn attention_key(snapshot: &ChatSnapshot) -> Option<String> {
 
 fn terminal_notice(
     status: TurnStatus,
+    error_code: Option<&str>,
     active: bool,
     queued: bool,
     validation: bool,
@@ -30,6 +31,7 @@ fn terminal_notice(
     }
     match status {
         TurnStatus::Error => Some(Notice::Failed),
+        TurnStatus::Interrupted if error_code == Some("progress_paused") => Some(Notice::Paused),
         TurnStatus::Completed if !queued => Some(if validation {
             Notice::Validation
         } else {
@@ -40,20 +42,24 @@ fn terminal_notice(
 }
 
 pub(super) fn finished(app: &tauri::AppHandle, session: &Session, home: &std::path::Path) {
-    let Some((id, status, active, queued)) = session.data.lock().ok().and_then(|data| {
-        data.turns.last().map(|last| {
-            (
-                last.turn.id.clone(),
-                last.turn.status.clone(),
-                data.active.is_some(),
-                !data.extras.queue.is_empty(),
-            )
+    let Some((id, status, error_code, active, queued)) =
+        session.data.lock().ok().and_then(|data| {
+            data.turns.last().map(|last| {
+                (
+                    last.turn.id.clone(),
+                    last.turn.status.clone(),
+                    last.turn.error.as_ref().map(|error| error.code.clone()),
+                    data.active.is_some(),
+                    !data.extras.queue.is_empty(),
+                )
+            })
         })
-    }) else {
+    else {
         return;
     };
     let validation = workflow::awaiting_validation(home, &session.id, &id);
-    if let Some(notice) = terminal_notice(status, active, queued, validation) {
+    if let Some(notice) = terminal_notice(status, error_code.as_deref(), active, queued, validation)
+    {
         system::notify(app, &session.id, &id, notice);
     }
 }
@@ -131,6 +137,7 @@ mod tests {
             custom_workflow_id: None,
             custom_agent_id: None,
             approval_mode: ApprovalMode::Yolo,
+            manual_validation: false,
         };
         a.submit_message("hello".into(), options, vec![]).unwrap();
         b.data.lock().unwrap().manual_compaction = true;
@@ -155,6 +162,7 @@ mod tests {
                 custom_workflow_id: None,
                 custom_agent_id: None,
                 approval_mode: ApprovalMode::Yolo,
+                manual_validation: false,
             };
             let _signal = session.reserve("Continue".into(), options).unwrap();
             session
@@ -189,7 +197,7 @@ mod tests {
                 assert!(snapshot.active_turn_id.is_some());
                 assert!(snapshot.turns[0].error.is_none());
                 assert_eq!(
-                    terminal_notice(snapshot.turns[0].status.clone(), true, false, false),
+                    terminal_notice(snapshot.turns[0].status.clone(), None, true, false, false),
                     None
                 );
             }
@@ -208,7 +216,7 @@ mod tests {
             assert!(snapshot.active_turn_id.is_none());
             assert!(snapshot.turns[0].steps[0].retry.is_none());
             assert_eq!(
-                terminal_notice(snapshot.turns[0].status.clone(), false, false, false),
+                terminal_notice(snapshot.turns[0].status.clone(), None, false, false, false),
                 Some(if succeeds {
                     Notice::Completed
                 } else {
@@ -223,31 +231,41 @@ mod tests {
     #[test]
     fn only_idle_root_completion_or_failure_notifies() {
         assert_eq!(
-            terminal_notice(TurnStatus::Completed, false, false, false),
+            terminal_notice(TurnStatus::Completed, None, false, false, false),
             Some(Notice::Completed)
         );
         assert_eq!(
-            terminal_notice(TurnStatus::Completed, false, false, true),
+            terminal_notice(TurnStatus::Completed, None, false, false, true),
             Some(Notice::Validation)
         );
         assert_eq!(
-            terminal_notice(TurnStatus::Completed, false, true, false),
+            terminal_notice(TurnStatus::Completed, None, false, true, false),
             None
         );
         assert_eq!(
-            terminal_notice(TurnStatus::Completed, true, false, false),
+            terminal_notice(TurnStatus::Completed, None, true, false, false),
             None
         );
         assert_eq!(
-            terminal_notice(TurnStatus::Error, false, true, false),
+            terminal_notice(TurnStatus::Error, None, false, true, false),
             Some(Notice::Failed)
+        );
+        assert_eq!(
+            terminal_notice(
+                TurnStatus::Interrupted,
+                Some("progress_paused"),
+                false,
+                false,
+                false,
+            ),
+            Some(Notice::Paused)
         );
         for status in [
             TurnStatus::Running,
             TurnStatus::Cancelled,
             TurnStatus::Interrupted,
         ] {
-            assert_eq!(terminal_notice(status, false, false, false), None);
+            assert_eq!(terminal_notice(status, None, false, false, false), None);
         }
     }
 }

@@ -16,8 +16,11 @@ it("sends the chosen custom graph identity and uses a composer model without mut
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_workflow_catalog"));
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
   await user.click(await screen.findByRole("menuitem", { name: "Meu fluxo" }));
+  const validation = screen.getByRole("switch", { name: "Validação manual" });
+  expect(validation).not.toBeChecked();
+  await user.click(validation);
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Examine o projeto{Enter}");
-  expect(send).toHaveBeenCalledWith("Examine o projeto", { account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customWorkflowId: customFlow.id, approvalMode: "yolo" });
+  expect(send).toHaveBeenCalledWith("Examine o projeto", { account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customWorkflowId: customFlow.id, approvalMode: "yolo", manualValidation: true });
   expect(save).not.toHaveBeenCalled();
 });
 
@@ -42,6 +45,7 @@ it("runs a Solo agent as the main chat agent with its fixed model", async () => 
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_workflow_catalog"));
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
   await user.click(await screen.findByRole("menuitem", { name: solo.name }));
+  expect(screen.queryByRole("switch", { name: "Validação manual" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toBeDisabled();
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Analise este chamado{Enter}");
   expect(send).toHaveBeenCalledWith("Analise este chamado", { account: "local", model: "specialist", reasoning: null, mode: "build", workflow: "custom", customAgentId: solo.id, approvalMode: "yolo" });

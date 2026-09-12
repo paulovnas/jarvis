@@ -70,7 +70,7 @@ export function Home() {
     const options = chat.snapshot?.latestOptions ?? turns[turns.length - 1]?.options;
     if (!options) return false;
     return chat.send(
-      "Prepare a publicação das alterações atuais deste projeto. Siga as opções configuradas em Detalhes → Opções, revise o diff e as validações, e apresente a proposta completa no painel para minha aprovação. Não execute commit, push, pull request ou merge por outro caminho.",
+      "Prepare a publicação das alterações atuais deste projeto. A pasta do projeto pode agrupar um ou mais repositórios Git independentes: descubra cada raiz Git que contenha alterações e trate separadamente seu status, diff, validações, branch, commit, push e eventual pull request ou merge. Siga as opções configuradas em Detalhes → Opções e reúna todos os repositórios afetados em uma única proposta completa no painel para minha aprovação. Use jarvis_propose_publication para propor e, depois da aprovação, executar as ações de cada repositório.",
       { account: options.account, model: options.model, reasoning: options.reasoning, mode: "build", workflow: "standard", approvalMode: "yolo" },
     );
   }, [chat]);

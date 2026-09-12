@@ -31,6 +31,7 @@ export const turnOptionsSchema = z.object({
   customWorkflowId: z.string().optional(),
   customAgentId: z.string().optional(),
   approvalMode: z.enum(["manual", "yolo"]),
+  manualValidation: z.boolean().optional(),
 });
 export const agentToolSchema = z.object({
   id: z.string(), name: z.string(), args: z.record(z.string(), z.unknown()),

@@ -7,7 +7,7 @@ pub(crate) mod dashboard;
 mod desktop_events;
 pub(crate) mod diffs;
 #[cfg(test)]
-mod evaluation;
+pub(crate) mod evaluation;
 pub(crate) mod history;
 pub(crate) mod image_generation;
 mod instructions;
@@ -18,6 +18,7 @@ pub(crate) mod maintenance;
 mod model_instructions;
 mod patch;
 pub(crate) mod processes;
+mod progress;
 mod provider;
 pub(crate) mod provider_links;
 pub(crate) mod publication;
@@ -38,11 +39,11 @@ use crate::{library, openai_codex::OpenAiCodexState, persistence::AppState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, Weak,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -57,6 +58,8 @@ pub struct AgentError {
     retry_after: Option<Duration>,
     #[serde(skip)]
     tool_result: Option<String>,
+    #[serde(skip)]
+    provider_metadata: Option<Box<crate::diagnostics::ProviderMetadata>>,
 }
 impl AgentError {
     fn new(code: &str, message: &str) -> Self {
@@ -65,9 +68,11 @@ impl AgentError {
             message: message.into(),
             retry_after: None,
             tool_result: None,
+            provider_metadata: None,
         }
     }
     fn storage() -> Self {
+        crate::diagnostics::record_storage_failure("session_storage", None);
         Self::new("session_storage", "Não foi possível salvar o histórico. A execução foi interrompida para preservar a conversa.")
     }
     fn cancelled() -> Self {
@@ -97,6 +102,7 @@ impl From<crate::openai_codex::ProviderError> for AgentError {
             message: value.message,
             retry_after: None,
             tool_result: None,
+            provider_metadata: None,
         }
     }
 }
@@ -108,6 +114,7 @@ impl From<crate::mcp::McpError> for AgentError {
             message: value.message,
             retry_after: None,
             tool_result: Some(tool_result),
+            provider_metadata: None,
         }
     }
 }
@@ -129,6 +136,9 @@ pub enum ApprovalMode {
     Manual,
     Yolo,
 }
+fn is_false(value: &bool) -> bool {
+    !*value
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TurnOptions {
@@ -143,6 +153,8 @@ pub struct TurnOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     custom_agent_id: Option<String>,
     approval_mode: ApprovalMode,
+    #[serde(default, skip_serializing_if = "is_false")]
+    manual_validation: bool,
 }
 
 impl TurnOptions {
@@ -153,6 +165,16 @@ impl TurnOptions {
             Some(workflow::Flow::Planned | workflow::Flow::Complete) => false,
             None => self.mode == Mode::Build,
         }
+    }
+    fn manual_validation(&self) -> bool {
+        self.manual_validation
+            && match self.workflow {
+                Some(workflow::Flow::Planned | workflow::Flow::Complete) => true,
+                Some(workflow::Flow::Custom) => {
+                    self.custom_workflow_id.is_some() && self.custom_agent_id.is_none()
+                }
+                _ => false,
+            }
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -205,6 +227,14 @@ struct Step {
     loop_steers: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
     loop_avoided_calls: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    progress_events: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    evidence_events: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    progress_checkpoints: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    progress_pauses: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     retry: Option<provider::retry::Status>,
     #[serde(default)]
@@ -314,6 +344,7 @@ impl Session {
         }
         journal::append_event(&self.journal, kind, value).inspect_err(|_| {
             data.storage_failed = true;
+            crate::diagnostics::record_storage_failure("session_journal", Some(&self.id));
         })
     }
     fn persist_turn(
@@ -336,6 +367,7 @@ impl Session {
         );
         if result.is_err() {
             data.storage_failed = true;
+            crate::diagnostics::record_storage_failure("session_journal", Some(&self.id));
             return Err(AgentError::storage());
         }
         data.durable_turn = Some(candidate.clone());
@@ -389,6 +421,7 @@ impl Session {
         };
         if journal::append(&self.journal, &turn).is_err() {
             data.storage_failed = true;
+            crate::diagnostics::record_storage_failure("session_journal", Some(&self.id));
             return Err(AgentError::storage());
         }
         data.durable_turn = Some(turn.clone());
@@ -405,8 +438,10 @@ impl Session {
         data.revision = next_revision();
         Ok(signal)
     }
-    fn resume_recovered_turn(&self) -> Result<Option<watch::Receiver<bool>>, AgentError> {
-        const NOTICE: &str = "The Jarvis runtime restarted during this direct execution. All persisted tool results are valid and already applied. Continue from those results without repeating prior tool calls. Inspect the current project state before any new mutation.";
+    fn resume_recovered_turn(
+        &self,
+        trigger: RecoveryTrigger,
+    ) -> Result<Option<watch::Receiver<bool>>, AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
         if self.journal_maintenance.load(Ordering::Acquire) {
             return Err(journal_maintenance::maintenance_error());
@@ -425,15 +460,32 @@ impl Session {
         if !resumable_direct_turn(current) {
             return Ok(None);
         }
+        let progress_pause = current
+            .turn
+            .error
+            .as_ref()
+            .is_some_and(|error| error.code == "progress_paused");
+        if progress_pause && trigger == RecoveryTrigger::PassiveOpen {
+            return Ok(None);
+        }
         if current.turn.status == TurnStatus::Interrupted {
             current.turn.status = TurnStatus::Running;
             current.turn.error = None;
         }
+        let notice = if progress_pause {
+            "The user explicitly resumed a direct execution paused by the Jarvis progress watchdog. All persisted tool results remain valid. Re-read the durable objective/evidence checkpoint and current project state, incorporate the newest queued user guidance, and choose a bounded strategy without repeating prior calls."
+        } else {
+            "The Jarvis runtime restarted during this direct execution. All persisted tool results are valid and already applied. Continue from those results without repeating prior tool calls. Inspect the current project state before any new mutation."
+        };
         let recorded = current.wire.iter().any(|item| {
-            item["role"].as_str() == Some("user") && item["content"].as_str() == Some(NOTICE)
+            item["role"].as_str() == Some("user") && item["content"].as_str() == Some(notice)
         });
         if !recorded {
-            current.wire.push(json!({"role":"user","content":NOTICE}));
+            current.wire.push(json!({
+                "role":"user",
+                "_jarvis_runtime":true,
+                "content":notice,
+            }));
             if journal::append(&self.journal, current).is_err() {
                 data.storage_failed = true;
                 return Err(AgentError::storage());
@@ -672,11 +724,28 @@ impl Session {
         Ok(input)
     }
 }
+
+#[derive(Debug)]
+struct SessionLoadLease {
+    id: String,
+    loading: Arc<Mutex<HashSet<String>>>,
+}
+
+impl Drop for SessionLoadLease {
+    fn drop(&mut self) {
+        if let Ok(mut loading) = self.loading.lock() {
+            loading.remove(&self.id);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AgentState {
     pub(crate) processes: processes::ProcessState,
     pub(crate) terminals: terminals::TerminalState,
     sessions: Arc<Mutex<HashMap<String, Arc<Session>>>>,
+    session_gates: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
+    loading_sessions: Arc<Mutex<HashSet<String>>>,
     histories: history::HistoryState,
     workflows: workflow::Registry,
     journal_maintenance: Arc<AtomicBool>,
@@ -688,6 +757,8 @@ impl Default for AgentState {
             processes: processes::ProcessState::new(terminals.clone()),
             terminals,
             sessions: Default::default(),
+            session_gates: Default::default(),
+            loading_sessions: Default::default(),
             histories: Default::default(),
             workflows: Default::default(),
             journal_maintenance: Default::default(),
@@ -695,6 +766,45 @@ impl Default for AgentState {
     }
 }
 impl AgentState {
+    fn session_gate(&self, id: &str) -> Result<Arc<Mutex<()>>, AgentError> {
+        let mut gates = self
+            .session_gates
+            .lock()
+            .map_err(|_| AgentError::internal())?;
+        gates.retain(|_, gate| gate.strong_count() > 0);
+        if let Some(gate) = gates.get(id).and_then(Weak::upgrade) {
+            return Ok(gate);
+        }
+        let gate = Arc::new(Mutex::new(()));
+        gates.insert(id.into(), Arc::downgrade(&gate));
+        Ok(gate)
+    }
+
+    fn session_gates<'a>(
+        &self,
+        ids: impl IntoIterator<Item = &'a str>,
+    ) -> Result<Vec<Arc<Mutex<()>>>, AgentError> {
+        let mut ids: Vec<_> = ids.into_iter().collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids.into_iter().map(|id| self.session_gate(id)).collect()
+    }
+
+    fn begin_session_load(&self, id: &str) -> Result<SessionLoadLease, AgentError> {
+        self.loading_sessions
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .insert(id.into());
+        let lease = SessionLoadLease {
+            id: id.into(),
+            loading: self.loading_sessions.clone(),
+        };
+        if self.journal_maintenance.load(Ordering::Acquire) {
+            return Err(journal_maintenance::maintenance_error());
+        }
+        Ok(lease)
+    }
+
     pub(crate) fn has_active_chats(&self) -> bool {
         self.activity()
             .map(|items| {
@@ -737,11 +847,20 @@ impl AgentState {
                 "Não foi possível verificar as execuções. Reabra o aplicativo e tente novamente.",
             )
         };
-        // Keep the same registry -> database order as session loading. Holding each idle
-        // session lock also prevents a previously acquired Arc from reserving a late turn.
+        let ids = state.with_connection(home, |connection| {
+            library::deletion::conversation_ids(connection, target)
+        })?;
+        let gates = self
+            .session_gates(ids.iter().map(String::as_str))
+            .map_err(|_| internal())?;
+        let _gate_guards = gates
+            .iter()
+            .map(|gate| gate.lock().map_err(|_| internal()))
+            .collect::<Result<Vec<_>, _>>()?;
+        // Per-conversation gates keep a loader from publishing a session after deletion.
+        // Holding each idle session lock also prevents an acquired Arc from reserving a late turn.
         let mut sessions = self.sessions.lock().map_err(|_| internal())?;
         state.with_connection(home, |connection| {
-            let ids = library::deletion::conversation_ids(connection, target)?;
             let targets: Vec<_> = ids
                 .iter()
                 .filter_map(|id| sessions.get(id).cloned())
@@ -799,15 +918,16 @@ impl AgentState {
         home: &std::path::Path,
         id: &str,
     ) -> Result<Arc<Session>, AgentError> {
-        let mut sessions = self.sessions.lock().map_err(|_| AgentError::internal())?;
-        if self.journal_maintenance.load(Ordering::Acquire) {
-            return Err(journal_maintenance::maintenance_error());
+        let gate = self.session_gate(id)?;
+        let _gate = gate.lock().map_err(|_| AgentError::internal())?;
+        {
+            let mut sessions = self.sessions.lock().map_err(|_| AgentError::internal())?;
+            Self::prune_idle(&mut sessions);
+            if let Some(session) = sessions.get(id) {
+                return Ok(session.clone());
+            }
         }
-        if let Some(session) = sessions.get(id) {
-            return Ok(session.clone());
-        }
-        // Completed runtime replay is not a permanent history cache.
-        Self::prune_idle(&mut sessions);
+        let _loading = self.begin_session_load(id)?;
         let (path, root) = library::agent_location(state, home, id)?;
         let (mut turns, mut extras) = journal::load_for_recovery(&path)?;
         let recovery = turns
@@ -867,7 +987,10 @@ impl AgentState {
                 let _ = handle.emit("agent:updated", snapshot);
             }),
         });
-        sessions.insert(id.into(), session.clone());
+        self.sessions
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .insert(id.into(), session.clone());
         Ok(session)
     }
     fn existing(&self, id: &str) -> Result<Arc<Session>, AgentError> {
@@ -941,25 +1064,27 @@ fn now() -> u64 {
         .as_millis() as u64
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RecoveryTrigger {
+    PassiveOpen,
+    UserAction,
+}
+
 fn resumable_direct_turn(turn: &StoredTurn) -> bool {
     let recoverable_status = turn.turn.status == TurnStatus::Running
         || (turn.turn.status == TurnStatus::Interrupted
-            && turn
-                .turn
-                .error
-                .as_ref()
-                .is_some_and(|error| error.code == "interrupted"));
+            && turn.turn.error.as_ref().is_some_and(|error| {
+                matches!(error.code.as_str(), "interrupted" | "progress_paused")
+            }));
     recoverable_status && turn.turn.options.direct() && journal::safe_to_resume(turn)
 }
 
 fn resumable_workflow_turn(turn: &StoredTurn) -> bool {
     let recoverable_status = turn.turn.status == TurnStatus::Running
         || (turn.turn.status == TurnStatus::Interrupted
-            && turn
-                .turn
-                .error
-                .as_ref()
-                .is_some_and(|error| error.code == "interrupted"));
+            && turn.turn.error.as_ref().is_some_and(|error| {
+                matches!(error.code.as_str(), "interrupted" | "progress_paused")
+            }));
     recoverable_status
         && matches!(
             turn.turn.options.workflow,
@@ -1026,7 +1151,7 @@ pub async fn get_chat(
     let session = agent
         .runtime_session(&app, &persistence, &conversation_id)
         .await?;
-    let signal = session.resume_recovered_turn()?;
+    let signal = session.resume_recovered_turn(RecoveryTrigger::PassiveOpen)?;
     let snapshot_agent = agent.clone();
     let snapshot_state = state.clone();
     let snapshot_home = home.clone();
@@ -1100,7 +1225,7 @@ pub async fn start_agent_turn(
         attachments::validate_parts(&home, &conversation_id, &mut parts)?;
         let (content, parts) = skill_input::normalize(&home, &session.root, content, parts)?;
         let submitted = session.submit_message(content, options, parts)?;
-        let recovery = session.resume_recovered_turn()?;
+        let recovery = session.resume_recovered_turn(RecoveryTrigger::UserAction)?;
         let signal = match recovery {
             Some(signal) => Some(signal),
             None => submitted.or(session.reserve_next()?),
@@ -1219,7 +1344,7 @@ pub async fn resume_agent_queue(
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     app.state::<crate::core::CoreState>().require_ready(&home)?;
     library::agent_location(&persistence, &home, &conversation_id)?;
-    let signal = match session.resume_recovered_turn()? {
+    let signal = match session.resume_recovered_turn(RecoveryTrigger::UserAction)? {
         Some(signal) => Some(signal),
         None => session.reserve_next()?,
     };
@@ -1585,6 +1710,7 @@ fn run_turn<'a>(
         let mut tasks_reminded = false;
         let mut mcp_reminded = false;
         let mut repeated_tools = tool_loop::Guard::default();
+        let mut progress_watchdog = progress::Watchdog::default();
         let mut read_reuse = tool_loop::ReadReuseCache::default();
         let mut project_instructions = instructions::Resolver::new(&session.root)?;
         let response_language = crate::system::response_language(home);
@@ -1710,6 +1836,9 @@ fn run_turn<'a>(
             }
             if let Some(exec) = &execution {
                 exec.filter(&mut definitions);
+            }
+            if let Some(definition) = progress_watchdog.definition() {
+                definitions.push(definition);
             }
             mcp_clients
                 .ensure_scope_visible(&definitions)
@@ -1857,6 +1986,23 @@ fn run_turn<'a>(
             })?;
             compaction::record_usage(session, usage.as_ref())?;
             if calls.is_empty() {
+                if progress_watchdog.checkpoint_required() {
+                    progress_watchdog.missed_checkpoint();
+                    session.update(true, |data| {
+                        data.turns.last_mut().unwrap().wire.push(json!({
+                            "role":"user",
+                            "_jarvis_runtime":true,
+                            "content":"The final response was not accepted because the required progress checkpoint is still pending. Call progress_checkpoint before continuing or concluding."
+                        }));
+                    })?;
+                    if let Some(action) = progress_watchdog.take_action() {
+                        if let Some(error) = record_progress_action(session, action)? {
+                            context.close().await;
+                            return Err(error);
+                        }
+                    }
+                    continue;
+                }
                 if mcp_clients.requires_explicit_attempt() {
                     if mcp_reminded {
                         return Err(AgentError::new(
@@ -1975,6 +2121,7 @@ fn run_turn<'a>(
                     },
                     None => (None, false),
                 };
+                let progress_preflight = progress_watchdog.preflight(&tool).err();
                 let preflight = execution
                     .as_ref()
                     .and_then(|exec| exec.preflight(&tool))
@@ -1992,7 +2139,8 @@ fn run_turn<'a>(
                     .or(instruction_preflight)
                     .or(terminal_preflight)
                     .or_else(|| task_preflight.map(str::to_owned));
-                let permitted = preflight.is_none()
+                let permitted = progress_preflight.is_none()
+                    && preflight.is_none()
                     && authorize_with_policy(
                         session,
                         &tool,
@@ -2019,7 +2167,10 @@ fn run_turn<'a>(
                 })?;
                 let mut read_observation = None;
                 let mut reused_read = None;
-                let result = if permitted {
+                let mut confirmed_mutation = false;
+                let result = if let Some(error) = progress_preflight {
+                    Err(error)
+                } else if permitted {
                     let _mutation_guard = match &execution {
                         Some(exec) => {
                             exec.mutation_guard(
@@ -2031,7 +2182,9 @@ fn run_turn<'a>(
                         }
                         None => None,
                     };
-                    if tool.name.starts_with("hub_")
+                    if tool.name == progress::TOOL_NAME {
+                        progress_watchdog.checkpoint(&tool.args)
+                    } else if tool.name.starts_with("hub_")
                         || tool.name.starts_with("process_")
                         || tool.name.starts_with("terminal_")
                         || tool.name.starts_with("browser_")
@@ -2140,6 +2293,7 @@ fn run_turn<'a>(
                         .await
                         {
                             Ok(outcome) => {
+                                confirmed_mutation = !outcome.changed_paths.is_empty();
                                 for revision in outcome.revisions {
                                     diffs::record(owner, revision).await?;
                                 }
@@ -2251,6 +2405,7 @@ fn run_turn<'a>(
                                     read_observation = Some(observation);
                                 }
                                 if let Some(revision) = revision {
+                                    confirmed_mutation = true;
                                     let changed_path = revision.path.clone();
                                     diffs::record(owner, revision).await?;
                                     if let Err(cause) = lsp.refresh(&changed_path).await {
@@ -2303,6 +2458,12 @@ fn run_turn<'a>(
                     }
                 }
                 let steer = repeated_tools.observe(&tool, status == "error", &wire_output);
+                let progress_observation = progress_watchdog.observe(
+                    &tool,
+                    status == "error",
+                    &wire_output,
+                    confirmed_mutation || (tool.name.starts_with("mcp_") && requires_task),
+                );
                 let retained_bytes = wire_output.len() as u64;
                 session.update(true, |data| {
                     let current = data.turns.last_mut().unwrap();
@@ -2349,6 +2510,11 @@ fn run_turn<'a>(
                             "content":message,
                         }));
                     }
+                    match progress_observation {
+                        progress::Observation::MaterialProgress => step.progress_events += 1,
+                        progress::Observation::NewEvidence => step.evidence_events += 1,
+                        progress::Observation::Unproductive => {}
+                    }
                 })?;
                 if let Some(exec) = &execution {
                     exec.observe_recovery_inspection(
@@ -2379,8 +2545,41 @@ fn run_turn<'a>(
                     return Ok(());
                 }
             }
+            if let Some(action) = progress_watchdog.take_action() {
+                if let Some(error) = record_progress_action(session, action)? {
+                    context.close().await;
+                    return Err(error);
+                }
+            }
         }
     })
+}
+
+fn record_progress_action(
+    session: &Session,
+    action: progress::Action,
+) -> Result<Option<AgentError>, AgentError> {
+    let (paused, message) = match action {
+        progress::Action::RequireCheckpoint(message) => (false, message),
+        progress::Action::Pause(message) => (true, message),
+    };
+    session.update(true, |data| {
+        let current = data.turns.last_mut().unwrap();
+        if let Some(step) = current.turn.steps.last_mut() {
+            if paused {
+                step.progress_pauses += 1;
+            } else {
+                step.progress_checkpoints += 1;
+            }
+        }
+        current.wire.push(json!({
+            "role":"user",
+            "_jarvis_runtime":true,
+            "_jarvis_progress_watchdog":true,
+            "content":message,
+        }));
+    })?;
+    Ok(paused.then(|| AgentError::new("progress_paused", &message)))
 }
 
 fn finish(session: &Session, result: Result<(), AgentError>) {
@@ -2392,17 +2591,24 @@ fn finish(session: &Session, result: Result<(), AgentError>) {
         let current = data.turns.last_mut().unwrap();
         journal::interrupt_tools(current);
         current.turn.duration_ms = now().saturating_sub(current.turn.created_at);
+        let mut recovery = None;
         match result {
             Ok(()) => current.turn.status = TurnStatus::Completed,
             Err(error) => {
-                current.turn.status = if error.code == "cancelled" {
-                    TurnStatus::Cancelled
-                } else {
-                    TurnStatus::Error
+                current.turn.status = match error.code.as_str() {
+                    "cancelled" => TurnStatus::Cancelled,
+                    "progress_paused" => {
+                        if current.turn.options.direct() {
+                            recovery = Some(current.turn.id.clone());
+                        }
+                        TurnStatus::Interrupted
+                    }
+                    _ => TurnStatus::Error,
                 };
                 current.turn.error = Some(error);
             }
         }
+        data.recovery = recovery;
         data.active = None;
         data.compacting = false;
     });

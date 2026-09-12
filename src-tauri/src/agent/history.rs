@@ -2,6 +2,8 @@
 use super::*;
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
+    fs::{self, OpenOptions},
+    io::{Read, Write},
     path::Path,
     time::SystemTime,
 };
@@ -11,6 +13,9 @@ const PAGE_BYTES: usize = 1024 * 1024;
 const RAIL_SIZE: usize = 48;
 const INDEX_CACHE_ENTRIES: usize = 16;
 const INDEX_CACHE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_SINGLE_INDEX_BYTES: usize = 16 * 1024 * 1024;
+const MAX_SIDECAR_BYTES: usize = 32 * 1024 * 1024;
+const SIDECAR_VERSION: u8 = 1;
 const MAX_CACHED_PREVIEW_BYTES: usize = 256 * 1024;
 const DEFERRED_DETAIL_KEY: &str = "_jarvisHistoryDetailsDeferred";
 
@@ -76,7 +81,7 @@ pub(super) struct Window {
     pub total: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Excerpt {
     pub id: String,
@@ -120,6 +125,34 @@ struct Entry {
     limit: Option<u64>,
     edited_paths: Vec<String>,
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedEntry {
+    offset: u64,
+    length: usize,
+    excerpt: Excerpt,
+    status: TurnStatus,
+    resumable: bool,
+    tokens: Vec<u64>,
+    limit: Option<u64>,
+    edited_paths: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedIndex {
+    version: u8,
+    fingerprint: journal::PrefixFingerprint,
+    entries: Vec<PersistedEntry>,
+    queue: Vec<queue::QueuedMessage>,
+    context: Option<compaction::Checkpoint>,
+    compactions: Vec<compaction::CompactionEvent>,
+    files: BTreeMap<String, (u64, usize, diffs::FileSummary)>,
+    tail: Option<StoredTurn>,
+    damaged_turn: Option<String>,
+}
+
 #[derive(Default)]
 struct Index {
     end: u64,
@@ -133,6 +166,196 @@ struct Index {
     files: BTreeMap<String, (u64, usize, diffs::FileSummary)>,
     tail: Option<StoredTurn>,
     damaged_turn: Option<String>,
+}
+
+impl PersistedEntry {
+    fn from_entry(entry: &Entry) -> Self {
+        Self {
+            offset: entry.offset,
+            length: entry.length,
+            excerpt: entry.excerpt.clone(),
+            status: entry.status.clone(),
+            resumable: entry.resumable,
+            tokens: entry.tokens.clone(),
+            limit: entry.limit,
+            edited_paths: entry.edited_paths.clone(),
+        }
+    }
+
+    fn into_entry(self) -> Entry {
+        Entry {
+            offset: self.offset,
+            length: self.length,
+            excerpt: self.excerpt,
+            preview: None,
+            preview_size: 0,
+            status: self.status,
+            resumable: self.resumable,
+            tokens: self.tokens,
+            limit: self.limit,
+            edited_paths: self.edited_paths,
+        }
+    }
+}
+
+impl PersistedIndex {
+    fn from_index(index: &Index, fingerprint: journal::PrefixFingerprint) -> Self {
+        Self {
+            version: SIDECAR_VERSION,
+            fingerprint,
+            entries: index
+                .entries
+                .iter()
+                .map(PersistedEntry::from_entry)
+                .collect(),
+            queue: index.queue.clone(),
+            context: index.context.clone(),
+            compactions: index.compactions.clone(),
+            files: index.files.clone(),
+            tail: index.tail.clone(),
+            damaged_turn: index.damaged_turn.clone(),
+        }
+    }
+
+    fn into_index(self) -> Option<Index> {
+        if self.version != SIDECAR_VERSION || self.fingerprint.length == 0 {
+            return None;
+        }
+        let end = self.fingerprint.length;
+        let mut ids = HashSet::with_capacity(self.entries.len());
+        let mut entries = Vec::with_capacity(self.entries.len());
+        for (index, entry) in self.entries.into_iter().enumerate() {
+            if entry.length == 0
+                || entry.offset == 0
+                || entry.excerpt.id.is_empty()
+                || entry.excerpt.index != index
+                || entry
+                    .offset
+                    .checked_add(entry.length as u64)
+                    .is_none_or(|record_end| record_end > end)
+                || !ids.insert(entry.excerpt.id.clone())
+            {
+                return None;
+            }
+            entries.push(entry.into_entry());
+        }
+        if self.files.values().any(|(offset, length, _)| {
+            *length == 0
+                || *offset == 0
+                || offset
+                    .checked_add(*length as u64)
+                    .is_none_or(|record_end| record_end > end)
+        }) {
+            return None;
+        }
+        let running_tail = entries
+            .last()
+            .is_some_and(|entry| entry.status == TurnStatus::Running);
+        if running_tail != self.tail.is_some()
+            || self.tail.as_ref().is_some_and(|tail| {
+                tail.turn.status != TurnStatus::Running
+                    || entries
+                        .last()
+                        .is_none_or(|entry| entry.excerpt.id != tail.turn.id)
+            })
+        {
+            return None;
+        }
+        if self
+            .damaged_turn
+            .as_ref()
+            .is_some_and(|id| entries.last().is_none_or(|entry| entry.excerpt.id != *id))
+        {
+            return None;
+        }
+        let index = Index {
+            end,
+            length: end,
+            modified: None,
+            entries,
+            ids,
+            queue: self.queue,
+            context: self.context,
+            compactions: self.compactions,
+            files: self.files,
+            tail: self.tail,
+            damaged_turn: self.damaged_turn,
+        };
+        index.valid_context().then_some(index)
+    }
+}
+
+fn sidecar_path(path: &Path) -> PathBuf {
+    path.with_extension("jarvis-index.json")
+}
+
+fn load_sidecar(
+    path: &Path,
+    metadata: &fs::Metadata,
+) -> Option<(Index, journal::PrefixFingerprint)> {
+    let sidecar = sidecar_path(path);
+    let sidecar_metadata = fs::symlink_metadata(&sidecar).ok()?;
+    if !sidecar_metadata.is_file()
+        || sidecar_metadata.is_symlink()
+        || sidecar_metadata.len() > MAX_SIDECAR_BYTES as u64
+    {
+        return None;
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(sidecar).ok()?;
+    let mut bytes = Vec::with_capacity(sidecar_metadata.len() as usize);
+    Read::take(&mut file, MAX_SIDECAR_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > MAX_SIDECAR_BYTES {
+        return None;
+    }
+    let persisted: PersistedIndex = serde_json::from_slice(&bytes).ok()?;
+    if metadata.len() < persisted.fingerprint.length {
+        return None;
+    }
+    let fingerprint = persisted.fingerprint.clone();
+    let mut index = persisted.into_index()?;
+    if metadata.len() == index.end {
+        index.length = metadata.len();
+        index.modified = metadata.modified().ok();
+    }
+    Some((index, fingerprint))
+}
+
+fn persist_sidecar(
+    path: &Path,
+    index: &Index,
+    fingerprint: journal::PrefixFingerprint,
+) -> Result<(), AgentError> {
+    let destination = sidecar_path(path);
+    if fs::symlink_metadata(&destination)
+        .is_ok_and(|metadata| !metadata.is_file() || metadata.is_symlink())
+    {
+        return Err(AgentError::storage());
+    }
+    let bytes = serde_json::to_vec(&PersistedIndex::from_index(index, fingerprint))
+        .map_err(|_| AgentError::storage())?;
+    if bytes.len() > MAX_SIDECAR_BYTES {
+        return Ok(());
+    }
+    let parent = destination.parent().ok_or_else(AgentError::storage)?;
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(parent).map_err(|_| AgentError::storage())?;
+    temporary
+        .write_all(&bytes)
+        .and_then(|()| temporary.as_file_mut().sync_all())
+        .map_err(|_| AgentError::storage())?;
+    temporary
+        .persist(destination)
+        .map_err(|_| AgentError::storage())?;
+    Ok(())
 }
 
 fn indexed_entry(
@@ -176,120 +399,178 @@ fn indexed_entry(
 }
 
 impl Index {
-    fn refresh(&mut self, path: &Path) -> Result<(), AgentError> {
-        let metadata = std::fs::symlink_metadata(path).map_err(|_| AgentError::storage())?;
-        if !metadata.is_file() || metadata.is_symlink() {
-            return Err(AgentError::storage());
-        }
-        let modified = metadata.modified().ok();
-        if self.length == metadata.len() && self.modified == modified && self.end > 0 {
-            return Ok(());
-        }
-        if metadata.len() < self.length
-            || (metadata.len() == self.length && self.modified != modified)
-        {
-            *self = Self::default();
-        }
-        self.end = journal::scan(path, self.end, |offset, length, record| {
-            match record.r#type.as_str() {
-                "turn_checkpoint" => {
-                    let turn: StoredTurn =
-                        serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
-                    if let Some(damaged) = self.damaged_turn.as_deref() {
-                        if turn.turn.id != damaged
-                            || !self
-                                .entries
-                                .last()
-                                .is_some_and(|last| last.excerpt.id == damaged)
-                        {
-                            return Err(AgentError::storage());
-                        }
-                        self.damaged_turn = None;
-                    }
-                    let replacing = self
-                        .entries
-                        .last()
-                        .is_some_and(|last| last.excerpt.id == turn.turn.id);
-                    if replacing {
-                        self.entries.pop();
-                    } else if !self.ids.insert(turn.turn.id.clone()) {
-                        return Err(AgentError::storage());
-                    }
-                    let entry = indexed_entry(&turn, self.entries.len(), offset, length)?;
-                    self.tail = (turn.turn.status == TurnStatus::Running).then_some(turn);
-                    self.entries.push(entry);
-                }
-                "turn_delta" => {
-                    let current_id = self
-                        .tail
-                        .as_ref()
-                        .map(|turn| turn.turn.id.clone())
-                        .ok_or_else(AgentError::storage)?;
-                    let delta = serde_json::from_value::<journal::TurnDelta>(record.data);
-                    if let Some(damaged) = &self.damaged_turn {
-                        if delta.as_ref().is_ok_and(|delta| delta.turn_id != *damaged) {
-                            return Err(AgentError::storage());
-                        }
-                        return Ok(());
-                    }
-                    let Ok(delta) = delta else {
-                        self.damaged_turn = Some(current_id);
-                        return Ok(());
-                    };
-                    let mut candidate = self.tail.clone().ok_or_else(AgentError::storage)?;
-                    if journal::apply_delta(&mut candidate, delta).is_err() {
-                        self.damaged_turn = Some(current_id);
-                        return Ok(());
-                    }
-                    let entry = self.entries.last().ok_or_else(AgentError::storage)?;
-                    let replacement = indexed_entry(
-                        &candidate,
-                        self.entries.len().saturating_sub(1),
-                        entry.offset,
-                        entry.length,
-                    )?;
-                    *self.entries.last_mut().ok_or_else(AgentError::storage)? = replacement;
-                    self.tail = Some(candidate);
-                }
-                "queue_checkpoint" => {
-                    self.queue =
-                        serde_json::from_value(record.data).map_err(|_| AgentError::storage())?
-                }
-                "context_checkpoint" => {
-                    self.context = Some(
-                        serde_json::from_value(record.data).map_err(|_| AgentError::storage())?,
-                    )
-                }
-                "compaction_completed" => {
-                    let completed: compaction::CompletedCompaction =
-                        serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
-                    self.context = Some(completed.context);
-                    self.compactions.push(completed.event);
-                }
-                "file_checkpoint" => {
-                    let revision: diffs::FileRevision =
-                        serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
-                    self.files
-                        .insert(revision.path.clone(), (offset, length, revision.summary()));
-                }
-                _ => return Err(AgentError::storage()),
-            }
-            Ok(())
-        })?;
-        self.queue.retain(|message| !self.ids.contains(&message.id));
+    fn valid_context(&self) -> bool {
         let count: usize = self.entries.iter().map(|entry| entry.tokens.len()).sum();
-        if self.context.as_ref().is_some_and(|context| {
+        !self.context.as_ref().is_some_and(|context| {
             context.through > count
                 || (context.through > 0 && context.summary.is_empty())
                 || context
                     .measured
                     .as_ref()
                     .is_some_and(|usage| usage.wire_end > count || usage.wire_end < context.through)
-        }) {
+        })
+    }
+
+    fn apply_record(
+        &mut self,
+        offset: u64,
+        length: usize,
+        record: journal::Record,
+    ) -> Result<(), AgentError> {
+        match record.r#type.as_str() {
+            "turn_checkpoint" => {
+                let turn: StoredTurn =
+                    serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+                if let Some(damaged) = self.damaged_turn.as_deref() {
+                    if turn.turn.id != damaged
+                        || !self
+                            .entries
+                            .last()
+                            .is_some_and(|last| last.excerpt.id == damaged)
+                    {
+                        return Err(AgentError::storage());
+                    }
+                    self.damaged_turn = None;
+                }
+                let replacing = self
+                    .entries
+                    .last()
+                    .is_some_and(|last| last.excerpt.id == turn.turn.id);
+                if replacing {
+                    self.entries.pop();
+                } else if !self.ids.insert(turn.turn.id.clone()) {
+                    return Err(AgentError::storage());
+                }
+                let entry = indexed_entry(&turn, self.entries.len(), offset, length)?;
+                self.tail = (turn.turn.status == TurnStatus::Running).then_some(turn);
+                self.entries.push(entry);
+            }
+            "turn_delta" => {
+                let current_id = self
+                    .tail
+                    .as_ref()
+                    .map(|turn| turn.turn.id.clone())
+                    .ok_or_else(AgentError::storage)?;
+                let delta = serde_json::from_value::<journal::TurnDelta>(record.data);
+                if let Some(damaged) = &self.damaged_turn {
+                    if delta.as_ref().is_ok_and(|delta| delta.turn_id != *damaged) {
+                        return Err(AgentError::storage());
+                    }
+                    return Ok(());
+                }
+                let Ok(delta) = delta else {
+                    self.damaged_turn = Some(current_id);
+                    return Ok(());
+                };
+                let mut candidate = self.tail.clone().ok_or_else(AgentError::storage)?;
+                if journal::apply_delta(&mut candidate, delta).is_err() {
+                    self.damaged_turn = Some(current_id);
+                    return Ok(());
+                }
+                let entry = self.entries.last().ok_or_else(AgentError::storage)?;
+                let replacement = indexed_entry(
+                    &candidate,
+                    self.entries.len().saturating_sub(1),
+                    entry.offset,
+                    entry.length,
+                )?;
+                *self.entries.last_mut().ok_or_else(AgentError::storage)? = replacement;
+                self.tail = Some(candidate);
+            }
+            "queue_checkpoint" => {
+                self.queue =
+                    serde_json::from_value(record.data).map_err(|_| AgentError::storage())?
+            }
+            "context_checkpoint" => {
+                self.context =
+                    Some(serde_json::from_value(record.data).map_err(|_| AgentError::storage())?)
+            }
+            "compaction_completed" => {
+                let completed: compaction::CompletedCompaction =
+                    serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+                self.context = Some(completed.context);
+                self.compactions.push(completed.event);
+            }
+            "file_checkpoint" => {
+                let revision: diffs::FileRevision =
+                    serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+                self.files
+                    .insert(revision.path.clone(), (offset, length, revision.summary()));
+            }
+            _ => return Err(AgentError::storage()),
+        }
+        Ok(())
+    }
+
+    fn scan_from(
+        &mut self,
+        path: &Path,
+        expected: Option<&journal::PrefixFingerprint>,
+    ) -> Result<Option<journal::ScanSnapshot>, AgentError> {
+        let start = self.end;
+        if let Some(expected) = expected {
+            journal::scan_snapshot_after_verified_prefix(
+                path,
+                start,
+                expected,
+                |offset, length, record| self.apply_record(offset, length, record),
+            )
+        } else {
+            journal::scan_snapshot(path, start, |offset, length, record| {
+                self.apply_record(offset, length, record)
+            })
+            .map(Some)
+        }
+    }
+
+    fn refresh(&mut self, path: &Path) -> Result<(), AgentError> {
+        let metadata = std::fs::symlink_metadata(path).map_err(|_| AgentError::storage())?;
+        if !metadata.is_file() || metadata.is_symlink() {
             return Err(AgentError::storage());
         }
-        self.length = metadata.len();
-        self.modified = modified;
+        let modified = metadata.modified().ok();
+        let mut verified_prefix = None;
+        if self.end == 0 {
+            if let Some((index, fingerprint)) = load_sidecar(path, &metadata) {
+                *self = index;
+                verified_prefix = Some(fingerprint);
+            }
+        }
+        if verified_prefix.is_none()
+            && self.length == metadata.len()
+            && self.modified == modified
+            && self.end > 0
+        {
+            return Ok(());
+        }
+        if metadata.len() < self.end
+            || metadata.len() < self.length
+            || (metadata.len() == self.length && self.modified != modified)
+        {
+            *self = Self::default();
+            verified_prefix = None;
+        }
+        let snapshot = match self.scan_from(path, verified_prefix.as_ref())? {
+            Some(snapshot) => snapshot,
+            None => {
+                *self = Self::default();
+                self.scan_from(path, None)?
+                    .ok_or_else(AgentError::storage)?
+            }
+        };
+        let sidecar_is_current = verified_prefix
+            .as_ref()
+            .is_some_and(|fingerprint| fingerprint == &snapshot.fingerprint);
+        self.end = snapshot.end;
+        self.queue.retain(|message| !self.ids.contains(&message.id));
+        if !self.valid_context() {
+            return Err(AgentError::storage());
+        }
+        self.length = snapshot.file_length;
+        self.modified = snapshot.modified;
+        if !sidecar_is_current {
+            let _ = persist_sidecar(path, self, snapshot.fingerprint);
+        }
         Ok(())
     }
 
@@ -464,7 +745,9 @@ impl Index {
         self.entries
             .iter()
             .map(|entry| {
-                entry.preview_size
+                std::mem::size_of::<Entry>()
+                    + entry.preview_size
+                    + entry.excerpt.id.len()
                     + entry.excerpt.user.len()
                     + entry.excerpt.assistant.len()
                     + entry.tokens.len() * 8
@@ -475,8 +758,18 @@ impl Index {
                         .sum::<usize>()
             })
             .sum::<usize>()
+            + self
+                .queue
+                .iter()
+                .map(|message| message.id.len() + message.content.len() + 256)
+                .sum::<usize>()
+            + self
+                .context
+                .as_ref()
+                .map_or(0, |context| context.summary.len())
             + self.files.len() * 512
             + self.compactions.len() * 256
+            + self.damaged_turn.as_ref().map_or(0, String::len)
     }
 
     fn tool_call(&self, path: &Path, turn_id: &str, tool_id: &str) -> Result<ToolCall, AgentError> {
@@ -529,8 +822,37 @@ pub struct Page {
     navigation: Vec<Excerpt>,
 }
 
+struct CachedIndex {
+    path: PathBuf,
+    index: Arc<Mutex<Index>>,
+    weight: usize,
+}
+
+#[derive(Default)]
+struct HistoryCache {
+    entries: VecDeque<CachedIndex>,
+}
+
+impl HistoryCache {
+    fn trim(&mut self, releasing: Option<&Arc<Mutex<Index>>>) {
+        while self.entries.len() > INDEX_CACHE_ENTRIES
+            || self.entries.iter().map(|entry| entry.weight).sum::<usize>() > INDEX_CACHE_BYTES
+        {
+            let Some(position) = self.entries.iter().position(|entry| {
+                Arc::strong_count(&entry.index) == 1
+                    || releasing.is_some_and(|current| {
+                        Arc::ptr_eq(current, &entry.index) && Arc::strong_count(&entry.index) == 2
+                    })
+            }) else {
+                break;
+            };
+            self.entries.remove(position);
+        }
+    }
+}
+
 #[derive(Clone, Default)]
-pub(super) struct HistoryState(Arc<Mutex<VecDeque<(PathBuf, Index)>>>);
+pub(super) struct HistoryState(Arc<Mutex<HistoryCache>>);
 impl HistoryState {
     pub(super) fn has_recovery_tail(&self, path: &Path) -> Result<bool, AgentError> {
         self.with(path, |index| {
@@ -573,31 +895,68 @@ impl HistoryState {
     }
     pub(super) fn forget(&self, path: &Path) {
         if let Ok(mut cache) = self.0.lock() {
-            cache.retain(|(key, _)| key != path);
+            cache.entries.retain(|entry| entry.path != path);
         }
     }
+
+    fn cached_index(&self, path: &Path) -> Result<Arc<Mutex<Index>>, AgentError> {
+        let mut cache = self.0.lock().map_err(|_| AgentError::internal())?;
+        if let Some(position) = cache.entries.iter().position(|entry| entry.path == path) {
+            let entry = cache
+                .entries
+                .remove(position)
+                .ok_or_else(AgentError::internal)?;
+            let index = entry.index.clone();
+            cache.entries.push_back(entry);
+            return Ok(index);
+        }
+        let index = Arc::new(Mutex::new(Index::default()));
+        cache.entries.push_back(CachedIndex {
+            path: path.into(),
+            index: index.clone(),
+            weight: 0,
+        });
+        cache.trim(None);
+        Ok(index)
+    }
+
+    fn finish(&self, path: &Path, index: &Arc<Mutex<Index>>, weight: usize, succeeded: bool) {
+        let Ok(mut cache) = self.0.lock() else {
+            return;
+        };
+        let Some(position) = cache
+            .entries
+            .iter()
+            .position(|entry| entry.path == path && Arc::ptr_eq(&entry.index, index))
+        else {
+            return;
+        };
+        let Some(mut entry) = cache.entries.remove(position) else {
+            return;
+        };
+        if succeeded && weight <= MAX_SINGLE_INDEX_BYTES {
+            entry.weight = weight;
+            cache.entries.push_back(entry);
+            cache.trim(Some(index));
+        }
+    }
+
     fn with<T>(
         &self,
         path: &Path,
         action: impl FnOnce(&Index) -> Result<T, AgentError>,
     ) -> Result<T, AgentError> {
-        let mut cache = self.0.lock().map_err(|_| AgentError::internal())?;
-        let mut index = cache
-            .iter()
-            .position(|(key, _)| key == path)
-            .and_then(|position| cache.remove(position))
-            .map(|(_, value)| value)
-            .unwrap_or_default();
-        index.refresh(path)?;
-        let result = action(&index);
-        if index.weight() <= 16 * 1024 * 1024 {
-            cache.push_back((path.into(), index));
-        }
-        while cache.len() > INDEX_CACHE_ENTRIES
-            || cache.iter().map(|(_, value)| value.weight()).sum::<usize>() > INDEX_CACHE_BYTES
-        {
-            cache.pop_front();
-        }
+        let cached = self.cached_index(path)?;
+        let Ok(mut index) = cached.lock() else {
+            self.finish(path, &cached, 0, false);
+            return Err(AgentError::internal());
+        };
+        let (result, weight) = {
+            let result = index.refresh(path).and_then(|()| action(&index));
+            (result, index.weight())
+        };
+        drop(index);
+        self.finish(path, &cached, weight, result.is_ok());
         result
     }
 }
@@ -609,10 +968,14 @@ impl AgentState {
         home: &Path,
         id: &str,
     ) -> Result<Arc<Session>, AgentError> {
-        let mut sessions = self.sessions.lock().map_err(|_| AgentError::internal())?;
-        Self::prune_idle(&mut sessions);
-        if let Some(session) = sessions.get(id) {
-            return Ok(session.clone());
+        let gate = self.session_gate(id)?;
+        let _gate = gate.lock().map_err(|_| AgentError::internal())?;
+        {
+            let mut sessions = self.sessions.lock().map_err(|_| AgentError::internal())?;
+            Self::prune_idle(&mut sessions);
+            if let Some(session) = sessions.get(id) {
+                return Ok(session.clone());
+            }
         }
         let (path, root) = library::agent_location(state, home, id)?;
         let extras = self.histories.with(&path, |index| {
@@ -645,7 +1008,7 @@ impl AgentState {
             diffs::load_legacy(&root, &legacy, &mut extras.files);
             Ok(extras)
         })?;
-        Ok(Arc::new(Session {
+        let file_session = Arc::new(Session {
             id: id.into(),
             journal: path,
             root,
@@ -663,7 +1026,14 @@ impl AgentState {
                 compacting: false,
                 manual_compaction: false,
             }),
-        }))
+        });
+        Ok(self
+            .sessions
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .get(id)
+            .cloned()
+            .unwrap_or(file_session))
     }
 
     fn history_page(
@@ -675,13 +1045,18 @@ impl AgentState {
         after: Option<usize>,
         around: Option<usize>,
     ) -> Result<Page, AgentError> {
-        let sessions = self.sessions.lock().map_err(|_| AgentError::internal())?;
         let (path, _) = library::agent_location(state, home, id)?;
         let mut page = self
             .histories
             .with(&path, |index| index.page(&path, id, before, after, around))?;
         // The last durable checkpoint can lag behind the active streamed response.
-        if let Some(session) = sessions.get(id) {
+        let session = self
+            .sessions
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .get(id)
+            .cloned();
+        if let Some(session) = session {
             let data = session.data.lock().map_err(|_| AgentError::internal())?;
             for turn in &mut page.turns {
                 if let Some(live) = data.turns.last().filter(|last| last.turn.id == turn.id) {
@@ -700,24 +1075,27 @@ impl AgentState {
         turn_id: &str,
         tool_id: &str,
     ) -> Result<ToolCall, AgentError> {
-        {
-            let sessions = self.sessions.lock().map_err(|_| AgentError::internal())?;
-            if let Some(tool) = sessions.get(id).and_then(|session| {
-                session.data.lock().ok().and_then(|data| {
-                    data.turns
-                        .iter()
-                        .rev()
-                        .find(|stored| stored.turn.id == turn_id)
-                        .and_then(|stored| {
-                            stored
-                                .turn
-                                .steps
-                                .iter()
-                                .flat_map(|step| &step.tools)
-                                .find(|tool| tool.id == tool_id)
-                        })
-                        .cloned()
-                })
+        let session = self
+            .sessions
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .get(id)
+            .cloned();
+        if let Some(session) = session {
+            if let Some(tool) = session.data.lock().ok().and_then(|data| {
+                data.turns
+                    .iter()
+                    .rev()
+                    .find(|stored| stored.turn.id == turn_id)
+                    .and_then(|stored| {
+                        stored
+                            .turn
+                            .steps
+                            .iter()
+                            .flat_map(|step| &step.tools)
+                            .find(|tool| tool.id == tool_id)
+                    })
+                    .cloned()
             }) {
                 return Ok(tool);
             }
@@ -733,9 +1111,12 @@ impl AgentState {
         home: &Path,
         id: &str,
     ) -> Result<ChatSnapshot, AgentError> {
-        let mut sessions = self.sessions.lock().map_err(|_| AgentError::internal())?;
-        Self::prune_idle(&mut sessions);
-        if let Some(session) = sessions.get(id) {
+        let session = {
+            let mut sessions = self.sessions.lock().map_err(|_| AgentError::internal())?;
+            Self::prune_idle(&mut sessions);
+            sessions.get(id).cloned()
+        };
+        if let Some(session) = session {
             let data = session.data.lock().map_err(|_| AgentError::internal())?;
             let mut snapshot = session.snapshot_data(&data);
             let mut start = data.turns.len().saturating_sub(PAGE_SIZE);
@@ -846,7 +1227,12 @@ pub async fn get_chat_tool_call(
 mod tests {
     use super::*;
     use crate::agent::tests::Fixture;
-    use std::fs;
+    use std::{
+        fs,
+        sync::mpsc,
+        thread,
+        time::{Duration, Instant},
+    };
     fn stored(index: usize) -> StoredTurn {
         StoredTurn {
             mcp_intent: None,
@@ -865,6 +1251,7 @@ mod tests {
                     custom_workflow_id: None,
                     custom_agent_id: None,
                     approval_mode: ApprovalMode::Manual,
+                    manual_validation: false,
                 },
                 context_window: Some(128000),
                 status: TurnStatus::Completed,
@@ -952,6 +1339,10 @@ mod tests {
         assert_eq!(index.entries.len(), 121);
         let mut restarted = Index::default();
         restarted.refresh(&path).unwrap();
+        assert!(restarted
+            .entries
+            .iter()
+            .all(|entry| entry.preview.is_none()));
         assert_eq!(restarted.context().tokens, index.context().tokens);
     }
 
@@ -1070,7 +1461,185 @@ mod tests {
             fs::write(&path, "{}\n").unwrap();
             cache.with(&path, |_| Ok(())).unwrap();
         }
-        assert_eq!(cache.0.lock().unwrap().len(), INDEX_CACHE_ENTRIES);
+        assert_eq!(cache.0.lock().unwrap().entries.len(), INDEX_CACHE_ENTRIES);
+    }
+
+    #[test]
+    fn appended_journal_reuses_verified_sidecar_and_indexes_only_the_suffix() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("appended.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        for index in 0..40 {
+            journal::append(&path, &stored(index)).unwrap();
+        }
+        Index::default().refresh(&path).unwrap();
+        journal::append(&path, &stored(40)).unwrap();
+
+        let mut restarted = Index::default();
+        restarted.refresh(&path).unwrap();
+
+        assert_eq!(restarted.entries.len(), 41);
+        assert!(restarted.entries[..40]
+            .iter()
+            .all(|entry| entry.preview.is_none()));
+        assert!(restarted.entries[40].preview.is_some());
+    }
+
+    #[test]
+    fn invalid_sidecar_is_rebuilt_from_the_preserved_journal() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("invalid-sidecar.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        for index in 0..25 {
+            journal::append(&path, &stored(index)).unwrap();
+        }
+        Index::default().refresh(&path).unwrap();
+        fs::write(sidecar_path(&path), b"not an index").unwrap();
+
+        let mut rebuilt = Index::default();
+        rebuilt.refresh(&path).unwrap();
+
+        assert_eq!(rebuilt.entries.len(), 25);
+        assert!(rebuilt.entries.iter().all(|entry| entry.preview.is_some()));
+        let persisted: PersistedIndex =
+            serde_json::from_slice(&fs::read(sidecar_path(&path)).unwrap()).unwrap();
+        assert_eq!(persisted.version, SIDECAR_VERSION);
+    }
+
+    #[test]
+    fn sidecar_with_a_stale_journal_fingerprint_is_rebuilt() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("stale-fingerprint.jsonl");
+        let replacement = fixture.root.join("replacement.jsonl");
+        for candidate in [&path, &replacement] {
+            fs::write(candidate, "{}\n").unwrap();
+        }
+        for index in 0..25 {
+            journal::append(&path, &stored(index)).unwrap();
+            let mut turn = stored(index);
+            if index == 24 {
+                turn.turn.steps[0].text = "Respostb 24".into();
+            }
+            journal::append(&replacement, &turn).unwrap();
+        }
+        Index::default().refresh(&path).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().len(),
+            fs::metadata(&replacement).unwrap().len()
+        );
+        fs::copy(&replacement, &path).unwrap();
+
+        let mut rebuilt = Index::default();
+        rebuilt.refresh(&path).unwrap();
+
+        assert!(rebuilt.entries.iter().all(|entry| entry.preview.is_some()));
+        assert_eq!(
+            rebuilt
+                .page(&path, "conversation", None, None, None)
+                .unwrap()
+                .turns
+                .last()
+                .unwrap()
+                .steps[0]
+                .text,
+            "Respostb 24"
+        );
+    }
+
+    #[test]
+    fn independent_conversations_do_not_hold_the_global_history_cache_lock() {
+        let fixture = Fixture::new();
+        let first_path = fixture.root.join("first.jsonl");
+        let second_path = fixture.root.join("second.jsonl");
+        for path in [&first_path, &second_path] {
+            fs::write(path, "{}\n").unwrap();
+            journal::append(path, &stored(0)).unwrap();
+        }
+        let cache = HistoryState::default();
+        cache.with(&first_path, |_| Ok(())).unwrap();
+        cache.with(&second_path, |_| Ok(())).unwrap();
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let first_cache = cache.clone();
+        let first = thread::spawn(move || {
+            first_cache
+                .with(&first_path, |_| {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Ok(())
+                })
+                .unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let second_cache = cache.clone();
+        let second = thread::spawn(move || {
+            second_cache.with(&second_path, |_| Ok(())).unwrap();
+            finished_tx.send(()).unwrap();
+        });
+        let independent = finished_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+        release_tx.send(()).unwrap();
+        first.join().unwrap();
+        second.join().unwrap();
+
+        assert!(
+            independent,
+            "another conversation waited for the global cache"
+        );
+    }
+
+    #[test]
+    #[ignore = "performance characterization for large local journals"]
+    fn benchmark_large_journal_sidecar_and_concurrent_history_reads() {
+        let fixture = Fixture::new();
+        let paths = [
+            fixture.root.join("benchmark-a.jsonl"),
+            fixture.root.join("benchmark-b.jsonl"),
+        ];
+        for path in &paths {
+            fs::write(path, "{}\n").unwrap();
+            for index in 0..600 {
+                let mut turn = stored(index);
+                turn.turn.steps[0].text.push_str(&"x".repeat(4096));
+                journal::append(path, &turn).unwrap();
+            }
+        }
+
+        let cold_started = Instant::now();
+        for path in &paths {
+            Index::default().refresh(path).unwrap();
+        }
+        let cold = cold_started.elapsed();
+        let warm_started = Instant::now();
+        for path in &paths {
+            Index::default().refresh(path).unwrap();
+        }
+        let warm = warm_started.elapsed();
+
+        let cache = HistoryState::default();
+        let parallel_started = Instant::now();
+        let workers: Vec<_> = paths
+            .into_iter()
+            .map(|path| {
+                let cache = cache.clone();
+                thread::spawn(move || {
+                    cache
+                        .with(&path, |index| {
+                            index.page(&path, "benchmark", None, None, None)
+                        })
+                        .unwrap()
+                })
+            })
+            .collect();
+        for worker in workers {
+            assert_eq!(worker.join().unwrap().turns.len(), PAGE_SIZE);
+        }
+        eprintln!(
+            "large journal benchmark: cold={cold:?}, verified_sidecar={warm:?}, concurrent_pages={:?}",
+            parallel_started.elapsed()
+        );
     }
 
     #[test]

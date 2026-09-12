@@ -302,6 +302,10 @@ pub(super) async fn run(
         async move { execute_step(current, job?).await }
     })
     .await;
+    let outcome = match outcome {
+        Ok(results) => validation::publish_custom(&hub, &results).map(|()| results),
+        Err(error) => Err(error),
+    };
     let text = match &outcome {
         Ok(results) => results
             .last()

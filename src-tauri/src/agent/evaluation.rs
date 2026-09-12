@@ -5,6 +5,7 @@ const CASES: [&str; 2] = [
     include_str!("fixtures/evaluations/movarte-explicit-mcp.json"),
     include_str!("fixtures/evaluations/movarte-planned-flow.json"),
 ];
+const RUNTIME_SUITE: &str = include_str!("fixtures/evaluations/movarte-runtime-scenarios.json");
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +115,93 @@ struct LocalReadReuseSummary {
     original_bytes: u64,
     retained_bytes: u64,
     reduction_basis_points: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RuntimeSuite {
+    schema_version: u64,
+    id: String,
+    description: String,
+    scenarios: Vec<RuntimeScenario>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RuntimeScenario {
+    id: String,
+    incident: String,
+    expected: RuntimeReport,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RuntimeReport {
+    state: String,
+    metrics: BTreeMap<String, u64>,
+}
+
+impl RuntimeReport {
+    pub(crate) fn new<const N: usize>(state: &str, metrics: [(&str, u64); N]) -> Self {
+        Self {
+            state: state.into(),
+            metrics: metrics
+                .into_iter()
+                .map(|(name, value)| (name.into(), value))
+                .collect(),
+        }
+    }
+}
+
+fn load_runtime_suite() -> RuntimeSuite {
+    serde_json::from_str(RUNTIME_SUITE).expect("valid scripted harness evaluation fixture")
+}
+
+fn validate_runtime_suite(suite: &RuntimeSuite) -> Result<(), String> {
+    if suite.schema_version != 1 {
+        return Err(format!("{} uses an unsupported schema version", suite.id));
+    }
+    if suite.id.trim().is_empty()
+        || suite.description.trim().is_empty()
+        || suite.scenarios.is_empty()
+    {
+        return Err("runtime evaluation suite is incomplete".into());
+    }
+    let mut ids = std::collections::HashSet::new();
+    for scenario in &suite.scenarios {
+        if scenario.id.trim().is_empty()
+            || scenario.incident.trim().is_empty()
+            || scenario.expected.state.trim().is_empty()
+            || scenario.expected.metrics.is_empty()
+            || scenario
+                .expected
+                .metrics
+                .keys()
+                .any(|metric| metric.trim().is_empty())
+        {
+            return Err(format!("{} is incomplete", scenario.id));
+        }
+        if !ids.insert(&scenario.id) {
+            return Err(format!("{} is duplicated", scenario.id));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn assert_runtime_report(id: &str, actual: RuntimeReport) {
+    let suite = load_runtime_suite();
+    validate_runtime_suite(&suite).unwrap();
+    let scenario = suite
+        .scenarios
+        .iter()
+        .find(|scenario| scenario.id == id)
+        .unwrap_or_else(|| panic!("scripted harness scenario '{id}' is not registered"));
+    assert_eq!(actual, scenario.expected, "runtime evaluation {id}");
+    println!(
+        "HARNESS_EVAL case={} current={}",
+        id,
+        serde_json::to_string(&actual).unwrap()
+    );
 }
 
 fn load_cases() -> Vec<EvaluationCase> {
@@ -329,6 +417,14 @@ fn harness_evaluation_reports_the_sanitized_movarte_baselines() {
             agent_time_ms: 4_343_697,
         }
     );
+}
+
+#[test]
+fn harness_evaluation_runtime_manifest_is_versioned_and_complete() {
+    let suite = load_runtime_suite();
+    validate_runtime_suite(&suite).unwrap();
+    assert_eq!(suite.id, "movarte-runtime-regressions");
+    assert_eq!(suite.scenarios.len(), 15);
 }
 
 #[tokio::test]

@@ -453,7 +453,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::tests::{session, Fixture};
+    use crate::agent::{
+        evaluation::{assert_runtime_report, RuntimeReport},
+        tests::{session, Fixture},
+    };
 
     #[test]
     fn antigravity_summary_uses_a_supported_low_route_without_changing_chat_options() {
@@ -468,6 +471,7 @@ mod tests {
             custom_workflow_id: None,
             custom_agent_id: None,
             approval_mode: ApprovalMode::Yolo,
+            manual_validation: false,
         };
         credential.antigravity_models.insert(
             options.model.clone(),
@@ -545,6 +549,7 @@ mod tests {
             custom_workflow_id: None,
             custom_agent_id: None,
             approval_mode: ApprovalMode::Manual,
+            manual_validation: false,
         };
         let auth = options.clone();
         let credential = tokio::task::spawn_blocking(move || {
@@ -609,6 +614,7 @@ mod tests {
                     custom_workflow_id: None,
                     custom_agent_id: None,
                     approval_mode: ApprovalMode::Manual,
+                    manual_validation: false,
                 },
             )
             .unwrap();
@@ -621,7 +627,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compaction_preserves_visible_history_and_latest_request_across_restart() {
+    async fn harness_evaluation_compaction_preserves_context_across_reload() {
         let fixture = Fixture::new();
         let session = long_session(&fixture);
         let (_, signal) = watch::channel(false);
@@ -666,6 +672,20 @@ mod tests {
         data.turns = turns;
         data.extras = extras;
         assert_eq!(input(&data), replay);
+        assert_runtime_report(
+            "compaction-reload",
+            RuntimeReport::new(
+                "completed",
+                [
+                    ("compactions", 1),
+                    ("inputTokens", 30_000),
+                    ("outputTokens", 1_000),
+                    ("persistedEvents", 1),
+                    ("recoveries", 1),
+                    ("toolCalls", 1),
+                ],
+            ),
+        );
     }
     #[tokio::test]
     async fn large_windows_compact_proactively_and_runtime_state_is_not_the_user_request() {

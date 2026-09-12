@@ -17,6 +17,11 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId }: { turn:
   const now = useRunningClock(running);
   const durationMs = executionDuration(turn.createdAt, turn.durationMs, running, now);
   const timestamp = new Date(turn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const errorTitle = turn.error?.code === "progress_paused"
+    ? "Execução pausada"
+    : turn.status === "cancelled" || turn.status === "interrupted"
+      ? "Execução interrompida"
+      : "Falha na execução";
   return <AssistantMessageTurn message={{
     id: turn.id, role: "assistant", content: turn.steps[turn.steps.length - 1]?.text ?? "", timestamp,
     model: `${turn.options.account} / ${turn.options.model}`, streaming: running,
@@ -26,7 +31,7 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId }: { turn:
       detailContext: conversationId ? { conversationId, turnId: turn.id } : undefined,
       steps: turn.steps.map((step, index) => ({ thinking: step.summary, tools: step.tools, commentary: index < turn.steps.length - 1 ? step.text : "" })),
     } : undefined,
-    error: turn.error ? { title: turn.status === "cancelled" || turn.status === "interrupted" ? "Execução interrompida" : "Falha na execução", message: turn.error.message } : undefined,
+    error: turn.error ? { title: errorTitle, message: turn.error.message } : undefined,
   }} />;
 });
 

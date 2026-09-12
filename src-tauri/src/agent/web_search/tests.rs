@@ -12,6 +12,7 @@ fn options(account: &str, model: &str) -> TurnOptions {
         custom_workflow_id: None,
         custom_agent_id: None,
         approval_mode: super::super::ApprovalMode::Yolo,
+        manual_validation: false,
     }
 }
 

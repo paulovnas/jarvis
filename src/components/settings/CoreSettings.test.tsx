@@ -9,6 +9,18 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 const invokeMock = vi.mocked(invoke);
 const events = new Map<string, EventCallback<unknown>>();
+const diagnosticSummary = {
+  runId: "0123456789abcdef0123456789abcdef",
+  appVersion: "0.9.10-beta",
+  os: "macos",
+  arch: "aarch64",
+  startedAt: 1_757_376_000_000,
+  logFiles: 1,
+  logBytes: 1024,
+  eventCount: 1,
+  recentEvents: [],
+  copyable: "Diagnóstico do Jarvis",
+};
 beforeEach(() => {
   invokeMock.mockReset(); events.clear();
   vi.mocked(listen).mockImplementation(async (name, callback) => { events.set(name, callback); return () => { events.delete(name); }; });
@@ -138,7 +150,7 @@ it("oferece reinstalação no card e no diagnóstico após uma atualização fal
   state.items[3].latestVersion = "1.1.0";
   state.items[3].updateAvailable = true;
   state.items[3].error = "Recursos da nova release inválidos";
-  invokeMock.mockResolvedValue(state);
+  invokeMock.mockImplementation(async command => command === "get_diagnostic_summary" ? diagnosticSummary : state);
   render(<CoreSettings />);
 
   const cardReinstall = await screen.findByRole("button", { name: "Reinstalar Open Design" });
@@ -150,7 +162,9 @@ it("oferece reinstalação no card e no diagnóstico após uma atualização fal
   fireEvent.click(screen.getByRole("button", { name: "Diagnóstico e Reparo" }));
   const dialog = await screen.findByRole("dialog", { name: "Diagnóstico e Reparo" });
   expect(within(dialog).getByText("Core funcional · ação pendente")).toBeVisible();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Reinstalar Open Design" }));
+  const diagnosticReinstall = within(dialog).getByRole("button", { name: "Reinstalar Open Design" });
+  await waitFor(() => expect(diagnosticReinstall).toBeEnabled());
+  fireEvent.click(diagnosticReinstall);
   fireEvent.click(await screen.findByRole("button", { name: "Confirmar reinstalação" }));
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("repair_core_component", { id: "open-design", reinstall: true }));
 });

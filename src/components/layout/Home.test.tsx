@@ -35,9 +35,15 @@ describe("Home shell", () => {
     await user.click(await screen.findByRole("button", { name: "Publicar" }));
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("start_agent_turn", {
       conversationId: "c1",
-      content: expect.stringContaining("apresente a proposta completa no painel"),
+      content: expect.stringContaining("todos os repositórios afetados em uma única proposta"),
       options: { account: "openai-codex-pessoal", model: "model", reasoning: "medium", mode: "build", workflow: "standard", approvalMode: "yolo" },
     }));
+    const publicationCall = invokeMock.mock.calls.find(([command]) => command === "start_agent_turn");
+    const content = (publicationCall?.[1] as { content?: string } | undefined)?.content;
+    expect(content).toContain("um ou mais repositórios Git independentes");
+    expect(content).toContain("cada raiz Git que contenha alterações");
+    expect(content).toContain("todos os repositórios afetados em uma única proposta");
+    expect(content).toContain("Use jarvis_propose_publication");
   });
   it("keeps independent drafts through dashboard and empty-workspace navigation", async () => {
     const user = userEvent.setup();

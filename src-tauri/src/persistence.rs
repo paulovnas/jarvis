@@ -2,11 +2,15 @@ use std::{
     fmt, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
+
+const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const QUICK_CHECK_ERROR_LIMIT: usize = 20;
 
 const MIGRATIONS: &[Migration] = &[
     Migration {
@@ -145,6 +149,17 @@ pub struct PersistenceError {
     pub message: String,
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseIntegrityResult {
+    pub healthy: bool,
+    pub message: String,
+    pub details: Vec<String>,
+    pub duration_ms: u64,
+    pub journal_mode: String,
+    pub busy_timeout_ms: i64,
+}
+
 impl PersistenceError {
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
@@ -163,12 +178,14 @@ impl std::error::Error for PersistenceError {}
 
 impl From<rusqlite::Error> for PersistenceError {
     fn from(error: rusqlite::Error) -> Self {
+        crate::diagnostics::record_storage_failure("sqlite", None);
         Self::new(format!("SQLite error: {error}"))
     }
 }
 
 impl From<std::io::Error> for PersistenceError {
     fn from(error: std::io::Error) -> Self {
+        crate::diagnostics::record_storage_failure("database_filesystem", None);
         Self::new(format!("Database filesystem error: {error}"))
     }
 }
@@ -188,6 +205,14 @@ fn open_database(path: &Path) -> Result<Connection, PersistenceError> {
 }
 
 pub(crate) fn initialize_database(connection: &mut Connection) -> Result<(), PersistenceError> {
+    // Install the busy handler before migrations or any other lock-taking
+    // statement. It protects startup from short-lived locks held by backup,
+    // antivirus and diagnostic processes without retrying uncertain writes.
+    connection.busy_timeout(DATABASE_BUSY_TIMEOUT)?;
+    // Keep SQLite's rollback journal while AppState owns one mutex-serialized
+    // connection. WAL adds sidecar and recovery lifecycle without unlocking
+    // parallel reads in this topology; revisit this if independent readers are
+    // introduced.
     connection.pragma_update(None, "foreign_keys", true)?;
     let mut current_version =
         connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -224,6 +249,46 @@ pub(crate) fn initialize_database(connection: &mut Connection) -> Result<(), Per
     }
 
     Ok(())
+}
+
+fn check_database_integrity(
+    connection: &Connection,
+) -> Result<DatabaseIntegrityResult, PersistenceError> {
+    let started = Instant::now();
+    let journal_mode =
+        connection.pragma_query_value(None, "journal_mode", |row| row.get::<_, String>(0))?;
+    let busy_timeout_ms =
+        connection.pragma_query_value(None, "busy_timeout", |row| row.get::<_, i64>(0))?;
+    let mut statement =
+        connection.prepare(&format!("PRAGMA quick_check({QUICK_CHECK_ERROR_LIMIT})"))?;
+    let details = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if details.is_empty() {
+        return Err(PersistenceError::new(
+            "SQLite quick_check returned no result",
+        ));
+    }
+    let healthy = details.len() == 1 && details[0].eq_ignore_ascii_case("ok");
+    if !healthy {
+        crate::diagnostics::record_storage_failure("sqlite_quick_check", None);
+    }
+    let duration_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+    Ok(DatabaseIntegrityResult {
+        healthy,
+        message: if healthy {
+            "A estrutura do banco de dados está íntegra.".into()
+        } else {
+            format!(
+                "O SQLite encontrou {} inconsistência(s) no banco de dados.",
+                details.len()
+            )
+        },
+        details,
+        duration_ms,
+        journal_mode,
+        busy_timeout_ms,
+    })
 }
 
 fn ensure_app_config_row(connection: &Connection) -> Result<(), PersistenceError> {
@@ -472,6 +537,13 @@ impl AppState {
         self.with_connection(home_dir, |connection| list_provider_accounts(connection))
     }
 
+    pub(crate) fn check_database_integrity(
+        &self,
+        home_dir: &Path,
+    ) -> Result<DatabaseIntegrityResult, PersistenceError> {
+        self.with_connection(home_dir, |connection| check_database_integrity(connection))
+    }
+
     // Drop the cached SQLite handle. Tests use it before remove_dir_all so NTFS
     // releases the .db file even when detached OAuth threads still hold Arc
     // clones of this state. Production never needs it: closing a Jarvis session
@@ -630,6 +702,78 @@ mod tests {
             database_path(Path::new("/Users/example")),
             crate::data_dir::root(Path::new("/Users/example")).join("jarvis.db")
         );
+    }
+
+    #[test]
+    fn initialization_configures_a_five_second_busy_timeout() {
+        let mut connection = Connection::open_in_memory().expect("in-memory SQLite");
+        connection
+            .busy_timeout(Duration::ZERO)
+            .expect("disable default timeout");
+
+        initialize_database(&mut connection).expect("initialize database");
+
+        let configured: i64 = connection
+            .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+            .expect("configured busy timeout");
+        assert_eq!(configured, 5_000);
+    }
+
+    #[test]
+    fn transient_external_write_contention_waits_instead_of_failing() {
+        use rusqlite::TransactionBehavior;
+        use std::{sync::mpsc, thread};
+
+        let directory = tempfile::tempdir().expect("temporary database directory");
+        let path = directory.path().join("contention.sqlite");
+        let mut holder = open_database(&path).expect("lock holder connection");
+        holder
+            .execute_batch(
+                "CREATE TABLE contention_probe (id INTEGER PRIMARY KEY, value TEXT NOT NULL);",
+            )
+            .expect("contention table");
+        let contender = open_database(&path).expect("contending connection");
+        let transaction = holder
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .expect("acquire write lock");
+        transaction
+            .execute(
+                "INSERT INTO contention_probe (id, value) VALUES (1, 'holder')",
+                [],
+            )
+            .expect("holder write");
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            started_tx.send(()).expect("signal contention start");
+            let started = Instant::now();
+            let result = contender.execute(
+                "INSERT INTO contention_probe (id, value) VALUES (2, 'contender')",
+                [],
+            );
+            (result, started.elapsed())
+        });
+        started_rx.recv().expect("contention start");
+        thread::sleep(Duration::from_millis(80));
+        transaction.commit().expect("release write lock");
+
+        let (result, elapsed) = worker.join().expect("contending writer");
+        assert_eq!(result.expect("write after transient lock"), 1);
+        assert!(elapsed >= Duration::from_millis(40));
+    }
+
+    #[test]
+    fn quick_check_reports_integrity_and_effective_connection_settings() {
+        let directory = tempfile::tempdir().expect("temporary database directory");
+        let connection = open_database(&directory.path().join("integrity.sqlite"))
+            .expect("initialized database");
+
+        let result = check_database_integrity(&connection).expect("quick check result");
+
+        assert!(result.healthy);
+        assert_eq!(result.details, ["ok"]);
+        assert_eq!(result.busy_timeout_ms, 5_000);
+        assert_ne!(result.journal_mode.to_ascii_lowercase(), "wal");
     }
 
     #[test]

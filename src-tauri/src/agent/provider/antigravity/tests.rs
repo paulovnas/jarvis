@@ -9,6 +9,7 @@ fn options(model: &str) -> TurnOptions {
         custom_workflow_id: None,
         custom_agent_id: None,
         approval_mode: crate::agent::ApprovalMode::Manual,
+        manual_validation: false,
     }
 }
 

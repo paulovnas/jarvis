@@ -518,6 +518,7 @@ pub(crate) enum Notice {
     Completed,
     Question,
     Validation,
+    Paused,
     Failed,
 }
 impl Notice {
@@ -526,6 +527,7 @@ impl Notice {
             Self::Completed => "Trabalho concluído",
             Self::Question => "Aguardando sua resposta",
             Self::Validation => "Validação disponível",
+            Self::Paused => "Execução pausada",
             Self::Failed => "Conversa interrompida por erro",
         }
     }

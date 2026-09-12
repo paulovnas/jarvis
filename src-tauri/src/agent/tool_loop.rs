@@ -290,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn fifth_identical_result_steers_and_next_identical_call_is_stopped() {
+    fn harness_evaluation_fifth_identical_result_steers_and_sixth_is_stopped() {
         let mut guard = Guard::default();
         let call = tool("read", json!({"path":"src/app.ts"}));
         for _ in 0..4 {
@@ -303,6 +303,19 @@ mod tests {
         assert_eq!(
             guard.before_call(&call).unwrap_err().code,
             "repeated_tool_loop"
+        );
+        crate::agent::evaluation::assert_runtime_report(
+            "stagnation-guard",
+            crate::agent::evaluation::RuntimeReport::new(
+                "paused",
+                [
+                    ("blockedCalls", 1),
+                    ("executedCalls", 5),
+                    ("steps", 6),
+                    ("steers", 1),
+                    ("toolCalls", 6),
+                ],
+            ),
         );
     }
 

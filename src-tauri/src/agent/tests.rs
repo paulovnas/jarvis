@@ -30,6 +30,7 @@ fn options(approval_mode: ApprovalMode) -> TurnOptions {
         custom_workflow_id: None,
         custom_agent_id: None,
         approval_mode,
+        manual_validation: false,
     }
 }
 
@@ -165,7 +166,7 @@ fn activity_tracks_loaded_sessions_without_exposing_history() {
 }
 
 #[test]
-fn direct_recovery_resumes_only_durable_tool_results_and_preserves_new_messages() {
+fn harness_evaluation_direct_recovery_preserves_durable_results_and_new_messages() {
     let fixture = Fixture::new();
     let session = session(&fixture);
     let mut direct = options(ApprovalMode::Yolo);
@@ -223,7 +224,10 @@ fn direct_recovery_resumes_only_durable_tool_results_and_preserves_new_messages(
         data.turns.push(prior_runtime);
         data.recovery = Some("recovered-turn".into());
     }
-    assert!(session.resume_recovered_turn().unwrap().is_some());
+    assert!(session
+        .resume_recovered_turn(RecoveryTrigger::UserAction)
+        .unwrap()
+        .is_some());
     let snapshot = session.snapshot().unwrap();
     assert_eq!(snapshot.active_turn_id.as_deref(), Some("recovered-turn"));
     assert_eq!(snapshot.turns[0].status, TurnStatus::Running);
@@ -238,10 +242,88 @@ fn direct_recovery_resumes_only_durable_tool_results_and_preserves_new_messages(
     assert!(persisted[0].wire.iter().any(|item| item["content"]
         .as_str()
         .is_some_and(|text| text.contains("runtime restarted"))));
+    let persisted_results = persisted[0]
+        .wire
+        .iter()
+        .filter(|item| item["type"] == "function_call_output")
+        .count() as u64;
+    evaluation::assert_runtime_report(
+        "direct-turn-resume",
+        evaluation::RuntimeReport::new(
+            "resumed",
+            [
+                ("persistedToolResults", persisted_results),
+                ("queuedMessages", 1),
+                ("recoveries", 1),
+                ("toolCalls", 1),
+            ],
+        ),
+    );
 }
 
 #[test]
-fn coordinated_recovery_is_explicit_and_pairs_an_uncertain_tool_without_replaying_it() {
+fn harness_evaluation_progress_pause_waits_for_user_before_direct_resume() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    session
+        .reserve(
+            "Investigue e corrija o problema".into(),
+            options(ApprovalMode::Yolo),
+        )
+        .unwrap();
+    finish(
+        &session,
+        Err(AgentError::new(
+            "progress_paused",
+            "A execução foi pausada com o estado preservado.",
+        )),
+    );
+
+    assert_eq!(
+        session.snapshot().unwrap().turns[0].status,
+        TurnStatus::Interrupted
+    );
+    assert!(session
+        .resume_recovered_turn(RecoveryTrigger::PassiveOpen)
+        .unwrap()
+        .is_none());
+    assert!(session
+        .submit(
+            "Continue usando outra estratégia".into(),
+            options(ApprovalMode::Yolo)
+        )
+        .unwrap()
+        .is_none());
+    assert!(session
+        .resume_recovered_turn(RecoveryTrigger::UserAction)
+        .unwrap()
+        .is_some());
+    let snapshot = session.snapshot().unwrap();
+    assert_eq!(snapshot.turns[0].status, TurnStatus::Running);
+    assert_eq!(snapshot.queued_messages.len(), 1);
+    let (persisted, _) = journal::read_only(&session.journal).unwrap();
+    assert!(persisted[0].wire.iter().any(|item| {
+        item["_jarvis_runtime"] == true
+            && item["content"]
+                .as_str()
+                .is_some_and(|text| text.contains("progress watchdog"))
+    }));
+    evaluation::assert_runtime_report(
+        "progress-pause-resume",
+        evaluation::RuntimeReport::new(
+            "resumed",
+            [
+                ("passiveResumes", 0),
+                ("pauses", 1),
+                ("queuedMessages", 1),
+                ("recoveries", 1),
+            ],
+        ),
+    );
+}
+
+#[test]
+fn harness_evaluation_coordinated_recovery_pairs_uncertain_tools_without_replay() {
     let fixture = Fixture::new();
     let session = session(&fixture);
     let mut coordinated = options(ApprovalMode::Yolo);
@@ -286,7 +368,10 @@ fn coordinated_recovery_is_explicit_and_pairs_an_uncertain_tool_without_replayin
         data.durable_turn = Some(turn);
     }
 
-    assert!(session.resume_recovered_turn().unwrap().is_none());
+    assert!(session
+        .resume_recovered_turn(RecoveryTrigger::UserAction)
+        .unwrap()
+        .is_none());
     let (signal, uncertain) = session.resume_interrupted_workflow_turn().unwrap();
     assert_eq!(uncertain, vec!["write"]);
     assert!(!*signal.borrow());
@@ -311,6 +396,24 @@ fn coordinated_recovery_is_explicit_and_pairs_an_uncertain_tool_without_replayin
         .wire
         .iter()
         .any(|item| item["_jarvis_workflow_recovery"] == true));
+    let persisted_results = recovered
+        .wire
+        .iter()
+        .filter(|item| item["type"] == "function_call_output")
+        .count() as u64;
+    evaluation::assert_runtime_report(
+        "workflow-turn-resume",
+        evaluation::RuntimeReport::new(
+            "resumed",
+            [
+                ("errors", 1),
+                ("persistedToolResults", persisted_results),
+                ("recoveries", 1),
+                ("toolCalls", 1),
+                ("uncertainCalls", uncertain.len() as u64),
+            ],
+        ),
+    );
 }
 
 #[test]
@@ -719,6 +822,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                         custom_workflow_id: None,
                         custom_agent_id: None,
                         approval_mode: ApprovalMode::Manual,
+                        manual_validation: false,
                     },
                     status: TurnStatus::Running,
                     tasks: vec![],

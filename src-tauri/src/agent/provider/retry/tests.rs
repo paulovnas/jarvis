@@ -1,5 +1,8 @@
 use super::*;
-use crate::agent::{ApprovalMode, Mode};
+use crate::agent::{
+    evaluation::{assert_runtime_report, RuntimeReport},
+    ApprovalMode, Mode,
+};
 use crate::openai_codex::custom::Protocol;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -34,6 +37,7 @@ fn options() -> TurnOptions {
         custom_workflow_id: None,
         custom_agent_id: None,
         approval_mode: ApprovalMode::Yolo,
+        manual_validation: false,
     }
 }
 
@@ -60,12 +64,12 @@ fn complete(protocol: Protocol) -> String {
         Protocol::OpenaiCompletions => {
             sse(&[
                 json!({"choices":[{"index":0,"delta":{"content":"Concluído"},"finish_reason":null}]}),
-                json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
+                json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":4}}),
             ]) + "data: [DONE]\n\n"
         }
         Protocol::OpenaiResponses => sse(&[
             json!({"type":"response.output_text.delta","delta":"Concluído"}),
-            json!({"type":"response.completed","response":{"status":"completed","output":[
+            json!({"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":4},"output":[
                 {"type":"message","role":"assistant","content":[{"type":"output_text","text":"Concluído"}]}
             ]}}),
         ]),
@@ -153,7 +157,10 @@ fn request<'a>(credential: &'a CodexCredential, options: &'a TurnOptions) -> Req
 }
 
 #[tokio::test]
-async fn retries_gateway_and_connection_failures_across_custom_protocols() {
+async fn harness_evaluation_provider_recovers_transient_failures_across_custom_protocols() {
+    let mut provider_requests = 0;
+    let mut input_tokens = 0;
+    let mut output_tokens = 0;
     for protocol in [
         Protocol::OpenaiCompletions,
         Protocol::OpenaiResponses,
@@ -185,11 +192,30 @@ async fn retries_gateway_and_connection_failures_across_custom_protocols() {
             .await
             .unwrap();
         assert_eq!(result.text, "Concluído");
+        let usage = result.usage.unwrap();
+        input_tokens += usage.input_tokens;
+        output_tokens += usage.output_tokens;
         assert_eq!(attempts, vec![Some(1), Some(2), None]);
         let requests = server.join().unwrap();
+        provider_requests += requests.len() as u64;
         assert_eq!(requests.len(), 3);
         assert!(requests.windows(2).all(|pair| pair[0] == pair[1]));
     }
+    assert_runtime_report(
+        "provider-transient-recovery",
+        RuntimeReport::new(
+            "completed",
+            [
+                ("errors", 6),
+                ("inputTokens", input_tokens),
+                ("outputTokens", output_tokens),
+                ("providerRequests", provider_requests),
+                ("recoveries", 3),
+                ("retries", 6),
+                ("steps", provider_requests),
+            ],
+        ),
+    );
 }
 
 #[tokio::test]
@@ -391,6 +417,64 @@ async fn partial_stream_is_replaced_without_replaying_completed_tool_results() {
         .collect();
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0]["content"], "Arquivo salvo");
+}
+
+#[tokio::test]
+async fn harness_evaluation_late_provider_request_preserves_completed_tool_results() {
+    let (url, server) = server(vec![(400, "invalid request".into())]);
+    let auth = credential(url, Protocol::OpenaiCompletions);
+    let options = options();
+    let (_stop, signal) = watch::channel(false);
+    let mut scripted = request(&auth, &options);
+    scripted.tools = vec![
+        json!({"type":"function","name":"read","description":"Read","parameters":{"type":"object","properties":{}}}),
+    ];
+    scripted.input.extend([
+        json!({"type":"function_call","call_id":"durable-read","name":"read","arguments":"{}"}),
+        json!({"type":"function_call_output","call_id":"durable-read","output":"Conteúdo preservado"}),
+    ]);
+    let mut retries = 0;
+    let error = scripted
+        .run(
+            signal,
+            |delta| {
+                if matches!(delta, Delta::Retry(Some(_))) {
+                    retries += 1;
+                }
+                Ok(())
+            },
+            Duration::ZERO,
+        )
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.code, "provider_request");
+    assert_eq!(retries, 0);
+
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 1);
+    let durable: Vec<_> = requests[0]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "tool")
+        .collect();
+    assert_eq!(durable.len(), 1);
+    assert_eq!(durable[0]["content"], "Conteúdo preservado");
+    assert_runtime_report(
+        "provider-late-request-error",
+        RuntimeReport::new(
+            "error",
+            [
+                ("errors", 1),
+                ("persistedToolResults", durable.len() as u64),
+                ("providerRequests", requests.len() as u64),
+                ("retries", retries),
+                ("steps", 1),
+                ("toolCalls", 1),
+            ],
+        ),
+    );
 }
 
 #[tokio::test]

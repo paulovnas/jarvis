@@ -23,6 +23,8 @@ import type { WorkflowSnapshot } from "@/core/workflow";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
 import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
@@ -121,8 +123,12 @@ export function ChatComposer({
   const [choosingModel, setChoosingModel] = useState(false);
   const choosingModelLock = useRef(false);
   const [workflow, setWorkflow] = useState<FlowSelection>(flowSelection(initialOptions));
+  const [manualValidation, setManualValidation] = useState(initialOptions?.manualValidation ?? false);
   const [pendingWorkflow, setPendingWorkflow] = useState<FlowSelection | null>(null);
   const selectedFlow = flowOptions(workflow);
+  const manualValidationAvailable = selectedFlow.workflow === "planned"
+    || selectedFlow.workflow === "complete"
+    || (selectedFlow.workflow === "custom" && Boolean(selectedFlow.customWorkflowId));
   const customFlow = catalog.data?.flows.find(flow => flow.id === selectedFlow.customWorkflowId);
   const selectedCustomAgent = catalog.data?.agents.find(agent => agent.id === selectedFlow.customAgentId);
   const customUnavailable = selectedFlow.workflow === "custom" && (selectedFlow.customAgentId
@@ -150,6 +156,8 @@ export function ChatComposer({
     };
     try {
       const options: TurnOptions = running && initialOptions ? { ...initialOptions, approvalMode: "yolo" } : { account: currentModelDef.value.slice(0, separator), model: currentModelDef.value.slice(separator + 1), reasoning, mode: "build", ...selectedFlow, approvalMode: "yolo" };
+      if (manualValidationAvailable && manualValidation) options.manualValidation = true;
+      else delete options.manualValidation;
       const accepted = submitted.parts?.length ? await onSendMessage(trimmed, options, submitted.parts) : await onSendMessage(trimmed, options);
       if (!accepted) restoreSubmitted();
     } catch (cause) {
@@ -212,6 +220,7 @@ export function ChatComposer({
       return;
     }
     setWorkflow(next);
+    if (next === "standard" || next === "designer" || next.startsWith("agent:")) setManualValidation(false);
   };
 
   return (
@@ -252,6 +261,17 @@ export function ChatComposer({
           <div className="composer-options flex flex-1 items-center gap-0.5">
             <FlowPicker customFlows={catalog.data?.flows} customAgents={catalog.data?.agents} value={workflow} onChange={chooseWorkflow} disabled={running || sending || compacting} />
 
+            {manualValidationAvailable && <div className="flex h-7.5 shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-2" title="Solicita sua aprovação funcional ao final da implementação">
+              <Switch
+                id="manual-workflow-validation"
+                checked={manualValidation}
+                onCheckedChange={setManualValidation}
+                disabled={running || sending || compacting}
+                className="cursor-pointer"
+              />
+              <Label htmlFor="manual-workflow-validation" className="cursor-pointer whitespace-nowrap text-[10px] text-muted-foreground">Validação manual</Label>
+            </div>}
+
             <ModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} disabled={!modelsReady || running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} />
 
             {/* Botão redondo com seta pra cima no canto inferior direito */}
@@ -281,7 +301,7 @@ export function ChatComposer({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="cursor-pointer">Manter fluxo atual</AlertDialogCancel>
-            <AlertDialogAction data-confirm-action className="cursor-pointer" onClick={() => { if (pendingWorkflow) setWorkflow(pendingWorkflow); setPendingWorkflow(null); }}>Trocar fluxo</AlertDialogAction>
+            <AlertDialogAction data-confirm-action className="cursor-pointer" onClick={() => { if (pendingWorkflow) { setWorkflow(pendingWorkflow); if (pendingWorkflow === "standard" || pendingWorkflow === "designer" || pendingWorkflow.startsWith("agent:")) setManualValidation(false); } setPendingWorkflow(null); }}>Trocar fluxo</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

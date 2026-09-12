@@ -137,6 +137,7 @@ mod tests {
             custom_workflow_id: None,
             custom_agent_id: None,
             approval_mode: ApprovalMode::Manual,
+            manual_validation: false,
         };
         session
             .submit_message("first".into(), options.clone(), vec![])

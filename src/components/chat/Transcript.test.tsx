@@ -8,7 +8,7 @@ import { populatedLibrary } from "@/test/library-fixtures";
 import { useChat } from "@/hooks/use-chat";
 import { ChatArea } from "./ChatArea";
 import type { HistoryPage } from "@/core/chat";
-import type { LatestVisibility } from "./Transcript";
+import { TurnBody, type LatestVisibility } from "./Transcript";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
@@ -99,5 +99,21 @@ describe("lazy transcript navigation", () => {
     await act(async () => resolve(page(60)));
     expect(screen.queryByText("Resposta 60")).not.toBeInTheDocument();
     expect(await screen.findByText("Resposta 99")).toBeInTheDocument();
+  });
+});
+
+describe("estado do turno", () => {
+  it("apresenta uma pausa do watchdog como retomável, sem tratá-la como falha", () => {
+    render(<TurnBody turn={{
+      ...savedTurn(),
+      status: "interrupted",
+      error: {
+        code: "progress_paused",
+        message: "O histórico foi preservado. Envie uma nova mensagem para continuar.",
+      },
+    }} />);
+
+    expect(screen.getByText("Execução pausada")).toBeInTheDocument();
+    expect(screen.getByText(/histórico foi preservado/i)).toBeInTheDocument();
   });
 });

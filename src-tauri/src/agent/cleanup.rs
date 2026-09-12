@@ -103,6 +103,13 @@ impl AgentState {
         if selection.len() > 500 || ids.len() != selection.len() {
             return Err(failure());
         }
+        let gates = self
+            .session_gates(selection.iter().map(|item| item.id.as_str()))
+            .map_err(|_| failure())?;
+        let _gate_guards = gates
+            .iter()
+            .map(|gate| gate.lock().map_err(|_| failure()))
+            .collect::<Result<Vec<_>, _>>()?;
         let mut sessions = self.sessions.lock().map_err(|_| failure())?;
         let targets: Vec<_> = selection
             .iter()
@@ -323,6 +330,7 @@ mod tests {
                 custom_workflow_id: None,
                 custom_agent_id: None,
                 approval_mode: ApprovalMode::Manual,
+                manual_validation: false,
             },
             parts: vec![],
             auxiliary_for: None,

@@ -7,6 +7,7 @@ mod backup;
 mod core;
 mod data_dir;
 mod desktop;
+mod diagnostics;
 mod library;
 mod mcp;
 mod model_bindings;
@@ -45,6 +46,7 @@ pub fn run() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
         use tauri::Manager;
+        diagnostics::record_single_instance_conflict();
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.show();
             let _ = window.unminimize();
@@ -71,11 +73,18 @@ pub fn run() {
             let profile = data_dir::configure(&app.config().identifier)?;
             let lease = data_dir::Lease::acquire(&home, profile)?;
             debug_assert_eq!(lease.root(), data_dir::root(&home));
+            let diagnostics =
+                diagnostics::initialize(lease.root(), &app.package_info().version.to_string());
             if !app.manage(lease) {
                 return Err(std::io::Error::other(
                     "O controle exclusivo do diretório de dados já foi configurado.",
                 )
                 .into());
+            }
+            if !app.manage(diagnostics) {
+                return Err(
+                    std::io::Error::other("O diagnóstico local já foi configurado.").into(),
+                );
             }
             desktop::setup(app)?;
             skills::setup(&home).map_err(|error| std::io::Error::other(error.message))?;
@@ -108,6 +117,9 @@ pub fn run() {
                 core::install_core_component,
                 core::health::diagnose_core,
                 core::health::repair_core_component,
+                diagnostics::get_diagnostic_summary,
+                diagnostics::check_database_integrity,
+                diagnostics::export_diagnostic_bundle,
                 core::context7::configure_context7,
                 desktop::get_desktop_layout,
                 desktop::save_desktop_layout,
@@ -239,12 +251,21 @@ pub fn run() {
 // Windows updater installation exits directly, bypassing Tauri's ExitRequested event.
 // Keep the same cleanup available to that hook and to normal application shutdown.
 pub(crate) fn prepare_exit(app: &tauri::AppHandle) {
+    prepare_exit_with_reason(app, diagnostics::ShutdownReason::UserExit);
+}
+
+pub(crate) fn prepare_exit_for_update(app: &tauri::AppHandle) {
+    prepare_exit_with_reason(app, diagnostics::ShutdownReason::Update);
+}
+
+fn prepare_exit_with_reason(app: &tauri::AppHandle, reason: diagnostics::ShutdownReason) {
     use tauri::Manager;
     desktop::flush(app);
     shutdown_services(
         &app.state::<system::SystemState>(),
         &app.state::<agent::AgentState>(),
     );
+    diagnostics::finish(reason);
 }
 
 fn shutdown_services(system: &system::SystemState, agent: &agent::AgentState) {

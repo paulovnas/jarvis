@@ -596,6 +596,7 @@ fn bead_changed_error(checkpoint: &BeadCheckpoint) -> AgentError {
             })
             .to_string(),
         ),
+        provider_metadata: None,
     }
 }
 
@@ -952,9 +953,15 @@ fn settle(
             Ok(()) if job.handoff.as_ref().is_some_and(|h| matches!(h.verdict, Verdict::Completed | Verdict::Approved)) => Status::Completed,
             Ok(()) => Status::Blocked,
             Err(error) if error.code == "cancelled" => Status::Cancelled,
+            Err(error) if error.code == "progress_paused" => Status::Interrupted,
             Err(_) => Status::Failed,
         };
-        job.updated_at = now(); job.duration_ms = duration_ms.unwrap_or_else(|| job.updated_at.saturating_sub(original.updated_at)); job.error = result.as_ref().err().map(|error| error.message.clone()); job.recovery = None;
+        job.updated_at = now(); job.duration_ms = duration_ms.unwrap_or_else(|| job.updated_at.saturating_sub(original.updated_at)); job.error = result.as_ref().err().map(|error| error.message.clone());
+        job.recovery = result
+            .as_ref()
+            .err()
+            .filter(|error| error.code == "progress_paused")
+            .map(|_| RecoveryCheckpoint::new(vec![]));
         let text = json!({"agent":job.id,"role":job.role,"status":job.status,"beadId":job.bead_id,"handoff":job.handoff,"error":job.error}).to_string();
         state.messages.push(Message { from: job.id.clone(), to: job.parent_id.clone(), text });
         Ok(())
