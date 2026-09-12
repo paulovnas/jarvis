@@ -73,24 +73,29 @@ describe("macOS signing setup", () => {
   });
 
   it("applies the isolated development config before Cargo and app arguments", () => {
+    const projectRoot = "/tmp/Jarvis Project";
+    const developmentConfig = path.join(
+      projectRoot,
+      "src-tauri/tauri.dev.conf.json",
+    );
     const original = ["dev", "--no-watch", "--", "--locked", "--", "hello world"];
-    const prepared = developmentArguments(original, "/tmp/Jarvis Project");
+    const prepared = developmentArguments(original, projectRoot);
     expect(prepared).toEqual([
       "dev",
       "--no-watch",
       "--config",
-      "/tmp/Jarvis Project/src-tauri/tauri.dev.conf.json",
+      developmentConfig,
       "--",
       "--locked",
       "--",
       "hello world",
     ]);
-    expect(developmentArguments(["build"], "/tmp/Jarvis Project")).toEqual(["build"]);
-    expect(developmentArguments(["build", "--debug"], "/tmp/Jarvis Project")).toEqual([
+    expect(developmentArguments(["build"], projectRoot)).toEqual(["build"]);
+    expect(developmentArguments(["build", "--debug"], projectRoot)).toEqual([
       "build",
       "--debug",
       "--config",
-      "/tmp/Jarvis Project/src-tauri/tauri.dev.conf.json",
+      developmentConfig,
     ]);
   });
 
