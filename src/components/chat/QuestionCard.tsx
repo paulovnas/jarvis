@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/TextInput";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/questions";
@@ -59,11 +60,11 @@ export function QuestionCard({ request, drafts, draftKey, onAnswer }: {
     <CardHeader className="flex flex-row items-start justify-between gap-3">
       <CardTitle id={titleId} ref={title} tabIndex={-1} className="min-w-0 flex-1 break-words outline-none" aria-live="polite">{question.question}</CardTitle>
       <div className="flex shrink-0 items-center gap-1">
-        {deadline && <Badge variant="outline" role={remainingSeconds === 0 ? "status" : undefined} aria-live={remainingSeconds === 0 ? "polite" : undefined} title="As recomendações serão enviadas automaticamente ao fim da contagem." className="mr-1 gap-1 font-mono text-[10px] tabular-nums text-onedark-green">
+        {deadline && <Hint content="As recomendações serão enviadas automaticamente ao fim da contagem."><Badge variant="outline" role={remainingSeconds === 0 ? "status" : undefined} aria-live={remainingSeconds === 0 ? "polite" : undefined} className="mr-1 gap-1 font-mono text-[10px] tabular-nums text-onedark-green">
           <Timer aria-hidden="true" className="size-3" />
           <span aria-hidden="true">{remainingSeconds === null ? "…" : remainingSeconds > 0 ? `${remainingSeconds}s` : "Enviando…"}</span>
           <span className="sr-only">{remainingSeconds === null ? "Calculando tempo para resposta recomendada automática" : remainingSeconds > 0 ? `Resposta recomendada automática em ${remainingSeconds} segundos` : "Enviando respostas recomendadas"}</span>
-        </Badge>}
+        </Badge></Hint>}
         {request.questions.length > 1 && <>
           <Button variant="ghost" size="icon-xs" className="cursor-pointer" aria-label="Pergunta anterior" disabled={pending || draft.index === 0} onClick={() => navigate(draft.index - 1)}><ChevronLeft /></Button>
           <span className="text-xs tabular-nums text-muted-foreground">{draft.index + 1} de {request.questions.length}</span>

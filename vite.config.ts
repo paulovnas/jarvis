@@ -21,7 +21,20 @@ export default defineConfig(async () => ({
       }
     },
   } satisfies Plugin],
-  build: { chunkSizeWarningLimit: 3000 },
+  build: {
+    chunkSizeWarningLimit: 3000,
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (
+            id.includes("/src/components/ui/hint.tsx")
+            || id.includes("/src/components/ui/tooltip.tsx")
+            || id.includes("/node_modules/@base-ui/react/tooltip/")
+          ) return "tooltip";
+        },
+      },
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

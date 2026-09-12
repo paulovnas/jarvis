@@ -12,6 +12,7 @@ import { BrowserPanel } from "@/components/browser/BrowserPanel";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { orderedItems } from "@/core/item-order";
 import { SortableItem, SortableList } from "@/components/layout/SortableList";
+import { Hint } from "@/components/ui/hint";
 
 const CodeViewer = lazy(async () => {
   // Monaco resolves translated labels while its modules initialize. Finish the
@@ -62,17 +63,17 @@ export function FileWorkspace({ files, browser, terminalLauncher, children }: { 
           const path = id.startsWith("file:") ? id.slice(5) : null;
           const tab = path === null ? browser?.snapshot.tabs.find(item => `browser:${item.id}` === id) : undefined;
           return <SortableItem key={id} id={id}>{sort => <div data-workspace-tab={id} ref={sort.setNodeRef} style={sort.style} className="group/workspace-tab relative shrink-0">
-            <TabsTrigger ref={sort.setActivatorNodeRef} {...sort.listeners} onKeyDown={event => {
+            <Hint content={path ?? tab?.url}><TabsTrigger ref={sort.setActivatorNodeRef} {...sort.listeners} onKeyDown={event => {
               sort.listeners?.onKeyDown?.(event);
               if (sorting.current) event.preventBaseUIHandler();
-            }} aria-describedby={sort.attributes["aria-describedby"]} value={id} title={path ?? tab?.url} className="h-7 max-w-64 cursor-pointer gap-1.5 pl-2 pr-7 text-xs">
+            }} aria-describedby={sort.attributes["aria-describedby"]} value={id} className="h-7 max-w-64 cursor-pointer gap-1.5 pl-2 pr-7 text-xs">
               {path ? <FileIcon path={path} /> : <Globe className="size-3.5 shrink-0 text-onedark-cyan" />}
               <span className={`truncate ${path ? "font-mono text-[11px]" : ""}`}>{path ? fileName(path) : tab?.title || "Navegador"}{path && files?.tabs.paths.some(other => other !== path && fileName(other) === fileName(path)) && <span className="ml-1 text-muted-foreground">· {path.slice(0, path.lastIndexOf("/")) || "/"}</span>}</span>
-            </TabsTrigger>
-            <Button type="button" variant="ghost" size="icon" aria-label={path ? `Fechar arquivo ${path}` : `Fechar navegador ${tab?.title}`} title={path ? `Fechar ${path}` : `Fechar ${tab?.title}`} data-path={path ?? undefined} onClick={event => { if (path) close(event); else if (tab) void browser?.command({ action: "close", id: tab.id }); }} className="absolute inset-y-0 right-0.5 my-auto size-5 cursor-pointer opacity-60 group-hover/workspace-tab:opacity-100 focus-visible:opacity-100 active:not-aria-[haspopup]:translate-y-0"><X className="size-3" /></Button>
+            </TabsTrigger></Hint>
+            <Hint content={path ? `Fechar ${path}` : `Fechar ${tab?.title}`}><Button type="button" variant="ghost" size="icon" aria-label={path ? `Fechar arquivo ${path}` : `Fechar navegador ${tab?.title}`} data-path={path ?? undefined} onClick={event => { if (path) close(event); else if (tab) void browser?.command({ action: "close", id: tab.id }); }} className="absolute inset-y-0 right-0.5 my-auto size-5 cursor-pointer opacity-60 group-hover/workspace-tab:opacity-100 focus-visible:opacity-100 active:not-aria-[haspopup]:translate-y-0"><X className="size-3" /></Button></Hint>
           </div>}</SortableItem>;
         })}</SortableList>
-        {browser && browser.snapshot.tabs.length > 0 && <Button type="button" variant="ghost" size="icon" aria-label="Nova aba do navegador" title="Nova aba do navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-6 shrink-0 cursor-pointer"><Plus className="size-3.5" /></Button>}
+        {browser && browser.snapshot.tabs.length > 0 && <Hint content="Nova aba do navegador"><Button type="button" variant="ghost" size="icon" aria-label="Nova aba do navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-6 shrink-0 cursor-pointer"><Plus className="size-3.5" /></Button></Hint>}
       </TabsList></div>
       {terminalLauncher}
     </div>
@@ -81,12 +82,12 @@ export function FileWorkspace({ files, browser, terminalLauncher, children }: { 
     {active && files && <TabsContent value={`file:${active}`} className="m-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3 text-xs text-muted-foreground">
         <FileIcon path={active} />
-        <span className="min-w-0 flex-1 truncate font-mono" title={active}>{active}</span>
+        <Hint content={active}><span className="min-w-0 flex-1 truncate font-mono">{active}</span></Hint>
         <Badge variant="outline" className="h-6 gap-1.5 rounded-md border-onedark-yellow/30 bg-onedark-yellow/10 px-2.5 text-xs font-medium text-onedark-yellow">
           <LockKeyhole aria-hidden="true" />
           Somente leitura
         </Badge>
-        <Button type="button" variant="ghost" size="icon" aria-label="Atualizar arquivo" title="Atualizar arquivo" onClick={files.refresh} disabled={files.active.loading} className="size-6 cursor-pointer"><RefreshCw className="size-3.5" /></Button>
+        <Hint content="Atualizar arquivo"><Button type="button" variant="ghost" size="icon" aria-label="Atualizar arquivo" onClick={files.refresh} disabled={files.active.loading} className="size-6 cursor-pointer"><RefreshCw className="size-3.5" /></Button></Hint>
       </div>
       <div className="min-h-0 min-w-0 flex-1">
         {files.active.loading ? <FileSkeleton /> : files.active.error ? <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center"><FileSearch className="size-8 text-muted-foreground" /><p role="alert" className="max-w-md text-sm text-muted-foreground">{files.active.error}</p><Button type="button" variant="outline" onClick={files.refresh} className="cursor-pointer">Tentar novamente</Button></div> : files.active.data ? <ViewerBoundary key={files.projectId}><Suspense fallback={<FileSkeleton />}><CodeViewer file={files.active.data} paths={files.tabs.paths} visible /></Suspense></ViewerBoundary> : null}

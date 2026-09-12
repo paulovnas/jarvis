@@ -1,6 +1,7 @@
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { lazy, Suspense } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Hint } from "@/components/ui/hint";
 import { AssistantWorkCollapse } from "./AssistantWorkCollapse";
 import { QuestionHistory } from "./QuestionHistory";
 import { GeneratedImageCard } from "./GeneratedImageCard";
@@ -18,7 +19,7 @@ export function AssistantMessageTurn({ message }: { message: ChatMessage }) {
             <span aria-hidden="true" className="relative h-5 w-3.5 overflow-hidden"><JarvisLogo className="absolute -left-[7px] -top-1 size-7 max-w-none" /></span>
             <span aria-hidden="true" className="text-xs font-semibold tracking-wide text-foreground">arvis</span>
           </span>
-          {message.model && <Badge variant="outline" title={message.model} className="max-w-56 truncate border-0 bg-transparent px-1 font-mono text-[10px] text-muted-foreground">{message.model.split(" / ").pop()}</Badge>}
+          {message.model && <Hint content={message.model}><Badge variant="outline" className="max-w-56 truncate border-0 bg-transparent px-1 font-mono text-[10px] text-muted-foreground">{message.model.split(" / ").pop()}</Badge></Hint>}
         </div>
         <time className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{message.timestamp}</time>
       </header>

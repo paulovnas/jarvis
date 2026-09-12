@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
+import { Hint } from "@/components/ui/hint";
 import { conversationContext } from "@/core/inspector";
 import type { ContextInfo } from "@/core/chat";
 
@@ -35,7 +36,7 @@ export function ContextUsage({ context, live, onCompact, compacting = false, dis
       <span className="ml-auto font-mono text-[11px] tabular-nums transition-colors motion-reduce:transition-none" style={{ color }}>{percent === null ? "—" : `${Math.round(percent)}%`}</span>
     </div>
     <div className="mt-2 flex items-center gap-2">
-      <Button variant="ghost" size="icon" aria-label="Compactar contexto" title="Compactar contexto" disabled={disabled || busy || !onCompact} className="size-6 shrink-0 cursor-pointer text-muted-foreground" onClick={() => setConfirming(true)}><RefreshCw aria-hidden="true" className={`size-3.5 ${busy ? "animate-spin motion-reduce:animate-none" : ""}`} /></Button>
+      <Hint content="Compactar contexto"><Button variant="ghost" size="icon" aria-label="Compactar contexto" disabled={disabled || busy || !onCompact} className="size-6 shrink-0 cursor-pointer text-muted-foreground" onClick={() => setConfirming(true)}><RefreshCw aria-hidden="true" className={`size-3.5 ${busy ? "animate-spin motion-reduce:animate-none" : ""}`} /></Button></Hint>
       {percent !== null ? <Progress aria-label="Ocupação da janela de contexto" value={Math.min(100, percent)} className="min-w-0 flex-1 [&_[data-slot=progress-indicator]]:bg-[var(--context-color)] [&_[data-slot=progress-indicator]]:motion-reduce:transition-none" /> : <div className="h-1 flex-1 rounded-full bg-muted" />}
     </div>
     {tokens !== null && <p className="mt-1 text-right font-mono text-[10px] text-muted-foreground tabular-nums">{estimated ? "≈ " : ""}{format(tokens)}{limit ? ` / ${format(limit)}` : ""} tokens</p>}

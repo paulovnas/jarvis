@@ -19,7 +19,9 @@ it("separates immutable built-in flow and agent cards from custom management", a
   expect(within(jarvis).queryByRole("button", { name: /Excluir|Editar/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Editar Meu fluxo" })).toBeVisible();
   await user.click(screen.getByRole("tab", { name: "Agentes" }));
-  expect(within(screen.getByRole("region", { name: "Agentes Jarvis" })).getAllByRole("button")).toHaveLength(7);
+  const nativeAgents = screen.getByRole("region", { name: "Agentes Jarvis" });
+  expect(within(nativeAgents).getAllByRole("button")).toHaveLength(8);
+  expect(within(nativeAgents).getByRole("button", { name: "Ver agente GitHub" })).toHaveTextContent("Misto");
   expect(screen.getByRole("button", { name: "Editar Analista próprio" })).toBeVisible();
 });
 

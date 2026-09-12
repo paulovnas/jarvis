@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Camera, Globe, RefreshCw, SquareTerminal } from 
 import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/TextInput";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -85,13 +86,13 @@ export function BrowserPanel({ browser, tab }: { browser: BrowserController; tab
   };
   return <div className="flex h-full min-h-0 flex-col">
     <form aria-label="Navegação" className="flex min-h-11 shrink-0 items-center gap-1 border-b border-border bg-card px-2" onSubmit={event => { event.preventDefault(); try { void browser.command({ action: "navigate", id: tab.id, url: browserAddress(address) }); } catch (cause) { toast.error(libraryError(cause)); } }}>
-      <Button type="button" variant="ghost" size="icon" title="Voltar" aria-label="Voltar página" className="size-7 cursor-pointer" onClick={() => void browser.command({ action: "back", id: tab.id })}><ArrowLeft className="size-3.5" /></Button>
-      <Button type="button" variant="ghost" size="icon" title="Avançar" aria-label="Avançar página" className="size-7 cursor-pointer" onClick={() => void browser.command({ action: "forward", id: tab.id })}><ArrowRight className="size-3.5" /></Button>
-      <Button type="button" variant="ghost" size="icon" title="Recarregar" aria-label="Recarregar página" className="size-7 cursor-pointer" onClick={() => void browser.command({ action: "reload", id: tab.id })}><RefreshCw className="size-3.5" /></Button>
+      <Hint content="Voltar"><Button type="button" variant="ghost" size="icon" aria-label="Voltar página" className="size-7 cursor-pointer" onClick={() => void browser.command({ action: "back", id: tab.id })}><ArrowLeft className="size-3.5" /></Button></Hint>
+      <Hint content="Avançar"><Button type="button" variant="ghost" size="icon" aria-label="Avançar página" className="size-7 cursor-pointer" onClick={() => void browser.command({ action: "forward", id: tab.id })}><ArrowRight className="size-3.5" /></Button></Hint>
+      <Hint content="Recarregar"><Button type="button" variant="ghost" size="icon" aria-label="Recarregar página" className="size-7 cursor-pointer" onClick={() => void browser.command({ action: "reload", id: tab.id })}><RefreshCw className="size-3.5" /></Button></Hint>
       <Input ref={input} aria-label="Endereço do navegador" placeholder="URL ou localhost:3000" autoFocus={tab.url === "about:blank"} value={address} onChange={event => setDraft({ url: tab.url, value: event.target.value })} onFocus={event => event.target.select()} className="mx-1 h-7 min-w-0 flex-1 font-mono text-xs" />
       <Button type="submit" size="sm" variant="secondary" className="h-7 cursor-pointer px-2 text-xs">Ir</Button>
-      <Button type="button" variant={consoleOpen ? "secondary" : "ghost"} size="icon" title="Console" aria-label="Mostrar console" aria-pressed={consoleOpen} className="size-7 cursor-pointer" onClick={() => { setConsoleOpen(!consoleOpen); if (!consoleOpen) void readConsole(); }}><SquareTerminal className="size-3.5" /></Button>
-      <Button type="button" variant="ghost" size="icon" title="Capturar página" aria-label="Capturar página" disabled={capturing} className="size-7 cursor-pointer" onClick={() => void screenshot()}><Camera className="size-3.5" /></Button>
+      <Hint content="Console"><Button type="button" variant={consoleOpen ? "secondary" : "ghost"} size="icon" aria-label="Mostrar console" aria-pressed={consoleOpen} className="size-7 cursor-pointer" onClick={() => { setConsoleOpen(!consoleOpen); if (!consoleOpen) void readConsole(); }}><SquareTerminal className="size-3.5" /></Button></Hint>
+      <Hint content="Capturar página"><Button type="button" variant="ghost" size="icon" aria-label="Capturar página" disabled={capturing} className="size-7 cursor-pointer" onClick={() => void screenshot()}><Camera className="size-3.5" /></Button></Hint>
     </form>
     <NativeViewport browser={browser} tab={tab} />
     {consoleOpen && <section aria-label="Console da página" className="flex h-44 min-h-0 shrink-0 flex-col border-t border-border bg-sidebar">

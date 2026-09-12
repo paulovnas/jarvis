@@ -113,7 +113,7 @@ describe("SkillsMarketplace", () => {
     expect(screen.queryByRole("button", { name: "Ver skill-1" })).not.toBeInTheDocument();
 
     // Limpa o filtro de repositório clicando no badge de remoção
-    await user.click(screen.getByTitle("Limpar filtro de repositório"));
+    await user.click(screen.getByRole("button", { name: "Limpar filtro de repositório" }));
     expect(screen.getByRole("button", { name: "Ver skill-1" })).toBeVisible();
   });
   it("limpa a barra de pesquisa ao clicar no botão X", async () => {

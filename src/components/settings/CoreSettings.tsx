@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { useCore, type CoreController } from "@/hooks/use-core";
 import { CoreInstallProgress } from "@/components/core/CoreInstallProgress";
 import { CoreReinstallDialog } from "@/components/core/CoreReinstallDialog";
+import { Hint } from "@/components/ui/hint";
 
 export function CorePanel({ core, setup = false }: { core: CoreController; setup?: boolean }) {
   const { snapshot, error, busy, install, refresh, check, repair } = core;
@@ -33,7 +34,7 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
     <div className="flex items-center justify-between gap-3">
       <div className="flex items-center gap-2"><Cpu className="size-4 text-primary" /><h2 className="text-sm font-medium">Core</h2><Badge variant="outline" className="font-mono text-[10px] text-muted-foreground">{snapshot.items.filter(item => item.installed && item.configured && !item.healthError).length}/{snapshot.items.length}</Badge></div>
       <div className="flex items-center gap-1"><Button size="sm" variant="ghost" aria-label="Diagnóstico e Reparo" onClick={() => setDiagnostics(true)}><Wrench className="size-3.5" />Diagnóstico</Button>
-<Button size="icon-sm" variant="ghost" aria-label="Verificar atualizações do Core" title="Verificar atualizações" disabled={snapshot.checking || busy} onClick={() => void check()}><RefreshCw className={`size-3.5 ${snapshot.checking ? "animate-spin" : ""}`} /></Button></div>
+<Hint content="Verificar atualizações"><Button size="icon-sm" variant="ghost" aria-label="Verificar atualizações do Core" disabled={snapshot.checking || busy} onClick={() => void check()}><RefreshCw className={`size-3.5 ${snapshot.checking ? "animate-spin" : ""}`} /></Button></Hint></div>
     </div>
     <div className="core-card-grid">{snapshot.items.map(item => {
       const { icon: Icon, label, description, color, tint } = CORE_DETAILS[item.id];

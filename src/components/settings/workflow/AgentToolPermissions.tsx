@@ -11,6 +11,7 @@ import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { libraryError } from "@/core/library";
 import { CAPABILITY_LABELS, type CustomAgent } from "@/core/workflow-catalog";
 import { ChoiceField } from "./WorkflowFields";
+import { Hint } from "@/components/ui/hint";
 
 const permissions = z.array(z.object({ id: z.string(), name: z.string(), group: z.string(), description: z.string(), required: z.boolean(), capabilities: z.array(z.enum(["read_only", "write_files", "commands"])) }));
 
@@ -37,7 +38,7 @@ export function AgentToolPermissions({ agent, disabled, onChange }: { agent: Cus
       const locked = tool.required || !capable || Boolean(mcpDenied);
       return <div key={tool.id} className="flex min-w-0 items-start gap-3 rounded-lg border border-border bg-card p-3 shadow-(--edge-highlight)">
         <div className="min-w-0 flex-1">
-          <Label htmlFor={`permission-${tool.id}`} className="cursor-pointer truncate font-mono text-xs" title={tool.name}>{tool.name}</Label>
+          <Hint content={tool.name}><Label htmlFor={`permission-${tool.id}`} className="cursor-pointer truncate font-mono text-xs">{tool.name}</Label></Hint>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">{tool.description}</p>
           {locked && <Badge variant="outline" className="mt-2 gap-1 text-[10px] text-muted-foreground"><LockKeyhole className="size-3" />{tool.required ? "Obrigatória" : !tool.capabilities.length ? "Fluxos nativos" : !capable ? "Restrita pelo acesso" : "MCPs desativados"}</Badge>}
         </div>

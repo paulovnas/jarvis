@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
+import { Hint } from "@/components/ui/hint";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProviderUsage } from "@/hooks/use-provider-usage";
 import type { ProviderAccount } from "@/core/provider-accounts";
@@ -18,10 +19,10 @@ function WindowBar({ window, now, stale }: { window: UsageWindow; now: number; s
     <div className="flex items-center justify-between gap-5 font-mono text-[11px] tabular-nums"><span>{window.label}</span><span style={{ color: quotaColor(window.remainingPercent) }}>{quotaPercent(window.remainingPercent)}</span></div>
     {window.remainingPercent !== null && <div className="relative">
       <Progress aria-label={`${window.group} ${window.label} restante`} value={window.remainingPercent} style={{ "--quota-color": quotaColor(window.remainingPercent) } as CSSProperties} className="[&_[data-slot=progress-indicator]]:bg-[var(--quota-color)]" />
-      {expected !== null && <span role="img" aria-label={`Restante esperado: ${Math.round(expected)}%`} title={`Restante esperado neste momento: ${Math.round(expected)}%`} style={{ left: `${expected}%` }} className="absolute -top-1 h-3 w-0.5 -translate-x-1/2 rounded-full bg-foreground shadow-[0_0_0_1px_var(--color-card)]" />}
+      {expected !== null && <Hint content={`Restante esperado neste momento: ${Math.round(expected)}%`}><span role="img" aria-label={`Restante esperado: ${Math.round(expected)}%`} style={{ left: `${expected}%` }} className="absolute -top-1 h-3 w-0.5 -translate-x-1/2 rounded-full bg-foreground shadow-[0_0_0_1px_var(--color-card)]" /></Hint>}
     </div>}
-    {reset && <p title={window.resetsAt ? new Date(window.resetsAt).toLocaleString("pt-BR") : undefined} className="text-[10px] text-muted-foreground">{reset === "agora" ? "Reset previsto agora" : `Renova em ${reset}`}</p>}
-    {reserve !== null && <p title="Percentual da cota total acima ou abaixo do consumo esperado para este momento da janela." className={`font-mono text-[10px] ${reserve < 0 ? "text-onedark-red" : reserve > 0 ? "text-onedark-green" : "text-muted-foreground"}`}>{reserve === 0 ? "No ritmo da janela" : `${Math.abs(reserve)}% ${reserve > 0 ? "em reserva" : "em déficit"}`}</p>}
+    {reset && <Hint content={window.resetsAt ? new Date(window.resetsAt).toLocaleString("pt-BR") : undefined}><p className="text-[10px] text-muted-foreground">{reset === "agora" ? "Reset previsto agora" : `Renova em ${reset}`}</p></Hint>}
+    {reserve !== null && <Hint content="Percentual da cota total acima ou abaixo do consumo esperado para este momento da janela."><p className={`font-mono text-[10px] ${reserve < 0 ? "text-onedark-red" : reserve > 0 ? "text-onedark-green" : "text-muted-foreground"}`}>{reserve === 0 ? "No ritmo da janela" : `${Math.abs(reserve)}% ${reserve > 0 ? "em reserva" : "em déficit"}`}</p></Hint>}
   </div>;
 }
 
@@ -51,7 +52,7 @@ export function ProviderUsage({ account, now }: { account: ProviderAccount; now:
       {!data && !error && <div role="status" aria-label="Carregando limites" className="space-y-4"><Skeleton className="h-5" /><Skeleton className="h-2" /><Skeleton className="h-5" /><Skeleton className="h-2" /></div>}
       {failed && <p role="status" className="mb-3 text-[11px] text-onedark-yellow">{data?.fetchedAt ? "Limites desatualizados" : "Limites indisponíveis"}</p>}
       {data && !windows.length && !failed && <p className="text-xs text-muted-foreground">Nenhuma janela informada.</p>}
-      <div className={`grid gap-5 ${groups.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>{groups.map(group => <section key={group} className="min-w-0 space-y-4"><h3 className="micro-label truncate text-muted-foreground" title={group}>{group}</h3>{windows.filter(window => window.group === group).map(window => <WindowBar key={window.id} window={window} now={now} stale={Boolean(failed) || !data?.fetchedAt || now - data.fetchedAt > 5 * 60_000} />)}</section>)}</div>
+      <div className={`grid gap-5 ${groups.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>{groups.map(group => <section key={group} className="min-w-0 space-y-4"><Hint content={group}><h3 className="micro-label truncate text-muted-foreground">{group}</h3></Hint>{windows.filter(window => window.group === group).map(window => <WindowBar key={window.id} window={window} now={now} stale={Boolean(failed) || !data?.fetchedAt || now - data.fetchedAt > 5 * 60_000} />)}</section>)}</div>
       {credits && <section className="mt-4 border-t border-border pt-3"><div className="flex items-center justify-between text-xs"><span>Resets disponíveis</span><span className="font-mono text-primary">{credits.availableCount}</span></div>{credits.availableCount > 0 && <div className="mt-2 space-y-1 text-[10px] text-muted-foreground">{credits.detailsAvailable && credits.expirations.length ? credits.expirations.map((expiry, index) => <p key={index}>{expiry ? `Expira em ${new Date(expiry).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}` : "Validade não informada"}</p>) : <p>Validade indisponível</p>}</div>}</section>}
       {data?.fetchedAt && <p className="mt-4 font-mono text-[9px] text-muted-foreground/70">Atualizado às {new Date(data.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>}
     </PopoverContent>

@@ -7,6 +7,7 @@ import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Hint } from "@/components/ui/hint";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const eventKinds = [
@@ -186,7 +187,7 @@ export function DiagnosticEvidence() {
         <dl className="grid gap-2 text-[11px] sm:grid-cols-3">
           <div className="rounded-md border border-border bg-sidebar p-3"><dt className="micro-label text-muted-foreground">Versão</dt><dd className="mt-1 font-mono">{summary.appVersion}</dd></div>
           <div className="rounded-md border border-border bg-sidebar p-3"><dt className="micro-label text-muted-foreground">Sistema</dt><dd className="mt-1 font-mono">{summary.os} · {summary.arch}</dd></div>
-          <div className="rounded-md border border-border bg-sidebar p-3"><dt className="micro-label text-muted-foreground">Execução</dt><dd className="mt-1 truncate font-mono" title={summary.runId}>{summary.runId}</dd></div>
+          <div className="rounded-md border border-border bg-sidebar p-3"><dt className="micro-label text-muted-foreground">Execução</dt><Hint content={summary.runId}><dd className="mt-1 truncate font-mono">{summary.runId}</dd></Hint></div>
         </dl>
         <div className="flex items-start gap-2 rounded-md border border-border bg-sidebar p-3 text-xs">
           {incident ? <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-yellow" /> : <ShieldCheck aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-green" />}

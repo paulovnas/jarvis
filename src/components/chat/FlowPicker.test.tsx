@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import { customAgent, customFlow } from "@/test/workflow-fixtures";
+import { builtinGithubAgent, customAgent, customFlow } from "@/test/workflow-fixtures";
 import { FlowPicker } from "./FlowPicker";
 
 it("oferece os quatro fluxos com descrição e seleciona sem alterar o modelo", async () => {
@@ -49,4 +49,12 @@ it("lists Solo and Mixed agents in their own section and hides flow-only agents"
   expect(screen.queryByRole("menuitem", { name: flowOnly.name })).not.toBeInTheDocument();
   await user.click(screen.getByRole("menuitem", { name: solo.name }));
   expect(change).toHaveBeenCalledExactlyOnceWith(`agent:${solo.id}`);
+});
+
+it("lists the mixed built-in GitHub agent for direct conversations", async () => {
+  const user = userEvent.setup(), change = vi.fn();
+  render(<FlowPicker value="standard" onChange={change} builtinAgents={[builtinGithubAgent]} />);
+  await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
+  await user.click(await screen.findByRole("menuitem", { name: "GitHub" }));
+  expect(change).toHaveBeenCalledExactlyOnceWith("agent:builtin:github");
 });

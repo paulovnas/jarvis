@@ -169,7 +169,7 @@ describe("Persistent live conversation", () => {
   it("restaura skills explícitas como badges no histórico", async () => {
     call.mockResolvedValue({ ...emptyChat(), turns: [{ ...savedTurn(), user: "/review Confira o README", parts: [{ type: "skill", id: "review-id", name: "review" }, { type: "text", text: " Confira o README" }] }] });
     render(<TestChat />);
-    const badge = await screen.findByTitle("Skill: review");
+    const badge = await screen.findByText("review");
     expect(badge).toHaveTextContent("review");
     expect(within(screen.getByTestId("user-message-turn1")).getByText("Confira o README")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Remover skill review" })).not.toBeInTheDocument();
@@ -368,6 +368,6 @@ describe("Persistent live conversation", () => {
     const { rerender } = render(<TestChat />); await screen.findByRole("textbox");
     const library = populatedLibrary(); library.projects[0].name = "Meu projeto"; library.conversations[0].title = "Título editado";
     rerender(<TestChat library={library} />);
-    expect(screen.getByRole("heading", { name:"Título editado" })).toBeInTheDocument(); expect(screen.getByTitle("/projects/jarvis")).toHaveTextContent("Pessoal / Meu projeto"); expect(call.mock.calls.filter(([command]) => command === "get_chat")).toHaveLength(1);
+    expect(screen.getByRole("heading", { name:"Título editado" })).toBeInTheDocument(); expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent === "Pessoal / Meu projeto")).toBeVisible(); expect(call.mock.calls.filter(([command]) => command === "get_chat")).toHaveLength(1);
   });
 });

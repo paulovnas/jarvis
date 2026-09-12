@@ -17,6 +17,7 @@ import { workflowAppearance } from "@/components/agents/workflow-appearance";
 import { agentAppearance, flowAppearance } from "@/core/workflow-appearance";
 import { reasoningPreview } from "@/components/chat/reasoning-preview";
 import { executionDuration, formatExecutionDuration, useRunningClock } from "@/hooks/use-running-clock";
+import { Hint } from "@/components/ui/hint";
 
 function presentation(agent: WorkflowAgent) {
   return agent.role === "custom"
@@ -25,10 +26,10 @@ function presentation(agent: WorkflowAgent) {
 }
 
 function ModelDetails({ agent }: { agent: WorkflowAgent }) {
-  return <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-[9px] text-muted-foreground" title={`${agent.options.account} / ${agent.options.model}`}>
+  return <Hint content={`${agent.options.account} / ${agent.options.model}`}><span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-[9px] text-muted-foreground">
     <span className="max-w-24 truncate text-foreground/75">{aliasSuffix(agent.options.account)}</span><span aria-hidden="true" className="text-border">/</span><span className="truncate">{agent.options.model}</span>
     {agent.options.reasoning && <><span aria-hidden="true">·</span><span>{reasoningLabel(agent.options.reasoning)}</span></>}
-  </span>;
+  </span></Hint>;
 }
 function StatusBadge({ agent }: { agent: WorkflowAgent }) {
   const color = agent.status === "completed" ? "var(--color-onedark-green)" : ["failed", "blocked"].includes(agent.status) ? "var(--destructive)" : activeAgent(agent) ? presentation(agent).color : "var(--muted-foreground)";
@@ -82,9 +83,9 @@ export function WorkflowAgents({ workflow, conversationId }: { workflow?: Workfl
         const thought = agent.currentThought ? reasoningPreview(agent.currentThought) : "";
         const requiresAttention = Boolean(agent.pendingApproval || agent.pendingQuestion || agent.pendingAuthoring);
         return <Button key={agent.id} variant="ghost" data-status={agent.status} style={agent.status === "waiting" || agent.status === "queued" ? { borderColor: agent.role === "custom" ? `color-mix(in srgb, ${color} 50%, transparent)` : `${color}80` } : undefined} onClick={() => setSelected(agent.id)} aria-label={`Abrir agente ${label}: ${agent.title}`} className="agent-execution relative isolate h-auto w-full cursor-pointer flex-col items-stretch gap-2 rounded-md border border-border bg-card/60 p-3 text-left whitespace-normal shadow-[inset_0_1px_0_#ffffff0a] hover:border-primary/40">
-          <span className="flex items-center gap-2"><Icon aria-hidden="true" className="size-3.5 shrink-0" style={{ color }} /><span className="flex-1 text-xs font-medium">{label}</span>{requiresAttention && selected !== agent.id && <span aria-label="Aguardando sua resposta" title="Aguardando sua resposta" className="flex size-5 items-center justify-center rounded-full border border-onedark-yellow/30 bg-onedark-yellow/10 text-onedark-yellow"><CircleAlert aria-hidden="true" className="size-3" /></span>}{agent.status === "running" && <span aria-label="Em execução" className="size-1.5 animate-pulse rounded-full motion-reduce:animate-none" style={{ backgroundColor: color }} />}<ChevronRight className="size-3 text-muted-foreground" /></span>
+          <span className="flex items-center gap-2"><Icon aria-hidden="true" className="size-3.5 shrink-0" style={{ color }} /><span className="flex-1 text-xs font-medium">{label}</span>{requiresAttention && selected !== agent.id && <Hint content="Aguardando sua resposta"><span aria-label="Aguardando sua resposta" className="flex size-5 items-center justify-center rounded-full border border-onedark-yellow/30 bg-onedark-yellow/10 text-onedark-yellow"><CircleAlert aria-hidden="true" className="size-3" /></span></Hint>}{agent.status === "running" && <span aria-label="Em execução" className="size-1.5 animate-pulse rounded-full motion-reduce:animate-none" style={{ backgroundColor: color }} />}<ChevronRight className="size-3 text-muted-foreground" /></span>
           {agent.title !== label && <span className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{agent.title}</span>}
-          {thought && <span title={thought} className={`line-clamp-2 text-[10px] italic leading-4 text-muted-foreground ${agent.status === "running" ? "reasoning-shimmer" : ""}`}>{thought}</span>}
+          {thought && <Hint content={thought}><span className={`line-clamp-2 text-[10px] italic leading-4 text-muted-foreground ${agent.status === "running" ? "reasoning-shimmer" : ""}`}>{thought}</span></Hint>}
           <span className="flex items-center gap-2"><StatusBadge agent={agent} /><span aria-label="Tempo de execução" className="font-mono text-[9px] tabular-nums text-muted-foreground">{formatExecutionDuration(duration)}</span></span>
           <ModelDetails agent={agent} />
         </Button>;

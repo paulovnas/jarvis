@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Maximize2, Minimize2, Minus, X } from "lucide-react";
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 
 export function TitleBar() {
   const [isMaximized, setIsMaximized] = useState(false);
@@ -85,27 +86,27 @@ export function TitleBar() {
     <div aria-label="Controles da janela" className={isMac ? "group flex items-center gap-0.5" : "flex self-stretch"} onDoubleClick={event => event.stopPropagation()}>
       {isMac ? (
         <>
-          <Button variant="ghost" type="button" aria-label="Fechar janela" title="Fechar" onClick={handleClose} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
+          <Hint content="Fechar"><Button variant="ghost" type="button" aria-label="Fechar janela" onClick={handleClose} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
             <span className="flex size-3 shrink-0 items-center justify-center rounded-full border border-black/10 bg-[#ff5f57]"><X className="size-2.5 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" /></span>
-          </Button>
-          <Button variant="ghost" type="button" aria-label="Minimizar janela" title="Minimizar" onClick={handleMinimize} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
+          </Button></Hint>
+          <Hint content="Minimizar"><Button variant="ghost" type="button" aria-label="Minimizar janela" onClick={handleMinimize} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
             <span className="flex size-3 shrink-0 items-center justify-center rounded-full border border-black/10 bg-[#febc2e]"><Minus className="size-2.5 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" /></span>
-          </Button>
-          <Button variant="ghost" type="button" aria-label={greenLabel} title={greenLabel} onClick={handleGreen} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
+          </Button></Hint>
+          <Hint content={greenLabel}><Button variant="ghost" type="button" aria-label={greenLabel} onClick={handleGreen} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
             <span className="flex size-3 shrink-0 items-center justify-center rounded-full border border-black/10 bg-[#28c840]">{expanded ? <Minimize2 className="size-2 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" /> : <Maximize2 className="size-2 text-black/65 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" />}</span>
-          </Button>
+          </Button></Hint>
         </>
       ) : (
         <>
-          <Button variant="ghost" type="button" aria-label="Minimizar janela" title="Minimizar" onClick={handleMinimize} className="h-full w-11 cursor-pointer rounded-none px-0">
+          <Hint content="Minimizar"><Button variant="ghost" type="button" aria-label="Minimizar janela" onClick={handleMinimize} className="h-full w-11 cursor-pointer rounded-none px-0">
             <Minus className="size-3.5" />
-          </Button>
-          <Button variant="ghost" type="button" aria-label={greenLabel} title={greenLabel} onClick={handleGreen} className="h-full w-11 cursor-pointer rounded-none px-0">
+          </Button></Hint>
+          <Hint content={greenLabel}><Button variant="ghost" type="button" aria-label={greenLabel} onClick={handleGreen} className="h-full w-11 cursor-pointer rounded-none px-0">
             {expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-          </Button>
-          <Button variant="ghost" type="button" aria-label="Fechar janela" title="Fechar" onClick={handleClose} className="h-full w-11 cursor-pointer rounded-none px-0 hover:bg-destructive/15 hover:text-destructive">
+          </Button></Hint>
+          <Hint content="Fechar"><Button variant="ghost" type="button" aria-label="Fechar janela" onClick={handleClose} className="h-full w-11 cursor-pointer rounded-none px-0 hover:bg-destructive/15 hover:text-destructive">
             <X className="size-3.5" />
-          </Button>
+          </Button></Hint>
         </>
       )}
     </div>

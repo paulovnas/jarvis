@@ -29,6 +29,7 @@ fn mandatory_context_retrieval_is_available_in_every_role_flow_and_scope() {
     for broad in [true, false] {
         for name in ["ctx_search", "ctx_index", "ctx_stats"] {
             assert!(Role::Github.allows(Flow::Publication, name, broad));
+            assert!(Role::Github.allows(Flow::Custom, name, broad));
         }
     }
     assert!(!Role::Github.allows(Flow::Complete, "ctx_search", true));

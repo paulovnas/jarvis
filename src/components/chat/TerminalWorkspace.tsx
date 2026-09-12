@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -181,13 +182,12 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
   const count = terminalCount;
   const triggerLabel = count === 0 ? "Abrir terminais" : count === 1 ? "1 terminal aberto" : `${count} terminais abertos`;
 
-  const launcher = <Button
+  const launcher = <Hint content={conversationId ? open ? "Recolher painel de terminais" : triggerLabel : "Abra uma conversa para usar o terminal"}><Button
         ref={launcherRef}
         type="button"
         variant="ghost"
         size="icon"
         disabled={!conversationId}
-        title={conversationId ? open ? "Recolher painel de terminais" : triggerLabel : "Abra uma conversa para usar o terminal"}
         aria-label={triggerLabel}
         aria-expanded={open}
         aria-controls={panelId}
@@ -196,7 +196,7 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
       >
         {open ? <PanelBottomClose className="size-3.5 stroke-[2.2]" /> : <PanelBottomOpen className="size-3.5 stroke-[2.2]" />}
         {count > 0 && <Badge className="absolute -right-1.5 -top-1.5 min-w-4 justify-center border-border bg-primary px-1 py-0 text-[9px] text-primary-foreground">{count}</Badge>}
-      </Button>;
+      </Button></Hint>;
 
   return <>
     <ResizablePanelGroup groupRef={groupRef} orientation="vertical" className={`min-h-0 min-w-0 flex-1 ${animating ? "panels-animating" : ""}`} onLayoutChanged={(panels, meta) => {
@@ -212,7 +212,7 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
       <section id={panelId} aria-label="Painel de terminais" inert={!open} aria-hidden={!open} className={`dark flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-sidebar text-foreground transition-transform duration-200 motion-reduce:transition-none ${open ? "" : "translate-y-full"}`}>
         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-3 py-1">
           <span className="flex items-center gap-2 text-xs font-medium"><TerminalIcon className="size-3.5 text-onedark-green" />Terminais{count > 0 && <Badge variant="secondary" className="px-1 py-0 font-mono text-[9px]">{count}</Badge>}</span>
-          <Button type="button" variant="ghost" size="icon" aria-label="Recolher painel de terminais" title="Recolher painel de terminais" className="size-6 shrink-0 cursor-pointer text-muted-foreground" onClick={() => { togglePanel(); launcherRef.current?.focus(); }}><PanelBottomClose className="size-3.5" /></Button>
+          <Hint content="Recolher painel de terminais"><Button type="button" variant="ghost" size="icon" aria-label="Recolher painel de terminais" className="size-6 shrink-0 cursor-pointer text-muted-foreground" onClick={() => { togglePanel(); launcherRef.current?.focus(); }}><PanelBottomClose className="size-3.5" /></Button></Hint>
         </div>
         <div className="min-h-0 min-w-0 flex-1">
             {loading ? <div className="flex h-full flex-col gap-3"><Skeleton className="h-8 w-56" /><Skeleton className="min-h-0 flex-1" /></div> : visibleTerminals.length === 0 ? <div className="flex h-full flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-border bg-sidebar/50 text-center">
@@ -238,7 +238,7 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
                       <RenameTerminalPopover key={`${terminal.id}:${renamingId === terminal.id ? terminal.title : "closed"}`} open={renamingId === terminal.id} terminal={terminal} pending={renamingPending} onOpenChange={next => { if (!next) setRenamingId(null); }} onRename={title => rename(terminal, title)} />
                     </div>)}
                   </TabsList>
-                  <Button type="button" variant="outline" size="icon" aria-label="Novo terminal" title="Novo terminal" className="size-7 shrink-0 cursor-pointer" disabled={creating} onClick={() => { void create(); }}><Plus className="size-3.5" /></Button>
+                  <Hint content="Novo terminal"><Button type="button" variant="outline" size="icon" aria-label="Novo terminal" className="size-7 shrink-0 cursor-pointer" disabled={creating} onClick={() => { void create(); }}><Plus className="size-3.5" /></Button></Hint>
                 </div>
               </div>
               {active && <TabsContent value={active.id} className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-sidebar" aria-label={active.title}>
@@ -247,7 +247,7 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
               </TabsContent>}
             </Tabs>}
         </div>
-        {active && <div className="flex shrink-0 items-center gap-2 border-t border-border bg-secondary/40 px-5 py-2 font-mono text-[11px] text-muted-foreground"><Folder className="size-3 shrink-0 text-onedark-cyan" /><span className="min-w-0 flex-1 truncate" title={active.command ? `${active.cwd}\n${active.command}` : active.cwd}>{active.cwd}</span><span className={`shrink-0 ${active.status === "failed" ? "text-destructive" : active.status === "running" ? "text-onedark-green" : ""}`}>{TERMINAL_STATUS_LABELS[active.status]}</span></div>}
+        {active && <div className="flex shrink-0 items-center gap-2 border-t border-border bg-secondary/40 px-5 py-2 font-mono text-[11px] text-muted-foreground"><Folder className="size-3 shrink-0 text-onedark-cyan" /><Hint content={active.command ? `${active.cwd}\n${active.command}` : active.cwd}><span className="min-w-0 flex-1 truncate">{active.cwd}</span></Hint><span className={`shrink-0 ${active.status === "failed" ? "text-destructive" : active.status === "running" ? "text-onedark-green" : ""}`}>{TERMINAL_STATUS_LABELS[active.status]}</span></div>}
       </section>
       </ResizablePanel>
     </ResizablePanelGroup>

@@ -89,7 +89,7 @@ fn custom_flows_accept_immutable_native_agents_and_freeze_their_runtime_contract
 #[test]
 fn native_canvas_topology_is_derived_from_the_real_delegation_contract() {
     let agents = builtin_agents();
-    assert_eq!(agents.len(), 7);
+    assert_eq!(agents.len(), 8);
     assert!(agents.iter().all(|agent| agent.immutable));
     assert_eq!(
         agents
@@ -99,6 +99,12 @@ fn native_canvas_topology_is_derived_from_the_real_delegation_contract() {
             .capability,
         Capability::Commands
     );
+    let github = agents
+        .iter()
+        .find(|agent| agent.role == Role::Github)
+        .unwrap();
+    assert_eq!(github.name, "GitHub");
+    assert_eq!(github.usage, AgentUsage::Mixed);
 
     let flows = builtin_flows();
     assert_eq!(flows.len(), 4);
@@ -134,7 +140,7 @@ fn catalog_view_keeps_user_definitions_separate_from_immutable_native_graphs() {
     let value = serde_json::to_value(CatalogView::from(example())).unwrap();
     assert_eq!(value["agents"].as_array().unwrap().len(), 1);
     assert_eq!(value["flows"].as_array().unwrap().len(), 1);
-    assert_eq!(value["builtinAgents"].as_array().unwrap().len(), 7);
+    assert_eq!(value["builtinAgents"].as_array().unwrap().len(), 8);
     assert_eq!(value["builtinFlows"].as_array().unwrap().len(), 4);
     assert_eq!(value["builtinFlows"][3]["immutable"], true);
     assert_eq!(value["builtinFlows"][3]["id"], "complete");
@@ -190,6 +196,11 @@ fn agent_usage_controls_direct_selection_and_flow_membership() {
     catalog.validate().unwrap();
     catalog.agents[0].usage = AgentUsage::FlowOnly;
     assert!(catalog.resolve_agent(&agent_id).is_err());
+
+    let github = catalog.resolve_agent("builtin:github").unwrap();
+    assert_eq!(github.native_role, Some(Role::Github));
+    assert_eq!(github.usage, AgentUsage::Mixed);
+    assert!(catalog.resolve_agent("builtin:planner").is_err());
 }
 
 #[test]

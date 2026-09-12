@@ -20,7 +20,7 @@ it("groups the thirteen immutable agents by flow and offers useful role-specific
   const designer = screen.getByRole("region",{ name:"Agentes do fluxo Designer" });
   const planned = screen.getByRole("region",{ name:"Agentes do fluxo Planejado" });
   const complete = screen.getByRole("region",{ name:"Agentes do fluxo Completo" });
-  const publication = screen.getByRole("region",{ name:"Agentes do fluxo Publicação" });
+  const publication = screen.getByRole("region",{ name:"Agentes do fluxo GitHub" });
   expect(within(standard).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
   expect(within(designer).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
   expect(within(planned).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(3);
@@ -38,7 +38,7 @@ it("identifica o provedor escolhido pelo sufixo ao lado do modelo", () => {
   vi.mocked(useAgentModels).mockReturnValue({ data: { "planned/planner": { account: "openai-codex-personal", model: "gpt-5.6-sol", reasoning: "high" } }, error: null, saving: false, save, refresh: vi.fn() });
   render(<AgentSettings accounts={accounts} />);
   const group = screen.getByRole("region", { name: "Agentes do fluxo Planejado" });
-  expect(within(group).getByTitle("openai-codex-personal")).toHaveTextContent("personal");
+  expect(within(group).getByText("personal")).toBeVisible();
   expect(within(group).getByRole("button", { name: "Modelo de Planejador no fluxo Planejado" })).toHaveTextContent("GPT 5.6 Sol");
 });
 
@@ -92,7 +92,7 @@ it("lets the user retry an instruction load failure without changing the model",
 
 it("gives every agent a distinct accent within each flow", () => {
   render(<AgentSettings accounts={accounts} />);
-  for (const flow of ["Padrão", "Designer", "Planejado", "Completo", "Publicação"]) {
+  for (const flow of ["Padrão", "Designer", "Planejado", "Completo", "GitHub"]) {
     const group = screen.getByRole("region", { name: `Agentes do fluxo ${flow}` });
     const colors = Object.values(ROLE_LABELS).flatMap(label => {
       const name = within(group).queryByText(label, { selector: "[data-slot=card-title]" });

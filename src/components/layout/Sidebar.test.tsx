@@ -41,7 +41,7 @@ describe("Persistent sidebar", () => {
     await user.click(await screen.findByRole("button", { name: "Excluir conversa Primeira conversa" }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent("Primeira conversa");
     await user.click(screen.getByRole("button", { name: "Cancelar" }));
-    fireEvent.contextMenu(screen.getByTitle("/projects/jarvis"));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Jarvis" }));
     await user.click(await screen.findByRole("menuitem", { name: "Mover para outro workspace" }));
     const target = stored.workspaces.find(item => item.id !== "w1")!;
     const dialog = screen.getByRole("dialog");
@@ -79,10 +79,10 @@ describe("Persistent sidebar", () => {
     const selected = await screen.findByRole("button", { name:/^(?!Excluir).*Primeira conversa/ });
     expect(within(selected).getByRole("img", { name:"Mensagem não lida" })).toBeVisible();
     expect(within(selected).getByRole("status", { name:"Conversa em execução" })).toBeVisible();
-    expect(within(screen.getByTitle("/projects/website")).getByRole("img", { name:"Projeto com mensagens não lidas" })).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Projeto Website" })).getByRole("img", { name:"Projeto com mensagens não lidas" })).toBeVisible();
     view.rerender(<Harness unreadIds={new Set(["c3"])} />);
     expect(within(selected).queryByRole("img", { name:"Mensagem não lida" })).not.toBeInTheDocument();
-    expect(within(screen.getByTitle("/projects/website")).getByRole("img", { name:"Projeto com mensagens não lidas" })).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Projeto Website" })).getByRole("img", { name:"Projeto com mensagens não lidas" })).toBeVisible();
   });
 
   it("shows which conversations own open terminal tabs", async () => {
@@ -127,7 +127,9 @@ describe("Persistent sidebar", () => {
     const { rerender } = render(<Harness runningIds={new Set(["c1", "c3"])} />);
     const selected = await screen.findByRole("button", { name: /^(?!Excluir).*Primeira conversa/ });
     expect(within(selected).getByRole("status", { name: "Conversa em execução" })).toBeInTheDocument();
-    const folded = screen.getByTitle("/projects/website");
+    const folded = within(screen.getByRole("group", { name: "Projeto Website" })).getByRole("button", {
+      name: "Projeto com conversa em execuçãoWebsite",
+    });
     expect(within(folded).getByRole("status", { name: "Projeto com conversa em execução" })).toBeInTheDocument();
     expect(screen.queryByText("Conversa em segundo plano")).not.toBeInTheDocument();
     rerender(<Harness runningIds={new Set()} />);
@@ -263,7 +265,10 @@ describe("Persistent sidebar", () => {
     });
     await user.click(screen.getByRole("button", { name: "Novo" }));
     await user.click(await screen.findByRole("menuitem", { name: "Adicionar projeto" }));
-    expect(await screen.findByRole("button", { name: "Jarvis" })).toHaveAttribute("title", "/projects/jarvis");
+    const projectButton = await screen.findByRole("button", { name: "Jarvis" });
+    expect(projectButton).not.toHaveAttribute("title");
+    await user.hover(screen.getByText("Jarvis"));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("/projects/jarvis");
     expect(screen.getByRole("button", { name: "Nova conversa em Jarvis" })).toBeEnabled();
   });
 

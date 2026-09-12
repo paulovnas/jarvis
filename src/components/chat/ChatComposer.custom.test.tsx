@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { ChatComposer } from "./ChatComposer";
-import { customAgent, customCatalog, customFlow } from "@/test/workflow-fixtures";
+import { builtinGithubAgent, customAgent, customCatalog, customFlow } from "@/test/workflow-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const models = [{ provider: "local", models: [{ value: "local/model", label: "Model", reasoningLevels: [], defaultReasoningLevel: null }] }];
@@ -49,4 +49,14 @@ it("runs a Solo agent as the main chat agent with its fixed model", async () => 
   expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toBeDisabled();
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Analise este chamado{Enter}");
   expect(send).toHaveBeenCalledWith("Analise este chamado", { account: "local", model: "specialist", reasoning: null, mode: "build", workflow: "custom", customAgentId: solo.id, approvalMode: "yolo" });
+});
+
+it("runs the mixed GitHub agent directly with its dedicated configurable model", async () => {
+  const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true), save = vi.fn().mockResolvedValue(true);
+  render(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "publication/github": { account: "local", model: "model", reasoning: null } }, error: null, saving: false, save, refresh: vi.fn() }} />);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_workflow_catalog"));
+  await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
+  await user.click(await screen.findByRole("menuitem", { name: builtinGithubAgent.name }));
+  await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Liste os pull requests abertos{Enter}");
+  expect(send).toHaveBeenCalledWith("Liste os pull requests abertos", { account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customAgentId: "builtin:github", approvalMode: "yolo" });
 });

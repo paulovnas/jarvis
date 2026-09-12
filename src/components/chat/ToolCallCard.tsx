@@ -13,6 +13,7 @@ import { Spinner } from "@/components/ui/spinner";
 import type { ToolCallItem } from "./types";
 import { QuestionHistory } from "./QuestionHistory";
 import { isTaskReminder } from "./tool-activity";
+import { Hint } from "@/components/ui/hint";
 
 const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
 const DEFERRED_DETAIL_KEY = "_jarvisHistoryDetailsDeferred";
@@ -126,9 +127,9 @@ export function ToolCallCard({ tool, detailContext }: { tool: ToolCallItem; deta
     <Collapsible open={open} onOpenChange={next => { setOpen(next); if (next) requestDetails(); }} data-testid={`tool-call-${tool.id}`} className="tool-slot min-w-0">
       <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group flex h-auto min-h-9 w-full cursor-pointer justify-start gap-2 px-2.5 text-left text-[11px]">
         <Icon aria-hidden="true" data-icon="inline-start" className={`size-3.5 shrink-0 ${mutation ? "text-onedark-yellow" : current.name === "bash" ? "text-onedark-green" : current.name.includes("skill") ? "text-onedark-purple" : current.name === "web_search" || current.name.startsWith("ctx_") ? "text-onedark-cyan" : "text-primary"}`} />
-        <span className="min-w-0 flex-1 truncate" title={typeof detail === "string" ? detail : undefined}>
+        <Hint content={typeof detail === "string" ? detail : undefined}><span className="min-w-0 flex-1 truncate">
           <span className="text-muted-foreground">{label}</span>{typeof detail === "string" && <> <span className="mx-1 text-muted-foreground/50">/</span> <span className="font-mono text-[10px] text-foreground">{detail}</span></>}
-        </span>
+        </span></Hint>
         <span className="sr-only">{status}</span>
         {loading || current.status === "running" || current.status === "pending" ? <Spinner aria-hidden="true" className="motion-reduce:animate-none" /> : warning ? <TriangleAlert aria-hidden="true" className="text-onedark-yellow" /> : current.status === "error" ? <AlertCircle aria-hidden="true" className="text-destructive" /> : <Check aria-hidden="true" className="text-onedark-green" />}
         <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />

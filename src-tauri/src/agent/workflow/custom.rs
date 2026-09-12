@@ -136,6 +136,12 @@ pub(super) fn instructions(agent: &catalog::AgentDefinition) -> String {
 }
 
 pub(super) fn direct_instructions(agent: &catalog::AgentDefinition) -> String {
+    if let Some(role) = agent.native_role {
+        return format!(
+            "{}\nThis built-in Jarvis agent is the primary agent in this conversation. Use the native task list to organize multi-step work. Do not call hub tools or behave as a delegated workflow step. Follow current user instructions and project rules.\n",
+            contracts::prompt(Flow::Custom, role, &agent.id)
+        );
+    }
     format!("\nUser-defined direct agent: {}.\n{}\n\n{}\nWork as the primary agent in this conversation. Use the native task list to organize multi-step work. Do not call hub tools or behave as a delegated workflow step. Follow current user instructions and project rules.\n", agent.name, include_str!("common.md"), agent.instructions)
 }
 

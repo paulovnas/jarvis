@@ -6,6 +6,7 @@ import { z } from "zod";
 import { attachmentSchema } from "@/core/attachments";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Hint } from "@/components/ui/hint";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StoredImage } from "./AttachmentPreview";
 import type { ToolCallItem } from "./types";
@@ -26,7 +27,7 @@ export function BrowserCaptureCard({ tool }: { tool: ToolCallItem }) {
   };
   return <section aria-label="Captura do navegador" className="my-2 w-full max-w-lg">
     <Button type="button" variant="ghost" aria-label="Ampliar captura do navegador" className="h-auto w-full cursor-pointer overflow-hidden rounded-md border border-border p-0" onClick={() => setOpen(true)}><StoredImage attachment={result.attachment} full /></Button>
-    <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground" title={result.url}>{result.url}</p>
+    <Hint content={result.url}><p className="mt-1 truncate font-mono text-[10px] text-muted-foreground">{result.url}</p></Hint>
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90dvh] overflow-auto sm:max-w-4xl" aria-describedby={undefined}><DialogHeader><DialogTitle>Captura do navegador</DialogTitle></DialogHeader><StoredImage attachment={result.attachment} full /><Button type="button" variant="outline" className="cursor-pointer" disabled={saving} onClick={() => void save()}><Download className="size-4" />Salvar captura</Button></DialogContent></Dialog>
   </section>;
 }

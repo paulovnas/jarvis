@@ -49,6 +49,7 @@ import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { SortableItem, SortableList } from "./SortableList";
 import { orderedItems } from "@/core/item-order";
 import { MoveProjectDialog } from "./MoveProjectDialog";
+import { Hint } from "@/components/ui/hint";
 
 type NameDialog =
   | { kind: "workspace" }
@@ -119,11 +120,11 @@ export function AppSidebar({
             >
               {runningConversationIds?.has(item.id) ? <Spinner aria-label="Conversa em execução" className="text-primary motion-reduce:animate-none" /> : <MessageSquare className={item.id === selected?.conversationId ? "text-primary" : "text-muted-foreground/55"} />}
               <span className="min-w-0 flex-1 truncate">{item.title}</span>
-              {(terminalCounts?.get(item.id) ?? 0) > 0 && <span role="img" aria-label={`${terminalCounts?.get(item.id)} ${terminalCounts?.get(item.id) === 1 ? "terminal aberto" : "terminais abertos"}`} title={`${terminalCounts?.get(item.id)} ${terminalCounts?.get(item.id) === 1 ? "terminal aberto" : "terminais abertos"}`} className="flex shrink-0 items-center gap-0.5 font-mono text-[9px] text-onedark-green"><SquareTerminal aria-hidden="true" className="size-3.5" />{(terminalCounts?.get(item.id) ?? 0) > 1 && terminalCounts?.get(item.id)}</span>}
-              {unreadConversationIds?.has(item.id) && <Badge role="img" aria-label="Mensagem não lida" title="Mensagem não lida" className="size-2 shrink-0 rounded-full border-0 bg-primary p-0 shadow-[0_0_6px_#61afef44]" />}
+              {(terminalCounts?.get(item.id) ?? 0) > 0 && <Hint content={`${terminalCounts?.get(item.id)} ${terminalCounts?.get(item.id) === 1 ? "terminal aberto" : "terminais abertos"}`}><span role="img" aria-label={`${terminalCounts?.get(item.id)} ${terminalCounts?.get(item.id) === 1 ? "terminal aberto" : "terminais abertos"}`} className="flex shrink-0 items-center gap-0.5 font-mono text-[9px] text-onedark-green"><SquareTerminal aria-hidden="true" className="size-3.5" />{(terminalCounts?.get(item.id) ?? 0) > 1 && terminalCounts?.get(item.id)}</span></Hint>}
+              {unreadConversationIds?.has(item.id) && <Hint content="Mensagem não lida"><Badge role="img" aria-label="Mensagem não lida" className="size-2 shrink-0 rounded-full border-0 bg-primary p-0 shadow-[0_0_6px_#61afef44]" /></Hint>}
             </SidebarMenuButton>
           </LibraryItemMenu>
-          <SidebarMenuAction showOnHover aria-label={`Excluir conversa ${item.title}`} title="Excluir conversa" disabled={busy} className="cursor-pointer text-muted-foreground hover:text-destructive focus-visible:opacity-100" onClick={() => { library.clearError(); setDeletion({ kind: "conversation", item }); }}><Trash2 aria-hidden="true" /></SidebarMenuAction>
+          <Hint content="Excluir conversa"><SidebarMenuAction showOnHover aria-label={`Excluir conversa ${item.title}`} disabled={busy} className="cursor-pointer text-muted-foreground hover:text-destructive focus-visible:opacity-100" onClick={() => { library.clearError(); setDeletion({ kind: "conversation", item }); }}><Trash2 aria-hidden="true" /></SidebarMenuAction></Hint>
         </SidebarMenuItem>}</SortableItem>
       ))}
     </SidebarMenu>
@@ -176,8 +177,8 @@ export function AppSidebar({
                 </SelectContent>
               </Select>
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Novo" title="Novo" className="shrink-0 cursor-pointer" disabled={busy || !snapshot} />}>
-                <Plus />
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Novo" className="shrink-0 cursor-pointer" disabled={busy || !snapshot} />}>
+                <Hint content="Novo"><span className="flex items-center"><Plus /></span></Hint>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-64">
                 <DropdownMenuGroup>
@@ -257,7 +258,6 @@ export function AppSidebar({
                                 className={`h-8 cursor-pointer text-muted-foreground data-active:bg-transparent! data-active:shadow-none! ${isCurrentProject ? "font-semibold text-foreground!" : ""}`}
                                 isActive={item.id === project?.id}
                                 disabled={busy}
-                                title={item.path}
                                 onClick={() => {
                                   if (item.id !== project?.id) void library.select({
                                     kind: "project",
@@ -267,18 +267,17 @@ export function AppSidebar({
                               />}>
                                 <ChevronRight aria-hidden="true" className={`size-3 text-muted-foreground/55 transition-transform motion-reduce:transition-none ${isOpen ? "rotate-90" : ""}`} />
                                 {snapshot.conversations.some(entry => entry.projectId === item.id && runningConversationIds?.has(entry.id)) ? <Spinner aria-label="Projeto com conversa em execução" className="text-primary motion-reduce:animate-none" /> : <Folder className={isCurrentProject ? "text-onedark-cyan" : "text-muted-foreground/55"} />}
-                                <span className="min-w-0 flex-1">
+                                <Hint content={item.path}><span className="min-w-0 flex-1">
                                   <span className="block truncate">
                                     {item.name}
                                   </span>
-                                </span>
-                                {conversations.some(entry => unreadConversationIds?.has(entry.id)) && <Badge role="img" aria-label="Projeto com mensagens não lidas" title="Mensagens não lidas" className="mr-1 size-2 shrink-0 rounded-full border-0 bg-primary p-0" />}
+                                </span></Hint>
+                                {conversations.some(entry => unreadConversationIds?.has(entry.id)) && <Hint content="Mensagens não lidas"><Badge role="img" aria-label="Projeto com mensagens não lidas" className="mr-1 size-2 shrink-0 rounded-full border-0 bg-primary p-0" /></Hint>}
                               </CollapsibleTrigger>
                             </LibraryItemMenu>
-                              <SidebarMenuAction
+                              <Hint content="Nova conversa"><SidebarMenuAction
                                 type="button"
                                 aria-label={`Nova conversa em ${item.name}`}
-                                title="Nova conversa"
                                 className="cursor-pointer text-muted-foreground peer-data-[size=lg]/menu-button:top-2 disabled:pointer-events-none disabled:opacity-50"
                                 disabled={busy}
                                 onClick={() => {
@@ -287,7 +286,7 @@ export function AppSidebar({
                                 }}
                               >
                                 <Plus aria-hidden="true" />
-                              </SidebarMenuAction>
+                              </SidebarMenuAction></Hint>
                               <CollapsibleContent className="my-0.5 ml-2.5 border-l border-border/60 pl-1.5">
                                 <SidebarMenu className="mb-1">
                                   <SidebarMenuItem>

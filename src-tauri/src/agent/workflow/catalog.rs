@@ -226,7 +226,11 @@ pub(crate) fn builtin_agent(role: Role) -> Option<BuiltinAgentDefinition> {
         description: role_description(role),
         instructions: role.contract(),
         role,
-        usage: AgentUsage::FlowOnly,
+        usage: if role == Role::Github {
+            AgentUsage::Mixed
+        } else {
+            AgentUsage::FlowOnly
+        },
         capability: role_capability(role),
         appearance: role_appearance(role),
         immutable: true,
@@ -242,6 +246,7 @@ pub(crate) fn builtin_agents() -> Vec<BuiltinAgentDefinition> {
         Role::Designer,
         Role::Builder,
         Role::Reviewer,
+        Role::Github,
     ]
     .into_iter()
     .filter_map(builtin_agent)
@@ -558,8 +563,9 @@ impl Catalog {
             .agents
             .iter()
             .find(|agent| agent.id == id)
-            .ok_or_else(|| invalid("Este agente não existe mais. Escolha outro agente."))?
-            .clone();
+            .cloned()
+            .or_else(|| Role::from_builtin_id(id).and_then(runtime_builtin_agent))
+            .ok_or_else(|| invalid("Este agente não existe mais. Escolha outro agente."))?;
         if !agent.usage.allows_solo() {
             return Err(invalid(
                 "Este agente está disponível somente dentro de fluxos.",

@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { LazyChatMarkdown as ChatMarkdown } from "@/components/chat/LazyChatMarkdown";
 import { boardSchema, dashboardError, statusFor, type Bead } from "@/core/dashboard";
 import { useDashboardQuery } from "@/hooks/use-dashboard-query";
+import { Hint } from "@/components/ui/hint";
 
 function childrenOf(epic: Bead, issues: Bead[]) {
   return issues.filter(issue => issue.parent === epic.id
@@ -93,7 +94,7 @@ function ProjectPlans({ projectId, conversationId, onOpenKanban, active }: { pro
           </section>
         </div>
         <DialogFooter className="mx-0 mb-0 shrink-0 border-t border-border bg-sidebar px-5 pt-5 pb-6 sm:justify-between">
-          <Button variant="destructive" size="sm" className="cursor-pointer text-xs" disabled={active || closing} title={active ? "Interrompa a execução atual antes de encerrar o plano." : undefined} onClick={() => { setCloseError(null); setConfirming(true); }}>Encerrar plano</Button>
+          <Hint content={active ? "Interrompa a execução atual antes de encerrar o plano." : undefined}><Button variant="destructive" size="sm" className="cursor-pointer text-xs" disabled={active || closing} onClick={() => { setCloseError(null); setConfirming(true); }}>Encerrar plano</Button></Hint>
           {onOpenKanban && <Button variant="outline" size="sm" className="cursor-pointer gap-2 text-xs" onClick={() => { setSelected(null); onOpenKanban(projectId); }}>Ver mais detalhes<ArrowUpRight className="size-3.5" /></Button>}
         </DialogFooter>
       </DialogContent>}

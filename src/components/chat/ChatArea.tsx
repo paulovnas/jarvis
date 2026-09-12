@@ -22,6 +22,7 @@ import { useBrowser } from "@/hooks/use-browser";
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { AuthoringApprovalDrawer } from "./AuthoringApprovalDrawer";
 import { WorkflowRecoveryAlert } from "./WorkflowRecoveryAlert";
+import { Hint } from "@/components/ui/hint";
 
 function ConversationView({ context, modelGroups, modelBindings, modelsReady, chat, workflow, agentModels, drafts, questionDrafts, onLatestVisibility, files }: { context: ConversationDetails; modelGroups: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; drafts: Map<string, ChatDraft>; questionDrafts: Map<string, QuestionDraft>; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController }) {
   const footer = useRef<HTMLElement>(null);
@@ -56,7 +57,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, ch
     && !snapshot.pendingQuestion
     && !snapshot.pendingAuthoring
     && !snapshot.queuedMessages?.length;
-  const browserLauncher = <Button type="button" variant="ghost" size="icon" aria-label="Abrir navegador" title="Abrir navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-7 cursor-pointer text-muted-foreground hover:text-onedark-cyan"><Globe className="size-3.5" /></Button>;
+  const browserLauncher = <Hint content="Abrir navegador"><Button type="button" variant="ghost" size="icon" aria-label="Abrir navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-7 cursor-pointer text-muted-foreground hover:text-onedark-cyan"><Globe className="size-3.5" /></Button></Hint>;
   const composer = (terminalLauncher: ReactNode) => <footer ref={footer} aria-label="Área de composição" className="chat-footer mx-auto max-h-[65dvh] w-full max-w-4xl min-w-0 shrink-0 overflow-y-auto overscroll-none px-5 pb-4 pt-3">
     {workflow?.data?.recovery && <WorkflowRecoveryAlert recovery={workflow.data.recovery} onResume={chat.resumeWorkflow} />}
     {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.id} tool={snapshot.pendingApproval} projectPath={context.project.path} onAnswer={chat.approve} />}
@@ -100,7 +101,7 @@ export function ChatArea({ modelGroups = [], modelBindings, modelsReady, library
       {leftToggle}
       <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-card text-primary shadow-[inset_0_1px_0_#ffffff0d]"><FolderGit2 aria-hidden="true" className="size-4" /></div>
       <div className="min-w-0 flex-1">
-        <p className="mb-1 truncate font-mono text-[10px] text-muted-foreground" title={project?.path}>{workspace?.name ?? "Jarvis"}{project && <> <span className="px-1 text-muted-foreground/50">/</span> {project.name}</>}</p>
+        <Hint content={project?.path}><p className="mb-1 truncate font-mono text-[10px] text-muted-foreground">{workspace?.name ?? "Jarvis"}{project && <> <span className="px-1 text-muted-foreground/50">/</span> {project.name}</>}</p></Hint>
         {conversation && <h1 className="truncate text-sm font-medium">{conversation.title}</h1>}
       </div>
       {rightToggle}

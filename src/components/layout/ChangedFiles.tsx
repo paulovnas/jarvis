@@ -8,6 +8,7 @@ import { DiffSkeleton } from "./LoadingSkeletons";
 import { fileDiffSchema, type FileChange, type FileDiff } from "@/core/chat";
 import { libraryError } from "@/core/library";
 import { resolveProjectFilePath } from "@/core/project-path";
+import { Hint } from "@/components/ui/hint";
 
 function Counts({ additions, deletions }: Pick<FileChange, "additions" | "deletions">) {
   return additions === null || deletions === null ? <span className="text-[10px] text-muted-foreground">Sem base</span> : <span className="flex shrink-0 gap-2 font-mono text-[11px] tabular-nums" aria-label={`${additions} linhas adicionadas, ${deletions} linhas removidas`}><span className="text-[#98c379]">+{additions}</span><span className="text-destructive">−{deletions}</span></span>;
@@ -18,7 +19,7 @@ function FileButton({ file, selected, onClick }: { file: FileChange; selected?: 
   const name = parts.pop();
   return <Button variant="ghost" onClick={onClick} aria-pressed={selected} aria-label={`Alterações em ${file.path}`} className={`h-auto w-full cursor-pointer justify-start gap-2 px-2 py-2 text-xs ${selected ? "bg-primary/10 text-primary" : ""}`}>
     <FileCode2 aria-hidden="true" className="size-4 shrink-0 text-primary" />
-    <span className="min-w-0 flex-1 text-left" title={file.path}><span className="block truncate">{name}</span>{parts.length > 0 && <span className="block truncate text-[10px] text-muted-foreground">{parts.join("/")}</span>}</span>
+    <Hint content={file.path}><span className="min-w-0 flex-1 text-left"><span className="block truncate">{name}</span>{parts.length > 0 && <span className="block truncate text-[10px] text-muted-foreground">{parts.join("/")}</span>}</span></Hint>
     <Counts {...file} />
   </Button>;
 }
@@ -37,7 +38,7 @@ function DiffView({ conversationId, file, revision, projectPath }: { conversatio
     return () => { active = false; };
   }, [conversationId, file.path, revision, attempt]);
   return <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={`Diff de ${file.path}`}>
-    <div className="flex min-w-0 items-center gap-3 border-b border-border px-4 py-3">{filePath ? <Button variant="ghost" size="sm" className="min-w-0 flex-1 cursor-pointer justify-start truncate px-0 font-mono text-xs hover:bg-transparent hover:text-primary" title="Abrir no editor padrão" aria-label={`Abrir ${file.path} no editor padrão`} onClick={() => { void invoke("open_conversation_path", { conversationId, path: file.path }).catch(error => toast.error(libraryError(error, "Não foi possível abrir o arquivo no aplicativo padrão."))); }}>{file.path}</Button> : <p className="min-w-0 flex-1 truncate font-mono text-xs" title={file.path}>{file.path}</p>}<Counts {...file} /></div>
+    <div className="flex min-w-0 items-center gap-3 border-b border-border px-4 py-3">{filePath ? <Hint content="Abrir no editor padrão"><Button variant="ghost" size="sm" className="min-w-0 flex-1 cursor-pointer justify-start truncate px-0 font-mono text-xs hover:bg-transparent hover:text-primary" aria-label={`Abrir ${file.path} no editor padrão`} onClick={() => { void invoke("open_conversation_path", { conversationId, path: file.path }).catch(error => toast.error(libraryError(error, "Não foi possível abrir o arquivo no aplicativo padrão."))); }}>{file.path}</Button></Hint> : <Hint content={file.path}><p className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</p></Hint>}<Counts {...file} /></div>
     {!result ? <DiffSkeleton /> : result.error ? <div className="space-y-3 p-4"><p role="alert" className="text-xs text-destructive">{result.error}</p><Button variant="outline" size="sm" className="cursor-pointer" onClick={() => { setResult(null); setAttempt(value => value + 1); }}>Tentar novamente</Button></div> : result.diff && <>
       <p className="border-b border-border/50 px-4 py-2 text-[11px] text-muted-foreground">Alterações da sessão ainda não commitadas.</p>
       <div className="min-h-0 flex-1 overflow-auto" tabIndex={0} aria-label="Linhas do diff">

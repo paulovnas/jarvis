@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { type Bead, actorName, date, shortId, statuses, statusFor, typeName } from "@/core/dashboard";
 import { BeadDrawer } from "./BeadDrawer";
+import { Hint } from "@/components/ui/hint";
 
 export function BeadsBoard({ projectId, projectName, issues, onChanged }: { projectId: string; projectName?: string; issues: Bead[]; onChanged: () => Promise<unknown> }) {
   const [query, setQuery] = useState("");
@@ -47,7 +48,7 @@ export function BeadsBoard({ projectId, projectName, issues, onChanged }: { proj
 function BeadCard({ issue, projectName, onClick }: { issue: Bead; projectName?: string; onClick: () => void }) {
   const Icon = issue.issue_type === "epic" ? Layers : issue.issue_type === "bug" ? Bug : issue.status === "closed" ? Check : Circle;
   return <Button variant="ghost" className="bead-card h-auto w-full cursor-pointer flex-col items-stretch gap-3 rounded-md border border-border bg-card p-3 text-left font-normal whitespace-normal" aria-label={`${typeName(issue.issue_type)}: ${issue.title}`} onClick={onClick}>
-    <div className="flex items-center gap-2"><Icon className={`size-3.5 ${issue.issue_type === "epic" ? "text-onedark-purple" : "text-muted-foreground"}`} /><span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground" title={issue.id}>{shortId(issue.id, projectName)}</span><span className={`font-mono text-[10px] ${issue.priority <= 1 ? "text-onedark-red" : "text-muted-foreground"}`}>P{issue.priority}</span></div>
+    <div className="flex items-center gap-2"><Icon className={`size-3.5 ${issue.issue_type === "epic" ? "text-onedark-purple" : "text-muted-foreground"}`} /><Hint content={issue.id}><span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground">{shortId(issue.id, projectName)}</span></Hint><span className={`font-mono text-[10px] ${issue.priority <= 1 ? "text-onedark-red" : "text-muted-foreground"}`}>P{issue.priority}</span></div>
     <p className="line-clamp-3 text-[13px] leading-5 font-medium">{issue.title}</p>
     {(issue.issue_type === "epic" || issue.labels.length > 0) && <div className="flex flex-wrap gap-1">{issue.issue_type === "epic" && <Badge variant="outline" className="border-onedark-purple/25 bg-onedark-purple/5 text-[9px] text-onedark-purple">Épico</Badge>}{issue.labels.slice(0, 2).map(label => <Badge key={label} variant="secondary" className="max-w-28 truncate text-[9px]">{label}</Badge>)}{issue.labels.length > 2 && <span className="text-[10px] text-muted-foreground">+{issue.labels.length - 2}</span>}</div>}
     <div className="flex items-center gap-2 border-t border-border/60 pt-2 text-[10px] text-muted-foreground"><span className="min-w-0 flex-1 truncate">{issue.assignee ? <span className="flex items-center gap-1"><UserRound className="size-3" /><span className="truncate">{actorName(issue.assignee)}</span></span> : typeName(issue.issue_type)}</span>{issue.comment_count > 0 && <span className="flex items-center gap-1"><MessageSquare className="size-3" />{issue.comment_count}</span>}<span className="shrink-0 font-mono">{date(issue.updated_at)}</span></div>

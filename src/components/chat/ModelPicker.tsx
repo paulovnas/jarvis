@@ -3,6 +3,7 @@ import type { ProviderAccount, ProviderModel } from "@/core/provider-accounts";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { reasoningLabel } from "@/core/reasoning";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Hint } from "@/components/ui/hint";
 
 export interface ModelOptionDef extends Pick<ProviderModel, "reasoningLevels" | "defaultReasoningLevel"> {
   value: string;
@@ -22,15 +23,14 @@ export function ModelPicker({ modelGroups, selection, onSelect, disabled = false
   const reasoning = selection?.reasoning;
   const displayModelLabel = currentModelDef ? `${currentModelDef.label}${reasoning ? ` · ${reasoningLabel(reasoning)}` : ""}` : selection ? `${selection.model.split("/").pop()} · Indisponível` : modelGroups.length ? "Escolher modelo" : "Nenhum modelo conectado";
   return (<DropdownMenu>
-              <DropdownMenuTrigger
+              <Hint content={selection?.model}><DropdownMenuTrigger
                 aria-label={ariaLabel}
-                title={selection?.model}
                 disabled={disabled}
                 className="composer-model flex h-7.5 max-w-full cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 font-mono text-[10px] font-medium text-foreground shadow-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
               >
                 <span className="truncate">{displayModelLabel}</span>
                 <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-              </DropdownMenuTrigger>
+              </DropdownMenuTrigger></Hint>
 
               <DropdownMenuContent
                 align="end"

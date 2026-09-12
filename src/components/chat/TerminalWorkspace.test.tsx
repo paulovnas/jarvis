@@ -283,7 +283,7 @@ describe("Integrated terminals", () => {
     const user = userEvent.setup();
     render(<TestWorkspace conversationId="chat" />);
     await user.click(await screen.findByRole("button", { name: "1 terminal aberto" }));
-    expect(await screen.findByTitle(cwd)).toHaveTextContent(cwd);
+    expect(await screen.findByText(cwd)).toHaveTextContent(cwd);
     expect(screen.getByText("Em execução")).toBeVisible();
   });
 

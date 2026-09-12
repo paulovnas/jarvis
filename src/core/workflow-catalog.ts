@@ -3,8 +3,8 @@ import type { TurnOptions } from "./chat";
 import { workflowAppearanceSchema } from "./workflow-appearance";
 
 const id = z.string().regex(/^[a-f0-9]{32}$/i);
-const builtinRoleSchema = z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer"]);
-const builtinAgentIdSchema = z.string().regex(/^builtin:(planner|investigator|writer|orchestrator|designer|builder|reviewer)$/);
+const builtinRoleSchema = z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer", "github"]);
+const builtinAgentIdSchema = z.string().regex(/^builtin:(planner|investigator|writer|orchestrator|designer|builder|reviewer|github)$/);
 const agentReferenceIdSchema = z.union([id, builtinAgentIdSchema]);
 export const modelChoiceSchema = z.object({ account: z.string(), model: z.string(), reasoning: z.string().nullable() });
 export const customAgentSchema = z.object({
@@ -25,7 +25,7 @@ export const customFlowSchema = z.object({
 });
 export const builtinAgentSchema = z.object({
   id: builtinAgentIdSchema, name: z.string(), description: z.string(), instructions: z.string(), role: builtinRoleSchema,
-  usage: z.literal("flow_only"), capability: z.enum(["read_only", "write_files", "commands"]),
+  usage: z.enum(["mixed", "flow_only"]), capability: z.enum(["read_only", "write_files", "commands"]),
   appearance: workflowAppearanceSchema, immutable: z.literal(true),
 });
 export const workflowConnectionSchema = z.object({

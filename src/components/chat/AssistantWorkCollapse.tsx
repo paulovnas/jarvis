@@ -2,6 +2,7 @@ import { AlertCircle, BrainCircuit, Check, ChevronRight, Layers3, TriangleAlert,
 import { Fragment, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Hint } from "@/components/ui/hint";
 import { Spinner } from "@/components/ui/spinner";
 import { formatExecutionDuration } from "@/hooks/use-running-clock";
 import { ToolCallCard } from "./ToolCallCard";
@@ -37,7 +38,7 @@ export function AssistantWorkCollapse({ work, isStreaming = false }: { work: Ass
     <Collapsible key={isStreaming ? "running" : "finished"} defaultOpen={isStreaming} render={<section aria-label="Processamento do Jarvis" />} className="min-w-0 text-muted-foreground">
       <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-8 max-w-full cursor-pointer justify-start gap-2 px-1 text-left text-[11px]">
         {retry ? <Wifi aria-hidden="true" className="text-onedark-yellow" data-icon="inline-start" /> : isStreaming ? <Spinner aria-label="Em execução" className="motion-reduce:animate-none" data-icon="inline-start" /> : <BrainCircuit aria-hidden="true" data-icon="inline-start" />}
-        <span role={retry ? "status" : undefined} className={`min-w-0 truncate ${isStreaming && !waiting ? "reasoning-shimmer" : ""}`} title={heading}>{heading}</span>
+        <Hint content={heading}><span role={retry ? "status" : undefined} className={`min-w-0 truncate ${isStreaming && !waiting ? "reasoning-shimmer" : ""}`}>{heading}</span></Hint>
         {isStreaming && <span aria-label="Tempo total da execução" className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">· {formatExecutionDuration(work.durationSeconds * 1_000)}</span>}
         {tools.length > 0 && <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">· {tools.length} {tools.length === 1 ? "ação" : "ações"}</span>}
         {failures > 0 && <span className="sr-only">{failures} {failures === 1 ? "ação não concluída" : "ações não concluídas"}</span>}
@@ -120,7 +121,7 @@ function ToolActivityGroup({ group, isLatest, detailContext }: { group: ReturnTy
   return <Collapsible key={isLatest ? "latest" : "completed"} defaultOpen={isLatest && group.active} className="rounded-md border border-border/60 bg-card/35">
     <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group flex h-auto min-h-9 w-full cursor-pointer justify-start gap-2 px-2.5 text-left text-[11px]">
       <Layers3 aria-hidden="true" data-icon="inline-start" className="size-3.5 shrink-0 text-onedark-cyan" />
-      <span className="min-w-0 flex-1 truncate" title={group.summary}>{group.summary}</span>
+      <Hint content={group.summary}><span className="min-w-0 flex-1 truncate">{group.summary}</span></Hint>
       <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{group.tools.length} {group.tools.length === 1 ? "ação" : "ações"}</span>
       {group.active ? <Spinner aria-label="Grupo em execução" className="motion-reduce:animate-none" /> : group.failures > 0 ? <AlertCircle aria-label={`${group.failures} ${group.failures === 1 ? "falha" : "falhas"}`} className="size-3.5 text-destructive" /> : group.warnings > 0 ? <TriangleAlert aria-label={`${group.warnings} ${group.warnings === 1 ? "aviso" : "avisos"}`} className="size-3.5 text-onedark-yellow" /> : <Check aria-label="Grupo concluído" className="size-3.5 text-onedark-green" />}
       <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />

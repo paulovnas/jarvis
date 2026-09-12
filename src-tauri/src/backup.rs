@@ -178,7 +178,7 @@ fn builtin_target(key: &str) -> Option<ModelTarget> {
                 ("reviewer", "Revisor"),
             ],
         ),
-        "publication" => ("Publicação", &[("github", "GitHub")]),
+        "publication" => ("GitHub", &[("github", "GitHub")]),
         _ => return None,
     };
     let role_label = roles

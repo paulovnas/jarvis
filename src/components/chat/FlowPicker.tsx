@@ -1,6 +1,6 @@
 import { Check, ChevronDown } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import type { CustomAgent, CustomFlow, FlowSelection } from "@/core/workflow-catalog";
+import type { BuiltinAgentDefinition, CustomAgent, CustomFlow, FlowSelection } from "@/core/workflow-catalog";
 
 import { BUILTIN_FLOWS } from "@/components/agents/workflow-presentation";
 import { workflowAppearance } from "@/components/agents/workflow-appearance";
@@ -22,9 +22,11 @@ function PickerItems({ options, value, onChange }: { options: PickerOption[]; va
   </DropdownMenuItem>);
 }
 
-export function FlowPicker({ value, onChange, disabled, customFlows = [], customAgents = [] }: { value: FlowSelection; onChange: (flow: FlowSelection) => void; disabled?: boolean; customFlows?: CustomFlow[]; customAgents?: CustomAgent[] }) {
+export function FlowPicker({ value, onChange, disabled, customFlows = [], customAgents = [], builtinAgents = [] }: { value: FlowSelection; onChange: (flow: FlowSelection) => void; disabled?: boolean; customFlows?: CustomFlow[]; customAgents?: CustomAgent[]; builtinAgents?: BuiltinAgentDefinition[] }) {
   const savedFlows: PickerOption[] = customFlows.map(flow => { const { Icon, color } = workflowAppearance(flow.appearance, flowAppearance); return { value: `custom:${flow.id}`, title: flow.name, description: flow.description || `${flow.steps.length} etapas personalizadas`, icon: Icon, color }; });
-  const individualAgents: PickerOption[] = customAgents.filter(agent => agent.usage === "solo" || agent.usage === "mixed").map(agent => { const { Icon, color } = workflowAppearance(agent.appearance, agentAppearance); return { value: `agent:${agent.id}`, title: agent.name, description: agent.description || "Agente personalizado para uso direto", icon: Icon, color }; });
+  const nativeAgents: PickerOption[] = builtinAgents.filter(agent => agent.usage === "mixed").map(agent => { const { Icon, color } = workflowAppearance(agent.appearance, agentAppearance); return { value: `agent:${agent.id}`, title: agent.name, description: agent.description, icon: Icon, color }; });
+  const customIndividualAgents: PickerOption[] = customAgents.filter(agent => agent.usage === "solo" || agent.usage === "mixed").map(agent => { const { Icon, color } = workflowAppearance(agent.appearance, agentAppearance); return { value: `agent:${agent.id}`, title: agent.name, description: agent.description || "Agente personalizado para uso direto", icon: Icon, color }; });
+  const individualAgents = [...nativeAgents, ...customIndividualAgents];
   const options: PickerOption[] = [...BUILTIN_FLOWS, ...savedFlows, ...individualAgents];
   const selected = options.find(option => option.value === value) ?? { ...BUILTIN_FLOWS[0], title: "Opção indisponível" };
   const Icon = selected.icon;

@@ -5,7 +5,7 @@ import { workflowAppearanceSchema } from "./workflow-appearance";
 import { pendingAuthoringSchema } from "./authoring";
 
 export type Workflow = "standard" | "designer" | "planned" | "complete" | "publication" | "custom";
-export const FLOW_LABELS: Record<Workflow, string> = { standard: "Padrão", designer: "Designer", planned: "Planejado", complete: "Completo", publication: "Publicação", custom: "Customizado" };
+export const FLOW_LABELS: Record<Workflow, string> = { standard: "Padrão", designer: "Designer", planned: "Planejado", complete: "Completo", publication: "GitHub", custom: "Customizado" };
 export const rootRole = (flow: Workflow) => flow === "custom" ? "custom" : flow === "standard" ? "builder" : flow === "designer" ? "designer" : flow === "publication" ? "github" : "planner";
 export const ROLE_LABELS = { planner: "Planejador", investigator: "Investigador", writer: "Redator", orchestrator: "Orquestrador", designer: "Designer", builder: "Construtor", reviewer: "Revisor", github: "GitHub", custom: "Customizado" };
 export const ROLE_COLORS = { planner: "#c678dd", investigator: "#56b6c2", writer: "#e08a78", orchestrator: "#e5c07b", designer: "#ef8fba", builder: "#61afef", reviewer: "#98c379", github: "#d7dce5", custom: "#969eac" };

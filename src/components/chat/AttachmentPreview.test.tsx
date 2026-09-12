@@ -18,6 +18,6 @@ it("mantém o skeleton até o navegador carregar a imagem", async () => {
 it("mantém o nome completo acessível e limita o cartão do documento", () => {
   const name = `${"documento".repeat(40)}.txt`;
   render(<AttachmentPreview attachment={{ ...attachment, kind: "document", name }} />);
-  expect(screen.getByTitle(name)).toHaveClass("truncate");
-  expect(screen.getByTitle(name).closest(".w-52")).toHaveClass("max-w-full", "min-w-0");
+  expect(screen.getByText(name)).toHaveClass("truncate");
+  expect(screen.getByText(name).closest(".w-52")).toHaveClass("max-w-full", "min-w-0");
 });

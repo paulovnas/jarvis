@@ -85,7 +85,7 @@ describe("Explicit skill input", () => {
     let resolve!: (value: ChatDraft) => void;
     const remove = vi.fn(() => new Promise<ChatDraft>(done => { resolve = done; }));
     const { rerender } = await renderComposer(<ChatComposer key="one" draftKey="one" drafts={drafts} modelGroups={models} onSendMessage={vi.fn()} queuedMessages={[{ id: "q", content: "/react-expert Revise a tela", parts: skillParts, options: chatOptions }]} onRemoveQueued={remove} />);
-    expect(within(screen.getByRole("region", { name: "Mensagens agendadas" })).getByTitle("Skill: react-expert")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Mensagens agendadas" })).getByText("react-expert")).toBeVisible();
     await user.type(screen.getByRole("textbox"), "Antes");
     await user.click(screen.getByRole("button", { name: "Editar mensagem 1" }));
     rerender(<ChatComposer key="two" draftKey="two" drafts={drafts} modelGroups={models} onSendMessage={vi.fn()} />);

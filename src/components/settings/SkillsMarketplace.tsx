@@ -51,6 +51,7 @@ import {
   type Skill,
 } from "@/core/skills";
 import { SkillDetailsDialog, type SkillSelection } from "./SkillDetailsDialog";
+import { Hint } from "@/components/ui/hint";
 
 const PAGE_SIZE = 24;
 const number = new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 });
@@ -297,18 +298,19 @@ export function SkillsMarketplace({
 
             <div className="flex items-center gap-2">
               {source !== "all" && (
-                <Badge
+                <Hint content="Limpar filtro de repositório"><Button
                   variant="secondary"
+                  size="sm"
+                  aria-label="Limpar filtro de repositório"
                   className="cursor-pointer gap-1 px-2 py-1 text-xs font-normal text-foreground hover:bg-destructive/15 hover:text-destructive transition-colors"
                   onClick={() => {
                     setSource("all");
                     setPage(1);
                   }}
-                  title="Limpar filtro de repositório"
                 >
                   <span>@{source}</span>
                   <X className="size-3" />
-                </Badge>
+                </Button></Hint>
               )}
 
               <Popover open={repoOpen} onOpenChange={setRepoOpen}>
@@ -509,37 +511,33 @@ export function SkillsMarketplace({
                           </Avatar>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">
-                              <span
+                              <Hint content={skill.name}><span
                                 className="truncate text-sm font-semibold text-[#e5e5e6] group-hover:text-[#61afef] transition-colors"
-                                title={skill.name}
                               >
                                 {skill.name}
-                              </span>
+                              </span></Hint>
                             </div>
                             {skill.skillId !== skill.name ? (
-                              <span
+                              <Hint content={skill.skillId}><span
                                 className="block truncate font-mono text-[11px] text-muted-foreground"
-                                title={skill.skillId}
                               >
                                 {skill.skillId}
-                              </span>
+                              </span></Hint>
                             ) : (
-                              <span
+                              <Hint content={skill.source}><span
                                 className="block truncate text-xs text-muted-foreground"
-                                title={skill.source}
                               >
                                 {skill.source}
-                              </span>
+                              </span></Hint>
                             )}
                           </div>
                         </Button>
 
                         <div className="flex shrink-0 items-center gap-1">
-                          <Button
+                          <Hint content="Ver no skills.sh"><Button
                             variant="ghost"
                             size="icon-sm"
                             className="size-7 cursor-pointer text-muted-foreground hover:text-[#e5e5e6] hover:bg-card"
-                            title="Ver no skills.sh"
                             aria-label={`Ver ${skill.name} no skills.sh`}
                             onClick={() => {
                               void openUrl(
@@ -550,31 +548,29 @@ export function SkillsMarketplace({
                             }}
                           >
                             <ExternalLink className="size-3.5" />
-                          </Button>
+                          </Button></Hint>
                         </div>
                       </div>
 
                       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2.5">
                         <div className="flex min-w-0 items-center gap-2">
-                          <button
+                          <Hint content={`Filtrar por @${skill.source}`}><button
                             type="button"
                             onClick={() => {
                               setSource(skill.source);
                               setPage(1);
                             }}
-                            title={`Filtrar por @${skill.source}`}
                             aria-label={`Filtrar por @${skill.source}`}
                             className="cursor-pointer max-w-[140px] truncate rounded-md bg-card border border-border/60 hover:border-[#61afef]/40 px-2 py-0.5 text-[11px] font-medium text-foreground hover:text-white transition-colors"
                           >
                             @{skill.source}
-                          </button>
-                          <span
+                          </button></Hint>
+                          <Hint content={`${skill.installs.toLocaleString("pt-BR")} instalações`}><span
                             className="flex items-center gap-1 text-[11px] tabular-nums text-muted-foreground shrink-0"
-                            title={`${skill.installs.toLocaleString("pt-BR")} instalações`}
                           >
                             <ArrowDownToLine aria-hidden="true" className="size-3" />
                             {number.format(skill.installs)}
-                          </span>
+                          </span></Hint>
                         </div>
 
                         <div>

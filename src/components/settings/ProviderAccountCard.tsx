@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import type { ProviderAccount, ProviderUsageAlert } from "@/core/provider-accounts";
 import { ProviderUsageAlertSettings } from "./ProviderUsageAlertSettings";
+import { Hint } from "@/components/ui/hint";
 
 const ACCOUNT_TYPE_LABELS: Record<ProviderAccount["accountType"], string> = {
   personal: "Pessoal",
@@ -60,7 +61,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             <ProviderIcon kind={account.providerKind} className="size-4" />
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <CardTitle className="min-w-0 truncate font-mono text-xs!" title={account.alias}>{account.alias}</CardTitle>
+            <Hint content={account.alias}><CardTitle className="min-w-0 truncate font-mono text-xs!">{account.alias}</CardTitle></Hint>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Badge variant="outline" className={`shrink-0 ${!account.enabled ? "text-muted-foreground" : !account.modelsAvailable ? "border-[#e5c07b]/30 bg-[#e5c07b]/10 text-[#e5c07b]" : "border-[#98c379]/30 bg-[#98c379]/10 text-[#98c379]"}`}>
                 <CheckCircle2 aria-hidden="true" data-icon="inline-start" />
@@ -110,7 +111,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             ) : (
               <div className="flex flex-wrap gap-1.5">
                 {account.models.map((model) => (
-                  <Badge key={model.id} variant="outline" className="max-w-full" title={`${model.id}${model.contextWindow ? ` · ${model.contextWindow.toLocaleString("pt-BR")} tokens` : ""}`}><span className="truncate">{model.name}</span></Badge>
+                  <Hint key={model.id} content={`${model.id}${model.contextWindow ? ` · ${model.contextWindow.toLocaleString("pt-BR")} tokens` : ""}`}><Badge variant="outline" className="max-w-full"><span className="truncate">{model.name}</span></Badge></Hint>
                 ))}
               </div>
             )}

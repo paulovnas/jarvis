@@ -110,7 +110,7 @@ describe("Interactive questions", () => {
     render(<QuestionCard request={{ turnId: "t", toolId: "a", deadlineAt: Date.now() + 1_000, questions: [
       { id: "one", question: "Escolha?", options: [{ label: "A" }, { label: "B" }] },
     ] }} drafts={new Map()} draftKey="manual" onAnswer={vi.fn()} />);
-    expect(screen.queryByTitle("As recomendações serão enviadas automaticamente ao fim da contagem.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/resposta recomendada automática/i)).not.toBeInTheDocument();
     expect(screen.queryByText("Recomendada")).not.toBeInTheDocument();
   });
 });

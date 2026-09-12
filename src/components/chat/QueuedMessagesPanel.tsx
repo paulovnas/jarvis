@@ -14,6 +14,7 @@ import { ConfirmationDialogContent as AlertDialogContent } from "@/components/Co
 import { SortableItem, SortableList } from "@/components/layout/SortableList";
 import type { QueuedMessage } from "@/core/chat";
 import { MessageContent } from "./MessageContent";
+import { Hint } from "@/components/ui/hint";
 
 interface QueuedMessagesPanelProps {
   messages: QueuedMessage[];
@@ -100,7 +101,7 @@ export function QueuedMessagesPanel({
           {messages.map((message, index) => <SortableItem key={message.id} id={message.id} disabled={locked || messages.length < 2}>{sort => {
             const itemBusy = busyIds.has(message.id);
             return <div ref={sort.setNodeRef} style={sort.style} data-queued-message={message.id} className="group/queued flex min-h-10 items-center gap-1 border-b border-border/45 px-1 last:border-b-0">
-              {messages.length > 1 ? <Button
+              {messages.length > 1 ? <Hint content="Arraste para reordenar"><Button
                 ref={sort.setActivatorNodeRef}
                 {...sort.attributes}
                 {...sort.listeners}
@@ -108,46 +109,42 @@ export function QueuedMessagesPanel({
                 variant="ghost"
                 size="icon"
                 aria-label={`Reordenar mensagem ${index + 1}`}
-                title="Arraste para reordenar"
                 disabled={locked || itemBusy}
                 className="size-6 shrink-0 cursor-grab touch-none text-muted-foreground/55 hover:text-foreground active:cursor-grabbing"
-              ><GripVertical aria-hidden="true" className="size-3.5" /></Button> : <CornerDownRight aria-hidden="true" className="mx-1 size-3 shrink-0 text-muted-foreground/45" />}
-              <div className="min-w-0 flex-1 truncate text-xs text-foreground/85" title={message.content}>
+              ><GripVertical aria-hidden="true" className="size-3.5" /></Button></Hint> : <CornerDownRight aria-hidden="true" className="mx-1 size-3 shrink-0 text-muted-foreground/45" />}
+              <Hint content={message.content}><div className="min-w-0 flex-1 truncate text-xs text-foreground/85">
                 <MessageContent content={message.content} parts={message.parts} />
-              </div>
-              <Button
+              </div></Hint>
+              <Hint content={running ? "Adicionar à execução atual sem interrompê-la" : "Disponível durante uma execução"}><Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 className="h-7 shrink-0 cursor-pointer gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-onedark-cyan"
                 aria-label={`Enviar mensagem ${index + 1} agora`}
-                title={running ? "Adicionar à execução atual sem interrompê-la" : "Disponível durante uma execução"}
                 disabled={!running || locked || itemBusy || !onSendNow}
                 onClick={() => { void withMessageLock(message.id, async () => { await onSendNow?.(message.id); }); }}
-              ><SendHorizontal aria-hidden="true" className="size-3" />Enviar agora</Button>
-              <Button
+              ><SendHorizontal aria-hidden="true" className="size-3" />Enviar agora</Button></Hint>
+              <Hint content="Retirar da fila e editar"><Button
                 type="button"
                 variant="ghost"
                 size="icon"
                 className="size-7 shrink-0 cursor-pointer text-muted-foreground hover:text-foreground"
                 aria-label={`Editar mensagem ${index + 1}`}
-                title="Retirar da fila e editar"
                 disabled={locked || itemBusy || !onEdit}
                 onClick={() => { void withMessageLock(message.id, async () => { await onEdit?.(message.id); }); }}
-              ><Pencil aria-hidden="true" className="size-3.5" /></Button>
-              <Button
+              ><Pencil aria-hidden="true" className="size-3.5" /></Button></Hint>
+              <Hint content="Cancelar e excluir"><Button
                 type="button"
                 variant="ghost"
                 size="icon"
                 className="size-7 shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
                 aria-label={`Excluir mensagem ${index + 1}`}
-                title="Cancelar e excluir"
                 disabled={locked || itemBusy || !onDelete}
                 onClick={event => {
                   event.stopPropagation();
                   setDeleteTarget(message);
                 }}
-              ><Trash2 aria-hidden="true" className="size-3.5" /></Button>
+              ><Trash2 aria-hidden="true" className="size-3.5" /></Button></Hint>
             </div>;
           }}</SortableItem>)}
         </SortableList>

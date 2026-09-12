@@ -17,6 +17,7 @@ import { SkillDetailsDialog, type SkillSelection } from "./SkillDetailsDialog";
 import { SkillsMarketplace } from "./SkillsMarketplace";
 import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Hint } from "@/components/ui/hint";
 
 const ORIGINS = { jarvis: "Jarvis", agents: ".agents · Global", project: ".agents · Projeto" };
 export function SkillsSettings({ onCountChange }: { onCountChange?: (count: number) => void }) {
@@ -115,7 +116,7 @@ export function SkillsSettings({ onCountChange }: { onCountChange?: (count: numb
       <h2 className="text-sm font-medium">Skills</h2>
       <div className="flex items-center gap-1">
         {upgrades.length > 1 && <Button variant="outline" size="sm" className="cursor-pointer" disabled={!!busy || checkingUpdates} onClick={() => { void upgrade(upgrades.map(skill => skill.id)); }}><ArrowUpCircle aria-hidden="true" />Atualizar todas<Badge variant="secondary">{upgrades.length}</Badge></Button>}
-        <Button variant="ghost" size="icon-sm" className="cursor-pointer" title="Verificar atualizações" aria-label="Verificar atualizações de skills" disabled={!!busy || checkingUpdates} onClick={() => { void checkUpdates(); }}>{checkingUpdates ? <Spinner /> : <RefreshCw />}</Button>
+        <Hint content="Verificar atualizações"><Button variant="ghost" size="icon-sm" className="cursor-pointer" aria-label="Verificar atualizações de skills" disabled={!!busy || checkingUpdates} onClick={() => { void checkUpdates(); }}>{checkingUpdates ? <Spinner /> : <RefreshCw />}</Button></Hint>
         <Button size="sm" className="cursor-pointer" onClick={() => setMarketplace(true)}><Store aria-hidden="true" />Marketplace</Button>
       </div>
     </div>
@@ -123,7 +124,7 @@ export function SkillsSettings({ onCountChange }: { onCountChange?: (count: numb
       <Label htmlFor="skills-agents" className="cursor-pointer text-xs">Incluir .agents/skills</Label>
       <Switch id="skills-agents" className="cursor-pointer" checked={snapshot?.includeAgents ?? false} disabled={!snapshot || !!busy} onCheckedChange={enabled => { void perform("agents", async () => { update(await invoke("set_skills_agents", { enabled })); }); }} />
     </div>
-    {snapshot && <span className="truncate font-mono text-[11px] text-muted-foreground" title={snapshot.directory}>{snapshot.directory}</span>}
+    {snapshot && <Hint content={snapshot.directory}><span className="truncate font-mono text-[11px] text-muted-foreground">{snapshot.directory}</span></Hint>}
     {checkingUpdates && <Alert role="status" aria-live="polite" className="border-onedark-yellow/25 bg-onedark-yellow/5 text-onedark-yellow">
       <RefreshCw aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />
       <AlertTitle className="text-xs">Verificando atualizações das skills</AlertTitle>
@@ -135,11 +136,11 @@ export function SkillsSettings({ onCountChange }: { onCountChange?: (count: numb
       <div className="flex items-center gap-2 p-3">
         <Button variant="ghost" className="h-auto min-w-0 flex-1 cursor-pointer justify-start gap-3 p-0 text-left hover:bg-transparent" aria-label={`Detalhes de ${skill.name}`} onClick={() => setSelection({ id: skill.id, name: skill.name })}>
           <BookOpen aria-hidden="true" className="size-4 shrink-0 text-primary" />
-          <span className="flex min-w-0 flex-1 flex-col gap-1"><span className="truncate text-sm font-medium">{skill.name}</span><span className="line-clamp-2 whitespace-normal text-xs font-normal text-muted-foreground">{skill.description}</span><span className="mt-1 flex flex-wrap gap-1"><Badge variant="outline" className="text-[10px]">{ORIGINS[skill.origin]}</Badge>{skill.managed && <Badge variant="outline" className="border-primary/30 text-primary">Nativa</Badge>}<Badge variant="outline" className={skill.enabled ? "border-[#98c379]/30 text-[#98c379]" : "text-muted-foreground"}>{skill.enabled ? "Ativa" : "Inativa"}</Badge>{skill.updateError && <Badge variant="outline" className="border-[#e5c07b]/30 text-[#e5c07b]" title={skill.updateError}>Verificação pendente</Badge>}</span></span>
+          <span className="flex min-w-0 flex-1 flex-col gap-1"><span className="truncate text-sm font-medium">{skill.name}</span><span className="line-clamp-2 whitespace-normal text-xs font-normal text-muted-foreground">{skill.description}</span><span className="mt-1 flex flex-wrap gap-1"><Badge variant="outline" className="text-[10px]">{ORIGINS[skill.origin]}</Badge>{skill.managed && <Badge variant="outline" className="border-primary/30 text-primary">Nativa</Badge>}<Badge variant="outline" className={skill.enabled ? "border-[#98c379]/30 text-[#98c379]" : "text-muted-foreground"}>{skill.enabled ? "Ativa" : "Inativa"}</Badge>{skill.updateError && <Hint content={skill.updateError}><Badge variant="outline" className="border-[#e5c07b]/30 text-[#e5c07b]">Verificação pendente</Badge></Hint>}</span></span>
         </Button>
-        {skill.updateAvailable && <Button variant="ghost" size="icon-sm" title={`Atualizar ${skill.name}`} aria-label={`Atualizar ${skill.name}`} className="cursor-pointer text-primary" disabled={!!busy || checkingUpdates} onClick={() => { void upgrade([skill.id]); }}><ArrowUpCircle /></Button>}
+        {skill.updateAvailable && <Hint content={`Atualizar ${skill.name}`}><Button variant="ghost" size="icon-sm" aria-label={`Atualizar ${skill.name}`} className="cursor-pointer text-primary" disabled={!!busy || checkingUpdates} onClick={() => { void upgrade([skill.id]); }}><ArrowUpCircle /></Button></Hint>}
         <Switch aria-label={`Ativar ${skill.name}`} className="cursor-pointer" checked={skill.enabled} disabled={!!busy} onCheckedChange={enabled => { void perform(skill.id, async () => { update(await invoke("set_skill_enabled", { id: skill.id, enabled })); toast.success(enabled ? "Skill ativada" : "Skill desativada"); }); }} />
-        {!skill.managed && <Button variant="ghost" size="icon-sm" className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive" aria-label={`Excluir ${skill.name}`} title={`Excluir ${skill.name}`} disabled={!!busy || checkingUpdates} onClick={() => setDeleting(skill)}><Trash2 /></Button>}
+        {!skill.managed && <Hint content={`Excluir ${skill.name}`}><Button variant="ghost" size="icon-sm" className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive" aria-label={`Excluir ${skill.name}`} disabled={!!busy || checkingUpdates} onClick={() => setDeleting(skill)}><Trash2 /></Button></Hint>}
       </div>
     </Card>)}</div>}
     {snapshot?.warnings.map(warning => <p key={warning} role="alert" className="text-xs text-[#e5c07b]">{warning}</p>)}

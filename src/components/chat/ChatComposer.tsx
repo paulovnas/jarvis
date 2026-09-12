@@ -25,6 +25,7 @@ import { ConfirmationDialogContent as AlertDialogContent } from "@/components/Co
 import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Hint } from "@/components/ui/hint";
 
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
@@ -131,8 +132,11 @@ export function ChatComposer({
     || (selectedFlow.workflow === "custom" && Boolean(selectedFlow.customWorkflowId));
   const customFlow = catalog.data?.flows.find(flow => flow.id === selectedFlow.customWorkflowId);
   const selectedCustomAgent = catalog.data?.agents.find(agent => agent.id === selectedFlow.customAgentId);
+  const selectedBuiltinAgent = catalog.data?.builtinAgents.find(agent => agent.id === selectedFlow.customAgentId);
+  const selectedAgent = selectedCustomAgent ?? selectedBuiltinAgent;
+  const githubSelected = selectedBuiltinAgent?.role === "github";
   const customUnavailable = selectedFlow.workflow === "custom" && (selectedFlow.customAgentId
-    ? !selectedCustomAgent || selectedCustomAgent.usage === "flow_only"
+    ? !selectedAgent || selectedAgent.usage === "flow_only"
     : !customFlow);
   const customUnavailableMessage = catalog.error ?? (!catalog.data
     ? selectedFlow.customAgentId ? "Carregando o agente individual…" : "Carregando o fluxo customizado…"
@@ -167,7 +171,9 @@ export function ChatComposer({
   };
 
   const availableModels = modelGroups.flatMap((group) => group.models);
-  const profile = selectedFlow.workflow === "custom" ? undefined : agentModels?.data?.[`${workflow}/${rootRole(selectedFlow.workflow ?? "standard")}`];
+  const profile = githubSelected
+    ? agentModels?.data?.["publication/github"]
+    : selectedFlow.workflow === "custom" ? undefined : agentModels?.data?.[`${workflow}/${rootRole(selectedFlow.workflow ?? "standard")}`];
   const customAgentSelection = selectedCustomAgent?.model ? { model: `${selectedCustomAgent.model.account}/${selectedCustomAgent.model.model}`, reasoning: selectedCustomAgent.model.reasoning } : null;
   const separator = selection?.model.indexOf("/") ?? -1;
   const boundChoice = selection && separator > 0 && manualBindings !== modelBindings ? resolveChatModel(modelBindings, draftKey, { account: selection.model.slice(0, separator), model: selection.model.slice(separator + 1), reasoning: selection.reasoning }) : null;
@@ -180,7 +186,8 @@ export function ChatComposer({
     return !model || Boolean(choice.reasoning && !model.reasoningLevels.includes(choice.reasoning));
   };
   const invalidAgent = selectedFlow.customAgentId
-    ? selectedCustomAgent?.model && invalidSelection({ model: `${selectedCustomAgent.model.account}/${selectedCustomAgent.model.model}`, reasoning: selectedCustomAgent.model.reasoning }) ? selectedCustomAgent.name : undefined
+    ? selectedCustomAgent?.model && invalidSelection({ model: `${selectedCustomAgent.model.account}/${selectedCustomAgent.model.model}`, reasoning: selectedCustomAgent.model.reasoning }) ? selectedCustomAgent.name
+      : githubSelected && profile && invalidSelection({ model: `${profile.account}/${profile.model}`, reasoning: profile.reasoning }) ? "GitHub" : undefined
     : selectedFlow.workflow === "custom"
       ? catalog.data?.agents.find(agent => agent.model && customFlow?.steps.some(step => step.agentId === agent.id) && invalidSelection({ model: `${agent.model.account}/${agent.model.model}`, reasoning: agent.model.reasoning }))?.name
     : Object.entries(agentModels?.data ?? {}).find(([key, choice]) => key.startsWith(`${workflow}/`) && invalidSelection({ model: `${choice.account}/${choice.model}`, reasoning: choice.reasoning }))?.[0];
@@ -196,7 +203,7 @@ export function ChatComposer({
       : currentModelDef?.defaultReasoningLevel ?? currentModelDef?.reasoningLevels[0] ?? null;
   const chooseModel = (next: ModelSelection) => {
     if (selectedCustomAgent?.model) return;
-    if (agentModels && selectedFlow.workflow !== "custom") { void agentModels.save(selectedFlow.workflow ?? "standard", rootRole(selectedFlow.workflow ?? "standard"), { account: next.model.slice(0, next.model.indexOf("/")), model: next.model.slice(next.model.indexOf("/") + 1), reasoning: next.reasoning }); }
+    if (agentModels && (selectedFlow.workflow !== "custom" || githubSelected)) { const targetFlow = githubSelected ? "publication" : selectedFlow.workflow ?? "standard"; void agentModels.save(targetFlow, rootRole(targetFlow), { account: next.model.slice(0, next.model.indexOf("/")), model: next.model.slice(next.model.indexOf("/") + 1), reasoning: next.reasoning }); }
     else {
       const split = next.model.indexOf("/");
       const choice = { account: next.model.slice(0, split), model: next.model.slice(split + 1), reasoning: next.reasoning };
@@ -242,26 +249,25 @@ export function ChatComposer({
         {/* Linha de controles inferior no padrão Metis */}
         <div className="composer-controls flex w-full items-center justify-between gap-1 px-3 pb-3 pt-1">
           {/* Canto inferior esquerdo: botão de anexo com ícone plus */}
-          <Button
+          <Hint content="Anexar imagens ou documentos"><Button
             type="button"
             variant="ghost"
             size="icon"
             disabled={disabled || compacting || uploading || !draftKey}
             onClick={() => fileInput.current?.click()}
-            title="Anexar imagens ou documentos"
             aria-label="Adicionar anexo"
             className="size-7.5 cursor-pointer rounded-full bg-secondary text-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <Plus className="size-3.5 stroke-[2.2]" />
-          </Button>
+          </Button></Hint>
           {terminalLauncher}
           <Input ref={fileInput} type="file" multiple className="hidden" aria-label="Selecionar anexos" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.pdf,.docx,.odt,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.ts,.tsx,.js,.css,.html,.rs,.py" onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void addFiles(files); }} />
 
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}
           <div className="composer-options flex flex-1 items-center gap-0.5">
-            <FlowPicker customFlows={catalog.data?.flows} customAgents={catalog.data?.agents} value={workflow} onChange={chooseWorkflow} disabled={running || sending || compacting} />
+            <FlowPicker customFlows={catalog.data?.flows} customAgents={catalog.data?.agents} builtinAgents={catalog.data?.builtinAgents} value={workflow} onChange={chooseWorkflow} disabled={running || sending || compacting} />
 
-            {manualValidationAvailable && <div className="flex h-7.5 shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-2" title="Solicita sua aprovação funcional ao final da implementação">
+            {manualValidationAvailable && <Hint content="Solicita sua aprovação funcional ao final da implementação"><div className="flex h-7.5 shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-2">
               <Switch
                 id="manual-workflow-validation"
                 checked={manualValidation}
@@ -270,7 +276,7 @@ export function ChatComposer({
                 className="cursor-pointer"
               />
               <Label htmlFor="manual-workflow-validation" className="cursor-pointer whitespace-nowrap text-[10px] text-muted-foreground">Validação manual</Label>
-            </div>}
+            </div></Hint>}
 
             <ModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} disabled={!modelsReady || running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} />
 
