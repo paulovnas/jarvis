@@ -92,7 +92,9 @@ bun run tauri dev
 
 ## Architecture Overview
 
-Jarvis is a coding agent GUI: **Tauri v2 (Rust backend in `src-tauri`) + React 19/TypeScript frontend**. Heavy logic (agent loop, tools, providers) belongs in Rust commands; the frontend stays thin. `docs/metis`, `docs/opencode`, and `docs/omp` are the mandatory reference projects — study the sources relevant to a feature, compare their trade-offs when they overlap, and treat all three trees as read-only.
+Jarvis is a coding agent GUI: **Tauri v2 (Rust backend in `src-tauri`) + React 19/TypeScript frontend**. Heavy logic (agent loop, tools, providers) belongs in Rust commands; the frontend stays thin. `docs/codex` is the primary reference for the Rust harness, tools, approvals, commands, context, streaming, recovery and coordination; `docs/opencode` and `docs/omp` are complementary mandatory references. Study the relevant contracts and tests, compare trade-offs, and treat all three trees as read-only.
+
+Verify autonomy through behavior: action volume or the absence of writes does not prove stagnation. Runtime-required recovery tools must remain available to every role. Preserve confirmed results and current user intent; recoverable errors should guide the next action instead of terminating the chat.
 
 ## Conventions & Patterns
 

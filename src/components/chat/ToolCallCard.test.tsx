@@ -38,6 +38,9 @@ describe("ToolCallCard Web Search", () => {
     expect(screen.getByRole("button", { name: /Leitura de arquivo/ }).querySelector(".text-primary")).toBeInTheDocument();
   });
   it.each([
+    ["jarvis_inspect_publication", "Git · Inspecionar repositórios"],
+    ["jarvis_propose_publication", "GitHub · Proposta de publicação"],
+    ["progress_checkpoint", "Reorganizar próxima ação"],
     ["apply_patch", "Patch transacional"],
     ["lsp_definition", "Código · Definição"],
     ["lsp_references", "Código · Referências"],

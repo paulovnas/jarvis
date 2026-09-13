@@ -1290,6 +1290,8 @@ mod tests {
                     through: 0,
                     summary: String::new(),
                     preserved_user: None,
+                    preserved_users: vec![],
+                    tool_receipts: vec![],
                     count: 1,
                     measured: None,
                 },

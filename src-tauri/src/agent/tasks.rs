@@ -163,6 +163,45 @@ pub(super) fn requires_active_task(name: &str) -> bool {
         || crate::core::context::needs_approval(name)
 }
 
+// This exemption affects task bookkeeping only. It never grants execution permission
+// or replaces shell/publication policy. Unknown syntax remains conservative.
+pub(super) fn requires_active_task_for(tool: &super::ToolCall) -> bool {
+    if tool.name == "bash"
+        && tool.args["command"]
+            .as_str()
+            .is_some_and(read_only_inspection)
+    {
+        return false;
+    }
+    requires_active_task(&tool.name)
+}
+
+fn read_only_inspection(command: &str) -> bool {
+    if command.contains([
+        ';', '&', '|', '\n', '\r', '>', '<', '$', '`', '(', ')', '\\', '\'', '"',
+    ]) {
+        return false;
+    }
+    let words: Vec<_> = command.split_whitespace().collect();
+    match words.as_slice() {
+        ["pwd" | "Get-Location"] => true,
+        ["git", rest @ ..] => {
+            let rest = match rest {
+                ["-C", _, rest @ ..] => rest,
+                rest => rest,
+            };
+            matches!(
+                rest.first(),
+                Some(&"status" | &"diff" | &"log" | &"show" | &"rev-parse" | &"ls-files")
+            ) && !rest.iter().any(|word| {
+                word.starts_with("--output") || matches!(*word, "--ext-diff" | "--textconv")
+            })
+        }
+        ["gh", "pr", "view" | "list" | "status", ..] => true,
+        _ => false,
+    }
+}
+
 pub(super) fn context(tasks: &[Task]) -> String {
     if tasks.is_empty() {
         String::new()
@@ -177,6 +216,31 @@ pub(super) fn context(tasks: &[Task]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inspection_does_not_require_tasks_but_unknown_or_effectful_commands_do() {
+        for command in [
+            "git status --short",
+            "git -C backend diff --stat",
+            "git log -3",
+            "gh pr view --json state",
+            "pwd",
+            "Get-Location",
+        ] {
+            assert!(read_only_inspection(command), "{command}");
+        }
+        for command in [
+            "npm test",
+            "git commit -m fix",
+            "git diff --output=stolen.txt",
+            "git status; rm file",
+            "gh api -X POST repos/a/b",
+            "git show $(touch file)",
+            "git diff > file",
+        ] {
+            assert!(!read_only_inspection(command), "{command}");
+        }
+    }
 
     fn task(id: &str, title: &str, status: Status) -> Task {
         Task {

@@ -29,6 +29,7 @@ mod skill_input;
 mod tasks;
 pub(crate) mod terminals;
 mod title;
+mod tool_contract;
 mod tool_loop;
 mod tools;
 pub(crate) mod vision;
@@ -1828,6 +1829,7 @@ fn run_turn<'a>(
                 &options.model,
             );
             let mut definitions = tools::definitions(options.mode);
+            definitions.push(publication::inspection::definition());
             if !publication_agent {
                 definitions.extend(authoring::definitions());
             }
@@ -1893,11 +1895,11 @@ fn run_turn<'a>(
                 definitions.push(image_generation::definition());
                 instructions.push_str(" Use generate_image for requested image creation. It uses the independently configured Antigravity account. The resulting images are displayed directly in chat and stored as conversation attachments; do not embed base64 or repeat their preview in Markdown. Never claim an image was created without a successful tool result.");
             }
-            if let Some(exec) = &execution {
-                exec.filter(&mut definitions);
-            }
             if let Some(definition) = progress_watchdog.definition() {
                 definitions.push(definition);
+            }
+            if let Some(exec) = &execution {
+                exec.filter(&mut definitions);
             }
             mcp_clients
                 .ensure_scope_visible(&definitions)
@@ -1942,6 +1944,7 @@ fn run_turn<'a>(
                 });
             })?;
             let input = session.input()?;
+            let tool_catalog = tool_contract::Catalog::new(&definitions);
             let response = provider::stream(
                 &credential,
                 &session.id,
@@ -2018,18 +2021,16 @@ fn run_turn<'a>(
                 Err(error) => return Err(error),
             };
             let calls = provider::tool_calls(&response.output)?;
-            let previous: Vec<Value> = session
+            let previous: HashSet<String> = session
                 .data
                 .lock()
                 .map_err(|_| AgentError::internal())?
                 .turns
                 .iter()
-                .flat_map(|turn| turn.wire.clone())
+                .flat_map(|turn| turn.wire.iter())
+                .filter_map(|item| item["call_id"].as_str().map(str::to_owned))
                 .collect();
-            if calls
-                .iter()
-                .any(|call| previous.iter().any(|item| item["call_id"] == call.id))
-            {
+            if calls.iter().any(|call| previous.contains(&call.id)) {
                 return Err(AgentError::new("duplicate_tool_call", "O provedor repetiu um identificador de ferramenta. A execução foi interrompida antes de repetir a ação."));
             }
             let usage = response.usage.clone();
@@ -2045,23 +2046,6 @@ fn run_turn<'a>(
             })?;
             compaction::record_usage(session, usage.as_ref())?;
             if calls.is_empty() {
-                if progress_watchdog.checkpoint_required() {
-                    progress_watchdog.missed_checkpoint();
-                    session.update(true, |data| {
-                        data.turns.last_mut().unwrap().wire.push(json!({
-                            "role":"user",
-                            "_jarvis_runtime":true,
-                            "content":"The final response was not accepted because the required progress checkpoint is still pending. Call progress_checkpoint before continuing or concluding."
-                        }));
-                    })?;
-                    if let Some(action) = progress_watchdog.take_action() {
-                        if let Some(error) = record_progress_action(session, action)? {
-                            context.close().await;
-                            return Err(error);
-                        }
-                    }
-                    continue;
-                }
                 if mcp_clients.requires_explicit_attempt() {
                     if mcp_reminded {
                         return Err(AgentError::new(
@@ -2096,7 +2080,7 @@ fn run_turn<'a>(
                             return Err(AgentError::new("missing_handoff", "O agente não entregou o handoff estruturado. O resultado precisa ser revisado antes de retomar."));
                         }
                         handoff_reminded = true;
-                        session.update(true, |data| { data.turns.last_mut().unwrap().wire.push(json!({"role":"user","content":"Your coordinator needs the structured result. Call hub_complete with outcomes, evidence, validation and limitations. If blocked, use verdict blocked; do not claim success without evidence."})); })?;
+                        session.update(true, |data| { data.turns.last_mut().unwrap().wire.push(json!({"role":"user","_jarvis_runtime":true,"content":"Your coordinator needs the structured result. Call hub_complete with outcomes, evidence, validation and limitations. If blocked, use verdict blocked; do not claim success without evidence."})); })?;
                         continue;
                     }
                 }
@@ -2129,7 +2113,6 @@ fn run_turn<'a>(
                 }
                 if let Err(error) = repeated_tools.before_call(&tool) {
                     let output = error.message.clone();
-                    let recoverable = error.code == "stale_edit_context";
                     session.update(true, |data| {
                         let current = data.turns.last_mut().unwrap();
                         if !current.wire.iter().any(|item| {
@@ -2148,13 +2131,13 @@ fn run_turn<'a>(
                             item.output.clone_from(&output);
                         }
                     })?;
-                    if recoverable {
-                        continue;
-                    }
-                    return Err(error);
+                    // Suppress the redundant or stale action, then let the model recover.
+                    // A tool-level problem must not discard the rest of the turn.
+                    continue;
                 }
-                let instruction_preflight = match project_instructions.discover(&tool) {
-                    Ok(true) if matches!(tool.name.as_str(), "write" | "edit" | "apply_patch") => {
+                let contract_preflight = tool_catalog.validate(&tool).err();
+                let instruction_preflight = match contract_preflight.as_ref().map_or_else(|| project_instructions.discover(&tool), |_| Ok(false)) {
+                    Ok(true) if matches!(tool.name.as_str(), "write" | "edit" | "apply_patch") || (tool.name == "bash" && tasks::requires_active_task_for(&tool)) => {
                         Some("O Jarvis carregou instruções AGENTS.md específicas para este caminho. A alteração não foi executada; revise as novas regras e envie novamente uma ação compatível.".to_owned())
                     }
                     Ok(_) => None,
@@ -2163,7 +2146,7 @@ fn run_turn<'a>(
                 let requires_task = if tool.name.starts_with("mcp_") {
                     mcp_clients.requires_active_task(&tool.name)
                 } else {
-                    tasks::requires_active_task(&tool.name)
+                    tasks::requires_active_task_for(&tool)
                 };
                 let task_preflight = if direct_tasks
                     && requires_task
@@ -2198,7 +2181,8 @@ fn run_turn<'a>(
                     .or(instruction_preflight)
                     .or(terminal_preflight)
                     .or_else(|| task_preflight.map(str::to_owned));
-                let permitted = progress_preflight.is_none()
+                let permitted = contract_preflight.is_none()
+                    && progress_preflight.is_none()
                     && preflight.is_none()
                     && authorize_with_policy(
                         session,
@@ -2227,7 +2211,7 @@ fn run_turn<'a>(
                 let mut read_observation = None;
                 let mut reused_read = None;
                 let mut confirmed_mutation = false;
-                let result = if let Some(error) = progress_preflight {
+                let result = if let Some(error) = contract_preflight.or(progress_preflight) {
                     Err(error)
                 } else if permitted {
                     let _mutation_guard = match &execution {
@@ -2243,6 +2227,9 @@ fn run_turn<'a>(
                     };
                     if tool.name == progress::TOOL_NAME {
                         progress_watchdog.checkpoint(&tool.args)
+                    } else if tool.name == "jarvis_inspect_publication" {
+                        publication::inspection::inspect(&session.root, &tool.args, signal.clone())
+                            .await
                     } else if tool.name.starts_with("hub_")
                         || tool.name.starts_with("process_")
                         || tool.name.starts_with("terminal_")
@@ -2516,11 +2503,11 @@ fn run_turn<'a>(
                         read_reuse.remember(observation, status == "completed" && !indexed);
                     }
                 }
-                let steer = repeated_tools.observe(&tool, status == "error", &wire_output);
+                let steer = repeated_tools.observe(&tool, status == "error", &output);
                 let progress_observation = progress_watchdog.observe(
                     &tool,
                     status == "error",
-                    &wire_output,
+                    &output,
                     confirmed_mutation || (tool.name.starts_with("mcp_") && requires_task),
                 );
                 let retained_bytes = wire_output.len() as u64;
@@ -2605,31 +2592,18 @@ fn run_turn<'a>(
                 }
             }
             if let Some(action) = progress_watchdog.take_action() {
-                if let Some(error) = record_progress_action(session, action)? {
-                    context.close().await;
-                    return Err(error);
-                }
+                record_progress_action(session, action)?;
             }
         }
     })
 }
 
-fn record_progress_action(
-    session: &Session,
-    action: progress::Action,
-) -> Result<Option<AgentError>, AgentError> {
-    let (paused, message) = match action {
-        progress::Action::RequireCheckpoint(message) => (false, message),
-        progress::Action::Pause(message) => (true, message),
-    };
+fn record_progress_action(session: &Session, action: progress::Action) -> Result<(), AgentError> {
+    let progress::Action::SuggestCheckpoint(message) = action;
     session.update(true, |data| {
         let current = data.turns.last_mut().unwrap();
         if let Some(step) = current.turn.steps.last_mut() {
-            if paused {
-                step.progress_pauses += 1;
-            } else {
-                step.progress_checkpoints += 1;
-            }
+            step.progress_checkpoints += 1;
         }
         current.wire.push(json!({
             "role":"user",
@@ -2638,7 +2612,7 @@ fn record_progress_action(
             "content":message,
         }));
     })?;
-    Ok(paused.then(|| AgentError::new("progress_paused", &message)))
+    Ok(())
 }
 
 fn finish(session: &Session, result: Result<(), AgentError>) {

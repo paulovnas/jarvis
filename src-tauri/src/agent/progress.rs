@@ -1,18 +1,12 @@
+//! Advisory recovery based on observed results, never on the number of useful actions.
 use super::{AgentError, ToolCall};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashSet, VecDeque};
 
 pub(super) const TOOL_NAME: &str = "progress_checkpoint";
-
-const MAX_ACTIONS_WITHOUT_MATERIAL_PROGRESS: usize = 64;
-const MAX_UNPRODUCTIVE_STREAK: usize = 8;
-const ERROR_WINDOW: usize = 12;
-const MAX_ERRORS_IN_WINDOW: usize = 8;
-const MAX_CHECKPOINT_VIOLATIONS: usize = 3;
-
-const CHECKPOINT_REQUIRED: &str = "Jarvis progress watchdog checkpoint (runtime instruction, not a new user request). Work has continued without observable material progress. Before any other tool, call progress_checkpoint with the current objective, concrete evidence gathered so far, and one bounded next action. Do not claim progress from plans, repeated polling, or an unconfirmed mutation.";
-const CHECKPOINT_ACCEPTED: &str = "Checkpoint registrado. Execute a próxima ação delimitada. O Jarvis continuará enquanto houver fatos novos ou progresso material confirmado.";
+const UNPRODUCTIVE_STREAK: usize = 8;
+const EVIDENCE_CAPACITY: usize = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Observation {
@@ -23,41 +17,16 @@ pub(super) enum Observation {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Action {
-    RequireCheckpoint(String),
-    Pause(String),
-}
-
-#[derive(Clone, Debug)]
-enum Phase {
-    Monitoring {
-        checkpointed: bool,
-    },
-    CheckpointRequired {
-        reason: &'static str,
-        announced: bool,
-        violations: usize,
-    },
-    Paused {
-        reason: &'static str,
-        announced: bool,
-    },
-}
-
-impl Default for Phase {
-    fn default() -> Self {
-        Self::Monitoring {
-            checkpointed: false,
-        }
-    }
+    SuggestCheckpoint(String),
 }
 
 #[derive(Default)]
 pub(super) struct Watchdog {
-    phase: Phase,
-    actions_since_progress: usize,
+    checkpoint_pending: bool,
+    announce: bool,
     unproductive_streak: usize,
-    recent_errors: VecDeque<bool>,
     evidence: HashSet<u64>,
+    evidence_order: VecDeque<u64>,
 }
 
 #[derive(Deserialize)]
@@ -69,71 +38,48 @@ struct Checkpoint {
 }
 
 impl Watchdog {
-    pub(super) fn checkpoint_required(&self) -> bool {
-        matches!(self.phase, Phase::CheckpointRequired { .. })
-    }
-
     pub(super) fn definition(&self) -> Option<Value> {
-        matches!(self.phase, Phase::CheckpointRequired { .. }).then(|| {
-            json!({
-                "type": "function",
-                "name": TOOL_NAME,
-                "description": "Required by the Jarvis runtime after progress stalls. Restate the active objective, cite concrete evidence already obtained, and commit to one bounded next action. This checkpoint does not itself complete work.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "objective": {"type":"string","minLength":1,"maxLength":2000},
-                        "evidence": {"type":"array","items":{"type":"string","minLength":1,"maxLength":2000},"minItems":1,"maxItems":12},
-                        "nextAction": {"type":"string","minLength":1,"maxLength":2000}
-                    },
-                    "required": ["objective", "evidence", "nextAction"],
-                    "additionalProperties": false
-                }
-            })
-        })
+        self.checkpoint_pending.then(|| json!({
+            "type": "function",
+            "name": TOOL_NAME,
+            "description": "Recovery aid after repeated unchanged results or errors. Summarize the active objective, reuse concrete evidence, and choose one bounded next action. You may also proceed directly with a different productive action or finish with an accurate result. A checkpoint is not a prerequisite for continuing.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "objective": {"type":"string","minLength":1,"maxLength":2000},
+                    "evidence": {"type":"array","items":{"type":"string","minLength":1,"maxLength":2000},"minItems":1,"maxItems":12},
+                    "nextAction": {"type":"string","minLength":1,"maxLength":2000}
+                },
+                "required": ["objective", "evidence", "nextAction"],
+                "additionalProperties": false
+            }
+        }))
     }
 
     pub(super) fn preflight(&self, tool: &ToolCall) -> Result<(), AgentError> {
-        match (&self.phase, tool.name.as_str()) {
-            (Phase::CheckpointRequired { .. }, TOOL_NAME) => Ok(()),
-            (Phase::CheckpointRequired { .. }, _) => Err(AgentError::new(
-                "progress_checkpoint_required",
-                "O watchdog exige um checkpoint de objetivo e evidências antes de executar outra ferramenta.",
-            )),
-            (_, TOOL_NAME) => Err(AgentError::new(
-                "tool_unavailable",
-                "Nenhum checkpoint de progresso está pendente.",
-            )),
-            _ => Ok(()),
+        if tool.name == TOOL_NAME && !self.checkpoint_pending {
+            return Err(AgentError::new("tool_unavailable", "Nenhum checkpoint de progresso está pendente. Continue com a próxima ação necessária."));
         }
+        Ok(())
     }
 
     pub(super) fn checkpoint(&mut self, args: &Value) -> Result<String, AgentError> {
-        if !matches!(self.phase, Phase::CheckpointRequired { .. }) {
-            return Err(AgentError::new(
-                "tool_unavailable",
-                "Nenhum checkpoint de progresso está pendente.",
-            ));
-        }
-        let checkpoint: Checkpoint = serde_json::from_value(args.clone()).map_err(|_| {
+        let checkpoint: Checkpoint = serde_json::from_value(args.clone()).map_err(|error| {
             AgentError::new(
                 "progress_checkpoint_invalid",
-                "Informe objective, evidence e nextAction no formato solicitado.",
+                &format!("Informe objective, evidence e nextAction: {error}"),
             )
         })?;
-        let valid = bounded(&checkpoint.objective)
-            && bounded(&checkpoint.next_action)
-            && (1..=12).contains(&checkpoint.evidence.len())
-            && checkpoint.evidence.iter().all(|item| bounded(item));
-        if !valid {
-            return Err(AgentError::new(
-                "progress_checkpoint_invalid",
-                "O checkpoint precisa conter um objetivo, de 1 a 12 evidências concretas e uma próxima ação delimitada.",
-            ));
+        if !bounded(&checkpoint.objective)
+            || !bounded(&checkpoint.next_action)
+            || !(1..=12).contains(&checkpoint.evidence.len())
+            || !checkpoint.evidence.iter().all(|item| bounded(item))
+        {
+            return Err(AgentError::new("progress_checkpoint_invalid", "Informe um objetivo, de 1 a 12 evidências e uma próxima ação, cada texto com 1 a 2000 bytes."));
         }
-        self.phase = Phase::Monitoring { checkpointed: true };
-        self.reset_counters();
-        Ok(CHECKPOINT_ACCEPTED.into())
+        self.reset_guidance();
+        // Keep evidence identities: a checkpoint must not make an old result new again.
+        Ok("Checkpoint registrado. Execute a próxima ação delimitada usando as evidências já obtidas.".into())
     }
 
     pub(super) fn observe(
@@ -144,129 +90,51 @@ impl Watchdog {
         confirmed_mutation: bool,
     ) -> Observation {
         if tool.name == TOOL_NAME {
-            if failed {
-                self.checkpoint_violation();
-            }
             return Observation::Unproductive;
         }
-        if matches!(self.phase, Phase::CheckpointRequired { .. }) {
-            self.checkpoint_violation();
-            return Observation::Unproductive;
-        }
-        if failed {
-            self.actions_since_progress += 1;
-            self.unproductive_streak += 1;
-            self.record_error(true);
-            self.detect_stagnation();
-            return Observation::Unproductive;
-        }
-        if confirmed_mutation || material_tool(&tool.name) {
-            self.phase = Phase::Monitoring {
-                checkpointed: false,
-            };
-            self.reset_counters();
+        let new_evidence =
+            !failed && !output.trim().is_empty() && self.remember(fingerprint(tool, output));
+        if !failed && (confirmed_mutation || (new_evidence && material_tool(&tool.name, output))) {
+            self.reset_guidance();
             return Observation::MaterialProgress;
         }
-
-        self.actions_since_progress += 1;
-        self.record_error(false);
-        let observation = if polling_tool(&tool.name) || output.trim().is_empty() {
-            self.unproductive_streak += 1;
-            Observation::Unproductive
-        } else if self.evidence.insert(fingerprint(tool, output)) {
+        if new_evidence {
+            self.reset_guidance();
+            return Observation::NewEvidence;
+        }
+        self.unproductive_streak += 1;
+        if self.unproductive_streak >= UNPRODUCTIVE_STREAK {
+            self.checkpoint_pending = true;
+            self.announce = true;
             self.unproductive_streak = 0;
-            Observation::NewEvidence
-        } else {
-            self.unproductive_streak += 1;
-            Observation::Unproductive
-        };
-        self.detect_stagnation();
-        observation
-    }
-
-    pub(super) fn missed_checkpoint(&mut self) {
-        self.checkpoint_violation();
+        }
+        Observation::Unproductive
     }
 
     pub(super) fn take_action(&mut self) -> Option<Action> {
-        match &mut self.phase {
-            Phase::CheckpointRequired {
-                reason, announced, ..
-            } if !*announced => {
-                *announced = true;
-                Some(Action::RequireCheckpoint(format!(
-                    "{CHECKPOINT_REQUIRED}\nTrigger: {reason}"
-                )))
-            }
-            Phase::Paused { reason, announced } if !*announced => {
-                *announced = true;
-                Some(Action::Pause(format!(
-                    "A execução foi pausada de forma segura após uma segunda estagnação ({reason}). O histórico e os resultados de ferramentas foram preservados.{}",
-                    " Em fluxos diretos, envie uma nova mensagem para continuar; em fluxos Planejado ou Completo, use Retomar fluxo."
-                )))
-            }
-            _ => None,
+        if !std::mem::take(&mut self.announce) {
+            return None;
         }
+        Some(Action::SuggestCheckpoint("Jarvis recovery guidance (runtime instruction, not a new user request): recent actions returned errors or unchanged evidence. Reuse confirmed results and choose a different bounded action toward the user's current objective. You can use progress_checkpoint to organize recovery. Do not repeat an uncertain mutation; inspect its outcome first. If an external dependency truly prevents completion, report that specific blocker or use ask_user. This guidance does not suspend the task or require another user message.".into()))
     }
 
-    fn detect_stagnation(&mut self) {
-        let reason = if self.unproductive_streak >= MAX_UNPRODUCTIVE_STREAK {
-            Some("ações consecutivas sem fato novo ou mudança confirmada")
-        } else if self.recent_errors.len() >= MAX_ERRORS_IN_WINDOW
-            && self.recent_errors.iter().filter(|failed| **failed).count() >= MAX_ERRORS_IN_WINDOW
-        {
-            Some("taxa de erro elevada nas ações recentes")
-        } else if self.actions_since_progress >= MAX_ACTIONS_WITHOUT_MATERIAL_PROGRESS {
-            Some("muitas ações exploratórias sem progresso material")
-        } else {
-            None
-        };
-        let Some(reason) = reason else {
-            return;
-        };
-        self.phase = match self.phase {
-            Phase::Monitoring {
-                checkpointed: false,
-            } => Phase::CheckpointRequired {
-                reason,
-                announced: false,
-                violations: 0,
-            },
-            Phase::Monitoring { checkpointed: true } => Phase::Paused {
-                reason,
-                announced: false,
-            },
-            ref phase => phase.clone(),
-        };
-    }
-
-    fn checkpoint_violation(&mut self) {
-        if let Phase::CheckpointRequired {
-            reason, violations, ..
-        } = &mut self.phase
-        {
-            *violations += 1;
-            if *violations >= MAX_CHECKPOINT_VIOLATIONS {
-                self.phase = Phase::Paused {
-                    reason,
-                    announced: false,
-                };
-            }
-        }
-    }
-
-    fn record_error(&mut self, failed: bool) {
-        if self.recent_errors.len() == ERROR_WINDOW {
-            self.recent_errors.pop_front();
-        }
-        self.recent_errors.push_back(failed);
-    }
-
-    fn reset_counters(&mut self) {
-        self.actions_since_progress = 0;
+    fn reset_guidance(&mut self) {
+        self.checkpoint_pending = false;
+        self.announce = false;
         self.unproductive_streak = 0;
-        self.recent_errors.clear();
-        self.evidence.clear();
+    }
+
+    fn remember(&mut self, fingerprint: u64) -> bool {
+        if !self.evidence.insert(fingerprint) {
+            return false;
+        }
+        self.evidence_order.push_back(fingerprint);
+        if self.evidence_order.len() > EVIDENCE_CAPACITY {
+            if let Some(oldest) = self.evidence_order.pop_front() {
+                self.evidence.remove(&oldest);
+            }
+        }
+        true
     }
 }
 
@@ -275,7 +143,13 @@ fn bounded(value: &str) -> bool {
     !value.is_empty() && value.len() <= 2_000
 }
 
-fn material_tool(name: &str) -> bool {
+fn material_tool(name: &str, output: &str) -> bool {
+    if name.starts_with("jarvis_propose_") {
+        // A declined proposal or partial application is not a confirmed mutation.
+        return serde_json::from_str::<Value>(output).is_ok_and(|v| {
+            v["approved"] == true && matches!(v["status"].as_str(), Some("applied" | "published"))
+        });
+    }
     matches!(
         name,
         "update_tasks"
@@ -303,55 +177,35 @@ fn material_tool(name: &str) -> bool {
             | "terminal_start"
             | "terminal_write"
             | "terminal_close"
-            | "jarvis_propose_agent"
-            | "jarvis_propose_flow"
-    )
-}
-
-fn polling_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "process_list"
-            | "process_output"
-            | "terminal_list"
-            | "terminal_output"
-            | "hub_list"
-            | "hub_wait"
-            | "browser_snapshot"
-            | "browser_console"
     )
 }
 
 fn fingerprint(tool: &ToolCall, output: &str) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325;
-    hash_bytes(&mut hash, tool.name.as_bytes());
-    hash_value(&mut hash, &tool.args);
-    hash_bytes(&mut hash, output.as_bytes());
-    hash
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    tool.name.hash(&mut hash);
+    hash_value(&tool.args, &mut hash);
+    output.hash(&mut hash);
+    hash.finish()
 }
 
-fn hash_value(hash: &mut u64, value: &Value) {
+fn hash_value(value: &Value, hash: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
     match value {
         Value::Object(object) => {
             let mut fields: Vec<_> = object.iter().collect();
-            fields.sort_by_key(|(name, _)| *name);
-            for (name, value) in fields {
-                hash_bytes(hash, name.as_bytes());
-                hash_value(hash, value);
+            fields.sort_by_key(|(key, _)| *key);
+            for (key, value) in fields {
+                key.hash(hash);
+                hash_value(value, hash);
             }
         }
-        Value::Array(values) => {
-            for value in values {
-                hash_value(hash, value);
+        Value::Array(items) => {
+            for item in items {
+                hash_value(item, hash);
             }
         }
-        _ => hash_bytes(hash, value.to_string().as_bytes()),
-    }
-}
-
-fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
-    for byte in bytes {
-        *hash = (*hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
+        _ => value.to_string().hash(hash),
     }
 }
 
@@ -370,160 +224,117 @@ mod tests {
         }
     }
 
-    fn checkpoint(watchdog: &mut Watchdog) {
-        watchdog
-            .checkpoint(&json!({
-                "objective":"Implementar a correção",
-                "evidence":["O arquivo relevante foi localizado"],
-                "nextAction":"Editar o arquivo identificado"
-            }))
-            .unwrap();
-    }
-
     #[test]
-    fn harness_evaluation_long_work_with_material_progress_never_hits_a_step_limit() {
+    fn arbitrarily_long_analysis_with_new_evidence_never_pauses_or_requires_writes() {
         let mut watchdog = Watchdog::default();
-        let mut evidence = 0;
-        let mut progress = 0;
-        for cycle in 0..5 {
-            for index in 0..63 {
-                let call = tool("read", cycle * 100 + index);
-                assert_eq!(
-                    watchdog.observe(&call, false, &format!("fact-{cycle}-{index}"), false),
-                    Observation::NewEvidence
-                );
-                evidence += 1;
-                assert!(watchdog.take_action().is_none());
-            }
-            let write = tool("write", cycle);
+        for index in 0..2_000 {
             assert_eq!(
-                watchdog.observe(&write, false, "Arquivo salvo", true),
-                Observation::MaterialProgress
+                watchdog.observe(&tool("read", index), false, &format!("fact-{index}"), false),
+                Observation::NewEvidence
             );
-            progress += 1;
             assert!(watchdog.take_action().is_none());
         }
-        crate::agent::evaluation::assert_runtime_report(
+        assert!(watchdog.evidence.len() <= EVIDENCE_CAPACITY);
+        super::super::evaluation::assert_runtime_report(
             "progress-long-run",
-            crate::agent::evaluation::RuntimeReport::new(
+            super::super::evaluation::RuntimeReport::new(
                 "completed",
                 [
                     ("checkpoints", 0),
-                    ("evidenceEvents", evidence),
-                    ("progressEvents", progress),
-                    ("toolCalls", evidence + progress),
+                    ("evidenceEvents", 2000),
+                    ("toolCalls", 2000),
                 ],
             ),
         );
     }
 
     #[test]
-    fn harness_evaluation_first_stagnation_requires_a_structured_checkpoint() {
+    fn repeated_results_offer_recovery_without_blocking_next_action() {
         let mut watchdog = Watchdog::default();
-        for index in 0..MAX_ACTIONS_WITHOUT_MATERIAL_PROGRESS {
-            let call = tool("read", index);
-            watchdog.observe(&call, false, &format!("fact-{index}"), false);
+        let call = tool("read", 0);
+        for _ in 0..=UNPRODUCTIVE_STREAK {
+            watchdog.observe(&call, false, "same", false);
         }
         assert!(matches!(
             watchdog.take_action(),
-            Some(Action::RequireCheckpoint(_))
+            Some(Action::SuggestCheckpoint(_))
         ));
         assert!(watchdog.definition().is_some());
+        assert!(watchdog.preflight(&tool("bash", 1)).is_ok());
         assert_eq!(
-            watchdog.preflight(&tool("write", 1)).unwrap_err().code,
-            "progress_checkpoint_required"
-        );
-        checkpoint(&mut watchdog);
-        assert!(watchdog.definition().is_none());
-        crate::agent::evaluation::assert_runtime_report(
-            "progress-first-checkpoint",
-            crate::agent::evaluation::RuntimeReport::new(
-                "checkpointed",
-                [
-                    ("checkpoints", 1),
-                    ("evidenceEvents", 64),
-                    ("steps", 65),
-                    ("toolCalls", 65),
-                ],
-            ),
-        );
-    }
-
-    #[test]
-    fn harness_evaluation_second_stagnation_pauses_without_replaying_tools() {
-        let mut watchdog = Watchdog::default();
-        for index in 0..MAX_ACTIONS_WITHOUT_MATERIAL_PROGRESS {
-            let call = tool("read", index);
-            watchdog.observe(&call, false, &format!("first-{index}"), false);
-        }
-        assert!(matches!(
-            watchdog.take_action(),
-            Some(Action::RequireCheckpoint(_))
-        ));
-        checkpoint(&mut watchdog);
-        for index in 0..MAX_ACTIONS_WITHOUT_MATERIAL_PROGRESS {
-            let call = tool("search", index + 1000);
-            watchdog.observe(&call, false, &format!("second-{index}"), false);
-        }
-        assert!(matches!(watchdog.take_action(), Some(Action::Pause(_))));
-        assert!(watchdog.take_action().is_none());
-        crate::agent::evaluation::assert_runtime_report(
-            "progress-second-stagnation",
-            crate::agent::evaluation::RuntimeReport::new(
-                "paused",
-                [
-                    ("checkpoints", 1),
-                    ("evidenceEvents", 128),
-                    ("pausedCalls", 0),
-                    ("steps", 129),
-                    ("toolCalls", 129),
-                ],
-            ),
-        );
-    }
-
-    #[test]
-    fn high_error_rate_triggers_before_unique_failures_can_run_forever() {
-        let mut watchdog = Watchdog::default();
-        for index in 0..MAX_ERRORS_IN_WINDOW {
-            watchdog.observe(&tool("mcp_query", index), true, "failed", false);
-        }
-        assert!(matches!(
-            watchdog.take_action(),
-            Some(Action::RequireCheckpoint(message)) if message.contains("taxa de erro") || message.contains("ações consecutivas")
-        ));
-    }
-
-    #[test]
-    fn evidence_identity_ignores_json_object_key_order() {
-        let mut watchdog = Watchdog::default();
-        let mut first = tool("search", 1);
-        first.args = json!({"query":"needle","path":"src"});
-        let mut reordered = tool("search", 2);
-        reordered.args = json!({"path":"src","query":"needle"});
-        assert_eq!(
-            watchdog.observe(&first, false, "same result", false),
+            watchdog.observe(&tool("bash", 1), false, "checks passed", false),
             Observation::NewEvidence
         );
+        assert!(watchdog.definition().is_none());
+    }
+
+    #[test]
+    fn checkpoint_keeps_evidence_and_invalid_checkpoints_do_not_block_work() {
+        let mut watchdog = Watchdog::default();
+        let call = tool("read", 0);
+        for _ in 0..=UNPRODUCTIVE_STREAK {
+            watchdog.observe(&call, false, "same", false);
+        }
+        for _ in 0..5 {
+            assert!(watchdog.checkpoint(&json!({})).is_err());
+        }
+        assert!(watchdog.preflight(&tool("bash", 1)).is_ok());
+        watchdog.checkpoint(&json!({"objective":"Publish the requested diff", "evidence":["Diff inspected"], "nextAction":"Run relevant validation"})).unwrap();
         assert_eq!(
-            watchdog.observe(&reordered, false, "same result", false),
+            watchdog.observe(&call, false, "same", false),
             Observation::Unproductive
         );
     }
 
     #[test]
-    fn three_ignored_checkpoint_requests_pause_the_execution() {
+    fn changed_polling_is_evidence_but_identical_task_updates_are_not_progress() {
         let mut watchdog = Watchdog::default();
-        for index in 0..MAX_UNPRODUCTIVE_STREAK {
-            watchdog.observe(&tool("process_output", index), false, "same", false);
+        let call = tool("terminal_output", 0);
+        for index in 0..20 {
+            assert_eq!(
+                watchdog.observe(&call, false, &format!("output {index}"), false),
+                Observation::NewEvidence
+            );
         }
-        assert!(matches!(
-            watchdog.take_action(),
-            Some(Action::RequireCheckpoint(_))
+        let task = tool("update_tasks", 1);
+        assert_eq!(
+            watchdog.observe(&task, false, "in progress", false),
+            Observation::MaterialProgress
+        );
+        assert_eq!(
+            watchdog.observe(&task, false, "in progress", false),
+            Observation::Unproductive
+        );
+        assert!(!material_tool(
+            "jarvis_propose_publication",
+            r#"{"approved":false,"status":"rejected"}"#
         ));
-        for _ in 0..MAX_CHECKPOINT_VIOLATIONS {
-            watchdog.missed_checkpoint();
+        assert!(material_tool(
+            "jarvis_propose_publication",
+            r#"{"approved":true,"status":"applied"}"#
+        ));
+    }
+
+    #[test]
+    fn error_streaks_can_recover_more_than_once_without_aborting_the_turn() {
+        let mut watchdog = Watchdog::default();
+        for cycle in 0..3 {
+            for index in 0..UNPRODUCTIVE_STREAK {
+                watchdog.observe(&tool("read", index), true, "invalid arguments", false);
+            }
+            assert!(matches!(
+                watchdog.take_action(),
+                Some(Action::SuggestCheckpoint(_))
+            ));
+            assert_eq!(
+                watchdog.observe(
+                    &tool("search", cycle),
+                    false,
+                    &format!("recovered-{cycle}"),
+                    false
+                ),
+                Observation::NewEvidence
+            );
         }
-        assert!(matches!(watchdog.take_action(), Some(Action::Pause(_))));
     }
 }

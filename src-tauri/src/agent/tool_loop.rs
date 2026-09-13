@@ -4,12 +4,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 const STEER_AFTER: usize = 5;
 const READ_CACHE_CAPACITY: usize = 64;
-pub(super) const READ_REUSE_MESSAGE: &str = "Resultado reutilizado pelo Jarvis: o arquivo e o intervalo continuam byte a byte iguais à leitura anterior. Use o conteúdo já presente no histórico; uma nova cópia foi omitida para reduzir contexto.";
+pub(super) const READ_REUSE_MESSAGE: &str = "Resultado reutilizado pelo Jarvis: este intervalo já está coberto por uma leitura anterior e o arquivo continua byte a byte igual. Use o conteúdo já presente no histórico; uma nova cópia foi omitida para reduzir contexto.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ReadEntry {
     fingerprint: [u8; 32],
-    output_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,13 +25,20 @@ pub(super) struct ReadReuseCache {
 impl ReadReuseCache {
     pub(super) fn resolve(&self, observation: &super::tools::ReadObservation) -> Option<ReadReuse> {
         self.entries
-            .get(&observation.identity)
-            .filter(|entry| {
-                entry.fingerprint == observation.fingerprint
-                    && entry.output_bytes > READ_REUSE_MESSAGE.len() as u64
+            .iter()
+            .find(|(identity, entry)| {
+                identity.path == observation.identity.path
+                    && identity.offset <= observation.identity.offset
+                    && identity.offset.saturating_add(identity.limit)
+                        >= observation
+                            .identity
+                            .offset
+                            .saturating_add(observation.identity.limit)
+                    && entry.fingerprint == observation.fingerprint
+                    && observation.output_bytes > READ_REUSE_MESSAGE.len() as u64
             })
-            .map(|entry| ReadReuse {
-                original_bytes: entry.output_bytes,
+            .map(|_| ReadReuse {
+                original_bytes: observation.output_bytes,
             })
     }
 
@@ -42,7 +48,7 @@ impl ReadReuseCache {
         available_in_history: bool,
     ) {
         self.remove(&observation.identity);
-        if !available_in_history {
+        if !available_in_history || !observation.complete {
             return;
         }
         while self.entries.len() >= READ_CACHE_CAPACITY {
@@ -55,7 +61,6 @@ impl ReadReuseCache {
             observation.identity,
             ReadEntry {
                 fingerprint: observation.fingerprint,
-                output_bytes: observation.output_bytes,
             },
         );
     }
@@ -126,7 +131,7 @@ impl Guard {
         if self.steered.as_ref() == Some(&call) {
             return Err(AgentError::new(
                 "repeated_tool_loop",
-                "O agente repetiu a mesma chamada após receber uma orientação para mudar de estratégia. A execução foi interrompida antes de executar a ação novamente.",
+                "Esta chamada já retornou o mesmo resultado cinco vezes e não foi executada novamente. Use o resultado anterior, corrija os argumentos ou escolha outra ação para concluir o pedido. A conversa continua; se houver uma dependência externa, explique-a precisamente.",
             ));
         }
         Ok(())
@@ -169,7 +174,7 @@ impl Guard {
         }
         self.steered = Some(observation.call);
         Some(format!(
-            "Jarvis detected {STEER_AFTER} consecutive identical calls to `{}` with the same result class. Do not call it again with the same arguments. Explain what is blocking progress and choose a different source, query, file, tool, or approach. If user input is required, use ask_user.",
+            "Jarvis detected {STEER_AFTER} consecutive identical calls to `{}` with the same result class. Reuse the existing result instead of executing it again. Correct invalid arguments or choose a different bounded query or action within the user's requested scope and sources. Do not switch to an unrelated MCP. If no useful action remains, report the concrete blocker or use ask_user for genuinely missing input; do not continue broad exploration.",
             tool.name
         ))
     }
@@ -307,7 +312,7 @@ mod tests {
         crate::agent::evaluation::assert_runtime_report(
             "stagnation-guard",
             crate::agent::evaluation::RuntimeReport::new(
-                "paused",
+                "recoverable",
                 [
                     ("blockedCalls", 1),
                     ("executedCalls", 5),
@@ -317,6 +322,43 @@ mod tests {
                 ],
             ),
         );
+        let next = tool("search", json!({"path":"src", "query":"new evidence"}));
+        assert!(guard.before_call(&next).is_ok());
+        guard.observe(&next, false, "useful result");
+        assert!(guard.before_call(&call).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_contained_read_reuses_only_complete_valid_history() {
+        let fixture = super::super::tests::Fixture::new();
+        let path = fixture.root.join("large.txt");
+        fs::write(&path, "long enough line for reuse\n".repeat(500)).unwrap();
+        let mut cache = ReadReuseCache::default();
+        cache.remember(
+            read(&fixture.root, json!({"path":"large.txt","limit":500})).await,
+            true,
+        );
+        let subset = read(
+            &fixture.root,
+            json!({"path":"large.txt","offset":100,"limit":100}),
+        )
+        .await;
+        assert!(cache.resolve(&subset).is_some());
+        fs::write(&path, "different line for reuse\n".repeat(500)).unwrap();
+        assert!(cache
+            .resolve(
+                &read(
+                    &fixture.root,
+                    json!({"path":"large.txt","offset":100,"limit":100})
+                )
+                .await
+            )
+            .is_none());
+        cache.clear();
+        let mut incomplete = subset.clone();
+        incomplete.complete = false;
+        cache.remember(incomplete, true);
+        assert!(cache.resolve(&subset).is_none());
     }
 
     #[test]
@@ -561,6 +603,7 @@ mod tests {
             },
             fingerprint: [index as u8; 32],
             output_bytes: 1_000,
+            complete: true,
         };
         for index in 0..=READ_CACHE_CAPACITY {
             cache.remember(observation(index), true);

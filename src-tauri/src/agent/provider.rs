@@ -657,18 +657,34 @@ pub(super) fn tool_calls(output: &[Value]) -> Result<Vec<ToolCall>, AgentError> 
             return Err(protocol_error());
         }
         let name = item["name"].as_str().ok_or_else(protocol_error)?;
-        let args: Value =
-            serde_json::from_str(item["arguments"].as_str().ok_or_else(protocol_error)?)
-                .map_err(|_| protocol_error())?;
-        if !args.is_object() {
-            return Err(protocol_error());
-        }
+        let parsed =
+            serde_json::from_str::<Value>(item["arguments"].as_str().ok_or_else(protocol_error)?);
+        let (args, argument_error) = match parsed {
+            Ok(args) if args.is_object() => (args, None),
+            Ok(_) => (
+                json!({}),
+                Some("Os argumentos devem ser um objeto JSON.".to_owned()),
+            ),
+            Err(error) => (
+                json!({}),
+                Some(format!(
+                    "JSON inválido na linha {}, coluna {}. Corrija a sintaxe dos argumentos.",
+                    error.line(),
+                    error.column()
+                )),
+            ),
+        };
         calls.push(ToolCall {
             id: id.into(),
             name: name.into(),
             args,
-            status: "pending".into(),
-            output: String::new(),
+            status: if argument_error.is_some() {
+                "error"
+            } else {
+                "pending"
+            }
+            .into(),
+            output: argument_error.unwrap_or_default(),
             duration_ms: 0,
         });
     }

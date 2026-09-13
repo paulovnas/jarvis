@@ -1,6 +1,19 @@
 use super::*;
 use crate::persistence::initialize_database;
 
+#[test]
+fn publication_contract_reuses_evidence_and_does_not_expand_into_a_whole_project_audit() {
+    assert!(DEFAULT_PUBLISH_PROMPT.contains("Reuse valid checks already performed"));
+    assert!(DEFAULT_PUBLISH_PROMPT.contains("whole-codebase audit"));
+    let contract =
+        crate::agent::workflow::catalog::builtin_agent(crate::agent::workflow::Role::Github)
+            .unwrap()
+            .instructions;
+    assert!(contract.contains("jarvis_inspect_publication"));
+    assert!(contract.contains("Inspect the relevant diff once"));
+    assert!(contract.contains("do not repeat an uncertain action"));
+}
+
 fn database() -> Connection {
     let mut database = Connection::open_in_memory().unwrap();
     initialize_database(&mut database).unwrap();

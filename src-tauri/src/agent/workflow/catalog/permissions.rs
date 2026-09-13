@@ -8,7 +8,12 @@ use crate::agent::{
 pub(crate) fn required(name: &str) -> bool {
     matches!(
         name,
-        "ctx_search" | "ctx_index" | "ctx_stats" | "hub_complete" | "update_tasks"
+        "ctx_search"
+            | "ctx_index"
+            | "ctx_stats"
+            | "hub_complete"
+            | "update_tasks"
+            | "progress_checkpoint"
     )
 }
 
@@ -66,6 +71,9 @@ fn description(name: &str) -> &'static str {
         }
         "jarvis_propose_publication" => {
             "Propor operações Git e GitHub para aprovação e execução supervisionadas."
+        }
+        "jarvis_inspect_publication" => {
+            "Consultar repositórios, branches e alterações pendentes sem publicar."
         }
         "web_search" => "Pesquisar na web com a conta configurada.",
         "read_attachment" => "Ler documentos anexados à conversa.",
@@ -155,7 +163,14 @@ pub(crate) fn builtin_permissions() -> Vec<Permission> {
         ("Projeto", tools::definitions(Mode::Build)),
         (
             "Jarvis",
-            [authoring::definitions(), vec![publication::definition()]].concat(),
+            [
+                authoring::definitions(),
+                vec![
+                    publication::definition(),
+                    publication::inspection::definition(),
+                ],
+            ]
+            .concat(),
         ),
         (
             "Pesquisa e mídia",

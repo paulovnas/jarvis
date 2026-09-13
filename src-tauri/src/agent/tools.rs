@@ -29,6 +29,7 @@ pub(super) struct ReadObservation {
     pub(super) identity: ReadIdentity,
     pub(super) fingerprint: [u8; 32],
     pub(super) output_bytes: u64,
+    pub(super) complete: bool,
 }
 
 pub(super) struct ExecutionResult {
@@ -77,7 +78,7 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
             definition("write", "Create or replace a UTF-8 project file atomically. Read existing files first. Content is the complete new file.", json!({"path":string,"content":string}), &["path","content"]),
             definition("edit", "Replace exactly one unique occurrence in a UTF-8 project file. oldText must be nonempty and match exactly once.", json!({"path":string,"oldText":string,"newText":string}), &["path","oldText","newText"]),
             super::patch::definition(),
-            definition("bash", &format!("Run a shell command in the project directory. {} Use noninteractive commands. Maximum timeout is 120 seconds. Background processes are stopped when the command finishes. This is not a filesystem sandbox; stay within the project and respect user instructions.", super::shell::prompt()), json!({"command":string,"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}), &["command"]),
+            definition("bash", &format!("Run a bounded noninteractive command. Use workdir (relative to the project root) for nested repositories instead of shell cd chains. {} Maximum timeout is 120 seconds. Background processes are stopped when the command finishes. Output retains its beginning and end; use Context-mode for large analysis. This is not a filesystem sandbox; stay within the project and respect user instructions.", super::shell::prompt()), json!({"command":string,"workdir":{"type":"string","description":"Existing directory inside the project; defaults to '.'"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}), &["command"]),
         ]);
     }
     tools
@@ -108,7 +109,7 @@ pub(super) fn instructions(root: &Path, mode: Mode) -> String {
         instructions.push_str("Prefer apply_patch for one coherent change spanning multiple files; it validates the complete patch before writing and returns bounded LSP diagnostics. Keep write/edit for isolated changes.\n");
     }
     instructions.push_str("For code navigation, prefer lsp_definition, lsp_references and lsp_symbols over repeated text searches when a project language server is installed. Use lsp_diagnostics for focused compiler feedback; if a server is unavailable, report it once and use the smallest text-based fallback.\n");
-    instructions.push_str(super::authoring::INSTRUCTIONS);
+    instructions.push_str("Keep progress updates concise and tied to the next concrete action; do not repeatedly restate the plan or settled facts. When a tool rejects arguments, correct the indicated fields and continue. Runtime recovery guidance is not a new task, approval request or reason to stop. A tool-level failure does not erase completed work or the user's current authorization.\n");
     instructions.push_str(super::browser::EFFICIENCY);
     instructions.push_str(&format!("{}\n", super::shell::prompt()));
     if let Ok(path) = scoped(root, "AGENTS.md", false) {
@@ -227,7 +228,7 @@ fn bounded(mut value: String) -> String {
     value
 }
 
-fn ignored_discovery_directory(name: &std::ffi::OsStr) -> bool {
+pub(super) fn ignored_discovery_directory(name: &std::ffi::OsStr) -> bool {
     matches!(
         name.to_str(),
         Some(
@@ -422,6 +423,7 @@ fn file_tool(
                 },
                 fingerprint,
                 output_bytes: 0,
+                complete: true,
             });
             output
         }
@@ -486,9 +488,11 @@ fn file_tool(
         }
         _ => return Err(error("Ferramenta desconhecida.")),
     };
+    let complete = result.len() <= MAX_OUTPUT;
     let output = bounded(result);
     if let Some(observation) = &mut read {
         observation.output_bytes = output.len() as u64;
+        observation.complete = complete;
     }
     Ok(FileToolResult { output, read })
 }
@@ -548,28 +552,56 @@ fn search(
     Ok(output)
 }
 
-async fn capture(mut pipe: impl AsyncRead + Unpin) -> String {
-    let mut result = Vec::new();
+pub(super) async fn capture(mut pipe: impl AsyncRead + Unpin) -> String {
+    let mut head = Vec::new();
+    let mut tail = std::collections::VecDeque::new();
+    let mut total = 0usize;
     let mut buffer = [0_u8; 4096];
-    let mut truncated = false;
     loop {
         match pipe.read(&mut buffer).await {
             Ok(0) | Err(_) => break,
             Ok(count) => {
-                let keep = count.min(MAX_OUTPUT.saturating_sub(result.len()));
-                result.extend_from_slice(&buffer[..keep]);
-                truncated |= keep < count;
+                total = total.saturating_add(count);
+                let keep = count.min((MAX_OUTPUT / 2).saturating_sub(head.len()));
+                head.extend_from_slice(&buffer[..keep]);
+                tail.extend(&buffer[keep..count]);
+                let excess = tail.len().saturating_sub(MAX_OUTPUT / 2);
+                tail.drain(..excess);
             }
         }
     }
-    let mut output = String::from_utf8_lossy(&result).into_owned();
-    if truncated {
-        output.push_str("\n[Saída truncada]\n");
+    let mut output = String::from_utf8_lossy(&head).into_owned();
+    if total > MAX_OUTPUT {
+        output.push_str(&format!(
+            "\n[Saída truncada: {} bytes intermediários omitidos; início e fim preservados]\n",
+            total - MAX_OUTPUT
+        ));
     }
+    output.push_str(&String::from_utf8_lossy(tail.make_contiguous()));
     output
 }
 
-async fn finish_capture(mut task: tokio::task::JoinHandle<String>) -> String {
+fn bounded_command(value: &str) -> String {
+    if value.len() <= MAX_OUTPUT {
+        return value.to_owned();
+    }
+    let mut head = MAX_OUTPUT / 2;
+    let mut tail = value.len() - MAX_OUTPUT / 2;
+    while !value.is_char_boundary(head) {
+        head -= 1;
+    }
+    while !value.is_char_boundary(tail) {
+        tail += 1;
+    }
+    format!(
+        "{}\n[Saída truncada: {} bytes intermediários omitidos]\n{}",
+        &value[..head],
+        tail - head,
+        &value[tail..]
+    )
+}
+
+pub(super) async fn finish_capture(mut task: tokio::task::JoinHandle<String>) -> String {
     match tokio::time::timeout(Duration::from_secs(2), &mut task).await {
         Ok(Ok(output)) => output,
         _ => {
@@ -583,13 +615,18 @@ async fn shell(
     args: &Value,
     mut signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
-    scoped(root, ".", false)?;
+    let directory = scoped(root, args["workdir"].as_str().unwrap_or("."), false)?;
+    if !directory.is_dir() {
+        return Err(error(
+            "workdir precisa indicar uma pasta existente dentro do projeto.",
+        ));
+    }
     let command = argument(args, "command")?;
     if command.trim().is_empty() || command.len() > 16_000 {
         return Err(error("Comando vazio ou muito longo."));
     }
     let timeout = args["timeoutSeconds"].as_u64().unwrap_or(60).clamp(1, 120);
-    let mut child = super::shell::spawn(command, root)
+    let mut child = super::shell::spawn(command, &directory)
         .map_err(|_| error("Não foi possível iniciar o terminal."))?;
     let stdout = tokio::spawn(capture(
         child.stdout().take().ok_or_else(AgentError::internal)?,
@@ -602,7 +639,7 @@ async fn shell(
         result = tokio::time::timeout(Duration::from_secs(timeout), child.wait()) => match result {
             Ok(Ok(status)) => Ok(status),
             Ok(Err(_)) => Err(error("Falha ao aguardar o comando.")),
-            Err(_) => Err(error("O comando excedeu o tempo limite e foi interrompido.")),
+            Err(_) => Err(AgentError::new("command_timeout", "O comando excedeu o tempo limite e foi interrompido. Verifique os efeitos já produzidos antes de repetir a ação.")),
         }
     };
     if status.is_err() {
@@ -610,7 +647,7 @@ async fn shell(
     }
     let _ = child.wait().await;
     let (stdout, stderr) = tokio::join!(finish_capture(stdout), finish_capture(stderr));
-    let output = bounded(format!("{stdout}{stderr}"));
+    let output = bounded_command(&format!("{stdout}{stderr}"));
     match status {
         Ok(status) if status.success() => Ok(format!("Código de saída: 0\n{output}")),
         Ok(status) => Err(error(&format!(
@@ -619,7 +656,10 @@ async fn shell(
                 .code()
                 .map_or("sinal".into(), |code| code.to_string())
         ))),
-        Err(cause) => Err(error(&format!("{}\n{output}", cause.message))),
+        Err(cause) => Err(AgentError::new(
+            &cause.code,
+            &format!("{}\n{output}", cause.message),
+        )),
     }
 }
 
@@ -800,6 +840,49 @@ mod tests {
         .unwrap();
         assert!(result.contains("changed"));
         assert!(result.contains(fixture.root.to_str().unwrap().trim_start_matches(r"\\?\")));
+    }
+
+    #[tokio::test]
+    async fn explicit_workdir_runs_in_nested_repo_and_rejects_escape() {
+        let fixture = Fixture::new();
+        fs::create_dir(fixture.root.join("backend")).unwrap();
+        fs::write(fixture.root.join("backend/marker.txt"), "nested repository").unwrap();
+        let (_send, signal) = watch::channel(false);
+        let command = if cfg!(windows) {
+            "Get-Content marker.txt"
+        } else {
+            "cat marker.txt"
+        };
+        let result = shell(
+            &fixture.root,
+            &json!({"command":command,"workdir":"backend"}),
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+        assert!(result.contains("nested repository"));
+        for path in ["../", "backend/marker.txt", "missing"] {
+            assert!(shell(
+                &fixture.root,
+                &json!({"command":command,"workdir":path}),
+                signal.clone()
+            )
+            .await
+            .is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn long_command_output_preserves_failure_at_the_end_with_bounded_memory() {
+        let bytes = format!("START\n{}\nFINAL FAILURE", "á".repeat(60_000));
+        let output = capture(bytes.as_bytes()).await;
+        assert!(output.starts_with("START"));
+        assert!(output.ends_with("FINAL FAILURE"));
+        assert!(output.contains("Saída truncada"));
+        assert!(output.len() < MAX_OUTPUT + 200);
+        let combined = bounded_command(&format!("{output}{output}"));
+        assert!(combined.starts_with("START"));
+        assert!(combined.ends_with("FINAL FAILURE"));
     }
     #[tokio::test]
     async fn cancellation_terminates_the_process_tree() {

@@ -367,9 +367,14 @@ fn configure_terminal(command: &mut CommandBuilder, root: &Path) {
 pub(crate) fn spawn(command: &str, root: &Path) -> std::io::Result<Box<dyn ChildWrapper>> {
     let mut process = crate::background::tokio_command(&SHELL.program);
     crate::mcp::executable::configure(&mut process, false);
+    process.args(arguments(command)).current_dir(root);
+    spawn_process(process)
+}
+
+pub(crate) fn spawn_process(
+    mut process: tokio::process::Command,
+) -> std::io::Result<Box<dyn ChildWrapper>> {
     process
-        .args(arguments(command))
-        .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

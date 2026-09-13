@@ -44,6 +44,10 @@ impl Resolver {
     pub(super) fn discover(&mut self, tool: &ToolCall) -> Result<bool, AgentError> {
         let mut directories = Vec::new();
         match tool.name.as_str() {
+            "bash" => {
+                let target = self.safe_path(tool.args["workdir"].as_str().unwrap_or("."))?;
+                directories.push(target);
+            }
             "list" | "search" => {
                 if let Some(path) = tool.args["path"].as_str() {
                     let target = self.safe_path(path)?;

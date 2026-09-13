@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const CASES: [&str; 3] = [
+const CASES: [&str; 4] = [
     include_str!("fixtures/evaluations/movarte-explicit-mcp.json"),
     include_str!("fixtures/evaluations/movarte-planned-flow.json"),
     include_str!("fixtures/evaluations/movarte-hml-migration-objectivity.json"),
+    include_str!("fixtures/evaluations/movarte-github-publication.json"),
 ];
 const RUNTIME_SUITE: &str = include_str!("fixtures/evaluations/movarte-runtime-scenarios.json");
 
@@ -443,7 +444,7 @@ fn assess(case: &EvaluationCase) -> Vec<Violation> {
 #[test]
 fn harness_evaluation_reports_the_sanitized_movarte_baselines() {
     let cases = load_cases();
-    assert_eq!(cases.len(), 3);
+    assert_eq!(cases.len(), 4);
     for case in &cases {
         validate(case).unwrap();
         assert_eq!(assess(case), case.expectations.baseline_violations);
@@ -546,7 +547,7 @@ fn harness_evaluation_runtime_manifest_is_versioned_and_complete() {
     let suite = load_runtime_suite();
     validate_runtime_suite(&suite).unwrap();
     assert_eq!(suite.id, "movarte-runtime-regressions");
-    assert_eq!(suite.scenarios.len(), 15);
+    assert_eq!(suite.scenarios.len(), 14);
 }
 
 #[tokio::test]

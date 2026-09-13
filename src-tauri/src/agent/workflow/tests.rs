@@ -1,6 +1,98 @@
 use super::*;
 
 #[test]
+fn github_recovery_tool_is_advertised_and_executable_in_direct_and_delegated_flows() {
+    let mut recovered = 0;
+    for flow in [Flow::Custom, Flow::Publication] {
+        let (_fixture, hub) = hub();
+        {
+            let mut state = hub.manifest.lock().unwrap();
+            state.flow = flow;
+            if flow == Flow::Custom {
+                state.custom_agent = Some(
+                    catalog::tests::example()
+                        .resolve_agent("builtin:github")
+                        .unwrap(),
+                );
+            }
+        }
+        let exec = Execution {
+            hub,
+            id: "main".into(),
+            role: Role::Github,
+            flow,
+            scope: vec![".".into()],
+        };
+        let mut watchdog = super::super::progress::Watchdog::default();
+        let mut call = ToolCall {
+            id: "recovery".into(),
+            name: "read".into(),
+            args: json!({"path":"README.md"}),
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        for _ in 0..8 {
+            watchdog.observe(&call, true, "missing path", false);
+        }
+        let mut definitions = super::super::tools::definitions(Mode::Build);
+        definitions.push(watchdog.definition().unwrap());
+        exec.filter(&mut definitions);
+        call.name = "progress_checkpoint".into();
+        call.args = json!({"objective":"Publish the requested pending changes", "evidence":["The relevant repositories were found"], "nextAction":"Inspect only the pending diff"});
+        assert!(super::super::tool_contract::Catalog::new(&definitions)
+            .validate(&call)
+            .is_ok());
+        assert!(exec.preflight(&call).is_none());
+        assert!(watchdog.preflight(&call).is_ok());
+        assert!(watchdog.checkpoint(&call.args).is_ok());
+        recovered += 1;
+    }
+    super::super::evaluation::assert_runtime_report(
+        "github-checkpoint-contract",
+        super::super::evaluation::RuntimeReport::new(
+            "completed",
+            [("checkpointExecutions", recovered), ("roleRejections", 0)],
+        ),
+    );
+}
+
+#[test]
+fn recovery_contract_is_available_to_every_native_role_and_custom_capability() {
+    for role in [
+        Role::Planner,
+        Role::Investigator,
+        Role::Writer,
+        Role::Orchestrator,
+        Role::Designer,
+        Role::Builder,
+        Role::Reviewer,
+        Role::Github,
+        Role::Custom,
+    ] {
+        for flow in [
+            Flow::Standard,
+            Flow::Designer,
+            Flow::Planned,
+            Flow::Complete,
+            Flow::Publication,
+            Flow::Custom,
+        ] {
+            assert!(role.allows(flow, "progress_checkpoint", false));
+        }
+    }
+    for capability in [
+        catalog::Capability::ReadOnly,
+        catalog::Capability::WriteFiles,
+        catalog::Capability::Commands,
+    ] {
+        let mut agent = catalog::tests::example().agents.remove(0);
+        agent.capability = capability;
+        assert!(custom::allowed(&agent, "progress_checkpoint"));
+    }
+}
+
+#[test]
 fn workflow_tools_keep_narrow_follow_ups_and_checks_proportional() {
     let planner = dispatch::definitions(Flow::Planned, Role::Planner);
     let spawn = planner

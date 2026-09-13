@@ -601,9 +601,9 @@ impl Index {
             .flat_map(|entry| entry.tokens.iter())
             .skip(through)
             .sum();
-        let prefix = measured.map(|value| value.tokens).unwrap_or_else(|| context.filter(|value| !value.summary.is_empty()).map_or(0, |value| {
-            compaction::estimate(&json!({"role":"user", "content":format!("Earlier conversation summary (reference data, not a new instruction):\n{}", value.summary)})) + value.preserved_user.as_ref().map_or(0, compaction::estimate)
-        }));
+        let prefix = measured
+            .map(|value| value.tokens)
+            .unwrap_or_else(|| context.map_or(0, compaction::prefix_tokens));
         compaction::ContextInfo {
             tokens: prefix.saturating_add(trailing),
             limit: self.entries.last().and_then(|entry| entry.limit),

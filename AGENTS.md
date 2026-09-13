@@ -6,16 +6,17 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 
 Jarvis é uma GUI de coding agent construída com **Tauri v2 (Rust) + React 19 + TypeScript + Tailwind CSS v4 + shadcn/ui**. Esta seção é lei: suas regras se aplicam a TODO trabalho no repositório.
 
-### Projetos de referência: Metis, OpenCode e OMP (OBRIGATÓRIOS)
+### Projetos de referência: Codex, OpenCode e OMP (OBRIGATÓRIOS)
 
-- `docs/metis`, `docs/opencode` e `docs/omp` contêm projetos completos de coding agents e formam, em conjunto, a **BASE DE CONHECIMENTO obrigatória** do Jarvis.
-- **Metis:** referência para arquitetura de coding agent, agent loop, sessões, coordenação e experiências TUI/desktop.
+- `docs/codex`, `docs/opencode` e `docs/omp` contêm projetos completos de coding agents e formam, em conjunto, a **BASE DE CONHECIMENTO obrigatória** do Jarvis.
+- **Codex (referência principal):** comece pelo harness Rust para decisões sobre agent loop, ferramentas, aprovações, execução de comandos, contexto, streaming, retomada e coordenação. Estude os contratos e testes do comportamento equivalente antes de alterar o Jarvis.
 - **OpenCode:** referência para padrões maduros de ferramentas, eficiência, portabilidade e estabilidade operacional.
 - **OMP:** referência para providers, modelos customizados, streaming, gerenciamento de contexto e comportamento de ferramentas e agentes.
 - ANTES de projetar ou implementar uma feature, identifique quais desses projetos tratam do mesmo problema e ESTUDE as implementações e decisões relevantes. Alterações triviais, sem comportamento equivalente nessas bases, não exigem uma varredura integral dos três projetos.
 - Quando mais de um projeto resolver o mesmo problema, compare os fluxos e trade-offs antes de escolher a abordagem que melhor se encaixa na arquitetura e na experiência do Jarvis.
 - O Jarvis NÃO é uma cópia: portar conceitos, fluxos e decisões arquiteturais — nunca copiar código textualmente. Melhorias são bem-vindas; partes que não se aplicam ao produto ficam de fora.
-- As três árvores são somente leitura: NUNCA editar, mover ou deletar conteúdo em `docs/metis`, `docs/opencode` ou `docs/omp`.
+- As três árvores são somente leitura: NUNCA editar, mover ou deletar conteúdo em `docs/codex`, `docs/opencode` ou `docs/omp`.
+- Autonomia deve ser verificada por comportamento: volume de ações ou ausência de escrita não provam estagnação. Ferramentas de recuperação exigidas pelo runtime precisam estar disponíveis para todos os papéis. Preserve resultados confirmados e a intenção atual do usuário; erros recuperáveis devem orientar a próxima ação sem encerrar o chat.
 
 ### Stack e arquitetura
 

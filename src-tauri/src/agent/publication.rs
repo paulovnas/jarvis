@@ -1,4 +1,5 @@
 //! Project-scoped publication settings and supervised Git/GitHub execution.
+pub(super) mod inspection;
 use super::{tools, AgentError, ToolCall};
 use crate::persistence::AppState;
 use regex::Regex;
@@ -15,7 +16,7 @@ use std::{
 };
 use tauri::Manager;
 
-pub const DEFAULT_PUBLISH_PROMPT: &str = "Review the complete project diff, keep each commit cohesive, and propose a clear Conventional Commit message. Run the checks that are relevant to the changed scope before proposing publication. Include only files that belong to the requested work and explain material validation evidence.";
+pub const DEFAULT_PUBLISH_PROMPT: &str = "Publish the requested pending changes. Inspect repository status and the relevant diffs to choose scoped files and a clear Conventional Commit message. Reuse valid checks already performed; run only validation required by the project or a concrete concern in the changed scope. Do not turn publication into a new implementation or a whole-codebase audit. Prepare the complete supervised proposal, then verify the approved operations and report their actual results.";
 pub const DEFAULT_PR_PROMPT: &str = "Write the pull request title and body in the configured user-facing language. Explain the concrete problem and resulting behavior, then include concise validation evidence and material risks. Use this structure when applicable:\n\n## Alterações\n\n## Validação\n\n## Observações";
 const PR_QUESTION_ID: &str = "publication_pull_request";
 
@@ -261,7 +262,7 @@ pub(super) fn instructions(settings: &Settings) -> String {
     let github = if settings.gh_available {
         "GitHub CLI is available. A pull request may be included when explicitly requested or after the configured ask_user decision."
     } else {
-        "GitHub CLI is unavailable. Do not propose a pull request or merge; keep publication local to Git commits."
+        "GitHub CLI is unavailable. Git commits and pushes are still supported; do not propose a pull request or merge until the CLI is available."
     };
     let publish_prompt = prompt_data(&settings.publish_prompt);
     let pr_prompt = prompt_data(&settings.pr_prompt);
