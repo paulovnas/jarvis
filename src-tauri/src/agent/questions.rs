@@ -1,6 +1,4 @@
-use super::{
-    cancelled, journal, next_revision, AgentError, AgentState, ChatSnapshot, Session, ToolCall,
-};
+use super::{cancelled, next_revision, AgentError, AgentState, ChatSnapshot, Session, ToolCall};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -214,7 +212,7 @@ pub(super) async fn execute(
     session.update(true, |data| {
         if let Some(active) = &mut data.active {
             turn_id.clone_from(&active.id);
-            active.question = Some(Pending {
+            active.wait_for_question(Pending {
                 request: PendingQuestion {
                     turn_id: active.id.clone(),
                     tool_id: tool.id.clone(),
@@ -265,7 +263,7 @@ pub(super) fn answer(
         .active
         .as_ref()
         .filter(|active| active.id == turn_id && !*active.cancel.borrow())
-        .and_then(|active| active.question.as_ref())
+        .and_then(|active| active.pending_question())
         .filter(|pending| pending.request.tool_id == tool_id)
         .ok_or_else(|| {
             AgentError::new(
@@ -297,8 +295,7 @@ pub(super) fn answer(
     current
         .wire
         .push(json!({"type":"function_call_output", "call_id":tool_id, "output":output}));
-    if journal::append_update(&session.journal, &previous, &current).is_err() {
-        data.storage_failed = true;
+    if session.writer.append_turn(current.clone()).is_err() || session.writer.flush().is_err() {
         if let Some(active) = &data.active {
             let _ = active.cancel.send(true);
         }
@@ -308,7 +305,7 @@ pub(super) fn answer(
     let pending = data
         .active
         .as_mut()
-        .and_then(|active| active.question.take())
+        .and_then(|active| active.take_question())
         .ok_or_else(AgentError::internal)?;
     data.revision = next_revision();
     let snapshot = session.snapshot_data(&data);

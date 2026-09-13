@@ -147,6 +147,7 @@ fn server(replies: Vec<(u16, String)>) -> (String, JoinHandle<Vec<Value>>) {
 
 fn request<'a>(credential: &'a CodexCredential, options: &'a TurnOptions) -> Request<'a> {
     Request {
+        client: super::super::http_client().unwrap(),
         credential,
         options,
         session_id: "session",

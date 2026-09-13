@@ -528,7 +528,8 @@ fn overflow(value: &Value) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn stream(
+pub(super) async fn stream_with_client(
+    client: &reqwest::Client,
     credential: &CodexCredential,
     session_id: &str,
     options: &TurnOptions,
@@ -546,7 +547,8 @@ pub(super) async fn stream(
         &input,
         &tools,
     )?;
-    let mut response = send_body(credential, &body, &options.model, signal, on_delta).await?;
+    let mut response =
+        send_body(client, credential, &body, &options.model, signal, on_delta).await?;
     if let Some(item) = response.output.last_mut() {
         let step = body["request"]["labels"]["last_step_index"]
             .as_str()
@@ -596,7 +598,8 @@ pub(crate) async fn grounded_search(
     signal: watch::Receiver<bool>,
 ) -> Result<Response, AgentError> {
     let body = grounded_body(credential, session, model, query, response_language)?;
-    let result = send_body(credential, &body, model, signal, |_| Ok(())).await;
+    let client = super::http_client()?;
+    let result = send_body(&client, credential, &body, model, signal, |_| Ok(())).await;
     if let Err(error) = &result {
         if error.code == "context_overflow" || error.code.starts_with("provider_") {
             crate::diagnostics::record_provider_failure(
@@ -610,6 +613,7 @@ pub(crate) async fn grounded_search(
     result
 }
 async fn send_body(
+    client: &reqwest::Client,
     credential: &CodexCredential,
     body: &Value,
     model: &str,
@@ -621,12 +625,6 @@ async fn send_body(
         .as_deref()
         .filter(|s| ENDPOINTS.contains(s))
         .unwrap_or(ENDPOINTS[0]);
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(20))
-        .timeout(Duration::from_secs(600))
-        .build()
-        .map_err(|_| AgentError::internal())?;
     let request = client
         .post(format!(
             "{endpoint}/v1internal:streamGenerateContent?alt=sse"

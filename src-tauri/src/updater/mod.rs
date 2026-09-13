@@ -244,14 +244,15 @@ pub async fn install_app_update(
         return Err("Abra o Jarvis instalado no computador para atualizar.".into());
     }
     require_idle(&app)?;
+    let drain = app
+        .state::<crate::agent::AgentState>()
+        .begin_update_drain()?;
     let already_installed = state
         .installed
         .lock()
         .map_err(|_| "Atualizador indisponível.")?
         .clone();
-    let version = if let Some(version) = already_installed {
-        version
-    } else {
+    if already_installed.is_none() {
         let mut update = state
             .candidate
             .lock()
@@ -292,14 +293,11 @@ pub async fn install_app_update(
             .installed
             .lock()
             .map_err(|_| "Atualizador indisponível.")? = Some(version.clone());
-        version
-    };
+    }
     let _ = on_progress.send(Progress::Restarting);
     crate::desktop::flush(&app);
-    relaunch::launch_updated(&app, &version).await?;
-    // The successor has shown its window. Never exit merely because spawning was attempted.
-    crate::prepare_exit_for_update(&app);
-    app.exit(0);
+    drain.keep_closed();
+    relaunch::launch_updated(&app);
     Ok(())
 }
 

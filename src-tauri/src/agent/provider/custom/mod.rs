@@ -48,6 +48,7 @@ fn output(
     })
 }
 
+#[cfg(test)]
 fn authenticated_request(
     credential: &CodexCredential,
     config: &Config,
@@ -59,6 +60,15 @@ fn authenticated_request(
         .timeout(Duration::from_secs(600))
         .build()
         .map_err(|_| AgentError::internal())?;
+    authenticated_request_with_client(&client, credential, config, body)
+}
+
+fn authenticated_request_with_client(
+    client: &reqwest::Client,
+    credential: &CodexCredential,
+    config: &Config,
+    body: &Value,
+) -> Result<reqwest::RequestBuilder, AgentError> {
     let endpoint = config.endpoint()?;
     let openrouter = endpoint.scheme() == "https"
         && endpoint.host_str() == Some("openrouter.ai")
@@ -84,8 +94,19 @@ fn authenticated_request(
     Ok(request)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn session_request(
+    credential: &CodexCredential,
+    config: &Config,
+    body: Value,
+    session_id: &str,
+) -> Result<reqwest::RequestBuilder, AgentError> {
+    let client = super::http_client()?;
+    session_request_with_client(&client, credential, config, body, session_id)
+}
+
+fn session_request_with_client(
+    client: &reqwest::Client,
     credential: &CodexCredential,
     config: &Config,
     mut body: Value,
@@ -102,7 +123,7 @@ fn session_request(
     {
         body["prompt_cache_key"] = json!(session_id);
     }
-    let mut request = authenticated_request(credential, config, &body)?;
+    let mut request = authenticated_request_with_client(client, credential, config, &body)?;
     if official && endpoint.host_str() == Some("openrouter.ai") {
         request = request.header("x-session-id", session_id);
     }
@@ -110,7 +131,8 @@ fn session_request(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn stream(
+pub(super) async fn stream_with_client(
+    client: &reqwest::Client,
     credential: &CodexCredential,
     config: &Config,
     session_id: &str,
@@ -142,7 +164,7 @@ pub(super) async fn stream(
         ));
     }
     let body = request::body(config, model, options, instructions, input, tools)?;
-    let request = session_request(credential, config, body, session_id)?;
+    let request = session_request_with_client(client, credential, config, body, session_id)?;
     let scope = request::scope(config, options);
     if config.protocol == Protocol::OpenaiResponses {
         let mut response =
@@ -165,6 +187,35 @@ pub(super) async fn stream(
         return Ok(response);
     }
     receive(request, config.protocol, &scope, signal, on_delta).await
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+async fn stream(
+    credential: &CodexCredential,
+    config: &Config,
+    session_id: &str,
+    options: &TurnOptions,
+    instructions: &str,
+    input: Vec<Value>,
+    tools: Vec<Value>,
+    signal: watch::Receiver<bool>,
+    on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
+) -> Result<Response, AgentError> {
+    let client = super::http_client()?;
+    stream_with_client(
+        &client,
+        credential,
+        config,
+        session_id,
+        options,
+        instructions,
+        input,
+        tools,
+        signal,
+        on_delta,
+    )
+    .await
 }
 
 async fn receive(

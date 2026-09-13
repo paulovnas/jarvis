@@ -22,14 +22,16 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId }: { turn:
     : turn.status === "cancelled" || turn.status === "interrupted"
       ? "Execução interrompida"
       : "Falha na execução";
+  const latestText = turn.steps[turn.steps.length - 1]?.text ?? "";
+  const repeatedError = turn.error?.message.trim() === latestText.trim();
   return <AssistantMessageTurn message={{
-    id: turn.id, role: "assistant", content: turn.steps[turn.steps.length - 1]?.text ?? "", timestamp,
+    id: turn.id, role: "assistant", content: running || repeatedError ? "" : latestText, timestamp,
     model: `${turn.options.account} / ${turn.options.model}`, streaming: running,
     work: running || turn.steps.some((step, index) => step.summary || step.tools.length || (step.text && index < turn.steps.length - 1)) ? {
       retry: running ? turn.steps[turn.steps.length - 1]?.retry : undefined,
       durationSeconds: Math.floor(durationMs / 1000),
       detailContext: conversationId ? { conversationId, turnId: turn.id } : undefined,
-      steps: turn.steps.map((step, index) => ({ thinking: step.summary, tools: step.tools, commentary: index < turn.steps.length - 1 ? step.text : "" })),
+      steps: turn.steps.map((step, index) => ({ thinking: step.summary, tools: step.tools, commentary: running || index < turn.steps.length - 1 ? step.text : "" })),
     } : undefined,
     error: turn.error ? { title: errorTitle, message: turn.error.message } : undefined,
   }} />;

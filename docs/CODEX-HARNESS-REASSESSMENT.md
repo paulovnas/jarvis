@@ -91,6 +91,27 @@ Existing provider-specific streaming, retry and caching behavior was reviewed an
 
 The selected model and reasoning effort influence latency and decisions. The deterministic suite proves harness behavior, not a fixed execution time or the absence of all model hallucinations. No provider benchmark is fabricated from scripted tests.
 
+## Explicit runtime contracts added in the second phase
+
+The follow-up refactor moves the main harness boundaries from implicit conventions into small contracts that can be validated independently:
+
+| Boundary | Implemented contract | Resulting behavior |
+| --- | --- | --- |
+| Session persistence | One `SessionWriter` owns each conversation journal, its ordered queue, last durable turn, bounded retries, flush barrier and shutdown drain | Transient write failures retain the pending operation in order. The agent waits only at declared durability boundaries, while filesystem I/O remains outside the async agent loop |
+| Tool runtime | `Handler`, `Effect`, `ApprovalPolicy`, `Capabilities` and `PreparedTool` bind the exact model-visible schema to executable behavior | Unknown tools and malformed arguments fail as structured, recoverable results before approval or side effects. Approval and parallel eligibility derive from the registered contract instead of scattered name checks |
+| Turn ownership | `ActiveTurn`, `TurnPhase`, a single mailbox and `TurnAdmission` model sampling, tool execution, user waiters, cancellation and drain | Approvals are correlated to their tool, auxiliary messages stop entering a draining turn, and an update cannot begin while turns are active or admit new work after its drain starts |
+| Renderer events | Rust emits versioned `agent:event` batches with conversation, base revision, new revision and typed deltas | The renderer applies changes in order, ignores duplicate or stale batches and reloads an authoritative snapshot when it detects a revision gap. Full snapshots remain the resynchronization path |
+| Model context | Typed context items and an immutable `StepContext` capture provider options, instructions, visible tools, input and original user authorization for one inference step | Runtime-only metadata is removed at the provider boundary, compaction cannot replace the user's authorization, and configuration changes cannot mutate a request already in flight |
+| Provider execution | One `TurnSession` retains the credential, conversation session ID and pooled HTTP client for the complete turn; eligible native reads execute concurrently | Connection and retry identity are reused without leaking settings from another turn. Mutations remain serial, and parallel results are correlated by call ID then returned in the provider's original call order with individual durations |
+
+OpenAI `previous_response_id` was deliberately not introduced. Jarvis currently sends Responses requests with `store: false` and maintains the complete validated local replay; depending on a provider-stored response would weaken that durability contract. The safe reuse in this phase is the HTTP connection pool, conversation session ID and existing provider cache key.
+
+## Native relaunch after an installed update
+
+The former updater spawned the updated executable before the current process exited and waited for a loopback readiness acknowledgement. On macOS, the current process still owned `tauri-plugin-single-instance`'s lock, so the plugin terminated the successor during setup and Jarvis reported that the new instance had exited before opening.
+
+The updater now starts an admission drain, installs the artifact, flushes desktop state, performs the idempotent service/diagnostic shutdown and calls Tauri's native `AppHandle::request_restart()`. Tauri tears down the current runtime before launching the installed executable, which releases the single-instance lock in the required order. The obsolete port, token, child-process and window-ready handshake was removed. A runtime-contract test fixes the required sequence as `prepare_exit` followed by `request_restart`; a packaged-app update remains the necessary end-to-end confirmation because a test process cannot replace its installed application bundle.
+
 ## Existing mechanisms retained after review
 
 | Subsystem | Reason to retain it |
@@ -108,6 +129,6 @@ The regression suite covers native argument errors, malformed JSON recovery, hid
 
 Baseline observations and executable regressions are separate: the old 6m25s trace is retained as observed evidence; new tests run the actual contracts against synthetic/local fixtures. The reference suite does not publish Movarte or call paid providers.
 
-Validation on macOS: `bun run check` passed lint, typecheck, 113 frontend test files (571 passed, one intentionally skipped) and production build. `cargo clippy -- -D warnings` passed. `cargo test` passed 638 tests; 18 environment-dependent tests remained intentionally ignored. `git diff --check` and `cargo fmt --check` passed. The Rust target measured 16 GiB with 103 GiB free on the volume, below the repository's cleanup thresholds.
+Validation on macOS: `bun run check` passed lint, typecheck, 114 frontend test files (575 passed, one intentionally skipped) and production build. `cargo clippy -- -D warnings` passed. `cargo test` passed 649 tests; 18 environment-dependent tests remained intentionally ignored. `git diff --check` and `cargo fmt --check` passed. The Rust target measured 24 GiB with 94 GiB free on the volume, below the repository's cleanup thresholds.
 
 Installed-app behavior, live provider timing and native Windows execution require their respective runtime environments; macOS source-level checks do not constitute a Windows smoke test. No application release, commit, push, or Movarte publication was performed as part of this reassessment.

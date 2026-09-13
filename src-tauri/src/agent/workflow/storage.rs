@@ -358,17 +358,19 @@ fn worker_session(
     path: PathBuf,
     turns: Vec<StoredTurn>,
     extras: journal::Extras,
-) -> Arc<Session> {
+) -> Result<Arc<Session>, AgentError> {
     let durable_turn = turns.last().cloned();
+    let writer =
+        session_writer::SessionWriter::start(path.clone(), job.id.clone(), durable_turn.clone())?;
     let weak = Arc::downgrade(hub);
-    Arc::new(Session {
+    Ok(Arc::new(Session {
         id: job.id.clone(),
         journal: path,
         root: hub.root.root.clone(),
         journal_maintenance: hub.root.journal_maintenance.clone(),
+        writer,
         data: Mutex::new(SessionData {
             turns,
-            durable_turn,
             extras,
             active: None,
             recovery: None,
@@ -384,7 +386,7 @@ fn worker_session(
                 (hub.emit)(&hub.root.id);
             }
         }),
-    })
+    }))
 }
 
 pub(super) fn worker(
@@ -416,7 +418,7 @@ pub(super) fn worker(
         file.sync_all().map_err(|_| AgentError::storage())?;
         (vec![], journal::Extras::default())
     };
-    let session = worker_session(hub, job, path, turns, extras);
+    let session = worker_session(hub, job, path, turns, extras)?;
     let content = resume.unwrap_or_else(|| job.prompt.clone());
     let original = hub
         .root
@@ -468,7 +470,7 @@ pub(super) fn resume_worker(
             Some("The previous runtime stopped before this worker created a durable turn. Inspect current Beads and project state, then continue the assigned work without assuming that no external state changed.".into()),
         );
     }
-    let session = worker_session(hub, job, path, turns, extras);
+    let session = worker_session(hub, job, path, turns, extras)?;
     let (signal, _) = session.resume_interrupted_workflow_turn()?;
     Ok((session, signal))
 }

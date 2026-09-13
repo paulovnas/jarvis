@@ -94,6 +94,26 @@ it("shows the exact commit, PR and merge scope before publishing", async () => {
   expect(answer).toHaveBeenCalledWith(true, null);
 });
 
+it("sends a publication observation back for revision instead of presenting it as immediate execution", async () => {
+  const user = userEvent.setup();
+  const answer = vi.fn().mockResolvedValue(true);
+  const request: PendingAuthoring = {
+    turnId: "turn-4", toolId: "tool-4", action: "publish", catalogRevision: null,
+    summary: "Publicar somente os arquivos aprovados.", agentReferences: [],
+    target: { kind: "publication", after: { summary: "Publicar somente os arquivos aprovados.", repositories: [
+      { path: ".", reset: null, files: ["src/App.tsx", "docs/picpay.ofx"], branch: null, commitMessage: "fix: adjust publication", push: "normal", pullRequest: null },
+    ] } },
+  };
+  render(<AuthoringApprovalDrawer request={request} onAnswer={answer} />);
+  const dialog = screen.getByRole("dialog", { name: "Revisar ações Git e GitHub" });
+
+  await user.type(within(dialog).getByLabelText(/Orientação para o agente/), "Ignore docs/picpay.ofx");
+  expect(within(dialog).getByText(/nenhuma ação será executada agora/i)).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Enviar para revisão" }));
+
+  expect(answer).toHaveBeenCalledWith(true, "Ignore docs/picpay.ofx");
+});
+
 it("shows a supervised soft reset without requiring a commit", () => {
   const request: PendingAuthoring = {
     turnId: "turn-4", toolId: "tool-4", action: "publish", catalogRevision: null,

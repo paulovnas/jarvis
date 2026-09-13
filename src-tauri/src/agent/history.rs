@@ -1008,15 +1008,16 @@ impl AgentState {
             diffs::load_legacy(&root, &legacy, &mut extras.files);
             Ok(extras)
         })?;
+        let writer = session_writer::SessionWriter::start(path.clone(), id.into(), None)?;
         let file_session = Arc::new(Session {
             id: id.into(),
             journal: path,
             root,
             journal_maintenance: Default::default(),
+            writer,
             emit: Arc::new(|_| {}),
             data: Mutex::new(SessionData {
                 turns: vec![],
-                durable_turn: None,
                 active: None,
                 recovery: None,
                 revision: 0,
@@ -1718,6 +1719,9 @@ mod tests {
             .unwrap();
         runtime.id = id.clone();
         runtime.journal = path.clone();
+        runtime.writer =
+            session_writer::SessionWriter::start(path.clone(), id.clone(), Some(stored(79)))
+                .unwrap();
         let session = Arc::new(runtime);
         agent
             .sessions

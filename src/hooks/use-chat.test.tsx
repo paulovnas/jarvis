@@ -3,14 +3,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
+import type { ChatSnapshot } from "@/core/chat";
 import { useChat } from "./use-chat";
 import { toast } from "sonner";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
 const listeners = new Map<string, Set<EventCallback<unknown>>>();
-const running = () => ({ ...emptyChat(), revision: 10, history: { start: 0, total: 1 }, activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running", steps: [] }] });
-const completed = () => ({ ...emptyChat(), revision: 12, history: { start: 0, total: 1 }, turns: [savedTurn()] });
+const running = (): ChatSnapshot => ({ ...emptyChat(), revision: 10, history: { start: 0, total: 1 }, activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running", steps: [] }] });
+const completed = (): ChatSnapshot => ({ ...emptyChat(), revision: 12, history: { start: 0, total: 1 }, turns: [savedTurn()] });
 beforeEach(() => {
   listeners.clear(); call.mockReset().mockResolvedValue(running());
   vi.mocked(listen).mockImplementation(async (name, callback) => {
@@ -21,12 +22,38 @@ beforeEach(() => {
 async function emit(name: string, payload: unknown = null) {
   await act(async () => { listeners.get(name)?.forEach(handler => handler({ event: name, id: 1, payload })); });
 }
+function update(beforeRevision: number, next: ChatSnapshot) {
+  const turn = next.turns[next.turns.length - 1];
+  return {
+    conversationId: next.conversationId,
+    baseRevision: beforeRevision,
+    revision: next.revision,
+    events: [
+      ...(turn ? [{ type: "turnStarted", turn }] : []),
+      {
+        type: "stateChanged",
+        state: {
+          compacting: next.compacting ?? false,
+          activeTurnId: next.activeTurnId,
+          pendingApproval: next.pendingApproval,
+          pendingQuestion: next.pendingQuestion ?? null,
+          pendingAuthoring: next.pendingAuthoring ?? null,
+          queuedMessages: next.queuedMessages ?? [],
+          context: next.context ?? { tokens: 0, limit: null, estimated: true, compacting: false, compactions: 0 },
+          compactions: next.compactions ?? [],
+          fileChanges: next.fileChanges ?? [],
+          history: next.history ?? { start: 0, total: next.turns.length },
+        },
+      },
+    ],
+  };
+}
 
 it("reports provider failures from execution events through Sonner without repeating them", async () => {
   const notice = vi.spyOn(toast, "error"); const { result } = renderHook(() => useChat("c1"));
   await waitFor(() => expect(result.current.snapshot).not.toBeNull());
-  const failure = { ...completed(), turns: [{ ...savedTurn(), status: "error", error: { code: "account_missing", message: "O provedor foi removido." } }] };
-  await emit("agent:updated", failure); await emit("agent:updated", failure);
+  const failure: ChatSnapshot = { ...completed(), turns: [{ ...savedTurn(), status: "error", error: { code: "account_missing", message: "O provedor foi removido." } }] };
+  await emit("agent:event", update(10, failure)); await emit("agent:event", update(10, failure));
   expect(notice).toHaveBeenCalledTimes(1);
   expect(notice).toHaveBeenCalledWith("O modelo da conversa está indisponível", expect.objectContaining({ description: "O provedor foi removido." }));
 });
@@ -38,7 +65,7 @@ it("recovers a missed completion when the native window regains focus", async ()
   await emit("tauri://focus");
   await waitFor(() => expect(result.current.snapshot?.activeTurnId).toBeNull());
   expect(result.current.snapshot?.turns[0].steps[0].text).toBe("O projeto usa **Tauri**.");
-  await emit("agent:updated", running());
+  await emit("agent:event", update(12, running()));
   expect(result.current.snapshot?.turns[0].status).toBe("completed");
 });
 
@@ -63,7 +90,8 @@ it("does not let a delayed initial load replace a newer streaming update", async
   call.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
   const { result } = renderHook(() => useChat("c1"));
   await waitFor(() => expect(call).toHaveBeenCalledOnce());
-  await emit("agent:updated", completed());
+  call.mockResolvedValueOnce(completed());
+  await emit("agent:event", update(10, completed()));
   await act(async () => resolve(running()));
-  expect(result.current.snapshot?.turns[0].status).toBe("completed");
+  await waitFor(() => expect(result.current.snapshot?.turns[0].status).toBe("completed"));
 });

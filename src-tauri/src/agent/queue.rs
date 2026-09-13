@@ -195,7 +195,7 @@ impl Session {
         let Some(active) = data.active.as_ref() else {
             return Ok(false);
         };
-        if !active.accepting_auxiliary {
+        if !active.accepts_auxiliary() {
             return Ok(false);
         }
         let turn_id = active.id.clone();
@@ -318,7 +318,7 @@ impl Session {
             data.active
                 .as_mut()
                 .ok_or_else(AgentError::cancelled)?
-                .accepting_auxiliary = false;
+                .close_auxiliary();
         }
         Ok(pending)
     }
@@ -329,7 +329,7 @@ impl Session {
             return Ok(());
         };
         if let Some(active) = data.active.as_mut() {
-            active.accepting_auxiliary = false;
+            active.transition(turn_state::TurnPhase::Draining);
         }
         let mut queue = data.extras.queue.clone();
         let mut restored = false;

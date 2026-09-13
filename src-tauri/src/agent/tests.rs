@@ -20,7 +20,7 @@ impl Drop for Fixture {
     }
 }
 
-fn options(approval_mode: ApprovalMode) -> TurnOptions {
+pub(super) fn options(approval_mode: ApprovalMode) -> TurnOptions {
     TurnOptions {
         account: "account".into(),
         model: "model".into(),
@@ -163,15 +163,17 @@ fn title_generation_guard_deduplicates_and_allows_retry_after_completion() {
 pub(super) fn session(fixture: &Fixture) -> Arc<Session> {
     let journal = fixture.root.join("session.jsonl");
     fs::write(&journal, "{}\n").unwrap();
+    let writer =
+        session_writer::SessionWriter::start(journal.clone(), "conversation".into(), None).unwrap();
     Arc::new(Session {
         id: "conversation".into(),
         journal,
         root: fixture.root.clone(),
         journal_maintenance: Default::default(),
+        writer,
         emit: Arc::new(|_| {}),
         data: Mutex::new(SessionData {
             turns: vec![],
-            durable_turn: None,
             active: None,
             recovery: None,
             revision: 1,
@@ -409,7 +411,6 @@ fn harness_evaluation_coordinated_recovery_pairs_uncertain_tools_without_replay(
     {
         let mut data = session.data.lock().unwrap();
         data.turns.push(turn.clone());
-        data.durable_turn = Some(turn);
     }
 
     assert!(session
@@ -560,6 +561,7 @@ fn deletion_blocks_active_turns_evicts_idle_sessions_and_rejects_late_writes() {
     let mutable = Arc::get_mut(&mut session).unwrap();
     mutable.id = id.clone();
     mutable.journal = path.clone();
+    mutable.writer = session_writer::SessionWriter::start(path.clone(), id.clone(), None).unwrap();
     agent
         .sessions
         .lock()
@@ -825,22 +827,19 @@ async fn read_only_mcp_calls_do_not_prompt_but_mutations_still_require_approval(
 fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
     let fixture = Fixture::new();
     let (cancel, _) = watch::channel(false);
+    let journal = fixture.root.join("session.jsonl");
+    fs::write(&journal, "").unwrap();
     let session = Session {
         id: "conversation".into(),
-        journal: fixture.root.join("session.jsonl"),
+        journal: journal.clone(),
         root: fixture.root.clone(),
         journal_maintenance: Default::default(),
+        writer: session_writer::SessionWriter::start(journal.clone(), "conversation".into(), None)
+            .unwrap(),
         emit: Arc::new(|_| {}),
         data: Mutex::new(SessionData {
             revision: 3,
-            active: Some(Active {
-                id: "turn".into(),
-                cancel,
-                approval: None,
-                question: None,
-                authoring: None,
-                accepting_auxiliary: true,
-            }),
+            active: Some(Active::new("turn".into(), cancel)),
             recovery: None,
             storage_failed: false,
             last_emit: std::time::Instant::now(),
@@ -874,7 +873,6 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                     error: None,
                 },
             }],
-            durable_turn: None,
         }),
     };
     let snapshot = serde_json::to_string(&session.snapshot().unwrap()).unwrap();

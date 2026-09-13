@@ -27,7 +27,7 @@ function useWorkflowQuery<T>(conversationId: string | null, agentId: string | un
       finally { running = false; if (active && dirty) schedule(); }
     };
     const schedule = () => { if (timer) return; timer = setTimeout(() => { timer = undefined; void refresh(); }, 150); };
-    void Promise.all(["workflow:changed", "agent:updated"].map(event => listen<{ conversationId: string }>(event, event => { if (active && event.payload.conversationId === conversationId) schedule(); }).then(stop => { if (active) stops.push(stop); else stop(); }))).then(() => { if (active) void refresh(); }).catch(cause => { if (active) setResult({ key, data: null, error: libraryError(cause, "Não foi possível acompanhar o fluxo.") }); });
+    void Promise.all(["workflow:changed", "agent:event"].map(event => listen<{ conversationId: string }>(event, event => { if (active && event.payload.conversationId === conversationId) schedule(); }).then(stop => { if (active) stops.push(stop); else stop(); }))).then(() => { if (active) void refresh(); }).catch(cause => { if (active) setResult({ key, data: null, error: libraryError(cause, "Não foi possível acompanhar o fluxo.") }); });
     return () => { active = false; if (timer) clearTimeout(timer); stops.forEach(stop => stop()); };
   }, [conversationId, agentId, key, parse, attempt]);
   return { data: result?.key === key ? result.data : null, error: result?.key === key ? result.error : null, loading: !!conversationId && result?.key !== key, retry: () => setAttempt(value => value + 1) };

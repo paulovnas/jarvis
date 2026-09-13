@@ -27,6 +27,7 @@ fn retryable(error: &AgentError) -> bool {
 }
 
 pub(super) struct Request<'a> {
+    pub client: reqwest::Client,
     pub credential: &'a CodexCredential,
     pub session_id: &'a str,
     pub options: &'a TurnOptions,
@@ -52,6 +53,7 @@ impl Request<'_> {
             }
             let mut reconnecting = retries > 0;
             let result = stream_once(
+                &self.client,
                 self.credential,
                 self.session_id,
                 self.options,

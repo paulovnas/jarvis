@@ -8,6 +8,7 @@ import { libraryError } from "@/core/library";
 import type { PendingQuestion, QuestionResponse } from "@/core/questions";
 import { onDesktopResume } from "@/core/desktop-resume";
 import type { PendingAuthoring } from "@/core/authoring";
+import { agentEventBatchSchema, applyAgentEventBatch } from "@/core/agent-events";
 
 export function useChat(conversationId: string | null) {
   const [loaded, setLoaded] = useState<ChatSnapshot | null>(null);
@@ -25,24 +26,28 @@ export function useChat(conversationId: string | null) {
   const [compactingIds, setCompactingIds] = useState<ReadonlySet<string>>(() => new Set());
   const snapshot = loaded?.conversationId === conversationId ? loaded : null;
 
-  const accept = useCallback((value: unknown, id: string) => {
-    const next = readChat(value, id);
+  const reportModelError = useCallback((next: ChatSnapshot) => {
     const last = next.turns[next.turns.length - 1];
     if (last?.error && /^(account_|provider_|credential_|invalid_model|invalid_reasoning)/.test(last.error.code) && !modelNotices.current.has(last.id)) {
       modelNotices.current.add(last.id);
       toast.error("O modelo da conversa está indisponível", { id: `chat-model:${last.id}`, description: last.error.message });
     }
-    setLoaded(current => mergeChat(current, next));
   }, []);
+  const accept = useCallback((value: unknown, id: string) => {
+    const next = readChat(value, id);
+    reportModelError(next);
+    setLoaded(current => mergeChat(current, next));
+  }, [reportModelError]);
 
   useEffect(() => {
     const request = ++generation.current;
     if (!conversationId) return;
-    let dispose: (() => void) | undefined;
+    const dispose: Array<() => void> = [];
     let stopResume: (() => void) | undefined;
     let active = true;
     let refreshing = false;
     let refreshAgain = false;
+    let resyncQueued = false;
     const refresh = async () => {
       if (!active) return;
       if (refreshing) { refreshAgain = true; return; }
@@ -57,24 +62,36 @@ export function useChat(conversationId: string | null) {
         if (refreshAgain && active) { refreshAgain = false; void refresh(); }
       }
     };
+    const scheduleResync = () => {
+      if (resyncQueued || !active) return;
+      resyncQueued = true;
+      queueMicrotask(() => {
+        resyncQueued = false;
+        if (active) void refresh();
+      });
+    };
     // Subscribe before loading so an update cannot fall between snapshot and listener.
-    void listen<unknown>("agent:updated", event => {
+    const events = listen<unknown>("agent:event", event => {
       if (!active) return;
-      const value = event.payload;
-      if (typeof value === "object" && value !== null && "conversationId" in value && value.conversationId === conversationId) {
-        try { accept(value, conversationId); }
-        catch { setError({ id: conversationId, message: "Uma atualização do agente não pôde ser lida. Reabra a conversa para sincronizar." }); }
-      }
-    }).then(unlisten => {
-      if (!active) { unlisten(); return; }
-      dispose = unlisten;
+      const parsed = agentEventBatchSchema.safeParse(event.payload);
+      if (!parsed.success || parsed.data.conversationId !== conversationId) return;
+      setLoaded(current => {
+        const applied = applyAgentEventBatch(current, parsed.data);
+        if (applied.needsResync) scheduleResync();
+        if (applied.snapshot) reportModelError(applied.snapshot);
+        return applied.snapshot;
+      });
+    });
+    void Promise.all([events]).then(unlisteners => {
+      if (!active) { unlisteners.forEach(unlisten => unlisten()); return; }
+      dispose.push(...unlisteners);
       stopResume = onDesktopResume(() => { void refresh(); });
       return refresh();
     }).catch((cause: unknown) => {
       if (active) setError({ id: conversationId, message: libraryError(cause, "Não foi possível abrir o histórico desta conversa.") });
     });
-    return () => { active = false; dispose?.(); stopResume?.(); if (generation.current === request) generation.current += 1; };
-  }, [conversationId, attempt, accept]);
+    return () => { active = false; dispose.forEach(unlisten => unlisten()); stopResume?.(); if (generation.current === request) generation.current += 1; };
+  }, [conversationId, attempt, accept, reportModelError]);
 
   const loadHistory = async (direction: HistoryDirection): Promise<boolean> => {
     if (!conversationId || !snapshot || historyLock.current === conversationId) return false;
@@ -175,7 +192,11 @@ export function useChat(conversationId: string | null) {
     try {
       const result = await invoke<unknown>("answer_agent_authoring", { conversationId: id, decision: { turnId: proposal.turnId, toolId: proposal.toolId, approved, note } });
       if (generation.current === request) accept(result, id);
-      toast.success(approved ? proposal.target.kind === "publication" ? "Publicação processada" : "Configuração aprovada e salva" : "Proposta recusada");
+      if (approved && proposal.target.kind === "publication" && note?.trim()) {
+        toast.info("Orientação enviada para revisão", { description: "O agente GitHub apresentará uma nova proposta antes de publicar." });
+      } else {
+        toast.success(approved ? proposal.target.kind === "publication" ? "Publicação processada" : "Configuração aprovada e salva" : "Proposta recusada");
+      }
       return true;
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível responder à proposta.")); return false; }
   };

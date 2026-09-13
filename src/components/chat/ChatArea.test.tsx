@@ -12,19 +12,44 @@ import { ChatArea } from "./ChatArea";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
-const listeners = new Set<EventCallback<unknown>>();
+const listeners = new Map<string, Set<EventCallback<unknown>>>();
 function TestChat({ library = populatedLibrary(), connected = true }: { library?: LibrarySnapshot; connected?: boolean }) {
   const chat = useChat(library.selection.conversationId);
   return <ChatArea library={library} chat={chat} modelGroups={connected ? [{ provider:"Codex", models:[{ value:"openai-codex-pessoal/model",label:"Modelo real",reasoningLevels:["medium"],defaultReasoningLevel:"medium" }] }] : []} />;
 }
 async function update(snapshot: ChatSnapshot) {
-  await act(async () => { for (const handler of listeners) handler({ event: "agent:updated", id: 1, payload: snapshot }); });
+  const turn = snapshot.turns[snapshot.turns.length - 1];
+  const payload = {
+    conversationId: snapshot.conversationId,
+    baseRevision: Math.max(0, snapshot.revision - 1),
+    revision: snapshot.revision,
+    events: [
+      ...(turn ? [{ type: "turnStarted", turn }] : []),
+      {
+        type: "stateChanged",
+        state: {
+          compacting: snapshot.compacting ?? false,
+          activeTurnId: snapshot.activeTurnId,
+          pendingApproval: snapshot.pendingApproval,
+          pendingQuestion: snapshot.pendingQuestion ?? null,
+          pendingAuthoring: snapshot.pendingAuthoring ?? null,
+          queuedMessages: snapshot.queuedMessages ?? [],
+          context: snapshot.context ?? { tokens: 0, limit: null, estimated: true, compacting: false, compactions: 0 },
+          compactions: snapshot.compactions ?? [],
+          fileChanges: snapshot.fileChanges ?? [],
+          history: snapshot.history ?? { start: 0, total: snapshot.turns.length },
+        },
+      },
+    ],
+  };
+  await act(async () => { for (const handler of listeners.get("agent:event") ?? []) handler({ event: "agent:event", id: 1, payload }); });
 }
 describe("Persistent live conversation", () => {
   beforeEach(() => {
     listeners.clear(); call.mockReset().mockResolvedValue(emptyChat());
-    vi.mocked(listen).mockImplementation(async (_name, callback) => {
-      listeners.add(callback); return () => { listeners.delete(callback); };
+    vi.mocked(listen).mockImplementation(async (name, callback) => {
+      const set = listeners.get(name) ?? new Set(); set.add(callback); listeners.set(name, set);
+      return () => { set.delete(callback); };
     });
   });
   it("submits during execution and removes queued messages through the native commands", async () => {
@@ -193,7 +218,7 @@ describe("Persistent live conversation", () => {
     const observation = screen.getByText("Vou conferir os arquivos.");
     const firstTool = screen.getByRole("button", { name: /Leitura de arquivo.*file-0/ });
     expect(observation).toBeVisible();
-    expect(observation).toHaveClass("italic");
+    expect(observation.closest("[data-execution-observation]")?.querySelector(".italic")).toContainElement(observation);
     expect(screen.queryByRole("button", { name: /Observações/ })).not.toBeInTheDocument();
     expect(observation.compareDocumentPosition(firstTool) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(screen.queryByText("Conteúdo 0")).not.toBeInTheDocument();
@@ -216,13 +241,13 @@ describe("Persistent live conversation", () => {
     await screen.findByRole("button", { name: "Interromper execução" });
     expect(screen.getByRole("group", { name: "Mensagem e opções de envio" })).toHaveAttribute("data-working", "true");
     expect(screen.getByRole("main", { name: "Conversa" })).not.toHaveAttribute("data-working");
-    await update({ ...running, revision: 4, turns: [{ ...savedTurn(), status: "running" }] });
+    await update({ ...running, revision: 3, turns: [{ ...savedTurn(), status: "running" }] });
     expect(await screen.findByText("Tauri")).toBeInTheDocument();
-    await update({ ...running, revision: 3 });
+    await update({ ...running, revision: 2 });
     expect(screen.getByText("Tauri")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Interromper execução" }));
     expect(call).toHaveBeenCalledWith("cancel_agent_turn", { conversationId: "c1", turnId: "turn1" });
-    await update({ ...emptyChat(), revision: 5, turns: [savedTurn()] });
+    await update({ ...emptyChat(), revision: 4, turns: [savedTurn()] });
     expect(screen.getByRole("group", { name: "Mensagem e opções de envio" })).not.toHaveAttribute("data-working");
   });
   it("shows exact tool arguments and correlates a manual denial", async () => {

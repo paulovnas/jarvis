@@ -1,7 +1,7 @@
 //! Supervised authoring for user-owned Jarvis agents and workflows.
 use super::{
-    cancelled, journal, next_revision, publication, workflow, AgentError, AgentState, ChatSnapshot,
-    Session, ToolCall,
+    cancelled, next_revision, publication, workflow, AgentError, AgentState, ChatSnapshot, Session,
+    ToolCall,
 };
 use crate::{openai_codex::OpenAiCodexState, persistence::AppState};
 use serde::{Deserialize, Serialize};
@@ -490,7 +490,7 @@ pub(super) async fn execute(
     session.update(true, |data| {
         if let Some(active) = &mut data.active {
             request.turn_id.clone_from(&active.id);
-            active.authoring = Some(Pending {
+            active.wait_for_authoring(Pending {
                 request,
                 mutation,
                 started: std::time::Instant::now(),
@@ -533,7 +533,7 @@ fn answer_with(
         .active
         .as_ref()
         .filter(|active| active.id == turn_id && !*active.cancel.borrow())
-        .and_then(|active| active.authoring.as_ref())
+        .and_then(|active| active.pending_authoring())
         .filter(|pending| pending.request.tool_id == tool_id)
         .ok_or_else(|| {
             AgentError::new(
@@ -544,7 +544,20 @@ fn answer_with(
     let mutation = pending.mutation.clone();
     let catalog_revision = pending.request.catalog_revision;
     let elapsed = pending.started.elapsed().as_millis() as u64;
-    let (output, changed) = if approved {
+    let publication_revision_requested =
+        approved && note.is_some() && matches!(&mutation, Mutation::Publication(_));
+    let (output, changed) = if publication_revision_requested {
+        (
+            json!({
+                "approved":false,
+                "status":"revision_requested",
+                "note":note,
+                "guidance":"Do not execute the previous publication proposal. Incorporate the user's note, re-inspect the current Git and GitHub state, then submit a revised jarvis_propose_publication proposal for explicit approval."
+            })
+            .to_string(),
+            false,
+        )
+    } else if approved {
         apply(mutation, catalog_revision, note.as_deref())?
     } else {
         (
@@ -584,8 +597,7 @@ fn answer_with(
     current
         .wire
         .push(json!({"type":"function_call_output","call_id":tool_id,"output":output}));
-    if journal::append_update(&session.journal, &previous, &current).is_err() {
-        data.storage_failed = true;
+    if session.writer.append_turn(current.clone()).is_err() || session.writer.flush().is_err() {
         if let Some(active) = &data.active {
             let _ = active.cancel.send(true);
         }
@@ -595,7 +607,7 @@ fn answer_with(
     let pending = data
         .active
         .as_mut()
-        .and_then(|active| active.authoring.take())
+        .and_then(|active| active.take_authoring())
         .ok_or_else(AgentError::internal)?;
     data.revision = next_revision();
     let snapshot = session.snapshot_data(&data);

@@ -326,7 +326,6 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         Err(error) => eprintln!("Desktop restoration unavailable: {error}"),
     }
     window.show()?;
-    crate::updater::relaunch::signal_ready(app.handle());
     Ok(())
 }
 

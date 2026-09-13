@@ -509,6 +509,7 @@ pub async fn submit_workflow_validation(
 ) -> Result<(), AgentError> {
     let activity = crate::updater::begin_activity(&app)
         .map_err(|message| AgentError::new("app_updating", &message))?;
+    let admission = agent.inner().begin_turn()?;
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     crate::core::require_ready(&home)?;
     let session = agent
@@ -543,6 +544,7 @@ pub async fn submit_workflow_validation(
             RunControl {
                 signal,
                 activity,
+                admission,
                 workflow_recovery: None,
             },
         );

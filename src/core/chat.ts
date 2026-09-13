@@ -38,7 +38,7 @@ export const agentToolSchema = z.object({
   status: z.enum(["pending", "running", "completed", "error"]),
   output: z.string(), durationMs: z.number().nonnegative(),
 });
-const retryStatusSchema = z.object({
+export const retryStatusSchema = z.object({
   attempt: z.number().int().min(1).max(5), maxAttempts: z.literal(5),
   retryAt: z.number().nonnegative(), message: z.string(),
 });
@@ -49,19 +49,21 @@ export const directTaskSchema = z.object({
   status: z.enum(["pending", "in_progress", "completed", "blocked"]),
 });
 export type DirectTask = z.infer<typeof directTaskSchema>;
-const turnSchema = z.object({
+export const usageSchema = z.object({ inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative() });
+export const agentStepSchema = z.object({
+  durationMs: z.number().nonnegative(),
+  text: z.string(), summary: z.string(), tools: z.array(agentToolSchema),
+  retry: retryStatusSchema.nullable().optional(),
+  usage: usageSchema.nullable(),
+});
+export const agentTurnSchema = z.object({
   id: z.string(), createdAt: z.number().nonnegative(), durationMs: z.number().nonnegative(),
   user: z.string(), options: turnOptionsSchema,
   parts: z.array(messagePartSchema).optional(),
   contextWindow: z.number().int().positive().nullable().optional(),
   status: z.enum(["running", "completed", "cancelled", "error", "interrupted"]),
   tasks: z.array(directTaskSchema).default([]),
-  steps: z.array(z.object({
-    durationMs: z.number().nonnegative(),
-    text: z.string(), summary: z.string(), tools: z.array(agentToolSchema),
-    retry: retryStatusSchema.nullable().optional(),
-    usage: z.object({ inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative() }).nullable(),
-  })),
+  steps: z.array(agentStepSchema),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
 });
 export const queuedMessageSchema = z.object({ id: z.string(), content: z.string(), options: turnOptionsSchema, parts: z.array(messagePartSchema).optional() });
@@ -74,11 +76,11 @@ export const fileDiffSchema = z.object({
   path: z.string(), base: z.enum(["conversation", "git", "unknown"]), truncated: z.boolean(),
   rows: z.array(z.object({ kind: z.enum(["added", "removed", "context", "gap"]), oldLine: z.number().int().positive().nullable(), newLine: z.number().int().positive().nullable(), text: z.string() })),
 });
-const contextInfoSchema = z.object({
+export const contextInfoSchema = z.object({
   tokens: z.number().nonnegative(), limit: z.number().positive().nullable(),
   estimated: z.boolean(), compacting: z.boolean(), compactions: z.number().int().nonnegative(),
 });
-const compactionEventSchema = z.object({
+export const compactionEventSchema = z.object({
   id: z.string(), createdAt: z.number().nonnegative(), turnId: z.string(),
   afterTurn: z.boolean(), automatic: z.boolean(),
   tokensBefore: z.number().nonnegative(), tokensAfter: z.number().nonnegative(),
@@ -87,11 +89,11 @@ export type CompactionEvent = z.infer<typeof compactionEventSchema>;
 export const historyWindowSchema = z.object({ start: z.number().int().nonnegative(), total: z.number().int().nonnegative() });
 export const historyExcerptSchema = z.object({ id: z.string(), index: z.number().int().nonnegative(), createdAt: z.number().nonnegative(), user: z.string(), assistant: z.string() });
 export type HistoryExcerpt = z.infer<typeof historyExcerptSchema>;
-export const historyPageSchema = z.object({ conversationId: z.string(), turns: z.array(turnSchema), compactions: z.array(compactionEventSchema), history: historyWindowSchema, navigation: z.array(historyExcerptSchema) });
+export const historyPageSchema = z.object({ conversationId: z.string(), turns: z.array(agentTurnSchema), compactions: z.array(compactionEventSchema), history: historyWindowSchema, navigation: z.array(historyExcerptSchema) });
 export type HistoryPage = z.infer<typeof historyPageSchema>;
 const snapshotSchema = z.object({
   conversationId: z.string(), revision: z.number().int().nonnegative(),
-  turns: z.array(turnSchema), activeTurnId: z.string().nullable(), pendingApproval: agentToolSchema.nullable(),
+  turns: z.array(agentTurnSchema), activeTurnId: z.string().nullable(), pendingApproval: agentToolSchema.nullable(),
   queuedMessages: z.array(queuedMessageSchema).optional(), context: contextInfoSchema.optional(), fileChanges: z.array(fileChangeSchema).optional(),
   compacting: z.boolean().optional(),
   compactions: z.array(compactionEventSchema).optional(),
@@ -105,7 +107,8 @@ export type FileChange = z.infer<typeof fileChangeSchema>;
 export type FileDiff = z.infer<typeof fileDiffSchema>;
 export type ContextInfo = z.infer<typeof contextInfoSchema>;
 export type TurnOptions = z.infer<typeof turnOptionsSchema>;
-export type AgentTurn = z.infer<typeof turnSchema>;
+export type AgentTurn = z.infer<typeof agentTurnSchema>;
+export type AgentStep = z.infer<typeof agentStepSchema>;
 export type AgentTool = z.infer<typeof agentToolSchema>;
 export type ChatSnapshot = z.infer<typeof snapshotSchema>;
 

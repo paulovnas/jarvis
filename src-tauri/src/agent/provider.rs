@@ -27,6 +27,54 @@ pub(super) struct Response {
     pub usage: Option<Usage>,
 }
 
+/// One transport session is retained for the complete Jarvis turn. Connection
+/// pools, TLS state and provider retry identity are therefore reused across
+/// model steps without leaking settings from a later turn.
+pub(super) struct TurnSession {
+    credential: CodexCredential,
+    session_id: String,
+    client: reqwest::Client,
+}
+
+impl TurnSession {
+    pub(super) fn new(credential: CodexCredential, session_id: String) -> Result<Self, AgentError> {
+        Ok(Self {
+            credential,
+            session_id,
+            client: http_client()?,
+        })
+    }
+
+    pub(super) async fn stream(
+        &self,
+        step: &super::context_manager::StepContext,
+        signal: watch::Receiver<bool>,
+        on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
+    ) -> Result<Response, AgentError> {
+        debug_assert!(!step.authorization().values.is_empty());
+        retry::Request {
+            client: self.client.clone(),
+            credential: &self.credential,
+            session_id: &self.session_id,
+            options: step.options(),
+            instructions: step.instructions(),
+            input: provider_input(step.input()),
+            tools: ordered_tools(step.tools().to_vec()),
+        }
+        .run(signal, on_delta, Duration::from_secs(2))
+        .await
+    }
+}
+
+fn http_client() -> Result<reqwest::Client, AgentError> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(600))
+        .build()
+        .map_err(|_| AgentError::internal())
+}
+
 #[derive(Default)]
 pub(super) struct Sse {
     pending: Vec<u8>,
@@ -301,7 +349,7 @@ fn request_body(
         .collect();
     let mut body = json!({
         "model":options.model, "instructions":instructions, "input":input,
-        "tools":tools, "tool_choice":"auto", "parallel_tool_calls":false,
+        "tools":tools, "tool_choice":"auto", "parallel_tool_calls":true,
         "stream":true, "store":false, "prompt_cache_key":session_id,
         "include":["reasoning.encrypted_content"]
     });
@@ -323,7 +371,9 @@ pub(super) async fn stream(
     signal: watch::Receiver<bool>,
     on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
+    let client = http_client()?;
     retry::Request {
+        client,
         credential,
         session_id,
         options,
@@ -369,6 +419,7 @@ fn equivalent_tool_catalogs_keep_the_same_cacheable_prefix() {
 
 #[allow(clippy::too_many_arguments)]
 async fn stream_once(
+    client: &reqwest::Client,
     credential: &CodexCredential,
     session_id: &str,
     options: &TurnOptions,
@@ -386,7 +437,8 @@ async fn stream_once(
         "openai_codex"
     };
     let result = if let Some(config) = &credential.custom {
-        custom::stream(
+        custom::stream_with_client(
+            client,
             credential,
             config,
             session_id,
@@ -399,7 +451,8 @@ async fn stream_once(
         )
         .await
     } else if credential.project_id.is_some() {
-        antigravity::stream(
+        antigravity::stream_with_client(
+            client,
             credential,
             session_id,
             options,
@@ -412,7 +465,7 @@ async fn stream_once(
         .await
     } else {
         let body = request_body(options, instructions, input, tools, session_id);
-        match authenticated_request(credential, session_id, &body, Duration::from_secs(600)) {
+        match authenticated_request_with_client(client, credential, session_id, &body) {
             Ok(request) => receive(request, signal, on_delta).await,
             Err(error) => Err(error),
         }
@@ -442,6 +495,15 @@ pub(super) fn authenticated_request(
         .timeout(timeout)
         .build()
         .map_err(|_| AgentError::internal())?;
+    authenticated_request_with_client(&client, credential, session_id, body)
+}
+
+fn authenticated_request_with_client(
+    client: &reqwest::Client,
+    credential: &CodexCredential,
+    session_id: &str,
+    body: &Value,
+) -> Result<reqwest::RequestBuilder, AgentError> {
     let request = client
         .post(format!("{OPENAI_CODEX_BASE_URL}/codex/responses"))
         .bearer_auth(&credential.access)

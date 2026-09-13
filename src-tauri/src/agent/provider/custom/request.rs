@@ -193,12 +193,12 @@ pub(super) fn body(
                 })
                 .collect();
             // No Codex account, cache, beta or encrypted-reasoning headers are sent to gateways.
-            json!({"model":model.id,"instructions":instructions,"input":input,"stream":true,"store":false,"max_output_tokens":model.max_output_tokens})
+            json!({"model":model.id,"instructions":instructions,"input":input,"stream":true,"store":false,"parallel_tool_calls":true,"max_output_tokens":model.max_output_tokens})
         }
         Protocol::OpenaiCompletions => {
             let mut messages = messages(&input, &scope, model, false, false)?;
             messages.insert(0, json!({"role":"system","content":instructions}));
-            let mut body = json!({"model":model.id,"messages":messages,"stream":true,"stream_options":{"include_usage":true}});
+            let mut body = json!({"model":model.id,"messages":messages,"stream":true,"parallel_tool_calls":true,"stream_options":{"include_usage":true}});
             body[match config.token_field {
                 TokenField::MaxTokens => "max_tokens",
                 TokenField::MaxCompletionTokens => "max_completion_tokens",

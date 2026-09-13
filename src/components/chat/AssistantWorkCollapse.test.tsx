@@ -71,9 +71,9 @@ it("uses the latest paragraph when there is no heading and handles partial headi
 
 it("shows every reasoning heading from the same provider step on first expansion", async () => {
   render(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 3, steps: [{ thinking: "**Analisando projeto**\n\nArquivos recebidos.\n\n**Conferindo testes**\n\nTestes encontrados.", commentary: "", tools: [] }] }} />);
-  const timeline = screen.getByRole("list", { name: "Linha do tempo da execução" });
-  expect(within(timeline).getByRole("button", { name: /Analisando projeto/ })).toBeVisible();
-  expect(within(timeline).getByRole("button", { name: /Conferindo testes/ })).toBeVisible();
+  const activity = screen.getByRole("list", { name: "Atividades da etapa 1" });
+  expect(within(activity).getByRole("button", { name: /Analisando projeto/ })).toBeVisible();
+  expect(within(activity).getByRole("button", { name: /Conferindo testes/ })).toBeVisible();
 });
 
 it("keeps observations outside reasoning as italic chronological text", async () => {
@@ -91,9 +91,9 @@ it("keeps observations outside reasoning as italic chronological text", async ()
   const activity = screen.getByRole("button", { name: /Leu e pesquisou arquivos.*5 ações/ });
 
   expect(reasoning).toBeVisible();
-  expect(observation).toHaveClass("italic");
+  expect(observation.closest("[data-execution-observation]")?.querySelector(".italic")).toContainElement(observation);
   expect(screen.queryByRole("button", { name: /Observações/ })).not.toBeInTheDocument();
-  expect(reasoning.compareDocumentPosition(observation) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  expect(observation.compareDocumentPosition(reasoning) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   expect(observation.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 });
 
@@ -112,24 +112,71 @@ it("preserves the sequence between observations, actions and later reasoning", a
   const readsGroup = screen.getByRole("button", { name: /Leu e pesquisou arquivos.*16 ações/ });
   const secondReasoning = screen.getByRole("button", { name: /Resultado da verificação/ });
 
-  expect(firstReasoning.compareDocumentPosition(observation) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-  expect(observation.compareDocumentPosition(readsGroup) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  expect(observation.compareDocumentPosition(firstReasoning) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  expect(firstReasoning.compareDocumentPosition(readsGroup) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   expect(readsGroup.compareDocumentPosition(secondReasoning) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 });
 
-it("presents reasoning, observations and actions on one numbered chronological timeline", async () => {
+it("starts an unnumbered activity phase below each observation", async () => {
   const user = userEvent.setup();
   render(<AssistantWorkCollapse work={{ durationSeconds: 9, steps: [
     { thinking: "Analisando o pedido", commentary: "Vou conferir a implementação.", tools: [{ id: "read-one", name: "read", status: "completed", args: { path: "src/App.tsx" }, output: "" }] },
-    { thinking: "Validando o resultado", commentary: "", tools: [{ id: "test-one", name: "bash", status: "completed", args: { command: "bun test" }, output: "ok" }] },
+    { thinking: "Validando o resultado", commentary: "Agora vou executar os testes.", tools: [{ id: "test-one", name: "bash", status: "completed", args: { command: "bun test" }, output: "ok" }] },
   ] }} />);
 
   await user.click(screen.getByRole("button", { name: /Trabalhou por 9s/ }));
-  const timeline = screen.getByRole("list", { name: "Linha do tempo da execução" });
-  const rows = within(timeline).getAllByRole("listitem");
+  const phases = within(screen.getByRole("list", { name: "Etapas da execução" }))
+    .getAllByRole("listitem")
+    .filter(item => item.hasAttribute("data-execution-phase"));
 
-  expect(rows.map(row => row.dataset.timelineKind)).toEqual(["reasoning", "commentary", "tool", "reasoning", "tool"]);
-  expect(rows.map(row => within(row).getByText(/^\d{2}$/).textContent)).toEqual(["01", "02", "03", "04", "05"]);
+  expect(phases).toHaveLength(2);
+  expect(within(phases[0]).getByText("Vou conferir a implementação.")).toBeVisible();
+  expect(within(phases[1]).getByText("Agora vou executar os testes.")).toBeVisible();
+  expect(within(phases[0]).getAllByRole("listitem").map(item => item.dataset.activityKind)).toEqual(["reasoning", "tool"]);
+  expect(within(phases[1]).getAllByRole("listitem").map(item => item.dataset.activityKind)).toEqual(["reasoning", "tool"]);
+  expect(screen.queryByText(/^0[1-9]$/)).not.toBeInTheDocument();
+});
+
+it("keeps a streaming observation stable while actions are appended below it", () => {
+  const observation = "Vou inspecionar os arquivos relevantes.";
+  const initial = { durationSeconds: 2, steps: [{ thinking: "Localizando arquivos", commentary: observation, tools: [] }] };
+  const { rerender } = render(<AssistantWorkCollapse isStreaming work={initial} />);
+  const phase = screen.getByText(observation).closest("[data-execution-phase]");
+
+  rerender(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 3, steps: [{
+    ...initial.steps[0],
+    tools: [{ id: "live-read", name: "read", status: "running", args: { path: "src/App.tsx" }, output: "" }],
+  }] }} />);
+
+  const currentObservation = screen.getByText(observation);
+  const tool = screen.getByRole("button", { name: /Leitura de arquivo.*src\/App.tsx/ });
+  expect(currentObservation.closest("[data-execution-phase]")).toBe(phase);
+  expect(currentObservation.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+});
+
+it("starts a new phase and closes the previous action group after a later observation", () => {
+  const activeTools = Array.from({ length: 5 }, (_, index) => ({
+    id: `phase-read-${index}`,
+    name: "read",
+    status: (index === 4 ? "running" : "completed") as "running" | "completed",
+    args: {},
+    output: "",
+  }));
+  const first = { thinking: "Analisando arquivos", commentary: "Vou mapear a implementação.", tools: activeTools };
+  const { rerender } = render(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 4, steps: [first] }} />);
+  expect(screen.getByRole("button", { name: /Leu e pesquisou arquivos.*5 ações/ })).toHaveAttribute("aria-expanded", "true");
+
+  rerender(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 5, steps: [
+    { ...first, tools: activeTools.map(tool => ({ ...tool, status: "completed" as const })) },
+    { thinking: "Validando resultado", commentary: "Agora vou validar a alteração.", tools: [] },
+  ] }} />);
+
+  const phases = within(screen.getByRole("list", { name: "Etapas da execução" }))
+    .getAllByRole("listitem")
+    .filter(item => item.hasAttribute("data-execution-phase"));
+  expect(phases).toHaveLength(2);
+  expect(within(phases[1]).getByText("Agora vou validar a alteração.")).toBeVisible();
+  expect(screen.getByRole("button", { name: /Leu e pesquisou arquivos.*5 ações/ })).toHaveAttribute("aria-expanded", "false");
 });
 
 it("does not group actions across a later reasoning step", async () => {
@@ -146,8 +193,8 @@ it("does not group actions across a later reasoning step", async () => {
   const laterReasoning = screen.getByRole("button", { name: /Agora vou validar/ });
   const firstCommand = screen.getByTestId("tool-call-bash-0");
 
-  const timeline = screen.getByRole("list", { name: "Linha do tempo da execução" });
-  expect(within(timeline).queryByRole("button", { name: /6 ações/ })).not.toBeInTheDocument();
+  const activity = screen.getByRole("list", { name: "Atividades da etapa 1" });
+  expect(within(activity).queryByRole("button", { name: /6 ações/ })).not.toBeInTheDocument();
   expect(lastRead.compareDocumentPosition(laterReasoning) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   expect(laterReasoning.compareDocumentPosition(firstCommand) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 });

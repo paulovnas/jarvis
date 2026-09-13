@@ -8,7 +8,27 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const listeners = new Set<EventCallback<unknown>>();
 const call = vi.mocked(invoke);
 async function emit(conversationId: string, revision: number, activeTurnId: string | null) {
-  await act(async () => { for (const handler of listeners) handler({ event: "agent:updated", id: 1, payload: { conversationId, revision, activeTurnId } }); });
+  const payload = {
+    conversationId,
+    baseRevision: revision - 1,
+    revision,
+    events: [{
+      type: "stateChanged",
+      state: {
+        compacting: false,
+        activeTurnId,
+        pendingApproval: null,
+        pendingQuestion: null,
+        pendingAuthoring: null,
+        queuedMessages: [],
+        context: { tokens: 0, limit: null, estimated: true, compacting: false, compactions: 0 },
+        compactions: [],
+        fileChanges: [],
+        history: { start: 0, total: 0 },
+      },
+    }],
+  };
+  await act(async () => { for (const handler of listeners) handler({ event: "agent:event", id: 1, payload }); });
 }
 beforeEach(() => {
   listeners.clear(); call.mockReset().mockResolvedValue([]);

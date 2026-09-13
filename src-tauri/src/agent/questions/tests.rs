@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::journal;
 use crate::agent::{
     authorize, finish,
     tests::{session, Fixture},

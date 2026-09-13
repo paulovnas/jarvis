@@ -157,6 +157,8 @@ fn publication_tool_exposes_typed_multi_repository_review() {
     assert!(prompt.contains("Never infer merge authorization"));
     assert!(prompt.contains("Never send the user to a terminal"));
     assert!(prompt.contains("reused automatically"));
+    assert!(prompt.contains("revision_requested"));
+    assert!(prompt.contains("revised proposal for explicit approval"));
     assert!(prompt.contains(PR_QUESTION_ID));
     assert!(prompt.contains("Use focused commits"));
     assert_eq!(

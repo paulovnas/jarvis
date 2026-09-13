@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Bot, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, GitCompareArrows, GitMerge, GitPullRequest, LockKeyhole, RotateCcw, Route, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
+import { Bot, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, GitCompareArrows, GitMerge, GitPullRequest, LockKeyhole, MessageSquareText, RotateCcw, Route, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -152,6 +152,7 @@ export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request:
   const changes = useMemo(() => changedFields(request), [request]);
   const isAgent = request.target.kind === "agent";
   const isPublication = request.target.kind === "publication";
+  const requestsRevision = isPublication && note.trim().length > 0;
   const action = request.action === "create" ? "Criar" : request.action === "update" ? "Editar" : "Executar";
   const target = isPublication ? "ações" : isAgent ? "agente" : "fluxo";
   const answer = async (approved: boolean) => {
@@ -179,12 +180,16 @@ export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request:
         </section>}
         {request.target.kind === "agent" ? <AgentReview agent={request.target.after} /> : request.target.kind === "flow" ? <FlowReview flow={request.target.after} references={request.agentReferences} /> : <PublicationReview proposal={request.target.after} />}
         <Separator className="my-5" />
-        <div className="space-y-2"><Label htmlFor={`authoring-note-${request.toolId}`}>Orientação para o agente <span className="font-normal text-muted-foreground">(opcional)</span></Label><Textarea id={`authoring-note-${request.toolId}`} value={note} onChange={event => setNote(event.target.value)} maxLength={2000} disabled={pending} placeholder="Explique um ajuste se preferir recusar ou deixe uma observação para a aprovação." className="min-h-20 resize-y" /></div>
+        <div className="space-y-2">
+          <Label htmlFor={`authoring-note-${request.toolId}`}>Orientação para o agente <span className="font-normal text-muted-foreground">(opcional)</span></Label>
+          <Textarea id={`authoring-note-${request.toolId}`} value={note} onChange={event => setNote(event.target.value)} maxLength={2000} disabled={pending} placeholder={isPublication ? "Descreva o ajuste que o agente deve incorporar antes de apresentar uma nova proposta." : "Explique um ajuste se preferir recusar ou deixe uma observação para a aprovação."} className="min-h-20 resize-y" />
+          {isPublication && <p className="text-xs leading-5 text-muted-foreground">Ao adicionar uma orientação, nenhuma ação será executada agora. O agente GitHub revisará a proposta e pedirá sua aprovação novamente.</p>}
+        </div>
         <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-sidebar/55 p-3 text-xs leading-5 text-muted-foreground"><LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-yellow" /><span>{isPublication ? "A autorização vale uma vez e somente para os repositórios, arquivos e operações exibidos. Uma falha parcial precisa ser revisada antes de qualquer nova tentativa." : "Agentes e fluxos nativos permanecem protegidos. Esta autorização vale apenas para a proposta exibida, neste turno."}</span></div>
       </div>
       <SheetFooter className="shrink-0 flex-row items-center justify-end gap-3 border-t border-border bg-card/70 p-4">
         <Button variant="outline" className="cursor-pointer" disabled={pending} onClick={() => { void answer(false); }}><X />Recusar</Button>
-        <Button className="cursor-pointer" disabled={pending || (request.action === "update" && changes.length === 0)} onClick={() => { void answer(true); }}>{pending ? <Spinner /> : <Sparkles />}{isPublication ? "Aprovar e executar" : "Aprovar e salvar"}</Button>
+        <Button className="cursor-pointer" disabled={pending || (request.action === "update" && changes.length === 0)} onClick={() => { void answer(true); }}>{pending ? <Spinner /> : requestsRevision ? <MessageSquareText /> : <Sparkles />}{requestsRevision ? "Enviar para revisão" : isPublication ? "Aprovar e executar" : "Aprovar e salvar"}</Button>
       </SheetFooter>
     </SheetContent>
   </Sheet>;

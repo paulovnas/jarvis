@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 #[cfg(unix)]
 use std::fs::File;
 use std::{
+    collections::BTreeMap,
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -36,6 +37,11 @@ pub(super) struct ExecutionResult {
     pub(super) output: String,
     pub(super) revision: Option<super::diffs::FileRevision>,
     pub(super) read: Option<ReadObservation>,
+}
+
+pub(super) struct ParallelExecution {
+    pub(super) result: Result<ExecutionResult, AgentError>,
+    pub(super) duration_ms: u64,
 }
 
 struct FileToolResult {
@@ -391,6 +397,45 @@ pub(super) async fn execute_with_revision(
     })
     .await
     .map_err(|_| AgentError::internal())?
+}
+
+pub(super) async fn execute_parallel_reads(
+    root: &Path,
+    calls: &[ToolCall],
+    mode: Mode,
+    signal: watch::Receiver<bool>,
+) -> BTreeMap<String, ParallelExecution> {
+    let mut tasks = tokio::task::JoinSet::new();
+    for call in calls {
+        let root = root.to_path_buf();
+        let call = call.clone();
+        let signal = signal.clone();
+        tasks.spawn(async move {
+            let id = call.id.clone();
+            let started = std::time::Instant::now();
+            let result = execute_with_revision(&root, &call, mode, signal).await;
+            (
+                id,
+                ParallelExecution {
+                    result,
+                    duration_ms: started.elapsed().as_millis() as u64,
+                },
+            )
+        });
+    }
+    let mut results = BTreeMap::new();
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok((id, result)) => {
+                results.insert(id, result);
+            }
+            Err(_) => {
+                // A join failure cannot identify the original call. The caller
+                // treats its missing entry as a regular serial fallback.
+            }
+        }
+    }
+    results
 }
 fn file_tool(
     root: &Path,
@@ -753,6 +798,52 @@ mod tests {
             fs::read_to_string(fixture.root.join("a.txt")).unwrap(),
             "first\nchanged\nlast\n"
         );
+    }
+
+    #[tokio::test]
+    async fn parallel_reads_keep_results_addressable_and_honor_cancellation() {
+        let fixture = Fixture::new();
+        fs::write(fixture.root.join("a.txt"), "alpha\n").unwrap();
+        fs::write(fixture.root.join("b.txt"), "beta\n").unwrap();
+        let calls = [
+            ToolCall {
+                id: "second".into(),
+                ..tool("read", json!({"path":"b.txt"}))
+            },
+            ToolCall {
+                id: "first".into(),
+                ..tool("read", json!({"path":"a.txt"}))
+            },
+        ];
+        let (cancel, signal) = watch::channel(false);
+        let results =
+            execute_parallel_reads(&fixture.root, &calls, Mode::Plan, signal.clone()).await;
+        assert_eq!(
+            results.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+        assert_eq!(
+            results["first"].result.as_ref().unwrap().output,
+            "1: alpha\n"
+        );
+        assert_eq!(
+            results["second"].result.as_ref().unwrap().output,
+            "1: beta\n"
+        );
+        let provider_order = calls
+            .iter()
+            .map(|call| results[&call.id].result.as_ref().unwrap().output.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(provider_order, ["1: beta\n", "1: alpha\n"]);
+        assert!(results
+            .values()
+            .all(|execution| execution.duration_ms < 30_000));
+
+        cancel.send(true).unwrap();
+        let cancelled = execute_parallel_reads(&fixture.root, &calls, Mode::Plan, signal).await;
+        assert!(cancelled
+            .values()
+            .all(|execution| matches!(&execution.result, Err(error) if error.code == "cancelled")));
     }
     #[tokio::test]
     async fn ordinary_discovery_skips_dependencies_but_explicit_reads_remain_available() {

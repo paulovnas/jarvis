@@ -150,9 +150,11 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
         }
         agents[0].duration_ms = duration_ms;
         agents[0].current_thought = current_thought;
-        if data.active.as_ref().is_some_and(|active| {
-            active.question.is_some() || active.approval.is_some() || active.authoring.is_some()
-        }) {
+        if data
+            .active
+            .as_ref()
+            .is_some_and(|active| active.is_waiting())
+        {
             agents[0].status = Status::Waiting;
         }
     }
@@ -212,17 +214,12 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
             card.duration_ms = duration_ms;
             card.current_thought = current_thought;
             if let Some(active) = &data.active {
-                card.pending_approval = active
-                    .approval
-                    .as_ref()
-                    .map(|approval| approval.tool.clone());
+                card.pending_approval = active.pending_approval_tool().cloned();
                 card.pending_question = active
-                    .question
-                    .as_ref()
+                    .pending_question()
                     .map(|pending| pending.request.clone());
                 card.pending_authoring = active
-                    .authoring
-                    .as_ref()
+                    .pending_authoring()
                     .map(|pending| pending.request.clone());
                 card.active_turn_id = Some(active.id.clone());
                 if card.pending_approval.is_some()

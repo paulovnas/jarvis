@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { agentActivitySchema } from "@/core/chat";
+import { agentEventBatchSchema } from "@/core/agent-events";
 import { onDesktopResume } from "@/core/desktop-resume";
 
 // Observe every session independently of the conversation currently open in the chat.
@@ -57,7 +58,19 @@ export function useAgentActivity() {
         if (active && refreshAgain) { refreshAgain = false; void refresh(); }
       }
     };
-    void listen<unknown>("agent:updated", event => { if (active) accept(event.payload); }).then(unlisten => {
+    void listen<unknown>("agent:event", event => {
+      if (!active) return;
+      const parsed = agentEventBatchSchema.safeParse(event.payload);
+      if (!parsed.success) return;
+      const changed = [...parsed.data.events].reverse().find(item => item.type === "stateChanged");
+      if (!changed || changed.type !== "stateChanged") return;
+      accept({
+        conversationId: parsed.data.conversationId,
+        revision: parsed.data.revision,
+        activeTurnId: changed.state.activeTurnId,
+        compacting: changed.state.compacting,
+      });
+    }).then(unlisten => {
       if (!active) { unlisten(); return; }
       dispose = unlisten;
       stopResume = onDesktopResume(() => { void refresh(); });

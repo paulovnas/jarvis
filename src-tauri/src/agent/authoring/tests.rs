@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::journal;
 use crate::agent::{
     tests::{session, Fixture},
     ApprovalMode, Mode, Step, TurnOptions,
@@ -216,7 +217,7 @@ async fn approval_is_correlated_durable_and_cannot_be_replayed() {
         .update(true, |data| {
             let active = data.active.as_mut().unwrap();
             request.turn_id.clone_from(&active.id);
-            active.authoring = Some(Pending {
+            active.wait_for_authoring(Pending {
                 request,
                 mutation: Mutation::Catalog(mutation),
                 started: std::time::Instant::now(),
@@ -311,7 +312,7 @@ async fn rejection_never_applies_the_catalog_mutation() {
         .update(true, |data| {
             let active = data.active.as_mut().unwrap();
             request.turn_id.clone_from(&active.id);
-            active.authoring = Some(Pending {
+            active.wait_for_authoring(Pending {
                 request,
                 mutation: Mutation::Catalog(mutation),
                 started: std::time::Instant::now(),
@@ -338,4 +339,81 @@ async fn rejection_never_applies_the_catalog_mutation() {
     let output: Value = serde_json::from_str(&received.await.unwrap()).unwrap();
     assert_eq!(output["status"], "rejected");
     assert_eq!(output["note"], "Prefiro um nome mais curto");
+}
+
+#[tokio::test]
+async fn publication_approval_with_a_note_requests_revision_without_applying() {
+    let (_fixture, session, _signal) = reserve();
+    let proposal: publication::Proposal = serde_json::from_value(json!({
+        "summary":"Publicar somente os arquivos aprovados.",
+        "repositories":[{
+            "path":".",
+            "reset":null,
+            "files":["src/App.tsx","docs/picpay.ofx"],
+            "branch":null,
+            "commitMessage":"fix: adjust publication",
+            "push":"normal",
+            "pullRequest":null
+        }]
+    }))
+    .unwrap();
+    let call = tool(
+        "jarvis_propose_publication",
+        serde_json::to_value(&proposal).unwrap(),
+    );
+    let (reply, received) = oneshot::channel();
+    session
+        .update(true, |data| {
+            let active = data.active.as_mut().unwrap();
+            let turn_id = active.id.clone();
+            active.wait_for_authoring(Pending {
+                request: PendingProposal {
+                    turn_id,
+                    tool_id: call.id.clone(),
+                    action: Action::Publish,
+                    summary: proposal.summary.clone(),
+                    catalog_revision: None,
+                    target: Target::Publication {
+                        after: proposal.clone(),
+                    },
+                    agent_references: vec![],
+                },
+                mutation: Mutation::Publication(proposal),
+                started: std::time::Instant::now(),
+                reply,
+            });
+            data.turns.last_mut().unwrap().turn.steps.push(Step {
+                tools: vec![call],
+                ..Step::default()
+            });
+        })
+        .unwrap();
+    let pending = session.snapshot().unwrap().pending_authoring.unwrap();
+    let applied = Arc::new(AtomicBool::new(false));
+    let marker = applied.clone();
+
+    let (snapshot, changed) = answer_with(
+        &session,
+        &pending.turn_id,
+        &pending.tool_id,
+        true,
+        Some("Ignore docs/picpay.ofx".into()),
+        move |_, _, _| {
+            marker.store(true, Ordering::SeqCst);
+            Ok((String::new(), false))
+        },
+    )
+    .unwrap();
+
+    assert!(!changed);
+    assert!(!applied.load(Ordering::SeqCst));
+    assert!(snapshot.pending_authoring.is_none());
+    let output: Value = serde_json::from_str(&received.await.unwrap()).unwrap();
+    assert_eq!(output["approved"], false);
+    assert_eq!(output["status"], "revision_requested");
+    assert_eq!(output["note"], "Ignore docs/picpay.ofx");
+    assert!(output["guidance"]
+        .as_str()
+        .unwrap()
+        .contains("submit a revised jarvis_propose_publication proposal"));
 }

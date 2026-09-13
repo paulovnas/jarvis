@@ -1,5 +1,5 @@
 import { AlertCircle, BrainCircuit, Check, ChevronRight, Layers3, Sparkles, TriangleAlert, Wifi } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
+import { lazy, Suspense, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Hint } from "@/components/ui/hint";
@@ -10,10 +10,12 @@ import { groupToolActivity, isTaskReminder } from "./tool-activity";
 import type { AssistantWorkData, ToolCallItem } from "./types";
 import { reasoningPreview, reasoningSections } from "./reasoning-preview";
 
+const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
+
 export function AssistantWorkCollapse({ work, isStreaming = false }: { work: AssistantWorkData; isStreaming?: boolean }) {
   const allTools = useMemo(() => work.steps.flatMap(step => step.tools), [work.steps]);
   const tools = useMemo(() => allTools.filter(tool => tool.name !== "ask_user"), [allTools]);
-  const timeline = useMemo(() => buildExecutionTimeline(work.steps), [work.steps]);
+  const phases = useMemo(() => buildExecutionPhases(work.steps), [work.steps]);
   const waiting = allTools.some(tool => tool.name === "ask_user" && (tool.status === "running" || tool.status === "pending"));
   const failures = tools.filter(tool => tool.status === "error" && !isTaskReminder(tool)).length;
   const warnings = tools.filter(isTaskReminder).length;
@@ -35,7 +37,7 @@ export function AssistantWorkCollapse({ work, isStreaming = false }: { work: Ass
       </CollapsibleTrigger>
       <CollapsibleContent className="flex min-w-0 flex-col gap-1.5 py-2">
         {retry && <p className="rounded-md border border-onedark-yellow/20 bg-onedark-yellow/5 px-3 py-2 text-xs text-onedark-yellow">{retry.message}</p>}
-        <ExecutionTimeline items={timeline} detailContext={work.detailContext} isStreaming={isStreaming} />
+        <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming={isStreaming} />
         {work.steps.length === 0 && !retry && <p className="py-1 text-xs">Conectando ao provedor…</p>}
       </CollapsibleContent>
     </Collapsible>
@@ -43,72 +45,76 @@ export function AssistantWorkCollapse({ work, isStreaming = false }: { work: Ass
 }
 
 type ReasoningThought = { id: string; content: string };
-type TimelineItem =
+type ActivityItem =
   | { id: string; kind: "reasoning"; thoughts: ReasoningThought[] }
-  | { id: string; kind: "commentary"; content: string }
   | { id: string; kind: "tool-group"; group: ReturnType<typeof groupToolActivity>[number] }
   | { id: string; kind: "tool"; tool: ToolCallItem };
+type ExecutionPhase = { id: string; observation: string; activity: ActivityItem[] };
 
-function buildExecutionTimeline(steps: AssistantWorkData["steps"]): TimelineItem[] {
-  const items: TimelineItem[] = [];
+function buildExecutionPhases(steps: AssistantWorkData["steps"]): ExecutionPhase[] {
+  const phases: ExecutionPhase[] = [];
+  let current: ExecutionPhase | undefined;
   let pendingTools: ToolCallItem[] = [];
+  const ensurePhase = (id: string) => {
+    if (current) return current;
+    current = { id, observation: "", activity: [] };
+    phases.push(current);
+    return current;
+  };
   const flushTools = () => {
     if (pendingTools.length === 0) return;
+    const phase = ensurePhase("phase:initial");
     const groups = groupToolActivity(pendingTools);
-    if (groups.length > 0) groups.forEach(group => items.push({ id: `group:${group.id}`, kind: "tool-group", group }));
-    else pendingTools.forEach(tool => items.push({ id: `tool:${tool.id}`, kind: "tool", tool }));
+    if (groups.length > 0) groups.forEach(group => phase.activity.push({ id: `group:${group.id}`, kind: "tool-group", group }));
+    else pendingTools.forEach(tool => phase.activity.push({ id: `tool:${tool.id}`, kind: "tool", tool }));
     pendingTools = [];
   };
 
   steps.forEach((step, stepIndex) => {
     const thoughts = reasoningSections(step.thinking).map((content, partIndex) => ({ id: `${stepIndex}:thinking:${partIndex}`, content }));
-    const commentary = step.commentary.trim();
-    if (thoughts.length > 0 || commentary) flushTools();
-    if (thoughts.length >= 4) items.push({ id: thoughts[0].id, kind: "reasoning", thoughts });
-    else thoughts.forEach(thought => items.push({ id: thought.id, kind: "reasoning", thoughts: [thought] }));
-    if (commentary) items.push({ id: `${stepIndex}:commentary`, kind: "commentary", content: commentary });
+    const observation = step.commentary.trim();
+    if (observation) {
+      flushTools();
+      current = { id: `${stepIndex}:observation`, observation, activity: [] };
+      phases.push(current);
+    }
+    const phase = ensurePhase("phase:initial");
+    if (thoughts.length > 0) flushTools();
+    if (thoughts.length >= 4) phase.activity.push({ id: thoughts[0].id, kind: "reasoning", thoughts });
+    else thoughts.forEach(thought => phase.activity.push({ id: thought.id, kind: "reasoning", thoughts: [thought] }));
     pendingTools.push(...step.tools.filter(tool => tool.name !== "ask_user"));
   });
   flushTools();
-  return items;
+  return phases.filter(phase => phase.observation || phase.activity.length > 0);
 }
 
-function ExecutionTimeline({ items, detailContext, isStreaming }: { items: TimelineItem[]; detailContext?: AssistantWorkData["detailContext"]; isStreaming: boolean }) {
-  if (items.length === 0) return null;
-  return <div className="min-w-0">
-    <div className="flex items-center gap-2 px-1 pb-1">
-      <span className="shrink-0 font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground/70">Linha do tempo</span>
-      <span aria-hidden="true" className="h-px min-w-4 flex-1 bg-border/60" />
-    </div>
-    <ol aria-label="Linha do tempo da execução" className="relative flex min-w-0 flex-col gap-0.5 before:absolute before:top-3 before:bottom-3 before:left-2.5 before:w-px before:bg-gradient-to-b before:from-onedark-purple/35 before:via-onedark-cyan/30 before:to-border">
-      {items.map((item, index) => {
-        const isLatest = index === items.length - 1;
-        const active = isStreaming && isLatest;
-        return <TimelineRow key={item.id} index={index} kind={item.kind} active={active} animate={isStreaming}>
-          {item.kind === "reasoning" ? item.thoughts.length > 1
-            ? <ReasoningGroup thoughts={item.thoughts} />
-            : <ReasoningItem content={item.thoughts[0].content} />
-          : item.kind === "commentary" ? <div className="flex min-w-0 items-start gap-2 rounded-md px-2.5 py-2 text-xs leading-relaxed text-muted-foreground/80 hover:bg-card/25">
-            <Sparkles aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-purple/80" />
-            <p className="whitespace-pre-wrap break-words italic">{item.content}</p>
+function ExecutionPhases({ phases, detailContext, isStreaming }: { phases: ExecutionPhase[]; detailContext?: AssistantWorkData["detailContext"]; isStreaming: boolean }) {
+  if (phases.length === 0) return null;
+  return <div role="list" aria-label="Etapas da execução" className="flex min-w-0 flex-col gap-3">
+    {phases.map((phase, phaseIndex) => {
+      const current = isStreaming && phaseIndex === phases.length - 1;
+      return <section key={phase.id} role="listitem" data-execution-phase={phase.id} aria-current={current ? "step" : undefined} className="min-w-0">
+        {phase.observation && <div data-execution-observation className={`flex min-w-0 items-start gap-2 px-1.5 py-1.5 text-xs leading-relaxed ${current ? "text-foreground/90" : "text-muted-foreground/80"} ${isStreaming ? "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200" : ""}`}>
+          <Sparkles aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-purple/80" />
+          <div className="min-w-0 break-words italic [&_code]:font-mono [&_p]:m-0">
+            <Suspense fallback={<p className="whitespace-pre-wrap">{phase.observation}</p>}><ChatMarkdown content={phase.observation} /></Suspense>
           </div>
-          : item.kind === "tool-group" ? <ToolActivityGroup group={item.group} isLatest={isLatest} detailContext={detailContext} />
-          : <ToolCallCard tool={item.tool} detailContext={detailContext} />}
-        </TimelineRow>;
-      })}
-    </ol>
+        </div>}
+        {phase.activity.length > 0 && <ol aria-label={`Atividades da etapa ${phaseIndex + 1}`} className={`flex min-w-0 flex-col gap-0.5 ${phase.observation ? "ml-2 border-l border-border/60 pl-2.5" : ""}`}>
+          {phase.activity.map((item, itemIndex) => {
+            const latest = current && itemIndex === phase.activity.length - 1;
+            return <li key={item.id} data-activity-kind={item.kind} aria-current={latest ? "step" : undefined} className={`min-w-0 ${isStreaming ? "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-150" : ""}`}>
+              {item.kind === "reasoning" ? item.thoughts.length > 1
+                ? <ReasoningGroup thoughts={item.thoughts} />
+                : <ReasoningItem content={item.thoughts[0].content} />
+              : item.kind === "tool-group" ? <ToolActivityGroup group={item.group} isLatest={latest} detailContext={detailContext} />
+              : <ToolCallCard tool={item.tool} detailContext={detailContext} />}
+            </li>;
+          })}
+        </ol>}
+      </section>;
+    })}
   </div>;
-}
-
-function TimelineRow({ index, kind, active, animate, children }: { index: number; kind: TimelineItem["kind"]; active: boolean; animate: boolean; children: ReactNode }) {
-  const tone = kind === "reasoning" ? "border-onedark-purple/45 text-onedark-purple"
-    : kind === "commentary" ? "border-onedark-yellow/40 text-onedark-yellow"
-      : kind === "tool-group" ? "border-onedark-cyan/45 text-onedark-cyan"
-        : "border-primary/40 text-primary";
-  return <li data-timeline-kind={kind} aria-current={active ? "step" : undefined} className={`relative min-w-0 pl-7 ${animate ? "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-150" : ""}`}>
-    <span aria-hidden="true" className={`absolute top-2 left-0 z-10 flex size-5 items-center justify-center rounded-full border bg-background font-mono text-[8px] font-semibold tabular-nums ${tone} ${active ? "ring-2 ring-onedark-cyan/15" : ""}`}>{String(index + 1).padStart(2, "0")}</span>
-    {children}
-  </li>;
 }
 
 function ReasoningGroup({ thoughts }: { thoughts: { id: string; content: string }[] }) {

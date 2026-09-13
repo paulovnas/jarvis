@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { fileChangeSchema, type FileChange } from "@/core/chat";
+import { agentEventBatchSchema } from "@/core/agent-events";
 import { libraryError } from "@/core/library";
 
 export function useSessionFiles(conversationId: string | null) {
@@ -12,7 +13,6 @@ export function useSessionFiles(conversationId: string | null) {
     let running = false;
     let queued = false;
     let stop: (() => void) | undefined;
-    let debounce: ReturnType<typeof setTimeout> | undefined;
     let fingerprint: string | undefined;
     const refresh = async () => {
       if (!active) return;
@@ -30,19 +30,22 @@ export function useSessionFiles(conversationId: string | null) {
       }
     };
     void refresh();
-    void listen<{ conversationId: string; activeTurnId: string | null; fileChanges?: FileChange[] }>("agent:updated", event => {
-      if (!active || event.payload.conversationId !== conversationId) return;
-      const next = JSON.stringify([event.payload.activeTurnId, event.payload.fileChanges]);
+    void listen<unknown>("agent:event", event => {
+      if (!active) return;
+      const parsed = agentEventBatchSchema.safeParse(event.payload);
+      if (!parsed.success || parsed.data.conversationId !== conversationId) return;
+      const changed = [...parsed.data.events].reverse().find(item => item.type === "stateChanged");
+      if (!changed || changed.type !== "stateChanged") return;
+      const next = JSON.stringify([changed.state.activeTurnId, changed.state.fileChanges]);
       if (next === fingerprint) return;
       fingerprint = next;
-      // Streaming emits frequently. Throttle without postponing forever.
-      if (!debounce) debounce = setTimeout(() => { debounce = undefined; void refresh(); }, event.payload.activeTurnId ? 1000 : 0);
+      setResult({ id: conversationId, files: changed.state.fileChanges });
     }).then(unlisten => { if (active) stop = unlisten; else unlisten(); }).catch(() => {});
     const focus = () => { if (document.visibilityState === "visible") void refresh(); };
     const timer = setInterval(focus, 10_000);
     window.addEventListener("focus", focus);
     document.addEventListener("visibilitychange", focus);
-    return () => { active = false; stop?.(); clearInterval(timer); clearTimeout(debounce); window.removeEventListener("focus", focus); document.removeEventListener("visibilitychange", focus); };
+    return () => { active = false; stop?.(); clearInterval(timer); window.removeEventListener("focus", focus); document.removeEventListener("visibilitychange", focus); };
   }, [conversationId]);
   const selected = result?.id === conversationId ? result : null;
   return { files: selected?.files ?? [], error: selected?.error, loading: !!conversationId && !selected };

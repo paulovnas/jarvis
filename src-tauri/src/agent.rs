@@ -3,11 +3,13 @@ pub(crate) mod authoring;
 pub(crate) mod browser;
 pub(crate) mod cleanup;
 mod compaction;
+mod context_manager;
 pub(crate) mod dashboard;
 mod desktop_events;
 pub(crate) mod diffs;
 #[cfg(test)]
 pub(crate) mod evaluation;
+mod events;
 pub(crate) mod history;
 pub(crate) mod image_generation;
 mod instructions;
@@ -24,6 +26,7 @@ pub(crate) mod provider_links;
 pub(crate) mod publication;
 pub(crate) mod questions;
 pub(crate) mod queue;
+mod session_writer;
 pub(crate) mod shell;
 mod skill_input;
 mod tasks;
@@ -32,6 +35,7 @@ mod title;
 mod tool_contract;
 mod tool_loop;
 mod tools;
+pub(crate) mod turn_state;
 pub(crate) mod vision;
 pub(crate) mod web_search;
 pub(crate) mod workflow;
@@ -220,6 +224,8 @@ struct ContextReduction {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Step {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_id: Option<String>,
     #[serde(default)]
     context_searches: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -300,17 +306,9 @@ struct Approval {
     tool: ToolCall,
     reply: oneshot::Sender<bool>,
 }
-struct Active {
-    id: String,
-    cancel: watch::Sender<bool>,
-    approval: Option<Approval>,
-    question: Option<questions::Pending>,
-    authoring: Option<authoring::Pending>,
-    accepting_auxiliary: bool,
-}
+type Active = turn_state::ActiveTurn;
 struct SessionData {
     turns: Vec<StoredTurn>,
-    durable_turn: Option<StoredTurn>,
     active: Option<Active>,
     recovery: Option<String>,
     revision: u64,
@@ -325,6 +323,7 @@ struct Session {
     journal: PathBuf,
     root: PathBuf,
     journal_maintenance: Arc<AtomicBool>,
+    writer: session_writer::SessionWriter,
     data: Mutex<SessionData>,
     emit: Arc<dyn Fn(ChatSnapshot) + Send + Sync>,
 }
@@ -345,10 +344,16 @@ impl Session {
         if data.storage_failed {
             return Err(AgentError::storage());
         }
-        journal::append_event(&self.journal, kind, value).inspect_err(|_| {
+        let result = self
+            .writer
+            .append_event(kind, value)
+            .and_then(|()| self.writer.flush());
+        if result.is_err() {
             data.storage_failed = true;
             crate::diagnostics::record_storage_failure("session_journal", Some(&self.id));
-        })
+            return Err(AgentError::storage());
+        }
+        Ok(())
     }
     fn persist_turn(
         &self,
@@ -358,22 +363,34 @@ impl Session {
         if data.storage_failed {
             return Err(AgentError::storage());
         }
-        let result = data.durable_turn.as_ref().map_or_else(
-            || journal::append(&self.journal, candidate),
-            |durable| {
-                if durable.turn.id == candidate.turn.id {
-                    journal::append_update(&self.journal, durable, candidate)
-                } else {
-                    journal::append(&self.journal, candidate)
-                }
-            },
-        );
+        let result = self
+            .writer
+            .append_turn(candidate.clone())
+            .and_then(|()| self.writer.flush());
         if result.is_err() {
             data.storage_failed = true;
             crate::diagnostics::record_storage_failure("session_journal", Some(&self.id));
             return Err(AgentError::storage());
         }
-        data.durable_turn = Some(candidate.clone());
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), AgentError> {
+        let result = self.writer.flush();
+        if result.is_err() {
+            if let Ok(mut data) = self.data.lock() {
+                data.storage_failed = true;
+            }
+            crate::diagnostics::record_storage_failure("session_journal", Some(&self.id));
+            return Err(AgentError::storage());
+        }
+        Ok(())
+    }
+
+    fn transition(&self, phase: turn_state::TurnPhase) -> Result<(), AgentError> {
+        let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
+        let active = data.active.as_mut().ok_or_else(AgentError::cancelled)?;
+        active.transition(phase);
         Ok(())
     }
     #[cfg(test)]
@@ -422,21 +439,9 @@ impl Session {
                 error: None,
             },
         };
-        if journal::append(&self.journal, &turn).is_err() {
-            data.storage_failed = true;
-            crate::diagnostics::record_storage_failure("session_journal", Some(&self.id));
-            return Err(AgentError::storage());
-        }
-        data.durable_turn = Some(turn.clone());
+        self.persist_turn(data, &turn)?;
         let (cancel, signal) = watch::channel(false);
-        data.active = Some(Active {
-            id,
-            cancel,
-            approval: None,
-            question: None,
-            authoring: None,
-            accepting_auxiliary: true,
-        });
+        data.active = Some(Active::new(id, cancel));
         data.turns.push(turn);
         data.revision = next_revision();
         Ok(signal)
@@ -489,21 +494,11 @@ impl Session {
                 "_jarvis_runtime":true,
                 "content":notice,
             }));
-            if journal::append(&self.journal, current).is_err() {
-                data.storage_failed = true;
-                return Err(AgentError::storage());
-            }
-            data.durable_turn = Some(current.clone());
+            let candidate = current.clone();
+            self.persist_turn(&mut data, &candidate)?;
         }
         let (cancel, signal) = watch::channel(false);
-        data.active = Some(Active {
-            id,
-            cancel,
-            approval: None,
-            question: None,
-            authoring: None,
-            accepting_auxiliary: true,
-        });
+        data.active = Some(Active::new(id, cancel));
         data.recovery = None;
         data.revision = next_revision();
         Ok(Some(signal))
@@ -561,14 +556,7 @@ impl Session {
         data.turns[index] = current;
         let id = data.turns[index].turn.id.clone();
         let (cancel, signal) = watch::channel(false);
-        data.active = Some(Active {
-            id,
-            cancel,
-            approval: None,
-            question: None,
-            authoring: None,
-            accepting_auxiliary: true,
-        });
+        data.active = Some(Active::new(id, cancel));
         data.recovery = None;
         data.revision = next_revision();
         Ok((signal, uncertain))
@@ -589,12 +577,10 @@ impl Session {
             },
             navigation: None,
             active_turn_id: data.active.as_ref().map(|active| active.id.clone()),
-            pending_approval: data.active.as_ref().and_then(|active| {
-                active
-                    .approval
-                    .as_ref()
-                    .map(|approval| approval.tool.clone())
-            }),
+            pending_approval: data
+                .active
+                .as_ref()
+                .and_then(|active| active.pending_approval_tool().cloned()),
             queued_messages: data
                 .extras
                 .queue
@@ -604,14 +590,12 @@ impl Session {
                 .collect(),
             pending_question: data.active.as_ref().and_then(|active| {
                 active
-                    .question
-                    .as_ref()
+                    .pending_question()
                     .map(|pending| pending.request.clone())
             }),
             pending_authoring: data.active.as_ref().and_then(|active| {
                 active
-                    .authoring
-                    .as_ref()
+                    .pending_authoring()
                     .map(|pending| pending.request.clone())
             }),
             context: compaction::info(data),
@@ -696,8 +680,6 @@ impl Session {
         if durable {
             if let Some(last) = data.turns.last().cloned() {
                 self.persist_turn(&mut data, &last)?;
-            } else {
-                data.durable_turn = None;
             }
         }
         let should_emit = durable || data.last_emit.elapsed() >= Duration::from_millis(50);
@@ -711,6 +693,7 @@ impl Session {
         }
         Ok(())
     }
+    #[cfg(test)]
     fn input(&self) -> Result<Vec<Value>, AgentError> {
         let data = self.data.lock().map_err(|_| AgentError::internal())?;
         if data.storage_failed {
@@ -767,6 +750,7 @@ pub struct AgentState {
     histories: history::HistoryState,
     workflows: workflow::Registry,
     journal_maintenance: Arc<AtomicBool>,
+    admission: turn_state::TurnAdmission,
 }
 impl Default for AgentState {
     fn default() -> Self {
@@ -781,10 +765,20 @@ impl Default for AgentState {
             histories: Default::default(),
             workflows: Default::default(),
             journal_maintenance: Default::default(),
+            admission: Default::default(),
         }
     }
 }
 impl AgentState {
+    fn begin_turn(&self) -> Result<turn_state::TurnLease, AgentError> {
+        self.admission
+            .enter()
+            .map_err(|message| AgentError::new("turn_admission_closed", message))
+    }
+
+    pub(crate) fn begin_update_drain(&self) -> Result<turn_state::DrainLease, String> {
+        self.admission.begin_drain().map_err(str::to_owned)
+    }
     fn session_gate(&self, id: &str) -> Result<Arc<Mutex<()>>, AgentError> {
         let mut gates = self
             .session_gates
@@ -861,11 +855,13 @@ impl AgentState {
         self.terminals.stop_all();
     }
     pub(crate) fn busy_for_update(&self) -> bool {
-        self.activity().map_or(true, |items| {
-            items
-                .iter()
-                .any(|item| item.active_turn_id.is_some() || item.compacting)
-        }) || self.processes.has_running()
+        self.admission.active() != 0
+            || self.activity().map_or(true, |items| {
+                items
+                    .iter()
+                    .any(|item| item.active_turn_id.is_some() || item.compacting)
+            })
+            || self.processes.has_running()
             || self.terminals.has_running()
     }
     pub(crate) fn delete_library_item(
@@ -997,15 +993,22 @@ impl AgentState {
             journal::append_event(&path, "file_checkpoint", file)?;
         }
         let handle = app.clone();
+        let protocol = Arc::new(events::ProtocolEmitter::new(handle.clone()));
+        let event_protocol = protocol.clone();
         let durable_turn = turns.last().cloned();
+        let writer = session_writer::SessionWriter::start(
+            path.clone(),
+            id.to_owned(),
+            durable_turn.clone(),
+        )?;
         let session = Arc::new(Session {
             id: id.into(),
             journal: path,
             root,
             journal_maintenance: self.journal_maintenance.clone(),
+            writer,
             data: Mutex::new(SessionData {
                 turns,
-                durable_turn,
                 active: None,
                 recovery,
                 revision: next_revision(),
@@ -1017,9 +1020,10 @@ impl AgentState {
             }),
             emit: Arc::new(move |snapshot| {
                 desktop_events::attention(&handle, &snapshot.conversation_id, &snapshot);
-                let _ = handle.emit("agent:updated", snapshot);
+                event_protocol.emit(&snapshot);
             }),
         });
+        protocol.seed(session.snapshot()?);
         self.sessions
             .lock()
             .map_err(|_| AgentError::internal())?
@@ -1195,6 +1199,7 @@ pub async fn get_chat(
     .await
     .map_err(|_| AgentError::internal())??;
     if let Some(signal) = signal {
+        let admission = app.state::<AgentState>().begin_turn()?;
         (session.emit)(snapshot.clone());
         let mcp = app.state::<crate::mcp::McpState>().inner().clone();
         spawn_run(
@@ -1207,6 +1212,7 @@ pub async fn get_chat(
             RunControl {
                 signal,
                 activity,
+                admission,
                 workflow_recovery: None,
             },
         );
@@ -1270,6 +1276,7 @@ pub async fn start_agent_turn(
     let initial = session.snapshot()?;
     (session.emit)(initial.clone());
     if let Some(signal) = signal {
+        let admission = run_app.state::<AgentState>().begin_turn()?;
         spawn_run(
             session,
             run_state,
@@ -1280,6 +1287,7 @@ pub async fn start_agent_turn(
             RunControl {
                 signal,
                 activity,
+                admission,
                 workflow_recovery: None,
             },
         );
@@ -1290,6 +1298,7 @@ pub async fn start_agent_turn(
 struct RunControl {
     signal: watch::Receiver<bool>,
     activity: crate::updater::ActivityLease,
+    admission: turn_state::TurnLease,
     workflow_recovery: Option<Vec<String>>,
 }
 
@@ -1312,10 +1321,12 @@ fn spawn_run(
     let RunControl {
         mut signal,
         activity,
+        admission,
         mut workflow_recovery,
     } = control;
     tauri::async_runtime::spawn(async move {
         let _activity = activity;
+        let _admission = admission;
         loop {
             let _ = library::dashboard::touch_activity(&state, &home, &session.id);
             let _ = app.emit("library:changed", ());
@@ -1390,6 +1401,7 @@ pub async fn resume_agent_queue(
     let snapshot = session.snapshot()?;
     (session.emit)(snapshot.clone());
     if let Some(signal) = signal {
+        let admission = app.state::<AgentState>().begin_turn()?;
         let mcp = app.state::<crate::mcp::McpState>().inner().clone();
         spawn_run(
             session,
@@ -1401,6 +1413,7 @@ pub async fn resume_agent_queue(
             RunControl {
                 signal,
                 activity,
+                admission,
                 workflow_recovery: None,
             },
         );
@@ -1435,6 +1448,7 @@ pub async fn resume_interrupted_workflow(
     let snapshot = session.snapshot()?;
     (session.emit)(snapshot.clone());
     let mcp = app.state::<crate::mcp::McpState>().inner().clone();
+    let admission = app.state::<AgentState>().begin_turn()?;
     spawn_run(
         session,
         persistence.inner().clone(),
@@ -1445,6 +1459,7 @@ pub async fn resume_interrupted_workflow(
         RunControl {
             signal,
             activity,
+            admission,
             workflow_recovery: Some(uncertain),
         },
     );
@@ -1458,10 +1473,10 @@ pub fn cancel_agent_turn(
     turn_id: String,
 ) -> Result<(), AgentError> {
     let session = agent.existing(&conversation_id)?;
-    let data = session.data.lock().map_err(|_| AgentError::internal())?;
-    if let Some(active) = &data.active {
+    let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
+    if let Some(active) = &mut data.active {
         if active.id == turn_id {
-            let _ = active.cancel.send(true);
+            active.cancel();
         }
     }
     Ok(())
@@ -1490,19 +1505,13 @@ fn answer_approval(
         .as_mut()
         .filter(|active| active.id == turn_id)
         .ok_or_else(AgentError::cancelled)?;
-    if !active
-        .approval
-        .as_ref()
-        .is_some_and(|approval| approval.tool.id == tool_id)
-    {
+    let Some(approval) = active.take_approval(tool_id) else {
         return Err(AgentError::new(
             "stale_approval",
             "Esta solicitação de autorização não está mais ativa.",
         ));
-    }
-    if let Some(approval) = active.approval.take() {
-        let _ = approval.reply.send(approved);
-    }
+    };
+    let _ = approval.reply.send(approved);
     Ok(())
 }
 
@@ -1517,33 +1526,76 @@ async fn authorize(
     authorize_with_policy(session, tool, options, mcp_mutating, false, signal).await
 }
 
+#[cfg(test)]
 async fn authorize_with_policy(
     session: &Session,
     tool: &ToolCall,
     options: &TurnOptions,
     mcp_mutating: bool,
     force_manual: bool,
+    signal: watch::Receiver<bool>,
+) -> Result<bool, AgentError> {
+    let approval = if force_manual {
+        tool_contract::ApprovalPolicy::Always
+    } else if tools::needs_approval(&tool.name)
+        || tool.name == "workflow_check"
+        || mcp_mutating
+        || crate::core::context::needs_approval(&tool.name)
+        || crate::core::beads::needs_approval(&tool.name)
+    {
+        tool_contract::ApprovalPolicy::AccordingToTurn
+    } else {
+        tool_contract::ApprovalPolicy::Never
+    };
+    let handler = if tool.name.starts_with("mcp_") {
+        tool_contract::Handler::Mcp
+    } else {
+        tool_contract::Handler::Native
+    };
+    authorize_declared(session, tool, options, approval, handler, signal).await
+}
+
+async fn authorize_prepared(
+    session: &Session,
+    tool: &ToolCall,
+    options: &TurnOptions,
+    prepared: tool_contract::PreparedTool,
+    force_manual: bool,
+    signal: watch::Receiver<bool>,
+) -> Result<bool, AgentError> {
+    let approval = if force_manual {
+        tool_contract::ApprovalPolicy::Always
+    } else {
+        prepared.capabilities.approval
+    };
+    authorize_declared(session, tool, options, approval, prepared.handler, signal).await
+}
+
+async fn authorize_declared(
+    session: &Session,
+    tool: &ToolCall,
+    options: &TurnOptions,
+    approval: tool_contract::ApprovalPolicy,
+    handler: tool_contract::Handler,
     mut signal: watch::Receiver<bool>,
 ) -> Result<bool, AgentError> {
     if *signal.borrow() {
         return Err(AgentError::cancelled());
     }
-    let ordinarily_requires_approval = tools::needs_approval(&tool.name)
-        || tool.name == "workflow_check"
-        || (tool.name.starts_with("mcp_") && mcp_mutating)
-        || crate::core::context::needs_approval(&tool.name)
-        || crate::core::beads::needs_approval(&tool.name);
+    let force_manual = approval == tool_contract::ApprovalPolicy::Always;
+    let ordinarily_requires_approval = approval != tool_contract::ApprovalPolicy::Never;
+    let mutating_mcp = handler == tool_contract::Handler::Mcp
+        && approval == tool_contract::ApprovalPolicy::AccordingToTurn;
     if (!ordinarily_requires_approval && !force_manual)
         || (!force_manual && options.approval_mode == ApprovalMode::Yolo)
-        || (!force_manual
-            && options.mode == Mode::Plan
-            && (!tool.name.starts_with("mcp_") || !mcp_mutating))
+        || (!force_manual && options.mode == Mode::Plan && !mutating_mcp)
     {
         return Ok(true);
     }
     let (reply, received) = oneshot::channel();
     session.update(true, |data| {
-        data.active.as_mut().unwrap().approval = Some(Approval {
+        let active = data.active.as_mut().unwrap();
+        active.wait_for_approval(Approval {
             tool: tool.clone(),
             reply,
         });
@@ -1553,7 +1605,8 @@ async fn authorize_with_policy(
         result = received => result.unwrap_or(false),
     };
     session.update(true, |data| {
-        data.active.as_mut().unwrap().approval = None;
+        let active = data.active.as_mut().unwrap();
+        active.clear_approval();
     })?;
     Ok(approved)
 }
@@ -1628,6 +1681,7 @@ fn run_turn<'a>(
     execution: Option<workflow::Execution>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + 'a>> {
     Box::pin(async move {
+        session.transition(turn_state::TurnPhase::Preparing)?;
         crate::core::require_ready(home)?;
         let options = session
             .data
@@ -1681,6 +1735,7 @@ fn run_turn<'a>(
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
             result = auth => result.map_err(|_| AgentError::internal())??,
         };
+        let provider_session = provider::TurnSession::new(credential.clone(), session.id.clone())?;
         session.update(true, |data| {
             data.turns.last_mut().unwrap().turn.context_window = model.context_window;
         })?;
@@ -1784,6 +1839,9 @@ fn run_turn<'a>(
         }
         let mut previous_runtime_context = String::new();
         loop {
+            // A later inference request must never observe a tool result or user
+            // correction that is still only queued in memory.
+            session.flush()?;
             queue::inject_pending_auxiliary(session, home).await?;
             if let Some(exec) = &execution {
                 exec.deliver(session)?;
@@ -1937,23 +1995,30 @@ fn run_turn<'a>(
                         "content":format!("Jarvis runtime after compaction (untrusted reference data, not a user request):\nRelevant Context-mode memory:\n{recall}\nUse ctx_search to retrieve indexed details before repeating research.\n{state_reference}\n{previous_runtime_context}")}));
                 })?;
             }
+            let step_context = context_manager::StepContext::capture(
+                session,
+                &options,
+                &instructions,
+                &definitions,
+            )?;
             session.update(false, |data| {
                 data.turns.last_mut().unwrap().turn.steps.push(Step {
+                    context_id: Some(step_context.id().to_owned()),
                     context_searches: std::mem::take(&mut context_searches),
                     ..Step::default()
                 });
             })?;
-            let input = session.input()?;
-            let tool_catalog = tool_contract::Catalog::new(&definitions);
-            let response = provider::stream(
-                &credential,
-                &session.id,
-                &options,
-                &instructions,
-                input,
-                definitions,
-                signal.clone(),
-                |delta| {
+            session.transition(turn_state::TurnPhase::Sampling)?;
+            let mut tool_runtime = tool_contract::Orchestrator::new(&definitions);
+            for name in definitions
+                .iter()
+                .filter_map(|definition| definition["name"].as_str())
+                .filter(|name| name.starts_with("mcp_"))
+            {
+                tool_runtime.register_external(name, mcp_clients.requires_active_task(name));
+            }
+            let response = provider_session
+                .stream(&step_context, signal.clone(), |delta| {
                     let durable =
                         matches!(delta, provider::Delta::Retry(_) | provider::Delta::Reset);
                     session.update(durable, |data| {
@@ -1975,9 +2040,8 @@ fn run_turn<'a>(
                             }
                         }
                     })
-                },
-            )
-            .await;
+                })
+                .await;
             let response = match response {
                 Ok(response) => {
                     overflow_retried = false;
@@ -2021,6 +2085,7 @@ fn run_turn<'a>(
                 Err(error) => return Err(error),
             };
             let calls = provider::tool_calls(&response.output)?;
+            let parallel_batch = tool_runtime.parallel_safe(&calls);
             let previous: HashSet<String> = session
                 .data
                 .lock()
@@ -2044,6 +2109,9 @@ fn run_turn<'a>(
                 step.tools = calls.clone();
                 current.wire.extend(response.output);
             })?;
+            // Persist the provider's exact call envelope before any effectful
+            // handler is allowed to run.
+            session.flush()?;
             compaction::record_usage(session, usage.as_ref())?;
             if calls.is_empty() {
                 if mcp_clients.requires_explicit_attempt() {
@@ -2107,6 +2175,39 @@ fn run_turn<'a>(
                 context.close().await;
                 return Ok(());
             }
+            session.transition(turn_state::TurnPhase::ExecutingTools)?;
+            let parallel_native = parallel_batch
+                && execution.is_none()
+                && calls
+                    .iter()
+                    .all(|tool| matches!(tool.name.as_str(), "read" | "search" | "list"))
+                && calls.iter().all(|tool| {
+                    repeated_tools.before_call(tool).is_ok()
+                        && tool_runtime.preflight(tool).is_ok()
+                        && progress_watchdog.preflight(tool).is_ok()
+                        && project_instructions.discover(tool).is_ok()
+                });
+            let mut parallel_results = if parallel_native {
+                session.update(true, |data| {
+                    let step = data
+                        .turns
+                        .last_mut()
+                        .unwrap()
+                        .turn
+                        .steps
+                        .last_mut()
+                        .unwrap();
+                    for tool in &calls {
+                        if let Some(item) = step.tools.iter_mut().find(|item| item.id == tool.id) {
+                            item.status = "running".into();
+                        }
+                    }
+                })?;
+                tools::execute_parallel_reads(&session.root, &calls, options.mode, signal.clone())
+                    .await
+            } else {
+                std::collections::BTreeMap::new()
+            };
             for tool in calls {
                 if *signal.borrow() {
                     return Err(AgentError::cancelled());
@@ -2135,7 +2236,9 @@ fn run_turn<'a>(
                     // A tool-level problem must not discard the rest of the turn.
                     continue;
                 }
-                let contract_preflight = tool_catalog.validate(&tool).err();
+                let prepared = tool_runtime.preflight(&tool);
+                let contract_preflight = prepared.as_ref().err().cloned();
+                let prepared = prepared.ok();
                 let instruction_preflight = match contract_preflight.as_ref().map_or_else(|| project_instructions.discover(&tool), |_| Ok(false)) {
                     Ok(true) if matches!(tool.name.as_str(), "write" | "edit" | "apply_patch") || (tool.name == "bash" && tasks::requires_active_task_for(&tool)) => {
                         Some("O Jarvis carregou instruções AGENTS.md específicas para este caminho. A alteração não foi executada; revise as novas regras e envie novamente uma ação compatível.".to_owned())
@@ -2181,20 +2284,30 @@ fn run_turn<'a>(
                     .or(instruction_preflight)
                     .or(terminal_preflight)
                     .or_else(|| task_preflight.map(str::to_owned));
-                let permitted = contract_preflight.is_none()
+                let permitted = if contract_preflight.is_none()
                     && progress_preflight.is_none()
                     && preflight.is_none()
-                    && authorize_with_policy(
-                        session,
-                        &tool,
-                        &options,
-                        tool.name.starts_with("mcp_") && requires_task,
-                        terminal_requires_approval,
-                        signal.clone(),
-                    )
-                    .await?;
+                {
+                    match prepared {
+                        Some(prepared) => {
+                            authorize_prepared(
+                                session,
+                                &tool,
+                                &options,
+                                prepared,
+                                terminal_requires_approval,
+                                signal.clone(),
+                            )
+                            .await?
+                        }
+                        None => false,
+                    }
+                } else {
+                    false
+                };
                 crate::persistence::require_enabled_account(state, home, &options.account)?;
                 let started = std::time::Instant::now();
+                let mut measured_duration = None;
                 session.update(true, |data| {
                     let step = data
                         .turns
@@ -2225,29 +2338,26 @@ fn run_turn<'a>(
                         }
                         None => None,
                     };
-                    if tool.name == progress::TOOL_NAME {
-                        progress_watchdog.checkpoint(&tool.args)
-                    } else if tool.name == "jarvis_inspect_publication" {
-                        publication::inspection::inspect(&session.root, &tool.args, signal.clone())
+                    match prepared.map(|prepared| prepared.handler) {
+                        Some(tool_contract::Handler::Progress) => {
+                            progress_watchdog.checkpoint(&tool.args)
+                        }
+                        Some(tool_contract::Handler::PublicationInspection) => {
+                            publication::inspection::inspect(
+                                &session.root,
+                                &tool.args,
+                                signal.clone(),
+                            )
                             .await
-                    } else if tool.name.starts_with("hub_")
-                        || tool.name.starts_with("process_")
-                        || tool.name.starts_with("terminal_")
-                        || tool.name.starts_with("browser_")
-                        || matches!(
-                            tool.name.as_str(),
-                            "workflow_check" | "design_brief" | "validation_publish"
-                        )
-                    {
-                        match &execution {
+                        }
+                        Some(tool_contract::Handler::Workflow) => match &execution {
                             Some(exec) => exec.execute(&tool, signal.clone()).await,
                             None => Err(AgentError::new(
                                 "workflow_error",
                                 "Coordenação indisponível neste modo.",
                             )),
-                        }
-                    } else if matches!(tool.name.as_str(), "design_search" | "design_read") {
-                        match &design {
+                        },
+                        Some(tool_contract::Handler::Design) => match &design {
                             Some(pack) => pack
                                 .execute(&tool.name, &tool.args)
                                 .map_err(AgentError::from),
@@ -2255,48 +2365,49 @@ fn run_turn<'a>(
                                 "design_error",
                                 "Recursos de design disponíveis no fluxo Designer.",
                             )),
-                        }
-                    } else if tool.name == "update_tasks" {
-                        if direct_tasks {
-                            tasks::execute(session, &tool.args)
-                        } else {
-                            Err(AgentError::new(
-                                "tool_unavailable",
-                                "Tarefas nativas estão disponíveis apenas nos fluxos diretos.",
-                            ))
-                        }
-                    } else if tool.name.starts_with("beads_") {
-                        let call_id = if owner.id == session.id {
-                            tool.id.clone()
-                        } else {
-                            format!("{}:{}", session.id, tool.id)
-                        };
-                        match match &execution {
-                            Some(exec) => {
-                                workflow::validation::closure(exec, &tool, signal.clone()).await
-                            }
-                            None => Ok(()),
-                        } {
-                            Ok(()) => match &beads {
-                                Some(beads) => beads
-                                    .execute(
-                                        &tool.name,
-                                        &tool.args,
-                                        &call_id,
-                                        signal.clone(),
-                                        check_beads_project,
-                                    )
-                                    .await
-                                    .map_err(AgentError::from),
-                                None => Err(AgentError::new(
+                        },
+                        Some(tool_contract::Handler::DirectTasks) => {
+                            if direct_tasks {
+                                tasks::execute(session, &tool.args)
+                            } else {
+                                Err(AgentError::new(
                                     "tool_unavailable",
-                                    "Beads não é usado nos fluxos diretos.",
-                                )),
-                            },
-                            Err(error) => Err(error),
+                                    "Tarefas nativas estão disponíveis apenas nos fluxos diretos.",
+                                ))
+                            }
                         }
-                    } else if tool.name.starts_with("project_beads_") {
-                        match &project_beads {
+                        Some(tool_contract::Handler::Beads) => {
+                            let call_id = if owner.id == session.id {
+                                tool.id.clone()
+                            } else {
+                                format!("{}:{}", session.id, tool.id)
+                            };
+                            match match &execution {
+                                Some(exec) => {
+                                    workflow::validation::closure(exec, &tool, signal.clone()).await
+                                }
+                                None => Ok(()),
+                            } {
+                                Ok(()) => match &beads {
+                                    Some(beads) => beads
+                                        .execute(
+                                            &tool.name,
+                                            &tool.args,
+                                            &call_id,
+                                            signal.clone(),
+                                            check_beads_project,
+                                        )
+                                        .await
+                                        .map_err(AgentError::from),
+                                    None => Err(AgentError::new(
+                                        "tool_unavailable",
+                                        "Beads não é usado nos fluxos diretos.",
+                                    )),
+                                },
+                                Err(error) => Err(error),
+                            }
+                        }
+                        Some(tool_contract::Handler::ProjectBeads) => match &project_beads {
                             Some(beads) => beads
                                 .execute(&tool.name, &tool.args, signal.clone())
                                 .await
@@ -2305,20 +2416,20 @@ fn run_turn<'a>(
                                 "tool_unavailable",
                                 "Este projeto não possui um tracker .beads local disponível.",
                             )),
+                        },
+                        Some(tool_contract::Handler::JarvisAuthoring) => {
+                            authoring::execute(
+                                session,
+                                state,
+                                oauth,
+                                home,
+                                owner.project_id()?,
+                                &tool,
+                                signal.clone(),
+                            )
+                            .await
                         }
-                    } else if tool.name.starts_with("jarvis_") {
-                        authoring::execute(
-                            session,
-                            state,
-                            oauth,
-                            home,
-                            owner.project_id()?,
-                            &tool,
-                            signal.clone(),
-                        )
-                        .await
-                    } else if tool.name.starts_with("context7_") {
-                        crate::core::context7::execute(
+                        Some(tool_contract::Handler::Context7) => crate::core::context7::execute(
                             home,
                             &session.root,
                             &tool.name,
@@ -2326,11 +2437,11 @@ fn run_turn<'a>(
                             signal.clone(),
                         )
                         .await
-                        .map_err(AgentError::from)
-                    } else if tool.name.starts_with("lsp_") {
-                        lsp.execute(&tool, signal.clone()).await
-                    } else if tool.name == "apply_patch" {
-                        match patch::execute(
+                        .map_err(AgentError::from),
+                        Some(tool_contract::Handler::Lsp) => {
+                            lsp.execute(&tool, signal.clone()).await
+                        }
+                        Some(tool_contract::Handler::Patch) => match patch::execute(
                             &session.root,
                             &tool.args,
                             options.mode,
@@ -2355,22 +2466,21 @@ fn run_turn<'a>(
                                 Ok(format!("{}{}", outcome.output, diagnostics))
                             }
                             Err(cause) => Err(cause),
-                        }
-                    } else if tool.name.starts_with("ctx_") {
-                        context
+                        },
+                        Some(tool_contract::Handler::ContextMode) => context
                             .execute(&tool.name, &tool.args, restricted, signal.clone())
                             .await
-                            .map_err(AgentError::from)
-                    } else if tool.name == "ask_user" {
-                        questions::execute(
-                            session,
-                            &tool,
-                            signal.clone(),
-                            crate::system::ask_user_timeout_seconds(home),
-                        )
-                        .await
-                    } else if tool.name.starts_with("mcp_") {
-                        mcp_clients
+                            .map_err(AgentError::from),
+                        Some(tool_contract::Handler::AskUser) => {
+                            questions::execute(
+                                session,
+                                &tool,
+                                signal.clone(),
+                                crate::system::ask_user_timeout_seconds(home),
+                            )
+                            .await
+                        }
+                        Some(tool_contract::Handler::Mcp) => mcp_clients
                             .execute(
                                 mcp,
                                 state,
@@ -2381,90 +2491,107 @@ fn run_turn<'a>(
                                 signal.clone(),
                             )
                             .await
-                            .map_err(AgentError::from)
-                    } else if tool.name == "web_search" {
-                        web_search::execute(
-                            state,
-                            oauth,
-                            home,
-                            &options,
-                            response_language,
-                            &tool.args,
-                            signal.clone(),
-                        )
-                        .await
-                    } else if tool.name == "read_attachment" {
-                        attachments::read_tool(home, &owner.id, &tool.args)
-                    } else if tool.name == "vision" {
-                        vision::execute(
-                            state,
-                            oauth,
-                            home,
-                            &owner.id,
-                            &options,
-                            &tool.args,
-                            signal.clone(),
-                        )
-                        .await
-                    } else if tool.name == "generate_image" {
-                        image_generation::execute(
-                            state,
-                            oauth,
-                            home,
-                            &owner.id,
-                            &tool.args,
-                            signal.clone(),
-                        )
-                        .await
-                    } else if tool.name == "read_skill" {
-                        tokio::select! {
+                            .map_err(AgentError::from),
+                        Some(tool_contract::Handler::WebSearch) => {
+                            web_search::execute(
+                                state,
+                                oauth,
+                                home,
+                                &options,
+                                response_language,
+                                &tool.args,
+                                signal.clone(),
+                            )
+                            .await
+                        }
+                        Some(tool_contract::Handler::Attachment) => {
+                            attachments::read_tool(home, &owner.id, &tool.args)
+                        }
+                        Some(tool_contract::Handler::Vision) => {
+                            vision::execute(
+                                state,
+                                oauth,
+                                home,
+                                &owner.id,
+                                &options,
+                                &tool.args,
+                                signal.clone(),
+                            )
+                            .await
+                        }
+                        Some(tool_contract::Handler::ImageGeneration) => {
+                            image_generation::execute(
+                                state,
+                                oauth,
+                                home,
+                                &owner.id,
+                                &tool.args,
+                                signal.clone(),
+                            )
+                            .await
+                        }
+                        Some(tool_contract::Handler::SkillRead) => tokio::select! {
                             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
                             result = crate::skills::read(home, &session.root, &tool.args) => result.map_err(|cause| AgentError::new("skill_error", &cause.message)),
+                        },
+                        Some(tool_contract::Handler::SkillSearch) => {
+                            let available = tokio::select! {
+                                _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+                                result = crate::skills::active(home, &session.root) => result.map_err(|cause|AgentError::new("skill_error", &cause.message))?,
+                            };
+                            crate::skills::search(&available, &tool.args)
+                                .map_err(|cause| AgentError::new("skill_error", &cause.message))
                         }
-                    } else if tool.name == "find_skills" {
-                        let available = tokio::select! {
-                            _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-                            result = crate::skills::active(home, &session.root) => result.map_err(|cause|AgentError::new("skill_error", &cause.message))?,
-                        };
-                        crate::skills::search(&available, &tool.args)
-                            .map_err(|cause| AgentError::new("skill_error", &cause.message))
-                    } else {
-                        match tools::execute_with_revision(
-                            &session.root,
-                            &tool,
-                            options.mode,
-                            signal.clone(),
-                        )
-                        .await
-                        {
-                            Ok(execution) => {
-                                let tools::ExecutionResult {
-                                    mut output,
-                                    revision,
-                                    read,
-                                } = execution;
-                                if let Some(observation) = read {
-                                    if let Some(reused) = read_reuse.resolve(&observation) {
-                                        output = tool_loop::READ_REUSE_MESSAGE.into();
-                                        reused_read = Some(reused);
-                                    }
-                                    read_observation = Some(observation);
+                        Some(tool_contract::Handler::Native) => {
+                            let execution = match parallel_results.remove(&tool.id) {
+                                Some(parallel) => {
+                                    measured_duration = Some(parallel.duration_ms);
+                                    parallel.result
                                 }
-                                if let Some(revision) = revision {
-                                    confirmed_mutation = true;
-                                    let changed_path = revision.path.clone();
-                                    diffs::record(owner, revision).await?;
-                                    if let Err(cause) = lsp.refresh(&changed_path).await {
-                                        output.push_str(&format!(
+                                None => {
+                                    tools::execute_with_revision(
+                                        &session.root,
+                                        &tool,
+                                        options.mode,
+                                        signal.clone(),
+                                    )
+                                    .await
+                                }
+                            };
+                            match execution {
+                                Ok(execution) => {
+                                    let tools::ExecutionResult {
+                                        mut output,
+                                        revision,
+                                        read,
+                                    } = execution;
+                                    if let Some(observation) = read {
+                                        if let Some(reused) = read_reuse.resolve(&observation) {
+                                            output = tool_loop::READ_REUSE_MESSAGE.into();
+                                            reused_read = Some(reused);
+                                        }
+                                        read_observation = Some(observation);
+                                    }
+                                    if let Some(revision) = revision {
+                                        confirmed_mutation = true;
+                                        let changed_path = revision.path.clone();
+                                        diffs::record(owner, revision).await?;
+                                        if let Err(cause) = lsp.refresh(&changed_path).await {
+                                            output.push_str(&format!(
                                             "\nAviso: a alteração foi salva, mas o LSP não atualizou o arquivo: {}",
                                             cause.message
                                         ));
+                                        }
                                     }
+                                    Ok(output)
                                 }
-                                Ok(output)
+                                Err(error) => Err(error),
                             }
-                            Err(error) => Err(error),
                         }
+                        None => Err(AgentError::new(
+                            "tool_unavailable",
+                            "Ferramenta indisponível nesta etapa.",
+                        )),
                     }
                 } else {
                     Err(AgentError::new(
@@ -2546,7 +2673,8 @@ fn run_turn<'a>(
                     if let Some(item) = step.tools.iter_mut().find(|item| item.id == tool.id) {
                         item.status = status.into();
                         item.output = output;
-                        item.duration_ms = started.elapsed().as_millis() as u64;
+                        item.duration_ms = measured_duration
+                            .unwrap_or_else(|| started.elapsed().as_millis() as u64);
                     }
                     if let Some(message) = &steer {
                         step.loop_steers += 1;
@@ -2562,6 +2690,9 @@ fn run_turn<'a>(
                         progress::Observation::Unproductive => {}
                     }
                 })?;
+                // The result is the recovery boundary for this side effect.
+                // Flush it before another tool or model step can proceed.
+                session.flush()?;
                 if let Some(exec) = &execution {
                     exec.observe_recovery_inspection(
                         &tool,
@@ -2620,31 +2751,36 @@ fn finish(session: &Session, result: Result<(), AgentError>) {
         Ok(()) => result,
         Err(error) => Err(error),
     };
-    let update = session.update(true, |data| {
-        let current = data.turns.last_mut().unwrap();
-        journal::interrupt_tools(current);
-        current.turn.duration_ms = now().saturating_sub(current.turn.created_at);
-        let mut recovery = None;
-        match result {
-            Ok(()) => current.turn.status = TurnStatus::Completed,
-            Err(error) => {
-                current.turn.status = match error.code.as_str() {
-                    "cancelled" => TurnStatus::Cancelled,
-                    "progress_paused" => {
-                        if current.turn.options.direct() {
-                            recovery = Some(current.turn.id.clone());
-                        }
-                        TurnStatus::Interrupted
-                    }
-                    _ => TurnStatus::Error,
-                };
-                current.turn.error = Some(error);
+    let update = session
+        .update(true, |data| {
+            if let Some(active) = data.active.as_mut() {
+                active.transition(turn_state::TurnPhase::Draining);
             }
-        }
-        data.recovery = recovery;
-        data.active = None;
-        data.compacting = false;
-    });
+            let current = data.turns.last_mut().unwrap();
+            journal::interrupt_tools(current);
+            current.turn.duration_ms = now().saturating_sub(current.turn.created_at);
+            let mut recovery = None;
+            match result {
+                Ok(()) => current.turn.status = TurnStatus::Completed,
+                Err(error) => {
+                    current.turn.status = match error.code.as_str() {
+                        "cancelled" => TurnStatus::Cancelled,
+                        "progress_paused" => {
+                            if current.turn.options.direct() {
+                                recovery = Some(current.turn.id.clone());
+                            }
+                            TurnStatus::Interrupted
+                        }
+                        _ => TurnStatus::Error,
+                    };
+                    current.turn.error = Some(error);
+                }
+            }
+            data.recovery = recovery;
+            data.active = None;
+            data.compacting = false;
+        })
+        .and_then(|()| session.flush());
     if update.is_err() {
         // Surface journal failure even if the final checkpoint could not be written.
         let _ = session.update(false, |data| {

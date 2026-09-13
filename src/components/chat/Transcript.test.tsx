@@ -103,6 +103,37 @@ describe("lazy transcript navigation", () => {
 });
 
 describe("estado do turno", () => {
+  it("keeps the latest running text as an observation and promotes only the completed text to the final answer", async () => {
+    const firstStep = {
+      ...savedTurn().steps[0],
+      summary: "Analisando o projeto",
+      text: "Vou inspecionar os arquivos relevantes.",
+      tools: [],
+    };
+    const running = {
+      ...savedTurn(),
+      status: "running" as const,
+      createdAt: Date.now(),
+      steps: [firstStep],
+    };
+    const { rerender } = render(<TurnBody turn={running} />);
+
+    const observation = await screen.findByText("Vou inspecionar os arquivos relevantes.");
+    expect(observation.closest("[data-execution-observation]")).not.toBeNull();
+    expect(screen.getByRole("button", { name: /Em execução/ })).toHaveAttribute("aria-expanded", "true");
+
+    rerender(<TurnBody turn={{
+      ...running,
+      status: "completed",
+      durationMs: 4_000,
+      steps: [firstStep, { ...firstStep, summary: "", text: "A análise foi concluída.", tools: [] }],
+    }} />);
+
+    expect(screen.getByRole("button", { name: /Trabalhou por 4s/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Vou inspecionar os arquivos relevantes.")).not.toBeInTheDocument();
+    expect(await screen.findByText("A análise foi concluída.")).toBeVisible();
+  });
+
   it("apresenta uma pausa do watchdog como retomável, sem tratá-la como falha", () => {
     render(<TurnBody turn={{
       ...savedTurn(),
@@ -115,5 +146,18 @@ describe("estado do turno", () => {
 
     expect(screen.getByText("Execução pausada")).toBeInTheDocument();
     expect(screen.getByText(/histórico foi preservado/i)).toBeInTheDocument();
+  });
+
+  it("shows a blocking failure once when the final text repeats the turn error", () => {
+    const message = "A observação da aprovação ainda precisa ser incorporada.";
+    const turn = savedTurn();
+    turn.status = "error";
+    turn.error = { code: "publication_blocked", message };
+    turn.steps = [{ ...turn.steps[0], summary: "", tools: [], text: message }];
+
+    render(<TurnBody turn={turn} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(message);
+    expect(screen.getAllByText(message)).toHaveLength(1);
   });
 });
