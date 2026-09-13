@@ -10,6 +10,12 @@ import { onDesktopResume } from "@/core/desktop-resume";
 import type { PendingAuthoring } from "@/core/authoring";
 import { agentEventBatchSchema, applyAgentEventBatch } from "@/core/agent-events";
 
+function eventConversationId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const id = Reflect.get(payload, "conversationId");
+  return typeof id === "string" ? id : null;
+}
+
 export function useChat(conversationId: string | null) {
   const [loaded, setLoaded] = useState<ChatSnapshot | null>(null);
   const [error, setError] = useState<{ id: string; message: string } | null>(null);
@@ -47,7 +53,7 @@ export function useChat(conversationId: string | null) {
     let active = true;
     let refreshing = false;
     let refreshAgain = false;
-    let resyncQueued = false;
+    let resyncTimer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
       if (!active) return;
       if (refreshing) { refreshAgain = true; return; }
@@ -63,18 +69,19 @@ export function useChat(conversationId: string | null) {
       }
     };
     const scheduleResync = () => {
-      if (resyncQueued || !active) return;
-      resyncQueued = true;
-      queueMicrotask(() => {
-        resyncQueued = false;
+      if (resyncTimer || !active) return;
+      resyncTimer = setTimeout(() => {
+        resyncTimer = undefined;
         if (active) void refresh();
-      });
+      }, 100);
     };
     // Subscribe before loading so an update cannot fall between snapshot and listener.
     const events = listen<unknown>("agent:event", event => {
       if (!active) return;
+      const eventConversation = eventConversationId(event.payload);
+      if (eventConversation !== conversationId) return;
       const parsed = agentEventBatchSchema.safeParse(event.payload);
-      if (!parsed.success || parsed.data.conversationId !== conversationId) return;
+      if (!parsed.success) { scheduleResync(); return; }
       setLoaded(current => {
         const applied = applyAgentEventBatch(current, parsed.data);
         if (applied.needsResync) scheduleResync();
@@ -82,7 +89,10 @@ export function useChat(conversationId: string | null) {
         return applied.snapshot;
       });
     });
-    void Promise.all([events]).then(unlisteners => {
+    const workflowEvents = listen<unknown>("workflow:changed", event => {
+      if (active && eventConversationId(event.payload) === conversationId) scheduleResync();
+    });
+    void Promise.all([events, workflowEvents]).then(unlisteners => {
       if (!active) { unlisteners.forEach(unlisten => unlisten()); return; }
       dispose.push(...unlisteners);
       stopResume = onDesktopResume(() => { void refresh(); });
@@ -90,7 +100,7 @@ export function useChat(conversationId: string | null) {
     }).catch((cause: unknown) => {
       if (active) setError({ id: conversationId, message: libraryError(cause, "Não foi possível abrir o histórico desta conversa.") });
     });
-    return () => { active = false; dispose.forEach(unlisten => unlisten()); stopResume?.(); if (generation.current === request) generation.current += 1; };
+    return () => { active = false; if (resyncTimer) clearTimeout(resyncTimer); dispose.forEach(unlisten => unlisten()); stopResume?.(); if (generation.current === request) generation.current += 1; };
   }, [conversationId, attempt, accept, reportModelError]);
 
   const loadHistory = async (direction: HistoryDirection): Promise<boolean> => {

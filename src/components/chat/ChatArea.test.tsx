@@ -152,6 +152,7 @@ describe("Persistent live conversation", () => {
     expect(await screen.findByText("Tauri")).toBeInTheDocument();
     expect(screen.queryByText("Gemini 2.5 Pro")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Trabalhou por/ }));
+    await user.click(screen.getByRole("button", { name: /Leu e pesquisou arquivos.*2 ações/ }));
     await user.click(screen.getByRole("button", { name: /Verificando o projeto/ }));
     expect(screen.getByText("Verificando o projeto.", { selector: "p" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: /Leitura de arquivo/ }));
@@ -214,11 +215,13 @@ describe("Persistent live conversation", () => {
     expect(screen.queryByRole("button", { name: /Leitura de arquivo/ })).not.toBeInTheDocument();
     summary.focus();
     await user.keyboard("{Enter}");
+    await user.click(screen.getByRole("button", { name: /Leu e pesquisou arquivos.*4 ações/ }));
     expect(screen.getAllByRole("button", { name: /Leitura de arquivo/ })).toHaveLength(4);
     const observation = screen.getByText("Vou conferir os arquivos.");
     const firstTool = screen.getByRole("button", { name: /Leitura de arquivo.*file-0/ });
     expect(observation).toBeVisible();
-    expect(observation.closest("[data-execution-observation]")?.querySelector(".italic")).toContainElement(observation);
+    expect(observation.closest("[data-execution-observation]")).toHaveClass("text-foreground", "text-sm");
+    expect(observation.closest("[data-execution-observation]")?.querySelector(".italic")).toBeNull();
     expect(screen.queryByRole("button", { name: /Observações/ })).not.toBeInTheDocument();
     expect(observation.compareDocumentPosition(firstTool) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(screen.queryByText("Conteúdo 0")).not.toBeInTheDocument();
