@@ -53,6 +53,10 @@ it("prepares a version and dispatches signed remote builds without local Rust or
   expect(state.command).toHaveBeenCalledWith("gh", ["workflow", "run", "release-macos.yml", "--repo", "paulovnas/jarvis", "--ref", "main", "-f", "tag=v0.8.4-beta", "-f", "publish=true"]);
   expect(state.command.mock.calls.some(([program]) => ["cargo", "security", "codesign", "bun"].includes(String(program)))).toBe(false);
 });
+it("checks out the requested release tag instead of a stale workflow dispatch SHA", () => {
+  const workflow = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");
+  expect(workflow).toContain("ref: ${{ inputs.tag || github.sha }}");
+});
 it("keeps dry-run entirely local and read-only", async () => {
   process.argv.push("--dry-run");
   await import("./release");
