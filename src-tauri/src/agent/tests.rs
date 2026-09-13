@@ -116,6 +116,50 @@ fn a_new_user_turn_inherits_the_latest_durable_mcp_intent() {
     assert_eq!(unresolved, vec!["Continue e confirme a informação."]);
 }
 
+#[test]
+fn a_running_first_turn_is_immediately_available_for_title_generation() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    session
+        .reserve(
+            "Planeje uma migração longa sem bloquear o título.".into(),
+            options(ApprovalMode::Yolo),
+        )
+        .unwrap();
+
+    let request = title_request(&session).expect("running turn should be eligible");
+
+    assert_eq!(
+        request.message,
+        "Planeje uma migração longa sem bloquear o título."
+    );
+    assert_eq!(
+        session.data.lock().unwrap().turns[0].turn.status,
+        TurnStatus::Running
+    );
+}
+
+#[test]
+fn title_generation_guard_deduplicates_and_allows_retry_after_completion() {
+    let state = AgentState::default();
+    let first = state
+        .begin_title_generation("conversation")
+        .unwrap()
+        .expect("first request should acquire the guard");
+
+    assert!(state
+        .begin_title_generation("conversation")
+        .unwrap()
+        .is_none());
+
+    drop(first);
+
+    assert!(state
+        .begin_title_generation("conversation")
+        .unwrap()
+        .is_some());
+}
+
 pub(super) fn session(fixture: &Fixture) -> Arc<Session> {
     let journal = fixture.root.join("session.jsonl");
     fs::write(&journal, "{}\n").unwrap();

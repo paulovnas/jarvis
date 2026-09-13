@@ -267,16 +267,20 @@ export function ChatComposer({
           <div className="composer-options flex flex-1 items-center gap-0.5">
             <FlowPicker customFlows={catalog.data?.flows} customAgents={catalog.data?.agents} builtinAgents={catalog.data?.builtinAgents} value={workflow} onChange={chooseWorkflow} disabled={running || sending || compacting} />
 
-            {manualValidationAvailable && <Hint content="Solicita sua aprovação funcional ao final da implementação"><div className="flex h-7.5 shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-2">
+            {manualValidationAvailable && <Hint content="Solicita sua aprovação funcional ao final da implementação"><Label
+              htmlFor="manual-workflow-validation"
+              className={`flex h-7.5 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-[10px] font-normal transition-colors ${manualValidation ? "bg-onedark-green/5 text-onedark-green" : "text-muted-foreground hover:bg-secondary hover:text-foreground"}`}
+            >
               <Switch
                 id="manual-workflow-validation"
+                size="sm"
                 checked={manualValidation}
                 onCheckedChange={setManualValidation}
                 disabled={running || sending || compacting}
-                className="cursor-pointer"
+                className="cursor-pointer data-checked:bg-onedark-green"
               />
-              <Label htmlFor="manual-workflow-validation" className="cursor-pointer whitespace-nowrap text-[10px] text-muted-foreground">Validação manual</Label>
-            </div></Hint>}
+              <span className="whitespace-nowrap">Validação manual</span>
+            </Label></Hint>}
 
             <ModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} disabled={!modelsReady || running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} />
 

@@ -18,6 +18,11 @@ const mergeProposalSchema = z.object({
   deleteBranch: z.boolean(),
 });
 
+const resetProposalSchema = z.object({
+  mode: z.literal("soft"),
+  target: z.string(),
+});
+
 const pullRequestProposalSchema = z.object({
   base: z.string(),
   title: z.string(),
@@ -30,10 +35,12 @@ export const publicationProposalSchema = z.object({
   summary: z.string(),
   repositories: z.array(z.object({
     path: z.string(),
-    files: z.array(z.string()),
-    branch: z.string().nullable(),
-    commitMessage: z.string(),
-    pullRequest: pullRequestProposalSchema.nullable(),
+    reset: resetProposalSchema.nullable().default(null),
+    files: z.array(z.string()).default([]),
+    branch: z.string().nullable().default(null),
+    commitMessage: z.string().nullable().default(null),
+    push: z.enum(["none", "normal", "force_with_lease"]).default("none"),
+    pullRequest: pullRequestProposalSchema.nullable().default(null),
   })),
 });
 

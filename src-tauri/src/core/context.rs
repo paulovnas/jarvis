@@ -357,7 +357,7 @@ pub fn needs_approval(name: &str) -> bool {
 fn allowed(name: &str, plan: bool) -> bool {
     TOOLS.contains(&name) && (!plan || !needs_approval(name))
 }
-pub const INSTRUCTIONS: &str = "\nJarvis Core context policy: use ctx_search first for previously indexed results and session memory. Batch independent research commands with ctx_batch_execute; analyze logs, large files and data with ctx_execute/ctx_execute_file and print only relevant findings. Fetch reference URLs with ctx_fetch_and_index. Reserve direct read for small focused excerpts or exact code you will edit; use native write/edit for mutations. Do not dump whole files, DOM snapshots or process logs into the conversation to analyze them afterward. Large browser, terminal and external results are indexed automatically; retrieve omitted details with ctx_search using the returned source instead of running the same tool again. Context-mode processes run in the project; they are not a filesystem sandbox. Respect project scope and approvals, never bypass a denied tool. When execution tools are unavailable, use scoped read/search and indexing; Plan mode does not expose execution tools. ctx_index stores content in this conversation's private knowledge base. Core installation and upgrades are managed exclusively by Jarvis Settings, never by tool commands.\n";
+pub const INSTRUCTIONS: &str = "\nJarvis Core context policy: use ctx_search first only for previously indexed results or session memory. For new project facts with no known indexed source, gather and index them directly with ctx_batch_execute, ctx_execute/ctx_execute_file or ctx_index instead of probing an empty search first. Batch independent research commands with ctx_batch_execute; analyze logs, large files and data with ctx_execute/ctx_execute_file and print only relevant findings. Fetch reference URLs with ctx_fetch_and_index. Reserve direct read for small focused excerpts or exact code you will edit; use native write/edit for mutations. Do not dump whole files, DOM snapshots or process logs into the conversation to analyze them afterward. Large browser, terminal and external results are indexed automatically; retrieve omitted details with ctx_search using the returned source instead of running the same tool again. Context-mode processes run in the project; they are not a filesystem sandbox. Respect project scope and approvals, never bypass a denied tool. When execution tools are unavailable, use scoped read/search and indexing; Plan mode does not expose execution tools. ctx_index stores content in this conversation's private knowledge base. Core installation and upgrades are managed exclusively by Jarvis Settings, never by tool commands.\n";
 pub(super) async fn verify(package: &Path) -> Result<(), CoreError> {
     let test = tempfile::tempdir_in(package)?;
     let (_sender, signal) = watch::channel(false);
@@ -591,6 +591,7 @@ mod tests {
     fn context_instructions_explain_how_to_seed_an_empty_knowledge_base() {
         assert!(INSTRUCTIONS.contains("ctx_batch_execute"));
         assert!(INSTRUCTIONS.contains("ctx_index"));
+        assert!(INSTRUCTIONS.contains("instead of probing an empty search first"));
         assert!(INSTRUCTIONS.contains("instead of running the same tool again"));
     }
     #[test]

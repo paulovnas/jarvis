@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
@@ -28,6 +28,14 @@ describe("system preferences", () => {
     call.mockReset().mockResolvedValue(initial);
     vi.mocked(listen).mockReset().mockResolvedValue(vi.fn());
     vi.mocked(toast.success).mockReset();
+  });
+  it("groups the system preferences in one compact control panel", async () => {
+    render(<SystemSettings />);
+    const panel = await screen.findByRole("region", { name: "Preferências do sistema" });
+    expect(within(panel).getByRole("combobox", { name: "Idioma dos agentes" })).toHaveAttribute("data-size", "sm");
+    expect(within(panel).getByRole("combobox", { name: "Impedir repouso" })).toHaveAttribute("data-size", "sm");
+    expect(within(panel).getByRole("switch", { name: "Notificações do sistema" })).toHaveAttribute("data-size", "sm");
+    expect(within(panel).getByRole("spinbutton", { name: "Tempo para resposta recomendada" })).toBeVisible();
   });
   it.each([["open", "Enquanto Jarvis aberto"], ["off", "Desligado"], ["active", "Enquanto houver agentes/chats ativos"]])("saves sleep mode %s without changing notifications", async (value, label) => {
     const user = userEvent.setup();

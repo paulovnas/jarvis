@@ -101,6 +101,7 @@ pub(super) fn instructions(root: &Path, mode: Mode) -> String {
         root.display()
     );
     instructions.push_str("When a material user preference or clarification is needed, use ask_user to collect it through the Jarvis interface instead of listing questions in chat. Ask only what available evidence cannot resolve. Wait for the tool result; cancellation is not an answer or permission.\n");
+    instructions.push_str("Before the first tool, identify the exact requested outcome, what is outside scope, evidence already available and the smallest safe sequence to completion. Use a tool only to close an unresolved evidence gap, perform the requested change or verify a concrete risk. Do not add exploration, alternate approaches or validation for hypothetical concerns. Once the requested outcome and its necessary checks are satisfied, stop.\n");
     instructions.push_str("For libraries and frameworks, prefer Context7 or official project documentation before installed dependency source. Do not recursively explore node_modules, vendor, build output, caches or generated trees. An explicit dependency file remains readable only when a concrete unresolved behavior requires the exact installed implementation.\n");
     instructions.push_str("Reuse Context-mode recall and excerpts already read during the current turn. Batch independent discovery with Context-mode or parallel tool calls when available; do not reread unchanged ranges. Once evidence establishes a concrete root cause and patch scope, stop broad exploration, implement the focused change, and run the relevant validation.\n");
     if mode == Mode::Build {
@@ -771,6 +772,9 @@ mod tests {
         assert!(prompt.contains("Reuse Context-mode recall and excerpts already read"));
         assert!(prompt.contains("do not reread unchanged ranges"));
         assert!(prompt.contains("stop broad exploration"));
+        assert!(prompt.contains("the smallest safe sequence to completion"));
+        assert!(prompt.contains("validation for hypothetical concerns"));
+        assert!(prompt.contains("Once the requested outcome"));
         assert!(!prompt.contains("maximum number of steps"));
         assert!(prompt.contains("Use English for user-facing prose"));
         assert!(!prompt.contains("Respond in Brazilian Portuguese"));

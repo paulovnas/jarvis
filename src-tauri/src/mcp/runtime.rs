@@ -777,7 +777,7 @@ fn search_tools_definition(servers: &[String]) -> Value {
     json!({
         "type":"function",
         "name":MCP_SEARCH_TOOLS,
-        "description":"Search deferred tools inside the already selected or activated MCP servers. Use 2-4 precise capability keywords, preferably matching the MCP vocabulary. Results are bounded summaries; call mcp_load_tool with one returned tool ID before using it.",
+        "description":"Search deferred tools inside the already selected or activated MCP servers. Use 2-4 precise capability keywords, preferably matching the MCP vocabulary. Results are bounded summaries; call mcp_load_tool with one returned tool ID before using it. Once a matching tool is loaded, call it instead of searching again unless its schema proves it cannot perform the requested operation.",
         "parameters":{
             "type":"object",
             "properties":{
@@ -795,7 +795,7 @@ fn load_tool_definition() -> Value {
     json!({
         "type":"function",
         "name":MCP_LOAD_TOOL,
-        "description":"Load exactly one deferred MCP tool schema for the next model step. Use only a tool ID returned by mcp_search_tools. At most eight deferred tools stay loaded; loading another evicts the oldest.",
+        "description":"Load exactly one deferred MCP tool schema for the next model step. Use only a tool ID returned by mcp_search_tools. The loaded schema remains available; do not load it again. At most eight deferred tools stay loaded; loading another evicts the oldest.",
         "parameters":{
             "type":"object",
             "properties":{"tool":{"type":"string","minLength":1,"maxLength":240,"description":"Exact tool ID returned by mcp_search_tools."}},
@@ -993,7 +993,7 @@ impl TurnClients {
         let catalog_guidance = if self.deferred_tools.is_empty() {
             ""
         } else {
-            " A large MCP catalog is deferred: call mcp_search_tools with precise capability keywords, then mcp_load_tool for exactly one returned tool. Its validated schema appears on the next step. Do not guess hidden tool names or load unrelated tools."
+            " A large MCP catalog is deferred: start with one focused mcp_search_tools call using precise capability keywords, then mcp_load_tool for exactly one returned tool. Its validated schema appears on the next step and remains available. Call it directly; search again only when no result matches or the loaded schema cannot perform the requested operation. Do not reload an available schema, guess hidden tool names or load unrelated tools."
         };
         match self.exposure {
             Exposure::Explicit => format!(

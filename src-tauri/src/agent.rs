@@ -741,6 +741,20 @@ impl Drop for SessionLoadLease {
     }
 }
 
+#[derive(Debug)]
+struct TitleGenerationLease {
+    id: String,
+    generating: Arc<Mutex<HashSet<String>>>,
+}
+
+impl Drop for TitleGenerationLease {
+    fn drop(&mut self) {
+        if let Ok(mut generating) = self.generating.lock() {
+            generating.remove(&self.id);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AgentState {
     pub(crate) processes: processes::ProcessState,
@@ -748,6 +762,7 @@ pub struct AgentState {
     sessions: Arc<Mutex<HashMap<String, Arc<Session>>>>,
     session_gates: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
     loading_sessions: Arc<Mutex<HashSet<String>>>,
+    title_generations: Arc<Mutex<HashSet<String>>>,
     histories: history::HistoryState,
     workflows: workflow::Registry,
     journal_maintenance: Arc<AtomicBool>,
@@ -761,6 +776,7 @@ impl Default for AgentState {
             sessions: Default::default(),
             session_gates: Default::default(),
             loading_sessions: Default::default(),
+            title_generations: Default::default(),
             histories: Default::default(),
             workflows: Default::default(),
             journal_maintenance: Default::default(),
@@ -805,6 +821,20 @@ impl AgentState {
             return Err(journal_maintenance::maintenance_error());
         }
         Ok(lease)
+    }
+
+    fn begin_title_generation(&self, id: &str) -> Result<Option<TitleGenerationLease>, AgentError> {
+        let mut generating = self
+            .title_generations
+            .lock()
+            .map_err(|_| AgentError::internal())?;
+        if !generating.insert(id.into()) {
+            return Ok(None);
+        }
+        Ok(Some(TitleGenerationLease {
+            id: id.into(),
+            generating: self.title_generations.clone(),
+        }))
     }
 
     pub(crate) fn has_active_chats(&self) -> bool {
@@ -1271,6 +1301,13 @@ fn spawn_run(
     app: tauri::AppHandle,
     control: RunControl,
 ) {
+    spawn_title_generation(
+        &session,
+        state.clone(),
+        oauth.clone(),
+        home.clone(),
+        app.clone(),
+    );
     let RunControl {
         mut signal,
         activity,
@@ -1325,7 +1362,6 @@ fn spawn_run(
             }
         }
         desktop_events::finished(&app, &session, &home);
-        generate_title(&session, &state, &oauth, &home, &app).await;
         app.state::<AgentState>().release_idle(&session);
     });
 }
@@ -2648,29 +2684,64 @@ fn finish(session: &Session, result: Result<(), AgentError>) {
     }
 }
 
-async fn generate_title(
+#[derive(Debug, Clone)]
+struct TitleRequest {
+    message: String,
+    options: TurnOptions,
+}
+
+fn title_request(session: &Session) -> Option<TitleRequest> {
+    session.data.lock().ok().and_then(|data| {
+        data.turns.first().map(|first| TitleRequest {
+            message: first.turn.user.chars().take(2_000).collect(),
+            options: first.turn.options.clone(),
+        })
+    })
+}
+
+fn spawn_title_generation(
     session: &Session,
-    state: &AppState,
-    oauth: &OpenAiCodexState,
-    home: &std::path::Path,
-    app: &tauri::AppHandle,
+    state: AppState,
+    oauth: OpenAiCodexState,
+    home: PathBuf,
+    app: tauri::AppHandle,
 ) {
-    let first = session.data.lock().ok().and_then(|data| {
-        data.turns
-            .iter()
-            .find(|item| item.turn.status == TurnStatus::Completed)
-            .cloned()
-    });
-    let Some(first) = first else {
+    let Some(request) = title_request(session) else {
         return;
     };
-    if !library::needs_generated_title(state, home, &session.id).unwrap_or(false) {
+    let agent = app.state::<AgentState>().inner().clone();
+    let Ok(Some(lease)) = agent.begin_title_generation(&session.id) else {
+        return;
+    };
+    let conversation_id = session.id.clone();
+    tauri::async_runtime::spawn(async move {
+        let _lease = lease;
+        generate_title(conversation_id, request, state, oauth, home, app).await;
+    });
+}
+
+async fn generate_title(
+    conversation_id: String,
+    request: TitleRequest,
+    state: AppState,
+    oauth: OpenAiCodexState,
+    home: PathBuf,
+    app: tauri::AppHandle,
+) {
+    let eligibility_state = state.clone();
+    let eligibility_home = home.clone();
+    let eligibility_id = conversation_id.clone();
+    let eligible = tauri::async_runtime::spawn_blocking(move || {
+        library::needs_generated_title(&eligibility_state, &eligibility_home, &eligibility_id)
+    })
+    .await;
+    if !matches!(eligible, Ok(Ok(true))) {
         return;
     }
     let state_clone = state.clone();
     let oauth = oauth.clone();
-    let home_clone = home.to_path_buf();
-    let options = first.turn.options.clone();
+    let home_clone = home.clone();
+    let options = request.options;
     let options_clone = options.clone();
     let auth = tauri::async_runtime::spawn_blocking(move || {
         oauth.inference_credential(
@@ -2685,21 +2756,17 @@ async fn generate_title(
     let Ok(Ok(credential)) = auth else {
         return;
     };
-    let reply: String = first
-        .turn
-        .steps
-        .iter()
-        .map(|step| step.text.as_str())
-        .collect();
-    let input = vec![
-        json!({"role":"user", "content":format!("Request: {}\nResponse: {}", first.turn.user.chars().take(2000).collect::<String>(), reply.chars().take(3000).collect::<String>())}),
-    ];
+    let input = vec![json!({
+        "role":"user",
+        "content":format!("First user message:\n{}", request.message),
+    })];
     let (_sender, signal) = watch::channel(false);
+    let title_session_id = title::request_session_id(&conversation_id);
     let result = tokio::time::timeout(
         Duration::from_secs(45),
         provider::stream(
             &credential,
-            &session.id,
+            &title_session_id,
             &options,
             title::INSTRUCTIONS,
             input,
@@ -2711,8 +2778,15 @@ async fn generate_title(
     .await;
     if let Ok(Ok(response)) = result {
         if let Some(title) = title::normalize(&response.text) {
-            if library::save_generated_title(state, home, &session.id, &title).unwrap_or(false) {
-                let _ = app.emit("library:changed", &session.id);
+            let save_state = state.clone();
+            let save_home = home.clone();
+            let save_id = conversation_id.clone();
+            let saved = tauri::async_runtime::spawn_blocking(move || {
+                library::save_generated_title(&save_state, &save_home, &save_id, &title)
+            })
+            .await;
+            if matches!(saved, Ok(Ok(true))) {
+                let _ = app.emit("library:changed", &conversation_id);
             }
         }
     }

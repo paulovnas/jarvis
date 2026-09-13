@@ -120,45 +120,49 @@ export function ChatCleanupSettings() {
   const journalPercent = journalsProgress?.totalFiles
     ? journalsProgress.processedFiles / journalsProgress.totalFiles * 100
     : null;
-  return <section aria-labelledby="cleanup-title" className="mt-8 space-y-4 border-t border-border pt-7">
+  return <section aria-labelledby="cleanup-title" className="mt-7 space-y-3 border-t border-border pt-6">
     <h2 id="cleanup-title" className="micro-label flex items-center gap-2 text-muted-foreground"><Archive className="size-3.5" />Limpeza</h2>
-    <div className="grid items-start gap-4 lg:grid-cols-2">
-    <Card className="min-w-0 gap-4 p-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-2"><Label htmlFor="cleanup-period" className="text-xs">Conversas sem atividade há mais de</Label>
+    <Card size="sm" className="grid gap-0 rounded-lg py-0 lg:grid-cols-2">
+    <section aria-label="Limpeza de conversas" className="flex min-w-0 flex-col gap-3 p-4">
+      <div className="flex min-w-0 items-start gap-3">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground"><Trash2 className="size-3.5" /></span>
+        <div className="min-w-0"><h3 className="text-xs font-medium">Conversas antigas</h3><p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">Revise históricos inativos antes da exclusão definitiva.</p></div>
+      </div>
+      <div role="group" aria-label="Controles de limpeza" className="mt-auto flex flex-wrap items-end gap-2">
+        <div className="space-y-1.5"><Label htmlFor="cleanup-period" className="text-[10px] text-muted-foreground">Sem atividade há mais de</Label>
           <Select value={days} onValueChange={value => { if (value) { setDays(value); setPreview(null); } }} disabled={loading || deleting}>
-            <SelectTrigger id="cleanup-period" className="w-36 cursor-pointer"><SelectValue>{days} dias</SelectValue></SelectTrigger>
-            <SelectContent>{[7, 14, 30, 90].map(value => <SelectItem key={value} value={String(value)} className="cursor-pointer">{value} dias</SelectItem>)}</SelectContent>
+            <SelectTrigger id="cleanup-period" size="sm" className="w-32 cursor-pointer text-xs"><SelectValue>{days} dias</SelectValue></SelectTrigger>
+            <SelectContent>{[7, 14, 30, 90].map(value => <SelectItem key={value} value={String(value)} className="cursor-pointer text-xs">{value} dias</SelectItem>)}</SelectContent>
           </Select>
         </div>
         <Button variant="outline" size="sm" disabled={loading || deleting} onClick={() => { void analyze(); }} className="cursor-pointer gap-2"><Trash2 className="size-3.5" />Revisar limpeza</Button>
       </div>
-      <p className="text-xs text-muted-foreground">A conversa mais recente de cada projeto será mantida.</p>
+      <p className="text-[10px] leading-4 text-muted-foreground">A conversa mais recente de cada projeto será mantida.</p>
       {loading && <div role="status" aria-label="Analisando históricos" className="flex gap-3"><Skeleton className="h-4 w-1/2" /><Skeleton className="h-4 w-20" /></div>}
       {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
       {preview?.conversations.length === 0 && <p role="status" className="text-xs text-muted-foreground">Nenhuma conversa disponível para limpeza.{preview.protected > 0 && ` ${preview.protected} protegidas ou indisponíveis.`}</p>}
-    </Card>
-    <Card role="region" aria-label="Cache de recursos" className="min-w-0 gap-4 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3"><div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-secondary"><Database className="size-4 text-onedark-yellow" /></div><div className="min-w-0"><p className="text-xs font-medium">Cache do Marketplace</p><p className="text-[11px] text-muted-foreground">Repositórios reutilizados nas consultas e atualizações de skills.</p></div></div>
-        <Button variant="outline" size="sm" disabled={cacheLoading || cacheClearing || !cache?.bytes} onClick={() => setConfirmCache(true)} className="cursor-pointer gap-2"><Trash2 className="size-3.5" />Limpar cache</Button>
+    </section>
+    <section role="region" aria-label="Cache de recursos" className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:border-t-0 lg:border-l">
+      <div className="flex min-w-0 items-start gap-3">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary"><Database className="size-3.5 text-onedark-yellow" /></span>
+        <div className="min-w-0"><h3 className="text-xs font-medium">Cache do Marketplace</h3><p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">Repositórios reutilizados nas consultas e atualizações de skills.</p></div>
       </div>
       {cacheLoading && <div role="status" aria-label="Analisando cache de recursos" className="flex gap-3"><Skeleton className="h-4 w-28" /><Skeleton className="h-4 w-48" /></div>}
-      {!cacheLoading && cache && <div className="flex flex-wrap items-baseline justify-between gap-2 rounded-md border border-border bg-secondary/50 px-3 py-2"><span className="font-mono text-sm text-foreground">{size(cache.bytes)}</span><span className="text-[11px] text-muted-foreground">{cache.repositories} {cache.repositories === 1 ? "repositório" : "repositórios"}{cache.residues > 0 && ` · ${cache.residues} ${cache.residues === 1 ? "resíduo antigo" : "resíduos antigos"}`}</span></div>}
+      {!cacheLoading && cache && <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border pt-3"><span className="font-mono text-sm tabular-nums text-foreground">{size(cache.bytes)}</span><span className="text-[10px] text-muted-foreground">{cache.repositories} {cache.repositories === 1 ? "repositório" : "repositórios"}{cache.residues > 0 && ` · ${cache.residues} ${cache.residues === 1 ? "resíduo antigo" : "resíduos antigos"}`}</span><Button variant="outline" size="sm" disabled={cacheClearing || !cache.bytes} onClick={() => setConfirmCache(true)} className="ml-auto cursor-pointer gap-2"><Trash2 className="size-3.5" />Limpar cache</Button></div>}
       {cacheError && <div className="flex flex-wrap items-center justify-between gap-2"><p role="alert" className="text-xs text-destructive">{cacheError}</p><Button variant="ghost" size="sm" disabled={cacheLoading || cacheClearing} onClick={() => { void refreshCache(); }} className="cursor-pointer">Tentar novamente</Button></div>}
-      <p className="text-xs text-muted-foreground">Skills instaladas e suas configurações são preservadas. Resíduos de downloads interrompidos também são removidos automaticamente ao iniciar o Jarvis.</p>
-    </Card>
-    <Card role="region" aria-label="Otimização dos históricos" className="min-w-0 gap-4 p-5 lg:col-span-2">
+      <p className="text-[10px] leading-4 text-muted-foreground">Skills e configurações são preservadas. Downloads interrompidos também são removidos ao iniciar o Jarvis.</p>
+    </section>
+    <section role="region" aria-label="Otimização dos históricos" className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:col-span-2">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3"><div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-secondary"><HardDrive className="size-4 text-onedark-cyan" /></div><div className="min-w-0"><p className="text-xs font-medium">Históricos de conversas e agentes</p><p className="text-[11px] text-muted-foreground">Compacta revisões antigas sem alterar o estado atual das conversas.</p></div></div>
+        <div className="flex min-w-0 items-center gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary"><HardDrive className="size-3.5 text-onedark-cyan" /></span><div className="min-w-0"><h3 className="text-xs font-medium">Históricos de conversas e agentes</h3><p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">Compacta revisões antigas sem alterar o estado atual das conversas.</p></div></div>
         <Button variant="outline" size="sm" disabled={journalsLoading || journalsOptimizing || !journals?.candidates} onClick={() => { void optimize(); }} className="cursor-pointer gap-2"><Sparkles className="size-3.5" />{journalsOptimizing ? "Otimizando…" : "Otimizar históricos"}</Button>
       </div>
-      {journalsLoading && <div role="status" aria-label="Analisando arquivos de histórico" className="grid gap-2 sm:grid-cols-3"><Skeleton className="h-12" /><Skeleton className="h-12" /><Skeleton className="h-12" /></div>}
-      {!journalsLoading && journals && <div className="grid gap-2 sm:grid-cols-3">
-        <div className="rounded-md border border-border bg-secondary/50 px-3 py-2"><p className="font-mono text-sm text-foreground">{size(journals.currentBytes)}</p><p className="text-[10px] text-muted-foreground">{journals.files} {journals.files === 1 ? "arquivo de histórico analisado" : "arquivos de histórico analisados"}</p></div>
-        <div className="rounded-md border border-border bg-secondary/50 px-3 py-2"><p className="font-mono text-sm text-onedark-green">{size(journals.recoverableBytes)}</p><p className="text-[10px] text-muted-foreground">espaço recuperável em {journals.candidates} {journals.candidates === 1 ? "arquivo" : "arquivos"}</p></div>
-        <div className="rounded-md border border-border bg-secondary/50 px-3 py-2"><p className="font-mono text-sm text-foreground">{(journals.maxAmplificationBps / 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}×</p><p className="text-[10px] text-muted-foreground">maior amplificação · {journals.obsoleteRecords.toLocaleString("pt-BR")} revisões obsoletas</p></div>
-      </div>}
+      {journalsLoading && <div role="status" aria-label="Analisando arquivos de histórico" className="grid gap-3 border-y border-border py-3 sm:grid-cols-3"><Skeleton className="h-9" /><Skeleton className="h-9" /><Skeleton className="h-9" /></div>}
+      {!journalsLoading && journals && <dl className="grid gap-3 border-y border-border py-3 sm:grid-cols-3 sm:gap-0 sm:divide-x sm:divide-border">
+        <div className="flex flex-col sm:px-3 sm:first:pl-0"><dt className="order-2 text-[10px] text-muted-foreground">{journals.files} {journals.files === 1 ? "arquivo de histórico analisado" : "arquivos de histórico analisados"}</dt><dd className="order-1 font-mono text-sm tabular-nums text-foreground">{size(journals.currentBytes)}</dd></div>
+        <div className="flex flex-col sm:px-3"><dt className="order-2 text-[10px] text-muted-foreground">espaço recuperável em {journals.candidates} {journals.candidates === 1 ? "arquivo" : "arquivos"}</dt><dd className="order-1 font-mono text-sm tabular-nums text-onedark-green">{size(journals.recoverableBytes)}</dd></div>
+        <div className="flex flex-col sm:px-3 sm:last:pr-0"><dt className="order-2 text-[10px] text-muted-foreground">maior amplificação · {journals.obsoleteRecords.toLocaleString("pt-BR")} revisões obsoletas</dt><dd className="order-1 font-mono text-sm tabular-nums text-foreground">{(journals.maxAmplificationBps / 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}×</dd></div>
+      </dl>}
       {journalsProgress && <div role="status" aria-label="Progresso da otimização dos históricos" className="space-y-2">
         <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground"><span>{journalsProgress.phase === "analyzing" ? "Analisando históricos" : journalsProgress.phase === "compacting" ? "Compactando históricos" : "Otimização concluída"}</span><span className="font-mono tabular-nums">{journalsProgress.processedFiles}/{journalsProgress.totalFiles}{journalsProgress.recoveredBytes > 0 && ` · ${size(journalsProgress.recoveredBytes)}`}</span></div>
         <Progress value={journalPercent} aria-label="Arquivos processados" className={journalPercent === null ? "core-install-progress" : undefined} />
@@ -166,9 +170,9 @@ export function ChatCleanupSettings() {
       {journals && journals.protectedFiles > 0 && <p className="text-xs text-muted-foreground">{journals.protectedFiles} {journals.protectedFiles === 1 ? "histórico em uso foi preservado" : "históricos em uso foram preservados"}; eles entram na próxima análise.</p>}
       {journals && journals.invalidFiles > 0 && <p className="text-xs text-onedark-yellow">{journals.invalidFiles} {journals.invalidFiles === 1 ? "arquivo inválido foi mantido intacto" : "arquivos inválidos foram mantidos intactos"}.</p>}
       {journalsError && <div className="flex flex-wrap items-center justify-between gap-2"><p role="alert" className="text-xs text-destructive">{journalsError}</p><Button variant="ghost" size="sm" disabled={journalsLoading || journalsOptimizing} onClick={() => { void refreshJournals(); }} className="cursor-pointer">Tentar novamente</Button></div>}
-      <p className="text-xs text-muted-foreground">A troca só acontece depois que o novo arquivo é sincronizado, relido e comparado ao estado original. Conversas e subagentes em execução nunca são modificados.</p>
+      <p className="text-[10px] leading-4 text-muted-foreground">A troca só ocorre após o novo arquivo ser sincronizado e validado. Conversas e subagentes em execução nunca são modificados.</p>
+    </section>
     </Card>
-    </div>
     <AlertDialog open={Boolean(preview?.conversations.length)} onOpenChange={open => { if (!open && !deleting) setPreview(null); }}>
       <AlertDialogContent className="dark flex max-h-[80dvh] flex-col gap-4 border-border bg-card sm:max-w-lg">
         <AlertDialogHeader>

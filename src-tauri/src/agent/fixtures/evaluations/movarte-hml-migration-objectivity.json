@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "id": "movarte-hml-migration-objectivity",
+  "description": "Sanitized production trace of a narrow HML follow-up where Planner and Builder completed the migration safely but spent most of the turn on duplicated discovery and provider decisions.",
+  "sanitizedInput": "Apply the already-created migration for the current task to HML only.",
+  "expectations": {
+    "requiredOutcome": "completed",
+    "requiredMcp": "database",
+    "forbidOtherMcps": true,
+    "agentBudgets": [
+      {
+        "role": "planner",
+        "maxProviderSteps": 6,
+        "maxToolCalls": 5,
+        "maxToolErrors": 0,
+        "maxInputTokens": 900000,
+        "maxDurationMs": 300000
+      },
+      {
+        "role": "builder",
+        "maxProviderSteps": 16,
+        "maxToolCalls": 16,
+        "maxToolErrors": 1,
+        "maxInputTokens": 1000000,
+        "maxDurationMs": 240000
+      }
+    ],
+    "baselineViolations": [
+      { "code": "excessive_provider_steps", "count": 7, "role": "planner" },
+      { "code": "excessive_tool_calls", "count": 7, "role": "planner" },
+      { "code": "excessive_tool_errors", "count": 1, "role": "planner" },
+      { "code": "excessive_input_tokens", "count": 876652, "role": "planner" },
+      { "code": "excessive_duration_ms", "count": 219451, "role": "planner" },
+      { "code": "excessive_provider_steps", "count": 23, "role": "builder" },
+      { "code": "excessive_tool_calls", "count": 23, "role": "builder" },
+      { "code": "excessive_tool_errors", "count": 2, "role": "builder" },
+      { "code": "excessive_input_tokens", "count": 920846, "role": "builder" },
+      { "code": "excessive_duration_ms", "count": 157721, "role": "builder" }
+    ]
+  },
+  "observed": {
+    "wallTimeMs": 519451,
+    "agents": [
+      {
+        "role": "planner",
+        "outcome": "completed",
+        "providerSteps": 13,
+        "measuredProviderSteps": 13,
+        "toolCalls": 12,
+        "toolErrors": 1,
+        "inputTokens": 1776652,
+        "outputTokens": 2665,
+        "cacheReadTokens": 1508736,
+        "cacheWriteTokens": 0,
+        "durationMs": 519451,
+        "tools": [
+          { "name": "beads_list", "calls": 1, "errors": 0 },
+          { "name": "read", "calls": 4, "errors": 1, "errorClasses": { "path_not_found": 1 } },
+          { "name": "list", "calls": 3, "errors": 0 },
+          { "name": "beads_create", "calls": 1, "errors": 0 },
+          { "name": "hub_spawn", "calls": 1, "errors": 0 },
+          { "name": "hub_wait", "calls": 1, "errors": 0 },
+          { "name": "beads_close", "calls": 1, "errors": 0 }
+        ]
+      },
+      {
+        "role": "builder",
+        "outcome": "completed",
+        "providerSteps": 39,
+        "measuredProviderSteps": 39,
+        "toolCalls": 39,
+        "toolErrors": 3,
+        "inputTokens": 1920846,
+        "outputTokens": 15555,
+        "cacheReadTokens": 1596928,
+        "cacheWriteTokens": 0,
+        "durationMs": 397721,
+        "tools": [
+          { "name": "ctx_search", "calls": 2, "errors": 1, "errorClasses": { "empty_context_index": 1 } },
+          { "name": "read_skill", "calls": 1, "errors": 0 },
+          { "name": "beads_claim", "calls": 1, "errors": 0 },
+          { "name": "ctx_batch_execute", "calls": 3, "errors": 0 },
+          { "name": "read", "calls": 8, "errors": 0 },
+          { "name": "list", "calls": 1, "errors": 0 },
+          { "name": "bash", "calls": 2, "errors": 0 },
+          { "name": "mcp_activate", "calls": 1, "errors": 0 },
+          { "name": "mcp_search_tools", "calls": 3, "errors": 0 },
+          { "name": "mcp_load_tool", "calls": 4, "errors": 1, "errorClasses": { "unknown_deferred_tool": 1 } },
+          { "name": "database_list_connections", "mcp": "database", "calls": 1, "errors": 0 },
+          { "name": "database_execute_read_query", "mcp": "database", "calls": 7, "errors": 1, "errorClasses": { "invalid_multi_statement_read": 1 } },
+          { "name": "ctx_execute", "calls": 1, "errors": 0 },
+          { "name": "ctx_execute_file", "calls": 1, "errors": 0 },
+          { "name": "database_execute_query", "mcp": "database", "calls": 1, "errors": 0 },
+          { "name": "beads_update", "calls": 1, "errors": 0 },
+          { "name": "hub_complete", "calls": 1, "errors": 0 }
+        ]
+      }
+    ]
+  }
+}

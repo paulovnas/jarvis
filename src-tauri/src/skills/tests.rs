@@ -253,6 +253,8 @@ async fn progressive_loading_reads_only_enabled_skills_and_confines_references()
     let listed = prompt(&skills);
     assert!(listed.contains("A useful workflow"));
     assert!(!listed.contains("Private instructions"));
+    assert!(listed.contains("A topic match alone is insufficient"));
+    assert!(listed.contains("narrow operation already covered by project instructions"));
     assert!(read(home, &project, &json!({"id":id}))
         .await
         .unwrap()

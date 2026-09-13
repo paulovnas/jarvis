@@ -76,19 +76,36 @@ it("shows the exact commit, PR and merge scope before publishing", async () => {
     summary: "Publicar frontend e backend em propostas separadas.",
     agentReferences: [],
     target: { kind: "publication", after: { summary: "Publicar frontend e backend em propostas separadas.", repositories: [
-      { path: "frontend", files: ["src/App.tsx"], branch: "feat/new-home", commitMessage: "feat(home): improve hero", pullRequest: { base: "main", title: "Melhora a página inicial", body: "## Alterações\n\nAtualiza a hero.", draft: false, merge: { method: "squash", deleteBranch: true } } },
-      { path: "backend", files: ["src/server.ts"], branch: null, commitMessage: "fix(api): validate request", pullRequest: null },
+      { path: "frontend", reset: null, files: ["src/App.tsx"], branch: "feat/new-home", commitMessage: "feat(home): improve hero", push: "normal", pullRequest: { base: "main", title: "Melhora a página inicial", body: "## Alterações\n\nAtualiza a hero.", draft: false, merge: { method: "squash", deleteBranch: true } } },
+      { path: "backend", reset: null, files: ["src/server.ts"], branch: null, commitMessage: "fix(api): validate request", push: "none", pullRequest: null },
     ] } },
   };
   render(<AuthoringApprovalDrawer request={request} onAnswer={answer} />);
-  const dialog = screen.getByRole("dialog", { name: "Revisar publicação" });
+  const dialog = screen.getByRole("dialog", { name: "Revisar ações Git e GitHub" });
   expect(within(dialog).getByText("frontend")).toBeVisible();
   expect(within(dialog).getByText("backend")).toBeVisible();
   expect(within(dialog).getByText("feat(home): improve hero")).toBeVisible();
   expect(within(dialog).getByText("src/App.tsx")).toBeVisible();
   expect(await within(dialog).findByRole("heading", { name: "Alterações" })).toBeVisible();
-  expect(within(dialog).getByText(/Merge após criar · squash/)).toBeVisible();
+  expect(within(dialog).getByText("Push para origin")).toBeVisible();
+  expect(within(dialog).getByText(/Merge após localizar ou criar · squash/)).toBeVisible();
   expect(answer).not.toHaveBeenCalled();
-  await user.click(within(dialog).getByRole("button", { name: "Aprovar e publicar" }));
+  await user.click(within(dialog).getByRole("button", { name: "Aprovar e executar" }));
   expect(answer).toHaveBeenCalledWith(true, null);
+});
+
+it("shows a supervised soft reset without requiring a commit", () => {
+  const request: PendingAuthoring = {
+    turnId: "turn-4", toolId: "tool-4", action: "publish", catalogRevision: null,
+    summary: "Desfazer o último commit e manter as alterações preparadas.",
+    agentReferences: [],
+    target: { kind: "publication", after: { summary: "Desfazer o último commit e manter as alterações preparadas.", repositories: [
+      { path: "movart-express-back", reset: { mode: "soft", target: "HEAD^" }, files: [], branch: null, commitMessage: null, push: "none", pullRequest: null },
+    ] } },
+  };
+  render(<AuthoringApprovalDrawer request={request} onAnswer={vi.fn().mockResolvedValue(true)} />);
+  const dialog = screen.getByRole("dialog", { name: "Revisar ações Git e GitHub" });
+  expect(within(dialog).getByText("Reorganizar histórico")).toBeVisible();
+  expect(within(dialog).getByText("git reset --soft HEAD^")).toBeVisible();
+  expect(within(dialog).queryByText("Commit")).not.toBeInTheDocument();
 });

@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const CASES: [&str; 2] = [
+const CASES: [&str; 3] = [
     include_str!("fixtures/evaluations/movarte-explicit-mcp.json"),
     include_str!("fixtures/evaluations/movarte-planned-flow.json"),
+    include_str!("fixtures/evaluations/movarte-hml-migration-objectivity.json"),
 ];
 const RUNTIME_SUITE: &str = include_str!("fixtures/evaluations/movarte-runtime-scenarios.json");
 
@@ -28,6 +29,19 @@ struct Expectations {
     forbid_other_mcps: bool,
     #[serde(default)]
     baseline_violations: Vec<Violation>,
+    #[serde(default)]
+    agent_budgets: Vec<AgentBudget>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AgentBudget {
+    role: String,
+    max_provider_steps: u64,
+    max_tool_calls: u64,
+    max_tool_errors: u64,
+    max_input_tokens: u64,
+    max_duration_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -79,6 +93,8 @@ enum Outcome {
 struct Violation {
     code: ViolationCode,
     count: u64,
+    #[serde(default)]
+    role: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -87,6 +103,11 @@ enum ViolationCode {
     IncompleteRun,
     MissingRequiredMcp,
     UnrequestedMcp,
+    ExcessiveProviderSteps,
+    ExcessiveToolCalls,
+    ExcessiveToolErrors,
+    ExcessiveInputTokens,
+    ExcessiveDurationMs,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -254,6 +275,33 @@ fn validate(case: &EvaluationCase) -> Result<(), String> {
             return Err(format!("{} tool totals do not match its trace", agent.role));
         }
     }
+    let mut budget_roles = std::collections::HashSet::new();
+    for budget in &case.expectations.agent_budgets {
+        if budget.role.trim().is_empty()
+            || budget.max_provider_steps == 0
+            || budget.max_tool_calls == 0
+            || budget.max_input_tokens == 0
+            || budget.max_duration_ms == 0
+        {
+            return Err(format!("{} contains an invalid agent budget", case.id));
+        }
+        if !budget_roles.insert(budget.role.as_str()) {
+            return Err(format!("{} contains duplicate agent budgets", case.id));
+        }
+        if case
+            .observed
+            .agents
+            .iter()
+            .filter(|agent| agent.role == budget.role)
+            .count()
+            != 1
+        {
+            return Err(format!(
+                "{} budget role {} must identify exactly one observed agent",
+                case.id, budget.role
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -309,6 +357,7 @@ fn assess(case: &EvaluationCase) -> Vec<Violation> {
         violations.push(Violation {
             code: ViolationCode::IncompleteRun,
             count: incomplete,
+            role: None,
         });
     }
     if let Some(required) = &case.expectations.required_mcp {
@@ -324,6 +373,7 @@ fn assess(case: &EvaluationCase) -> Vec<Violation> {
             violations.push(Violation {
                 code: ViolationCode::MissingRequiredMcp,
                 count: 1,
+                role: None,
             });
         }
         if case.expectations.forbid_other_mcps {
@@ -339,6 +389,50 @@ fn assess(case: &EvaluationCase) -> Vec<Violation> {
                 violations.push(Violation {
                     code: ViolationCode::UnrequestedMcp,
                     count: unrelated_calls,
+                    role: None,
+                });
+            }
+        }
+    }
+    for budget in &case.expectations.agent_budgets {
+        let agent = case
+            .observed
+            .agents
+            .iter()
+            .find(|agent| agent.role == budget.role)
+            .expect("validated evaluation budget role");
+        for (code, actual, maximum) in [
+            (
+                ViolationCode::ExcessiveProviderSteps,
+                agent.provider_steps,
+                budget.max_provider_steps,
+            ),
+            (
+                ViolationCode::ExcessiveToolCalls,
+                agent.tool_calls,
+                budget.max_tool_calls,
+            ),
+            (
+                ViolationCode::ExcessiveToolErrors,
+                agent.tool_errors,
+                budget.max_tool_errors,
+            ),
+            (
+                ViolationCode::ExcessiveInputTokens,
+                agent.input_tokens,
+                budget.max_input_tokens,
+            ),
+            (
+                ViolationCode::ExcessiveDurationMs,
+                agent.duration_ms,
+                budget.max_duration_ms,
+            ),
+        ] {
+            if actual > maximum {
+                violations.push(Violation {
+                    code,
+                    count: actual - maximum,
+                    role: Some(agent.role.clone()),
                 });
             }
         }
@@ -349,7 +443,7 @@ fn assess(case: &EvaluationCase) -> Vec<Violation> {
 #[test]
 fn harness_evaluation_reports_the_sanitized_movarte_baselines() {
     let cases = load_cases();
-    assert_eq!(cases.len(), 2);
+    assert_eq!(cases.len(), 3);
     for case in &cases {
         validate(case).unwrap();
         assert_eq!(assess(case), case.expectations.baseline_violations);
@@ -415,6 +509,34 @@ fn harness_evaluation_reports_the_sanitized_movarte_baselines() {
             cache_read_basis_points: 9_762,
             wall_time_ms: 2_334_422,
             agent_time_ms: 4_343_697,
+        }
+    );
+
+    let migration = cases
+        .iter()
+        .find(|case| case.id == "movarte-hml-migration-objectivity")
+        .unwrap();
+    assert_eq!(
+        summarize(migration),
+        Summary {
+            agents: 2,
+            provider_steps: 52,
+            measured_provider_steps: 52,
+            tool_calls: 51,
+            tool_errors: 4,
+            error_classes: BTreeMap::from([
+                ("empty_context_index".into(), 1),
+                ("invalid_multi_statement_read".into(), 1),
+                ("path_not_found".into(), 1),
+                ("unknown_deferred_tool".into(), 1),
+            ]),
+            input_tokens: 3_697_498,
+            output_tokens: 18_220,
+            cache_read_tokens: 3_105_664,
+            cache_write_tokens: 0,
+            cache_read_basis_points: 8_399,
+            wall_time_ms: 519_451,
+            agent_time_ms: 917_172,
         }
     );
 }

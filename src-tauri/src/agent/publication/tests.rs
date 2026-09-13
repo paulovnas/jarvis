@@ -33,9 +33,11 @@ fn call(name: &str, command: &str) -> ToolCall {
 fn repo_proposal(path: &str, files: &[&str]) -> RepositoryProposal {
     RepositoryProposal {
         path: path.into(),
+        reset: None,
         files: files.iter().map(|file| (*file).into()).collect(),
         branch: None,
-        commit_message: "feat: publish approved change".into(),
+        commit_message: Some("feat: publish approved change".into()),
+        push: PushMode::None,
         pull_request: None,
     }
 }
@@ -120,6 +122,16 @@ fn publication_tool_exposes_typed_multi_repository_review() {
         definition["parameters"]["properties"]["repositories"]["maxItems"],
         8
     );
+    let repository = &definition["parameters"]["properties"]["repositories"]["items"];
+    assert_eq!(repository["properties"]["files"]["minItems"], 0);
+    assert_eq!(
+        repository["properties"]["reset"]["anyOf"][1]["properties"]["mode"]["enum"][0],
+        "soft"
+    );
+    assert_eq!(
+        repository["properties"]["push"]["enum"][2],
+        "force_with_lease"
+    );
     let settings = Settings {
         project_id: "p1".into(),
         publish_prompt: "Use focused commits".into(),
@@ -130,6 +142,8 @@ fn publication_tool_exposes_typed_multi_repository_review() {
     let prompt = instructions(&settings);
     assert!(prompt.contains("jarvis_propose_publication"));
     assert!(prompt.contains("Never infer merge authorization"));
+    assert!(prompt.contains("Never send the user to a terminal"));
+    assert!(prompt.contains("reused automatically"));
     assert!(prompt.contains(PR_QUESTION_ID));
     assert!(prompt.contains("Use focused commits"));
     assert_eq!(
@@ -163,6 +177,11 @@ fn shell_publication_mutations_are_blocked_without_false_positives_for_inspectio
     assert!(blocks_unsupervised_tool(&call("bash", "git diff --cached")).is_none());
     assert!(blocks_unsupervised_tool(&call("bash", "rg 'git commit' src")).is_none());
     assert!(blocks_unsupervised_tool(&call("bash", "git commit -m test")).is_some());
+    assert!(blocks_unsupervised_tool(&call(
+        "bash",
+        "git -C movart-express-back reset --soft HEAD^"
+    ))
+    .is_some());
     assert!(blocks_unsupervised_tool(&call(
         "terminal_start",
         "cd app && git -C . push origin HEAD"
@@ -242,6 +261,188 @@ fn approved_publication_resolves_a_nested_repository_from_the_project_root() {
         ),
         "app.txt"
     );
+}
+
+#[test]
+fn approved_action_only_soft_reset_keeps_the_changes_staged() {
+    let repository = repository();
+    let root = std::fs::canonicalize(repository.path()).unwrap();
+    let previous = git_ok(repository.path(), ["rev-parse", "HEAD"]);
+    std::fs::write(repository.path().join("app.txt"), "after\n").unwrap();
+    git_ok(repository.path(), ["add", "app.txt"]);
+    git_ok(
+        repository.path(),
+        ["commit", "--no-gpg-sign", "-m", "feat: second"],
+    );
+    let proposal = RepositoryProposal {
+        path: ".".into(),
+        reset: Some(ResetProposal {
+            mode: ResetMode::Soft,
+            target: "HEAD^".into(),
+        }),
+        files: vec![],
+        branch: None,
+        commit_message: None,
+        push: PushMode::None,
+        pull_request: None,
+    };
+
+    let result = publish_repository(&root, &proposal, false).unwrap();
+
+    assert_eq!(git_ok(repository.path(), ["rev-parse", "HEAD"]), previous);
+    assert_eq!(
+        git_ok(repository.path(), ["diff", "--cached", "--name-only"]),
+        "app.txt"
+    );
+    assert_eq!(result.reset.unwrap().target, "HEAD^");
+    assert!(result.commit.is_none());
+}
+
+#[test]
+fn approved_publication_can_select_an_existing_branch() {
+    let repository = repository();
+    let root = std::fs::canonicalize(repository.path()).unwrap();
+    let original = current_branch(repository.path()).unwrap();
+    git_ok(repository.path(), ["branch", "release"]);
+    let proposal = RepositoryProposal {
+        path: ".".into(),
+        reset: None,
+        files: vec![],
+        branch: Some("release".into()),
+        commit_message: None,
+        push: PushMode::None,
+        pull_request: None,
+    };
+
+    publish_repository(&root, &proposal, false).unwrap();
+
+    assert_eq!(current_branch(repository.path()).unwrap(), "release");
+    assert_ne!(original, "release");
+}
+
+#[test]
+fn approved_push_does_not_require_a_pull_request() {
+    let repository = repository();
+    let remote = tempfile::tempdir().unwrap();
+    git_ok(remote.path(), ["init", "--bare"]);
+    git_ok(
+        repository.path(),
+        ["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    std::fs::write(repository.path().join("app.txt"), "after\n").unwrap();
+    let root = std::fs::canonicalize(repository.path()).unwrap();
+    let mut proposal = repo_proposal(".", &["app.txt"]);
+    proposal.push = PushMode::Normal;
+
+    let result = publish_repository(&root, &proposal, false).unwrap();
+
+    let branch = current_branch(repository.path()).unwrap();
+    let remote_commit = git_ok(
+        repository.path(),
+        ["ls-remote", "origin", &format!("refs/heads/{branch}")],
+    );
+    assert!(remote_commit.starts_with(result.commit.as_deref().unwrap()));
+    assert_eq!(result.push, PushMode::Normal);
+    assert!(result.pull_request.is_none());
+}
+
+struct ExistingPullRequestGithub {
+    pull_request: PullRequestState,
+    created: std::cell::Cell<usize>,
+    merges: std::cell::RefCell<Vec<(String, String)>>,
+}
+
+impl GithubClient for ExistingPullRequestGithub {
+    fn authenticated(&self, _directory: &Path) -> Result<(), AgentError> {
+        Ok(())
+    }
+
+    fn find_open(
+        &self,
+        _directory: &Path,
+        _base: &str,
+        _head: &str,
+    ) -> Result<Option<PullRequestState>, AgentError> {
+        Ok(Some(self.pull_request.clone()))
+    }
+
+    fn create(
+        &self,
+        _directory: &Path,
+        _proposal: &PullRequestProposal,
+        _head: &str,
+    ) -> Result<PullRequestState, AgentError> {
+        self.created.set(self.created.get() + 1);
+        Err(AgentError::internal())
+    }
+
+    fn merge(
+        &self,
+        _directory: &Path,
+        pull_request: &PullRequestState,
+        _proposal: &MergeProposal,
+    ) -> Result<(), AgentError> {
+        self.merges
+            .borrow_mut()
+            .push((pull_request.url.clone(), pull_request.head_commit.clone()));
+        Ok(())
+    }
+}
+
+#[test]
+fn approved_merge_reuses_an_existing_pull_request_without_creating_a_duplicate() {
+    let repository = repository();
+    git_ok(
+        repository.path(),
+        [
+            "remote",
+            "add",
+            "origin",
+            "https://example.test/owner/project.git",
+        ],
+    );
+    let root = std::fs::canonicalize(repository.path()).unwrap();
+    let head = git_ok(repository.path(), ["rev-parse", "HEAD"]);
+    let github = ExistingPullRequestGithub {
+        pull_request: PullRequestState {
+            url: "https://github.test/owner/project/pull/42".into(),
+            head_commit: head.clone(),
+        },
+        created: std::cell::Cell::new(0),
+        merges: std::cell::RefCell::new(vec![]),
+    };
+    let proposal = RepositoryProposal {
+        path: ".".into(),
+        reset: None,
+        files: vec![],
+        branch: None,
+        commit_message: None,
+        push: PushMode::None,
+        pull_request: Some(PullRequestProposal {
+            base: "hml".into(),
+            title: "PR existente".into(),
+            body: "Reutilizar a PR aberta e concluir o merge aprovado.".into(),
+            draft: false,
+            merge: Some(MergeProposal {
+                method: MergeMethod::Squash,
+                delete_branch: true,
+            }),
+        }),
+    };
+
+    let result = publish_repository_with(&root, &proposal, Some(&github)).unwrap();
+
+    assert_eq!(github.created.get(), 0);
+    assert_eq!(
+        github.merges.borrow().as_slice(),
+        &[("https://github.test/owner/project/pull/42".into(), head,)]
+    );
+    assert_eq!(
+        result.pull_request.as_deref(),
+        Some("https://github.test/owner/project/pull/42")
+    );
+    assert!(result.pull_request_reused);
+    assert!(result.merged);
 }
 
 #[test]

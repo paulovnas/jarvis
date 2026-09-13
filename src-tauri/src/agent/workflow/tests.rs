@@ -1,4 +1,26 @@
 use super::*;
+
+#[test]
+fn workflow_tools_keep_narrow_follow_ups_and_checks_proportional() {
+    let planner = dispatch::definitions(Flow::Planned, Role::Planner);
+    let spawn = planner
+        .iter()
+        .find(|tool| tool["name"] == "hub_spawn")
+        .unwrap();
+    let spawn_description = spawn["description"].as_str().unwrap();
+    assert!(spawn_description.contains("dispatch one worker directly"));
+    assert!(spawn_description.contains("do not pre-read source files or runbooks"));
+
+    let builder = dispatch::definitions(Flow::Planned, Role::Builder);
+    let check = builder
+        .iter()
+        .find(|tool| tool["name"] == "workflow_check")
+        .unwrap();
+    let check_description = check["description"].as_str().unwrap();
+    assert!(check_description.contains("when source changed"));
+    assert!(check_description.contains("no source edit"));
+}
+
 #[test]
 fn mandatory_context_retrieval_is_available_in_every_role_flow_and_scope() {
     for flow in [

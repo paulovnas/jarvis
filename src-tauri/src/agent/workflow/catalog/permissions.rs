@@ -65,7 +65,7 @@ fn description(name: &str) -> &'static str {
             "Propor a criação ou edição supervisionada de um fluxo customizado."
         }
         "jarvis_propose_publication" => {
-            "Propor commits, pull requests e merges para aprovação explícita."
+            "Propor operações Git e GitHub para aprovação e execução supervisionadas."
         }
         "web_search" => "Pesquisar na web com a conta configurada.",
         "read_attachment" => "Ler documentos anexados à conversa.",

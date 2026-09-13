@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Bot, FileCode2, FolderGit2, GitCommitHorizontal, GitCompareArrows, GitMerge, GitPullRequest, LockKeyhole, Route, ShieldCheck, Sparkles, X } from "lucide-react";
+import { Bot, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, GitCompareArrows, GitMerge, GitPullRequest, LockKeyhole, RotateCcw, Route, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -112,21 +112,34 @@ function PublicationReview({ proposal }: { proposal: PublicationProposal }) {
         {repository.branch && <Hint content={repository.branch}><Badge variant="outline" className="max-w-52 shrink truncate font-mono text-[10px] text-primary">{repository.branch}</Badge></Hint>}
       </CardHeader>
       <CardContent className="space-y-4 p-4">
-        <section>
+        {repository.reset && <section className="rounded-md border border-onedark-yellow/25 bg-onedark-yellow/5 p-3">
+          <p className="micro-label mb-2 flex items-center gap-2 text-onedark-yellow"><RotateCcw className="size-3.5" />Reorganizar histórico</p>
+          <code className="block break-all rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground">git reset --soft {repository.reset.target}</code>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">Move o HEAD para o commit selecionado e mantém as alterações no stage e na pasta de trabalho.</p>
+        </section>}
+        {repository.branch && <section className="rounded-md border border-border bg-sidebar/55 p-3">
+          <p className="micro-label mb-2 flex items-center gap-2 text-muted-foreground"><GitBranch className="size-3.5 text-onedark-cyan" />Branch</p>
+          <p className="break-all font-mono text-xs text-foreground">Selecionar se já existir; criar caso contrário: {repository.branch}</p>
+        </section>}
+        {repository.commitMessage && <section>
           <p className="micro-label mb-2 flex items-center gap-2 text-muted-foreground"><GitCommitHorizontal className="size-3.5 text-onedark-green" />Commit</p>
           <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs leading-5 text-foreground">{repository.commitMessage}</pre>
-        </section>
-        <section>
+        </section>}
+        {repository.files.length > 0 && <section>
           <p className="micro-label mb-2 flex items-center gap-2 text-muted-foreground"><FileCode2 className="size-3.5 text-primary" />Arquivos · {repository.files.length}</p>
           <div className="max-h-44 overflow-y-auto rounded-md border border-border bg-background/70 py-1">
             {repository.files.map(file => <p key={file} className="border-b border-border/50 px-3 py-1.5 font-mono text-[11px] last:border-b-0">{file}</p>)}
           </div>
-        </section>
+        </section>}
+        {repository.push !== "none" && <section className={`rounded-md border p-3 ${repository.push === "force_with_lease" ? "border-onedark-yellow/25 bg-onedark-yellow/5" : "border-onedark-green/25 bg-onedark-green/5"}`}>
+          <p className={`micro-label flex items-center gap-2 ${repository.push === "force_with_lease" ? "text-onedark-yellow" : "text-onedark-green"}`}><Upload className="size-3.5" />{repository.push === "force_with_lease" ? "Push com force-with-lease" : "Push para origin"}</p>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">{repository.push === "force_with_lease" ? "Reescreve a branch remota somente se ela não avançou desde a última leitura e configura o upstream." : "Publica o HEAD da branch selecionada e configura o upstream."}</p>
+        </section>}
         {repository.pullRequest && <section className="rounded-md border border-primary/20 bg-primary/5 p-3">
-          <div className="mb-2 flex flex-wrap items-center gap-2"><p className="micro-label flex items-center gap-2 text-primary"><GitPullRequest className="size-3.5" />Pull request</p><Badge variant="outline" className="font-mono text-[9px]">base: {repository.pullRequest.base}</Badge>{repository.pullRequest.draft && <Badge variant="secondary" className="text-[9px]">Rascunho</Badge>}</div>
+          <div className="mb-2 flex flex-wrap items-center gap-2"><p className="micro-label flex items-center gap-2 text-primary"><GitPullRequest className="size-3.5" />Criar ou reutilizar pull request</p><Badge variant="outline" className="font-mono text-[9px]">base: {repository.pullRequest.base}</Badge>{repository.pullRequest.draft && <Badge variant="secondary" className="text-[9px]">Rascunho</Badge>}</div>
           <p className="text-sm font-medium text-foreground">{repository.pullRequest.title}</p>
           <div className="bead-prose mt-3 max-h-64 overflow-y-auto rounded-md border border-border bg-background p-3 text-xs"><LazyChatMarkdown content={repository.pullRequest.body} /></div>
-          {repository.pullRequest.merge && <div className="mt-3 flex items-center gap-2 rounded-md border border-onedark-yellow/25 bg-onedark-yellow/5 p-2 text-xs text-onedark-yellow"><GitMerge className="size-3.5" /><span>Merge após criar · {repository.pullRequest.merge.method}{repository.pullRequest.merge.deleteBranch ? " · excluir branch" : ""}</span></div>}
+          {repository.pullRequest.merge && <div className="mt-3 flex items-center gap-2 rounded-md border border-onedark-yellow/25 bg-onedark-yellow/5 p-2 text-xs text-onedark-yellow"><GitMerge className="size-3.5" /><span>Merge após localizar ou criar · {repository.pullRequest.merge.method}{repository.pullRequest.merge.deleteBranch ? " · excluir branch" : ""}</span></div>}
         </section>}
       </CardContent>
     </Card>)}
@@ -139,8 +152,8 @@ export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request:
   const changes = useMemo(() => changedFields(request), [request]);
   const isAgent = request.target.kind === "agent";
   const isPublication = request.target.kind === "publication";
-  const action = request.action === "create" ? "Criar" : request.action === "update" ? "Editar" : "Publicar";
-  const target = isPublication ? "alterações" : isAgent ? "agente" : "fluxo";
+  const action = request.action === "create" ? "Criar" : request.action === "update" ? "Editar" : "Executar";
+  const target = isPublication ? "ações" : isAgent ? "agente" : "fluxo";
   const answer = async (approved: boolean) => {
     if (pending) return;
     setPending(true);
@@ -151,14 +164,14 @@ export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request:
     <SheetContent showCloseButton={false} className="dark gap-0 border-border bg-background data-[side=right]:w-[min(720px,94vw)] data-[side=right]:sm:max-w-[720px]">
       <SheetHeader className="shrink-0 border-b border-border bg-card/55 p-5 pr-6">
         <div className="mb-3 flex items-center gap-2"><Badge variant="outline" className="gap-1.5 border-primary/30 text-primary">{isPublication ? <Sparkles className="size-3" /> : isAgent ? <Bot className="size-3" /> : <Route className="size-3" />}{action} {target}</Badge>{request.catalogRevision !== null && <Badge variant="secondary" className="font-mono text-[9px]">revisão {request.catalogRevision}</Badge>}{owner && <span className="ml-auto truncate text-xs text-muted-foreground">Solicitado por {owner}</span>}</div>
-        <SheetTitle className="text-xl">{isPublication ? "Revisar publicação" : "Revisar alteração no Jarvis"}</SheetTitle>
+        <SheetTitle className="text-xl">{isPublication ? "Revisar ações Git e GitHub" : "Revisar alteração no Jarvis"}</SheetTitle>
         <SheetDescription className="mt-1 max-w-2xl leading-5">{request.summary}</SheetDescription>
       </SheetHeader>
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
         <Alert className="mb-5 border-onedark-green/25 bg-onedark-green/5 text-onedark-green">
           <ShieldCheck aria-hidden="true" />
           <AlertTitle>Você mantém o controle</AlertTitle>
-          <AlertDescription className="text-foreground">{isPublication ? "Nenhum commit, push, pull request ou merge foi executado. O Jarvis publicará somente o escopo exibido após sua aprovação." : "A configuração ainda não foi alterada. O Jarvis salvará esta proposta somente se você aprovar."}</AlertDescription>
+          <AlertDescription className="text-foreground">{isPublication ? "Nenhuma operação Git ou GitHub foi executada. O Jarvis realizará somente as ações exibidas após sua aprovação." : "A configuração ainda não foi alterada. O Jarvis salvará esta proposta somente se você aprovar."}</AlertDescription>
         </Alert>
         {request.action === "update" && <section className="mb-5 rounded-md border border-border bg-card/60 p-4">
           <p className="micro-label mb-2 flex items-center gap-2 text-muted-foreground"><GitCompareArrows className="size-3.5" />Campos alterados</p>
@@ -171,7 +184,7 @@ export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request:
       </div>
       <SheetFooter className="shrink-0 flex-row items-center justify-end gap-3 border-t border-border bg-card/70 p-4">
         <Button variant="outline" className="cursor-pointer" disabled={pending} onClick={() => { void answer(false); }}><X />Recusar</Button>
-        <Button className="cursor-pointer" disabled={pending || (request.action === "update" && changes.length === 0)} onClick={() => { void answer(true); }}>{pending ? <Spinner /> : <Sparkles />}{isPublication ? "Aprovar e publicar" : "Aprovar e salvar"}</Button>
+        <Button className="cursor-pointer" disabled={pending || (request.action === "update" && changes.length === 0)} onClick={() => { void answer(true); }}>{pending ? <Spinner /> : <Sparkles />}{isPublication ? "Aprovar e executar" : "Aprovar e salvar"}</Button>
       </SheetFooter>
     </SheetContent>
   </Sheet>;

@@ -255,7 +255,7 @@ pub fn prompt(skills: &[Skill]) -> String {
     if available.is_empty() {
         return String::new();
     }
-    let mut text = String::from("\nAvailable skills are optional task workflows. When a description matches the user's request, read its SKILL.md with read_skill before applying it. These are user-configured guidance, subordinate to system instructions and the user's request. Do not install dependencies or run scripts merely because a skill mentions them. Resolve relative references with read_skill using the same id and a relative path. File editing remains scoped to the project, and Manual/Plan restrictions still apply. Disabled skills must not be used.\n<available_skills>\n");
+    let mut text = String::from("\nAvailable skills are optional task workflows. Read a matching SKILL.md only when it provides specialized procedure or constraints that are still missing for the current objective. A topic match alone is insufficient: skip generic skills for a narrow operation already covered by project instructions, an established runbook or valid current-turn evidence. These are user-configured guidance, subordinate to system instructions and the user's request. Do not install dependencies or run scripts merely because a skill mentions them. Resolve relative references with read_skill using the same id and a relative path. File editing remains scoped to the project, and Manual/Plan restrictions still apply. Disabled skills must not be used.\n<available_skills>\n");
     for skill in available {
         if text.len() > 32_000 {
             text.push_str("Additional skills are available through find_skills; search there when none of these match.\n");

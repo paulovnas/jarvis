@@ -14,6 +14,17 @@ const emptyCache = { bytes: 0, repositories: 0, residues: 0 };
 const emptyJournals = { files: 0, conversationJournals: 0, workerJournals: 0, protectedFiles: 0, invalidFiles: 0, candidates: 0, currentBytes: 0, liveBytes: 0, recoverableBytes: 0, obsoleteRecords: 0, maxAmplificationBps: 100 };
 describe("conversation cleanup", () => {
   beforeEach(() => { call.mockReset(); });
+  it("keeps the review action beside the compact cleanup period control", async () => {
+    call.mockImplementation(async (command) => {
+      if (command === "get_skill_cache_status") return emptyCache;
+      if (command === "get_journal_maintenance_status") return emptyJournals;
+      throw new Error(`unexpected command: ${command}`);
+    });
+    render(<ChatCleanupSettings />);
+    const controls = screen.getByRole("group", { name: "Controles de limpeza" });
+    expect(within(controls).getByRole("combobox", { name: "Sem atividade há mais de" })).toHaveAttribute("data-size", "sm");
+    expect(within(controls).getByRole("button", { name: "Revisar limpeza" })).toBeVisible();
+  });
   it("previews seven-day cleanup and only deletes the reviewed IDs after confirmation", async () => {
     call.mockImplementation(async (command) => {
       if (command === "get_skill_cache_status") return emptyCache;

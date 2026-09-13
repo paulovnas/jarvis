@@ -92,6 +92,7 @@ describe("ChatComposer model reasoning", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Planejado" }));
     const validation = screen.getByRole("switch", { name: "Validação manual" });
     expect(validation).not.toBeChecked();
+    expect(validation).toHaveAttribute("data-size", "sm");
     await user.click(validation);
     await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Implemente o ajuste{Enter}");
     expect(send).toHaveBeenCalledWith("Implemente o ajuste", expect.objectContaining({

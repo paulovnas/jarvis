@@ -68,55 +68,55 @@ export function SystemSettings() {
     if (value !== snapshot.preferences.askUserTimeoutSeconds) void save({ askUserTimeoutSeconds: value });
   };
   const problem = error ?? snapshot?.sleepError ?? snapshot?.notificationError;
-  return <section aria-labelledby="system-settings-title" className="space-y-4">
+  return <section aria-labelledby="system-settings-title" className="space-y-3">
     <h2 id="system-settings-title" className="micro-label flex items-center gap-2 text-muted-foreground"><Monitor className="size-3.5" />Sistema</h2>
-    {!snapshot ? error ? <div className="space-y-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button size="sm" variant="outline" className="cursor-pointer" onClick={() => { setError(null); setAttempt(n => n + 1); }}>Tentar novamente</Button></div> : <div role="status" aria-label="Carregando preferências do sistema" className="grid gap-4 lg:grid-cols-2">{[0, 1, 2, 3].map(key => <Card key={key} className="h-40 gap-4 p-5"><Skeleton className="h-5 w-40" /><Skeleton className="h-4 w-3/4" /><Skeleton className="mt-auto h-9 w-full" /></Card>)}</div> : <>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="min-w-0 gap-5 p-5">
-          <div>
-            <Label htmlFor="response-language" className="flex items-center gap-2 text-sm font-medium"><Languages className="size-4 text-onedark-purple" />Idioma dos agentes</Label>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">Define o idioma das respostas. A interface permanece em pt-BR.</p>
+    {!snapshot ? error ? <div className="space-y-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button size="sm" variant="outline" className="cursor-pointer" onClick={() => { setError(null); setAttempt(n => n + 1); }}>Tentar novamente</Button></div> : <Card role="status" aria-label="Carregando preferências do sistema" size="sm" className="grid gap-0 rounded-lg py-0 lg:grid-cols-2">{[0, 1, 2, 3].map((key) => <div key={key} className={`space-y-3 p-4 ${key > 0 ? "border-t border-border" : ""} ${key % 2 === 1 ? "lg:border-l" : ""} ${key === 1 ? "lg:border-t-0" : ""}`}><Skeleton className="h-4 w-36" /><Skeleton className="h-3 w-3/4" /><Skeleton className="h-7 w-48" /></div>)}</Card> : <>
+      <Card role="region" aria-label="Preferências do sistema" size="sm" className="grid gap-0 rounded-lg py-0 lg:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-3 p-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <Label htmlFor="response-language" className="flex cursor-pointer items-center gap-2 text-xs font-medium"><Languages className="size-3.5 text-onedark-purple" />Idioma dos agentes</Label>
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Define o idioma das respostas. A interface permanece em pt-BR.</p>
           </div>
-          <div className="mt-auto">
+          <div className="w-full shrink-0 xl:w-auto">
             <Select value={snapshot.preferences.responseLanguage} disabled={busy} onValueChange={value => { if (value && value in responseLanguages) void save({ responseLanguage: value as SystemPreferences["responseLanguage"] }); }}>
-              <SelectTrigger id="response-language" className="w-full cursor-pointer text-xs"><SelectValue>{responseLanguages[snapshot.preferences.responseLanguage]}</SelectValue></SelectTrigger>
+              <SelectTrigger id="response-language" size="sm" className="w-full cursor-pointer text-xs xl:w-52"><SelectValue>{responseLanguages[snapshot.preferences.responseLanguage]}</SelectValue></SelectTrigger>
               <SelectContent>{Object.entries(responseLanguages).map(([value, label]) => <SelectItem key={value} value={value} className="cursor-pointer text-xs">{label}</SelectItem>)}</SelectContent>
             </Select>
           </div>
-        </Card>
-        <Card className="min-w-0 gap-5 p-5">
-          <div>
-            <Label htmlFor="prevent-sleep" className="flex items-center gap-2 text-sm font-medium"><Moon className="size-4 text-onedark-yellow" />Impedir repouso</Label>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">Mantenha tarefas em execução sem deixar o computador entrar em repouso.</p>
+        </div>
+        <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:border-t-0 lg:border-l xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <Label htmlFor="prevent-sleep" className="flex cursor-pointer items-center gap-2 text-xs font-medium"><Moon className="size-3.5 text-onedark-yellow" />Impedir repouso</Label>
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Evita o repouso durante tarefas ou enquanto o Jarvis estiver aberto.</p>
           </div>
-          <div className="mt-auto">
+          <div className="w-full shrink-0 xl:w-auto">
             <Select value={snapshot.preferences.preventSleep} disabled={busy} onValueChange={value => { if (value && value in sleepModes) void save({ preventSleep: value as SystemPreferences["preventSleep"] }); }}>
-              <SelectTrigger id="prevent-sleep" className="w-full cursor-pointer text-xs"><SelectValue>{sleepModes[snapshot.preferences.preventSleep]}</SelectValue></SelectTrigger>
+              <SelectTrigger id="prevent-sleep" size="sm" className="w-full cursor-pointer text-xs xl:w-64"><SelectValue>{sleepModes[snapshot.preferences.preventSleep]}</SelectValue></SelectTrigger>
               <SelectContent>{Object.entries(sleepModes).map(([value, label]) => <SelectItem key={value} value={value} className="cursor-pointer text-xs">{label}</SelectItem>)}</SelectContent>
             </Select>
           </div>
-        </Card>
-        <Card className="min-w-0 gap-5 p-5">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <Label htmlFor="system-notifications" className="flex items-center gap-2 text-sm font-medium"><Bell className="size-4 text-primary" />Notificações do sistema</Label>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">Receba avisos sobre conclusões, perguntas pendentes e erros.</p>
-            </div>
-            <Switch id="system-notifications" checked={snapshot.preferences.notifications} disabled={busy} onCheckedChange={notifications => void save({ notifications })} className="mt-0.5 shrink-0 cursor-pointer" />
+        </div>
+        <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <Label htmlFor="system-notifications" className="flex cursor-pointer items-center gap-2 text-xs font-medium"><Bell className="size-3.5 text-primary" />Notificações do sistema</Label>
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Avisos sobre conclusões, perguntas pendentes e erros.</p>
           </div>
-          <div className="mt-auto flex items-center justify-between gap-3 border-t border-border pt-4"><span className="text-[10px] text-muted-foreground">{snapshot.preferences.notifications ? "Avisos ativados" : "Avisos desativados"}</span><Button size="sm" variant="outline" disabled={busy || !snapshot.preferences.notifications} onClick={() => void test()} className="cursor-pointer gap-1.5 text-xs"><Send className="size-3" />Testar</Button></div>
-        </Card>
-        <Card className="min-w-0 gap-5 p-5">
-          <div>
-            <Label htmlFor="ask-user-timeout" className="flex items-center gap-2 text-sm font-medium"><TimerReset className="size-4 text-onedark-green" />Resposta automática</Label>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">Aplica a opção recomendada quando uma pergunta ficar sem resposta.</p>
+          <div className="flex shrink-0 items-center gap-2">
+            <Switch id="system-notifications" size="sm" checked={snapshot.preferences.notifications} disabled={busy} onCheckedChange={notifications => void save({ notifications })} className="shrink-0 cursor-pointer" />
+            <Button size="sm" variant="ghost" disabled={busy || !snapshot.preferences.notifications} onClick={() => void test()} className="cursor-pointer gap-1.5 text-xs"><Send className="size-3" />Testar</Button>
           </div>
-          <div className="relative mt-auto max-w-xs">
-            <Input id="ask-user-timeout" aria-label="Tempo para resposta recomendada" type="number" min={1} max={3600} step={1} inputMode="numeric" value={timeoutDraft} disabled={busy} onChange={event => setTimeoutDraft(event.target.value)} onBlur={commitQuestionTimeout} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} className="pr-20 font-mono text-xs tabular-nums" />
+        </div>
+        <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:border-l xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <Label htmlFor="ask-user-timeout" className="flex cursor-pointer items-center gap-2 text-xs font-medium"><TimerReset className="size-3.5 text-onedark-green" />Resposta automática</Label>
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Aplica a opção recomendada quando uma pergunta ficar sem resposta.</p>
+          </div>
+          <div className="relative w-full shrink-0 xl:w-36">
+            <Input id="ask-user-timeout" aria-label="Tempo para resposta recomendada" type="number" min={1} max={3600} step={1} inputMode="numeric" value={timeoutDraft} disabled={busy} onChange={event => setTimeoutDraft(event.target.value)} onBlur={commitQuestionTimeout} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} className="h-7 pr-16 font-mono text-xs tabular-nums" />
             <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[10px] text-muted-foreground">segundos</span>
           </div>
-        </Card>
-      </div>
+        </div>
+      </Card>
       {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
     </>}
   </section>;

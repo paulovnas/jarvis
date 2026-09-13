@@ -474,6 +474,11 @@ async fn harness_evaluation_large_mcp_catalog_loads_individual_tools_with_bounde
     );
     clients.ensure_scope_visible(&initial).unwrap();
     assert!(clients.instructions().contains("catalog is deferred"));
+    assert!(clients
+        .instructions()
+        .contains("one focused mcp_search_tools call"));
+    assert!(clients.instructions().contains("Call it directly"));
+    assert!(clients.instructions().contains("when no result matches"));
     assert!(clients.requires_explicit_attempt());
     assert!(!clients.requires_active_task("mcp_search_tools"));
     assert!(!clients.requires_active_task("mcp_load_tool"));

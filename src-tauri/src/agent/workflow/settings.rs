@@ -222,4 +222,27 @@ mod instruction_tests {
         assert!(get_agent_instructions(Flow::Designer, Role::Builder).is_err());
         assert!(get_agent_instructions(Flow::Publication, Role::Github).is_ok());
     }
+
+    #[test]
+    fn built_in_roles_enforce_objective_execution_for_narrow_follow_ups() {
+        let planner = contracts::prompt(Flow::Planned, Role::Planner, "planner");
+        assert!(planner.contains("latest user request as the active objective"));
+        assert!(planner.contains("smallest safe sequence"));
+        assert!(planner.contains("narrow operational follow-up"));
+        assert!(planner.contains("dispatch exactly one appropriate worker"));
+        assert!(planner.contains("Do not inspect source files or runbooks"));
+
+        let builder = contracts::prompt(Flow::Planned, Role::Builder, "builder");
+        assert!(builder.contains("direct link to an unresolved acceptance criterion"));
+        assert!(builder.contains("do not load a generic skill"));
+        assert!(builder.contains("bounded preflight/action/postcondition sequence"));
+        assert!(builder.contains("skip code-quality gates"));
+
+        let designer = contracts::prompt(Flow::Planned, Role::Designer, "designer");
+        assert!(designer.contains("reuse valid evidence"));
+        assert!(designer.contains("Run checks proportional to the changed surface"));
+
+        assert!(!planner.contains("maximum number of steps"));
+        assert!(!builder.contains("maximum number of steps"));
+    }
 }

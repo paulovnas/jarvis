@@ -194,30 +194,30 @@ export function BackupSettings({ accounts, onRestored }: { accounts: ProviderAcc
     }
   }
 
-  return <section aria-labelledby="backup-settings-title" className="mt-8 space-y-4 border-t border-border pt-7">
+  return <section aria-labelledby="backup-settings-title" className="mt-7 space-y-3 border-t border-border pt-6">
     <div className="space-y-1">
       <h2 id="backup-settings-title" className="micro-label flex items-center gap-2 text-muted-foreground"><Archive aria-hidden="true" className="size-3.5" />Backup e restauração</h2>
       <p className="text-xs leading-relaxed text-muted-foreground">Proteja suas preferências, agentes, fluxos, skills e MCPs em um único arquivo portátil.</p>
     </div>
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Card className="min-w-0 gap-5 p-5">
+    <Card size="sm" className="grid gap-0 rounded-lg py-0 lg:grid-cols-2">
+      <div className="flex min-w-0 flex-col gap-3 p-4">
         <div className="flex items-start gap-3">
-          <span className="rounded-md border border-onedark-green/20 bg-onedark-green/10 p-2 text-onedark-green"><Download aria-hidden="true" className="size-4" /></span>
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-onedark-green/10 text-onedark-green"><Download aria-hidden="true" className="size-3.5" /></span>
           <div className="min-w-0 space-y-1"><h3 className="text-sm font-medium">Criar backup</h3><p className="text-[11px] leading-relaxed text-muted-foreground">Escolha onde salvar um ZIP com as configurações atuais do Jarvis.</p></div>
         </div>
-        <div className="flex flex-wrap gap-1.5">{["Sistema", "Agentes e fluxos", "Skills", "MCPs"].map(item => <Badge key={item} variant="outline" className="rounded-md text-[9px] text-muted-foreground">{item}</Badge>)}</div>
+        <p className="text-[10px] leading-4 text-muted-foreground">Inclui Sistema, Agentes e fluxos, Skills e MCPs.</p>
         <p className="flex items-start gap-2 text-[10px] leading-relaxed text-onedark-yellow"><CircleAlert aria-hidden="true" className="mt-0.5 size-3 shrink-0" />MCPs podem incluir chaves de acesso. Guarde o ZIP em um local seguro.</p>
-        <Button type="button" variant="outline" disabled={busy} onClick={() => void createBackup()} className="mt-auto w-full cursor-pointer gap-2">{exporting ? <><Spinner aria-hidden="true" />Criando backup…</> : <><Download aria-hidden="true" />Escolher destino</>}</Button>
-      </Card>
-      <Card className="min-w-0 gap-5 p-5">
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void createBackup()} className="mt-auto w-fit cursor-pointer gap-2">{exporting ? <><Spinner aria-hidden="true" />Criando backup…</> : <><Download aria-hidden="true" />Escolher destino</>}</Button>
+      </div>
+      <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:border-t-0 lg:border-l">
         <div className="flex items-start gap-3">
-          <span className="rounded-md border border-onedark-cyan/20 bg-onedark-cyan/10 p-2 text-onedark-cyan"><Upload aria-hidden="true" className="size-4" /></span>
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-onedark-cyan/10 text-onedark-cyan"><Upload aria-hidden="true" className="size-3.5" /></span>
           <div className="min-w-0 space-y-1"><h3 className="text-sm font-medium">Restaurar backup</h3><p className="text-[11px] leading-relaxed text-muted-foreground">Inspecione o conteúdo e associe os agentes aos modelos disponíveis antes de aplicar.</p></div>
         </div>
         <p className="flex items-start gap-2 text-[10px] leading-relaxed text-onedark-yellow"><ShieldCheck aria-hidden="true" className="mt-0.5 size-3 shrink-0" />Contas de IA, projetos e conversas permanecem nesta instalação.</p>
-        <Button type="button" variant="outline" disabled={busy} onClick={() => void chooseBackup()} className="mt-auto w-full cursor-pointer gap-2">{inspecting ? <><Spinner aria-hidden="true" />Inspecionando…</> : <><Upload aria-hidden="true" />Escolher arquivo</>}</Button>
-      </Card>
-    </div>
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void chooseBackup()} className="mt-auto w-fit cursor-pointer gap-2">{inspecting ? <><Spinner aria-hidden="true" />Inspecionando…</> : <><Upload aria-hidden="true" />Escolher arquivo</>}</Button>
+      </div>
+    </Card>
     {error && !preview && <p role="alert" className="text-xs text-destructive">{error}</p>}
 
     <Dialog open={preview !== null} onOpenChange={open => { if (!open) closePreview(); }}>
