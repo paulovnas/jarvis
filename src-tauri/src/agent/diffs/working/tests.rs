@@ -26,8 +26,11 @@ fn commit(root: &Path) {
     );
 }
 fn revision(before: &str, after: &str) -> FileRevision {
+    revision_at("a.txt", before, after)
+}
+fn revision_at(path: &str, before: &str, after: &str) -> FileRevision {
     FileRevision::new(
-        "a.txt".into(),
+        path.into(),
         Some(before.into()),
         Some(after.into()),
         "conversation",
@@ -116,6 +119,69 @@ async fn live_git_excludes_other_files_staged_commits_and_keeps_post_commit_edit
     commit(&fixture.root);
     std::fs::write(fixture.root.join("a.txt"), "one\ntwo\nexternal\n").unwrap();
     assert!(files(&session, None).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn reconciles_commits_from_multiple_repositories_below_a_container_root() {
+    let fixture = crate::agent::tests::Fixture::new();
+    let session = crate::agent::tests::session(&fixture);
+    for repository in ["frontend", "backend"] {
+        let root = fixture.root.join(repository);
+        std::fs::create_dir(&root).unwrap();
+        init(&root);
+        std::fs::write(root.join("a.txt"), "before\n").unwrap();
+        run(&root, &["add", "a.txt"]);
+        commit(&root);
+        std::fs::write(root.join("a.txt"), "after\n").unwrap();
+        record(
+            &session,
+            revision_at(&format!("{repository}/a.txt"), "before\n", "after\n"),
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(files(&session, None).await.unwrap().len(), 2);
+    run(&fixture.root.join("backend"), &["add", "a.txt"]);
+    commit(&fixture.root.join("backend"));
+    let pending = files(&session, None).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].path, "frontend/a.txt");
+    run(&fixture.root.join("frontend"), &["add", "a.txt"]);
+    commit(&fixture.root.join("frontend"));
+    assert!(files(&session, None).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn chooses_the_nested_repository_when_the_container_is_also_a_repository() {
+    let fixture = crate::agent::tests::Fixture::new();
+    let session = crate::agent::tests::session(&fixture);
+    init(&fixture.root);
+    std::fs::write(fixture.root.join("root.txt"), "before\n").unwrap();
+    run(&fixture.root, &["add", "root.txt"]);
+    commit(&fixture.root);
+    let nested = fixture.root.join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    init(&nested);
+    std::fs::write(nested.join("nested.txt"), "before\n").unwrap();
+    run(&nested, &["add", "nested.txt"]);
+    commit(&nested);
+    std::fs::write(fixture.root.join("root.txt"), "after\n").unwrap();
+    record(&session, revision_at("root.txt", "before\n", "after\n"))
+        .await
+        .unwrap();
+    std::fs::write(nested.join("nested.txt"), "after\n").unwrap();
+    record(
+        &session,
+        revision_at("nested/nested.txt", "before\n", "after\n"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(files(&session, None).await.unwrap().len(), 2);
+    run(&nested, &["add", "nested.txt"]);
+    commit(&nested);
+    let pending = files(&session, None).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].path, "root.txt");
 }
 
 #[tokio::test]

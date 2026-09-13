@@ -2,10 +2,13 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { ProjectOptions } from "./ProjectOptions";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const call = vi.mocked(invoke);
 const settings = {
@@ -19,6 +22,7 @@ const settings = {
 beforeEach(() => {
   call.mockReset().mockImplementation(async command => {
     if (command === "get_project_publication_settings") return settings;
+    if (command === "get_project_repositories") return [];
     if (command === "save_project_publication_settings") return { ...settings, prMode: "ask_pr" };
     throw new Error(`Unexpected command ${command}`);
   });
@@ -26,7 +30,7 @@ beforeEach(() => {
 
 it("loads project-scoped publication rules and only reveals the PR editor when enabled", async () => {
   const user = userEvent.setup();
-  render(<ProjectOptions projectId="p1" />);
+  render(<ProjectOptions projectId="p1" projectPath="/projects/jarvis" />);
   expect(screen.getByRole("status", { name: "Carregando opções do projeto" })).toBeVisible();
   expect(await screen.findByRole("textbox", { name: "Instrução de publicação" })).toHaveValue(settings.publishPrompt);
   expect(screen.queryByRole("textbox", { name: "Instrução e template da PR" })).not.toBeInTheDocument();
@@ -43,9 +47,32 @@ it("loads project-scoped publication rules and only reveals the PR editor when e
 it("keeps PR automation unavailable when GitHub CLI is missing", async () => {
   call.mockResolvedValueOnce({ ...settings, ghAvailable: false });
   const user = userEvent.setup();
-  render(<ProjectOptions projectId="p1" />);
+  render(<ProjectOptions projectId="p1" projectPath="/projects/jarvis" />);
   expect(await screen.findByText("GitHub CLI necessário")).toBeVisible();
   await user.click(screen.getByRole("combobox", { name: "Comportamento de pull request" }));
   expect(await screen.findByRole("option", { name: "Perguntar sobre PR" })).toHaveAttribute("aria-disabled", "true");
   expect(screen.getByRole("option", { name: "Perguntar sobre PR e merge" })).toHaveAttribute("aria-disabled", "true");
+});
+
+it("adds a named Git repository from a directory below the project root", async () => {
+  vi.mocked(open).mockResolvedValue("/projects/jarvis/backend");
+  const repository = { id: "r1", projectId: "p1", path: "backend", directory: "/projects/jarvis/backend", name: "backend", description: "API", branch: "main", upstream: "origin/main", ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, remoteUrl: "https://github.com/example/backend.git", available: true, error: null, createdAt: 1, updatedAt: 1 };
+  call.mockImplementation(async (command) => {
+    if (command === "get_project_publication_settings") return settings;
+    if (command === "get_project_repositories") return [];
+    if (command === "save_project_repository") return repository;
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const user = userEvent.setup();
+  render(<ProjectOptions projectId="p1" projectPath="/projects/jarvis" />);
+  await screen.findByText("Nenhum repositório configurado");
+  await user.click(screen.getByRole("button", { name: "Adicionar" }));
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ directory: true, defaultPath: "/projects/jarvis" }));
+  expect(await screen.findByRole("dialog", { name: "Adicionar repositório" })).toBeVisible();
+  await user.clear(screen.getByRole("textbox", { name: "Nome do repositório" }));
+  await user.type(screen.getByRole("textbox", { name: "Nome do repositório" }), "Backend");
+  await user.type(screen.getByRole("textbox", { name: "Descrição do repositório" }), "API");
+  await user.click(screen.getByRole("button", { name: "Salvar repositório" }));
+  await waitFor(() => expect(call).toHaveBeenCalledWith("save_project_repository", { projectId: "p1", repository: { directory: "/projects/jarvis/backend", name: "Backend", description: "API" } }));
+  expect(toast.success).toHaveBeenCalledWith("Repositório adicionado");
 });

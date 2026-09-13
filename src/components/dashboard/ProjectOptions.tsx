@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { libraryError } from "@/core/library";
 import { PULL_REQUEST_MODE_LABELS, publicationSettingsSchema, type PublicationSettings, type PullRequestMode } from "@/core/publication";
+import { ProjectRepositoriesSettings } from "./ProjectRepositoriesSettings";
 
 type Draft = Pick<PublicationSettings, "publishPrompt" | "prMode" | "prPrompt">;
 
@@ -23,7 +24,7 @@ function OptionsSkeleton() {
   return <div role="status" aria-label="Carregando opções do projeto" className="mx-auto w-full max-w-5xl space-y-4 p-6"><Skeleton className="h-24 w-full" /><Skeleton className="h-80 w-full" /></div>;
 }
 
-export function ProjectOptions({ projectId }: { projectId: string }) {
+export function ProjectOptions({ projectId, projectPath }: { projectId: string; projectPath: string }) {
   const [settings, setSettings] = useState<PublicationSettings | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +68,8 @@ export function ProjectOptions({ projectId }: { projectId: string }) {
         <div><CardTitle>Publicação assistida</CardTitle><CardDescription className="mt-1 max-w-3xl leading-5">Estas regras pertencem somente a este projeto. O agente prepara commits e, quando configurado, pergunta sobre pull request e merge. Nada é publicado antes de você revisar a proposta.</CardDescription></div>
       </CardHeader>
     </Card>
+
+    <ProjectRepositoriesSettings projectId={projectId} projectPath={projectPath} />
 
     <Card>
       <CardHeader className="border-b border-border">

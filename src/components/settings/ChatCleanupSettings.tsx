@@ -128,14 +128,13 @@ export function ChatCleanupSettings() {
         <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground"><Trash2 className="size-3.5" /></span>
         <div className="min-w-0"><h3 className="text-xs font-medium">Conversas antigas</h3><p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">Revise históricos inativos antes da exclusão definitiva.</p></div>
       </div>
-      <div role="group" aria-label="Controles de limpeza" className="mt-auto flex flex-wrap items-end gap-2">
-        <div className="space-y-1.5"><Label htmlFor="cleanup-period" className="text-[10px] text-muted-foreground">Sem atividade há mais de</Label>
+      <div role="group" aria-label="Controles de limpeza" className="mt-auto grid w-fit grid-cols-[8rem_auto] items-stretch gap-x-2 gap-y-1.5">
+        <Label htmlFor="cleanup-period" className="col-start-1 row-start-1 text-[10px] text-muted-foreground">Sem atividade há mais de</Label>
           <Select value={days} onValueChange={value => { if (value) { setDays(value); setPreview(null); } }} disabled={loading || deleting}>
-            <SelectTrigger id="cleanup-period" size="sm" className="w-32 cursor-pointer text-xs"><SelectValue>{days} dias</SelectValue></SelectTrigger>
+            <SelectTrigger id="cleanup-period" size="sm" className="col-start-1 row-start-2 w-full cursor-pointer text-xs"><SelectValue>{days} dias</SelectValue></SelectTrigger>
             <SelectContent>{[7, 14, 30, 90].map(value => <SelectItem key={value} value={String(value)} className="cursor-pointer text-xs">{value} dias</SelectItem>)}</SelectContent>
           </Select>
-        </div>
-        <Button variant="outline" size="sm" disabled={loading || deleting} onClick={() => { void analyze(); }} className="cursor-pointer gap-2"><Trash2 className="size-3.5" />Revisar limpeza</Button>
+        <Button variant="outline" size="sm" disabled={loading || deleting} onClick={() => { void analyze(); }} className="col-start-2 row-start-2 h-full cursor-pointer gap-2"><Trash2 className="size-3.5" />Revisar limpeza</Button>
       </div>
       <p className="text-[10px] leading-4 text-muted-foreground">A conversa mais recente de cada projeto será mantida.</p>
       {loading && <div role="status" aria-label="Analisando históricos" className="flex gap-3"><Skeleton className="h-4 w-1/2" /><Skeleton className="h-4 w-20" /></div>}

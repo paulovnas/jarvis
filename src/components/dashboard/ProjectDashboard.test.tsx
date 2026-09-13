@@ -28,6 +28,7 @@ describe("Project Dashboard", () => {
       if (command === "get_project_beads") return [bead()];
       if (command === "get_core_status") return coreFixture();
       if (command === "get_project_publication_settings") return { projectId: "p1", publishPrompt: "Review changes", prMode: "disabled", prPrompt: "Write a PR", ghAvailable: true };
+      if (command === "get_project_repositories") return [];
       if (command === "get_bead_detail") return { issue: bead(), comments: [] };
       if (command === "open_project_directory") return;
       throw new Error(`Unexpected command ${command}`);
@@ -86,6 +87,31 @@ describe("Project Dashboard", () => {
     expect(await within(drawer).findByText("Contexto persistido")).toBeInTheDocument();
     expect(within(drawer).queryByRole("button", { name: /Editar|Excluir|Fechar tarefa/ })).not.toBeInTheDocument();
     expect(call).toHaveBeenCalledWith("get_bead_detail", { projectId: "p1", issueId: bead().id });
+  });
+  it("filters only the closed lane by completion date and defaults to today", async () => {
+    const user = userEvent.setup();
+    const today = new Date();
+    const fourDaysAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 4, 12);
+    render(<BeadsBoard projectId="p1" issues={[
+      bead({ id: "open", title: "Ainda aberta" }),
+      bead({ id: "closed-today", title: "Fechada hoje", status: "closed", closed_at: today.toISOString() }),
+      bead({ id: "closed-before", title: "Fechada antes", status: "closed", closed_at: fourDaysAgo.toISOString() }),
+    ]} onChanged={vi.fn()} />);
+    expect(screen.getByRole("region", { name: "Fechado: 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tarefa: Fechada hoje" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Tarefa: Fechada antes" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tarefa: Ainda aberta" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Filtrar tarefas fechadas: Hoje" }));
+    await user.click(screen.getByRole("button", { name: "7 Dias" }));
+    expect(screen.getByRole("region", { name: "Fechado: 2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tarefa: Fechada antes" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Filtrar tarefas fechadas: 7 Dias" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Filtrar tarefas fechadas: 7 Dias" }));
+    await user.click(screen.getByRole("button", { name: "Personalizado" }));
+    expect(screen.getAllByRole("grid")).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "Aplicar" }));
+    expect(screen.getByRole("button", { name: "Filtrar tarefas fechadas: Personalizado" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Fechado: 1" })).toBeInTheDocument();
   });
   it("preserves a failed comment and prevents duplicate submissions until persistence succeeds", async () => {
     const user = userEvent.setup(); const changed = vi.fn(async () => {});

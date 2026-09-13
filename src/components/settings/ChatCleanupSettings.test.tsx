@@ -22,8 +22,11 @@ describe("conversation cleanup", () => {
     });
     render(<ChatCleanupSettings />);
     const controls = screen.getByRole("group", { name: "Controles de limpeza" });
-    expect(within(controls).getByRole("combobox", { name: "Sem atividade há mais de" })).toHaveAttribute("data-size", "sm");
-    expect(within(controls).getByRole("button", { name: "Revisar limpeza" })).toBeVisible();
+    const period = within(controls).getByRole("combobox", { name: "Sem atividade há mais de" });
+    const review = within(controls).getByRole("button", { name: "Revisar limpeza" });
+    expect(period).toHaveAttribute("data-size", "sm");
+    expect(period).toHaveClass("row-start-2");
+    expect(review).toHaveClass("row-start-2", "h-full");
   });
   it("previews seven-day cleanup and only deletes the reviewed IDs after confirmation", async () => {
     call.mockImplementation(async (command) => {

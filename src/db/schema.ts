@@ -1,4 +1,4 @@
-import { check, index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 export const appConfig = sqliteTable(
@@ -117,6 +117,19 @@ export const projectPublicationSettings = sqliteTable("project_publication_setti
   prPrompt: text("pr_prompt").notNull(),
   updatedAt: integer("updated_at").notNull().default(sql`(unixepoch())`),
 }, (table) => [check("project_publication_pr_mode", sql`${table.prMode} IN ('disabled', 'ask_pr', 'ask_pr_merge')`)]);
+
+export const projectRepositories = sqliteTable("project_repositories", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  path: text("path").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at").notNull().default(sql`(unixepoch())`),
+}, (table) => [
+  uniqueIndex("project_repositories_project_path_unique").on(table.projectId, table.path),
+  index("project_repositories_project_idx").on(table.projectId),
+]);
 
 export const conversations = sqliteTable("conversations", {
   id: text("id").primaryKey(),

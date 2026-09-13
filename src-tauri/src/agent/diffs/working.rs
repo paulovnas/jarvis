@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use tokio::io::AsyncReadExt;
 
@@ -68,6 +68,29 @@ impl Repository {
             root,
             head: has_head.then(|| head.trim().to_owned()),
         }))
+    }
+
+    fn probe_for_file(root: &Path, path: &str) -> Result<PathBuf, AgentError> {
+        let relative = Path::new(path);
+        if relative
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err(failure());
+        }
+        let absolute = root.join(relative);
+        let mut probe = absolute.parent().ok_or_else(failure)?;
+        while !probe.exists() {
+            probe = probe
+                .parent()
+                .filter(|parent| parent.starts_with(root))
+                .ok_or_else(failure)?;
+        }
+        Ok(probe.to_path_buf())
+    }
+
+    pub async fn open_for_file(root: &Path, path: &str) -> Result<Option<Self>, AgentError> {
+        Self::open(&Self::probe_for_file(root, path)?).await
     }
 
     pub async fn contents(&self, root: &Path, path: &str) -> Result<Option<String>, AgentError> {
@@ -256,12 +279,35 @@ pub(super) async fn files(
     if revisions.is_empty() {
         return Ok(vec![]);
     }
-    let repository = Repository::open(&session.root).await?;
+    let mut repositories = Vec::<Repository>::new();
+    let mut repository_by_directory = HashMap::<PathBuf, Option<usize>>::new();
     let mut result = vec![];
     for revision in revisions {
         let live = current(&session.root, &revision.path).await?;
-        let head = if let Some(repo) = &repository {
-            repo.contents(&session.root, &revision.path).await?
+        let probe = Repository::probe_for_file(&session.root, &revision.path)?;
+        let repository = if let Some(index) = repository_by_directory.get(&probe) {
+            *index
+        } else {
+            let index = if let Some(repository) = Repository::open(&probe).await? {
+                if let Some(index) = repositories
+                    .iter()
+                    .position(|current| current.root == repository.root)
+                {
+                    Some(index)
+                } else {
+                    repositories.push(repository);
+                    Some(repositories.len() - 1)
+                }
+            } else {
+                None
+            };
+            repository_by_directory.insert(probe, index);
+            index
+        };
+        let head = if let Some(index) = repository {
+            repositories[index]
+                .contents(&session.root, &revision.path)
+                .await?
         } else {
             revision.before.clone()
         };

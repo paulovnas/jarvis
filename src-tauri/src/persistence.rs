@@ -89,6 +89,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 19,
         sql: include_str!("../../drizzle/0018_project_publication.sql"),
     },
+    Migration {
+        version: 20,
+        sql: include_str!("../../drizzle/0019_project_repositories.sql"),
+    },
 ];
 
 #[test]
@@ -787,7 +791,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 19);
+        assert_eq!(version, 20);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -910,7 +914,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 19);
+        assert_eq!(version, 20);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {

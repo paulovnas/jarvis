@@ -1757,6 +1757,8 @@ fn run_turn<'a>(
         .await?;
         let owner = execution.as_ref().map_or(session, |exec| exec.root());
         let publication_settings = publication::load(state, home, owner.project_id()?)?;
+        let repository_context =
+            crate::library::repositories::prompt(state, home, owner.project_id()?)?;
         let direct_tasks = options.direct() && owner.id == session.id;
         let design = if execution
             .as_ref()
@@ -1861,6 +1863,7 @@ fn run_turn<'a>(
             let search_enabled = !publication_agent && web_search::enabled(state, home, &options);
             let mut instructions = tools::instructions(&session.root, options.mode);
             project_instructions.append_prompt(&mut instructions);
+            instructions.push_str(&repository_context);
             if let Some(exec) = &execution {
                 instructions.push_str(&exec.instructions()?);
             }

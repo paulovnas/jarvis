@@ -82,4 +82,34 @@ describe("Live session files", () => {
     expect(result.current.files).toEqual([file]);
     expect(call).toHaveBeenCalledOnce();
   });
+  it("reconciles the live Git state as soon as a turn finishes", async () => {
+    call.mockResolvedValueOnce([file]).mockResolvedValueOnce([]);
+    const { result } = renderHook(() => useSessionFiles("c1"));
+    await waitFor(() => expect(result.current.files).toEqual([file]));
+    const payload = {
+      conversationId: "c1",
+      baseRevision: 1,
+      revision: 2,
+      events: [{
+        type: "stateChanged",
+        state: {
+          compacting: false,
+          activeTurnId: null,
+          pendingApproval: null,
+          pendingQuestion: null,
+          pendingAuthoring: null,
+          queuedMessages: [],
+          context: { tokens: 0, limit: null, estimated: true, compacting: false, compactions: 0 },
+          compactions: [],
+          fileChanges: [file],
+          history: { start: 0, total: 1 },
+        },
+      }],
+    };
+    await act(async () => {
+      for (const handler of listeners) handler({ event: "agent:event", id: 1, payload });
+    });
+    await waitFor(() => expect(result.current.files).toEqual([]));
+    expect(call).toHaveBeenCalledTimes(2);
+  });
 });

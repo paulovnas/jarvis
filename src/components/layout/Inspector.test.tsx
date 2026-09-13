@@ -134,6 +134,25 @@ describe("Inspector", () => {
     expect(footer).toBeInTheDocument();
   });
 
+  it("shows configured repositories and their local Git state in the GitHub tab", async () => {
+    vi.mocked(invoke).mockImplementation(async command => {
+      if (command === "get_agent_file_changes") return [];
+      if (command === "get_project_repositories") return [{ id: "repo", projectId: "p1", path: "backend", directory: "/projects/jarvis/backend", name: "Backend", description: "API principal", branch: "feature/pagamentos", upstream: "origin/feature/pagamentos", ahead: 2, behind: 1, staged: 1, unstaged: 3, untracked: 2, remoteUrl: "https://github.com/example/backend.git", available: true, error: null, createdAt: 1, updatedAt: 1 }];
+      return [];
+    });
+    const user = userEvent.setup();
+    render(<Inspector library={populatedLibrary()} chat={emptyChat()} />);
+    await user.click(screen.getByRole("tab", { name: "GitHub" }));
+    expect(screen.getByRole("tab", { name: "GitHub" })).toHaveAttribute("aria-selected", "true");
+    const repository = await screen.findByRole("article", { name: "GitHub Backend" });
+    expect(repository).toHaveTextContent("feature/pagamentos");
+    expect(repository).toHaveTextContent("2");
+    expect(repository).toHaveTextContent("1");
+    expect(repository).toHaveTextContent("3");
+    expect(repository).toHaveTextContent("2");
+    expect(repository).toHaveTextContent("origin/feature/pagamentos");
+  });
+
   it("shows empty activity sections and an unknown context without fabricating data", async () => {
     render(<Inspector library={populatedLibrary()} />);
     expect(screen.getByText("Nenhuma alteração pendente.")).toBeInTheDocument();

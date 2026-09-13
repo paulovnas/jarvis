@@ -158,7 +158,9 @@ pub(super) async fn record(session: &Session, revision: FileRevision) -> Result<
         // Rebase ownership after full/partial commits before recording another
         // edit. Preserve the journal baseline if Git is temporarily unavailable.
         baseline = previous.before.clone();
-        if let Ok(repository) = working::Repository::open(&session.root).await {
+        if let Ok(repository) =
+            working::Repository::open_for_file(&session.root, &revision.path).await
+        {
             let head = if let Some(repo) = repository {
                 repo.contents(&session.root, &revision.path).await
             } else {

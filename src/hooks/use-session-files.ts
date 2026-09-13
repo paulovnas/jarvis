@@ -39,6 +39,10 @@ export function useSessionFiles(conversationId: string | null) {
       const next = JSON.stringify([changed.state.activeTurnId, changed.state.fileChanges]);
       if (next === fingerprint) return;
       fingerprint = next;
+      if (changed.state.activeTurnId === null) {
+        void refresh();
+        return;
+      }
       setResult({ id: conversationId, files: changed.state.fileChanges });
     }).then(unlisten => { if (active) stop = unlisten; else unlisten(); }).catch(() => {});
     const focus = () => { if (document.visibilityState === "visible") void refresh(); };

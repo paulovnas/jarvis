@@ -65,6 +65,7 @@ pub enum InspectorTab {
     Details,
     #[default]
     Activities,
+    Github,
     Explorer,
 }
 

@@ -23,6 +23,7 @@ import { ProjectExplorer } from "@/components/files/ProjectExplorer";
 import type { ProjectFilesController } from "@/hooks/use-project-files";
 import { DirectTasks } from "./DirectTasks";
 import { Hint } from "@/components/ui/hint";
+import { GithubRepositoriesPanel } from "./GithubRepositoriesPanel";
 
 function ActivitySection({ title, icon, count, children }: { title: string; icon: ReactNode; count?: number; children: ReactNode }) {
   const { layout, updateLayout } = useDesktopLayout();
@@ -38,6 +39,7 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
   const { layout, updateLayout } = useDesktopLayout();
   const selectedChat = chat?.conversationId === library?.selection.conversationId ? chat : null;
   const [explorerVisited, setExplorerVisited] = useState(layout.inspectorTab === "explorer");
+  const [githubVisited, setGithubVisited] = useState(layout.inspectorTab === "github");
   const [publishing, setPublishing] = useState(false);
   const turns = selectedChat?.turns ?? [];
   const latestTurn = turns[turns.length - 1];
@@ -54,12 +56,12 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
   const files = changes.files;
   const projectId = library?.selection.projectId;
   const projectPath = library?.projects.find(project => project.id === projectId)?.path;
-  const section = layout.inspectorTab === "explorer" ? "explorer" : "activities";
-  const selectSection = (value: unknown) => { if (value === "activities" || value === "explorer") { if (value === "explorer") setExplorerVisited(true); updateLayout({ inspectorTab: value }); } };
+  const section = layout.inspectorTab === "explorer" ? "explorer" : layout.inspectorTab === "github" ? "github" : "activities";
+  const selectSection = (value: unknown) => { if (value === "activities" || value === "github" || value === "explorer") { if (value === "github") setGithubVisited(true); if (value === "explorer") setExplorerVisited(true); updateLayout({ inspectorTab: value }); } };
   const tabClass = "h-7 flex-none cursor-pointer px-2.5 text-xs data-active:bg-primary/15 data-active:text-primary dark:data-active:border-primary/20 dark:data-active:bg-primary/15 dark:data-active:text-primary";
   return <aside aria-label="Inspector" className="flex h-full min-h-0 flex-col bg-sidebar">
     <Tabs value={section} onValueChange={selectSection} className="h-full min-h-0 gap-0">
-      <div className="shrink-0 border-b border-border bg-card px-2 py-1"><TabsList aria-label="Seções da lateral direita" className="h-7 justify-start gap-1 rounded-md bg-transparent p-0"><TabsTrigger value="activities" className={tabClass}>Inspector</TabsTrigger><TabsTrigger value="explorer" className={tabClass}>Explorer</TabsTrigger></TabsList></div>
+      <div className="shrink-0 border-b border-border bg-card px-2 py-1"><TabsList aria-label="Seções da lateral direita" className="h-7 justify-start gap-1 rounded-md bg-transparent p-0"><TabsTrigger value="activities" className={tabClass}>Inspector</TabsTrigger><TabsTrigger value="github" className={tabClass}>GitHub</TabsTrigger><TabsTrigger value="explorer" className={tabClass}>Explorer</TabsTrigger></TabsList></div>
       <TabsContent value="activities" keepMounted className={`min-h-0 flex-1 flex-col ${section === "activities" ? "flex" : "hidden"}`}>
     <div className="min-h-0 flex-1">
         <ScrollArea className="h-full"><div key={selectedChat?.conversationId ?? "empty"} className="px-2">
@@ -82,6 +84,9 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
         </div></ScrollArea>
     </div>
     <ContextUsage key={selectedChat?.conversationId ?? "empty"} context={conversationContext(turns, accounts)} live={selectedChat?.context} onCompact={onCompact} compacting={compacting} disabled={!selectedChat || turns.length === 0 || !!selectedChat.activeTurnId || pending} />
+      </TabsContent>
+      <TabsContent value="github" keepMounted className={`min-h-0 flex-1 ${section === "github" ? "block" : "hidden"}`}>
+        {projectId && (githubVisited || section === "github") ? <GithubRepositoriesPanel key={projectId} projectId={projectId} /> : section === "github" ? <p className="p-4 text-xs text-muted-foreground">Abra uma conversa para consultar os repositórios do projeto.</p> : null}
       </TabsContent>
       <TabsContent value="explorer" keepMounted className={`min-h-0 flex-1 ${section === "explorer" ? "block" : "hidden"}`}>
         {projectId && fileWorkspace && (explorerVisited || section === "explorer") ? <ProjectExplorer key={projectId} projectId={projectId} projectName={library?.projects.find(project => project.id === projectId)?.name ?? "Projeto"} selected={fileWorkspace.tabs.activePath} onOpen={fileWorkspace.open} /> : section === "explorer" ? <p className="p-4 text-xs text-muted-foreground">Abra uma conversa para explorar os arquivos do projeto.</p> : null}
