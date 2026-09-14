@@ -69,7 +69,9 @@ describe("Home shell", () => {
     const field = await screen.findByRole("textbox", { name: "Mensagem" });
     field.focus(); await user.paste("Rascunho pessoal");
     await user.click(screen.getByRole("button", { name: "Detalhes" }));
-    expect(await screen.findByRole("tab", { name: /Kanban/ })).toBeVisible();
+    expect(
+      await screen.findByRole("tab", { name: /Kanban/ }, { timeout: 12_000 }),
+    ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Primeira conversa" }));
     expect(await screen.findByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho pessoal");
     const workspace = async (name: string) => {

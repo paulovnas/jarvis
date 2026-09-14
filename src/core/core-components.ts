@@ -16,7 +16,7 @@ export const coreSnapshotSchema = z.object({
     healthError: z.string().nullable().default(null),
     diagnostics: z.array(z.object({ label: z.string(), passed: z.boolean(), message: z.string() })).default([]),
   })).length(6).refine(items => new Set(items.map(item => item.id)).size === 6),
-}).refine(value => value.ready === value.items.every(item => item.installed && item.configured && !item.healthError));
+}).refine(value => value.ready === value.items.every(item => item.id === "context7" || (item.installed && item.configured && !item.healthError)));
 export type CoreSnapshot = z.infer<typeof coreSnapshotSchema>;
 export function coreError(cause: unknown): string {
   const error = z.object({ message: z.string().min(1) }).safeParse(cause);

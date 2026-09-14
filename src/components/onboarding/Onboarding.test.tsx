@@ -1,29 +1,57 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type EventCallback } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { coreFixture } from "@/test/core-fixtures";
 import { Onboarding } from "./Onboarding";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+const { backupOpenMock } = vi.hoisted(() => ({ backupOpenMock: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: backupOpenMock, save: vi.fn() }));
 const invokeMock = vi.mocked(invoke);
 const optionalTools = {
   platform: "windows",
   platformLabel: "Windows",
   tools: [
-    { id: "git", name: "Git", description: "Versionamento", installed: false, version: null, automaticInstall: true, installWith: "WinGet", helpUrl: "https://git-scm.com/download/win" },
-    { id: "gh", name: "GitHub CLI", description: "Pull requests", installed: false, version: null, automaticInstall: true, installWith: "WinGet", helpUrl: "https://cli.github.com/" },
+    { id: "git", name: "Git", description: "Versionamento", installed: false, version: null, automaticInstall: true, installWith: "WinGet", helpUrl: "https://git-scm.com/download/win", checks: [] },
+    { id: "gh", name: "GitHub CLI", description: "Pull requests", installed: false, version: null, automaticInstall: true, installWith: "WinGet", helpUrl: "https://cli.github.com/", checks: [] },
   ],
 };
-let changed: EventCallback<unknown> | undefined;
 beforeEach(() => {
-  invokeMock.mockReset(); changed = undefined;
-  vi.mocked(listen).mockImplementation(async (name, callback) => { if (name === "core:changed") changed = callback; return () => {}; });
+  invokeMock.mockReset(); backupOpenMock.mockReset();
+  vi.mocked(listen).mockResolvedValue(() => {});
 });
-it("requires all six configured tools before providers and a connected provider before the final step", async () => {
-  let state = coreFixture(); state.ready = false; state.items[4].configured = false;
+it("offers backup restoration before requiring Core or a provider", async () => {
+  const state = coreFixture();
+  backupOpenMock.mockResolvedValue("/tmp/restore.zip");
+  invokeMock.mockImplementation(async command => {
+    if (command === "get_core_status" || command === "check_core_updates") return state;
+    if (command === "inspect_settings_backup") return {
+      fingerprint: `sha256:${"a".repeat(64)}`,
+      createdAt: 1,
+      appVersion: "1.2.2",
+      sourcePlatform: { id: "macos", label: "macOS" },
+      archiveBytes: 1024,
+      summary: { customAgents: 0, customFlows: 0, skills: 0, mcps: 0, modelTargets: 0 },
+      modelTargets: [],
+      warnings: [],
+    };
+    if (command === "import_settings_backup") return { summary: { customAgents: 0, customFlows: 0, skills: 0, mcps: 0, modelTargets: 0 }, mappedModels: 0 };
+    return [];
+  });
+  const user = userEvent.setup();
+  render(<Onboarding saving={false} onComplete={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Restaurar backup" }));
+  const dialog = await screen.findByRole("dialog", { name: "Revisar backup" });
+  await user.click(screen.getByRole("button", { name: "Restaurar configurações" }));
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("import_settings_backup", expect.objectContaining({ path: "/tmp/restore.zip" })));
+  expect(await screen.findByText("Backup restaurado. Conecte os provedores desta instalação para continuar.")).toBeVisible();
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+});
+it("requires essential Core tools but leaves Context7 optional before providers", async () => {
+  const state = coreFixture(); state.items[4].configured = false;
   invokeMock.mockImplementation(async command => {
     if (command === "get_core_status" || command === "check_core_updates") return state;
     if (command === "get_optional_tools_status") return optionalTools;
@@ -33,11 +61,8 @@ it("requires all six configured tools before providers and a connected provider 
   render(<Onboarding saving={false} onComplete={complete} />);
   expect(screen.getByRole("heading", { name: "Bem-vindo ao Jarvis" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Avançar" }));
-  await screen.findByText("5/6");
-  expect(screen.getByRole("button", { name: "Avançar" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Configurar Context7" })).toBeEnabled();
-  state = coreFixture();
-  await act(async () => changed?.({ event: "core:changed", id: 1, payload: state }));
+  await screen.findByText("5/5 essenciais");
+  expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Avançar" }));
   expect(await screen.findByRole("heading", { name: "Complete seu ambiente" })).toBeVisible();
   await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());

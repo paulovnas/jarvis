@@ -26,7 +26,7 @@ O Jarvis reúne conversas com IA, arquivos, terminais, navegador, planejamento e
 
 Os agentes podem investigar o projeto, consultar documentação, editar arquivos, executar comandos, navegar pelo código, usar MCPs e realizar verificações. Operações sensíveis, validações e publicações podem ser apresentadas para sua revisão antes da execução.
 
-O Jarvis está em beta e evolui continuamente. Relate problemas e sugestões nas [issues do projeto](https://github.com/paulovnas/jarvis/issues).
+O Jarvis evolui continuamente. Relate problemas e sugestões nas [issues do projeto](https://github.com/paulovnas/jarvis/issues).
 
 ## Principais recursos
 
@@ -57,7 +57,7 @@ Nos fluxos Planejado e Completo, o Inspector acompanha o agente em atividade, o 
 
 ## Core
 
-O Core integra seis recursos essenciais ao harness do Jarvis. A instalação inicial é obrigatória e guiada; depois, versões, integridade, atualizações, diagnóstico e reparo ficam em **Configurações → Ferramentas → Core**. Os pacotes gerenciados são armazenados em `~/.jarvis`.
+O Core instala cinco recursos essenciais ao harness do Jarvis. O Context7 é uma integração opcional de documentação: pode ser instalado e configurado depois, sem impedir o uso do chat. Versões, integridade, atualizações, diagnóstico e reparo ficam em **Configurações → Ferramentas → Core**. Os pacotes gerenciados são armazenados em `~/.jarvis`.
 
 | Componente | Papel no Jarvis |
 | --- | --- |
@@ -65,10 +65,10 @@ O Core integra seis recursos essenciais ao harness do Jarvis. A instalação ini
 | [Ponytail](https://github.com/DietrichGebert/ponytail) | Fornece diretrizes de execução e revisão de código para reduzir ruído e retrabalho. |
 | [Beads](https://github.com/gastownhall/beads) | Mantém épicos, tarefas, dependências e comentários persistentes por projeto. |
 | [Open Design](https://github.com/nexu-io/open-design) | Disponibiliza sistemas visuais, referências, templates e recursos usados pelo Designer. |
-| [Context7](https://github.com/upstash/context7) | Consulta documentação e exemplos atualizados de bibliotecas. A chave fica no armazenamento seguro do sistema. |
+| [Context7](https://github.com/upstash/context7) | Opcional: consulta documentação e exemplos atualizados de bibliotecas. A chave fica no armazenamento seguro do sistema. |
 | [Servidores LSP](https://github.com/typescript-language-server/typescript-language-server) | Localiza definições, referências, símbolos e diagnósticos em projetos TypeScript, JavaScript e Python. Rust e Go usam a toolchain do projeto quando disponível. |
 
-Se um componente obrigatório estiver ausente ou inválido, o Jarvis bloqueia novas interações e abre o fluxo de **Diagnóstico e Reparo** para corrigir ou reinstalar o recurso.
+Se um componente essencial estiver ausente ou inválido, o Jarvis bloqueia novas interações e abre o fluxo de **Diagnóstico e Reparo** para corrigir ou reinstalar o recurso.
 
 ## Provedores, ferramentas e extensões
 
@@ -107,17 +107,19 @@ O botão **Publicar** no Inspector pede que a IA prepare uma proposta com os arq
 Baixe a versão mais recente em [Releases](https://github.com/paulovnas/jarvis/releases):
 
 - **macOS Apple Silicon:** abra o `.dmg` e copie o Jarvis para **Aplicativos**.
-- **Windows x64:** execute o instalador `-setup.exe`. O Windows pode exibir um aviso de editor desconhecido enquanto o projeto não possui assinatura Authenticode.
+- **Windows x64:** execute o instalador `-setup.exe`. O instalador garante o WebView2 quando necessário; em computadores sem ele, essa etapa usa a internet. O Windows pode exibir um aviso de editor desconhecido enquanto o projeto não possui assinatura Authenticode.
 
 O onboarding conduz cinco etapas:
 
-1. Conhecer os recursos principais do Jarvis.
-2. Instalar e configurar os seis componentes obrigatórios do Core.
-3. Verificar **Git** e **GitHub CLI**. Os dois são opcionais; quando ausentes, o Jarvis oferece Homebrew no macOS, WinGet no Windows ou instruções oficiais compatíveis com o sistema.
+1. Conhecer os recursos principais e, se necessário, restaurar um backup antes de configurar a máquina.
+2. Instalar os cinco componentes essenciais do Core. O Context7 continua disponível como uma integração opcional de documentação.
+3. Verificar **Git** e **GitHub CLI**. Os dois são opcionais; quando ausentes, o Jarvis oferece Homebrew no macOS, WinGet no Windows ou instruções oficiais compatíveis com o sistema. Com Git instalado, também informa se nome e e-mail estão prontos para commits; com GitHub CLI, informa se a conta está autenticada.
 4. Conectar ao menos um provedor e configurar as ferramentas de IA.
 5. Dar um nome ao workspace padrão e adicionar a pasta do primeiro projeto.
 
-Git é necessário para versionamento e publicação. O GitHub CLI é necessário somente para criar ou mesclar pull requests pelo Jarvis; autentique-o com `gh auth login` antes do primeiro uso.
+Git é necessário para versionamento e publicação. Configure `git config --global user.name` e `git config --global user.email` antes do primeiro commit; um projeto também pode definir essa identidade localmente. O GitHub CLI é necessário somente para criar ou mesclar pull requests pelo Jarvis; autentique-o com `gh auth login` antes do primeiro uso.
+
+Não é necessário instalar Bun, Node.js, Python, Rust, Cargo, Visual Studio, Chrome ou Playwright para usar o Jarvis. O Core mantém seus próprios runtimes e o navegador integrado usa o WebView do sistema. Toolchains adicionais pertencem ao projeto aberto: o Jarvis os detecta quando um comando de build, teste ou linguagem realmente precisar deles. No Windows, PowerShell 7, Git Bash e WSL são opções de terminal, não pré-requisitos.
 
 O macOS pode pedir autorização adicional porque as versões atuais ainda não possuem notarização Apple. Use **Ajustes do Sistema → Privacidade e Segurança** se necessário. Atualmente não são distribuídos pacotes para macOS Intel, Windows ARM64 ou Linux.
 
@@ -135,7 +137,9 @@ O macOS pode pedir autorização adicional porque as versões atuais ainda não 
 
 Configurações, conversas, recursos e dados locais ficam em `~/.jarvis`. Credenciais são protegidas pelo **Acesso às Chaves** no macOS e pelo armazenamento seguro do Windows. Prompts, anexos e o conteúdo necessário das ferramentas são enviados somente aos provedores e serviços usados na conversa.
 
-Em **Configurações → Geral → Exportar e importar**, um arquivo de backup reúne preferências, workspaces, agentes, fluxos, skills e MCPs. Provedores e credenciais não são exportados; após a importação, o Jarvis orienta o novo vínculo dos modelos.
+Em **Configurações → Geral → Exportar e importar**, um arquivo ZIP reúne as preferências gerais, agentes, fluxos, skills e configurações de MCP. Ele não inclui workspaces, projetos, conversas, histórico, pacotes do Core, contas de provedores, credenciais de IA, vínculos de modelos, layout da janela, abas abertas ou dimensões dos painéis. Após a importação, o Jarvis permite associar agentes aos modelos disponíveis nesta instalação.
+
+O ZIP registra o sistema de origem. Ao restaurar em outra plataforma, Jarvis redefine automaticamente shell, argumentos de terminal e fontes que não possam funcionar no destino, preservando as demais preferências. MCPs locais podem referenciar caminhos, executáveis ou chaves próprios da máquina de origem; revise-os antes de ativá-los. Configurações de MCP podem conter segredos, portanto guarde o ZIP em local seguro.
 
 Excluir um projeto remove seu registro e o histórico do Jarvis após confirmação. **A pasta e os arquivos do projeto no disco não são apagados.** Excluir um workspace também preserva as pastas dos projetos, mas remove seu histórico de conversas.
 

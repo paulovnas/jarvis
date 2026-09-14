@@ -52,6 +52,7 @@ fn round_trip_preserves_portable_settings_and_skill_payload() {
     assert_eq!(written, fs::metadata(&path).unwrap().len());
     assert_eq!(loaded.manifest.format, FORMAT);
     assert_eq!(loaded.manifest.version, FORMAT_VERSION);
+    assert_eq!(loaded.manifest.source_platform, Some(current_platform()));
     assert_eq!(loaded.manifest.summary.skills, 1);
     assert_eq!(loaded.manifest.summary.mcps, 1);
     assert_eq!(loaded.payload.catalog.agents[0].name, "Especialista");
@@ -60,6 +61,10 @@ fn round_trip_preserves_portable_settings_and_skill_payload() {
     assert_eq!(loaded.skill_files[0].bytes, files[0].bytes);
     assert!(loaded.payload.mcps[0].contains("mcp-secret"));
     assert_eq!(preview(&loaded).model_targets.len(), 1);
+    assert!(preview(&loaded)
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("Layout da janela")));
 }
 
 #[test]
@@ -114,6 +119,7 @@ fn inspection_rejects_unknown_entries_and_future_versions() {
             version,
             created_at: 1,
             app_version: "test".into(),
+            source_platform: Some(current_platform()),
             settings_sha256: digest(&settings),
             summary: summary(&payload(), &[]),
         };
@@ -142,6 +148,65 @@ fn inspection_rejects_unknown_entries_and_future_versions() {
     let unknown = directory.path().join("unknown.zip");
     archive(&unknown, FORMAT_VERSION, Some("providers.json"));
     assert!(read_archive(&unknown).is_err());
+}
+
+#[test]
+fn version_one_backups_remain_importable_without_platform_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("legacy.zip");
+    let settings = serde_json::to_vec_pretty(&payload()).unwrap();
+    let manifest = Manifest {
+        format: FORMAT.into(),
+        version: 1,
+        created_at: 1,
+        app_version: "legacy".into(),
+        source_platform: None,
+        settings_sha256: digest(&settings),
+        summary: summary(&payload(), &[]),
+    };
+    let file = fs::File::create(&path).unwrap();
+    let mut zip = zip::ZipWriter::new(file);
+    zip.start_file(MANIFEST_NAME, zip_options(0o600)).unwrap();
+    zip.write_all(&serde_json::to_vec(&manifest).unwrap())
+        .unwrap();
+    zip.start_file(SETTINGS_NAME, zip_options(0o600)).unwrap();
+    zip.write_all(&settings).unwrap();
+    zip.finish().unwrap();
+
+    let loaded = read_archive(&path).unwrap();
+    assert_eq!(loaded.manifest.version, 1);
+    assert_eq!(preview(&loaded).source_platform, None);
+}
+
+#[test]
+fn cross_platform_previews_explain_terminal_and_mcp_review() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("portable.zip");
+    let mut settings = payload();
+    settings.system.terminal.shell = Some("/bin/zsh".into());
+    settings.system.terminal.arguments = vec!["-il".into()];
+    write_archive(&path, &settings, &[]).unwrap();
+    let mut loaded = read_archive(&path).unwrap();
+    loaded.manifest.source_platform = Some(BackupPlatform {
+        id: if std::env::consts::OS == "windows" {
+            "macos".into()
+        } else {
+            "windows".into()
+        },
+        label: if std::env::consts::OS == "windows" {
+            "macOS".into()
+        } else {
+            "Windows".into()
+        },
+    });
+
+    let warnings = preview(&loaded).warnings;
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.contains("shell e os argumentos")));
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.contains("MCPs locais")));
 }
 
 #[test]

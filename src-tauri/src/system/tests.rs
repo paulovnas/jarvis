@@ -153,6 +153,32 @@ fn question_timeout_defaults_for_existing_installs_and_rejects_invalid_values() 
 }
 
 #[test]
+fn imported_preferences_reset_only_nonportable_terminal_values() {
+    let mut preferences = Preferences {
+        terminal: TerminalPreferences {
+            shell: Some("/bin/zsh".into()),
+            arguments: vec!["-il".into()],
+            font_family: Some("Jarvis Test Font That Is Not Installed".into()),
+            font_size: 15,
+        },
+        ..Preferences::default()
+    };
+    let source = if std::env::consts::OS == "windows" {
+        "macos"
+    } else {
+        "windows"
+    };
+    let normalization = normalize_imported_preferences(&mut preferences, Some(source));
+
+    assert!(normalization.terminal_shell_reset);
+    assert!(normalization.terminal_font_reset);
+    assert_eq!(preferences.terminal.shell, None);
+    assert!(preferences.terminal.arguments.is_empty());
+    assert_eq!(preferences.terminal.font_family, None);
+    assert_eq!(preferences.terminal.font_size, 15);
+}
+
+#[test]
 fn sleep_policy_follows_activity_and_open_mode() {
     assert!(!SleepMode::Off.inhibit(false));
     assert!(!SleepMode::Off.inhibit(true));

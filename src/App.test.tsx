@@ -41,8 +41,8 @@ const optionalTools = {
   platform: "macos",
   platformLabel: "macOS",
   tools: [
-    { id: "git", name: "Git", description: "Versionamento", installed: true, version: "git version 2.51.0", automaticInstall: true, installWith: "Homebrew", helpUrl: "https://git-scm.com/download/mac" },
-    { id: "gh", name: "GitHub CLI", description: "Pull requests", installed: true, version: "gh version 2.80.0", automaticInstall: true, installWith: "Homebrew", helpUrl: "https://cli.github.com/" },
+    { id: "git", name: "Git", description: "Versionamento", installed: true, version: "git version 2.51.0", automaticInstall: true, installWith: "Homebrew", helpUrl: "https://git-scm.com/download/mac", checks: [] },
+    { id: "gh", name: "GitHub CLI", description: "Pull requests", installed: true, version: "gh version 2.80.0", automaticInstall: true, installWith: "Homebrew", helpUrl: "https://cli.github.com/", checks: [] },
   ],
 };
 async function reachFinish(user: ReturnType<typeof userEvent.setup>) {

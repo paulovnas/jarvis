@@ -20,6 +20,7 @@ const preview = {
   fingerprint: `sha256:${"a".repeat(64)}`,
   createdAt: 1_757_376_000,
   appVersion: "0.9.1-beta",
+  sourcePlatform: { id: "macos", label: "macOS" },
   archiveBytes: 2_048,
   summary,
   modelTargets: [{ id: "builtin:planned/planner", kind: "builtin_agent", label: "Planejador", details: ["Fluxo Planejado", "Agente Jarvis"] }],
@@ -73,6 +74,7 @@ describe("settings backup", () => {
     expect(within(review).getByText("3")).toBeVisible();
     expect(within(review).getByText(/Provedores, contas, credenciais de IA/)).toBeVisible();
     expect(within(review).getByText(/MCP podem conter chaves/)).toBeVisible();
+    expect(within(review).getByText("macOS")).toBeVisible();
 
     await user.click(within(review).getByRole("button", { name: "Revisar modelos" }));
     const mapping = screen.getByRole("dialog", { name: "Associar modelos" });

@@ -48,6 +48,12 @@ impl ComponentId {
             Self::Lsp => "lsp",
         }
     }
+    pub fn required(self) -> bool {
+        // Context-mode is part of Jarvis' execution harness. Context7 enriches
+        // library research, but requires an independently managed API key and
+        // must never prevent a user from starting a local coding session.
+        self != Self::Context7
+    }
     fn name(self) -> &'static str {
         match self {
             Self::ContextMode => "Context-mode",
@@ -189,12 +195,9 @@ pub fn installed(home: &Path, id: ComponentId) -> Result<Installation, CoreError
 }
 pub fn require_ready(home: &Path) -> Result<(), CoreError> {
     for id in ComponentId::ALL {
-        installed(home, id)?;
-    }
-    if !context7::configured(home) {
-        return Err(error(
-            "Configure a chave do Context7 em Ferramentas → Core.",
-        ));
+        if id.required() {
+            installed(home, id)?;
+        }
     }
     Ok(())
 }
@@ -309,9 +312,9 @@ impl CoreState {
             })
             .collect();
         Ok(Snapshot {
-            ready: items
-                .iter()
-                .all(|i| i.installed && i.configured && i.health_error.is_none()),
+            ready: items.iter().all(|i| {
+                !i.id.required() || (i.installed && i.configured && i.health_error.is_none())
+            }),
             items,
             checking: data.checking,
         })

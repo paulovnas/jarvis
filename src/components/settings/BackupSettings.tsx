@@ -93,7 +93,7 @@ function ModelMappingRow({ target, accounts, choice, busy, onChange }: { target:
   </Card>;
 }
 
-export function BackupSettings({ accounts, onRestored }: { accounts: ProviderAccount[]; onRestored?: (summary: BackupPreview["summary"]) => void }) {
+export function BackupSettings({ accounts, onRestored, restoreOnly = false }: { accounts: ProviderAccount[]; onRestored?: (summary: BackupPreview["summary"]) => void; restoreOnly?: boolean }) {
   const [exporting, setExporting] = useState(false);
   const [inspecting, setInspecting] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -194,12 +194,12 @@ export function BackupSettings({ accounts, onRestored }: { accounts: ProviderAcc
     }
   }
 
-  return <section aria-labelledby="backup-settings-title" className="mt-7 space-y-3 border-t border-border pt-6">
-    <div className="space-y-1">
+  return <section aria-labelledby={restoreOnly ? undefined : "backup-settings-title"} className={restoreOnly ? "space-y-3" : "mt-7 space-y-3 border-t border-border pt-6"}>
+    {!restoreOnly && <div className="space-y-1">
       <h2 id="backup-settings-title" className="micro-label flex items-center gap-2 text-muted-foreground"><Archive aria-hidden="true" className="size-3.5" />Backup e restauração</h2>
       <p className="text-xs leading-relaxed text-muted-foreground">Proteja suas preferências, agentes, fluxos, skills e MCPs em um único arquivo portátil.</p>
-    </div>
-    <Card size="sm" className="grid gap-0 rounded-lg py-0 lg:grid-cols-2">
+    </div>}
+    {restoreOnly ? <div className="flex flex-wrap items-center gap-3 rounded-lg border border-onedark-cyan/25 bg-onedark-cyan/5 p-4"><span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-onedark-cyan/10 text-onedark-cyan"><Upload aria-hidden="true" className="size-4" /></span><div className="min-w-0 flex-1"><p className="text-sm font-medium">Já tem um backup?</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Restaure agentes, fluxos, skills, MCPs e preferências antes de configurar esta instalação.</p></div><Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void chooseBackup()} className="cursor-pointer gap-2">{inspecting ? <><Spinner aria-hidden="true" />Inspecionando…</> : <><Upload aria-hidden="true" />Restaurar backup</>}</Button></div> : <Card size="sm" className="grid gap-0 rounded-lg py-0 lg:grid-cols-2">
       <div className="flex min-w-0 flex-col gap-3 p-4">
         <div className="flex items-start gap-3">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-onedark-green/10 text-onedark-green"><Download aria-hidden="true" className="size-3.5" /></span>
@@ -214,10 +214,10 @@ export function BackupSettings({ accounts, onRestored }: { accounts: ProviderAcc
           <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-onedark-cyan/10 text-onedark-cyan"><Upload aria-hidden="true" className="size-3.5" /></span>
           <div className="min-w-0 space-y-1"><h3 className="text-sm font-medium">Restaurar backup</h3><p className="text-[11px] leading-relaxed text-muted-foreground">Inspecione o conteúdo e associe os agentes aos modelos disponíveis antes de aplicar.</p></div>
         </div>
-        <p className="flex items-start gap-2 text-[10px] leading-relaxed text-onedark-yellow"><ShieldCheck aria-hidden="true" className="mt-0.5 size-3 shrink-0" />Contas de IA, projetos e conversas permanecem nesta instalação.</p>
+        <p className="flex items-start gap-2 text-[10px] leading-relaxed text-onedark-yellow"><ShieldCheck aria-hidden="true" className="mt-0.5 size-3 shrink-0" />Contas de IA, projetos, conversas e layout da janela permanecem nesta instalação.</p>
         <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void chooseBackup()} className="mt-auto w-fit cursor-pointer gap-2">{inspecting ? <><Spinner aria-hidden="true" />Inspecionando…</> : <><Upload aria-hidden="true" />Escolher arquivo</>}</Button>
       </div>
-    </Card>
+    </Card>}
     {error && !preview && <p role="alert" className="text-xs text-destructive">{error}</p>}
 
     <Dialog open={preview !== null} onOpenChange={open => { if (!open) closePreview(); }}>
@@ -234,9 +234,10 @@ export function BackupSettings({ accounts, onRestored }: { accounts: ProviderAcc
               <SummaryCard icon={BookOpen} label="Skills" value={preview.summary.skills} />
               <SummaryCard icon={Plug} label="MCPs" value={preview.summary.mcps} />
             </div>
-            <Card className="grid gap-3 rounded-lg p-4 sm:grid-cols-3">
+            <Card className="grid gap-3 rounded-lg p-4 sm:grid-cols-4">
               <div><p className="micro-label text-muted-foreground">Criado em</p><p className="mt-1 font-mono text-xs tabular-nums">{new Date(preview.createdAt * 1000).toLocaleString("pt-BR")}</p></div>
               <div><p className="micro-label text-muted-foreground">Versão de origem</p><p className="mt-1 font-mono text-xs">Jarvis {preview.appVersion}</p></div>
+              <div><p className="micro-label text-muted-foreground">Sistema de origem</p><p className="mt-1 font-mono text-xs">{preview.sourcePlatform?.label ?? "Não informado"}</p></div>
               <div><p className="micro-label text-muted-foreground">Tamanho</p><p className="mt-1 font-mono text-xs tabular-nums">{formatBackupSize(preview.archiveBytes)}</p></div>
             </Card>
             <Alert className="border-onedark-yellow/30 bg-onedark-yellow/5"><CircleAlert className="text-onedark-yellow" /><AlertTitle className="text-onedark-yellow">A restauração substitui estas categorias</AlertTitle><AlertDescription className="space-y-1 text-xs leading-relaxed">{preview.warnings.map(warning => <p key={warning}>{warning}</p>)}</AlertDescription></Alert>

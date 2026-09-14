@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { CheckCircle2, Download, ExternalLink, GitBranch, GitPullRequest, RefreshCw, TriangleAlert } from "lucide-react";
+import { CheckCircle2, CircleAlert, Download, ExternalLink, GitBranch, GitPullRequest, RefreshCw, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +49,7 @@ function ToolCard({ tool, installing, disabled, onInstall, onHelp }: {
       {tool.version
         ? <p className="break-words font-mono text-[11px] text-muted-foreground">{tool.version}</p>
         : <p className="text-xs leading-5 text-muted-foreground">Você pode continuar sem esta ferramenta e instalá-la depois.</p>}
+      {tool.checks.length > 0 && <div className="mt-3 space-y-2 border-t border-border/70 pt-3">{tool.checks.map(check => <div key={check.id} className="flex items-start gap-2 text-[11px] leading-4"><span className={check.ready ? "mt-0.5 text-onedark-green" : "mt-0.5 text-onedark-yellow"}>{check.ready ? <CheckCircle2 aria-hidden="true" className="size-3" /> : <CircleAlert aria-hidden="true" className="size-3" />}</span><p><span className="font-medium text-foreground">{check.label}</span><span className="text-muted-foreground"> · {check.message}</span></p></div>)}</div>}
     </CardContent>
     {!tool.installed && <CardFooter className="flex flex-wrap gap-2 border-t border-border pt-4">
       {tool.automaticInstall && tool.installWith

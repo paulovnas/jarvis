@@ -21,7 +21,7 @@ use tauri::{Emitter, Manager};
 use zip::write::SimpleFileOptions;
 
 const FORMAT: &str = "jarvis-settings-backup";
-const FORMAT_VERSION: u16 = 1;
+const FORMAT_VERSION: u16 = 2;
 const MANIFEST_NAME: &str = "manifest.json";
 const SETTINGS_NAME: &str = "settings.json";
 const MAX_ARCHIVE_BYTES: u64 = 96 * 1024 * 1024;
@@ -71,6 +71,38 @@ pub struct BackupSummary {
     model_targets: usize,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupPlatform {
+    id: String,
+    label: String,
+}
+
+fn platform_label(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        "other" => "Outro sistema",
+        _ => return None,
+    })
+}
+
+fn current_platform() -> BackupPlatform {
+    let id = std::env::consts::OS;
+    let (id, label) = platform_label(id)
+        .map(|label| (id, label))
+        .unwrap_or(("other", "Outro sistema"));
+    BackupPlatform {
+        id: id.into(),
+        label: label.into(),
+    }
+}
+
+fn valid_platform(platform: &BackupPlatform) -> bool {
+    platform_label(&platform.id).is_some_and(|label| label == platform.label)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Manifest {
@@ -78,6 +110,8 @@ struct Manifest {
     version: u16,
     created_at: u64,
     app_version: String,
+    #[serde(default)]
+    source_platform: Option<BackupPlatform>,
     settings_sha256: String,
     summary: BackupSummary,
 }
@@ -106,6 +140,7 @@ pub struct BackupPreview {
     fingerprint: String,
     created_at: u64,
     app_version: String,
+    source_platform: Option<BackupPlatform>,
     archive_bytes: u64,
     summary: BackupSummary,
     model_targets: Vec<ModelTarget>,
@@ -456,6 +491,7 @@ fn write_archive(
         version: FORMAT_VERSION,
         created_at: unix_timestamp(),
         app_version: env!("CARGO_PKG_VERSION").into(),
+        source_platform: Some(current_platform()),
         settings_sha256: digest(&settings),
         summary: archive_summary,
     };
@@ -663,8 +699,15 @@ fn read_archive(path: &Path) -> Result<LoadedBackup, BackupError> {
             "Este backup foi criado por uma versão mais nova do Jarvis. Atualize o aplicativo antes de restaurá-lo.",
         ));
     }
-    if manifest.version != FORMAT_VERSION {
+    if !(1..=FORMAT_VERSION).contains(&manifest.version) {
         return Err(error("Esta versão do formato de backup não é suportada."));
+    }
+    if manifest
+        .source_platform
+        .as_ref()
+        .is_some_and(|platform| !valid_platform(platform))
+    {
+        return Err(error("O sistema de origem informado no backup é inválido."));
     }
     let settings = settings.ok_or_else(|| error("O backup não contém as configurações."))?;
     if manifest.settings_sha256 != digest(&settings) {
@@ -693,7 +736,9 @@ fn preview(loaded: &LoadedBackup) -> BackupPreview {
     let mut warnings = vec![
         "Provedores, contas, credenciais de IA e modelos não fazem parte do backup.".into(),
         "A restauração substitui as preferências, os agentes, os fluxos, as skills e os MCPs atuais.".into(),
-        "Projetos, conversas e pacotes instalados do Core permanecem nesta instalação.".into(),
+        "Workspaces, projetos, conversas e pacotes instalados do Core permanecem nesta instalação.".into(),
+        "Layout da janela, abas abertas e dimensões dos painéis permanecem nesta instalação.".into(),
+        "Web Search, Vision, geração de imagens, alertas de limite e vínculos de modelos dependem das contas conectadas e devem ser configurados nesta instalação.".into(),
     ];
     if !loaded.payload.mcps.is_empty() {
         warnings.push(
@@ -707,10 +752,43 @@ fn preview(loaded: &LoadedBackup) -> BackupPreview {
                 .into(),
         );
     }
+    let mut restored_preferences = loaded.payload.system.clone();
+    let normalization = system::normalize_imported_preferences(
+        &mut restored_preferences,
+        loaded
+            .manifest
+            .source_platform
+            .as_ref()
+            .map(|platform| platform.id.as_str()),
+    );
+    if normalization.terminal_shell_reset {
+        warnings.push(
+            "O shell e os argumentos do terminal serão redefinidos para o padrão deste sistema."
+                .into(),
+        );
+    }
+    if normalization.terminal_font_reset {
+        warnings.push(
+            "A fonte configurada não está disponível neste sistema e será substituída pela fonte padrão.".into(),
+        );
+    }
+    let destination_platform = current_platform();
+    if loaded
+        .manifest
+        .source_platform
+        .as_ref()
+        .is_some_and(|platform| platform.id.as_str() != destination_platform.id.as_str())
+        && !loaded.payload.mcps.is_empty()
+    {
+        warnings.push(
+            "MCPs locais podem referenciar executáveis ou caminhos do sistema de origem. Revise-os antes de ativá-los.".into(),
+        );
+    }
     BackupPreview {
         fingerprint: loaded.fingerprint.clone(),
         created_at: loaded.manifest.created_at,
         app_version: loaded.manifest.app_version.clone(),
+        source_platform: loaded.manifest.source_platform.clone(),
         archive_bytes: loaded.archive_bytes,
         summary: loaded.manifest.summary.clone(),
         model_targets: loaded.payload.model_targets.clone(),
@@ -915,9 +993,17 @@ fn apply_import(
     state: &AppState,
     mcp: &McpState,
     oauth: &OpenAiCodexState,
-    loaded: LoadedBackup,
+    mut loaded: LoadedBackup,
     mappings: Vec<ModelMapping>,
 ) -> Result<BackupImportResult, BackupError> {
+    system::normalize_imported_preferences(
+        &mut loaded.payload.system,
+        loaded
+            .manifest
+            .source_platform
+            .as_ref()
+            .map(|platform| platform.id.as_str()),
+    );
     let (catalog, native, bindings) = prepare_import(&loaded, home, state, oauth, mappings)?;
     let jarvis = crate::data_dir::root(home);
     fs::create_dir_all(&jarvis)

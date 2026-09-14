@@ -16,10 +16,13 @@ export const backupModelTargetSchema = z.object({
   details: z.array(z.string()),
 });
 
+export const backupPlatformSchema = z.object({ id: z.string().min(1), label: z.string().min(1) });
+
 export const backupPreviewSchema = z.object({
   fingerprint: z.string().startsWith("sha256:"),
   createdAt: z.number().int().nonnegative(),
   appVersion: z.string().min(1),
+  sourcePlatform: backupPlatformSchema.nullable(),
   archiveBytes: z.number().int().nonnegative(),
   summary: backupSummarySchema,
   modelTargets: z.array(backupModelTargetSchema),

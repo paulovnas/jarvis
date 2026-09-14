@@ -15,8 +15,8 @@ function snapshot(automaticInstall = true, gitInstalled = false) {
     platform: "windows",
     platformLabel: "Windows",
     tools: [
-      { id: "git", name: "Git", description: "Versiona alterações", installed: gitInstalled, version: gitInstalled ? "git version 2.51.0" : null, automaticInstall, installWith: automaticInstall ? "WinGet" : null, helpUrl: "https://git-scm.com/download/win" },
-      { id: "gh", name: "GitHub CLI", description: "Publica pull requests", installed: false, version: null, automaticInstall, installWith: automaticInstall ? "WinGet" : null, helpUrl: "https://cli.github.com/" },
+      { id: "git", name: "Git", description: "Versiona alterações", installed: gitInstalled, version: gitInstalled ? "git version 2.51.0" : null, automaticInstall, installWith: automaticInstall ? "WinGet" : null, helpUrl: "https://git-scm.com/download/win", checks: gitInstalled ? [{ id: "identity", label: "Identidade Git", ready: false, message: "Configure nome e e-mail antes de publicar commits." }] : [] },
+      { id: "gh", name: "GitHub CLI", description: "Publica pull requests", installed: false, version: null, automaticInstall, installWith: automaticInstall ? "WinGet" : null, helpUrl: "https://cli.github.com/", checks: [] },
     ],
   };
 }
@@ -32,6 +32,13 @@ it("installs a missing tool with the detected operating-system package manager",
   await user.click(await screen.findByRole("button", { name: "Instalar Git com WinGet" }));
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_optional_tool", { id: "git" }));
   expect(await screen.findByText("git version 2.51.0")).toBeVisible();
+});
+
+it("explains the Git identity required before the first publication", async () => {
+  invokeMock.mockResolvedValue(snapshot(true, true));
+  render(<OptionalToolsStep onBusyChange={vi.fn()} />);
+  expect(await screen.findByText("Identidade Git")).toBeVisible();
+  expect(screen.getByText(/Configure nome e e-mail antes de publicar commits/)).toBeVisible();
 });
 
 it("opens the operating-system instructions when automatic installation is unavailable", async () => {

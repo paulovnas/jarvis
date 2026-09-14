@@ -3,7 +3,7 @@
 //! Installation commands are selected from a closed enum. User-controlled text is
 //! never passed to a shell or interpreted as command arguments.
 use serde::{Deserialize, Serialize};
-use std::{process::Stdio, sync::LazyLock};
+use std::process::Stdio;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -149,6 +149,16 @@ pub struct OptionalTool {
     automatic_install: bool,
     install_with: Option<&'static str>,
     help_url: &'static str,
+    checks: Vec<OptionalToolCheck>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OptionalToolCheck {
+    id: &'static str,
+    label: &'static str,
+    ready: bool,
+    message: &'static str,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -201,9 +211,72 @@ fn package_manager(
 }
 
 fn current_package_manager(platform: Platform) -> Option<PackageManager> {
-    static HOMEBREW: LazyLock<bool> = LazyLock::new(|| command_available("brew"));
-    static WINGET: LazyLock<bool> = LazyLock::new(|| command_available("winget"));
-    package_manager(platform, *HOMEBREW, *WINGET)
+    // This is intentionally evaluated for every snapshot. A user can install
+    // Homebrew or WinGet while onboarding is open and "Verificar novamente"
+    // must make automatic installation available immediately.
+    match platform {
+        Platform::Macos => package_manager(platform, command_available("brew"), false),
+        Platform::Windows => package_manager(platform, false, command_available("winget")),
+        Platform::Linux | Platform::Other => package_manager(platform, false, false),
+    }
+}
+
+fn configured_git_identity() -> bool {
+    ["user.name", "user.email"].into_iter().all(|key| {
+        command("git")
+            .args(["config", "--global", "--get", key])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .is_some_and(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .chars()
+                    .any(|character| !character.is_control())
+            })
+    })
+}
+
+fn authenticated_github_cli() -> bool {
+    command("gh")
+        .args(["auth", "status"])
+        .env("GH_PROMPT_DISABLED", "1")
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn checks(id: OptionalToolId, installed: bool) -> Vec<OptionalToolCheck> {
+    if !installed {
+        return Vec::new();
+    }
+    match id {
+        OptionalToolId::Git => {
+            let ready = configured_git_identity();
+            vec![OptionalToolCheck {
+                id: "identity",
+                label: "Identidade Git",
+                ready,
+                message: if ready {
+                    "Nome e e-mail configurados para commits."
+                } else {
+                    "Configure nome e e-mail antes de publicar commits."
+                },
+            }]
+        }
+        OptionalToolId::Gh => {
+            let ready = authenticated_github_cli();
+            vec![OptionalToolCheck {
+                id: "authentication",
+                label: "GitHub conectado",
+                ready,
+                message: if ready {
+                    "Autenticação do GitHub CLI confirmada."
+                } else {
+                    "Entre no GitHub CLI antes de criar pull requests ou merges."
+                },
+            }]
+        }
+    }
 }
 
 fn snapshot() -> OptionalToolsSnapshot {
@@ -213,15 +286,17 @@ fn snapshot() -> OptionalToolsSnapshot {
         .into_iter()
         .map(|id| {
             let version = version(id);
+            let installed = version.is_some();
             OptionalTool {
                 id,
                 name: id.name(),
                 description: id.description(),
-                installed: version.is_some(),
+                installed,
                 version,
                 automatic_install: manager.is_some(),
                 install_with: manager.map(PackageManager::label),
                 help_url: id.help_url(platform),
+                checks: checks(id, installed),
             }
         })
         .collect();

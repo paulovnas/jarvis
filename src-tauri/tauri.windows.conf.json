@@ -3,6 +3,10 @@
   "bundle": {
     "targets": ["nsis"],
     "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
       "nsis": {
         "installMode": "currentUser",
         "installerHooks": "./windows/installer-hooks.nsh",

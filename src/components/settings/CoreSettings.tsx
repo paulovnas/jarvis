@@ -28,16 +28,18 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
   useEffect(() => { if (snapshot && !core.checked && !checkStarted.current) { checkStarted.current = true; void check(); } }, [snapshot, core.checked, check]);
   if (!snapshot && !error) return <div role="status" aria-label="Carregando Core" className="space-y-3"><Skeleton className="mb-5 h-5 w-24" /><div className="core-card-grid">{[0, 1, 2, 3, 4, 5].map(id => <Skeleton key={id} className="h-56 w-full rounded-lg" />)}</div></div>;
   if (!snapshot) return <div role="alert" className="space-y-3"><p className="text-sm text-destructive">{error}</p><Button variant="outline" onClick={() => void refresh()}>Tentar novamente</Button></div>;
-  const missing = snapshot.items.filter(item => !item.installed).map(item => item.id);
+  const essential = snapshot.items.filter(item => item.id !== "context7");
+  const missing = essential.filter(item => !item.installed).map(item => item.id);
   const reinstallTarget = snapshot.items.find(item => item.id === reinstall);
   return <TooltipProvider delay={150}><section aria-label="Core" className="space-y-4">
     <div className="flex items-center justify-between gap-3">
-      <div className="flex items-center gap-2"><Cpu className="size-4 text-primary" /><h2 className="text-sm font-medium">Core</h2><Badge variant="outline" className="font-mono text-[10px] text-muted-foreground">{snapshot.items.filter(item => item.installed && item.configured && !item.healthError).length}/{snapshot.items.length}</Badge></div>
+      <div className="flex items-center gap-2"><Cpu className="size-4 text-primary" /><h2 className="text-sm font-medium">Core</h2><Badge variant="outline" className="font-mono text-[10px] text-muted-foreground">{essential.filter(item => item.installed && item.configured && !item.healthError).length}/{essential.length} essenciais</Badge></div>
       <div className="flex items-center gap-1"><Button size="sm" variant="ghost" aria-label="Diagnóstico e Reparo" onClick={() => setDiagnostics(true)}><Wrench className="size-3.5" />Diagnóstico</Button>
 <Hint content="Verificar atualizações"><Button size="icon-sm" variant="ghost" aria-label="Verificar atualizações do Core" disabled={snapshot.checking || busy} onClick={() => void check()}><RefreshCw className={`size-3.5 ${snapshot.checking ? "animate-spin" : ""}`} /></Button></Hint></div>
     </div>
     <div className="core-card-grid">{snapshot.items.map(item => {
       const { icon: Icon, label, description, color, tint } = CORE_DETAILS[item.id];
+      const optional = item.id === "context7";
       const action = item.installed ? "Atualizar" : "Instalar";
       const usable = item.installed && item.configured && !item.healthError;
       const canInstall = !item.installed && !item.installedVersion;
@@ -56,7 +58,7 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
           <p className="mb-4 mt-2 text-xs leading-5 text-muted-foreground">{description}</p>
           <div className="mt-auto space-y-3 border-t border-border/70 pt-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              {usable && !item.error ? <Badge variant="outline" className="gap-1 border-onedark-green/25 bg-onedark-green/10 text-[9px] text-onedark-green"><Check className="size-2.5" />Pronto</Badge> : <Badge variant="outline" className="border-onedark-yellow/25 text-[9px] text-onedark-yellow">{item.error ? "Atenção" : item.healthError ? "Reparar" : item.installed ? "Configurar chave" : item.installedVersion ? "Reparar" : "Pendente"}</Badge>}
+              {usable && !item.error ? <Badge variant="outline" className="gap-1 border-onedark-green/25 bg-onedark-green/10 text-[9px] text-onedark-green"><Check className="size-2.5" />Pronto</Badge> : <Badge variant="outline" className="border-onedark-yellow/25 text-[9px] text-onedark-yellow">{item.error ? "Atenção" : item.healthError ? "Reparar" : optional ? "Opcional" : item.installed ? "Configurar chave" : item.installedVersion ? "Reparar" : "Pendente"}</Badge>}
               {item.installedVersion && <span className="font-mono text-[10px] text-muted-foreground">v{item.installedVersion}</span>}
             </div>
             {item.updateAvailable && <span className="block font-mono text-[10px] text-primary">→ {item.latestVersion}</span>}
@@ -69,7 +71,7 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
         </CardContent>
       </Card>;
     })}</div>
-    {setup && missing.length > 1 && <Button className="w-full" disabled={busy} onClick={() => void install(missing)}><Download className="size-4" />Instalar Core</Button>}
+    {setup && missing.length > 1 && <Button className="w-full" disabled={busy} onClick={() => void install(missing)}><Download className="size-4" />Instalar ferramentas essenciais</Button>}
     {diagnostics && <Suspense fallback={<Skeleton className="h-12 w-full" />}><CoreDiagnostics core={core} onClose={() => setDiagnostics(false)} /></Suspense>}
     <Context7Configuration open={configuring} onOpenChange={setConfiguring} onSaved={refresh} />
     <CoreReinstallDialog name={reinstallTarget?.name} open={reinstall !== null} busy={busy} onOpenChange={open => { if (!open) setReinstall(null); }} onConfirm={() => { if (reinstall) void repair(reinstall, true); setReinstall(null); }} />

@@ -448,6 +448,38 @@ pub(crate) fn backup_preferences(home: &Path) -> Result<Preferences, String> {
     Store::open(crate::data_dir::root(home).join("system.json")).map(|store| store.preferences)
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ImportNormalization {
+    pub terminal_shell_reset: bool,
+    pub terminal_font_reset: bool,
+}
+
+/// Keeps a portable backup from persisting a shell path or font that is not
+/// usable on the destination. The stored preferences remain otherwise intact.
+pub(crate) fn normalize_imported_preferences(
+    preferences: &mut Preferences,
+    source_platform: Option<&str>,
+) -> ImportNormalization {
+    let mut normalization = ImportNormalization::default();
+    if source_platform.is_some_and(|source| source != std::env::consts::OS)
+        && (preferences.terminal.shell.is_some() || !preferences.terminal.arguments.is_empty())
+    {
+        preferences.terminal.shell = None;
+        preferences.terminal.arguments.clear();
+        normalization.terminal_shell_reset = true;
+    }
+    if terminal_font_error(
+        preferences.terminal.font_family.as_deref(),
+        available_terminal_fonts(),
+    )
+    .is_some()
+    {
+        preferences.terminal.font_family = None;
+        normalization.terminal_font_reset = true;
+    }
+    normalization
+}
+
 // The assertion is created and dropped on one dedicated thread (required on Windows).
 pub fn setup(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let state = app.state::<SystemState>();

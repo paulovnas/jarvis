@@ -2,6 +2,12 @@ import { z } from "zod";
 
 export const optionalToolIdSchema = z.enum(["git", "gh"]);
 export type OptionalToolId = z.infer<typeof optionalToolIdSchema>;
+export const optionalToolCheckSchema = z.object({
+  id: z.enum(["identity", "authentication"]),
+  label: z.string().min(1),
+  ready: z.boolean(),
+  message: z.string().min(1),
+});
 
 export const optionalToolsSnapshotSchema = z.object({
   platform: z.enum(["macos", "windows", "linux", "other"]),
@@ -15,6 +21,7 @@ export const optionalToolsSnapshotSchema = z.object({
     automaticInstall: z.boolean(),
     installWith: z.string().min(1).nullable(),
     helpUrl: z.string().url(),
+    checks: z.array(optionalToolCheckSchema).max(1),
   })).length(2).refine(tools => new Set(tools.map(tool => tool.id)).size === 2),
 });
 

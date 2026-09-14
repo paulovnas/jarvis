@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn requires_every_component_and_never_treats_newer_release_as_missing() {
+fn requires_essential_components_without_requiring_context7() {
     let home = tempfile::tempdir().unwrap();
     let mut manifest = Manifest::default();
     assert!(require_ready(home.path()).is_err());
@@ -30,14 +30,12 @@ fn requires_every_component_and_never_treats_newer_release_as_missing() {
             },
         );
         save_manifest(home.path(), &manifest).unwrap();
-        assert!(require_ready(home.path()).is_err());
+        let essentials_installed = ComponentId::ALL
+            .into_iter()
+            .filter(|component| component.required())
+            .all(|component| manifest.installations.contains_key(&component));
+        assert_eq!(require_ready(home.path()).is_ok(), essentials_installed);
     }
-    assert!(!CoreState::default().snapshot(home.path()).unwrap().ready);
-    fs::write(
-        root(home.path()).join("context7.json"),
-        r#"{"credential_ref":"jarvis-core-context7-test"}"#,
-    )
-    .unwrap();
     assert!(require_ready(home.path()).is_ok());
     let state = CoreState::default();
     state
@@ -48,6 +46,14 @@ fn requires_every_component_and_never_treats_newer_release_as_missing() {
         .insert(ComponentId::ContextMode, "1.0.1".into());
     let snapshot = state.snapshot(home.path()).unwrap();
     assert!(snapshot.ready);
+    assert!(
+        !snapshot
+            .items
+            .iter()
+            .find(|item| item.id == ComponentId::Context7)
+            .unwrap()
+            .configured
+    );
     assert!(snapshot.items[0].update_available);
     fs::remove_file(root(home.path()).join("ponytail/test/verified")).unwrap();
     assert!(!state.snapshot(home.path()).unwrap().ready);

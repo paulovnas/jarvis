@@ -99,7 +99,7 @@ it("offers Open Design installation alongside the other Core resources", async (
   render(<CoreSettings />);
   fireEvent.click(await screen.findByRole("button", { name: "Instalar Open Design" }));
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "open-design" }));
-  expect(screen.getByText("5/6")).toBeInTheDocument();
+  expect(screen.getByText("4/5 essenciais")).toBeInTheDocument();
 });
 
 it("mostra versões e só oferece atualização quando há release maior", async () => {
@@ -113,8 +113,8 @@ it("mostra versões e só oferece atualização quando há release maior", async
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "context-mode" }));
 });
 
-it("validates the Context7 key before marking it ready and keeps failed configuration editable", async () => {
-  const state = coreFixture(); state.ready = false; state.items[4].configured = false;
+it("validates the optional Context7 key and keeps failed configuration editable", async () => {
+  const state = coreFixture(); state.items[4].configured = false;
   let fail = true;
   invokeMock.mockImplementation(async command => {
     if (command === "configure_context7") { if (fail) throw { message: "Chave inválida" }; return coreFixture(); }
