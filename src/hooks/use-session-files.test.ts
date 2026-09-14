@@ -2,6 +2,7 @@ import { act, fireEvent, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type EventCallback } from "@tauri-apps/api/event";
+import { savedTurn } from "@/test/chat-fixtures";
 import { useSessionFiles } from "./use-session-files";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -80,6 +81,48 @@ describe("Live session files", () => {
       for (const handler of listeners) handler({ event: "agent:event", id: 1, payload });
     });
     expect(result.current.files).toEqual([file]);
+    expect(call).toHaveBeenCalledOnce();
+  });
+  it("does not flash historical file changes when a new turn starts", async () => {
+    call.mockResolvedValue([]);
+    const { result } = renderHook(() => useSessionFiles("c1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const state = {
+      compacting: false,
+      activeTurnId: "turn2",
+      pendingApproval: null,
+      pendingQuestion: null,
+      pendingAuthoring: null,
+      queuedMessages: [],
+      context: { tokens: 0, limit: null, estimated: true, compacting: false, compactions: 0 },
+      compactions: [],
+      fileChanges: [file],
+      history: { start: 0, total: 2 },
+    };
+    await act(async () => {
+      const payload = {
+        conversationId: "c1",
+        baseRevision: 1,
+        revision: 2,
+        events: [
+          { type: "turnStarted", turn: { ...savedTurn(), id: "turn2", status: "running" } },
+          { type: "stateChanged", state },
+        ],
+      };
+      for (const handler of listeners) handler({ event: "agent:event", id: 1, payload });
+    });
+    expect(result.current.files).toEqual([]);
+    const current = { ...file, additions: 2, revision: 1 };
+    await act(async () => {
+      const payload = {
+        conversationId: "c1",
+        baseRevision: 2,
+        revision: 3,
+        events: [{ type: "stateChanged", state: { ...state, fileChanges: [current] } }],
+      };
+      for (const handler of listeners) handler({ event: "agent:event", id: 2, payload });
+    });
+    expect(result.current.files).toEqual([current]);
     expect(call).toHaveBeenCalledOnce();
   });
   it("reconciles the live Git state as soon as a turn finishes", async () => {

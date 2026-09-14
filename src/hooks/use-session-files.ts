@@ -39,6 +39,7 @@ export function useSessionFiles(conversationId: string | null) {
       const next = JSON.stringify([changed.state.activeTurnId, changed.state.fileChanges]);
       if (next === fingerprint) return;
       fingerprint = next;
+      if (parsed.data.events.some(item => item.type === "turnStarted")) return;
       if (changed.state.activeTurnId === null) {
         void refresh();
         return;
