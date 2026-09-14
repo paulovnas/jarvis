@@ -209,7 +209,7 @@ fn compacted_runtime_context_reaches_every_protocol_without_private_markers() {
             &antigravity_credential,
             &antigravity_options,
             &input,
-            &[tool.clone()],
+            std::slice::from_ref(&tool),
         )
         .unwrap(),
     );

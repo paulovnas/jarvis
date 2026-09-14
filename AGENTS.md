@@ -62,7 +62,7 @@ bun run test         # vitest run
 bun run build        # typecheck + vite build
 ```
 
-Ou simplesmente `bun run check` (roda os quatro). Se tocou em `src-tauri`, rode também `cargo clippy -- -D warnings` e `cargo test` lá dentro.
+Ou simplesmente `bun run check` (roda os quatro). Se tocou em `src-tauri`, rode também `cargo clippy --all-targets -- -D warnings` e `cargo test` lá dentro.
 
 ### Manutenção dos artefatos Rust
 
