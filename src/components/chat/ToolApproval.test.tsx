@@ -62,7 +62,7 @@ it("shows interpreted effects and creates a persistent project grant", async () 
 
   await user.click(screen.getByRole("switch", { name: "Lembrar esta autorização" }));
   await user.click(screen.getByRole("combobox", { name: "Escopo da autorização" }));
-  await user.click(screen.getByRole("option", { name: "Este projeto" }));
+  await user.click(await screen.findByRole("option", { name: "Este projeto" }));
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Escopo da autorização" })).toHaveTextContent("Este projeto"));
   await user.click(screen.getByRole("combobox", { name: "Duração da autorização" }));
   await user.click(await screen.findByRole("option", { name: "Manter entre sessões" }));
