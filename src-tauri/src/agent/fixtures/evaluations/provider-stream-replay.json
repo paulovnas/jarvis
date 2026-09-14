@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "provider-stream-replay",
+  "description": "Synthetic metadata-only provider traces used to verify the shared stream lifecycle without network access.",
+  "cases": [
+    {
+      "id": "codex-fragmented-tool-and-usage",
+      "provider": "openai_codex",
+      "frames": [
+        { "kind": "stream_fragment", "sequence": 1, "bytes": 23 },
+        { "kind": "stream_fragment", "sequence": 2, "bytes": 41 },
+        { "kind": "tool_call", "tool": "read" },
+        { "kind": "usage", "inputTokens": 120, "outputTokens": 18, "cacheReadTokens": 90, "cacheWriteTokens": 0 },
+        { "kind": "completed" }
+      ],
+      "expected": { "state": "completed", "fragments": 2, "streamBytes": 64, "retries": 0, "toolCalls": 1, "inputTokens": 120, "outputTokens": 18, "cacheReadTokens": 90, "cacheWriteTokens": 0, "failure": null }
+    },
+    {
+      "id": "antigravity-retry-then-complete",
+      "provider": "antigravity",
+      "frames": [
+        { "kind": "stream_fragment", "sequence": 1, "bytes": 31 },
+        { "kind": "retry", "failure": "network" },
+        { "kind": "stream_fragment", "sequence": 2, "bytes": 37 },
+        { "kind": "stream_fragment", "sequence": 3, "bytes": 19 },
+        { "kind": "tool_call", "tool": "search" },
+        { "kind": "usage", "inputTokens": 240, "outputTokens": 24, "cacheReadTokens": 180, "cacheWriteTokens": 12 },
+        { "kind": "completed" }
+      ],
+      "expected": { "state": "completed", "fragments": 3, "streamBytes": 87, "retries": 1, "toolCalls": 1, "inputTokens": 240, "outputTokens": 24, "cacheReadTokens": 180, "cacheWriteTokens": 12, "failure": null }
+    },
+    {
+      "id": "custom-fragmented-terminal-error",
+      "provider": "custom",
+      "frames": [
+        { "kind": "stream_fragment", "sequence": 1, "bytes": 11 },
+        { "kind": "stream_fragment", "sequence": 2, "bytes": 17 },
+        { "kind": "failed", "failure": "protocol" }
+      ],
+      "expected": { "state": "failed", "fragments": 2, "streamBytes": 28, "retries": 0, "toolCalls": 0, "inputTokens": 0, "outputTokens": 0, "cacheReadTokens": 0, "cacheWriteTokens": 0, "failure": "protocol" }
+    }
+  ]
+}

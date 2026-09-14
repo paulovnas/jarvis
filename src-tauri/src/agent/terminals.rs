@@ -34,7 +34,7 @@ fn invalid(message: &str) -> AgentError {
     AgentError::new("terminal", message)
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum TerminalOrigin {
     User,
@@ -422,9 +422,10 @@ impl TerminalState {
     pub(super) fn start_service(
         &self,
         request: ServiceSpawn,
+        sandbox: Option<&super::execution_sandbox::SandboxPlan>,
         events: TerminalEvents,
     ) -> Result<ChatTerminal, AgentError> {
-        self.spawn(
+        self.spawn_sandboxed(
             Spawn {
                 conversation: request.conversation,
                 root: request.root,
@@ -435,6 +436,7 @@ impl TerminalState {
                 initial_input: None,
                 service: Some((request.command, request.port)),
             },
+            sandbox,
             events,
         )
     }
@@ -700,6 +702,15 @@ impl TerminalState {
     }
 
     fn spawn(&self, request: Spawn, events: TerminalEvents) -> Result<ChatTerminal, AgentError> {
+        self.spawn_sandboxed(request, None, events)
+    }
+
+    fn spawn_sandboxed(
+        &self,
+        request: Spawn,
+        sandbox: Option<&super::execution_sandbox::SandboxPlan>,
+        events: TerminalEvents,
+    ) -> Result<ChatTerminal, AgentError> {
         let Spawn {
             conversation,
             root,
@@ -770,7 +781,11 @@ impl TerminalState {
             .openpty(INITIAL_SIZE)
             .map_err(|_| invalid("Não foi possível criar o terminal."))?;
         let command: CommandBuilder = match service {
-            Some((script, _)) => super::shell::terminal_service_command(root, script),
+            Some((script, _)) => super::shell::terminal_service_command(root, script, sandbox),
+            None if origin == TerminalOrigin::Agent => {
+                super::shell::terminal_agent_command(root, &self.preferences()?, sandbox)
+                    .map_err(|message| invalid(&message))?
+            }
             None => super::shell::terminal_command(root, &self.preferences()?)
                 .map_err(|message| invalid(&message))?,
         };
@@ -1034,6 +1049,7 @@ impl TerminalState {
         root: &Path,
         owner_id: &str,
         call: &ToolCall,
+        sandbox: Option<&super::execution_sandbox::SandboxPlan>,
         events: TerminalEvents,
     ) -> Result<String, AgentError> {
         let result = match call.name.as_str() {
@@ -1067,7 +1083,7 @@ impl TerminalState {
                     Some(command) => Some(format!("{command}\r")),
                     None => None,
                 };
-                serde_json::to_value(self.spawn(
+                serde_json::to_value(self.spawn_sandboxed(
                     Spawn {
                         conversation,
                         root,
@@ -1078,6 +1094,7 @@ impl TerminalState {
                         initial_input: input.as_deref(),
                         service: None,
                     },
+                    sandbox,
                     events,
                 )?)
                 .map_err(|_| AgentError::internal())?
@@ -1721,6 +1738,7 @@ mod tests {
                     output: String::new(),
                     duration_ms: 0,
                 },
+                None,
                 silent_events(),
             )
             .await
@@ -1751,6 +1769,7 @@ mod tests {
                     output: String::new(),
                     duration_ms: 0,
                 },
+                None,
                 silent_events(),
             )
             .await

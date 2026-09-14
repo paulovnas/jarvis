@@ -8,6 +8,7 @@ import {
   contextInfoSchema,
   fileChangeSchema,
   historyWindowSchema,
+  pendingApprovalSchema,
   queuedMessageSchema,
   retryStatusSchema,
   usageSchema,
@@ -16,13 +17,18 @@ import {
   type ChatSnapshot,
 } from "./chat";
 import { pendingQuestionSchema } from "./questions";
+import {
+  IPC_PROTOCOL_VERSION,
+  type AgentEventBatch as GeneratedAgentEventBatch,
+  type ChatSubscription as GeneratedChatSubscription,
+} from "@/generated/ipc";
 
 const startedItemSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("step"), stepIndex: z.number().int().nonnegative(), step: agentStepSchema }),
   z.object({ type: z.literal("tool"), stepIndex: z.number().int().nonnegative(), tool: agentToolSchema }),
 ]);
 const snapshotStateSchema = z.object({
-  compacting: z.boolean(), activeTurnId: z.string().nullable(), pendingApproval: agentToolSchema.nullable(),
+  compacting: z.boolean(), activeTurnId: z.string().nullable(), pendingApproval: pendingApprovalSchema.nullable(),
   pendingQuestion: pendingQuestionSchema.nullable(), pendingAuthoring: pendingAuthoringSchema.nullable(),
   queuedMessages: z.array(queuedMessageSchema), context: contextInfoSchema,
   compactions: z.array(compactionEventSchema), fileChanges: z.array(fileChangeSchema), history: historyWindowSchema,
@@ -36,16 +42,24 @@ const agentEventSchema = z.discriminatedUnion("type", [
     durationMs: z.number().nonnegative(), retry: retryStatusSchema.nullable(), usage: usageSchema.nullable(),
   }),
   z.object({ type: z.literal("itemCompleted"), stepIndex: z.number().int().nonnegative(), tool: agentToolSchema }),
-  z.object({ type: z.literal("approvalRequested"), tool: agentToolSchema.nullable() }),
+  z.object({ type: z.literal("approvalRequested"), approval: pendingApprovalSchema.nullable() }),
   z.object({ type: z.literal("stateChanged"), state: snapshotStateSchema }),
   z.object({ type: z.literal("turnCompleted"), turn: agentTurnSchema }),
 ]);
 
 export const agentEventBatchSchema = z.object({
+  protocolVersion: z.number().int().nonnegative().default(0),
   conversationId: z.string(), baseRevision: z.number().int().nonnegative().nullable(),
   revision: z.number().int().nonnegative(), events: z.array(agentEventSchema),
 });
-export type AgentEventBatch = z.infer<typeof agentEventBatchSchema>;
+export type AgentEventBatch = GeneratedAgentEventBatch & z.infer<typeof agentEventBatchSchema>;
+export const chatSubscriptionSchema = z.object({
+  protocolVersion: z.number().int().nonnegative(),
+  reset: z.boolean(),
+  snapshot: z.unknown().nullable(),
+  batches: z.array(agentEventBatchSchema),
+});
+export type ChatSubscription = GeneratedChatSubscription & z.infer<typeof chatSubscriptionSchema>;
 
 function replaceLatestTurn(snapshot: ChatSnapshot, change: (turn: AgentTurn) => AgentTurn): ChatSnapshot {
   if (!snapshot.turns.length) return snapshot;
@@ -104,7 +118,7 @@ function applyEvent(snapshot: ChatSnapshot, event: z.infer<typeof agentEventSche
         tools: step.tools.map(tool => tool.id === event.tool.id ? event.tool : tool),
       })));
     case "approvalRequested":
-      return { ...snapshot, pendingApproval: event.tool };
+      return { ...snapshot, pendingApproval: event.approval };
     case "stateChanged":
       return { ...snapshot, ...event.state };
   }
@@ -115,6 +129,9 @@ export function applyAgentEventBatch(
   batch: AgentEventBatch,
 ): { snapshot: ChatSnapshot | null; needsResync: boolean } {
   if (!current || current.conversationId !== batch.conversationId) {
+    return { snapshot: current, needsResync: true };
+  }
+  if (batch.protocolVersion > IPC_PROTOCOL_VERSION) {
     return { snapshot: current, needsResync: true };
   }
   if (batch.revision <= current.revision) return { snapshot: current, needsResync: false };

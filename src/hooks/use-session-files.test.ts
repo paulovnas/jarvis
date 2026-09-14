@@ -7,7 +7,7 @@ import { useSessionFiles } from "./use-session-files";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
 const listeners = new Set<EventCallback<unknown>>();
-const file = { path: "a.txt", additions: 1, deletions: 0, base: "conversation" };
+const file = { path: "a.txt", additions: 1, deletions: 0, base: "conversation", revision: 0 };
 beforeEach(() => {
   listeners.clear();
   vi.mocked(listen).mockImplementation(async (_event, callback) => {

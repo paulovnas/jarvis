@@ -12,6 +12,8 @@ Direct task tracking: Standard and direct Designer flows use update_tasks instea
 "#;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(rename = "TaskStatus"))]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Status {
     Pending,
@@ -21,6 +23,8 @@ pub(super) enum Status {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(rename = "DirectTask"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Task {
     pub(super) id: String,

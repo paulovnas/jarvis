@@ -65,7 +65,7 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
       <TabsContent value="activities" keepMounted className={`min-h-0 flex-1 flex-col ${section === "activities" ? "flex" : "hidden"}`}>
     <div className="min-h-0 flex-1">
         <ScrollArea className="h-full"><div key={selectedChat?.conversationId ?? "empty"} className="px-2">
-          {!publishingFlow && (directFlow ? <ActivitySection title="Tarefas" icon={<ListTodo aria-hidden="true" style={flow === "designer" ? { color: ROLE_COLORS.designer } : undefined} className={`size-4 ${flow === "standard" ? "text-primary" : ""}`} />} count={latestTurn?.tasks.length}>
+          {!publishingFlow && (directFlow ? <ActivitySection title="Tarefas" icon={<ListTodo aria-hidden="true" style={flow === "designer" ? { color: ROLE_COLORS.designer } : undefined} className={`size-4 ${flow === "standard" ? "text-primary" : ""}`} />} count={latestTurn?.tasks?.length}>
             <DirectTasks tasks={latestTurn?.tasks ?? []} active={!!latestTurn && selectedChat?.activeTurnId === latestTurn.id} flow={flow === "designer" ? "designer" : flow === "custom" ? "custom" : "standard"} />
           </ActivitySection> : <ActivitySection title="Plano" icon={<ListChecks aria-hidden="true" className="size-4 text-[#c678dd]" />}>
             {projectId && selectedChat ? <EpicPlans key={`${projectId}:${selectedChat.conversationId}`} projectId={projectId} conversationId={selectedChat.conversationId} active={Boolean(selectedChat.activeTurnId)} onOpenKanban={onOpenKanban} /> : <p className="text-xs text-muted-foreground">Nenhum plano em aberto.</p>}
@@ -86,7 +86,7 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
     <ContextUsage key={selectedChat?.conversationId ?? "empty"} context={conversationContext(turns, accounts)} live={selectedChat?.context} onCompact={onCompact} compacting={compacting} disabled={!selectedChat || turns.length === 0 || !!selectedChat.activeTurnId || pending} />
       </TabsContent>
       <TabsContent value="github" keepMounted className={`min-h-0 flex-1 ${section === "github" ? "block" : "hidden"}`}>
-        {projectId && (githubVisited || section === "github") ? <GithubRepositoriesPanel key={projectId} projectId={projectId} /> : section === "github" ? <p className="p-4 text-xs text-muted-foreground">Abra uma conversa para consultar os repositórios do projeto.</p> : null}
+        {projectId && (githubVisited || section === "github") ? <GithubRepositoriesPanel key={projectId} projectId={projectId} active={section === "github"} /> : section === "github" ? <p className="p-4 text-xs text-muted-foreground">Abra uma conversa para consultar os repositórios do projeto.</p> : null}
       </TabsContent>
       <TabsContent value="explorer" keepMounted className={`min-h-0 flex-1 ${section === "explorer" ? "block" : "hidden"}`}>
         {projectId && fileWorkspace && (explorerVisited || section === "explorer") ? <ProjectExplorer key={projectId} projectId={projectId} projectName={library?.projects.find(project => project.id === projectId)?.name ?? "Projeto"} selected={fileWorkspace.tabs.activePath} onOpen={fileWorkspace.open} /> : section === "explorer" ? <p className="p-4 text-xs text-muted-foreground">Abra uma conversa para explorar os arquivos do projeto.</p> : null}

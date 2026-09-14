@@ -1,5 +1,7 @@
 use super::{cancelled, AgentError, ToolCall, TurnOptions, Usage};
-use crate::openai_codex::{CodexCredential, OPENAI_CODEX_BASE_URL, OPENAI_CODEX_CLIENT_VERSION};
+use crate::openai_codex::{
+    CodexCredential, ProviderModel, OPENAI_CODEX_BASE_URL, OPENAI_CODEX_CLIENT_VERSION,
+};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -8,10 +10,15 @@ use std::{
 use tokio::sync::watch;
 
 mod antigravity;
+mod capabilities;
+#[cfg(test)]
+mod conformance;
 mod custom;
+mod events;
 pub(super) mod retry;
 
 pub(super) use antigravity::grounded_search;
+pub(super) use capabilities::ModelCapabilities;
 const MAX_EVENT: usize = 4 * 1024 * 1024;
 const MAX_STREAM: usize = 16 * 1024 * 1024;
 pub(super) enum Delta {
@@ -20,11 +27,33 @@ pub(super) enum Delta {
     Retry(Option<retry::Status>),
     Reset,
 }
+#[derive(Debug)]
 pub(super) struct Response {
     pub output: Vec<Value>,
     pub text: String,
     pub summary: String,
     pub usage: Option<Usage>,
+    calls: Vec<ToolCall>,
+}
+
+impl Response {
+    pub(super) fn from_output(
+        output: Vec<Value>,
+        usage: Option<Usage>,
+    ) -> Result<Self, AgentError> {
+        let normalized = events::NormalizedOutput::parse(output, usage)?;
+        Ok(Self {
+            output: normalized.wire_output(),
+            text: normalized.text,
+            summary: normalized.summary,
+            usage: normalized.usage,
+            calls: normalized.calls,
+        })
+    }
+
+    pub(super) fn tool_calls(&self) -> &[ToolCall] {
+        &self.calls
+    }
 }
 
 /// One transport session is retained for the complete Jarvis turn. Connection
@@ -32,17 +61,31 @@ pub(super) struct Response {
 /// model steps without leaking settings from a later turn.
 pub(super) struct TurnSession {
     credential: CodexCredential,
+    capabilities: std::sync::Arc<ModelCapabilities>,
     session_id: String,
     client: reqwest::Client,
+    telemetry: super::telemetry::TraceContext,
 }
 
 impl TurnSession {
-    pub(super) fn new(credential: CodexCredential, session_id: String) -> Result<Self, AgentError> {
+    pub(super) fn new(
+        credential: CodexCredential,
+        model: &ProviderModel,
+        session_id: String,
+        telemetry: super::telemetry::TraceContext,
+    ) -> Result<Self, AgentError> {
+        let capabilities = std::sync::Arc::new(ModelCapabilities::resolve(&credential, model));
         Ok(Self {
             credential,
+            capabilities,
             session_id,
             client: http_client()?,
+            telemetry,
         })
+    }
+
+    pub(super) fn capabilities(&self) -> &std::sync::Arc<ModelCapabilities> {
+        &self.capabilities
     }
 
     pub(super) async fn stream(
@@ -52,14 +95,40 @@ impl TurnSession {
         on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
     ) -> Result<Response, AgentError> {
         debug_assert!(!step.authorization().values.is_empty());
+        if step.capabilities() != self.capabilities.as_ref() {
+            return Err(AgentError::internal());
+        }
+        if !step.capabilities().tools && !step.tools().is_empty() {
+            return Err(AgentError::new(
+                "provider_tools_unsupported",
+                "O modelo selecionado não aceita as ferramentas obrigatórias do Jarvis. Escolha um modelo com suporte a ferramentas.",
+            ));
+        }
+        let input = provider_input(step.input());
+        if !step.capabilities().accepts_input(&input) {
+            return Err(AgentError::new(
+                "provider_images_unsupported",
+                "O modelo selecionado não aceita imagens nesta conversa.",
+            ));
+        }
+        if step.options().reasoning.as_deref().is_some_and(|effort| {
+            !matches!(effort, "off" | "none") && !step.capabilities().reasoning.supported
+        }) {
+            return Err(AgentError::new(
+                "provider_reasoning_unsupported",
+                "O modelo selecionado não aceita configuração de raciocínio.",
+            ));
+        }
         retry::Request {
             client: self.client.clone(),
             credential: &self.credential,
             session_id: &self.session_id,
             options: step.options(),
             instructions: step.instructions(),
-            input: provider_input(step.input()),
+            capabilities: step.capabilities().clone(),
+            input,
             tools: ordered_tools(step.tools().to_vec()),
+            telemetry: self.telemetry.clone(),
         }
         .run(signal, on_delta, Duration::from_secs(2))
         .await
@@ -328,6 +397,7 @@ fn event_failure(value: &Value) -> AgentError {
 }
 fn request_body(
     options: &TurnOptions,
+    capabilities: &ModelCapabilities,
     instructions: &str,
     input: Vec<Value>,
     tools: Vec<Value>,
@@ -349,13 +419,26 @@ fn request_body(
         .collect();
     let mut body = json!({
         "model":options.model, "instructions":instructions, "input":input,
-        "tools":tools, "tool_choice":"auto", "parallel_tool_calls":true,
         "stream":true, "store":false, "prompt_cache_key":session_id,
-        "include":["reasoning.encrypted_content"]
     });
-    if let Some(effort) = &options.reasoning {
-        body["reasoning"] =
-            json!({"effort": if effort == "off" { "none" } else { effort }, "summary":"auto"});
+    if capabilities.replay.opaque_state {
+        body["include"] = json!(["reasoning.encrypted_content"]);
+    }
+    if capabilities.tools && !tools.is_empty() {
+        body["tools"] = Value::Array(tools);
+        body["tool_choice"] = json!("auto");
+        if capabilities.parallel_tool_calls {
+            body["parallel_tool_calls"] = json!(true);
+        }
+    }
+    if capabilities.reasoning.supported {
+        if let Some(effort) = &options.reasoning {
+            let mut reasoning = json!({"effort": if effort == "off" { "none" } else { effort }});
+            if capabilities.reasoning.summaries {
+                reasoning["summary"] = json!("auto");
+            }
+            body["reasoning"] = reasoning;
+        }
     }
     body
 }
@@ -368,18 +451,22 @@ pub(super) async fn stream(
     instructions: &str,
     input: Vec<Value>,
     tools: Vec<Value>,
+    telemetry: &super::telemetry::TraceContext,
     signal: watch::Receiver<bool>,
     on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
     let client = http_client()?;
+    let capabilities = ModelCapabilities::resolve_for_options(credential, options);
     retry::Request {
         client,
         credential,
         session_id,
         options,
+        capabilities,
         instructions,
         input: provider_input(input),
         tools: ordered_tools(tools),
+        telemetry: telemetry.clone(),
     }
     .run(signal, on_delta, Duration::from_secs(2))
     .await
@@ -423,6 +510,7 @@ async fn stream_once(
     credential: &CodexCredential,
     session_id: &str,
     options: &TurnOptions,
+    capabilities: &ModelCapabilities,
     instructions: &str,
     input: Vec<Value>,
     tools: Vec<Value>,
@@ -443,6 +531,7 @@ async fn stream_once(
             config,
             session_id,
             options,
+            capabilities,
             instructions,
             input,
             tools,
@@ -456,6 +545,7 @@ async fn stream_once(
             credential,
             session_id,
             options,
+            capabilities,
             instructions,
             input,
             tools,
@@ -464,7 +554,14 @@ async fn stream_once(
         )
         .await
     } else {
-        let body = request_body(options, instructions, input, tools, session_id);
+        let body = request_body(
+            options,
+            capabilities,
+            instructions,
+            input,
+            tools,
+            session_id,
+        );
         match authenticated_request_with_client(client, credential, session_id, &body) {
             Ok(request) => receive(request, signal, on_delta).await,
             Err(error) => Err(error),
@@ -644,23 +741,15 @@ fn completed(response: &Value) -> Result<Response, AgentError> {
     }
     let items = response["output"].as_array().ok_or_else(protocol_error)?;
     let mut output = vec![];
-    let mut text = String::new();
-    let mut summary = vec![];
     for item in items {
         match item["type"].as_str() {
             Some("message") => {
                 let content = item["content"].as_array().ok_or_else(protocol_error)?;
-                for part in content {
-                    if let Some(value) = part["text"].as_str().or_else(|| part["refusal"].as_str()) { text.push_str(value); }
-                }
                 output.push(json!({"type":"message", "role":"assistant", "content":content}));
             },
             Some("reasoning") => {
-                if let Some(parts) = item["summary"].as_array() {
-                    summary.extend(parts.iter().filter_map(|part| part["text"].as_str().map(str::to_owned)));
-                }
                 // Encrypted replay data stays in Rust/the private journal, never in IPC.
-                if item["encrypted_content"].is_string() { output.push(item.clone()); }
+                if item["encrypted_content"].is_string() || item["summary"].is_array() { output.push(item.clone()); }
             },
             Some("function_call") => output.push(json!({"type":"function_call", "call_id":item["call_id"], "name":item["name"], "arguments":item["arguments"]})),
             Some("web_search_call") => output.push(item.clone()),
@@ -676,19 +765,7 @@ fn completed(response: &Value) -> Result<Response, AgentError> {
             cache_read_tokens: value["input_tokens_details"]["cached_tokens"].as_u64(),
             cache_write_tokens: value["input_tokens_details"]["cache_write_tokens"].as_u64(),
         });
-    if text.is_empty()
-        && !output
-            .iter()
-            .any(|item| item["type"] == "function_call" || item["type"] == "web_search_call")
-    {
-        return Err(protocol_error());
-    }
-    Ok(Response {
-        output,
-        text,
-        summary: summary.join("\n\n"),
-        usage,
-    })
+    Response::from_output(output, usage)
 }
 
 #[test]
@@ -709,46 +786,14 @@ fn responses_cache_usage_is_a_breakdown_not_extra_input() {
     }
 }
 pub(super) fn tool_calls(output: &[Value]) -> Result<Vec<ToolCall>, AgentError> {
-    let mut calls: Vec<ToolCall> = vec![];
+    let mut calls = Vec::new();
+    let mut ids = HashSet::new();
     for item in output.iter().filter(|item| item["type"] == "function_call") {
-        let id = item["call_id"]
-            .as_str()
-            .filter(|id| !id.is_empty() && id.len() <= 200)
-            .ok_or_else(protocol_error)?;
-        if calls.len() >= 16 || calls.iter().any(|call| call.id == id) {
+        let call = events::parse_tool_call(item)?;
+        if calls.len() >= 16 || !ids.insert(call.id.clone()) {
             return Err(protocol_error());
         }
-        let name = item["name"].as_str().ok_or_else(protocol_error)?;
-        let parsed =
-            serde_json::from_str::<Value>(item["arguments"].as_str().ok_or_else(protocol_error)?);
-        let (args, argument_error) = match parsed {
-            Ok(args) if args.is_object() => (args, None),
-            Ok(_) => (
-                json!({}),
-                Some("Os argumentos devem ser um objeto JSON.".to_owned()),
-            ),
-            Err(error) => (
-                json!({}),
-                Some(format!(
-                    "JSON inválido na linha {}, coluna {}. Corrija a sintaxe dos argumentos.",
-                    error.line(),
-                    error.column()
-                )),
-            ),
-        };
-        calls.push(ToolCall {
-            id: id.into(),
-            name: name.into(),
-            args,
-            status: if argument_error.is_some() {
-                "error"
-            } else {
-                "pending"
-            }
-            .into(),
-            output: argument_error.unwrap_or_default(),
-            duration_ms: 0,
-        });
+        calls.push(call);
     }
     Ok(calls)
 }
@@ -825,6 +870,7 @@ mod tests {
         .unwrap()
         .unwrap();
         let (_send, signal) = watch::channel(false);
+        let trace = super::super::telemetry::trace("live-provider-test", "request");
         let result = stream(
             &credential,
             &crate::library::new_id().unwrap(),
@@ -832,6 +878,7 @@ mod tests {
             "Respond briefly in Portuguese.",
             vec![json!({"role":"user","content":"Responda somente OK."})],
             vec![],
+            &trace,
             signal,
             |_| Ok(()),
         )
@@ -876,17 +923,63 @@ mod tests {
             approval_mode: ApprovalMode::Manual,
             manual_validation: false,
         };
+        let credential = CodexCredential::new("", "", 0, "", None, None);
+        let capabilities = ModelCapabilities::resolve_for_options(&credential, &options);
         let body = request_body(
             &options,
+            &capabilities,
+            "instructions",
+            vec![json!({"role":"user","content":"hello"})],
+            vec![json!({"type":"function","name":"read","parameters":{"type":"object"}})],
+            "session",
+        );
+        assert_eq!(body["model"], "chosen-model");
+        assert_eq!(body["reasoning"]["effort"], "high");
+        assert_eq!(body["reasoning"]["summary"], "auto");
+        assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["parallel_tool_calls"], true);
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+        assert_eq!(body["store"], false);
+        assert!(body.get("account").is_none());
+    }
+
+    #[test]
+    fn optional_codex_fields_are_omitted_when_the_step_does_not_use_them() {
+        let mut options = TurnOptions {
+            account: "a".into(),
+            model: "text-model".into(),
+            reasoning: None,
+            mode: Mode::Build,
+            workflow: None,
+            custom_workflow_id: None,
+            custom_agent_id: None,
+            approval_mode: ApprovalMode::Manual,
+            manual_validation: false,
+        };
+        let credential = CodexCredential::new("", "", 0, "", None, None);
+        let capabilities = ModelCapabilities::resolve_for_options(&credential, &options);
+        let body = request_body(
+            &options,
+            &capabilities,
             "instructions",
             vec![json!({"role":"user","content":"hello"})],
             vec![],
             "session",
         );
-        assert_eq!(body["model"], "chosen-model");
-        assert_eq!(body["reasoning"]["effort"], "high");
-        assert_eq!(body["store"], false);
-        assert!(body.get("account").is_none());
+        for field in ["tools", "tool_choice", "parallel_tool_calls", "reasoning"] {
+            assert!(body.get(field).is_none(), "unexpected field {field}");
+        }
+        options.reasoning = Some("none".into());
+        let capabilities = ModelCapabilities::resolve_for_options(&credential, &options);
+        let body = request_body(
+            &options,
+            &capabilities,
+            "instructions",
+            vec![json!({"role":"user","content":"hello"})],
+            vec![],
+            "session",
+        );
+        assert_eq!(body["reasoning"]["effort"], "none");
     }
     #[tokio::test]
     async fn context_overflow_is_classified_for_http_and_sse_without_retrying_unrelated_errors() {

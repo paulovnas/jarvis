@@ -162,6 +162,7 @@ fn messages(
     Ok(result)
 }
 
+#[cfg(test)]
 pub(super) fn body(
     config: &Config,
     model: &Model,
@@ -170,8 +171,44 @@ pub(super) fn body(
     input: Vec<Value>,
     tools: Vec<Value>,
 ) -> Result<Value, AgentError> {
+    let capabilities = ModelCapabilities::resolve_for_options(
+        &CodexCredential {
+            version: 1,
+            access: String::new(),
+            refresh: String::new(),
+            expires: 0,
+            account_id: String::new(),
+            email: None,
+            plan_type: None,
+            project_id: None,
+            antigravity_models: Default::default(),
+            antigravity_endpoint: None,
+            custom: Some(config.clone()),
+        },
+        options,
+    );
+    body_with_capabilities(
+        config,
+        model,
+        options,
+        &capabilities,
+        instructions,
+        input,
+        tools,
+    )
+}
+
+pub(super) fn body_with_capabilities(
+    config: &Config,
+    model: &Model,
+    options: &TurnOptions,
+    capabilities: &ModelCapabilities,
+    instructions: &str,
+    input: Vec<Value>,
+    tools: Vec<Value>,
+) -> Result<Value, AgentError> {
     let scope = scope(config, options);
-    let tools = if model.supports_tools { tools } else { vec![] };
+    let tools = if capabilities.tools { tools } else { vec![] };
     let mut body = match config.protocol {
         Protocol::OpenaiResponses => {
             let input: Vec<_> = input
@@ -193,12 +230,12 @@ pub(super) fn body(
                 })
                 .collect();
             // No Codex account, cache, beta or encrypted-reasoning headers are sent to gateways.
-            json!({"model":model.id,"instructions":instructions,"input":input,"stream":true,"store":false,"parallel_tool_calls":true,"max_output_tokens":model.max_output_tokens})
+            json!({"model":model.id,"instructions":instructions,"input":input,"stream":true,"store":false,"max_output_tokens":model.max_output_tokens})
         }
         Protocol::OpenaiCompletions => {
             let mut messages = messages(&input, &scope, model, false, false)?;
             messages.insert(0, json!({"role":"system","content":instructions}));
-            let mut body = json!({"model":model.id,"messages":messages,"stream":true,"parallel_tool_calls":true,"stream_options":{"include_usage":true}});
+            let mut body = json!({"model":model.id,"messages":messages,"stream":true,"stream_options":{"include_usage":true}});
             body[match config.token_field {
                 TokenField::MaxTokens => "max_tokens",
                 TokenField::MaxCompletionTokens => "max_completion_tokens",
@@ -216,50 +253,55 @@ pub(super) fn body(
             Protocol::AnthropicMessages => json!({"name":tool["name"],"description":tool["description"],"input_schema":tool["parameters"]}),
         }).collect());
     }
+    if !body["tools"].is_null() && capabilities.parallel_tool_calls {
+        body["parallel_tool_calls"] = json!(true);
+    }
     let effort = options
         .reasoning
         .as_deref()
         .or(model.default_reasoning_level.as_deref());
-    if let Some(effort) = effort {
-        if !model.reasoning_levels.iter().any(|level| level == effort) {
-            return Err(AgentError::new(
-                "custom_reasoning",
-                "O nível de raciocínio não está configurado para este modelo.",
-            ));
-        }
-        let off = matches!(effort, "off" | "none");
-        match model.reasoning {
-            Reasoning::None => {}
-            Reasoning::Effort if config.protocol == Protocol::OpenaiResponses => {
-                body["reasoning"] = json!({"effort":if off { "none" } else { effort }});
+    if capabilities.reasoning.supported {
+        if let Some(effort) = effort {
+            if !model.reasoning_levels.iter().any(|level| level == effort) {
+                return Err(AgentError::new(
+                    "custom_reasoning",
+                    "O nível de raciocínio não está configurado para este modelo.",
+                ));
             }
-            Reasoning::Effort => {
-                body["reasoning_effort"] = json!(if off { "none" } else { effort });
-            }
-            Reasoning::Openrouter => {
-                body["reasoning"] = if off {
-                    json!({"enabled":false})
-                } else {
-                    json!({"effort":effort})
-                };
-            }
-            Reasoning::Deepseek => {
-                body["thinking"] = json!({"type":if off { "disabled" } else { "enabled" }});
-                if !off {
-                    body["reasoning_effort"] = json!(effort);
+            let off = matches!(effort, "off" | "none");
+            match model.reasoning {
+                Reasoning::None => {}
+                Reasoning::Effort if config.protocol == Protocol::OpenaiResponses => {
+                    body["reasoning"] = json!({"effort":if off { "none" } else { effort }});
                 }
-            }
-            Reasoning::Budget => {
-                body["thinking"] = if off {
-                    json!({"type":"disabled"})
-                } else {
-                    json!({"type":"enabled","budget_tokens":model.thinking_budget})
-                };
-            }
-            Reasoning::Adaptive => {
-                body["thinking"] = json!({"type":if off { "disabled" } else { "adaptive" }});
-                if !off {
-                    body["output_config"] = json!({"effort":effort});
+                Reasoning::Effort => {
+                    body["reasoning_effort"] = json!(if off { "none" } else { effort });
+                }
+                Reasoning::Openrouter => {
+                    body["reasoning"] = if off {
+                        json!({"enabled":false})
+                    } else {
+                        json!({"effort":effort})
+                    };
+                }
+                Reasoning::Deepseek => {
+                    body["thinking"] = json!({"type":if off { "disabled" } else { "enabled" }});
+                    if !off {
+                        body["reasoning_effort"] = json!(effort);
+                    }
+                }
+                Reasoning::Budget => {
+                    body["thinking"] = if off {
+                        json!({"type":"disabled"})
+                    } else {
+                        json!({"type":"enabled","budget_tokens":model.thinking_budget})
+                    };
+                }
+                Reasoning::Adaptive => {
+                    body["thinking"] = json!({"type":if off { "disabled" } else { "adaptive" }});
+                    if !off {
+                        body["output_config"] = json!({"effort":effort});
+                    }
                 }
             }
         }

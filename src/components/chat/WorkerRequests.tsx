@@ -16,7 +16,7 @@ export function WorkerRequests({ conversationId, projectPath, agents, drafts }: 
   };
   return <section aria-label={`Solicitação de ${ROLE_LABELS[agent.role]}`} className="mb-2">
     <p className="micro-label mb-2 px-1 text-primary">{ROLE_LABELS[agent.role]} · {agent.title}</p>
-    {agent.pendingApproval && <ToolApproval key={agent.pendingApproval.id} tool={agent.pendingApproval} projectPath={projectPath} onAnswer={approved => answer("approve_workflow_tool", { turnId: agent.activeTurnId, toolId: agent.pendingApproval?.id, approved })} />}
+    {agent.pendingApproval && <ToolApproval key={agent.pendingApproval.tool.id} request={agent.pendingApproval} projectPath={projectPath} onAnswer={decision => answer("approve_workflow_tool", { turnId: agent.activeTurnId, toolId: agent.pendingApproval?.tool.id, decision })} />}
     {agent.pendingQuestion && <QuestionCard key={agent.pendingQuestion.toolId} request={agent.pendingQuestion} drafts={drafts} draftKey={questionKey(`${conversationId}/${agent.id}`, agent.pendingQuestion)} onAnswer={async (request, response) => { const accepted = await answer("answer_workflow_question", { turnId: request.turnId, toolId: request.toolId, response }); if (accepted) drafts.delete(questionKey(`${conversationId}/${agent.id}`, request)); return accepted; }} />}
     {agent.pendingAuthoring && <AuthoringApprovalDrawer key={agent.pendingAuthoring.toolId} request={agent.pendingAuthoring} owner={`${ROLE_LABELS[agent.role]} · ${agent.title}`} onAnswer={(approved, note) => answer("answer_workflow_authoring", { decision: { turnId: agent.pendingAuthoring?.turnId, toolId: agent.pendingAuthoring?.toolId, approved, note } })} />}
   </section>;

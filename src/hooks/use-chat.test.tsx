@@ -6,6 +6,7 @@ import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import type { ChatSnapshot } from "@/core/chat";
 import { useChat } from "./use-chat";
 import { toast } from "sonner";
+import { clearChatStore } from "@/core/chat-store";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
@@ -22,6 +23,7 @@ const observed = (): ChatSnapshot => ({
   }],
 });
 beforeEach(() => {
+  clearChatStore();
   listeners.clear(); call.mockReset().mockResolvedValue(running());
   vi.mocked(listen).mockImplementation(async (name, callback) => {
     const set = listeners.get(name) ?? new Set(); set.add(callback); listeners.set(name, set);
@@ -113,7 +115,7 @@ it("resyncs a matching conversation when an event batch is not understood", asyn
   await emit("agent:event", { conversationId: "c1", revision: 11, events: [{ type: "futureEvent" }] });
 
   await waitFor(() => expect(result.current.snapshot?.turns[0].steps[0].text).toBe("Vou conferir a configuração agora."));
-  expect(call).toHaveBeenLastCalledWith("get_chat", { conversationId: "c1" });
+  expect(call).toHaveBeenLastCalledWith("subscribe_chat", { conversationId: "c1", cursor: 10 });
 });
 
 it("resyncs when an event revision reveals a missed batch", async () => {
@@ -127,6 +129,43 @@ it("resyncs when an event revision reveals a missed batch", async () => {
   expect(result.current.snapshot?.turns[0].steps[0].text).toBe("Vou conferir a configuração agora.");
 });
 
+it("catches up from the cached cursor without replacing the transcript", async () => {
+  const { result } = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(result.current.snapshot?.revision).toBe(10));
+  call.mockResolvedValueOnce({
+    protocolVersion: 1,
+    reset: false,
+    snapshot: null,
+    batches: [update(10, observed())],
+  });
+
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
+
+  await waitFor(() => expect(result.current.snapshot?.revision).toBe(11));
+  expect(result.current.snapshot?.turns[0].steps[0].text).toBe("Vou conferir a configuração agora.");
+  expect(call).toHaveBeenLastCalledWith("subscribe_chat", { conversationId: "c1", cursor: 10 });
+});
+
+it("recovers a completion that happened while the chat UI was unmounted", async () => {
+  const first = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(first.result.current.snapshot?.activeTurnId).toBe("turn1"));
+  first.unmount();
+
+  const finished = { ...completed(), revision: 11 };
+  call.mockResolvedValueOnce({
+    protocolVersion: 1,
+    reset: false,
+    snapshot: null,
+    batches: [update(10, finished)],
+  });
+  const second = renderHook(() => useChat("c1"));
+
+  await waitFor(() => expect(second.result.current.snapshot?.turns[0].status).toBe("completed"));
+  expect(second.result.current.snapshot?.revision).toBe(11);
+  expect(call).toHaveBeenLastCalledWith("subscribe_chat", { conversationId: "c1", cursor: 10 });
+  expect(call).toHaveBeenCalledTimes(2);
+});
+
 it("uses workflow changes as a coalesced fallback for the main transcript", async () => {
   const { result } = renderHook(() => useChat("c1"));
   await waitFor(() => expect(result.current.snapshot?.revision).toBe(10));
@@ -135,6 +174,29 @@ it("uses workflow changes as a coalesced fallback for the main transcript", asyn
   await emit("workflow:changed", { conversationId: "c1" });
 
   await waitFor(() => expect(result.current.snapshot?.turns[0].steps[0].text).toBe("Vou conferir a configuração agora."));
+});
+
+it("uses durable library changes when a provider streaming event is missed", async () => {
+  const { result } = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(result.current.snapshot?.revision).toBe(10));
+  call.mockResolvedValueOnce(completed());
+
+  await emit("library:changed", "c1");
+
+  await waitFor(() => expect(result.current.snapshot?.turns[0].status).toBe("completed"));
+  expect(call).toHaveBeenLastCalledWith("subscribe_chat", { conversationId: "c1", cursor: 10 });
+});
+
+it("keeps the loaded transcript visible when a background reconciliation fails", async () => {
+  const { result } = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(result.current.snapshot?.revision).toBe(10));
+  call.mockRejectedValueOnce(new Error("temporary read failure"));
+
+  await emit("library:changed", "c1");
+  await waitFor(() => expect(call).toHaveBeenCalledTimes(2));
+
+  expect(result.current.error).toBeNull();
+  expect(result.current.snapshot?.turns[0].user).toBe("Leia o README");
 });
 
 it("ignores invalidation events from another conversation", async () => {

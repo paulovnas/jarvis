@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "bounded-replay-memory",
+  "description": "Large deterministic journals retain only the post-compaction suffix across repeated restarts.",
+  "historyTurns": [480, 960],
+  "itemsPerTurn": 2,
+  "checkpointRetainedTurns": [160, 80, 20],
+  "restartCount": 3
+}

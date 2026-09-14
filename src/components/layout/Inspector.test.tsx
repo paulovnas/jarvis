@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -151,6 +151,11 @@ describe("Inspector", () => {
     expect(repository).toHaveTextContent("3");
     expect(repository).toHaveTextContent("2");
     expect(repository).toHaveTextContent("origin/feature/pagamentos");
+    expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "get_project_repositories")).toHaveLength(1);
+
+    await user.click(screen.getByRole("tab", { name: "Inspector" }));
+    await user.click(screen.getByRole("tab", { name: "GitHub" }));
+    await waitFor(() => expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "get_project_repositories")).toHaveLength(2));
   });
 
   it("shows empty activity sections and an unknown context without fabricating data", async () => {

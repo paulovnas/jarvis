@@ -1,7 +1,7 @@
 use super::{
     cancelled, context_overflow, http_failure, overflow_error, protocol_error, request_id,
-    upstream_code, with_provider_metadata, AgentError, CodexCredential, Delta, Response, Sse,
-    TurnOptions, Usage, MAX_STREAM,
+    upstream_code, with_provider_metadata, AgentError, CodexCredential, Delta, ModelCapabilities,
+    Response, Sse, TurnOptions, Usage, MAX_STREAM,
 };
 use crate::openai_codex::custom::{AuthMode, Config, Model, Protocol};
 use serde_json::{json, Value};
@@ -13,6 +13,49 @@ mod messages;
 mod request;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(super) fn fixture_response(
+    protocol: Protocol,
+    events: &[Value],
+) -> Result<Response, AgentError> {
+    let scope = json!({"fixture":true});
+    match protocol {
+        Protocol::OpenaiResponses => {
+            let response = events.first().ok_or_else(protocol_error)?;
+            super::completed(response)
+        }
+        Protocol::OpenaiCompletions => {
+            let mut stream = completions::Stream::default();
+            for event in events {
+                stream.event(event, &mut |_| Ok(()))?;
+            }
+            stream.finish(&scope)
+        }
+        Protocol::AnthropicMessages => {
+            let mut stream = messages::Stream::default();
+            for event in events {
+                let _ = stream.event(event, &mut |_| Ok(()))?;
+            }
+            stream.finish(&scope)
+        }
+    }
+}
+
+#[cfg(test)]
+pub(super) fn fixture_request(
+    config: &Config,
+    options: &TurnOptions,
+    input: Vec<Value>,
+    tools: Vec<Value>,
+) -> Result<Value, AgentError> {
+    let model = config
+        .models
+        .iter()
+        .find(|model| model.id == options.model)
+        .ok_or_else(protocol_error)?;
+    request::body(config, model, options, "Fixture instructions", input, tools)
+}
 
 fn failed(event: &Value) -> AgentError {
     super::event_failure(event)
@@ -40,12 +83,10 @@ fn output(
     output.extend(calls);
     // Reject incomplete arguments before any tool can be dispatched.
     super::tool_calls(&output)?;
-    Ok(Response {
-        output,
-        text,
-        summary,
-        usage,
-    })
+    let response = Response::from_output(output, usage)?;
+    debug_assert_eq!(response.text, text);
+    debug_assert_eq!(response.summary, summary);
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -137,6 +178,7 @@ pub(super) async fn stream_with_client(
     config: &Config,
     session_id: &str,
     options: &TurnOptions,
+    capabilities: &ModelCapabilities,
     instructions: &str,
     input: Vec<Value>,
     tools: Vec<Value>,
@@ -151,19 +193,21 @@ pub(super) async fn stream_with_client(
         .ok_or_else(|| {
             AgentError::new("custom_model", "Cadastre este modelo no provedor Custom.")
         })?;
-    if !model.supports_images
-        && input.iter().any(|item| {
-            item["content"]
-                .as_array()
-                .is_some_and(|parts| parts.iter().any(|part| part["type"] == "input_image"))
-        })
-    {
+    if !capabilities.accepts_input(&input) {
         return Err(AgentError::new(
             "custom_images",
             "Este modelo não está configurado para receber imagens.",
         ));
     }
-    let body = request::body(config, model, options, instructions, input, tools)?;
+    let body = request::body_with_capabilities(
+        config,
+        model,
+        options,
+        capabilities,
+        instructions,
+        input,
+        tools,
+    )?;
     let request = session_request_with_client(client, credential, config, body, session_id)?;
     let scope = request::scope(config, options);
     if config.protocol == Protocol::OpenaiResponses {
@@ -203,12 +247,14 @@ async fn stream(
     on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
     let client = super::http_client()?;
+    let capabilities = ModelCapabilities::resolve_for_options(credential, options);
     stream_with_client(
         &client,
         credential,
         config,
         session_id,
         options,
+        &capabilities,
         instructions,
         input,
         tools,

@@ -22,6 +22,12 @@ describe("agent event protocol", () => {
     expect(applyAgentEventBatch(current, batch).needsResync).toBe(true);
   });
 
+  it("requests a compatible snapshot for a newer event protocol", () => {
+    const current = { ...emptyChat(), revision: 4 };
+    const batch = agentEventBatchSchema.parse({ protocolVersion: 3, conversationId: "c1", baseRevision: 4, revision: 5, events: [] });
+    expect(applyAgentEventBatch(current, batch).needsResync).toBe(true);
+  });
+
   it("ignores duplicate and stale batches without replaying their deltas", () => {
     const turn = {
       ...savedTurn(),

@@ -208,12 +208,9 @@ fn search_items() -> Vec<Value> {
 
 #[test]
 fn sources_are_merged_sanitized_bounded_and_include_the_search_account() {
-    let response = provider::Response {
-        output: search_items(),
-        text: "á".repeat(13000),
-        summary: "not exposed".into(),
-        usage: None,
-    };
+    let mut items = search_items();
+    items[1]["content"][0]["text"] = json!("á".repeat(13000));
+    let response = provider::Response::from_output(items, None).unwrap();
     let result: Value = serde_json::from_str(
         &format_result(&response, "openai-codex-search", "gpt-5.6-luna", 1).unwrap(),
     )
@@ -230,21 +227,34 @@ fn sources_are_merged_sanitized_bounded_and_include_the_search_account() {
 
 #[test]
 fn plain_completions_failed_searches_and_missing_sources_are_not_search_results() {
-    let mut response = provider::Response {
-        output: vec![],
-        text: "A plausible answer".into(),
-        summary: String::new(),
-        usage: None,
-    };
+    let response = provider::Response::from_output(
+        vec![json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"A plausible answer"}]})],
+        None,
+    )
+    .unwrap();
     assert_eq!(
         format_result(&response, "a", "gpt-5.6-luna", 8)
             .unwrap_err()
             .code,
         "web_search_not_invoked"
     );
-    response.output = vec![json!({"type":"web_search_call", "status":"failed"})];
+    let response = provider::Response::from_output(
+        vec![
+            json!({"type":"web_search_call", "status":"failed"}),
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"A plausible answer"}]}),
+        ],
+        None,
+    )
+    .unwrap();
     assert!(format_result(&response, "a", "gpt-5.6-luna", 8).is_err());
-    response.output[0]["status"] = json!("completed");
+    let response = provider::Response::from_output(
+        vec![
+            json!({"type":"web_search_call", "status":"completed"}),
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"A plausible answer"}]}),
+        ],
+        None,
+    )
+    .unwrap();
     assert_eq!(
         format_result(&response, "a", "gpt-5.6-luna", 8)
             .unwrap_err()

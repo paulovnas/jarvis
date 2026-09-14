@@ -7,6 +7,7 @@ import { emptyLibrary, populatedLibrary } from "@/test/library-fixtures";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import type { LibrarySnapshot } from "@/core/library";
 import type { ChatSnapshot } from "@/core/chat";
+import { clearChatStore } from "@/core/chat-store";
 import { useChat } from "@/hooks/use-chat";
 import { ChatArea } from "./ChatArea";
 
@@ -46,12 +47,29 @@ async function update(snapshot: ChatSnapshot) {
 }
 describe("Persistent live conversation", () => {
   beforeEach(() => {
-    listeners.clear(); call.mockReset().mockResolvedValue(emptyChat());
+    clearChatStore(); listeners.clear(); call.mockReset().mockResolvedValue(emptyChat());
     vi.mocked(listen).mockImplementation(async (name, callback) => {
       const set = listeners.get(name) ?? new Set(); set.add(callback); listeners.set(name, set);
       return () => { set.delete(callback); };
     });
   });
+  it("shows a submitted message while the native turn is still being accepted", async () => {
+    const user = userEvent.setup();
+    let finish!: (snapshot: ChatSnapshot) => void;
+    const accepted = { ...savedTurn(), user: "Mensagem imediata", status: "running" as const, steps: [] };
+    const running = { ...emptyChat(), revision: 2, history: { start: 0, total: 1 }, turns: [accepted], activeTurnId: accepted.id };
+    call.mockImplementation(command => command === "start_agent_turn"
+      ? new Promise<ChatSnapshot>(resolve => { finish = resolve; })
+      : Promise.resolve(emptyChat()));
+
+    render(<TestChat />);
+    await user.type(await screen.findByRole("textbox"), "Mensagem imediata{Enter}");
+
+    expect(await screen.findByText("Mensagem imediata")).toBeVisible();
+    await act(async () => { finish(running); });
+    await waitFor(() => expect(screen.getAllByText("Mensagem imediata")).toHaveLength(1));
+  });
+
   it("submits during execution and removes queued messages through the native commands", async () => {
     const user = userEvent.setup();
     const turn = { ...savedTurn(), status: "running" as const };
@@ -127,7 +145,7 @@ describe("Persistent live conversation", () => {
     await screen.findByRole("heading", { name: "Primeira conversa" });
     expect(await screen.findByRole("textbox")).toHaveAttribute("contenteditable", "true");
     expect(screen.getByRole("button", { name: "Adicionar anexo" })).toBeEnabled();
-    expect(call).toHaveBeenCalledWith("get_chat", { conversationId: "c1" });
+    expect(call).toHaveBeenCalledWith("subscribe_chat", { conversationId: "c1" });
   });
   it("uses the vertical brand and moves the same composer into the transcript after the first turn", async () => {
     render(<TestChat />);
@@ -256,21 +274,21 @@ describe("Persistent live conversation", () => {
   it("shows exact tool arguments and correlates a manual denial", async () => {
     const user = userEvent.setup();
     const tool = { ...savedTurn().steps[0].tools[0], name: "edit", args: { path: "README.md", oldText: "before", newText: "after" }, status: "pending" as const };
-    call.mockResolvedValue({ ...emptyChat(), activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running" }], pendingApproval: tool });
+    call.mockResolvedValue({ ...emptyChat(), activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running" }], pendingApproval: { tool, policy: null } });
     render(<TestChat />);
     expect(await screen.findByText("before")).toBeInTheDocument(); expect(screen.getByText("after")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Recusar" }));
-    expect(call).toHaveBeenCalledWith("approve_agent_tool", { conversationId: "c1", turnId: "turn1", toolId: "tool1", approved: false });
+    expect(call).toHaveBeenCalledWith("approve_agent_tool", { conversationId: "c1", turnId: "turn1", toolId: "tool1", decision: { approved: false, grant: null } });
   });
   it("identifies a Beads mutation as a task change and asks for approval", async () => {
     const user = userEvent.setup();
     const tool = { ...savedTurn().steps[0].tools[0], name: "beads_update", args: { id: "project-task", title: "Novo título" }, status: "pending" as const };
-    call.mockResolvedValue({ ...emptyChat(), activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running" }], pendingApproval: tool });
+    call.mockResolvedValue({ ...emptyChat(), activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running" }], pendingApproval: { tool, policy: null } });
     render(<TestChat />);
     expect(await screen.findByText("Autorizar alteração de tarefa?")).toBeInTheDocument();
     expect(screen.getByText("Novo título")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Recusar" }));
-    expect(call).toHaveBeenCalledWith("approve_agent_tool", { conversationId: "c1", turnId: "turn1", toolId: "tool1", approved: false });
+    expect(call).toHaveBeenCalledWith("approve_agent_tool", { conversationId: "c1", turnId: "turn1", toolId: "tool1", decision: { approved: false, grant: null } });
   });
   it("opens the supervised authoring drawer and correlates approval to the active turn", async () => {
     const user = userEvent.setup();
@@ -364,7 +382,7 @@ describe("Persistent live conversation", () => {
     });
     render(<TestChat />);
     await screen.findByRole("textbox", { name: "Endereço do navegador" });
-    await update({ ...emptyChat(), revision: 2, pendingApproval: { id: "browser-click", name: "browser_click", args: { id: "browser-1", element: "element-1" }, status: "pending", output: "", durationMs: 0 } });
+    await update({ ...emptyChat(), revision: 2, pendingApproval: { tool: { id: "browser-click", name: "browser_click", args: { id: "browser-1", element: "element-1" }, status: "pending", output: "", durationMs: 0 }, policy: null } });
     expect(await screen.findByRole("button", { name: "Autorizar uma vez" })).toBeVisible();
     expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Autorizar ação no navegador?")).toBeVisible();
@@ -396,6 +414,6 @@ describe("Persistent live conversation", () => {
     const { rerender } = render(<TestChat />); await screen.findByRole("textbox");
     const library = populatedLibrary(); library.projects[0].name = "Meu projeto"; library.conversations[0].title = "Título editado";
     rerender(<TestChat library={library} />);
-    expect(screen.getByRole("heading", { name:"Título editado" })).toBeInTheDocument(); expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent === "Pessoal / Meu projeto")).toBeVisible(); expect(call.mock.calls.filter(([command]) => command === "get_chat")).toHaveLength(1);
+    expect(screen.getByRole("heading", { name:"Título editado" })).toBeInTheDocument(); expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent === "Pessoal / Meu projeto")).toBeVisible(); expect(call.mock.calls.filter(([command]) => command === "subscribe_chat")).toHaveLength(1);
   });
 });

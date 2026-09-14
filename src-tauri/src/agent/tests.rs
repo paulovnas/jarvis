@@ -110,7 +110,8 @@ fn a_new_user_turn_inherits_the_latest_durable_mcp_intent() {
 
     let data = session.data.lock().unwrap();
     let (turn_id, inherited, unresolved) =
-        pending_mcp_intent_resolution(&data.turns).expect("new turn needs resolution");
+        pending_mcp_intent_resolution(&data.turns, &data.inherited_mcp_intent)
+            .expect("new turn needs resolution");
     assert_eq!(turn_id, data.turns.last().unwrap().turn.id);
     assert_eq!(inherited, intent);
     assert_eq!(unresolved, vec!["Continue e confirme a informação."]);
@@ -174,6 +175,9 @@ pub(super) fn session(fixture: &Fixture) -> Arc<Session> {
         emit: Arc::new(|_| {}),
         data: Mutex::new(SessionData {
             turns: vec![],
+            turn_base: 0,
+            wire_base: 0,
+            inherited_mcp_intent: crate::mcp::McpIntent::default(),
             active: None,
             recovery: None,
             revision: 1,
@@ -671,6 +675,90 @@ async fn manual_waits_for_matching_approval_and_yolo_does_not_prompt() {
 }
 
 #[tokio::test]
+async fn an_approved_decision_creates_a_reusable_project_grant() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let signal = session
+        .reserve("Publicar".into(), options(ApprovalMode::Manual))
+        .unwrap();
+    let tool = ToolCall {
+        id: "push".into(),
+        name: "bash".into(),
+        args: json!({"command":"git push origin feature"}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    let policy = execution_policy::inspect_tool(
+        &fixture.root,
+        &tool,
+        tool_contract::Capabilities {
+            effect: tool_contract::Effect::Mutating,
+            approval: tool_contract::ApprovalPolicy::AccordingToTurn,
+            parallel_safe: false,
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        policy.outcome.decision,
+        execution_policy::ExecutionDecision::Ask
+    );
+    let store = execution_grants::GrantStore::default();
+    store
+        .setup(fixture.root.join("execution-grants.json"), now())
+        .unwrap();
+    let task_session = session.clone();
+    let task_tool = tool.clone();
+    let pending = tokio::spawn(async move {
+        let approval_options = options(ApprovalMode::Manual);
+        authorize_declared(
+            ApprovalRequest {
+                session: &task_session,
+                tool: &task_tool,
+                options: &approval_options,
+                policy: Some(policy),
+                sandbox: None,
+                project_id: Some("project"),
+                signal,
+            },
+            tool_contract::ApprovalPolicy::AccordingToTurn,
+            tool_contract::Handler::Native,
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while session.snapshot().unwrap().pending_approval.is_none() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let turn = session.snapshot().unwrap().active_turn_id.unwrap();
+    answer_approval_decision(
+        &store,
+        &session,
+        &turn,
+        &tool.id,
+        ApprovalDecision {
+            approved: true,
+            grant: Some(ApprovalGrantRequest {
+                scope: ApprovalGrantScope::Project,
+                duration: ApprovalGrantDuration::Persistent,
+                match_kind: execution_grants::GrantMatch::Exact,
+            }),
+        },
+    )
+    .unwrap();
+
+    assert!(pending.await.unwrap().unwrap());
+    let grants = store.list_for_project("project", now()).unwrap();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].subject, "git push origin feature");
+    assert_eq!(grants[0].scope, execution_grants::GrantScopeKind::Project);
+}
+
+#[tokio::test]
 async fn ownership_sensitive_actions_still_prompt_in_automatic_mode() {
     let fixture = Fixture::new();
     let session = session(&fixture);
@@ -839,6 +927,9 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
         emit: Arc::new(|_| {}),
         data: Mutex::new(SessionData {
             revision: 3,
+            turn_base: 0,
+            wire_base: 0,
+            inherited_mcp_intent: crate::mcp::McpIntent::default(),
             active: Some(Active::new("turn".into(), cancel)),
             recovery: None,
             storage_failed: false,

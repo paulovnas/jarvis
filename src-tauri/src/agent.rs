@@ -10,6 +10,9 @@ pub(crate) mod diffs;
 #[cfg(test)]
 pub(crate) mod evaluation;
 mod events;
+mod execution_grants;
+mod execution_policy;
+mod execution_sandbox;
 pub(crate) mod history;
 pub(crate) mod image_generation;
 mod instructions;
@@ -21,6 +24,7 @@ mod model_instructions;
 mod patch;
 pub(crate) mod processes;
 mod progress;
+mod protocol;
 mod provider;
 pub(crate) mod provider_links;
 pub(crate) mod publication;
@@ -30,6 +34,7 @@ mod session_writer;
 pub(crate) mod shell;
 mod skill_input;
 mod tasks;
+pub(crate) mod telemetry;
 pub(crate) mod terminals;
 mod title;
 mod tool_contract;
@@ -56,6 +61,7 @@ use tauri::{Emitter, Manager};
 use tokio::sync::{oneshot, watch};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct AgentError {
     code: String,
     message: String,
@@ -130,12 +136,14 @@ impl From<crate::core::CoreError> for AgentError {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
     Plan,
     Build,
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum ApprovalMode {
     Manual,
@@ -145,6 +153,7 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TurnOptions {
     account: String,
@@ -185,6 +194,7 @@ impl TurnOptions {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 enum TurnStatus {
     Running,
@@ -194,59 +204,85 @@ enum TurnStatus {
     Interrupted,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(rename = "AgentTool"))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCall {
     id: String,
     name: String,
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     args: Value,
+    #[cfg_attr(
+        test,
+        ts(type = "\"pending\" | \"running\" | \"completed\" | \"error\"")
+    )]
     status: String,
     output: String,
+    #[cfg_attr(test, ts(type = "number"))]
     duration_ms: u64,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 struct Usage {
     // Total input includes cache reads/writes; the breakdown is never added again.
+    #[cfg_attr(test, ts(type = "number"))]
     input_tokens: u64,
+    #[cfg_attr(test, ts(type = "number"))]
     output_tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(type = "number | null"))]
     cache_read_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(type = "number | null"))]
     cache_write_tokens: Option<u64>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 struct ContextReduction {
     call_id: String,
+    #[cfg_attr(test, ts(type = "number"))]
     original_bytes: u64,
+    #[cfg_attr(test, ts(type = "number"))]
     retained_bytes: u64,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(rename = "AgentStep"))]
 #[serde(rename_all = "camelCase")]
 struct Step {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     context_id: Option<String>,
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number"))]
     context_searches: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     context_reductions: Vec<ContextReduction>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     read_reuses: Vec<ContextReduction>,
     #[serde(default, skip_serializing_if = "is_zero")]
+    #[cfg_attr(test, ts(type = "number"))]
     loop_steers: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
+    #[cfg_attr(test, ts(type = "number"))]
     loop_avoided_calls: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
+    #[cfg_attr(test, ts(type = "number"))]
     progress_events: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
+    #[cfg_attr(test, ts(type = "number"))]
     evidence_events: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
+    #[cfg_attr(test, ts(type = "number"))]
     progress_checkpoints: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
+    #[cfg_attr(test, ts(type = "number"))]
     progress_pauses: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     retry: Option<provider::retry::Status>,
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number"))]
     duration_ms: u64,
     text: String,
     summary: String,
@@ -258,16 +294,22 @@ fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(rename = "AgentTurn"))]
 #[serde(rename_all = "camelCase")]
 struct Turn {
     id: String,
+    #[cfg_attr(test, ts(type = "number"))]
     created_at: u64,
+    #[cfg_attr(test, ts(type = "number"))]
     duration_ms: u64,
     user: String,
     #[serde(default)]
     parts: Vec<skill_input::MessagePart>,
     options: TurnOptions,
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number | null"))]
+    #[cfg_attr(test, ts(optional = nullable))]
     context_window: Option<u64>,
     status: TurnStatus,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -283,32 +325,160 @@ struct StoredTurn {
     mcp_intent: Option<crate::mcp::McpIntent>,
 }
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ChatSnapshot {
+    protocol_version: u32,
     conversation_id: String,
     compacting: bool,
+    #[cfg_attr(test, ts(type = "number"))]
     revision: u64,
     turns: Vec<Turn>,
     history: history::Window,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     navigation: Option<Vec<history::Excerpt>>,
     active_turn_id: Option<String>,
-    pending_approval: Option<ToolCall>,
+    pending_approval: Option<PendingApproval>,
+    #[cfg_attr(test, ts(type = "unknown | null"))]
     pending_question: Option<questions::PendingQuestion>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "unknown"))]
     pending_authoring: Option<authoring::PendingProposal>,
     queued_messages: Vec<queue::QueuedMessage>,
     context: compaction::ContextInfo,
     compactions: Vec<compaction::CompactionEvent>,
     file_changes: Vec<diffs::FileSummary>,
 }
-struct Approval {
+
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalPolicyDetails {
+    code: String,
+    reason: String,
+    effects: execution_policy::ExecutionEffects,
+    command: Option<execution_policy::CommandPlan>,
+    read_paths: Vec<String>,
+    write_paths: Vec<String>,
+    working_directory: String,
+    repository_root: Option<String>,
+    command_prefix_available: bool,
+    sandbox: Option<execution_sandbox::SandboxReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct PendingApproval {
     tool: ToolCall,
+    policy: Option<ApprovalPolicyDetails>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum ApprovalGrantScope {
+    Conversation,
+    Project,
+    Repository,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum ApprovalGrantDuration {
+    Session,
+    Persistent,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApprovalGrantRequest {
+    scope: ApprovalGrantScope,
+    duration: ApprovalGrantDuration,
+    match_kind: execution_grants::GrantMatch,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApprovalDecision {
+    approved: bool,
+    #[serde(default)]
+    grant: Option<ApprovalGrantRequest>,
+}
+
+struct Approval {
+    request: PendingApproval,
+    policy: Option<execution_policy::ToolPolicy>,
+    project_id: Option<String>,
+    repository_root: Option<PathBuf>,
     reply: oneshot::Sender<bool>,
 }
+
+impl Approval {
+    fn new(
+        tool: ToolCall,
+        policy: Option<execution_policy::ToolPolicy>,
+        sandbox: Option<&execution_sandbox::SandboxPlan>,
+        project_id: Option<&str>,
+        reply: oneshot::Sender<bool>,
+    ) -> Self {
+        let repository_root = policy.as_ref().and_then(repository_root);
+        let details = policy.as_ref().map(|policy| ApprovalPolicyDetails {
+            code: policy.outcome.code.clone(),
+            reason: policy.outcome.reason.clone(),
+            effects: policy.outcome.effects.clone(),
+            command: policy.outcome.command.clone(),
+            read_paths: policy
+                .outcome
+                .read_paths
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
+            write_paths: policy
+                .outcome
+                .write_paths
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
+            working_directory: policy.working_directory.to_string_lossy().into_owned(),
+            repository_root: repository_root
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
+            command_prefix_available: execution_grants::can_prefix(&policy.outcome),
+            sandbox: sandbox.map(|plan| plan.report().clone()),
+        });
+        Self {
+            request: PendingApproval {
+                tool,
+                policy: details,
+            },
+            policy,
+            project_id: project_id.map(str::to_owned),
+            repository_root,
+            reply,
+        }
+    }
+}
+
+fn repository_root(policy: &execution_policy::ToolPolicy) -> Option<PathBuf> {
+    policy
+        .working_directory
+        .ancestors()
+        .take_while(|path| path.starts_with(&policy.project_root))
+        .find(|path| path.join(".git").exists())
+        .map(Path::to_path_buf)
+}
+
 type Active = turn_state::ActiveTurn;
 struct SessionData {
     turns: Vec<StoredTurn>,
+    turn_base: usize,
+    wire_base: usize,
+    inherited_mcp_intent: crate::mcp::McpIntent,
     active: Option<Active>,
     recovery: Option<String>,
     revision: u64,
@@ -317,6 +487,62 @@ struct SessionData {
     extras: journal::Extras,
     compacting: bool,
     manual_compaction: bool,
+}
+impl SessionData {
+    fn total_turns(&self) -> usize {
+        self.turn_base.saturating_add(self.turns.len())
+    }
+
+    fn local_wire_offset(&self, absolute: usize) -> usize {
+        absolute.saturating_sub(self.wire_base)
+    }
+
+    fn absolute_wire_end(&self) -> usize {
+        self.wire_base
+            .saturating_add(self.turns.iter().map(|turn| turn.wire.len()).sum::<usize>())
+    }
+
+    fn prune_compacted_prefix(&mut self) {
+        let Some(through) = self.extras.context.as_ref().map(|context| context.through) else {
+            return;
+        };
+        let active = self.active.as_ref().map(|active| active.id.as_str());
+        let mut wire_base = self.wire_base;
+        let mut remove = 0;
+        let mut inherited = self.inherited_mcp_intent.clone();
+        for turn in &self.turns {
+            if active == Some(turn.turn.id.as_str()) {
+                break;
+            }
+            let end = wire_base.saturating_add(turn.wire.len());
+            if end > through {
+                break;
+            }
+            if let Some(intent) = &turn.mcp_intent {
+                inherited = intent.clone();
+            }
+            wire_base = end;
+            remove += 1;
+        }
+        if remove == 0 {
+            return;
+        }
+        if remove == self.turns.len() {
+            let Some(mut latest) = self.turns.pop() else {
+                return;
+            };
+            latest.wire.clear();
+            latest.turn = history::history_preview(latest.turn);
+            self.turns.clear();
+            self.turns.push(latest);
+            self.turn_base = self.turn_base.saturating_add(remove.saturating_sub(1));
+        } else {
+            self.turns.drain(..remove);
+            self.turn_base = self.turn_base.saturating_add(remove);
+        }
+        self.wire_base = wire_base;
+        self.inherited_mcp_intent = inherited;
+    }
 }
 struct Session {
     id: String,
@@ -563,6 +789,7 @@ impl Session {
     }
     fn snapshot_data(&self, data: &SessionData) -> ChatSnapshot {
         ChatSnapshot {
+            protocol_version: protocol::VERSION,
             conversation_id: self.id.clone(),
             compacting: data.compacting || data.manual_compaction,
             revision: data.revision,
@@ -572,15 +799,17 @@ impl Session {
                 .map(|item| vec![item.turn.clone()])
                 .unwrap_or_default(),
             history: history::Window {
-                start: data.turns.len().saturating_sub(1),
-                total: data.turns.len(),
+                start: data
+                    .total_turns()
+                    .saturating_sub(usize::from(!data.turns.is_empty())),
+                total: data.total_turns(),
             },
             navigation: None,
             active_turn_id: data.active.as_ref().map(|active| active.id.clone()),
             pending_approval: data
                 .active
                 .as_ref()
-                .and_then(|active| active.pending_approval_tool().cloned()),
+                .and_then(|active| active.pending_approval_request().cloned()),
             queued_messages: data
                 .extras
                 .queue
@@ -743,7 +972,9 @@ impl Drop for TitleGenerationLease {
 pub struct AgentState {
     pub(crate) processes: processes::ProcessState,
     pub(crate) terminals: terminals::TerminalState,
+    grants: execution_grants::GrantStore,
     sessions: Arc<Mutex<HashMap<String, Arc<Session>>>>,
+    event_streams: Arc<Mutex<HashMap<String, Weak<events::ProtocolEmitter>>>>,
     session_gates: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
     loading_sessions: Arc<Mutex<HashSet<String>>>,
     title_generations: Arc<Mutex<HashSet<String>>>,
@@ -758,7 +989,9 @@ impl Default for AgentState {
         Self {
             processes: processes::ProcessState::new(terminals.clone()),
             terminals,
+            grants: Default::default(),
             sessions: Default::default(),
+            event_streams: Default::default(),
             session_gates: Default::default(),
             loading_sessions: Default::default(),
             title_generations: Default::default(),
@@ -770,6 +1003,11 @@ impl Default for AgentState {
     }
 }
 impl AgentState {
+    pub(crate) fn setup_execution_grants(&self, data_root: &Path) -> Result<(), String> {
+        self.grants
+            .setup(data_root.join("execution-grants.json"), now())
+    }
+
     fn begin_turn(&self) -> Result<turn_state::TurnLease, AgentError> {
         self.admission
             .enter()
@@ -958,7 +1196,56 @@ impl AgentState {
         }
         let _loading = self.begin_session_load(id)?;
         let (path, root) = library::agent_location(state, home, id)?;
-        let (mut turns, mut extras) = journal::load_for_recovery(&path)?;
+        let recovery_started = std::time::Instant::now();
+        let recovery_trace = telemetry::trace(id, "session_load");
+        let journal_bytes = std::fs::metadata(&path)
+            .map(|metadata| metadata.len())
+            .unwrap_or_default();
+        let replay = match self.histories.load_replay(&path, &root) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                telemetry::record(
+                    &recovery_trace,
+                    telemetry::Event::Recovery {
+                        outcome: telemetry::Outcome::Failed,
+                        journal_turns: 0,
+                        replayed_turns: 0,
+                        replayed_items: 0,
+                        replayed_bytes: journal_bytes.min(512 * 1024 * 1024),
+                        duration_ms: u64::try_from(recovery_started.elapsed().as_millis())
+                            .unwrap_or(u64::MAX),
+                        failure: Some(telemetry::failure_class(&error)),
+                    },
+                );
+                return Err(error);
+            }
+        };
+        let history::ReplayLoad {
+            mut turns,
+            mut extras,
+            wire_base,
+            turn_base,
+            total_turns,
+            inherited_mcp_intent,
+            file_checkpoints,
+            replayed_bytes,
+        } = replay;
+        telemetry::record(
+            &recovery_trace,
+            telemetry::Event::Recovery {
+                outcome: telemetry::Outcome::Succeeded,
+                journal_turns: u64::try_from(total_turns).unwrap_or(u64::MAX),
+                replayed_turns: u64::try_from(turns.len()).unwrap_or(u64::MAX),
+                replayed_items: turns
+                    .iter()
+                    .map(|turn| u64::try_from(turn.wire.len()).unwrap_or(u64::MAX))
+                    .sum(),
+                replayed_bytes: replayed_bytes.min(512 * 1024 * 1024),
+                duration_ms: u64::try_from(recovery_started.elapsed().as_millis())
+                    .unwrap_or(u64::MAX),
+                failure: None,
+            },
+        );
         let recovery = turns
             .last()
             .filter(|turn| resumable_direct_turn(turn))
@@ -983,13 +1270,7 @@ impl AgentState {
                 journal::append(&path, turn)?;
             }
         }
-        let recorded_files: std::collections::HashSet<_> = extras.files.keys().cloned().collect();
-        diffs::load_legacy(&root, &turns, &mut extras.files);
-        for file in extras
-            .files
-            .values()
-            .filter(|file| !recorded_files.contains(&file.path))
-        {
+        for file in &file_checkpoints {
             journal::append_event(&path, "file_checkpoint", file)?;
         }
         let handle = app.clone();
@@ -1009,6 +1290,9 @@ impl AgentState {
             writer,
             data: Mutex::new(SessionData {
                 turns,
+                turn_base,
+                wire_base,
+                inherited_mcp_intent,
                 active: None,
                 recovery,
                 revision: next_revision(),
@@ -1024,6 +1308,10 @@ impl AgentState {
             }),
         });
         protocol.seed(session.snapshot()?);
+        self.event_streams
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .insert(id.into(), Arc::downgrade(&protocol));
         self.sessions
             .lock()
             .map_err(|_| AgentError::internal())?
@@ -1037,6 +1325,29 @@ impl AgentState {
             .get(id)
             .cloned()
             .ok_or_else(AgentError::cancelled)
+    }
+
+    fn subscribe(
+        &self,
+        id: &str,
+        cursor: Option<u64>,
+        snapshot: ChatSnapshot,
+    ) -> Result<events::ChatSubscription, AgentError> {
+        let stream = {
+            let mut streams = self
+                .event_streams
+                .lock()
+                .map_err(|_| AgentError::internal())?;
+            streams.retain(|_, stream| stream.strong_count() > 0);
+            streams.get(id).and_then(Weak::upgrade)
+        };
+        match stream {
+            Some(stream) => stream.subscribe(cursor, snapshot),
+            None => Ok(events::ChatSubscription::from_snapshot(
+                snapshot,
+                cursor.is_some(),
+            )),
+        }
     }
 
     fn release_idle(&self, session: &Arc<Session>) {
@@ -1220,6 +1531,20 @@ pub async fn get_chat(
         agent.release_idle(&session);
     }
     Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn subscribe_chat(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
+    agent: tauri::State<'_, AgentState>,
+    oauth: tauri::State<'_, OpenAiCodexState>,
+    conversation_id: String,
+    cursor: Option<u64>,
+) -> Result<events::ChatSubscription, AgentError> {
+    let runtime = agent.inner().clone();
+    let snapshot = get_chat(app, persistence, agent, oauth, conversation_id.clone()).await?;
+    runtime.subscribe(&conversation_id, cursor, snapshot)
 }
 
 #[tauri::command]
@@ -1487,18 +1812,45 @@ pub fn approve_agent_tool(
     conversation_id: String,
     turn_id: String,
     tool_id: String,
-    approved: bool,
+    decision: ApprovalDecision,
 ) -> Result<(), AgentError> {
     let session = agent.existing(&conversation_id)?;
-    answer_approval(&session, &turn_id, &tool_id, approved)
+    answer_approval_decision(&agent.grants, &session, &turn_id, &tool_id, decision)
 }
 
+#[cfg(test)]
 fn answer_approval(
     session: &Session,
     turn_id: &str,
     tool_id: &str,
     approved: bool,
 ) -> Result<(), AgentError> {
+    let decision = ApprovalDecision {
+        approved,
+        grant: None,
+    };
+    answer_approval_decision(
+        &execution_grants::GrantStore::default(),
+        session,
+        turn_id,
+        tool_id,
+        decision,
+    )
+}
+
+fn answer_approval_decision(
+    grants: &execution_grants::GrantStore,
+    session: &Session,
+    turn_id: &str,
+    tool_id: &str,
+    decision: ApprovalDecision,
+) -> Result<(), AgentError> {
+    if !decision.approved && decision.grant.is_some() {
+        return Err(AgentError::new(
+            "execution_grant",
+            "Uma autorização recusada não pode criar uma regra de execução.",
+        ));
+    }
     let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
     let active = data
         .active
@@ -1511,8 +1863,112 @@ fn answer_approval(
             "Esta solicitação de autorização não está mais ativa.",
         ));
     };
-    let _ = approval.reply.send(approved);
+    drop(data);
+    if let Some(request) = decision.grant {
+        let policy = approval.policy.as_ref().ok_or_else(|| {
+            AgentError::new(
+                "execution_grant",
+                "Esta ação não possui uma política reutilizável.",
+            )
+        })?;
+        let project_id = approval.project_id.as_ref().ok_or_else(|| {
+            AgentError::new(
+                "execution_grant",
+                "O projeto desta autorização não está disponível.",
+            )
+        })?;
+        let scope = match request.scope {
+            ApprovalGrantScope::Conversation => {
+                if matches!(request.duration, ApprovalGrantDuration::Persistent) {
+                    return Err(AgentError::new(
+                        "execution_grant",
+                        "Autorizações de conversa duram somente até o Jarvis ser fechado.",
+                    ));
+                }
+                execution_grants::GrantScope::Conversation {
+                    conversation_id: session.id.clone(),
+                }
+            }
+            ApprovalGrantScope::Project => execution_grants::GrantScope::Project {
+                project_id: project_id.clone(),
+            },
+            ApprovalGrantScope::Repository => execution_grants::GrantScope::Repository {
+                project_id: project_id.clone(),
+                root: approval.repository_root.clone().ok_or_else(|| {
+                    AgentError::new(
+                        "execution_grant",
+                        "Nenhum repositório Git foi identificado para esta ação.",
+                    )
+                })?,
+            },
+        };
+        let duration = match request.duration {
+            ApprovalGrantDuration::Session => execution_grants::GrantDuration::Session,
+            ApprovalGrantDuration::Persistent => execution_grants::GrantDuration::Persistent,
+        };
+        grants
+            .create(execution_grants::CreateGrant {
+                scope,
+                match_kind: request.match_kind,
+                duration,
+                outcome: &policy.outcome,
+                tool_name: &approval.request.tool.name,
+                tool_arguments: &approval.request.tool.args,
+                now: now(),
+            })
+            .map_err(|message| AgentError::new("execution_grant", &message))?;
+    }
+    let _ = approval.reply.send(decision.approved);
     Ok(())
+}
+
+#[tauri::command]
+pub fn list_execution_grants(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
+    agent: tauri::State<'_, AgentState>,
+    project_id: String,
+) -> Result<Vec<execution_grants::ExecutionGrantSummary>, AgentError> {
+    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    library::dashboard::check_project(&persistence, &home, &project_id)?;
+    agent
+        .grants
+        .list_for_project(&project_id, now())
+        .map_err(|message| AgentError::new("execution_grant", &message))
+}
+
+#[tauri::command]
+pub fn revoke_execution_grant(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
+    agent: tauri::State<'_, AgentState>,
+    project_id: String,
+    grant_id: String,
+) -> Result<(), AgentError> {
+    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    library::dashboard::check_project(&persistence, &home, &project_id)?;
+    if agent
+        .grants
+        .revoke_for_project(&project_id, &grant_id)
+        .map_err(|message| AgentError::new("execution_grant", &message))?
+    {
+        Ok(())
+    } else {
+        Err(AgentError::new(
+            "execution_grant",
+            "A autorização de execução não foi encontrada neste projeto.",
+        ))
+    }
+}
+
+struct ApprovalRequest<'a> {
+    session: &'a Session,
+    tool: &'a ToolCall,
+    options: &'a TurnOptions,
+    policy: Option<execution_policy::ToolPolicy>,
+    sandbox: Option<&'a execution_sandbox::SandboxPlan>,
+    project_id: Option<&'a str>,
+    signal: watch::Receiver<bool>,
 }
 
 #[cfg(test)]
@@ -1552,34 +2008,45 @@ async fn authorize_with_policy(
     } else {
         tool_contract::Handler::Native
     };
-    authorize_declared(session, tool, options, approval, handler, signal).await
+    authorize_declared(
+        ApprovalRequest {
+            session,
+            tool,
+            options,
+            policy: None,
+            sandbox: None,
+            project_id: None,
+            signal,
+        },
+        approval,
+        handler,
+    )
+    .await
 }
 
 async fn authorize_prepared(
-    session: &Session,
-    tool: &ToolCall,
-    options: &TurnOptions,
+    request: ApprovalRequest<'_>,
     prepared: tool_contract::PreparedTool,
     force_manual: bool,
-    signal: watch::Receiver<bool>,
+    policy_requires_approval: bool,
+    sandbox_requires_approval: bool,
 ) -> Result<bool, AgentError> {
-    let approval = if force_manual {
+    let approval = if force_manual || sandbox_requires_approval {
         tool_contract::ApprovalPolicy::Always
+    } else if policy_requires_approval {
+        tool_contract::ApprovalPolicy::AccordingToTurn
     } else {
         prepared.capabilities.approval
     };
-    authorize_declared(session, tool, options, approval, prepared.handler, signal).await
+    authorize_declared(request, approval, prepared.handler).await
 }
 
 async fn authorize_declared(
-    session: &Session,
-    tool: &ToolCall,
-    options: &TurnOptions,
+    mut request: ApprovalRequest<'_>,
     approval: tool_contract::ApprovalPolicy,
     handler: tool_contract::Handler,
-    mut signal: watch::Receiver<bool>,
 ) -> Result<bool, AgentError> {
-    if *signal.borrow() {
+    if *request.signal.borrow() {
         return Err(AgentError::cancelled());
     }
     let force_manual = approval == tool_contract::ApprovalPolicy::Always;
@@ -1587,24 +2054,27 @@ async fn authorize_declared(
     let mutating_mcp = handler == tool_contract::Handler::Mcp
         && approval == tool_contract::ApprovalPolicy::AccordingToTurn;
     if (!ordinarily_requires_approval && !force_manual)
-        || (!force_manual && options.approval_mode == ApprovalMode::Yolo)
-        || (!force_manual && options.mode == Mode::Plan && !mutating_mcp)
+        || (!force_manual && request.options.approval_mode == ApprovalMode::Yolo)
+        || (!force_manual && request.options.mode == Mode::Plan && !mutating_mcp)
     {
         return Ok(true);
     }
     let (reply, received) = oneshot::channel();
-    session.update(true, |data| {
+    request.session.update(true, |data| {
         let active = data.active.as_mut().unwrap();
-        active.wait_for_approval(Approval {
-            tool: tool.clone(),
+        active.wait_for_approval(Approval::new(
+            request.tool.clone(),
+            request.policy,
+            request.sandbox,
+            request.project_id,
             reply,
-        });
+        ));
     })?;
     let approved = tokio::select! {
-        _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+        _ = cancelled(&mut request.signal) => return Err(AgentError::cancelled()),
         result = received => result.unwrap_or(false),
     };
-    session.update(true, |data| {
+    request.session.update(true, |data| {
         let active = data.active.as_mut().unwrap();
         active.clear_approval();
     })?;
@@ -1623,6 +2093,7 @@ fn settle_tool_result(
 
 fn pending_mcp_intent_resolution(
     turns: &[StoredTurn],
+    inherited_mcp_intent: &crate::mcp::McpIntent,
 ) -> Option<(String, crate::mcp::McpIntent, Vec<String>)> {
     let current = turns.last()?;
     if current.mcp_intent.is_some() {
@@ -1633,7 +2104,7 @@ fn pending_mcp_intent_resolution(
         .rposition(|turn| turn.mcp_intent.is_some());
     let inherited = previous
         .and_then(|index| turns[index].mcp_intent.clone())
-        .unwrap_or_default();
+        .unwrap_or_else(|| inherited_mcp_intent.clone());
     let start = previous.map_or(0, |index| index + 1);
     let messages = turns[start..]
         .iter()
@@ -1651,7 +2122,7 @@ async fn preserve_user_mcp_intent(
 ) -> Result<(), AgentError> {
     let pending = {
         let data = session.data.lock().map_err(|_| AgentError::internal())?;
-        pending_mcp_intent_resolution(&data.turns)
+        pending_mcp_intent_resolution(&data.turns, &data.inherited_mcp_intent)
     };
     let Some((turn_id, inherited, messages)) = pending else {
         return Ok(());
@@ -1671,28 +2142,50 @@ async fn preserve_user_mcp_intent(
     })
 }
 
-fn run_turn<'a>(
-    session: &'a Arc<Session>,
+struct TurnRuntime<'a> {
+    grants: &'a execution_grants::GrantStore,
     state: &'a AppState,
     oauth: &'a OpenAiCodexState,
     mcp: &'a crate::mcp::McpState,
     home: &'a std::path::Path,
+}
+
+fn run_turn<'a>(
+    session: &'a Arc<Session>,
+    runtime: TurnRuntime<'a>,
     mut signal: watch::Receiver<bool>,
     execution: Option<workflow::Execution>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + 'a>> {
     Box::pin(async move {
+        let TurnRuntime {
+            grants,
+            state,
+            oauth,
+            mcp,
+            home,
+        } = runtime;
         session.transition(turn_state::TurnPhase::Preparing)?;
         crate::core::require_ready(home)?;
-        let options = session
-            .data
-            .lock()
-            .map_err(|_| AgentError::internal())?
-            .turns
-            .last()
-            .ok_or_else(AgentError::internal)?
-            .turn
-            .options
-            .clone();
+        let (turn_id, options, initial_items, initial_bytes) = {
+            let data = session.data.lock().map_err(|_| AgentError::internal())?;
+            let current = data.turns.last().ok_or_else(AgentError::internal)?;
+            let input = compaction::input(&data);
+            (
+                current.turn.id.clone(),
+                current.turn.options.clone(),
+                u64::try_from(input.len()).unwrap_or(u64::MAX),
+                telemetry::serialized_bytes(&input),
+            )
+        };
+        let telemetry = telemetry::trace(&session.id, &turn_id);
+        telemetry::record(
+            &telemetry,
+            telemetry::Event::TurnStarted {
+                context_items: initial_items,
+                context_bytes: initial_bytes,
+                advertised_tools: 0,
+            },
+        );
         let publication_agent = execution
             .as_ref()
             .is_some_and(workflow::Execution::publication);
@@ -1735,7 +2228,12 @@ fn run_turn<'a>(
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
             result = auth => result.map_err(|_| AgentError::internal())??,
         };
-        let provider_session = provider::TurnSession::new(credential.clone(), session.id.clone())?;
+        let provider_session = provider::TurnSession::new(
+            credential.clone(),
+            &model,
+            session.id.clone(),
+            telemetry.clone(),
+        )?;
         session.update(true, |data| {
             data.turns.last_mut().unwrap().turn.context_window = model.context_window;
         })?;
@@ -1756,9 +2254,9 @@ fn run_turn<'a>(
         )
         .await?;
         let owner = execution.as_ref().map_or(session, |exec| exec.root());
-        let publication_settings = publication::load(state, home, owner.project_id()?)?;
-        let repository_context =
-            crate::library::repositories::prompt(state, home, owner.project_id()?)?;
+        let project_id = owner.project_id()?.to_owned();
+        let publication_settings = publication::load(state, home, &project_id)?;
+        let repository_context = crate::library::repositories::prompt(state, home, &project_id)?;
         let direct_tasks = options.direct() && owner.id == session.id;
         let design = if execution
             .as_ref()
@@ -1978,6 +2476,7 @@ fn run_turn<'a>(
                 false,
                 signal.clone(),
                 Some(&context.hooks),
+                Some(&telemetry),
             )
             .await?;
             if compacted {
@@ -2003,7 +2502,19 @@ fn run_turn<'a>(
                 &options,
                 &instructions,
                 &definitions,
+                provider_session.capabilities(),
             )?;
+            telemetry::record(
+                &telemetry,
+                telemetry::Event::ContextPrepared {
+                    context_id: telemetry::context_id(step_context.id()),
+                    input_items: u64::try_from(step_context.input().len()).unwrap_or(u64::MAX),
+                    input_bytes: telemetry::serialized_bytes(&step_context.input()),
+                    instructions_bytes: u64::try_from(step_context.instructions().len())
+                        .unwrap_or(u64::MAX),
+                    advertised_tools: u64::try_from(step_context.tools().len()).unwrap_or(u64::MAX),
+                },
+            );
             session.update(false, |data| {
                 data.turns.last_mut().unwrap().turn.steps.push(Step {
                     context_id: Some(step_context.id().to_owned()),
@@ -2065,6 +2576,7 @@ fn run_turn<'a>(
                         true,
                         signal.clone(),
                         Some(&context.hooks),
+                        Some(&telemetry),
                     )
                     .await?;
                     read_reuse.clear();
@@ -2087,7 +2599,7 @@ fn run_turn<'a>(
                 }
                 Err(error) => return Err(error),
             };
-            let calls = provider::tool_calls(&response.output)?;
+            let calls = response.tool_calls().to_vec();
             let parallel_batch = tool_runtime.parallel_safe(&calls);
             let previous: HashSet<String> = session
                 .data
@@ -2189,6 +2701,19 @@ fn run_turn<'a>(
                         && tool_runtime.preflight(tool).is_ok()
                         && progress_watchdog.preflight(tool).is_ok()
                         && project_instructions.discover(tool).is_ok()
+                        && tool_runtime.preflight(tool).is_ok_and(|prepared| {
+                            execution_policy::inspect_tool(
+                                &session.root,
+                                tool,
+                                prepared.capabilities,
+                            )
+                            .is_ok_and(|policy| {
+                                policy.is_none_or(|policy| {
+                                    policy.outcome.decision
+                                        == execution_policy::ExecutionDecision::Allow
+                                })
+                            })
+                        })
                 });
             let mut parallel_results = if parallel_native {
                 session.update(true, |data| {
@@ -2217,6 +2742,18 @@ fn run_turn<'a>(
                 }
                 if let Err(error) = repeated_tools.before_call(&tool) {
                     let output = error.message.clone();
+                    telemetry::record(
+                        &telemetry,
+                        telemetry::Event::ToolFinished {
+                            tool: telemetry::tool_kind(&tool.name),
+                            tool_id: telemetry::tool_id(&tool.id),
+                            outcome: telemetry::Outcome::Failed,
+                            duration_ms: 0,
+                            input_bytes: telemetry::serialized_bytes(&tool.args),
+                            output_bytes: u64::try_from(output.len()).unwrap_or(u64::MAX),
+                            failure: Some(telemetry::failure_class(&error)),
+                        },
+                    );
                     session.update(true, |data| {
                         let current = data.turns.last_mut().unwrap();
                         if !current.wire.iter().any(|item| {
@@ -2242,6 +2779,70 @@ fn run_turn<'a>(
                 let prepared = tool_runtime.preflight(&tool);
                 let contract_preflight = prepared.as_ref().err().cloned();
                 let prepared = prepared.ok();
+                let mut policy_preflight = None;
+                let mut policy_requires_approval = false;
+                let mut sandbox_requires_approval = false;
+                let mut sandbox_plan = None;
+                let mut tool_policy = None;
+                let mut grant_used = false;
+                if let Some(prepared) = prepared {
+                    match execution_policy::inspect_tool(
+                        &session.root,
+                        &tool,
+                        prepared.capabilities,
+                    ) {
+                        Ok(Some(policy)) => {
+                            sandbox_plan = execution_sandbox::prepare(&policy);
+                            let grant = if policy.outcome.decision
+                                == execution_policy::ExecutionDecision::Ask
+                                && tool.name != "jarvis_propose_publication"
+                            {
+                                grants.authorize(
+                                    &policy.outcome,
+                                    &tool.name,
+                                    &tool.args,
+                                    execution_grants::GrantContext {
+                                        conversation_id: &session.id,
+                                        project_id: &project_id,
+                                        working_directory: &policy.working_directory,
+                                    },
+                                    now(),
+                                )
+                            } else {
+                                Ok(None)
+                            };
+                            match grant {
+                                Ok(id) => grant_used = id.is_some(),
+                                Err(message) => policy_preflight = Some(message),
+                            }
+                            policy_requires_approval = policy.outcome.decision
+                                == execution_policy::ExecutionDecision::Ask
+                                && !grant_used
+                                && tool.name != "jarvis_propose_publication";
+                            sandbox_requires_approval = !grant_used
+                                && sandbox_plan.as_ref().is_some_and(|sandbox| {
+                                    sandbox.requires_informed_approval(&policy.outcome.effects)
+                                });
+                            if policy.outcome.decision == execution_policy::ExecutionDecision::Deny
+                            {
+                                policy_preflight = Some(policy.outcome.reason.clone());
+                            }
+                            telemetry::record(
+                                &telemetry,
+                                telemetry::Event::PolicyEvaluated {
+                                    tool: telemetry::tool_kind(&tool.name),
+                                    tool_id: telemetry::tool_id(&tool.id),
+                                    decision: telemetry::policy_decision(policy.outcome.decision),
+                                    reason: telemetry::policy_reason(&policy.outcome.code),
+                                    grant_used,
+                                },
+                            );
+                            tool_policy = Some(policy);
+                        }
+                        Ok(None) => {}
+                        Err(error) => policy_preflight = Some(error.message),
+                    }
+                }
                 let instruction_preflight = match contract_preflight.as_ref().map_or_else(|| project_instructions.discover(&tool), |_| Ok(false)) {
                     Ok(true) if matches!(tool.name.as_str(), "write" | "edit" | "apply_patch") || (tool.name == "bash" && tasks::requires_active_task_for(&tool)) => {
                         Some("O Jarvis carregou instruções AGENTS.md específicas para este caminho. A alteração não foi executada; revise as novas regras e envie novamente uma ação compatível.".to_owned())
@@ -2286,6 +2887,7 @@ fn run_turn<'a>(
                     })
                     .or(instruction_preflight)
                     .or(terminal_preflight)
+                    .or(policy_preflight)
                     .or_else(|| task_preflight.map(str::to_owned));
                 let permitted = if contract_preflight.is_none()
                     && progress_preflight.is_none()
@@ -2294,12 +2896,19 @@ fn run_turn<'a>(
                     match prepared {
                         Some(prepared) => {
                             authorize_prepared(
-                                session,
-                                &tool,
-                                &options,
+                                ApprovalRequest {
+                                    session,
+                                    tool: &tool,
+                                    options: &options,
+                                    policy: tool_policy.clone(),
+                                    sandbox: sandbox_plan.as_ref(),
+                                    project_id: Some(&project_id),
+                                    signal: signal.clone(),
+                                },
                                 prepared,
                                 terminal_requires_approval,
-                                signal.clone(),
+                                policy_requires_approval,
+                                sandbox_requires_approval,
                             )
                             .await?
                         }
@@ -2354,7 +2963,10 @@ fn run_turn<'a>(
                             .await
                         }
                         Some(tool_contract::Handler::Workflow) => match &execution {
-                            Some(exec) => exec.execute(&tool, signal.clone()).await,
+                            Some(exec) => {
+                                exec.execute_sandboxed(&tool, sandbox_plan.as_ref(), signal.clone())
+                                    .await
+                            }
                             None => Err(AgentError::new(
                                 "workflow_error",
                                 "Coordenação indisponível neste modo.",
@@ -2552,10 +3164,11 @@ fn run_turn<'a>(
                                     parallel.result
                                 }
                                 None => {
-                                    tools::execute_with_revision(
+                                    tools::execute_with_revision_sandboxed(
                                         &session.root,
                                         &tool,
                                         options.mode,
+                                        sandbox_plan.as_ref(),
                                         signal.clone(),
                                     )
                                     .await
@@ -2604,7 +3217,23 @@ fn run_turn<'a>(
                             .unwrap_or("A execução desta ferramenta foi recusada pelo usuário."),
                     ))
                 };
+                let tool_failure = result.as_ref().err().map(telemetry::failure_class);
+                let tool_outcome = telemetry::outcome(result.as_ref().err(), false);
+                let tool_duration =
+                    measured_duration.unwrap_or_else(|| started.elapsed().as_millis() as u64);
                 let (output, status, structured_error) = settle_tool_result(result)?;
+                telemetry::record(
+                    &telemetry,
+                    telemetry::Event::ToolFinished {
+                        tool: telemetry::tool_kind(&tool.name),
+                        tool_id: telemetry::tool_id(&tool.id),
+                        outcome: tool_outcome,
+                        duration_ms: tool_duration,
+                        input_bytes: telemetry::serialized_bytes(&tool.args),
+                        output_bytes: u64::try_from(output.len()).unwrap_or(u64::MAX),
+                        failure: tool_failure,
+                    },
+                );
                 if tool.name == "read" && status == "error" {
                     read_reuse.failed_read();
                 }
@@ -2676,8 +3305,7 @@ fn run_turn<'a>(
                     if let Some(item) = step.tools.iter_mut().find(|item| item.id == tool.id) {
                         item.status = status.into();
                         item.output = output;
-                        item.duration_ms = measured_duration
-                            .unwrap_or_else(|| started.elapsed().as_millis() as u64);
+                        item.duration_ms = tool_duration;
                     }
                     if let Some(message) = &steer {
                         step.loop_steers += 1;
@@ -2750,6 +3378,7 @@ fn record_progress_action(session: &Session, action: progress::Action) -> Result
 }
 
 fn finish(session: &Session, result: Result<(), AgentError>) {
+    let telemetry_outcome = telemetry::outcome(result.as_ref().err(), false);
     let result = match session.stop_auxiliary_delivery() {
         Ok(()) => result,
         Err(error) => Err(error),
@@ -2794,6 +3423,30 @@ fn finish(session: &Session, result: Result<(), AgentError>) {
             }
             data.last_emit = std::time::Instant::now() - Duration::from_secs(1);
         });
+    }
+    if let Ok(data) = session.data.lock() {
+        if let Some(current) = data.turns.last() {
+            let context = telemetry::trace(&session.id, &current.turn.id);
+            telemetry::record(
+                &context,
+                telemetry::Event::TurnFinished {
+                    outcome: telemetry_outcome,
+                    duration_ms: current.turn.duration_ms,
+                    provider_requests: u64::try_from(current.turn.steps.len()).unwrap_or(u64::MAX),
+                    tool_calls: current
+                        .turn
+                        .steps
+                        .iter()
+                        .map(|step| u64::try_from(step.tools.len()).unwrap_or(u64::MAX))
+                        .sum(),
+                    compacted: data
+                        .extras
+                        .compactions
+                        .iter()
+                        .any(|event| event.turn_id == current.turn.id),
+                },
+            );
+        }
     }
 }
 
@@ -2875,6 +3528,7 @@ async fn generate_title(
     })];
     let (_sender, signal) = watch::channel(false);
     let title_session_id = title::request_session_id(&conversation_id);
+    let title_trace = telemetry::trace(&conversation_id, &title_session_id);
     let result = tokio::time::timeout(
         Duration::from_secs(45),
         provider::stream(
@@ -2884,6 +3538,7 @@ async fn generate_title(
             title::INSTRUCTIONS,
             input,
             vec![],
+            &title_trace,
             signal,
             |_| Ok(()),
         ),

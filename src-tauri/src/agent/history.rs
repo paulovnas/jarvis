@@ -15,7 +15,7 @@ const INDEX_CACHE_ENTRIES: usize = 16;
 const INDEX_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SINGLE_INDEX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SIDECAR_BYTES: usize = 32 * 1024 * 1024;
-const SIDECAR_VERSION: u8 = 1;
+const SIDECAR_VERSION: u8 = 3;
 const MAX_CACHED_PREVIEW_BYTES: usize = 256 * 1024;
 const DEFERRED_DETAIL_KEY: &str = "_jarvisHistoryDetailsDeferred";
 
@@ -27,7 +27,7 @@ fn preview_value(value: &Value) -> Option<Value> {
     }
 }
 
-fn history_preview(mut turn: Turn) -> Turn {
+pub(super) fn history_preview(mut turn: Turn) -> Turn {
     const SUMMARY_KEYS: [&str; 12] = [
         "title",
         "path",
@@ -75,6 +75,8 @@ fn history_preview(mut turn: Turn) -> Turn {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(rename = "HistoryWindow"))]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Window {
     pub start: usize,
@@ -82,10 +84,13 @@ pub(super) struct Window {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(rename = "HistoryExcerpt"))]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Excerpt {
     pub id: String,
     pub index: usize,
+    #[cfg_attr(test, ts(type = "number"))]
     pub created_at: u64,
     pub user: String,
     pub assistant: String,
@@ -124,6 +129,7 @@ struct Entry {
     tokens: Vec<u64>,
     limit: Option<u64>,
     edited_paths: Vec<String>,
+    mcp_intent: Option<crate::mcp::McpIntent>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -137,6 +143,7 @@ struct PersistedEntry {
     tokens: Vec<u64>,
     limit: Option<u64>,
     edited_paths: Vec<String>,
+    mcp_intent: Option<crate::mcp::McpIntent>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -151,6 +158,27 @@ struct PersistedIndex {
     files: BTreeMap<String, (u64, usize, diffs::FileSummary)>,
     tail: Option<StoredTurn>,
     damaged_turn: Option<String>,
+    replay: ReplayCursor,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReplayCursor {
+    through: usize,
+    start_entry: usize,
+    wire_base: usize,
+    total_items: usize,
+}
+
+pub(super) struct ReplayLoad {
+    pub turns: Vec<StoredTurn>,
+    pub extras: journal::Extras,
+    pub wire_base: usize,
+    pub turn_base: usize,
+    pub total_turns: usize,
+    pub inherited_mcp_intent: crate::mcp::McpIntent,
+    pub file_checkpoints: Vec<diffs::FileRevision>,
+    pub replayed_bytes: u64,
 }
 
 #[derive(Default)]
@@ -166,6 +194,7 @@ struct Index {
     files: BTreeMap<String, (u64, usize, diffs::FileSummary)>,
     tail: Option<StoredTurn>,
     damaged_turn: Option<String>,
+    replay: ReplayCursor,
 }
 
 impl PersistedEntry {
@@ -179,6 +208,7 @@ impl PersistedEntry {
             tokens: entry.tokens.clone(),
             limit: entry.limit,
             edited_paths: entry.edited_paths.clone(),
+            mcp_intent: entry.mcp_intent.clone(),
         }
     }
 
@@ -194,6 +224,7 @@ impl PersistedEntry {
             tokens: self.tokens,
             limit: self.limit,
             edited_paths: self.edited_paths,
+            mcp_intent: self.mcp_intent,
         }
     }
 }
@@ -214,6 +245,7 @@ impl PersistedIndex {
             files: index.files.clone(),
             tail: index.tail.clone(),
             damaged_turn: index.damaged_turn.clone(),
+            replay: index.replay.clone(),
         }
     }
 
@@ -280,8 +312,9 @@ impl PersistedIndex {
             files: self.files,
             tail: self.tail,
             damaged_turn: self.damaged_turn,
+            replay: self.replay,
         };
-        index.valid_context().then_some(index)
+        (index.valid_context() && index.replay == index.derive_replay_cursor()).then_some(index)
     }
 }
 
@@ -395,10 +428,117 @@ fn indexed_entry(
         tokens: turn.wire.iter().map(compaction::estimate).collect(),
         limit: turn.turn.context_window,
         edited_paths,
+        mcp_intent: turn.mcp_intent.clone(),
     })
 }
 
 impl Index {
+    fn derive_replay_cursor(&self) -> ReplayCursor {
+        let through = self.context.as_ref().map_or(0, |context| context.through);
+        let total_items = self.entries.iter().map(|entry| entry.tokens.len()).sum();
+        let mut start_entry = 0;
+        let mut wire_base = 0usize;
+        while let Some(entry) = self.entries.get(start_entry) {
+            let end = wire_base.saturating_add(entry.tokens.len());
+            if end > through {
+                break;
+            }
+            wire_base = end;
+            start_entry += 1;
+        }
+        ReplayCursor {
+            through,
+            start_entry,
+            wire_base,
+            total_items,
+        }
+    }
+
+    fn stored_turn(&self, path: &Path, entry_index: usize) -> Result<StoredTurn, AgentError> {
+        let entry = self
+            .entries
+            .get(entry_index)
+            .ok_or_else(AgentError::storage)?;
+        if entry_index + 1 == self.entries.len() {
+            if let Some(tail) = self
+                .tail
+                .as_ref()
+                .filter(|tail| tail.turn.id == entry.excerpt.id)
+            {
+                return Ok(tail.clone());
+            }
+        }
+        serde_json::from_value(journal::record_at(path, entry.offset, entry.length)?.data)
+            .map_err(|_| AgentError::storage())
+    }
+
+    fn load_replay(&self, path: &Path, root: &Path) -> Result<ReplayLoad, AgentError> {
+        if self.damaged_turn.is_some() {
+            return Err(AgentError::storage());
+        }
+        let mut replayed_records = HashSet::new();
+        let turns = (self.replay.start_entry..self.entries.len())
+            .map(|entry_index| {
+                let entry = &self.entries[entry_index];
+                replayed_records.insert((entry.offset, entry.length));
+                self.stored_turn(path, entry_index)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut extras = journal::Extras {
+            queue: self.queue.clone(),
+            context: self.context.clone(),
+            compactions: self.compactions.clone(),
+            files: BTreeMap::new(),
+        };
+        for (name, (offset, length, _)) in &self.files {
+            replayed_records.insert((*offset, *length));
+            extras.files.insert(
+                name.clone(),
+                serde_json::from_value(journal::record_at(path, *offset, *length)?.data)
+                    .map_err(|_| AgentError::storage())?,
+            );
+        }
+        let persisted_files: HashSet<_> = extras.files.keys().cloned().collect();
+        let mut legacy = vec![];
+        for (entry_index, entry) in self.entries.iter().enumerate().filter(|(_, entry)| {
+            entry.edited_paths.iter().any(|name| {
+                let relative = Path::new(name)
+                    .strip_prefix(root)
+                    .unwrap_or_else(|_| Path::new(name));
+                !self.files.contains_key(relative.to_string_lossy().as_ref())
+            })
+        }) {
+            replayed_records.insert((entry.offset, entry.length));
+            legacy.push(self.stored_turn(path, entry_index)?);
+        }
+        diffs::load_legacy(root, &legacy, &mut extras.files);
+        let file_checkpoints = extras
+            .files
+            .values()
+            .filter(|file| !persisted_files.contains(&file.path))
+            .cloned()
+            .collect();
+        let inherited_mcp_intent = self.entries[..self.replay.start_entry]
+            .iter()
+            .rev()
+            .find_map(|entry| entry.mcp_intent.clone())
+            .unwrap_or_default();
+        let replayed_bytes = replayed_records
+            .into_iter()
+            .map(|(_, length)| u64::try_from(length).unwrap_or(u64::MAX))
+            .sum();
+        Ok(ReplayLoad {
+            turns,
+            extras,
+            wire_base: self.replay.wire_base,
+            turn_base: self.replay.start_entry,
+            total_turns: self.entries.len(),
+            inherited_mcp_intent,
+            file_checkpoints,
+            replayed_bytes,
+        })
+    }
+
     fn valid_context(&self) -> bool {
         let count: usize = self.entries.iter().map(|entry| entry.tokens.len()).sum();
         !self.context.as_ref().is_some_and(|context| {
@@ -566,6 +706,7 @@ impl Index {
         if !self.valid_context() {
             return Err(AgentError::storage());
         }
+        self.replay = self.derive_replay_cursor();
         self.length = snapshot.file_length;
         self.modified = snapshot.modified;
         if !sidecar_is_current {
@@ -756,6 +897,15 @@ impl Index {
                         .iter()
                         .map(|path| path.len() + 24)
                         .sum::<usize>()
+                    + entry.mcp_intent.as_ref().map_or(0, |intent| {
+                        intent
+                            .servers
+                            .iter()
+                            .chain(&intent.excluded_servers)
+                            .map(|server| server.id.len() + server.name.len() + 32)
+                            .sum::<usize>()
+                            + 32
+                    })
             })
             .sum::<usize>()
             + self
@@ -854,6 +1004,15 @@ impl HistoryCache {
 #[derive(Clone, Default)]
 pub(super) struct HistoryState(Arc<Mutex<HistoryCache>>);
 impl HistoryState {
+    pub(super) fn load_replay(&self, path: &Path, root: &Path) -> Result<ReplayLoad, AgentError> {
+        let (valid_end, file_length) = self.with(path, |index| Ok((index.end, index.length)))?;
+        if valid_end < file_length {
+            journal::repair_incomplete_tail(path, valid_end)?;
+            self.forget(path);
+        }
+        self.with(path, |index| index.load_replay(path, root))
+    }
+
     pub(super) fn has_recovery_tail(&self, path: &Path) -> Result<bool, AgentError> {
         self.with(path, |index| {
             Ok(index
@@ -873,6 +1032,7 @@ impl HistoryState {
         self.with(path, |index| {
             let page = index.full_page(path, id)?;
             Ok(ChatSnapshot {
+                protocol_version: protocol::VERSION,
                 conversation_id: id.into(),
                 compacting: false,
                 revision: next_revision(),
@@ -1018,6 +1178,9 @@ impl AgentState {
             emit: Arc::new(|_| {}),
             data: Mutex::new(SessionData {
                 turns: vec![],
+                turn_base: 0,
+                wire_base: 0,
+                inherited_mcp_intent: crate::mcp::McpIntent::default(),
                 active: None,
                 recovery: None,
                 revision: 0,
@@ -1094,7 +1257,9 @@ impl AgentState {
                             .steps
                             .iter()
                             .flat_map(|step| &step.tools)
-                            .find(|tool| tool.id == tool_id)
+                            .find(|tool| {
+                                tool.id == tool_id && tool.args[DEFERRED_DETAIL_KEY] != true
+                            })
                     })
                     .cloned()
             }) {
@@ -1112,6 +1277,12 @@ impl AgentState {
         home: &Path,
         id: &str,
     ) -> Result<ChatSnapshot, AgentError> {
+        // Serialize disk snapshots with runtime session creation. Otherwise a
+        // read that started while the session was loading could receive a newer
+        // global revision while still carrying the older on-disk transcript,
+        // temporarily hiding the submitted turn in the renderer.
+        let gate = self.session_gate(id)?;
+        let _gate = gate.lock().map_err(|_| AgentError::internal())?;
         let session = {
             let mut sessions = self.sessions.lock().map_err(|_| AgentError::internal())?;
             Self::prune_idle(&mut sessions);
@@ -1120,6 +1291,17 @@ impl AgentState {
         if let Some(session) = session {
             let data = session.data.lock().map_err(|_| AgentError::internal())?;
             let mut snapshot = session.snapshot_data(&data);
+            if data.turns.is_empty() {
+                drop(data);
+                let page = self.histories.with(&session.journal, |index| {
+                    index.page(&session.journal, id, None, None, None)
+                })?;
+                snapshot.turns = page.turns;
+                snapshot.history = page.history;
+                snapshot.navigation = Some(page.navigation);
+                snapshot.compactions = page.compactions;
+                return Ok(snapshot);
+            }
             let mut start = data.turns.len().saturating_sub(PAGE_SIZE);
             let mut bytes = 0;
             for index in (start..data.turns.len()).rev() {
@@ -1136,7 +1318,7 @@ impl AgentState {
                 .iter()
                 .map(|turn| history_preview(turn.turn.clone()))
                 .collect();
-            snapshot.history.start = start;
+            snapshot.history.start = data.turn_base.saturating_add(start);
             snapshot.compactions = data
                 .extras
                 .compactions
@@ -1145,16 +1327,8 @@ impl AgentState {
                 .cloned()
                 .collect();
             snapshot.navigation = Some(
-                (0..data.turns.len().min(RAIL_SIZE))
-                    .map(|slot| {
-                        let index = if data.turns.len() <= RAIL_SIZE {
-                            slot
-                        } else {
-                            slot * (data.turns.len() - 1) / (RAIL_SIZE - 1)
-                        };
-                        excerpt(&data.turns[index].turn, index)
-                    })
-                    .collect(),
+                self.histories
+                    .with(&session.journal, |index| Ok(index.navigation()))?,
             );
             return Ok(snapshot);
         }
@@ -1162,6 +1336,7 @@ impl AgentState {
         self.histories.with(&path, |index| {
             let page = index.page(&path, id, None, None, None)?;
             Ok(ChatSnapshot {
+                protocol_version: protocol::VERSION,
                 conversation_id: id.into(),
                 compacting: false,
                 revision: next_revision(),
@@ -1269,6 +1444,341 @@ mod tests {
             ],
         }
     }
+
+    fn checkpoint(through: usize) -> compaction::Checkpoint {
+        compaction::Checkpoint {
+            through,
+            summary: format!("Resumo ate {through}"),
+            count: 1,
+            ..Default::default()
+        }
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct ReplayMemoryFixture {
+        schema_version: u64,
+        id: String,
+        description: String,
+        history_turns: Vec<usize>,
+        items_per_turn: usize,
+        checkpoint_retained_turns: Vec<usize>,
+        restart_count: usize,
+    }
+
+    #[test]
+    fn harness_evaluation_bounds_replay_after_multiple_compactions_and_restarts() {
+        let specification: ReplayMemoryFixture = serde_json::from_str(include_str!(
+            "fixtures/evaluations/bounded-replay-memory.json"
+        ))
+        .unwrap();
+        assert_eq!(specification.schema_version, 1);
+        assert_eq!(specification.id, "bounded-replay-memory");
+        assert!(!specification.description.trim().is_empty());
+        assert_eq!(specification.items_per_turn, 2);
+        let retained_turns = *specification.checkpoint_retained_turns.last().unwrap();
+        let fixture = Fixture::new();
+        let mut observed = vec![];
+
+        for total_turns in specification.history_turns {
+            let path = fixture.root.join(format!("bounded-{total_turns}.jsonl"));
+            fs::write(&path, "{}\n").unwrap();
+            for turn_index in 0..total_turns {
+                let mut turn = stored(turn_index);
+                let payload = format!("turn-{turn_index}-{}", "x".repeat(512));
+                turn.turn.steps[0].text = payload.clone();
+                turn.wire[1]["content"] = json!(payload);
+                journal::append(&path, &turn).unwrap();
+            }
+            for (index, retained) in specification.checkpoint_retained_turns.iter().enumerate() {
+                let through = total_turns.saturating_sub(*retained) * specification.items_per_turn;
+                let context = compaction::Checkpoint {
+                    through,
+                    summary: format!("Compaction checkpoint {}", index + 1),
+                    preserved_users: vec![json!({
+                        "role": "user",
+                        "content": "Preserve the current objective."
+                    })],
+                    tool_receipts: vec![json!({
+                        "callId": format!("receipt-{index}"),
+                        "tool": "read",
+                        "output": "completed"
+                    })],
+                    count: u64::try_from(index + 1).unwrap(),
+                    ..Default::default()
+                };
+                journal::append_event(
+                    &path,
+                    "compaction_completed",
+                    &compaction::CompletedCompaction {
+                        context,
+                        event: compaction::CompactionEvent {
+                            id: format!("compaction-{index}"),
+                            created_at: u64::try_from(index + 1).unwrap(),
+                            turn_id: format!("t{}", total_turns - *retained - 1),
+                            after_turn: true,
+                            automatic: true,
+                            tokens_before: 10_000,
+                            tokens_after: 1_000,
+                        },
+                    },
+                )
+                .unwrap();
+            }
+
+            let (full_turns, full_extras) = journal::read_only(&path).unwrap();
+            let session = crate::agent::tests::session(&fixture);
+            let expected = {
+                let mut data = session.data.lock().unwrap();
+                data.turns = full_turns;
+                data.extras = full_extras;
+                compaction::input(&data)
+            };
+            let journal_bytes = fs::metadata(&path).unwrap().len();
+            for _ in 0..specification.restart_count {
+                let replay = HistoryState::default()
+                    .load_replay(&path, &fixture.root)
+                    .unwrap();
+                let replayed_items = replay
+                    .turns
+                    .iter()
+                    .map(|turn| turn.wire.len())
+                    .sum::<usize>();
+                assert_eq!(replay.total_turns, total_turns);
+                assert_eq!(replay.turns.len(), retained_turns);
+                assert_eq!(
+                    replayed_items,
+                    retained_turns * specification.items_per_turn
+                );
+                assert!(replay.replayed_bytes < journal_bytes / 4);
+                let mut data = session.data.lock().unwrap();
+                data.turns = replay.turns;
+                data.turn_base = replay.turn_base;
+                data.wire_base = replay.wire_base;
+                data.inherited_mcp_intent = replay.inherited_mcp_intent;
+                data.extras = replay.extras;
+                assert_eq!(compaction::input(&data), expected);
+                observed.push((total_turns, data.turns.len(), replayed_items));
+            }
+        }
+        assert!(observed.iter().all(|(_, turns, items)| {
+            *turns == retained_turns && *items == retained_turns * specification.items_per_turn
+        }));
+        println!(
+            "HARNESS_EVAL case={} current={observed:?}",
+            specification.id
+        );
+    }
+
+    #[test]
+    fn replay_cursor_keeps_the_complete_turn_that_crosses_the_checkpoint() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("replay-boundaries.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        for index in 0..3 {
+            journal::append(&path, &stored(index)).unwrap();
+        }
+
+        journal::append_event(&path, "context_checkpoint", &checkpoint(3)).unwrap();
+        let mut index = Index::default();
+        index.refresh(&path).unwrap();
+        assert_eq!(
+            index.replay,
+            ReplayCursor {
+                through: 3,
+                start_entry: 1,
+                wire_base: 2,
+                total_items: 6,
+            }
+        );
+
+        journal::append_event(&path, "context_checkpoint", &checkpoint(4)).unwrap();
+        index.refresh(&path).unwrap();
+        assert_eq!(index.replay.start_entry, 2);
+        assert_eq!(index.replay.wire_base, 4);
+
+        journal::append_event(&path, "context_checkpoint", &checkpoint(6)).unwrap();
+        index.refresh(&path).unwrap();
+        assert_eq!(index.replay.start_entry, 3);
+        assert_eq!(index.replay.wire_base, 6);
+        assert_eq!(index.replay.total_items, 6);
+    }
+
+    #[test]
+    fn replay_cursor_rebuilds_legacy_sidecars_without_compaction() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("legacy-replay.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        for index in 0..3 {
+            journal::append(&path, &stored(index)).unwrap();
+        }
+        Index::default().refresh(&path).unwrap();
+        let sidecar = sidecar_path(&path);
+        let mut persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(&sidecar).unwrap()).unwrap();
+        persisted["version"] = json!(1);
+        persisted.as_object_mut().unwrap().remove("replay");
+        fs::write(&sidecar, serde_json::to_vec(&persisted).unwrap()).unwrap();
+
+        let mut rebuilt = Index::default();
+        rebuilt.refresh(&path).unwrap();
+
+        assert_eq!(
+            rebuilt.replay,
+            ReplayCursor {
+                through: 0,
+                start_entry: 0,
+                wire_base: 0,
+                total_items: 6,
+            }
+        );
+        assert!(rebuilt.entries.iter().all(|entry| entry.preview.is_some()));
+        let persisted: PersistedIndex =
+            serde_json::from_slice(&fs::read(sidecar).unwrap()).unwrap();
+        assert_eq!(persisted.version, SIDECAR_VERSION);
+        assert_eq!(persisted.replay, rebuilt.replay);
+    }
+
+    #[test]
+    fn replay_cursor_ignores_an_incomplete_final_record() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("incomplete-replay.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        for index in 0..2 {
+            journal::append(&path, &stored(index)).unwrap();
+        }
+        journal::append_event(&path, "context_checkpoint", &checkpoint(2)).unwrap();
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{incomplete")
+            .unwrap();
+
+        let mut index = Index::default();
+        index.refresh(&path).unwrap();
+
+        assert_eq!(index.entries.len(), 2);
+        assert_eq!(
+            index.replay,
+            ReplayCursor {
+                through: 2,
+                start_entry: 1,
+                wire_base: 2,
+                total_items: 4,
+            }
+        );
+
+        let replay = HistoryState::default()
+            .load_replay(&path, &fixture.root)
+            .unwrap();
+        assert_eq!(replay.turns.len(), 1);
+        assert_eq!(replay.wire_base, 2);
+        assert!(fs::read(&path).unwrap().ends_with(b"\n"));
+        assert!(fixture.root.read_dir().unwrap().any(|entry| entry
+            .unwrap()
+            .path()
+            .to_string_lossy()
+            .contains("recovery-")));
+    }
+
+    #[test]
+    fn bounded_replay_matches_full_model_input_and_inherits_mcp_intent() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("bounded-replay.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        for turn_index in 0..5 {
+            let mut turn = stored(turn_index);
+            if turn_index == 1 {
+                turn.mcp_intent = Some(crate::mcp::McpIntent {
+                    mode: crate::mcp::McpIntentMode::Explicit,
+                    servers: vec![crate::mcp::McpIntentServer {
+                        id: "notebook".into(),
+                        name: "Gemini Notebook".into(),
+                    }],
+                    excluded_servers: vec![],
+                });
+            }
+            journal::append(&path, &turn).unwrap();
+        }
+        let mut context = checkpoint(5);
+        context.preserved_users = vec![json!({
+            "role": "user",
+            "content": "Use somente o notebook solicitado."
+        })];
+        context.tool_receipts = vec![json!({
+            "callId": "write-1",
+            "tool": "write",
+            "output": "completed"
+        })];
+        journal::append_event(&path, "context_checkpoint", &context).unwrap();
+        let (all_turns, all_extras) = journal::read_only(&path).unwrap();
+        let replay = HistoryState::default()
+            .load_replay(&path, &fixture.root)
+            .unwrap();
+
+        assert_eq!(replay.total_turns, 5);
+        assert_eq!(replay.turn_base, 2);
+        assert_eq!(replay.wire_base, 4);
+        assert_eq!(replay.turns.len(), 3);
+        assert_eq!(
+            replay.inherited_mcp_intent.mode,
+            crate::mcp::McpIntentMode::Explicit
+        );
+        assert_eq!(replay.inherited_mcp_intent.servers[0].id, "notebook");
+
+        let session = crate::agent::tests::session(&fixture);
+        let mut data = session.data.lock().unwrap();
+        data.turns = all_turns;
+        data.extras = all_extras;
+        let full_input = compaction::input(&data);
+        data.turns = replay.turns;
+        data.turn_base = replay.turn_base;
+        data.wire_base = replay.wire_base;
+        data.inherited_mcp_intent = replay.inherited_mcp_intent;
+        data.extras = replay.extras;
+        assert_eq!(compaction::input(&data), full_input);
+        assert_eq!(data.total_turns(), 5);
+        assert_eq!(session.snapshot_data(&data).history.total, 5);
+    }
+
+    #[test]
+    fn bounded_replay_materializes_the_latest_running_delta() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("running-replay.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        for turn_index in 0..2 {
+            journal::append(&path, &stored(turn_index)).unwrap();
+        }
+        journal::append_event(&path, "context_checkpoint", &checkpoint(4)).unwrap();
+        let mut initial = stored(2);
+        initial.turn.status = TurnStatus::Running;
+        initial.turn.steps.clear();
+        initial.wire.truncate(1);
+        journal::append(&path, &initial).unwrap();
+        let mut updated = initial.clone();
+        updated.turn.duration_ms = 42;
+        updated.turn.steps.push(Step {
+            text: "Resposta parcial".into(),
+            ..Step::default()
+        });
+        updated
+            .wire
+            .push(json!({"role":"assistant", "content":"Resposta parcial"}));
+        journal::append_update(&path, &initial, &updated).unwrap();
+
+        let replay = HistoryState::default()
+            .load_replay(&path, &fixture.root)
+            .unwrap();
+
+        assert_eq!(replay.turn_base, 2);
+        assert_eq!(replay.wire_base, 4);
+        assert_eq!(replay.turns.len(), 1);
+        assert_eq!(replay.turns[0].turn.id, updated.turn.id);
+        assert_eq!(replay.turns[0].turn.duration_ms, 42);
+        assert_eq!(replay.turns[0].wire, updated.wire);
+    }
+
     #[test]
     fn indexes_latest_checkpoints_and_seeks_bounded_pages_with_compaction_markers() {
         let fixture = Fixture::new();
@@ -1699,7 +2209,30 @@ mod tests {
         for index in 0..80 {
             journal::append(&path, &stored(index)).unwrap();
         }
-        let chat = agent.read_chat(&state, &fixture.root, &id).unwrap();
+        // A snapshot must not race a runtime session load and receive an
+        // apparently newer revision for older disk state.
+        let gate = agent.session_gate(&id).unwrap();
+        let guard = gate.lock().unwrap();
+        let reader = agent.clone();
+        let reader_state = state.clone();
+        let reader_home = fixture.root.clone();
+        let reader_id = id.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (snapshot_tx, snapshot_rx) = mpsc::channel();
+        let reader_thread = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            snapshot_tx
+                .send(reader.read_chat(&reader_state, &reader_home, &reader_id))
+                .unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(snapshot_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(guard);
+        let chat = snapshot_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        reader_thread.join().unwrap();
         assert_eq!(chat.history.start, 60);
         assert_eq!(chat.turns.len(), 20);
         assert!(agent.sessions.lock().unwrap().is_empty());

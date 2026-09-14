@@ -144,6 +144,15 @@ pub async fn compact_agent_context(
     let overhead = compaction::estimate(
         &json!({"instructions": instructions, "tools": definitions, "runtime_state": runtime_state}),
     );
+    let trace = {
+        let data = session.data.lock().map_err(|_| AgentError::internal())?;
+        let turn_id = data
+            .turns
+            .last()
+            .map(|turn| turn.turn.id.as_str())
+            .unwrap_or("manual_compaction");
+        super::telemetry::trace(&session.id, turn_id)
+    };
     let result = tokio::time::timeout(
         Duration::from_secs(600),
         compaction::ensure(
@@ -154,6 +163,7 @@ pub async fn compact_agent_context(
             true,
             signal,
             Some(&hooks),
+            Some(&trace),
         ),
     )
     .await

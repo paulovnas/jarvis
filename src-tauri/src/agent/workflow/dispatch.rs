@@ -865,10 +865,13 @@ fn launch_inner(
             };
             super::super::run_turn(
                 &task_session,
-                &task_hub.env.state,
-                &task_hub.env.oauth,
-                &task_hub.env.mcp,
-                &task_hub.env.home,
+                super::super::TurnRuntime {
+                    grants: &task_hub.env.grants,
+                    state: &task_hub.env.state,
+                    oauth: &task_hub.env.oauth,
+                    mcp: &task_hub.env.mcp,
+                    home: &task_hub.env.home,
+                },
                 signal,
                 Some(exec),
             )

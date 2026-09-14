@@ -150,10 +150,12 @@ fn request<'a>(credential: &'a CodexCredential, options: &'a TurnOptions) -> Req
         client: super::super::http_client().unwrap(),
         credential,
         options,
+        capabilities: ModelCapabilities::resolve_for_options(credential, options),
         session_id: "session",
         instructions: "Synthetic test",
         input: vec![json!({"role":"user","content":"Continue"})],
         tools: vec![],
+        telemetry: super::super::super::telemetry::trace("session", "retry-test"),
     }
 }
 

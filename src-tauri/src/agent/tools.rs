@@ -84,7 +84,7 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
             definition("write", "Create or replace a UTF-8 project file atomically. Read existing files first. Content is the complete new file.", json!({"path":string,"content":string}), &["path","content"]),
             definition("edit", "Replace exactly one unique occurrence in a UTF-8 project file. oldText must be nonempty and match exactly once.", json!({"path":string,"oldText":string,"newText":string}), &["path","oldText","newText"]),
             super::patch::definition(),
-            definition("bash", &format!("Run a bounded noninteractive command. Use workdir (relative to the project root) for nested repositories instead of shell cd chains. {} Maximum timeout is 120 seconds. Background processes are stopped when the command finishes. Output retains its beginning and end; use Context-mode for large analysis. This is not a filesystem sandbox; stay within the project and respect user instructions.", super::shell::prompt()), json!({"command":string,"workdir":{"type":"string","description":"Existing directory inside the project; defaults to '.'"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}), &["command"]),
+            definition("bash", &format!("Run a bounded noninteractive command. Use workdir (relative to the project root) for nested repositories instead of shell cd chains. {} Maximum timeout is 120 seconds. Background processes are stopped when the command finishes. Output retains its beginning and end; use Context-mode for large analysis. Jarvis inspects effects before execution and applies the strongest OS sandbox available; network, destructive actions, paths outside the project, and native fallbacks require an explicit scoped authorization.", super::shell::prompt()), json!({"command":string,"workdir":{"type":"string","description":"Existing directory inside the project; defaults to '.'"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}), &["command"]),
         ]);
     }
     tools
@@ -317,7 +317,7 @@ pub(super) async fn execute(
     mode: Mode,
     signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
-    execute_observed(root, tool, mode, signal)
+    execute_observed(root, tool, mode, None, signal)
         .await
         .map(|result| result.output)
 }
@@ -326,6 +326,7 @@ async fn execute_observed(
     root: &Path,
     tool: &ToolCall,
     mode: Mode,
+    sandbox: Option<&super::execution_sandbox::SandboxPlan>,
     signal: watch::Receiver<bool>,
 ) -> Result<FileToolResult, AgentError> {
     if mode == Mode::Plan && needs_approval(&tool.name) {
@@ -335,7 +336,7 @@ async fn execute_observed(
         return Err(AgentError::cancelled());
     }
     if tool.name == "bash" {
-        return shell(root, &tool.args, signal)
+        return shell(root, &tool.args, sandbox, signal)
             .await
             .map(FileToolResult::plain);
     }
@@ -353,8 +354,18 @@ pub(super) async fn execute_with_revision(
     mode: Mode,
     signal: watch::Receiver<bool>,
 ) -> Result<ExecutionResult, AgentError> {
+    execute_with_revision_sandboxed(root, tool, mode, None, signal).await
+}
+
+pub(super) async fn execute_with_revision_sandboxed(
+    root: &Path,
+    tool: &ToolCall,
+    mode: Mode,
+    sandbox: Option<&super::execution_sandbox::SandboxPlan>,
+    signal: watch::Receiver<bool>,
+) -> Result<ExecutionResult, AgentError> {
     if !matches!(tool.name.as_str(), "write" | "edit") {
-        return execute_observed(root, tool, mode, signal)
+        return execute_observed(root, tool, mode, sandbox, signal)
             .await
             .map(|result| ExecutionResult {
                 output: result.output,
@@ -658,6 +669,7 @@ pub(super) async fn finish_capture(mut task: tokio::task::JoinHandle<String>) ->
 async fn shell(
     root: &Path,
     args: &Value,
+    sandbox: Option<&super::execution_sandbox::SandboxPlan>,
     mut signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
     let directory = scoped(root, args["workdir"].as_str().unwrap_or("."), false)?;
@@ -671,7 +683,7 @@ async fn shell(
         return Err(error("Comando vazio ou muito longo."));
     }
     let timeout = args["timeoutSeconds"].as_u64().unwrap_or(60).clamp(1, 120);
-    let mut child = super::shell::spawn(command, &directory)
+    let mut child = super::shell::spawn(command, &directory, sandbox)
         .map_err(|_| error("Não foi possível iniciar o terminal."))?;
     let stdout = tokio::spawn(capture(
         child.stdout().take().ok_or_else(AgentError::internal)?,
@@ -947,6 +959,7 @@ mod tests {
         let result = shell(
             &fixture.root,
             &json!({"command":command,"workdir":"backend"}),
+            None,
             signal.clone(),
         )
         .await
@@ -956,6 +969,7 @@ mod tests {
             assert!(shell(
                 &fixture.root,
                 &json!({"command":command,"workdir":path}),
+                None,
                 signal.clone()
             )
             .await

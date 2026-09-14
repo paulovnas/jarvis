@@ -58,6 +58,9 @@ fn credential() -> CodexCredential {
     c.project_id = Some("project".into());
     c
 }
+fn capabilities(credential: &CodexCredential, options: &TurnOptions) -> ModelCapabilities {
+    ModelCapabilities::resolve_for_options(credential, options)
+}
 
 #[test]
 fn streaming_preserves_text_thought_signatures_parallel_calls_and_usage() {
@@ -93,8 +96,12 @@ fn streaming_preserves_text_thought_signatures_parallel_calls_and_usage() {
         "private-signature"
     );
     assert_eq!(contents[2]["parts"].as_array().unwrap().len(), 2);
+    let codex_options = options("gpt-5.6-luna");
+    let codex_credential = CodexCredential::new("", "", 0, "", None, None);
+    let codex_capabilities = capabilities(&codex_credential, &codex_options);
     let codex = super::super::request_body(
-        &options("gpt-5.6-luna"),
+        &codex_options,
+        &codex_capabilities,
         "System",
         replay,
         vec![],
@@ -146,7 +153,9 @@ fn envelope_converts_tools_and_uses_specific_thinking_transports() {
         "gemini-3.7-flash".into(),
         json!({"supportsThinking":true,"maxOutputTokens":65536}),
     );
-    let body=request_body(&credential,"1234",&options("gemini-3.7-flash"),"System",&[json!({"role":"user","content":"Hi"})],&[json!({"name":"read","description":"Read","parameters":{"type":"object","additionalProperties":false,"properties":{"path":{"type":"string"}},"required":["path"]}})]).unwrap();
+    let selected = options("gemini-3.7-flash");
+    let selected_capabilities = capabilities(&credential, &selected);
+    let body=request_body(&credential,"1234",&selected,&selected_capabilities,"System",&[json!({"role":"user","content":"Hi"})],&[json!({"name":"read","description":"Read","parameters":{"type":"object","additionalProperties":false,"properties":{"path":{"type":"string"}},"required":["path"]}})]).unwrap();
     assert_eq!(body["requestType"], "agent");
     assert_eq!(body["project"], "project");
     assert_eq!(
@@ -171,7 +180,9 @@ fn envelope_converts_tools_and_uses_specific_thinking_transports() {
         "claude-opus-thinking".into(),
         json!({"supportsThinking":true,"maxOutputTokens":100000}),
     );
-    let config = generation(&credential, &options("claude-opus-thinking"));
+    let claude = options("claude-opus-thinking");
+    let claude_capabilities = capabilities(&credential, &claude);
+    let config = generation(&credential, &claude, &claude_capabilities);
     assert_eq!(config["maxOutputTokens"], 64000);
     assert_eq!(config["thinkingConfig"]["thinkingBudget"], 1024);
 }
@@ -185,10 +196,30 @@ fn logical_model_routes_effort_and_preserves_prior_execution_link() {
         json!({"role":"user","content":"Hello"}),
         json!({"type":"message","role":"assistant","content":[{"text":"Hi"}],"_antigravity_model":"gemini-3.7-flash","_antigravity_execution":"execution-before","_antigravity_step":7}),
     ];
-    let low = request_body(&c, "session", &options, "System", &input, &[]).unwrap();
+    let low_capabilities = capabilities(&c, &options);
+    let low = request_body(
+        &c,
+        "session",
+        &options,
+        &low_capabilities,
+        "System",
+        &input,
+        &[],
+    )
+    .unwrap();
     assert_eq!(low["model"], "gemini-3.7-flash-low");
     options.reasoning = None;
-    let high = request_body(&c, "session", &options, "System", &input, &[]).unwrap();
+    let high_capabilities = capabilities(&c, &options);
+    let high = request_body(
+        &c,
+        "session",
+        &options,
+        &high_capabilities,
+        "System",
+        &input,
+        &[],
+    )
+    .unwrap();
     assert_eq!(high["model"], "gemini-3.7-flash-high");
     assert_eq!(
         high["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
@@ -200,6 +231,8 @@ fn logical_model_routes_effort_and_preserves_prior_execution_link() {
     );
     assert_eq!(high["request"]["labels"]["last_step_index"], "7");
     assert_eq!(low["request"]["sessionId"], high["request"]["sessionId"]);
+    assert!(high["request"].get("tools").is_none());
+    assert!(high["request"].get("toolConfig").is_none());
 }
 
 #[test]

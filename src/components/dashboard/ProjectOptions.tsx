@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { libraryError } from "@/core/library";
 import { PULL_REQUEST_MODE_LABELS, publicationSettingsSchema, type PublicationSettings, type PullRequestMode } from "@/core/publication";
 import { ProjectRepositoriesSettings } from "./ProjectRepositoriesSettings";
+import { ExecutionGrantsSettings } from "./ExecutionGrantsSettings";
 
 type Draft = Pick<PublicationSettings, "publishPrompt" | "prMode" | "prPrompt">;
 
@@ -70,6 +71,8 @@ export function ProjectOptions({ projectId, projectPath }: { projectId: string; 
     </Card>
 
     <ProjectRepositoriesSettings projectId={projectId} projectPath={projectPath} />
+
+    <ExecutionGrantsSettings projectId={projectId} />
 
     <Card>
       <CardHeader className="border-b border-border">

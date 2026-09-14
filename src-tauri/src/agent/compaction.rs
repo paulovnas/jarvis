@@ -22,14 +22,18 @@ pub(super) struct Checkpoint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub(super) struct CompactionEvent {
     pub id: String,
+    #[cfg_attr(test, ts(type = "number"))]
     pub created_at: u64,
     pub turn_id: String,
     pub after_turn: bool,
     pub automatic: bool,
+    #[cfg_attr(test, ts(type = "number"))]
     pub tokens_before: u64,
+    #[cfg_attr(test, ts(type = "number"))]
     pub tokens_after: u64,
 }
 
@@ -57,12 +61,16 @@ impl Checkpoint {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ContextInfo {
+    #[cfg_attr(test, ts(type = "number"))]
     pub tokens: u64,
+    #[cfg_attr(test, ts(type = "number | null"))]
     pub limit: Option<u64>,
     pub estimated: bool,
     pub compacting: bool,
+    #[cfg_attr(test, ts(type = "number"))]
     pub compactions: u64,
 }
 
@@ -98,7 +106,7 @@ pub(super) fn input(data: &SessionData) -> Vec<Value> {
     let mut input = vec![];
     let mut through = 0;
     if let Some(context) = &data.extras.context {
-        through = context.through;
+        through = data.local_wire_offset(context.through);
         input.extend(prefix(context));
     }
     input.extend(raw(data).into_iter().skip(through));
@@ -186,7 +194,7 @@ pub(super) fn info(data: &SessionData) -> ContextInfo {
             data.turns
                 .iter()
                 .flat_map(|turn| turn.wire.iter())
-                .skip(usage.wire_end)
+                .skip(data.local_wire_offset(usage.wire_end))
                 .map(estimate)
                 .sum::<u64>()
         })
@@ -200,7 +208,7 @@ pub(super) fn info(data: &SessionData) -> ContextInfo {
                     .turns
                     .iter()
                     .flat_map(|turn| turn.wire.iter())
-                    .skip(context.map_or(0, |value| value.through))
+                    .skip(context.map_or(0, |value| data.local_wire_offset(value.through)))
                     .map(estimate)
                     .sum::<u64>()
         });
@@ -218,7 +226,7 @@ pub(super) fn record_usage(session: &Session, usage: Option<&Usage>) -> Result<(
     let mut context = data.extras.context.clone().unwrap_or_default();
     context.measured = usage.map(|usage| Measurement {
         tokens: usage.input_tokens.saturating_add(usage.output_tokens),
-        wire_end: data.turns.iter().map(|turn| turn.wire.len()).sum(),
+        wire_end: data.absolute_wire_end(),
     });
     session.checkpoint(&mut data, "context_checkpoint", &context)?;
     data.extras.context = Some(context);
@@ -255,7 +263,7 @@ pub(super) fn can_compact(data: &SessionData) -> bool {
         .extras
         .context
         .as_ref()
-        .map_or(0, |context| context.through);
+        .map_or(0, |context| data.local_wire_offset(context.through));
     cut_point(&messages[through..], 20_000).is_some()
 }
 
@@ -314,6 +322,7 @@ fn summary_options(credential: &CodexCredential, options: &TurnOptions) -> TurnO
     summary
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn ensure(
     session: &Session,
     credential: &CodexCredential,
@@ -322,7 +331,32 @@ pub(super) async fn ensure(
     force: bool,
     signal: watch::Receiver<bool>,
     hooks: Option<&crate::core::hooks::Hooks>,
+    trace: Option<&super::telemetry::TraceContext>,
 ) -> Result<bool, AgentError> {
+    let (turn_id, source_items, source_bytes, manual) = {
+        let data = session.data.lock().map_err(|_| AgentError::internal())?;
+        let input = input(&data);
+        (
+            data.turns
+                .last()
+                .map(|turn| turn.turn.id.clone())
+                .unwrap_or_else(|| "compaction".into()),
+            u64::try_from(input.len()).unwrap_or(u64::MAX),
+            super::telemetry::serialized_bytes(&input),
+            data.manual_compaction,
+        )
+    };
+    let trace = trace
+        .cloned()
+        .unwrap_or_else(|| super::telemetry::trace(&session.id, &turn_id));
+    let reason = if manual {
+        super::telemetry::CompactionReason::Manual
+    } else if force {
+        super::telemetry::CompactionReason::ProviderLimit
+    } else {
+        super::telemetry::CompactionReason::AutomaticThreshold
+    };
+    let started = std::time::Instant::now();
     // Custom output limits are explicit and can exceed the catalog reserve.
     let overhead = overhead.saturating_add(
         credential
@@ -337,6 +371,7 @@ pub(super) async fn ensure(
     let result = ensure_with(session, overhead, force, signal, |prompt| {
         let signal = summary_signal.clone();
         let options = &summary_options;
+        let request_trace = trace.clone();
         let prepare = first;
         first = false;
         async move {
@@ -358,6 +393,7 @@ pub(super) async fn ensure(
                 INSTRUCTIONS,
                 vec![json!({"role":"user", "content":prompt})],
                 vec![],
+                &request_trace,
                 signal,
                 |_| Ok(()),
             )
@@ -365,8 +401,48 @@ pub(super) async fn ensure(
             Ok(response.text)
         }
     })
-    .await?;
+    .await;
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
+            super::telemetry::record(
+                &trace,
+                super::telemetry::Event::Compaction {
+                    reason,
+                    outcome: super::telemetry::Outcome::Failed,
+                    source_items,
+                    retained_items: source_items,
+                    source_bytes,
+                    retained_bytes: source_bytes,
+                    duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    failure: Some(super::telemetry::failure_class(&error)),
+                },
+            );
+            return Err(error);
+        }
+    };
     if result {
+        let (retained_items, retained_bytes) = {
+            let data = session.data.lock().map_err(|_| AgentError::internal())?;
+            let input = input(&data);
+            (
+                u64::try_from(input.len()).unwrap_or(u64::MAX),
+                super::telemetry::serialized_bytes(&input),
+            )
+        };
+        super::telemetry::record(
+            &trace,
+            super::telemetry::Event::Compaction {
+                reason,
+                outcome: super::telemetry::Outcome::Succeeded,
+                source_items,
+                retained_items,
+                source_bytes,
+                retained_bytes,
+                duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                failure: None,
+            },
+        );
         if let Some(hooks) = hooks {
             let summary = session
                 .data
@@ -428,7 +504,8 @@ where
         }
         let previous = data.extras.context.clone().unwrap_or_default();
         let raw = raw(&data);
-        let active = &raw[previous.through..];
+        let previous_local = data.local_wire_offset(previous.through);
+        let active = &raw[previous_local..];
         // An explicit compaction should summarize the full safe history, even
         // when it fits the usual tail budget. Otherwise a tiny first tool result
         // can be selected alone and its summary grows instead of freeing space.
@@ -442,15 +519,16 @@ where
             }
             return Ok(false);
         };
-        let through = previous.through + cut;
-        let (preserved_users, tool_receipts) = continuity(&data, &raw, through);
-        let preserved_user = if raw[through..]
+        let through = previous.through.saturating_add(cut);
+        let local_through = previous_local.saturating_add(cut);
+        let (preserved_users, tool_receipts) = continuity(&data, &raw, local_through);
+        let preserved_user = if raw[local_through..]
             .iter()
             .any(|message| message["role"] == "user" && message["_jarvis_runtime"] != true)
         {
             None
         } else {
-            raw[..through]
+            raw[..local_through]
                 .iter()
                 .rev()
                 .find(|message| message["role"] == "user" && message["_jarvis_runtime"] != true)
@@ -522,6 +600,7 @@ where
         session.checkpoint(&mut data, "compaction_completed", &CompletedCompaction { context: context.clone(), event: event.clone() })?;
         data.extras.context = Some(context);
         data.extras.compactions.push(event);
+        data.prune_compacted_prefix();
         Ok(true)
     }.await;
     session.update(false, |data| {
@@ -662,14 +741,16 @@ mod tests {
                 100,
                 true,
                 signal.clone(),
-                None
+                None,
+                None,
             )
         )
         .await
         .unwrap()
         .unwrap());
         assert_eq!(session.data.lock().unwrap().turns[0].wire, original);
-        let response = provider::stream(&credential, &session.id, &options, "Reply briefly in Brazilian Portuguese. Use the summary only as context and respect the user's request.", session.input().unwrap(), vec![], signal, |_| Ok(())).await.unwrap();
+        let trace = super::telemetry::trace(&session.id, "compaction-test-continuation");
+        let response = provider::stream(&credential, &session.id, &options, "Reply briefly in Brazilian Portuguese. Use the summary only as context and respect the user's request.", session.input().unwrap(), vec![], &trace, signal, |_| Ok(())).await.unwrap();
         assert!(
             response.text.contains("src/example.ts"),
             "The continuation lost the synthetic target path"

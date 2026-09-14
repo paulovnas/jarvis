@@ -23,6 +23,7 @@ beforeEach(() => {
   call.mockReset().mockImplementation(async command => {
     if (command === "get_project_publication_settings") return settings;
     if (command === "get_project_repositories") return [];
+    if (command === "list_execution_grants") return [];
     if (command === "save_project_publication_settings") return { ...settings, prMode: "ask_pr" };
     throw new Error(`Unexpected command ${command}`);
   });
@@ -45,7 +46,11 @@ it("loads project-scoped publication rules and only reveals the PR editor when e
 });
 
 it("keeps PR automation unavailable when GitHub CLI is missing", async () => {
-  call.mockResolvedValueOnce({ ...settings, ghAvailable: false });
+  call.mockImplementation(async command => {
+    if (command === "get_project_publication_settings") return { ...settings, ghAvailable: false };
+    if (command === "get_project_repositories" || command === "list_execution_grants") return [];
+    throw new Error(`Unexpected command ${command}`);
+  });
   const user = userEvent.setup();
   render(<ProjectOptions projectId="p1" projectPath="/projects/jarvis" />);
   expect(await screen.findByText("GitHub CLI necessário")).toBeVisible();
@@ -60,6 +65,7 @@ it("adds a named Git repository from a directory below the project root", async 
   call.mockImplementation(async (command) => {
     if (command === "get_project_publication_settings") return settings;
     if (command === "get_project_repositories") return [];
+    if (command === "list_execution_grants") return [];
     if (command === "save_project_repository") return repository;
     throw new Error(`Unexpected command ${command}`);
   });

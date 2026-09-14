@@ -371,6 +371,9 @@ fn worker_session(
         writer,
         data: Mutex::new(SessionData {
             turns,
+            turn_base: 0,
+            wire_base: 0,
+            inherited_mcp_intent: crate::mcp::McpIntent::default(),
             extras,
             active: None,
             recovery: None,

@@ -318,13 +318,22 @@ fn arguments(script: &str) -> Vec<String> {
 }
 
 /// Service commands use a PTY with stdin enabled, but exit with the command.
-pub(crate) fn terminal_service_command(root: &Path, script: &str) -> CommandBuilder {
-    let mut command = CommandBuilder::new(&SHELL.program);
-    command.args(
-        arguments(script)
-            .into_iter()
-            .filter(|arg| arg != "-NonInteractive"),
-    );
+pub(super) fn terminal_service_command(
+    root: &Path,
+    script: &str,
+    sandbox: Option<&super::execution_sandbox::SandboxPlan>,
+) -> CommandBuilder {
+    let arguments = arguments(script)
+        .into_iter()
+        .filter(|arg| arg != "-NonInteractive")
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+    let (program, arguments) = match sandbox {
+        Some(sandbox) => sandbox.wrap(&SHELL.program, arguments),
+        None => (SHELL.program.clone(), arguments),
+    };
+    let mut command = CommandBuilder::new(program);
+    command.args(arguments);
     configure_terminal(&mut command, root);
     command
 }
@@ -334,13 +343,37 @@ pub(crate) fn terminal_command(
     root: &Path,
     preferences: &TerminalPreferences,
 ) -> Result<CommandBuilder, String> {
+    terminal_command_with_sandbox(root, preferences, None)
+}
+
+pub(super) fn terminal_agent_command(
+    root: &Path,
+    preferences: &TerminalPreferences,
+    sandbox: Option<&super::execution_sandbox::SandboxPlan>,
+) -> Result<CommandBuilder, String> {
+    terminal_command_with_sandbox(root, preferences, sandbox)
+}
+
+fn terminal_command_with_sandbox(
+    root: &Path,
+    preferences: &TerminalPreferences,
+    sandbox: Option<&super::execution_sandbox::SandboxPlan>,
+) -> Result<CommandBuilder, String> {
     let program = interactive_shell(preferences)?;
-    let mut command = CommandBuilder::new(&program);
     let arguments = if preferences.arguments.is_empty() {
         default_interactive_arguments(&program)
     } else {
         preferences.arguments.clone()
     };
+    let arguments = arguments
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+    let (launch_program, arguments) = match sandbox {
+        Some(sandbox) => sandbox.wrap(&program, arguments),
+        None => (program.clone(), arguments),
+    };
+    let mut command = CommandBuilder::new(launch_program);
     command.args(arguments);
     #[cfg(unix)]
     command.env("SHELL", &program);
@@ -364,10 +397,22 @@ fn configure_terminal(command: &mut CommandBuilder, root: &Path) {
 
 /// Spawns `command` in `root` through the platform shell. The returned child
 /// kills its whole process tree on `start_kill` and on drop.
-pub(crate) fn spawn(command: &str, root: &Path) -> std::io::Result<Box<dyn ChildWrapper>> {
-    let mut process = crate::background::tokio_command(&SHELL.program);
+pub(super) fn spawn(
+    command: &str,
+    root: &Path,
+    sandbox: Option<&super::execution_sandbox::SandboxPlan>,
+) -> std::io::Result<Box<dyn ChildWrapper>> {
+    let arguments = arguments(command)
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+    let (program, arguments) = match sandbox {
+        Some(sandbox) => sandbox.wrap(&SHELL.program, arguments),
+        None => (SHELL.program.clone(), arguments),
+    };
+    let mut process = crate::background::tokio_command(program);
     crate::mcp::executable::configure(&mut process, false);
-    process.args(arguments(command)).current_dir(root);
+    process.args(arguments).current_dir(root);
     spawn_process(process)
 }
 
@@ -490,7 +535,7 @@ mod tests {
     #[tokio::test]
     async fn spawned_command_reports_output_and_exit_code() {
         let root = tempfile::tempdir().unwrap();
-        let mut child = spawn("exit 7", root.path()).unwrap();
+        let mut child = spawn("exit 7", root.path(), None).unwrap();
         let status = child.wait().await.unwrap();
         assert_eq!(status.code(), Some(7));
     }

@@ -83,7 +83,7 @@ it("loads a read-only transcript only after clicking an agent card", async () =>
 
 it("shows only the GitHub worker for publication and marks a closed request with attention", () => {
   const root = { ...agent, id: "main", parentId: null, role: "github" as const, title: "GitHub", options: { ...agent.options, workflow: "publication" as const } };
-  const github = { ...agent, id: "github-worker", role: "github" as const, title: "Publicar alterações", status: "waiting" as const, options: { ...agent.options, workflow: "publication" as const }, pendingApproval: { id: "approval", name: "bash", args: { command: "git status" }, status: "pending" as const, output: "", durationMs: 0 } };
+  const github = { ...agent, id: "github-worker", role: "github" as const, title: "Publicar alterações", status: "waiting" as const, options: { ...agent.options, workflow: "publication" as const }, pendingApproval: { tool: { id: "approval", name: "bash", args: { command: "git status" }, status: "pending" as const, output: "", durationMs: 0 }, policy: null } };
   render(<WorkflowAgents conversationId="c1" workflow={{ data: { conversationId: "c1", revision: 1, flow: "publication", agents: [root, github] }, error: null, loading: false, retry: vi.fn() }} />);
   expect(screen.queryByRole("button", { name: "Abrir agente GitHub: GitHub" })).not.toBeInTheDocument();
   const card = screen.getByRole("button", { name: "Abrir agente GitHub: Publicar alterações" });

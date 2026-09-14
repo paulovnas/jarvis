@@ -8,6 +8,8 @@ const CASES: [&str; 4] = [
     include_str!("fixtures/evaluations/movarte-github-publication.json"),
 ];
 const RUNTIME_SUITE: &str = include_str!("fixtures/evaluations/movarte-runtime-scenarios.json");
+const PROVIDER_REPLAY_SUITE: &str =
+    include_str!("fixtures/evaluations/provider-stream-replay.json");
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -161,6 +163,145 @@ struct RuntimeScenario {
 pub(crate) struct RuntimeReport {
     state: String,
     metrics: BTreeMap<String, u64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProviderReplaySuite {
+    schema_version: u64,
+    id: String,
+    description: String,
+    cases: Vec<ProviderReplayCase>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProviderReplayCase {
+    id: String,
+    provider: super::telemetry::ProviderKind,
+    frames: Vec<ReplayFrame>,
+    expected: ProviderReplayReport,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+enum ReplayFrame {
+    StreamFragment {
+        sequence: u64,
+        bytes: u64,
+    },
+    Retry {
+        failure: super::telemetry::FailureClass,
+    },
+    ToolCall {
+        tool: super::telemetry::ToolKind,
+    },
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_write_tokens: u64,
+    },
+    Completed,
+    Failed {
+        failure: super::telemetry::FailureClass,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProviderReplayReport {
+    state: String,
+    fragments: u64,
+    stream_bytes: u64,
+    retries: u64,
+    tool_calls: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_write_tokens: u64,
+    failure: Option<super::telemetry::FailureClass>,
+}
+
+fn replay_provider(case: &ProviderReplayCase) -> Result<ProviderReplayReport, String> {
+    let mut report = ProviderReplayReport {
+        state: "streaming".into(),
+        fragments: 0,
+        stream_bytes: 0,
+        retries: 0,
+        tool_calls: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        failure: None,
+    };
+    let mut next_sequence = 1;
+    for frame in &case.frames {
+        if matches!(report.state.as_str(), "completed" | "failed") {
+            return Err(format!(
+                "{} contains data after its terminal frame",
+                case.id
+            ));
+        }
+        match frame {
+            ReplayFrame::StreamFragment { sequence, bytes } => {
+                if *sequence != next_sequence || *bytes == 0 || *bytes > 4 * 1024 * 1024 {
+                    return Err(format!("{} contains an invalid stream fragment", case.id));
+                }
+                next_sequence += 1;
+                report.fragments += 1;
+                report.stream_bytes = report.stream_bytes.saturating_add(*bytes);
+            }
+            ReplayFrame::Retry { failure } => {
+                if !matches!(
+                    failure,
+                    super::telemetry::FailureClass::Network
+                        | super::telemetry::FailureClass::Timeout
+                        | super::telemetry::FailureClass::Unavailable
+                        | super::telemetry::FailureClass::Protocol
+                        | super::telemetry::FailureClass::RateLimit
+                ) {
+                    return Err(format!("{} retries a terminal failure", case.id));
+                }
+                report.retries += 1;
+            }
+            ReplayFrame::ToolCall { tool } => {
+                let _ = tool;
+                report.tool_calls += 1;
+            }
+            ReplayFrame::Usage {
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+            } => {
+                if cache_read_tokens > input_tokens || cache_write_tokens > input_tokens {
+                    return Err(format!("{} contains an invalid cache breakdown", case.id));
+                }
+                report.input_tokens = *input_tokens;
+                report.output_tokens = *output_tokens;
+                report.cache_read_tokens = *cache_read_tokens;
+                report.cache_write_tokens = *cache_write_tokens;
+            }
+            ReplayFrame::Completed => report.state = "completed".into(),
+            ReplayFrame::Failed { failure } => {
+                report.state = "failed".into();
+                report.failure = Some(*failure);
+            }
+        }
+    }
+    if report.state == "streaming" || report.fragments < 2 {
+        return Err(format!(
+            "{} is incomplete or does not exercise fragmentation",
+            case.id
+        ));
+    }
+    Ok(report)
 }
 
 impl RuntimeReport {
@@ -548,6 +689,50 @@ fn harness_evaluation_runtime_manifest_is_versioned_and_complete() {
     validate_runtime_suite(&suite).unwrap();
     assert_eq!(suite.id, "movarte-runtime-regressions");
     assert_eq!(suite.scenarios.len(), 14);
+}
+
+#[test]
+fn harness_evaluation_replays_sanitized_provider_streams_offline() {
+    let suite: ProviderReplaySuite = serde_json::from_str(PROVIDER_REPLAY_SUITE).unwrap();
+    assert_eq!(suite.schema_version, 1);
+    assert_eq!(suite.id, "provider-stream-replay");
+    assert!(!suite.description.trim().is_empty());
+    assert_eq!(suite.cases.len(), 3);
+    assert_eq!(
+        suite
+            .cases
+            .iter()
+            .map(|case| case.provider)
+            .collect::<std::collections::HashSet<_>>(),
+        std::collections::HashSet::from([
+            super::telemetry::ProviderKind::OpenAiCodex,
+            super::telemetry::ProviderKind::Antigravity,
+            super::telemetry::ProviderKind::Custom,
+        ])
+    );
+    for case in &suite.cases {
+        let actual = replay_provider(case).unwrap();
+        assert_eq!(actual, case.expected, "provider replay {}", case.id);
+        println!(
+            "HARNESS_EVAL provider={:?} case={} current={}",
+            case.provider,
+            case.id,
+            serde_json::to_string(&actual).unwrap()
+        );
+    }
+    let raw = PROVIDER_REPLAY_SUITE.to_ascii_lowercase();
+    for forbidden in [
+        "\"prompt\"",
+        "\"content\"",
+        "\"arguments\"",
+        "credential",
+        "secret",
+    ] {
+        assert!(
+            !raw.contains(forbidden),
+            "provider fixture leaked {forbidden}"
+        );
+    }
 }
 
 #[tokio::test]

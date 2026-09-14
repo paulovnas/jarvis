@@ -159,6 +159,56 @@ fn recover_swap(path: &Path) -> Result<(), AgentError> {
     }
 }
 
+fn preserve_and_truncate_unlocked(path: &Path, valid_end: u64) -> Result<(), AgentError> {
+    let backup = path.with_extension(format!("recovery-{}.jsonl", crate::library::new_id()?));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut copy = options.open(&backup).map_err(|_| AgentError::storage())?;
+    std::io::copy(&mut open(path, false)?, &mut copy)
+        .and_then(|_| copy.sync_all())
+        .map_err(|_| AgentError::storage())?;
+    #[cfg(unix)]
+    File::open(path.parent().ok_or_else(AgentError::storage)?)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| AgentError::storage())?;
+    // Truncation needs a write handle that is NOT in append mode: on Windows
+    // SetEndOfFile is denied (ACCESS_DENIED) on an append-only handle.
+    let mut options = OpenOptions::new();
+    options.read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(path).map_err(|_| AgentError::storage())?;
+    file.set_len(valid_end)
+        .and_then(|()| file.sync_all())
+        .map_err(|_| AgentError::storage())
+}
+
+pub(super) fn repair_incomplete_tail(path: &Path, known_valid_end: u64) -> Result<(), AgentError> {
+    let lock = journal_lock(path)?;
+    let _guard = lock.write().map_err(|_| AgentError::internal())?;
+    recover_swap(path)?;
+    let file_bytes = open(path, false)?
+        .metadata()
+        .map_err(|_| AgentError::storage())?
+        .len();
+    if file_bytes < known_valid_end {
+        return Err(AgentError::storage());
+    }
+    let valid_end = scan_unlocked(path, known_valid_end, |_, _, _| Ok(()))?;
+    if valid_end < file_bytes {
+        preserve_and_truncate_unlocked(path, valid_end)?;
+    }
+    Ok(())
+}
+
 pub(super) fn append(path: &Path, turn: &StoredTurn) -> Result<(), AgentError> {
     append_event(path, "turn_checkpoint", turn)
 }
@@ -701,35 +751,7 @@ fn read_unlocked(
     }
     if repair && valid_end < file_bytes {
         // Preserve crash debris before repairing only an incomplete final line.
-        let backup = path.with_extension(format!("recovery-{}.jsonl", crate::library::new_id()?));
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut copy = options.open(&backup).map_err(|_| AgentError::storage())?;
-        std::io::copy(&mut open(path, false)?, &mut copy)
-            .and_then(|_| copy.sync_all())
-            .map_err(|_| AgentError::storage())?;
-        #[cfg(unix)]
-        File::open(path.parent().ok_or_else(AgentError::storage)?)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| AgentError::storage())?;
-        // Truncation needs a write handle that is NOT in append mode: on Windows
-        // SetEndOfFile is denied (ACCESS_DENIED) on an append-only handle.
-        let mut options = OpenOptions::new();
-        options.read(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW);
-        }
-        let file = options.open(path).map_err(|_| AgentError::storage())?;
-        file.set_len(valid_end)
-            .and_then(|()| file.sync_all())
-            .map_err(|_| AgentError::storage())?;
+        preserve_and_truncate_unlocked(path, valid_end)?;
     }
     for turn in &mut turns {
         if repair && interrupt_running && turn.turn.status == TurnStatus::Running {

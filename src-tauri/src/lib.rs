@@ -75,6 +75,10 @@ pub fn run() {
             debug_assert_eq!(lease.root(), data_dir::root(&home));
             let diagnostics =
                 diagnostics::initialize(lease.root(), &app.package_info().version.to_string());
+            agent::telemetry::initialize(lease.root(), &app.package_info().version.to_string());
+            app.state::<agent::AgentState>()
+                .setup_execution_grants(lease.root())
+                .map_err(std::io::Error::other)?;
             if !app.manage(lease) {
                 return Err(std::io::Error::other(
                     "O controle exclusivo do diretório de dados já foi configurado.",
@@ -120,6 +124,8 @@ pub fn run() {
                 diagnostics::get_diagnostic_summary,
                 diagnostics::check_database_integrity,
                 diagnostics::export_diagnostic_bundle,
+                agent::telemetry::export_harness_trace,
+                agent::telemetry::get_harness_report,
                 core::context7::configure_context7,
                 desktop::get_desktop_layout,
                 desktop::save_desktop_layout,
@@ -179,6 +185,7 @@ pub fn run() {
                 core::beads::dashboard::add_bead_comment,
                 core::beads::dashboard::close_conversation_plan,
                 agent::get_chat,
+                agent::subscribe_chat,
                 agent::processes::list_chat_processes,
                 agent::processes::read_chat_process,
                 agent::processes::stop_chat_process,
@@ -222,6 +229,8 @@ pub fn run() {
                 agent::diffs::get_agent_file_changes,
                 agent::cancel_agent_turn,
                 agent::approve_agent_tool,
+                agent::list_execution_grants,
+                agent::revoke_execution_grant,
                 agent::questions::answer_agent_question,
                 agent::authoring::answer_agent_authoring,
                 openai_codex::list_provider_accounts,

@@ -58,6 +58,7 @@ pub(super) struct StepContext {
     tools: Arc<[Value]>,
     input: Arc<[Value]>,
     authorization: UserAuthorization,
+    capabilities: Arc<super::provider::ModelCapabilities>,
 }
 
 impl StepContext {
@@ -66,9 +67,10 @@ impl StepContext {
         options: &TurnOptions,
         instructions: &str,
         tools: &[Value],
+        capabilities: &Arc<super::provider::ModelCapabilities>,
     ) -> Result<Self, AgentError> {
         let data = session.data.lock().map_err(|_| AgentError::internal())?;
-        Self::from_data(&data, options, instructions, tools)
+        Self::from_data(&data, options, instructions, tools, capabilities)
     }
 
     fn from_data(
@@ -76,6 +78,7 @@ impl StepContext {
         options: &TurnOptions,
         instructions: &str,
         tools: &[Value],
+        capabilities: &Arc<super::provider::ModelCapabilities>,
     ) -> Result<Self, AgentError> {
         let authorized: Vec<Value> = data
             .turns
@@ -115,6 +118,7 @@ impl StepContext {
         digest.update(instructions.as_bytes());
         digest.update(serde_json::to_vec(tools).map_err(|_| AgentError::internal())?);
         digest.update(serde_json::to_vec(options).map_err(|_| AgentError::internal())?);
+        digest.update(serde_json::to_vec(capabilities).map_err(|_| AgentError::internal())?);
         let id = digest
             .finalize()
             .iter()
@@ -130,6 +134,7 @@ impl StepContext {
             authorization: UserAuthorization {
                 values: Arc::from(authorized),
             },
+            capabilities: Arc::clone(capabilities),
         })
     }
 
@@ -156,6 +161,10 @@ impl StepContext {
     pub(super) fn authorization(&self) -> &UserAuthorization {
         &self.authorization
     }
+
+    pub(super) fn capabilities(&self) -> &super::provider::ModelCapabilities {
+        &self.capabilities
+    }
 }
 
 impl ItemKind {
@@ -178,6 +187,24 @@ mod tests {
     use crate::agent::tests::{options, session, Fixture};
     use crate::agent::ApprovalMode;
     use serde_json::json;
+    use std::sync::Arc;
+
+    fn capabilities() -> Arc<super::super::provider::ModelCapabilities> {
+        let credential = crate::openai_codex::CodexCredential::new(
+            "access", "refresh", 1, "account", None, None,
+        );
+        let model = crate::openai_codex::ProviderModel {
+            id: "model".into(),
+            name: "Model".into(),
+            reasoning_levels: vec!["medium".into()],
+            default_reasoning_level: Some("medium".into()),
+            context_window: Some(128_000),
+        };
+        Arc::new(super::super::provider::ModelCapabilities::resolve(
+            &credential,
+            &model,
+        ))
+    }
 
     #[test]
     fn captures_immutable_settings_and_keeps_original_user_authorization() {
@@ -188,12 +215,15 @@ mod tests {
             .reserve("original request".into(), options.clone())
             .unwrap();
         let mut tools = vec![json!({"name":"read","parameters":{"type":"object"}})];
-        let step = StepContext::capture(&session, &options, "stable", &tools).unwrap();
+        let capabilities = capabilities();
+        let step =
+            StepContext::capture(&session, &options, "stable", &tools, &capabilities).unwrap();
         options.model = "changed".into();
         tools.clear();
         assert_eq!(step.options().model, "model");
         assert_eq!(step.tools().len(), 1);
         assert_eq!(step.authorization().values.len(), 1);
+        assert_eq!(step.capabilities().context_window, Some(128_000));
         assert_eq!(
             step.authorization().values[0]["content"],
             "original request"
@@ -212,7 +242,9 @@ mod tests {
         session
             .reserve("original request".into(), options.clone())
             .unwrap();
-        let before = StepContext::capture(&session, &options, "stable", &[]).unwrap();
+        let capabilities = capabilities();
+        let before =
+            StepContext::capture(&session, &options, "stable", &[], &capabilities).unwrap();
         session
             .update(true, |data| {
                 data.turns.last_mut().unwrap().wire.push(json!({
@@ -222,7 +254,7 @@ mod tests {
                 }));
             })
             .unwrap();
-        let after = StepContext::capture(&session, &options, "stable", &[]).unwrap();
+        let after = StepContext::capture(&session, &options, "stable", &[], &capabilities).unwrap();
         assert_ne!(before.id(), after.id());
     }
 }

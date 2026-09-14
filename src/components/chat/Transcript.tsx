@@ -107,7 +107,7 @@ export function Transcript({ snapshot, chat, onLatestVisibility }: { snapshot: C
       });
     } else if (follow.current && !hasNewer) { view.scrollTop = view.scrollHeight; lastScroll.current = view.scrollTop; }
     reportLatest();
-  }, [snapshot.turns, hasNewer, restoreVersion, window.total, reportLatest]);
+  }, [snapshot.turns, chat.pendingTurn, hasNewer, restoreVersion, window.total, reportLatest]);
   useLayoutEffect(() => {
     const view = viewport();
     const content = root.current?.querySelector<HTMLElement>('[aria-label="Histórico de mensagens"]');
@@ -149,6 +149,10 @@ export function Transcript({ snapshot, chat, onLatestVisibility }: { snapshot: C
           <TurnBody turn={turn} conversationId={snapshot.conversationId} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
         </div>)}
+        {chat.pendingTurn && <div data-turn-id={chat.pendingTurn.id} data-turn-index={window.total} className="[overflow-anchor:none]">
+          <UserMessageBubble message={{ id: chat.pendingTurn.id, role: "user", content: chat.pendingTurn.user, parts: chat.pendingTurn.parts, timestamp: new Date(chat.pendingTurn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />
+          <TurnBody turn={chat.pendingTurn} conversationId={snapshot.conversationId} />
+        </div>}
         {hasNewer && <div className="flex justify-center py-3"><Button variant="ghost" size="sm" className="cursor-pointer text-xs text-muted-foreground" disabled={chat.historyLoading} onClick={() => { void navigate("newer"); }}>Mensagens seguintes</Button></div>}
       </div>
     </ScrollArea>

@@ -8,6 +8,7 @@ import { populatedLibrary } from "@/test/library-fixtures";
 import { useChat } from "@/hooks/use-chat";
 import { ChatArea } from "./ChatArea";
 import type { HistoryPage } from "@/core/chat";
+import { clearChatStore } from "@/core/chat-store";
 import { TurnBody, type LatestVisibility } from "./Transcript";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -20,7 +21,7 @@ function Harness({ id = "c1", onLatestVisibility }: { id?: string; onLatestVisib
   return <ChatArea onLatestVisibility={onLatestVisibility} library={library} chat={useChat(id)} modelGroups={[{ provider: "Codex", models: [{ value: "openai-codex-pessoal/model", label: "Modelo", reasoningLevels: ["medium"], defaultReasoningLevel: "medium" }] }]} />;
 }
 describe("lazy transcript navigation", () => {
-  beforeEach(() => { call.mockReset(); vi.mocked(listen).mockResolvedValue(() => {}); });
+  beforeEach(() => { clearChatStore(); call.mockReset(); vi.mocked(listen).mockResolvedValue(() => {}); });
   it("reports reading only at the latest messages and clears visibility when leaving", async () => {
     call.mockResolvedValue({ ...emptyChat(), ...page(80) });
     const onLatestVisibility = vi.fn<LatestVisibility>();
@@ -69,7 +70,7 @@ describe("lazy transcript navigation", () => {
   });
   it("loads only the initial page, jumps by excerpt, and keeps the composer draft", async () => {
     call.mockImplementation(async (command, args) => {
-      if (command === "get_chat") return { ...emptyChat(), ...page(80) };
+      if (command === "subscribe_chat") return { ...emptyChat(), ...page(80) };
       if (command === "get_chat_history") return page(args && "around" in args ? 0 : 80);
       return [];
     });
@@ -95,7 +96,7 @@ describe("lazy transcript navigation", () => {
     await user.click(await screen.findByRole("button", { name: "Mensagens anteriores" }));
     expect(screen.getByRole("status", { name: "Carregando trecho" })).toBeInTheDocument();
     rerender(<Harness id="c2" />);
-    await waitFor(() => expect(call).toHaveBeenCalledWith("get_chat", { conversationId: "c2" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("subscribe_chat", { conversationId: "c2" }));
     await act(async () => resolve(page(60)));
     expect(screen.queryByText("Resposta 60")).not.toBeInTheDocument();
     expect(await screen.findByText("Resposta 99")).toBeInTheDocument();

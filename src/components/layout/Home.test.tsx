@@ -11,6 +11,7 @@ import { coreFixture } from "@/test/core-fixtures";
 import { DEFAULT_DESKTOP_LAYOUT } from "@/core/desktop-layout";
 import { DesktopLayoutProvider } from "./DesktopLayoutProvider";
 import type { FilePreview } from "@/core/project-files";
+import { clearChatStore } from "@/core/chat-store";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -27,7 +28,7 @@ describe("Home shell", () => {
     const chat = { ...emptyChat(), turns: [savedTurn()] };
     const original = invokeMock.getMockImplementation()!;
     invokeMock.mockImplementation(async (command, args, options) => {
-      if (command === "get_chat" || command === "start_agent_turn") return chat;
+      if (command === "subscribe_chat" || command === "start_agent_turn") return chat;
       if (command === "get_agent_models") return { "publication/github": { account: "openai-codex-economico", model: "gpt-5.6-luna", reasoning: "medium" } };
       if (command === "get_agent_file_changes") return [{ path: "src/main.ts", additions: 1, deletions: 0, base: "conversation" }];
       return original(command, args, options);
@@ -55,7 +56,7 @@ describe("Home shell", () => {
       if (command === "get_library_snapshot") return library;
       if (command === "get_project_metrics") return projectMetrics();
       if (command === "get_core_status") return coreFixture();
-      if (command === "get_chat") return emptyChat((args as { conversationId: string }).conversationId);
+      if (command === "subscribe_chat") return emptyChat((args as { conversationId: string }).conversationId);
       if (command === "select_library_item") {
         const { target } = args as { target: { kind: string; id: string } };
         const workspaceId = target.kind === "workspace" ? target.id : target.id === "c2" || target.id === "p2" ? "w2" : "w1";
@@ -136,7 +137,7 @@ describe("Home shell", () => {
     invokeMock.mockImplementation(async (command) => {
       if (command === "get_library_snapshot") return snapshot;
       if (command === "add_project") return populatedLibrary();
-      if (command === "get_chat") return emptyChat();
+      if (command === "subscribe_chat") return emptyChat();
       return [];
     });
     render(<Home />);
@@ -150,6 +151,7 @@ describe("Home shell", () => {
     expect(screen.getByRole("complementary", { name: "Workspace" })).toBeVisible();
   });
   beforeEach(() => {
+    clearChatStore();
     vi.restoreAllMocks();
     const bounds = HTMLElement.prototype.getBoundingClientRect;
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
@@ -167,7 +169,7 @@ describe("Home shell", () => {
         return Promise.resolve({ [`${selection.flow}/${selection.role}`]: selection.choice });
       }
       if (command === "get_library_snapshot") return Promise.resolve(populatedLibrary());
-      if (command === "get_chat") return Promise.resolve(emptyChat());
+      if (command === "subscribe_chat") return Promise.resolve(emptyChat());
       if (command === "get_agent_activity") return Promise.resolve([]);
       if (command === "get_terminal_activity") return Promise.resolve([]);
       if (command === "get_project_beads" || command === "get_agent_file_changes") return Promise.resolve([]);
@@ -183,7 +185,7 @@ describe("Home shell", () => {
     const projectId = snapshot.selection.projectId;
     invokeMock.mockImplementation(async (command, args) => {
       if (command === "get_library_snapshot") return snapshot;
-      if (command === "get_chat") return emptyChat();
+      if (command === "subscribe_chat") return emptyChat();
       if (command === "get_workflow") return { conversationId: "c1", revision: 1, flow: "planned", agents: [], validation: null };
       if (command === "get_project_beads") return [bead({ issue_type: "epic", title: "Plano de integração" })];
       if (command === "get_project_metrics") return { ...projectMetrics(), projectId };

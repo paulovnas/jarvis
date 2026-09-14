@@ -1,5 +1,5 @@
 //! Explicit turn lifecycle, active waiters, and admission control.
-use super::{authoring, questions, Approval, ToolCall};
+use super::{authoring, questions, Approval, PendingApproval, ToolCall};
 use std::{
     ops::{Deref, DerefMut},
     sync::{
@@ -77,7 +77,12 @@ impl ActiveTurn {
     }
 
     pub(super) fn pending_approval_tool(&self) -> Option<&ToolCall> {
-        self.pending_approval().map(|approval| &approval.tool)
+        self.pending_approval()
+            .map(|approval| &approval.request.tool)
+    }
+
+    pub(super) fn pending_approval_request(&self) -> Option<&PendingApproval> {
+        self.pending_approval().map(|approval| &approval.request)
     }
 
     pub(super) fn wait_for_approval(&mut self, approval: Approval) {
@@ -287,8 +292,8 @@ mod tests {
         let (cancel, _) = watch::channel(false);
         let (reply, received) = tokio::sync::oneshot::channel();
         let mut active = ActiveTurn::new("turn".into(), cancel);
-        active.wait_for_approval(Approval {
-            tool: ToolCall {
+        active.wait_for_approval(Approval::new(
+            ToolCall {
                 id: "tool".into(),
                 name: "write".into(),
                 args: json!({"path":"a.txt"}),
@@ -296,8 +301,11 @@ mod tests {
                 output: String::new(),
                 duration_ms: 0,
             },
+            None,
+            None,
+            None,
             reply,
-        });
+        ));
         assert_eq!(active.phase, TurnPhase::WaitingForApproval);
         assert!(active.is_waiting());
         assert!(active.take_approval("other").is_none());

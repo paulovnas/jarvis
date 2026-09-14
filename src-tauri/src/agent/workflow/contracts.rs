@@ -1,6 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum Flow {
     #[default]

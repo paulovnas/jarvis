@@ -348,6 +348,7 @@ fn protocols_translate_tools_history_images_and_output_limits_without_codex_fiel
         assert_eq!(body["model"], "vendor/model-v4");
         assert!(body.get("prompt_cache_key").is_none());
         assert!(body.get("include").is_none());
+        assert!(body.get("parallel_tool_calls").is_none());
         match protocol {
             Protocol::OpenaiCompletions => {
                 assert_eq!(body["max_tokens"], 4000);
@@ -545,7 +546,17 @@ fn completions_replay_preserves_reasoning_and_fragmented_tool_arguments_only_in_
     .unwrap();
     assert!(!body.to_string().contains("Inspect"));
     assert!(!body.to_string().contains("_custom"));
-    let body = crate::agent::provider::request_body(&options(), "", replay, vec![], "session");
+    let codex_options = options();
+    let credential = CodexCredential::new("", "", 0, "", None, None);
+    let capabilities = ModelCapabilities::resolve_for_options(&credential, &codex_options);
+    let body = crate::agent::provider::request_body(
+        &codex_options,
+        &capabilities,
+        "",
+        replay,
+        vec![],
+        "session",
+    );
     assert!(!body.to_string().contains("_custom"));
 }
 #[test]

@@ -15,12 +15,18 @@ pub(super) struct FileRevision {
     pub revision: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(rename = "FileChange"))]
 #[serde(rename_all = "camelCase")]
 pub struct FileSummary {
     pub path: String,
+    #[cfg_attr(test, ts(type = "number | null"))]
     pub additions: Option<u64>,
+    #[cfg_attr(test, ts(type = "number | null"))]
     pub deletions: Option<u64>,
+    #[cfg_attr(test, ts(type = "\"conversation\" | \"git\" | \"unknown\""))]
     pub base: String,
+    #[cfg_attr(test, ts(type = "number"))]
     pub revision: u64,
 }
 

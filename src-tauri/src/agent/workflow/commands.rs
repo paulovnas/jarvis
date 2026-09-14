@@ -46,7 +46,7 @@ pub struct AgentCard {
     handoff: Option<HandoffSummary>,
     error: Option<String>,
     attempts: u8,
-    pending_approval: Option<ToolCall>,
+    pending_approval: Option<PendingApproval>,
     pending_question: Option<questions::PendingQuestion>,
     pending_authoring: Option<authoring::PendingProposal>,
     active_turn_id: Option<String>,
@@ -214,7 +214,7 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
             card.duration_ms = duration_ms;
             card.current_thought = current_thought;
             if let Some(active) = &data.active {
-                card.pending_approval = active.pending_approval_tool().cloned();
+                card.pending_approval = active.pending_approval_request().cloned();
                 card.pending_question = active
                     .pending_question()
                     .map(|pending| pending.request.clone());
@@ -426,10 +426,10 @@ pub fn approve_workflow_tool(
     agent_id: String,
     turn_id: String,
     tool_id: String,
-    approved: bool,
+    decision: ApprovalDecision,
 ) -> Result<(), AgentError> {
     let session = active_worker(&agent, &conversation_id, &agent_id)?;
-    answer_approval(&session, &turn_id, &tool_id, approved)
+    answer_approval_decision(&agent.grants, &session, &turn_id, &tool_id, decision)
 }
 #[tauri::command]
 pub fn answer_workflow_question(

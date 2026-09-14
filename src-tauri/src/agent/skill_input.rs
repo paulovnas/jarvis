@@ -1,6 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum MessagePart {
     Text { text: String },

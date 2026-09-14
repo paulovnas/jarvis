@@ -228,6 +228,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
             processes: processes::ProcessState::new(terminals.clone()),
             terminals,
             terminal_events: terminals::silent_events(),
+            grants: execution_grants::GrantStore::default(),
             state: AppState::default(),
             oauth: OpenAiCodexState::default(),
             mcp: crate::mcp::McpState::default(),

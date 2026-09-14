@@ -184,6 +184,7 @@ struct Environment {
     processes: processes::ProcessState,
     terminals: terminals::TerminalState,
     terminal_events: terminals::TerminalEvents,
+    grants: execution_grants::GrantStore,
     state: AppState,
     oauth: OpenAiCodexState,
     mcp: crate::mcp::McpState,
@@ -783,9 +784,19 @@ impl Execution {
         )
     }
 
+    #[cfg(test)]
     pub(super) async fn execute(
         &self,
         tool: &ToolCall,
+        signal: watch::Receiver<bool>,
+    ) -> Result<String, AgentError> {
+        self.execute_sandboxed(tool, None, signal).await
+    }
+
+    pub(super) async fn execute_sandboxed(
+        &self,
+        tool: &ToolCall,
+        sandbox: Option<&super::execution_sandbox::SandboxPlan>,
         signal: watch::Receiver<bool>,
     ) -> Result<String, AgentError> {
         if tool.name.starts_with("browser_") {
@@ -821,6 +832,7 @@ impl Execution {
                     &self.hub.root.root,
                     &owner_id,
                     &call,
+                    sandbox,
                     self.hub.env.terminal_events.clone(),
                 )
                 .await;
@@ -841,6 +853,7 @@ impl Execution {
                     &self.hub.root.root,
                     &owner_id,
                     &call,
+                    sandbox,
                     self.hub.env.terminal_events.clone(),
                 )
                 .await;
@@ -1057,6 +1070,7 @@ pub(super) async fn run(
             processes: app.state::<AgentState>().processes.clone(),
             terminals: app.state::<AgentState>().terminals.clone(),
             terminal_events: terminals::events(app.clone()),
+            grants: app.state::<AgentState>().grants.clone(),
             state: env.0,
             oauth: env.1,
             mcp: env.2,
@@ -1088,10 +1102,13 @@ pub(super) async fn run(
         };
         let result = super::run_turn(
             session,
-            &hub.env.state,
-            &hub.env.oauth,
-            &hub.env.mcp,
-            &hub.env.home,
+            super::TurnRuntime {
+                grants: &hub.env.grants,
+                state: &hub.env.state,
+                oauth: &hub.env.oauth,
+                mcp: &hub.env.mcp,
+                home: &hub.env.home,
+            },
             signal,
             Some(execution),
         )
@@ -1117,7 +1134,20 @@ pub(super) async fn run(
         session.update(true, |data| {
             data.turns.last_mut().unwrap().turn.options = options.clone();
         })?;
-        return super::run_turn(session, &env.0, &env.1, &env.2, &env.3, signal, None).await;
+        let grants = app.state::<AgentState>().grants.clone();
+        return super::run_turn(
+            session,
+            super::TurnRuntime {
+                grants: &grants,
+                state: &env.0,
+                oauth: &env.1,
+                mcp: &env.2,
+                home: &env.3,
+            },
+            signal,
+            None,
+        )
+        .await;
     }
     let flow = options.workflow.unwrap_or_default();
     let (custom_definition, custom_agent) = if flow == Flow::Custom {
@@ -1161,6 +1191,7 @@ pub(super) async fn run(
         processes: app.state::<AgentState>().processes.clone(),
         terminals: app.state::<AgentState>().terminals.clone(),
         terminal_events: terminals::events(app.clone()),
+        grants: app.state::<AgentState>().grants.clone(),
         state: env.0,
         oauth: env.1,
         mcp: env.2,
@@ -1201,10 +1232,13 @@ pub(super) async fn run(
     } else {
         super::run_turn(
             session,
-            &hub.env.state,
-            &hub.env.oauth,
-            &hub.env.mcp,
-            &hub.env.home,
+            super::TurnRuntime {
+                grants: &hub.env.grants,
+                state: &hub.env.state,
+                oauth: &hub.env.oauth,
+                mcp: &hub.env.mcp,
+                home: &hub.env.home,
+            },
             signal,
             Some(execution),
         )

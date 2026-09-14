@@ -15,13 +15,16 @@ mod tests;
 pub const MAX_BYTES: usize = 20 * 1024 * 1024;
 const MAX_TEXT: usize = 2 * 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Attachment {
     pub id: String,
     pub conversation_id: String,
     pub name: String,
     pub mime: String,
+    #[cfg_attr(test, ts(type = "number"))]
     pub size: u64,
+    #[cfg_attr(test, ts(type = "\"image\" | \"document\""))]
     pub kind: String,
 }
 #[derive(Deserialize)]

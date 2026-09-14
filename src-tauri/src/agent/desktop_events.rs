@@ -15,7 +15,7 @@ fn attention_key(snapshot: &ChatSnapshot) -> Option<String> {
         .as_ref()
         .map(|q| &q.tool_id)
         .or_else(|| snapshot.pending_authoring.as_ref().map(|p| &p.tool_id))
-        .or_else(|| snapshot.pending_approval.as_ref().map(|a| &a.id))?;
+        .or_else(|| snapshot.pending_approval.as_ref().map(|a| &a.tool.id))?;
     Some(format!("{}/{turn}/{tool}", snapshot.conversation_id))
 }
 

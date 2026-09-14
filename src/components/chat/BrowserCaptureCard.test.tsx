@@ -18,9 +18,9 @@ it("shows and enlarges an actual captured attachment from the tool result", asyn
 
 it("asks approval for a browser action using its actual target URL", async () => {
   const answer = vi.fn(async () => true);
-  render(<ToolApproval tool={{ id: "open-1", name: "browser_open", args: { url: "http://localhost:5173/" }, status: "pending", output: "", durationMs: 0 }} projectPath="C:\\projeto" onAnswer={answer} />);
+  render(<ToolApproval request={{ tool: { id: "open-1", name: "browser_open", args: { url: "http://localhost:5173/" }, status: "pending", output: "", durationMs: 0 }, policy: null }} projectPath="C:\\projeto" onAnswer={answer} />);
   expect(screen.getByText("Autorizar ação no navegador?")).toBeVisible();
   expect(screen.getByText("http://localhost:5173/")).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Recusar" }));
-  expect(answer).toHaveBeenCalledWith(false);
+  expect(answer).toHaveBeenCalledWith({ approved: false, grant: null });
 });

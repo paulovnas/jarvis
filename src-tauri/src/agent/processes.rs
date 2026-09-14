@@ -59,6 +59,14 @@ impl ProcessInfo {
 }
 #[derive(Default, Clone)]
 pub(crate) struct ProcessState(TerminalState);
+struct StartRequest<'a> {
+    conversation: &'a str,
+    root: &'a Path,
+    call_id: &'a str,
+    owner_id: &'a str,
+    args: &'a Value,
+    sandbox: Option<&'a super::execution_sandbox::SandboxPlan>,
+}
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ProcessKind {
@@ -158,13 +166,17 @@ impl ProcessState {
     }
     async fn start_owned(
         &self,
-        conversation: &str,
-        root: &Path,
-        call_id: &str,
-        owner_id: &str,
-        args: &Value,
+        request: StartRequest<'_>,
         events: TerminalEvents,
     ) -> Result<ProcessInfo, AgentError> {
+        let StartRequest {
+            conversation,
+            root,
+            call_id,
+            owner_id,
+            args,
+            sandbox,
+        } = request;
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Args {
@@ -197,6 +209,7 @@ impl ProcessState {
                 command: &args.command,
                 port,
             },
+            sandbox,
             events,
         )?;
         self.info(conversation, &terminal.id)
@@ -211,8 +224,18 @@ impl ProcessState {
         args: &Value,
         events: TerminalEvents,
     ) -> Result<ProcessInfo, AgentError> {
-        self.start_owned(conversation, root, call_id, call_id, args, events)
-            .await
+        self.start_owned(
+            StartRequest {
+                conversation,
+                root,
+                call_id,
+                owner_id: call_id,
+                args,
+                sandbox: None,
+            },
+            events,
+        )
+        .await
     }
 
     pub(super) async fn execute(
@@ -221,12 +244,23 @@ impl ProcessState {
         root: &Path,
         owner_id: &str,
         call: &ToolCall,
+        sandbox: Option<&super::execution_sandbox::SandboxPlan>,
         events: TerminalEvents,
     ) -> Result<String, AgentError> {
         let result = match call.name.as_str() {
             "process_start" => serde_json::to_value(
-                self.start_owned(conversation, root, &call.id, owner_id, &call.args, events)
-                    .await?,
+                self.start_owned(
+                    StartRequest {
+                        conversation,
+                        root,
+                        call_id: &call.id,
+                        owner_id,
+                        args: &call.args,
+                        sandbox,
+                    },
+                    events,
+                )
+                .await?,
             )
             .map_err(|_| AgentError::internal())?,
             "process_list" => json!(self.list(conversation)?),
@@ -346,11 +380,14 @@ mod tests {
         let service = agent
             .processes
             .start_owned(
-                "chat",
-                root.path(),
-                "input",
-                "run:builder",
-                &json!({"title":"Interactive service", "command":command}),
+                StartRequest {
+                    conversation: "chat",
+                    root: root.path(),
+                    call_id: "input",
+                    owner_id: "run:builder",
+                    args: &json!({"title":"Interactive service", "command":command}),
+                    sandbox: None,
+                },
                 super::super::terminals::silent_events(),
             )
             .await
