@@ -30,6 +30,7 @@ pub(crate) mod provider_links;
 pub(crate) mod publication;
 pub(crate) mod questions;
 pub(crate) mod queue;
+pub(crate) mod response_export;
 mod session_writer;
 pub(crate) mod shell;
 mod skill_input;

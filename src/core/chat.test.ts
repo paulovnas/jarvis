@@ -18,7 +18,7 @@ describe("Chat IPC contract", () => {
     expect(() => readChat({ ...emptyChat(), turns: [{ ...turn, steps: [{ ...turn.steps[0], tools: [{ name: "bash" }] }] }] }, "c1")).toThrow();
   });
   it("rejects snapshots from a newer incompatible protocol", () => {
-    expect(() => readChat({ ...emptyChat(), protocolVersion: 3 }, "c1")).toThrow();
-    expect(readChat({ ...emptyChat(), protocolVersion: 2 }, "c1").protocolVersion).toBe(2);
+    expect(() => readChat({ ...emptyChat(), protocolVersion: 4 }, "c1")).toThrow();
+    expect(readChat({ ...emptyChat(), protocolVersion: 3 }, "c1").protocolVersion).toBe(3);
   });
 });

@@ -151,6 +151,7 @@ describe("Inspector", () => {
     expect(repository).toHaveTextContent("3");
     expect(repository).toHaveTextContent("2");
     expect(repository).toHaveTextContent("origin/feature/pagamentos");
+    expect(invoke).toHaveBeenCalledWith("get_project_repositories", { projectId: "p1", includeDefault: true });
     expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "get_project_repositories")).toHaveLength(1);
 
     await user.click(screen.getByRole("tab", { name: "Inspector" }));

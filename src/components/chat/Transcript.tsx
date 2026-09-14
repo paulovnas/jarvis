@@ -24,6 +24,7 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId }: { turn:
       : "Falha na execução";
   const latestText = turn.steps[turn.steps.length - 1]?.text ?? "";
   const repeatedError = turn.error?.message.trim() === latestText.trim();
+  const exportFileName = `Resposta-Jarvis-${new Date(turn.createdAt).toISOString().slice(0, 16).replace("T", "-").replace(":", "-")}.md`;
   return <AssistantMessageTurn message={{
     id: turn.id, role: "assistant", content: running || repeatedError ? "" : latestText, timestamp,
     model: `${turn.options.account} / ${turn.options.model}`, streaming: running,
@@ -34,6 +35,7 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId }: { turn:
       steps: turn.steps.map((step, index) => ({ thinking: step.summary, tools: step.tools, commentary: running || index < turn.steps.length - 1 ? step.text : "" })),
     } : undefined,
     error: turn.error ? { title: errorTitle, message: turn.error.message } : undefined,
+    exportFileName,
   }} />;
 });
 

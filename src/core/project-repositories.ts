@@ -27,8 +27,8 @@ export const projectRepositorySchema = z.object({
 export type ProjectRepository = z.infer<typeof projectRepositorySchema>;
 export type ProjectRepositoryInput = Pick<ProjectRepository, "name" | "description" | "directory"> & { id?: string };
 
-export async function getProjectRepositories(projectId: string) {
-  return projectRepositorySchema.array().parse(await invoke("get_project_repositories", { projectId }));
+export async function getProjectRepositories(projectId: string, includeDefault = false) {
+  return projectRepositorySchema.array().parse(await invoke("get_project_repositories", { projectId, includeDefault }));
 }
 
 export async function saveProjectRepository(projectId: string, repository: ProjectRepositoryInput) {

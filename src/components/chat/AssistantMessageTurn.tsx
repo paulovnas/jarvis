@@ -1,6 +1,10 @@
 import { JarvisLogo } from "@/components/JarvisLogo";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { Copy, Download } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
 import { AssistantWorkCollapse } from "./AssistantWorkCollapse";
 import { QuestionHistory } from "./QuestionHistory";
@@ -9,6 +13,38 @@ import { BrowserCaptureCard } from "./BrowserCaptureCard";
 import type { ChatMessage } from "./types";
 
 const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
+
+function ResponseActions({ content, fileName }: { content: string; fileName: string }) {
+  const [saving, setSaving] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      toast.success("Resposta copiada");
+    } catch {
+      toast.error("Não foi possível copiar a resposta.");
+    }
+  };
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const saved = await invoke<boolean>("save_markdown_document", { content, suggestedFileName: fileName });
+      if (saved) toast.success("Resposta salva em Markdown");
+    } catch {
+      toast.error("Não foi possível salvar a resposta.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <div role="group" aria-label="Ações da resposta" className="flex justify-end gap-0.5 text-muted-foreground">
+    <Hint content="Copiar todo o Markdown da resposta">
+      <Button type="button" variant="ghost" size="sm" className="cursor-pointer" aria-label="Copiar resposta" onClick={() => { void copy(); }}><Copy data-icon="inline-start" />Copiar</Button>
+    </Hint>
+    <Hint content="Salvar a resposta como documento .md">
+      <Button type="button" variant="ghost" size="sm" className="cursor-pointer" aria-label="Salvar resposta em Markdown" disabled={saving} onClick={() => { void save(); }}><Download data-icon="inline-start" />{saving ? "Salvando…" : "Salvar .md"}</Button>
+    </Hint>
+  </div>;
+}
 
 export function AssistantMessageTurn({ message }: { message: ChatMessage }) {
   return (
@@ -31,6 +67,7 @@ export function AssistantMessageTurn({ message }: { message: ChatMessage }) {
       {message.content && <div className="assistant-prose min-w-0 py-2 text-sm leading-7 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-card [&_pre]:p-3 [&_pre]:text-xs [&_code]:font-mono [&_p]:my-3 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h1]:text-lg [&_h2]:text-base [&_h3]:font-semibold [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_table]:block [&_table]:overflow-x-auto [&_td]:border [&_td]:p-2 [&_th]:border [&_th]:p-2">
         <Suspense fallback={<p className="whitespace-pre-wrap">{message.content}</p>}><ChatMarkdown content={message.content} /></Suspense>
       </div>}
+      {message.content && !message.streaming && <ResponseActions content={message.content} fileName={message.exportFileName ?? "Resposta-Jarvis.md"} />}
       {message.streaming && !message.content && !message.work && <p role="status" className="text-sm text-muted-foreground">Aguardando o provedor…</p>}
     </article>
   );

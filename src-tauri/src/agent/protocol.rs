@@ -1,7 +1,7 @@
 //! Versioned IPC contracts shared by the Rust harness and the renderer.
 
 /// Increment this value when a serialized IPC contract changes incompatibly.
-pub(crate) const VERSION: u32 = 2;
+pub(crate) const VERSION: u32 = 3;
 
 /// Stable facade for the snapshot types serialized by Tauri commands.
 pub(super) mod chat {

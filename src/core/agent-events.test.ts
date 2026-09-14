@@ -81,6 +81,29 @@ describe("agent event protocol", () => {
     expect(result.snapshot?.revision).toBe(5);
   });
 
+  it("updates direct tasks before the active turn completes", () => {
+    const turn = { ...savedTurn(), status: "running" as const, tasks: [] };
+    const current = { ...emptyChat(), revision: 4, turns: [turn], activeTurnId: turn.id, history: { start: 0, total: 1 } };
+    const tasks = [
+      { id: "inspect", title: "Inspecionar o projeto", status: "completed" as const },
+      { id: "implement", title: "Aplicar a correção", status: "in_progress" as const },
+    ];
+    const batch = agentEventBatchSchema.parse({
+      protocolVersion: 3,
+      conversationId: "c1",
+      baseRevision: 4,
+      revision: 5,
+      events: [{ type: "tasksUpdated", tasks }],
+    });
+
+    const result = applyAgentEventBatch(current, batch);
+
+    expect(result.needsResync).toBe(false);
+    expect(result.snapshot?.activeTurnId).toBe(turn.id);
+    expect(result.snapshot?.turns[0].status).toBe("running");
+    expect(result.snapshot?.turns[0].tasks).toEqual(tasks);
+  });
+
   it("requests a snapshot when an event does not extend the loaded revision", () => {
     const current = { ...emptyChat(), revision: 4 };
     const batch = agentEventBatchSchema.parse({ conversationId: "c1", baseRevision: 2, revision: 5, events: [] });
@@ -96,7 +119,7 @@ describe("agent event protocol", () => {
 
   it("requests a compatible snapshot for a newer event protocol", () => {
     const current = { ...emptyChat(), revision: 4 };
-    const batch = agentEventBatchSchema.parse({ protocolVersion: 3, conversationId: "c1", baseRevision: 4, revision: 5, events: [] });
+    const batch = agentEventBatchSchema.parse({ protocolVersion: 4, conversationId: "c1", baseRevision: 4, revision: 5, events: [] });
     expect(applyAgentEventBatch(current, batch).needsResync).toBe(true);
   });
 

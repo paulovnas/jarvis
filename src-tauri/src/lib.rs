@@ -159,6 +159,7 @@ pub fn run() {
                 agent::attachments::import_chat_attachments,
                 agent::attachments::get_chat_attachment_image,
                 agent::attachments::save_chat_image,
+                agent::response_export::save_markdown_document,
                 agent::web_search::set_web_search_config,
                 library::get_library_snapshot,
                 library::workspaces::move_project_workspace,

@@ -1,6 +1,7 @@
 import { useEffect, useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Node, EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, type Editor, type JSONContent, type NodeViewProps } from "@tiptap/react";
+import { Extension, Node, EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, type Editor, type JSONContent, type NodeViewProps } from "@tiptap/react";
+import { Plugin } from "@tiptap/pm/state";
 import Document from "@tiptap/extension-document";
 import Paragraph from "@tiptap/extension-paragraph";
 import Text from "@tiptap/extension-text";
@@ -34,12 +35,37 @@ const SkillToken = Node.create({
   addNodeView: () => ReactNodeViewRenderer(SkillNode),
 });
 
-// AppKit reserves U+F700–U+F747 for function and navigation keys. WKWebView can
-// occasionally surface those key codes as text input, which renders as tofu.
-const MACOS_FUNCTION_KEY_TEXT = /[\uF700-\uF747\uFFFC]/gu;
-function sanitizeComposerText(text: string): string {
-  return text.replace(MACOS_FUNCTION_KEY_TEXT, "");
+// AppKit navigation keys can leak through WKWebView as private-use text. Some
+// paths replace that invalid input with U+FFFD before ProseMirror sees it.
+function isUnsafeComposerCharacter(character: string): boolean {
+  const code = character.codePointAt(0);
+  if (code === undefined) return false;
+  const control = code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || (code >= 0x7f && code <= 0x9f);
+  const invalidScalar = code >= 0xd800 && code <= 0xdfff;
+  const privateUse = (code >= 0xe000 && code <= 0xf8ff) || (code >= 0xf0000 && code <= 0xffffd) || (code >= 0x100000 && code <= 0x10fffd);
+  const replacement = code === 0xfffc || code === 0xfffd;
+  const noncharacter = (code >= 0xfdd0 && code <= 0xfdef) || (code & 0xffff) >= 0xfffe;
+  return control || invalidScalar || privateUse || replacement || noncharacter;
 }
+
+function sanitizeComposerText(text: string): string {
+  return Array.from(text).filter(character => !isUnsafeComposerCharacter(character)).join("");
+}
+
+const CleanComposerText = Extension.create({
+  name: "cleanComposerText",
+  addProseMirrorPlugins: () => [new Plugin({
+    filterTransaction: transaction => {
+      if (!transaction.docChanged) return true;
+      let safe = true;
+      transaction.doc.descendants(node => {
+        if (node.isText && node.text && sanitizeComposerText(node.text) !== node.text) safe = false;
+        return safe;
+      });
+      return safe;
+    },
+  })],
+});
 
 function inputDocument(draft: ChatDraft): JSONContent {
   const parts = draft.parts?.length ? draft.parts : [{ type: "text" as const, text: draft.content }];
@@ -140,7 +166,7 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
     if (!next) { setCatalog(null); setDismissed(null); setSelected(""); }
   };
   const editor = useEditor({
-    extensions: [Document, Paragraph, Text, HardBreak, UndoRedo, SkillToken],
+    extensions: [Document, Paragraph, Text, HardBreak, UndoRedo, SkillToken, CleanComposerText],
     content: initialDocument,
     editable: !disabled,
     editorProps,

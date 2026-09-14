@@ -6,6 +6,7 @@ import {
   agentTurnSchema,
   compactionEventSchema,
   contextInfoSchema,
+  directTaskSchema,
   fileChangeSchema,
   historyWindowSchema,
   pendingApprovalSchema,
@@ -43,6 +44,7 @@ const agentEventSchema = z.discriminatedUnion("type", [
     durationMs: z.number().nonnegative(), retry: retryStatusSchema.nullable(), usage: usageSchema.nullable(),
   }),
   z.object({ type: z.literal("itemCompleted"), stepIndex: z.number().int().nonnegative(), tool: agentToolSchema }),
+  z.object({ type: z.literal("tasksUpdated"), tasks: z.array(directTaskSchema) }),
   z.object({ type: z.literal("approvalRequested"), approval: pendingApprovalSchema.nullable() }),
   z.object({ type: z.literal("stateChanged"), state: snapshotStateSchema }),
   z.object({ type: z.literal("turnCompleted"), turn: agentTurnSchema }),
@@ -116,6 +118,8 @@ function applyEvent(snapshot: ChatSnapshot, event: z.infer<typeof agentEventSche
         ...step,
         tools: step.tools.map(tool => tool.id === event.tool.id ? event.tool : tool),
       })));
+    case "tasksUpdated":
+      return replaceLatestTurn(snapshot, turn => ({ ...turn, tasks: event.tasks }));
     case "approvalRequested":
       return { ...snapshot, pendingApproval: event.approval };
     case "stateChanged": {

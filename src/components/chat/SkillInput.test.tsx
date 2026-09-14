@@ -117,7 +117,12 @@ describe("Explicit skill input", () => {
     const privateKeyInput = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "\uF703" });
     expect(field.dispatchEvent(privateKeyInput)).toBe(false);
     expect(privateKeyInput.defaultPrevented).toBe(true);
-    expect(field).toHaveTextContent("Texto");
+    expect(field.textContent).toBe("Texto");
+    const paragraph = field.querySelector("p");
+    expect(paragraph).not.toBeNull();
+    paragraph?.append(document.createTextNode("\uF703\uFFFC\uFFFD"));
+    fireEvent.input(field, { inputType: "insertText", data: "\uF703\uFFFC\uFFFD" });
+    await waitFor(() => expect(field.textContent).toBe("Texto"));
     await user.paste(" válido\uF703\uFFFC");
     await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
     expect(send).toHaveBeenCalledWith("Texto válido", expect.any(Object));

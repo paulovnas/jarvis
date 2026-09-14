@@ -34,6 +34,7 @@ it("loads project-scoped publication rules and only reveals the PR editor when e
   render(<ProjectOptions projectId="p1" projectPath="/projects/jarvis" />);
   expect(screen.getByRole("status", { name: "Carregando opções do projeto" })).toBeVisible();
   expect(await screen.findByRole("textbox", { name: "Instrução de publicação" })).toHaveValue(settings.publishPrompt);
+  expect(call).toHaveBeenCalledWith("get_project_repositories", { projectId: "p1", includeDefault: false });
   expect(screen.queryByRole("textbox", { name: "Instrução e template da PR" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("combobox", { name: "Comportamento de pull request" }));
   await user.click(await screen.findByRole("option", { name: "Perguntar sobre PR" }));

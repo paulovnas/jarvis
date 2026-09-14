@@ -8,7 +8,7 @@ import { Hint } from "@/components/ui/hint";
 import { useProjectRepositories } from "@/hooks/use-project-repositories";
 
 export function GithubRepositoriesPanel({ projectId, active = true }: { projectId: string; active?: boolean }) {
-  const state = useProjectRepositories(projectId, active);
+  const state = useProjectRepositories(projectId, active, true);
   return <section aria-label="Estado dos repositórios GitHub" className="flex h-full min-h-0 flex-col">
     <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3"><FolderGit2 className="size-3.5 text-onedark-cyan" /><h2 className="text-xs font-medium">Repositórios</h2><Badge variant="secondary" className="font-mono text-[9px]">{state.repositories.length}</Badge><Hint content="Atualizar estado local do Git"><Button type="button" variant="ghost" size="icon-sm" aria-label="Atualizar repositórios" className="ml-auto cursor-pointer text-muted-foreground" disabled={state.loading} onClick={() => { void state.refresh(); }}><RefreshCw className={`size-3.5 ${state.loading ? "animate-spin" : ""}`} /></Button></Hint></header>
     <ScrollArea className="min-h-0 flex-1"><div className="space-y-2 p-2.5">

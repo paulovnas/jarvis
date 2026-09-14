@@ -2,7 +2,7 @@
 use super::{
     authoring, compaction, diffs, history,
     protocol::chat::{ChatSnapshot, Step, ToolCall, Turn, Usage},
-    questions, queue,
+    questions, queue, tasks,
 };
 use serde::Serialize;
 use std::{collections::VecDeque, sync::Mutex};
@@ -80,6 +80,9 @@ pub(super) enum Event {
     ItemCompleted {
         step_index: usize,
         tool: ToolCall,
+    },
+    TasksUpdated {
+        tasks: Vec<tasks::Task>,
     },
     ApprovalRequested {
         approval: Option<super::PendingApproval>,
@@ -289,6 +292,11 @@ fn differences(previous: Option<&ChatSnapshot>, current: &ChatSnapshot) -> Vec<E
             });
         } else if let Some(before) = before_turn {
             append_step_events(&mut events, before, after);
+            if before.tasks != after.tasks {
+                events.push(Event::TasksUpdated {
+                    tasks: after.tasks.clone(),
+                });
+            }
             if before.status != after.status || !same(&before.error, &after.error) {
                 events.push(Event::TurnCompleted {
                     turn: after.clone(),
@@ -439,6 +447,30 @@ mod tests {
             matches!(events.first(), Some(Event::ItemDelta { text_append, .. }) if text_append == "answer")
         );
         assert!(!serde_json::to_string(&events).unwrap().contains("\"turn\""));
+    }
+
+    #[test]
+    fn task_updates_are_emitted_while_the_turn_is_active() {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve("hello".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        let before = session.snapshot().unwrap();
+        let tasks = vec![tasks::Task {
+            id: "inspect".into(),
+            title: "Inspecionar o projeto".into(),
+            status: tasks::Status::InProgress,
+        }];
+
+        session.replace_tasks(tasks.clone()).unwrap();
+
+        let after = session.snapshot().unwrap();
+        assert_eq!(after.active_turn_id, before.active_turn_id);
+        assert!(matches!(
+            differences(Some(&before), &after).as_slice(),
+            [Event::TasksUpdated { tasks: updated }] if updated == &tasks
+        ));
     }
 
     #[test]

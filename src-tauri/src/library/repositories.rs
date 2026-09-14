@@ -1,6 +1,6 @@
 //! Project-scoped Git repository topology and local status snapshots.
 
-use super::{new_id, project, run, LibraryError};
+use super::{new_id, project, run, LibraryError, Project};
 use crate::persistence::AppState;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
@@ -94,6 +94,38 @@ fn read_config(connection: &Connection, id: &str) -> Result<RepositoryConfig, Li
         )
         .optional()?
         .ok_or_else(|| invalid("O repositório configurado não existe mais."))
+}
+
+fn default_root_config(project: &Project) -> Option<RepositoryConfig> {
+    let root = std::fs::canonicalize(&project.path).ok()?;
+    let detected = git_output(&root, &["rev-parse", "--show-toplevel"])
+        .ok()
+        .flatten()?;
+    let detected = std::fs::canonicalize(detected.trim()).ok()?;
+    if detected != root {
+        return None;
+    }
+    Some(RepositoryConfig {
+        id: format!("default-{}", project.id),
+        project_id: project.id.clone(),
+        path: ".".into(),
+        name: project.name.clone(),
+        description: "Raiz Git detectada automaticamente.".into(),
+        created_at: project.created_at,
+        updated_at: project.created_at,
+    })
+}
+
+fn configs_with_default(
+    project: &Project,
+    configs: Vec<RepositoryConfig>,
+    include_default: bool,
+) -> Vec<RepositoryConfig> {
+    if include_default && configs.is_empty() {
+        default_root_config(project).into_iter().collect()
+    } else {
+        configs
+    }
 }
 
 fn validate_name(value: &str) -> Result<String, LibraryError> {
@@ -429,16 +461,17 @@ pub async fn get_project_repositories(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     project_id: String,
+    include_default: Option<bool>,
 ) -> Result<Vec<RepositorySnapshot>, LibraryError> {
-    let (root, configs) = run(app, state.inner().clone(), move |connection, _| {
+    let (project, configs) = run(app, state.inner().clone(), move |connection, _| {
         let project = project(connection, &project_id)?;
-        Ok((
-            PathBuf::from(project.path),
-            read_configs(connection, &project_id)?,
-        ))
+        let configs = read_configs(connection, &project_id)?;
+        Ok((project, configs))
     })
     .await?;
     tauri::async_runtime::spawn_blocking(move || {
+        let root = PathBuf::from(&project.path);
+        let configs = configs_with_default(&project, configs, include_default.unwrap_or(false));
         configs
             .into_iter()
             .map(|config| snapshot(&root, config))
@@ -608,5 +641,34 @@ mod tests {
         }]);
         assert!(prompt.contains("path=\"backend\""));
         assert!(prompt.contains("Use &lt;API&gt;"));
+    }
+
+    #[test]
+    fn exposes_the_project_root_only_as_an_opt_in_default_repository() {
+        let fixture = tempfile::tempdir().unwrap();
+        git(fixture.path(), &["init", "-q"]);
+        let db = database(fixture.path());
+        let project = project(&db, &"a".repeat(32)).unwrap();
+
+        assert!(configs_with_default(&project, Vec::new(), false).is_empty());
+        let configs = configs_with_default(&project, Vec::new(), true);
+        assert_eq!(configs.len(), 1);
+        let status = snapshot(fixture.path(), configs.into_iter().next().unwrap());
+        assert!(status.available);
+        assert_eq!(status.path, ".");
+        assert_eq!(status.name, "Project");
+        assert_eq!(status.description, "Raiz Git detectada automaticamente.");
+    }
+
+    #[test]
+    fn does_not_treat_a_directory_inside_another_repository_as_the_default_root() {
+        let fixture = tempfile::tempdir().unwrap();
+        git(fixture.path(), &["init", "-q"]);
+        let project_root = fixture.path().join("project");
+        std::fs::create_dir(&project_root).unwrap();
+        let db = database(&project_root);
+        let project = project(&db, &"a".repeat(32)).unwrap();
+
+        assert!(configs_with_default(&project, Vec::new(), true).is_empty());
     }
 }

@@ -48,6 +48,7 @@ export interface ChatMessage {
   error?: ChatErrorData;
   streaming?: boolean;
   model?: string;
+  exportFileName?: string;
 }
 
 export type CollaborationMode = "build" | "plan";
