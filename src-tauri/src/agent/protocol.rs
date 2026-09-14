@@ -169,6 +169,18 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/generated")
     }
 
+    fn normalize_line_endings(content: &str) -> String {
+        content.replace("\r\n", "\n")
+    }
+
+    #[test]
+    fn generated_contract_comparison_accepts_windows_line_endings() {
+        assert_eq!(
+            normalize_line_endings("first\r\nsecond\r\n"),
+            "first\nsecond\n"
+        );
+    }
+
     #[test]
     #[ignore = "writes versioned renderer contracts"]
     fn export_typescript_contracts() {
@@ -185,14 +197,16 @@ mod tests {
         let actual_typescript =
             fs::read_to_string(directory.join("ipc.ts")).expect("read generated TypeScript");
         assert_eq!(
-            actual_typescript, expected_typescript,
+            normalize_line_endings(&actual_typescript),
+            normalize_line_endings(&expected_typescript),
             "Rust IPC contracts changed; run `bun run ipc:generate`"
         );
         let expected_metadata = metadata();
         let actual_metadata =
             fs::read_to_string(directory.join("ipc.meta.json")).expect("read generated metadata");
         assert_eq!(
-            actual_metadata, expected_metadata,
+            normalize_line_endings(&actual_metadata),
+            normalize_line_endings(&expected_metadata),
             "IPC compatibility metadata changed; run `bun run ipc:generate`"
         );
     }
