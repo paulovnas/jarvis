@@ -617,13 +617,21 @@ mod tests {
 
     #[test]
     fn prefix_matches_argv_boundaries_only_in_the_same_repository() {
+        let directory = tempfile::tempdir().unwrap();
+        let backend = directory.path().join("backend");
+        let frontend = directory.path().join("frontend");
+        let backend_context = || GrantContext {
+            conversation_id: "conversation",
+            project_id: "project",
+            working_directory: &backend,
+        };
         let store = GrantStore::default();
         let requested = outcome("git push origin main");
         store
             .create(CreateGrant {
                 scope: GrantScope::Repository {
                     project_id: "project".into(),
-                    root: PathBuf::from("/project/backend"),
+                    root: backend.clone(),
                 },
                 match_kind: GrantMatch::CommandPrefix,
                 duration: GrantDuration::Session,
@@ -635,12 +643,13 @@ mod tests {
             .unwrap();
         let another_branch = outcome("git push origin release");
         assert!(store
-            .authorize(&another_branch, "bash", &Value::Null, context(), 11)
+            .authorize(&another_branch, "bash", &Value::Null, backend_context(), 11,)
             .unwrap()
             .is_some());
         let wrong_repo = GrantContext {
-            working_directory: Path::new("/project/frontend"),
-            ..context()
+            conversation_id: "conversation",
+            project_id: "project",
+            working_directory: &frontend,
         };
         assert!(store
             .authorize(&another_branch, "bash", &Value::Null, wrong_repo, 12)
@@ -648,7 +657,7 @@ mod tests {
             .is_none());
         let lookalike = outcome("git push-force origin main");
         assert!(store
-            .authorize(&lookalike, "bash", &Value::Null, context(), 13)
+            .authorize(&lookalike, "bash", &Value::Null, backend_context(), 13)
             .unwrap()
             .is_none());
     }
