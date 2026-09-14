@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { historyPageSchema, queuedMessageSchema, readChat, type AgentTurn, type ApprovalDecision, type ChatDraft, type MessagePart, type ChatSnapshot, type TurnOptions } from "@/core/chat";
-import { historyWindow, mergeChat, mergeHistory, type HistoryDirection } from "@/core/chat-history";
+import { hasValidHistoryWindow, historyWindow, mergeChat, mergeHistory, type HistoryDirection } from "@/core/chat-history";
 import { libraryError } from "@/core/library";
 import type { PendingQuestion, QuestionResponse } from "@/core/questions";
 import { onDesktopResume } from "@/core/desktop-resume";
@@ -106,7 +106,9 @@ export function useChat(conversationId: string | null) {
       if (refreshing) { refreshAgain = true; return; }
       refreshing = true;
       try {
-        const cursor = getChatSnapshot(conversationId)?.revision;
+        const cached = getChatSnapshot(conversationId);
+        // Replaying an already-current cursor cannot repair an invalid page.
+        const cursor = cached && hasValidHistoryWindow(cached) ? cached.revision : undefined;
         const value = await invoke<unknown>("subscribe_chat", { conversationId, ...(cursor === undefined ? {} : { cursor }) });
         if (active) acceptSubscription(value);
       } catch (cause) {

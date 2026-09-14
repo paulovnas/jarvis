@@ -6,7 +6,7 @@ import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import type { ChatSnapshot } from "@/core/chat";
 import { useChat } from "./use-chat";
 import { toast } from "sonner";
-import { clearChatStore } from "@/core/chat-store";
+import { clearChatStore, updateChatSnapshot } from "@/core/chat-store";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
@@ -144,6 +144,23 @@ it("catches up from the cached cursor without replacing the transcript", async (
   await waitFor(() => expect(result.current.snapshot?.revision).toBe(11));
   expect(result.current.snapshot?.turns[0].steps[0].text).toBe("Vou conferir a configuração agora.");
   expect(call).toHaveBeenLastCalledWith("subscribe_chat", { conversationId: "c1", cursor: 10 });
+});
+
+it("recovers an inconsistent cached page from a full subscription on reopen", async () => {
+  const correct = { ...completed(), turns: [savedTurn(), { ...savedTurn(), id: "turn2", user: "Só testando de novo" }], history: { start: 7, total: 9 } };
+  updateChatSnapshot("c1", () => ({ ...correct, history: { start: 8, total: 9 } }));
+  call.mockImplementation(async (_command, args) => ({
+    protocolVersion: 2,
+    reset: false,
+    snapshot: args && "cursor" in args ? null : correct,
+    batches: [],
+  }));
+
+  const { result } = renderHook(() => useChat("c1"));
+
+  await waitFor(() => expect(result.current.snapshot?.history).toEqual(correct.history));
+  expect(result.current.snapshot?.turns.map(turn => turn.user)).toEqual(["Leia o README", "Só testando de novo"]);
+  expect(call).toHaveBeenCalledWith("subscribe_chat", { conversationId: "c1" });
 });
 
 it("recovers a completion that happened while the chat UI was unmounted", async () => {

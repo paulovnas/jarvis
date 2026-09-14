@@ -17,6 +17,7 @@ import {
   type ChatSnapshot,
 } from "./chat";
 import { pendingQuestionSchema } from "./questions";
+import { hasValidHistoryWindow, historyWindow, mergeChat } from "./chat-history";
 import {
   IPC_PROTOCOL_VERSION,
   type AgentEventBatch as GeneratedAgentEventBatch,
@@ -80,10 +81,8 @@ function applyEvent(snapshot: ChatSnapshot, event: z.infer<typeof agentEventSche
   switch (event.type) {
     case "turnStarted": {
       const current = snapshot.turns[snapshot.turns.length - 1];
-      const turns = current?.id === event.turn.id
-        ? [...snapshot.turns.slice(0, -1), event.turn]
-        : [...snapshot.turns, event.turn].slice(-60);
-      return { ...snapshot, turns, activeTurnId: event.turn.id, latestOptions: event.turn.options };
+      const total = historyWindow(snapshot).total + (current?.id === event.turn.id ? 0 : 1);
+      return { ...snapshot, turns: [event.turn], history: { start: total - 1, total }, activeTurnId: event.turn.id, latestOptions: event.turn.options };
     }
     case "turnCompleted":
       return replaceLatestTurn(snapshot, turn => turn.id === event.turn.id ? event.turn : turn);
@@ -119,8 +118,10 @@ function applyEvent(snapshot: ChatSnapshot, event: z.infer<typeof agentEventSche
       })));
     case "approvalRequested":
       return { ...snapshot, pendingApproval: event.approval };
-    case "stateChanged":
-      return { ...snapshot, ...event.state };
+    case "stateChanged": {
+      const total = event.state.history.total;
+      return { ...snapshot, ...event.state, history: { start: Math.max(0, total - snapshot.turns.length), total } };
+    }
   }
 }
 
@@ -134,8 +135,19 @@ export function applyAgentEventBatch(
   if (batch.protocolVersion > IPC_PROTOCOL_VERSION) {
     return { snapshot: current, needsResync: true };
   }
+  if (!hasValidHistoryWindow(current)) return { snapshot: current, needsResync: true };
   if (batch.revision <= current.revision) return { snapshot: current, needsResync: false };
   if (batch.baseRevision !== current.revision) return { snapshot: current, needsResync: true };
-  const snapshot = batch.events.reduce(applyEvent, current);
-  return { snapshot: { ...snapshot, revision: batch.revision }, needsResync: false };
+  // Native events describe only the latest turn. Its index is not the start
+  // of the renderer's paginated history, and older visible turns are not live.
+  const window = historyWindow(current);
+  const latest = window.start + current.turns.length === window.total ? current.turns[current.turns.length - 1] : undefined;
+  const tail: ChatSnapshot = {
+    ...current,
+    turns: latest ? [latest] : [],
+    history: { start: window.total - (latest ? 1 : 0), total: window.total },
+    navigation: undefined,
+  };
+  const snapshot = batch.events.reduce(applyEvent, tail);
+  return { snapshot: mergeChat(current, { ...snapshot, revision: batch.revision }), needsResync: false };
 }

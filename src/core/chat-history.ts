@@ -11,6 +11,12 @@ function turnSize(turn: AgentTurn) {
 export type HistoryDirection = "older" | "newer" | "latest" | number;
 export function historyWindow(snapshot: ChatSnapshot) { return snapshot.history ?? { start: 0, total: snapshot.turns.length }; }
 
+export function hasValidHistoryWindow(snapshot: ChatSnapshot): boolean {
+  const { start, total } = historyWindow(snapshot);
+  return start + snapshot.turns.length <= total
+    && new Set(snapshot.turns.map(turn => turn.id)).size === snapshot.turns.length;
+}
+
 function bound(turns: AgentTurn[], start: number, keep: "start" | "end") {
   let result = turns.slice();
   if (result.length > MAX_TURNS) {
@@ -44,7 +50,7 @@ function navigation(current: HistoryExcerpt[] | undefined, next: ChatSnapshot) {
 }
 
 export function mergeChat(current: ChatSnapshot | null, next: ChatSnapshot): ChatSnapshot {
-  if (!current || current.conversationId !== next.conversationId) return { ...next, latestOptions: next.turns[next.turns.length - 1]?.options };
+  if (!current || current.conversationId !== next.conversationId || !hasValidHistoryWindow(current)) return { ...next, latestOptions: next.turns[next.turns.length - 1]?.options };
   if (!next.history) return current.revision > next.revision ? current : next;
   const newer = next.revision >= current.revision;
   if (!newer && !next.navigation) return current;

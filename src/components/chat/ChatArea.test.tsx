@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyLibrary, populatedLibrary } from "@/test/library-fixtures";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import type { LibrarySnapshot } from "@/core/library";
-import type { ChatSnapshot } from "@/core/chat";
+import { readChat, type ChatSnapshot } from "@/core/chat";
 import { clearChatStore } from "@/core/chat-store";
 import { useChat } from "@/hooks/use-chat";
 import { ChatArea } from "./ChatArea";
@@ -68,6 +68,60 @@ describe("Persistent live conversation", () => {
     expect(await screen.findByText("Mensagem imediata")).toBeVisible();
     await act(async () => { finish(running); });
     await waitFor(() => expect(screen.getAllByText("Mensagem imediata")).toHaveLength(1));
+  });
+
+  it("keeps consecutive messages and their own responses visible in an existing chat after reopening", async () => {
+    const user = userEvent.setup();
+    const messages = ["Oi", "Testando", "oi"];
+    let persisted: ChatSnapshot = {
+      ...emptyChat(),
+      history: { start: 5, total: 8 },
+      turns: messages.map((message, index) => ({ ...savedTurn(), id: `saved-${index}`, user: message, steps: [{ ...savedTurn().steps[0], text: `Resposta a ${message}`, summary: "", tools: [] }] })),
+    };
+    let accept!: (snapshot: ChatSnapshot) => void;
+    call.mockImplementation((command, args) => {
+      if (command === "start_agent_turn") return new Promise<ChatSnapshot>(resolve => { accept = resolve; });
+      return Promise.resolve({ protocolVersion: 2, reset: false, snapshot: args && "cursor" in args ? null : persisted, batches: [] });
+    });
+    const emitNative = async (snapshot: ChatSnapshot, events: unknown[]) => {
+      const payload = {
+        conversationId: "c1", baseRevision: snapshot.revision - 1, revision: snapshot.revision,
+        events: [...events, { type: "stateChanged", state: { ...readChat(snapshot, "c1"), pendingAuthoring: null } }],
+      };
+      await act(async () => { listeners.get("agent:event")?.forEach(handler => handler({ event: "agent:event", id: 1, payload })); });
+    };
+    const checkTranscript = () => {
+      const transcript = screen.getByLabelText("Histórico de mensagens");
+      expect(transcript.querySelectorAll("[data-turn-id]")).toHaveLength(persisted.turns.length);
+      for (const turn of persisted.turns) {
+        const row = transcript.querySelector<HTMLElement>(`[data-turn-id="${turn.id}"]`);
+        expect(row).not.toBeNull();
+        expect(within(row!).getByTestId(`user-message-${turn.id}`)).toHaveTextContent(turn.user);
+        expect(within(row!).getByText(`Resposta a ${turn.user}`)).toBeVisible();
+      }
+    };
+    const first = render(<TestChat />);
+    await screen.findByRole("textbox");
+    for (const message of ["Só testando de novo", "aaaaa"]) {
+      await user.type(screen.getByRole("textbox"), `${message}{Enter}`);
+      const turn = { ...savedTurn(), id: `submitted-${persisted.turns.length}`, createdAt: Date.now(), user: message, status: "running" as const, steps: [] };
+      const total = 5 + persisted.turns.length + 1;
+      const running = { ...emptyChat(), revision: persisted.revision + 1, turns: [turn], activeTurnId: turn.id, history: { start: total - 1, total } };
+      await emitNative(running, [{ type: "turnStarted", turn }]);
+      await act(async () => { accept(running); });
+      const step = { ...savedTurn().steps[0], text: `Resposta a ${message}`, summary: "", tools: [] };
+      await emitNative({ ...running, revision: running.revision + 1 }, [{ type: "itemStarted", item: { type: "step", stepIndex: 0, step } }]);
+      const completed = { ...turn, status: "completed" as const, steps: [step] };
+      const finished = { ...running, revision: running.revision + 2, turns: [completed], activeTurnId: null };
+      await emitNative(finished, [{ type: "turnCompleted", turn: completed }]);
+      persisted = { ...finished, turns: [...persisted.turns, completed], history: { start: 5, total } };
+      checkTranscript();
+    }
+
+    first.unmount();
+    render(<TestChat />);
+    await screen.findByRole("textbox");
+    checkTranscript();
   });
 
   it("submits during execution and removes queued messages through the native commands", async () => {
