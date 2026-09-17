@@ -12,7 +12,23 @@ import { UserMessageBubble } from "./UserMessageBubble";
 import { CompactionMarker } from "./CompactionMarker";
 import { executionDuration, useRunningClock } from "@/hooks/use-running-clock";
 
-export const TurnBody = memo(function TurnBody({ turn, conversationId }: { turn: AgentTurn; conversationId?: string }) {
+function retryableTurn(turn: AgentTurn): boolean {
+  if (!turn.error || (turn.status !== "error" && turn.status !== "interrupted")) return false;
+  const flow = turn.options.workflow;
+  return flow === undefined || flow === null || flow === "standard" || flow === "designer"
+    || flow === "planned" || flow === "complete" || flow === "publication"
+    || (flow === "custom" && Boolean(turn.options.customAgentId));
+}
+
+function retryUnavailableReason(turn: AgentTurn): string | undefined {
+  if (!turn.error || (turn.status !== "error" && turn.status !== "interrupted")) return undefined;
+  if (turn.options.workflow === "custom" && !turn.options.customAgentId) {
+    return "Este fluxo personalizado não possui um checkpoint seguro para retomar suas etapas sem repetir ações. Envie uma nova mensagem para continuar.";
+  }
+  return undefined;
+}
+
+export const TurnBody = memo(function TurnBody({ turn, conversationId, onRetry, retrying = false }: { turn: AgentTurn; conversationId?: string; onRetry?: (turnId: string) => void; retrying?: boolean }) {
   const running = turn.status === "running";
   const now = useRunningClock(running);
   const durationMs = executionDuration(turn.createdAt, turn.durationMs, running, now);
@@ -25,7 +41,7 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId }: { turn:
   const latestText = turn.steps[turn.steps.length - 1]?.text ?? "";
   const repeatedError = turn.error?.message.trim() === latestText.trim();
   const exportFileName = `Resposta-Jarvis-${new Date(turn.createdAt).toISOString().slice(0, 16).replace("T", "-").replace(":", "-")}.md`;
-  return <AssistantMessageTurn message={{
+  return <AssistantMessageTurn onRetry={onRetry && retryableTurn(turn) ? () => onRetry(turn.id) : undefined} retrying={retrying} retryUnavailableReason={retryUnavailableReason(turn)} message={{
     id: turn.id, role: "assistant", content: running || repeatedError ? "" : latestText, timestamp,
     model: `${turn.options.account} / ${turn.options.model}`, streaming: running,
     work: running || turn.steps.some((step, index) => step.summary || step.tools.length || (step.text && index < turn.steps.length - 1)) ? {
@@ -148,7 +164,7 @@ export function Transcript({ snapshot, chat, onLatestVisibility }: { snapshot: C
         {snapshot.turns.map((turn, index) => <div key={turn.id} data-turn-id={turn.id} data-turn-index={window.start + index} className="[overflow-anchor:none]">
           <UserMessageBubble message={{ id: turn.id, role: "user", content: turn.user, parts: turn.parts, timestamp: new Date(turn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && !event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
-          <TurnBody turn={turn} conversationId={snapshot.conversationId} />
+          <TurnBody turn={turn} conversationId={snapshot.conversationId} retrying={chat.retryingTurnIds.has(turn.id)} onRetry={!hasNewer && !snapshot.activeTurnId && !chat.pending && !chat.pendingTurn && window.start + index === window.total - 1 ? id => { void chat.retryTurn(id); } : undefined} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
         </div>)}
         {chat.pendingTurn && <div data-turn-id={chat.pendingTurn.id} data-turn-index={window.total} className="[overflow-anchor:none]">

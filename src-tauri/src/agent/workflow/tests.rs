@@ -971,6 +971,41 @@ fn recovery_reconciles_completed_workers_and_resumes_only_interrupted_turns() {
 }
 
 #[test]
+fn recovery_resumes_failed_root_and_failed_worker_from_their_journals() {
+    let (_fixture, hub) = hub();
+    let mut failed = job(&hub, Role::Builder, "src");
+    failed.status = Status::Running;
+    let (failed_session, _) = storage::worker(&hub, &failed, None).unwrap();
+    finish(
+        &failed_session,
+        Err(AgentError::new(
+            "provider_retry_exhausted",
+            "A conexão com o provedor falhou.",
+        )),
+    );
+    failed.status = Status::Failed;
+    failed.error = Some("A conexão com o provedor falhou.".into());
+    hub.mutate(|state| {
+        state.root_status = Status::Failed;
+        state.jobs.insert(failed.id.clone(), failed.clone());
+        Ok(())
+    })
+    .unwrap();
+
+    let loaded = storage::load(&hub.directory, &hub.root.id)
+        .unwrap()
+        .unwrap();
+    let (recovered, resumed) =
+        storage::prepare_recovery(&hub.directory, loaded, Flow::Complete, "run", vec![]).unwrap();
+
+    assert_eq!(recovered.root_status, Status::Running);
+    assert_eq!(recovered.jobs[&failed.id].status, Status::Queued);
+    assert!(recovered.jobs[&failed.id].error.is_none());
+    assert_eq!(resumed.len(), 1);
+    assert_eq!(resumed[0].id, failed.id);
+}
+
+#[test]
 fn recovery_restarts_a_worker_that_only_created_its_journal_header() {
     let (_fixture, hub) = hub();
     let mut interrupted = job(&hub, Role::Builder, "src");

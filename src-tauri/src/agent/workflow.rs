@@ -1003,10 +1003,10 @@ pub(super) fn validate_options(
     Ok(())
 }
 
-pub(super) fn validate_recovery_checkpoint(
+pub(super) fn recovery_checkpoint_available(
     home: &Path,
     session: &Session,
-) -> Result<(), AgentError> {
+) -> Result<bool, AgentError> {
     let data = session.data.lock().map_err(|_| AgentError::internal())?;
     if data.active.is_some() {
         return Err(AgentError::new(
@@ -1017,7 +1017,7 @@ pub(super) fn validate_recovery_checkpoint(
     let turn = data.turns.last().ok_or_else(AgentError::internal)?;
     if !super::resumable_workflow_turn(turn) {
         return Err(invalid(
-            "Esta conversa não possui um fluxo Planejado ou Completo interrompido.",
+            "Esta conversa não possui um fluxo Planejado ou Completo que possa ser retomado.",
         ));
     }
     let flow = turn
@@ -1026,17 +1026,29 @@ pub(super) fn validate_recovery_checkpoint(
         .workflow
         .ok_or_else(AgentError::internal)?;
     let directory = storage::path(home, &session.id)?;
-    let manifest = storage::load(&directory, &session.id)?
-        .ok_or_else(|| invalid("Checkpoint do fluxo não encontrado."))?;
+    let Some(manifest) = storage::load(&directory, &session.id)? else {
+        return Ok(false);
+    };
     if manifest.run_id != turn.turn.id
         || manifest.flow != flow
-        || manifest.root_status != Status::Interrupted
+        || !matches!(manifest.root_status, Status::Interrupted | Status::Failed)
     {
         return Err(invalid(
-            "O checkpoint salvo não corresponde à execução interrompida.",
+            "O checkpoint salvo não corresponde à execução que falhou.",
         ));
     }
-    Ok(())
+    Ok(true)
+}
+
+pub(super) fn validate_recovery_checkpoint(
+    home: &Path,
+    session: &Session,
+) -> Result<(), AgentError> {
+    if recovery_checkpoint_available(home, session)? {
+        Ok(())
+    } else {
+        Err(invalid("Checkpoint do fluxo não encontrado."))
+    }
 }
 
 pub(super) async fn run(

@@ -162,12 +162,15 @@ fn title_generation_guard_deduplicates_and_allows_retry_after_completion() {
 }
 
 pub(super) fn session(fixture: &Fixture) -> Arc<Session> {
+    session_with_id(fixture, "conversation")
+}
+
+fn session_with_id(fixture: &Fixture, id: &str) -> Arc<Session> {
     let journal = fixture.root.join("session.jsonl");
     fs::write(&journal, "{}\n").unwrap();
-    let writer =
-        session_writer::SessionWriter::start(journal.clone(), "conversation".into(), None).unwrap();
+    let writer = session_writer::SessionWriter::start(journal.clone(), id.into(), None).unwrap();
     Arc::new(Session {
-        id: "conversation".into(),
+        id: id.into(),
         journal,
         root: fixture.root.clone(),
         journal_maintenance: Default::default(),
@@ -373,6 +376,166 @@ fn harness_evaluation_progress_pause_waits_for_user_before_direct_resume() {
 }
 
 #[test]
+fn explicit_retry_continues_failed_direct_turn_without_replaying_uncertain_tools() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let mut direct = options(ApprovalMode::Yolo);
+    direct.workflow = Some(workflow::Flow::Designer);
+    let failed = StoredTurn {
+        mcp_intent: None,
+        turn: Turn {
+            id: "failed-turn".into(),
+            created_at: 1,
+            duration_ms: 3_000,
+            user: "Ajuste o layout".into(),
+            parts: vec![],
+            options: direct,
+            context_window: Some(128_000),
+            status: TurnStatus::Error,
+            tasks: vec![],
+            steps: vec![Step {
+                tools: vec![ToolCall {
+                    id: "write-1".into(),
+                    name: "write".into(),
+                    args: json!({"path":"src/app.tsx","content":"changed"}),
+                    status: "running".into(),
+                    output: String::new(),
+                    duration_ms: 0,
+                }],
+                ..Step::default()
+            }],
+            error: Some(AgentError::new(
+                "provider_retry_exhausted",
+                "A conexão com o provedor falhou.",
+            )),
+        },
+        wire: vec![
+            json!({"role":"user","content":"Ajuste o layout"}),
+            json!({"type":"function_call","call_id":"write-1","name":"write","arguments":"{}"}),
+        ],
+    };
+    journal::append(&session.journal, &failed).unwrap();
+    session.data.lock().unwrap().turns.push(failed);
+
+    let unavailable = session.retry_failed_turn("older-turn").unwrap_err();
+    assert_eq!(unavailable.code, "retry_unavailable");
+
+    let (signal, workflow_recovery) = session.retry_failed_turn("failed-turn").unwrap();
+    assert!(!*signal.borrow());
+    assert!(workflow_recovery.is_none());
+    let snapshot = session.snapshot().unwrap();
+    assert_eq!(snapshot.active_turn_id.as_deref(), Some("failed-turn"));
+    assert_eq!(snapshot.turns[0].status, TurnStatus::Running);
+    assert!(snapshot.turns[0].error.is_none());
+
+    let (stored, _) = journal::read_only(&session.journal).unwrap();
+    let retried = stored.last().unwrap();
+    assert_eq!(
+        retried
+            .wire
+            .iter()
+            .filter(|item| item["role"] == "user" && item["_jarvis_runtime"] != true)
+            .count(),
+        1
+    );
+    assert_eq!(
+        retried
+            .wire
+            .iter()
+            .filter(|item| item["type"] == "function_call_output" && item["call_id"] == "write-1")
+            .count(),
+        1
+    );
+    assert!(retried
+        .wire
+        .iter()
+        .any(|item| item["_jarvis_retry"] == true));
+    assert!(retried.turn.steps[0].tools[0]
+        .output
+        .contains("resultado desconhecido"));
+}
+
+#[test]
+fn explicit_retry_restarts_workflow_preparation_when_no_manifest_was_created() {
+    let fixture = Fixture::new();
+    let session = session_with_id(&fixture, "aabbccddaabbccddaabbccddaabbccdd");
+    let mut planned = options(ApprovalMode::Yolo);
+    planned.workflow = Some(workflow::Flow::Planned);
+    let failed = StoredTurn {
+        mcp_intent: None,
+        turn: Turn {
+            id: "planned-turn".into(),
+            created_at: 1,
+            duration_ms: 500,
+            user: "Planeje e implemente".into(),
+            parts: vec![],
+            options: planned,
+            context_window: Some(128_000),
+            status: TurnStatus::Error,
+            tasks: vec![],
+            steps: vec![],
+            error: Some(AgentError::new(
+                "provider_retry_exhausted",
+                "O provedor falhou antes de preparar o fluxo.",
+            )),
+        },
+        wire: vec![json!({"role":"user","content":"Planeje e implemente"})],
+    };
+    journal::append(&session.journal, &failed).unwrap();
+    session.data.lock().unwrap().turns.push(failed);
+
+    assert!(!workflow::recovery_checkpoint_available(&fixture.root, &session).unwrap());
+    let (_, workflow_recovery) = session.retry_failed_turn("planned-turn").unwrap();
+
+    assert_eq!(workflow_recovery, Some(vec![]));
+    assert_eq!(
+        session.snapshot().unwrap().active_turn_id.as_deref(),
+        Some("planned-turn")
+    );
+}
+
+#[test]
+fn explicit_retry_restarts_publication_with_current_repository_state() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let mut publication = options(ApprovalMode::Yolo);
+    publication.workflow = Some(workflow::Flow::Publication);
+    let failed = StoredTurn {
+        mcp_intent: None,
+        turn: Turn {
+            id: "publication-turn".into(),
+            created_at: 1,
+            duration_ms: 500,
+            user: "Faça commit, push, PR e merge".into(),
+            parts: vec![],
+            options: publication,
+            context_window: Some(128_000),
+            status: TurnStatus::Error,
+            tasks: vec![],
+            steps: vec![],
+            error: Some(AgentError::new(
+                "provider_retry_exhausted",
+                "A publicação foi interrompida.",
+            )),
+        },
+        wire: vec![json!({"role":"user","content":"Faça commit, push, PR e merge"})],
+    };
+    journal::append(&session.journal, &failed).unwrap();
+    session.data.lock().unwrap().turns.push(failed);
+
+    let (_, workflow_recovery) = session.retry_failed_turn("publication-turn").unwrap();
+
+    assert!(workflow_recovery.is_none());
+    let (stored, _) = journal::read_only(&session.journal).unwrap();
+    assert!(stored.last().unwrap().wire.iter().any(|item| {
+        item["_jarvis_retry"] == true
+            && item["content"].as_str().is_some_and(|content| {
+                content.contains("inspect the current project and task state")
+            })
+    }));
+}
+
+#[test]
 fn harness_evaluation_coordinated_recovery_pairs_uncertain_tools_without_replay() {
     let fixture = Fixture::new();
     let session = session(&fixture);
@@ -444,7 +607,7 @@ fn harness_evaluation_coordinated_recovery_pairs_uncertain_tools_without_replay(
     assert!(recovered
         .wire
         .iter()
-        .any(|item| item["_jarvis_workflow_recovery"] == true));
+        .any(|item| item["_jarvis_retry"] == true));
     let persisted_results = recovered
         .wire
         .iter()

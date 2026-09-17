@@ -220,6 +220,7 @@ pub fn run() {
                 agent::get_agent_activity,
                 agent::start_agent_turn,
                 agent::resume_agent_queue,
+                agent::retry_agent_turn,
                 agent::resume_interrupted_workflow,
                 agent::maintenance::compact_agent_context,
                 agent::queue::remove_queued_message,

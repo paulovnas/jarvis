@@ -101,6 +101,33 @@ describe("lazy transcript navigation", () => {
     expect(screen.queryByText("Resposta 60")).not.toBeInTheDocument();
     expect(await screen.findByText("Resposta 99")).toBeInTheDocument();
   });
+
+  it("offers retry only on the newest failed turn", async () => {
+    const older = {
+      ...savedTurn(),
+      id: "older-failure",
+      status: "error" as const,
+      error: { code: "provider_retry_exhausted", message: "Falha anterior." },
+    };
+    const newest = {
+      ...savedTurn(),
+      id: "newest-failure",
+      status: "error" as const,
+      error: { code: "provider_retry_exhausted", message: "Falha mais recente." },
+    };
+    call.mockResolvedValue({
+      ...emptyChat(),
+      revision: 3,
+      turns: [older, newest],
+      history: { start: 0, total: 2 },
+    });
+
+    render(<Harness />);
+
+    expect(await screen.findByText("Falha anterior.")).toBeInTheDocument();
+    expect(await screen.findByText("Falha mais recente.")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Tentar novamente" })).toHaveLength(1);
+  });
 });
 
 describe("estado do turno", () => {
@@ -161,5 +188,32 @@ describe("estado do turno", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent(message);
     expect(screen.getAllByText(message)).toHaveLength(1);
+  });
+
+  it("offers to continue a failed turn from the error message", async () => {
+    const retry = vi.fn();
+    const turn = savedTurn();
+    turn.status = "error";
+    turn.options.workflow = "publication";
+    turn.error = { code: "provider_retry_exhausted", message: "A conexão com o provedor falhou." };
+
+    render(<TurnBody turn={turn} onRetry={retry} />);
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Tentar novamente" }));
+    expect(retry).toHaveBeenCalledOnce();
+    expect(retry).toHaveBeenCalledWith(turn.id);
+  });
+
+  it("explains why a custom workflow cannot be retried safely", () => {
+    const turn = savedTurn();
+    turn.status = "error";
+    turn.options.workflow = "custom";
+    turn.options.customWorkflowId = "custom-flow";
+    turn.error = { code: "workflow_failed", message: "Uma etapa falhou." };
+
+    render(<TurnBody turn={turn} onRetry={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "Tentar novamente" })).not.toBeInTheDocument();
+    expect(screen.getByText(/não possui um checkpoint seguro/i)).toBeVisible();
   });
 });

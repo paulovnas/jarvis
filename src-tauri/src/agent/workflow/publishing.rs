@@ -5,17 +5,23 @@ fn prepare(hub: &Hub) -> Result<Job, AgentError> {
         let state = hub.manifest.lock().map_err(|_| AgentError::internal())?;
         (state.run_id.clone(), state.options.clone())
     };
-    let prompt = hub
-        .root
-        .data
-        .lock()
-        .map_err(|_| AgentError::internal())?
-        .turns
-        .last()
-        .ok_or_else(AgentError::internal)?
-        .turn
-        .user
-        .clone();
+    let prompt = {
+        let data = hub.root.data.lock().map_err(|_| AgentError::internal())?;
+        let turn = data.turns.last().ok_or_else(AgentError::internal)?;
+        let recovery = turn
+            .wire
+            .iter()
+            .rev()
+            .find(|item| item["_jarvis_retry"] == true)
+            .and_then(|item| item["content"].as_str());
+        match recovery {
+            Some(recovery) => format!(
+                "{}\n\nRuntime recovery context:\n{recovery}",
+                turn.turn.user
+            ),
+            None => turn.turn.user.clone(),
+        }
+    };
     Ok(Job {
         custom_agent: None,
         phase: Phase::Implementation,
@@ -150,5 +156,27 @@ mod tests {
         assert_eq!(job.options.account, "github-account");
         assert_eq!(job.options.model, "economical-model");
         assert_eq!(job.options.workflow, Some(Flow::Publication));
+    }
+
+    #[test]
+    fn publication_retry_passes_the_recovery_checkpoint_to_the_github_agent() {
+        let (_fixture, hub) = super::super::tests::hub();
+        hub.root
+            .update(false, |data| {
+                data.turns.last_mut().unwrap().wire.push(json!({
+                    "role": "user",
+                    "_jarvis_runtime": true,
+                    "_jarvis_retry": true,
+                    "content": "Verify the current repository state before any mutation.",
+                }));
+            })
+            .unwrap();
+
+        let job = prepare(&hub).unwrap();
+
+        assert!(job.prompt.contains("Runtime recovery context:"));
+        assert!(job
+            .prompt
+            .contains("Verify the current repository state before any mutation."));
     }
 }

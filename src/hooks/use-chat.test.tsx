@@ -227,3 +227,45 @@ it("ignores invalidation events from another conversation", async () => {
 
   expect(call).not.toHaveBeenCalled();
 });
+
+it("retries the failed turn in place and accepts the resumed snapshot", async () => {
+  const failed: ChatSnapshot = {
+    ...completed(),
+    revision: 20,
+    turns: [{
+      ...savedTurn(),
+      status: "error",
+      error: { code: "provider_retry_exhausted", message: "A conexão com o provedor falhou." },
+    }],
+  };
+  const resumed: ChatSnapshot = {
+    ...failed,
+    revision: 21,
+    activeTurnId: "turn1",
+    turns: [{ ...failed.turns[0], status: "running", error: null }],
+  };
+  let finishRetry!: (value: ChatSnapshot) => void;
+  const pendingRetry = new Promise<ChatSnapshot>(resolve => { finishRetry = resolve; });
+  call.mockImplementation(async command => command === "retry_agent_turn" ? pendingRetry : failed);
+  const { result } = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(result.current.snapshot?.turns[0].status).toBe("error"));
+
+  let first!: Promise<boolean>;
+  let duplicate!: Promise<boolean>;
+  act(() => {
+    first = result.current.retryTurn("turn1");
+    duplicate = result.current.retryTurn("turn1");
+  });
+  await expect(duplicate).resolves.toBe(false);
+  expect(call.mock.calls.filter(([command]) => command === "retry_agent_turn")).toHaveLength(1);
+  let retried = false;
+  await act(async () => {
+    finishRetry(resumed);
+    retried = await first;
+  });
+
+  expect(retried).toBe(true);
+  expect(call).toHaveBeenCalledWith("retry_agent_turn", { conversationId: "c1", turnId: "turn1" });
+  expect(result.current.snapshot?.activeTurnId).toBe("turn1");
+  expect(result.current.snapshot?.turns[0].status).toBe("running");
+});

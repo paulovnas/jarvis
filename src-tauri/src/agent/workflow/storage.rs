@@ -264,20 +264,18 @@ pub(super) fn prepare_recovery(
 ) -> Result<(Manifest, Vec<Job>), AgentError> {
     if manifest.flow != flow
         || manifest.run_id != run_id
-        || manifest.root_status != Status::Interrupted
+        || !matches!(manifest.root_status, Status::Interrupted | Status::Failed)
     {
         return Err(invalid(
-            "O checkpoint não corresponde ao fluxo interrompido desta conversa.",
+            "O checkpoint não corresponde ao fluxo que falhou nesta conversa.",
         ));
     }
     manifest.root_status = Status::Running;
     manifest.root_recovery = Some(RecoveryCheckpoint::new(root_uncertain));
     let mut resumed = Vec::new();
-    for job in manifest
-        .jobs
-        .values_mut()
-        .filter(|job| job.run_id == run_id && job.status == Status::Interrupted)
-    {
+    for job in manifest.jobs.values_mut().filter(|job| {
+        job.run_id == run_id && matches!(job.status, Status::Interrupted | Status::Failed)
+    }) {
         let journal_path = directory.join(format!("{}.jsonl", job.id));
         let tail = if journal_path.exists() {
             journal::read_only(&journal_path)?.0.pop()

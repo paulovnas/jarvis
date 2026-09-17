@@ -44,7 +44,9 @@ export function useChat(conversationId: string | null) {
   const sending = useRef(false);
   const modelNotices = useRef(new Set<string>());
   const compactLocks = useRef(new Set<string>());
+  const retryLocks = useRef(new Set<string>());
   const [compactingIds, setCompactingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [retryingTurns, setRetryingTurns] = useState<ReadonlySet<string>>(() => new Set());
   const subscribeStore = useCallback((listener: () => void) => subscribeChatSnapshot(conversationId, listener), [conversationId]);
   const readStore = useCallback(() => getChatSnapshot(conversationId), [conversationId]);
   const snapshot = useSyncExternalStore(subscribeStore, readStore, () => null);
@@ -301,6 +303,23 @@ export function useChat(conversationId: string | null) {
       return false;
     }
   };
+  const retryTurn = async (turnId: string): Promise<boolean> => {
+    if (!conversationId || snapshot?.activeTurnId) return false;
+    const id = conversationId; const request = generation.current; const key = `${id}:${turnId}`;
+    if (retryLocks.current.has(key)) return false;
+    retryLocks.current.add(key); setRetryingTurns(new Set(retryLocks.current));
+    try {
+      const result = await invoke<unknown>("retry_agent_turn", { conversationId: id, turnId });
+      if (generation.current === request) accept(result, id);
+      toast.success("Execução retomada", { description: "O Jarvis continuará do último estado salvo sem repetir ações automaticamente." });
+      return true;
+    } catch (cause) {
+      toast.error(libraryError(cause, "Não foi possível retomar esta execução."));
+      return false;
+    } finally {
+      retryLocks.current.delete(key); setRetryingTurns(new Set(retryLocks.current));
+    }
+  };
   const compact = async (): Promise<boolean> => {
     if (!conversationId || !snapshot || snapshot.activeTurnId || snapshot.context?.compacting || compactLocks.current.has(conversationId) || sending.current) return false;
     const id = conversationId; const request = generation.current;
@@ -313,6 +332,6 @@ export function useChat(conversationId: string | null) {
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível compactar o contexto.")); return false; }
     finally { compactLocks.current.delete(id); setCompactingIds(new Set(compactLocks.current)); }
   };
-  return { snapshot, pendingTurn: pendingTurn?.conversationId === conversationId ? pendingTurn.turn : null, loadHistory, historyLoading: historyPending === conversationId && conversationId !== null, historyError: historyError?.id === conversationId ? historyError.message : null, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, send, stop, approve, answerQuestion, answerAuthoring, removeQueued, deleteQueued, reorderQueued, sendQueuedNow, resumeQueue, resumeWorkflow, compact, retry: () => setAttempt(value => value + 1) };
+  return { snapshot, pendingTurn: pendingTurn?.conversationId === conversationId ? pendingTurn.turn : null, loadHistory, historyLoading: historyPending === conversationId && conversationId !== null, historyError: historyError?.id === conversationId ? historyError.message : null, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, retryingTurnIds: new Set([...retryingTurns].filter(key => key.startsWith(`${conversationId}:`)).map(key => key.slice(`${conversationId}:`.length))), send, stop, approve, answerQuestion, answerAuthoring, removeQueued, deleteQueued, reorderQueued, sendQueuedNow, resumeQueue, resumeWorkflow, retryTurn, compact, retry: () => setAttempt(value => value + 1) };
 }
 export type ChatController = ReturnType<typeof useChat>;

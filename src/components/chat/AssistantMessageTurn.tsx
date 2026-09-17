@@ -1,7 +1,7 @@
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { lazy, Suspense, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Copy, Download } from "lucide-react";
+import { Copy, Download, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,7 +45,7 @@ function ResponseActions({ content, fileName }: { content: string; fileName: str
   </div>;
 }
 
-export function AssistantMessageTurn({ message }: { message: ChatMessage }) {
+export function AssistantMessageTurn({ message, onRetry, retrying = false, retryUnavailableReason }: { message: ChatMessage; onRetry?: () => void; retrying?: boolean; retryUnavailableReason?: string }) {
   return (
     <article data-testid={`assistant-message-${message.id}`} className="my-5 flex min-w-0 flex-col gap-2">
       <header className="flex items-center justify-between gap-2">
@@ -61,7 +61,15 @@ export function AssistantMessageTurn({ message }: { message: ChatMessage }) {
       {message.work && <AssistantWorkCollapse work={message.work} isStreaming={message.streaming} />}
       {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "generate_image").map(tool => <GeneratedImageCard key={tool.id} tool={tool} />)}
       {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "browser_screenshot").map(tool => <BrowserCaptureCard key={tool.id} tool={tool} />)}
-      {message.error && <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm"><p className="font-medium">{message.error.title}</p><p className="mt-1 text-muted-foreground">{message.error.message}</p></div>}
+      {message.error && <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
+        <p className="font-medium">{message.error.title}</p>
+        <p className="mt-1 text-muted-foreground">{message.error.message}</p>
+        {onRetry && <Button type="button" variant="outline" size="sm" className="mt-3 cursor-pointer gap-2 border-destructive/30 bg-background/40" disabled={retrying} onClick={onRetry}>
+          <RotateCcw aria-hidden="true" className={retrying ? "animate-spin motion-reduce:animate-none" : ""} />
+          {retrying ? "Retomando…" : "Tentar novamente"}
+        </Button>}
+        {!onRetry && retryUnavailableReason && <p className="mt-3 border-t border-destructive/20 pt-2 text-xs text-muted-foreground">{retryUnavailableReason}</p>}
+      </div>}
       {message.content && <div className="assistant-prose min-w-0 py-2 text-sm leading-7 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-card [&_pre]:p-3 [&_pre]:text-xs [&_code]:font-mono [&_p]:my-3 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_h1]:text-lg [&_h2]:text-base [&_h3]:font-semibold [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_table]:block [&_table]:overflow-x-auto [&_td]:border [&_td]:p-2 [&_th]:border [&_th]:p-2">
         <Suspense fallback={<p className="whitespace-pre-wrap">{message.content}</p>}><ChatMarkdown content={message.content} /></Suspense>
       </div>}

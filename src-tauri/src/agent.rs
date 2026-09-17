@@ -734,6 +734,32 @@ impl Session {
     fn resume_interrupted_workflow_turn(
         &self,
     ) -> Result<(watch::Receiver<bool>, Vec<String>), AgentError> {
+        let turn_id = {
+            let data = self.data.lock().map_err(|_| AgentError::internal())?;
+            let turn = data.turns.last().ok_or_else(AgentError::internal)?;
+            if !resumable_workflow_turn(turn) {
+                return Err(AgentError::new(
+                    "workflow_recovery_unavailable",
+                    "Esta conversa não possui um fluxo Planejado ou Completo que possa ser retomado.",
+                ));
+            }
+            turn.turn.id.clone()
+        };
+        let (signal, recovery) = self.retry_failed_turn(&turn_id)?;
+        recovery
+            .map(|uncertain| (signal, uncertain))
+            .ok_or_else(|| {
+                AgentError::new(
+                    "workflow_recovery_unavailable",
+                    "Esta conversa não possui um fluxo Planejado ou Completo que possa ser retomado.",
+                )
+            })
+    }
+
+    fn retry_failed_turn(
+        &self,
+        turn_id: &str,
+    ) -> Result<(watch::Receiver<bool>, Option<Vec<String>>), AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
         if self.journal_maintenance.load(Ordering::Acquire) {
             return Err(journal_maintenance::maintenance_error());
@@ -753,32 +779,35 @@ impl Session {
             .checked_sub(1)
             .ok_or_else(AgentError::internal)?;
         let mut current = data.turns[index].clone();
-        if !resumable_workflow_turn(&current) {
+        if current.turn.id != turn_id {
             return Err(AgentError::new(
-                "workflow_recovery_unavailable",
-                "Esta conversa não possui um fluxo Planejado ou Completo interrompido que possa ser retomado.",
+                "retry_unavailable",
+                "Apenas a execução mais recente desta conversa pode ser retomada.",
             ));
         }
+        let workflow = resumable_workflow_turn(&current);
+        if !workflow && !retryable_without_workflow_checkpoint(&current) {
+            return Err(AgentError::new(
+                "retry_unavailable",
+                "Esta execução não possui um checkpoint seguro disponível para retomada.",
+            ));
+        }
+        let previous_error = current.turn.error.clone();
         let uncertain = journal::uncertain_tool_names(&current);
         journal::interrupt_tools(&mut current);
         current.turn.status = TurnStatus::Running;
         current.turn.error = None;
         let notice = format!(
-            "Jarvis workflow recovery checkpoint (runtime instructions, not a new user request). The previous process stopped during this Planned/Complete flow. Reconstruct the same plan from durable workflow, worker, Beads and validation checkpoints. Never replay a previous tool call automatically. Before any new mutation, inspect the current project and task state. Calls whose result was not durably observed: {}.",
-            serde_json::to_string(&uncertain).map_err(|_| AgentError::internal())?
+            "Jarvis retry checkpoint (runtime instructions, not a new user request). The user explicitly requested that this same turn continue from its durable state after it failed. Preserve the original objective, options, completed tool results, tasks and workflow state. Never replay a previous tool call automatically. Before any new mutation, inspect the current project and task state, then continue from the first unresolved outcome. Previous terminal error: {}. Calls whose result was not durably observed: {}.",
+            serde_json::to_string(&previous_error).map_err(|_| AgentError::internal())?,
+            serde_json::to_string(&uncertain).map_err(|_| AgentError::internal())?,
         );
-        if !current
-            .wire
-            .iter()
-            .any(|item| item["_jarvis_workflow_recovery"] == true)
-        {
-            current.wire.push(json!({
-                "role": "user",
-                "_jarvis_runtime": true,
-                "_jarvis_workflow_recovery": true,
-                "content": notice,
-            }));
-        }
+        current.wire.push(json!({
+            "role": "user",
+            "_jarvis_runtime": true,
+            "_jarvis_retry": true,
+            "content": notice,
+        }));
         self.persist_turn(&mut data, &current)?;
         data.turns[index] = current;
         let id = data.turns[index].turn.id.clone();
@@ -786,7 +815,7 @@ impl Session {
         data.active = Some(Active::new(id, cancel));
         data.recovery = None;
         data.revision = next_revision();
-        Ok((signal, uncertain))
+        Ok((signal, workflow.then_some(uncertain)))
     }
     fn snapshot_data(&self, data: &SessionData) -> ChatSnapshot {
         ChatSnapshot {
@@ -1428,8 +1457,21 @@ fn resumable_direct_turn(turn: &StoredTurn) -> bool {
     recoverable_status && turn.turn.options.direct() && journal::safe_to_resume(turn)
 }
 
+fn retryable_without_workflow_checkpoint(turn: &StoredTurn) -> bool {
+    let recoverable_status = turn.turn.status == TurnStatus::Error
+        || (turn.turn.status == TurnStatus::Interrupted
+            && turn.turn.error.as_ref().is_some_and(|error| {
+                matches!(error.code.as_str(), "interrupted" | "progress_paused")
+            }));
+    recoverable_status
+        && (turn.turn.options.direct()
+            || (turn.turn.options.workflow.is_none() && turn.turn.options.mode == Mode::Plan)
+            || turn.turn.options.workflow == Some(workflow::Flow::Publication))
+}
+
 fn resumable_workflow_turn(turn: &StoredTurn) -> bool {
     let recoverable_status = turn.turn.status == TurnStatus::Running
+        || turn.turn.status == TurnStatus::Error
         || (turn.turn.status == TurnStatus::Interrupted
             && turn.turn.error.as_ref().is_some_and(|error| {
                 matches!(error.code.as_str(), "interrupted" | "progress_paused")
@@ -1744,6 +1786,65 @@ pub async fn resume_agent_queue(
             },
         );
     }
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn retry_agent_turn(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
+    oauth: tauri::State<'_, OpenAiCodexState>,
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+    turn_id: String,
+) -> Result<ChatSnapshot, AgentError> {
+    let activity = crate::updater::begin_activity(&app)
+        .map_err(|message| AgentError::new("app_updating", &message))?;
+    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    app.state::<crate::core::CoreState>().require_ready(&home)?;
+    library::agent_location(&persistence, &home, &conversation_id)?;
+    let session = agent
+        .runtime_session(&app, &persistence, &conversation_id)
+        .await?;
+    let coordinated = {
+        let data = session.data.lock().map_err(|_| AgentError::internal())?;
+        data.turns
+            .last()
+            .filter(|turn| turn.turn.id == turn_id)
+            .is_some_and(resumable_workflow_turn)
+    };
+    let coordinated_checkpoint =
+        coordinated && workflow::recovery_checkpoint_available(&home, &session)?;
+    // Reserve a global execution slot before changing the durable turn back to
+    // running. If an update drain has already closed admission, dropping the
+    // lease leaves the failed checkpoint untouched and therefore retryable.
+    let admission = agent.begin_turn()?;
+    let prepared = session.clone();
+    let retry_turn_id = turn_id.clone();
+    let (signal, mut workflow_recovery) =
+        tauri::async_runtime::spawn_blocking(move || prepared.retry_failed_turn(&retry_turn_id))
+            .await
+            .map_err(|_| AgentError::internal())??;
+    if coordinated && !coordinated_checkpoint {
+        workflow_recovery = None;
+    }
+    let snapshot = session.snapshot()?;
+    (session.emit)(snapshot.clone());
+    let mcp = app.state::<crate::mcp::McpState>().inner().clone();
+    spawn_run(
+        session,
+        persistence.inner().clone(),
+        oauth.inner().clone(),
+        mcp,
+        home,
+        app,
+        RunControl {
+            signal,
+            activity,
+            admission,
+            workflow_recovery,
+        },
+    );
     Ok(snapshot)
 }
 
