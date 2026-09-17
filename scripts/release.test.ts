@@ -57,6 +57,12 @@ it("checks out the requested release tag instead of a stale workflow dispatch SH
   const workflow = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");
   expect(workflow).toContain("ref: ${{ inputs.tag || github.sha }}");
 });
+it("allows enough time to upload every signed release artifact", () => {
+  const workflow = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");
+  const publishJob = workflow.split("\n  publish:")[1];
+  expect(publishJob).toBeDefined();
+  expect(publishJob).toContain("timeout-minutes: 30");
+});
 it("keeps dry-run entirely local and read-only", async () => {
   process.argv.push("--dry-run");
   await import("./release");
