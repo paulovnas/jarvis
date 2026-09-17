@@ -3036,10 +3036,10 @@ fn run_turn<'a>(
                         Some(tool_contract::Handler::JarvisAuthoring) => {
                             authoring::execute(
                                 session,
+                                owner,
                                 state,
                                 oauth,
                                 home,
-                                owner.project_id()?,
                                 &tool,
                                 signal.clone(),
                             )

@@ -14,6 +14,23 @@ describe("Library command boundary", () => {
       conversationDetails(),
     );
   });
+  it("normalizes legacy projects and rejects unknown appearance values", () => {
+    const legacy = populatedLibrary();
+    delete legacy.projects[0].icon;
+    delete legacy.projects[0].color;
+    expect(readLibrarySnapshot(legacy).projects[0]).toMatchObject({
+      icon: "folder",
+      color: "cyan",
+    });
+    expect(() =>
+      readLibrarySnapshot({
+        ...populatedLibrary(),
+        projects: populatedLibrary().projects.map((project, index) =>
+          index === 0 ? { ...project, icon: "not-an-icon" } : project,
+        ),
+      }),
+    ).toThrow("inválidos");
+  });
   it("rejects malformed, orphaned, duplicate and inconsistent selections", () => {
     const original = populatedLibrary();
     for (const value of [

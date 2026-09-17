@@ -60,11 +60,11 @@ function TreeRow({ entry, depth, first, ...tree }: TreeProps & { entry: FileEntr
   const activate = () => folder ? tree.onToggle(entry.path) : tree.onOpen(entry.path);
   const focus = () => tree.onFocus(entry.path);
   return <li role="none">
-    <Hint content={entry.kind === "link" ? `${entry.path} — link simbólico` : entry.path}><Button type="button" role="treeitem" variant="ghost" aria-level={depth} aria-expanded={folder ? open : undefined} aria-selected={tree.selected === entry.path} disabled={entry.kind === "link"} tabIndex={tree.focused === entry.path || (!tree.focused && first) ? 0 : -1} onClick={activate} onFocus={focus} style={{ paddingLeft: 8 + (depth - 1) * 14 }} className="h-7 w-full min-w-0 cursor-pointer justify-start gap-1.5 rounded-none pr-3 text-xs font-normal aria-selected:bg-primary/15 aria-selected:text-primary">
+    <Button type="button" role="treeitem" variant="ghost" aria-level={depth} aria-expanded={folder ? open : undefined} aria-selected={tree.selected === entry.path} disabled={entry.kind === "link"} tabIndex={tree.focused === entry.path || (!tree.focused && first) ? 0 : -1} onClick={activate} onFocus={focus} style={{ paddingLeft: 8 + (depth - 1) * 14 }} className="h-7 w-full min-w-0 cursor-pointer justify-start gap-1.5 rounded-none pr-3 text-xs font-normal aria-selected:bg-primary/15 aria-selected:text-primary">
       {folder ? <ChevronRight aria-hidden="true" className={`size-3 shrink-0 ${open ? "rotate-90" : ""}`} /> : <span className="w-3 shrink-0" />}
       {folder ? open ? <FolderOpen aria-hidden="true" className="size-3.5 shrink-0 text-onedark-cyan" /> : <Folder aria-hidden="true" className="size-3.5 shrink-0 text-onedark-cyan" /> : entry.kind === "link" ? <Link aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" /> : <FileIcon path={entry.path} />}
-      <span className="truncate font-mono text-[11px]">{entry.name}</span>
-    </Button></Hint>
+      <Hint content={entry.kind === "link" ? `${entry.path} — link simbólico` : entry.path} whenTruncated={entry.kind !== "link" && entry.path === entry.name}><span className="truncate font-mono text-[11px]">{entry.name}</span></Hint>
+    </Button>
     {folder && open && <DirectoryItems {...tree} path={entry.path} depth={depth + 1} />}
   </li>;
 }
@@ -78,7 +78,7 @@ export function ProjectExplorer({ projectId, projectName, selected, onOpen }: { 
   const collapse = () => { setExpanded(new Set()); setFocused(null); };
   return <section aria-label="Explorer do projeto" className="flex h-full min-h-0 flex-col">
     <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
-      <FolderOpen aria-hidden="true" className="size-3.5 shrink-0 text-onedark-cyan" /><Hint content={projectName}><span className="min-w-0 flex-1 truncate text-xs font-medium">{projectName}</span></Hint>
+      <FolderOpen aria-hidden="true" className="size-3.5 shrink-0 text-onedark-cyan" /><Hint content={projectName} whenTruncated><span className="min-w-0 flex-1 truncate text-xs font-medium">{projectName}</span></Hint>
       <Hint content="Recolher pastas"><Button type="button" variant="ghost" size="icon" aria-label="Recolher pastas" onClick={collapse} className="size-6 cursor-pointer text-muted-foreground"><ChevronsDownUp className="size-3.5" /></Button></Hint>
       <Hint content="Atualizar Explorer"><Button type="button" variant="ghost" size="icon" aria-label="Atualizar Explorer" onClick={refresh} className="size-6 cursor-pointer text-muted-foreground"><RefreshCw className="size-3.5" /></Button></Hint>
     </div>

@@ -81,6 +81,18 @@ const ALIAS_SUFFIX_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 type SettingsView = "list" | "add" | "reauthorize" | "waiting";
 type ListState = "loading" | "ready" | "error";
 
+function useCompactSettingsNavigation() {
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 639px)");
+    const update = () => setCompact(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  return compact;
+}
+
 
 export type ProviderError = {
   code: string;
@@ -128,6 +140,7 @@ function SettingsSurface({ embedded, open, onOpenChange, children }: { embedded:
 }
 
 export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedProviders = false, onBusyChange }: SettingsDialogProps) {
+  const compactSettingsNavigation = useCompactSettingsNavigation();
   const bootstrap = useBootstrapResources();
   const { layout, updateLayout } = useDesktopLayout();
   const activeTab = layout.settingsTab;
@@ -740,7 +753,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
           <SettingsTabs.Root orientation="vertical" value={activeTab} onValueChange={value => { if (typeof value === "string") setActiveTab(value); }} className="group/tabs flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden">
             <div className="settings-navigation w-14 shrink-0 overflow-y-auto border-r border-border bg-sidebar p-2 sm:w-48 sm:p-3">
               <TabsList aria-label="Configurações" className="h-auto w-full flex-col items-stretch justify-start gap-1 rounded-none bg-transparent p-0">
-                {SETTINGS_SECTIONS.map(section => <Hint key={section.value} content={section.label}><TabsTrigger value={section.value} className="h-10 flex-none cursor-pointer justify-center gap-2.5 px-2 text-xs sm:justify-start">
+                {SETTINGS_SECTIONS.map(section => <Hint key={section.value} content={section.label} disabled={!compactSettingsNavigation}><TabsTrigger value={section.value} className="h-10 flex-none cursor-pointer justify-center gap-2.5 px-2 text-xs sm:justify-start">
                   <section.Icon aria-hidden="true" className="size-4" />
                   <span className="sr-only min-w-0 flex-1 text-left sm:not-sr-only">{section.label}</span>
                   <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">{section.value === "providers" && listState === "ready" ? accounts.length : section.value === "skills" ? visibleSkillCount : section.value === "mcps" ? mcpCount : null}</span>

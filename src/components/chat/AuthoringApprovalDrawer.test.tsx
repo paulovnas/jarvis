@@ -75,7 +75,7 @@ it("shows the exact commit, PR and merge scope before publishing", async () => {
     turnId: "turn-3", toolId: "tool-3", action: "publish", catalogRevision: null,
     summary: "Publicar frontend e backend em propostas separadas.",
     agentReferences: [],
-    target: { kind: "publication", after: { summary: "Publicar frontend e backend em propostas separadas.", repositories: [
+    target: { kind: "publication", after: { summary: "Publicar frontend e backend em propostas separadas.", authorization: null, repositories: [
       { path: "frontend", reset: null, files: ["src/App.tsx"], branch: "feat/new-home", commitMessage: "feat(home): improve hero", push: "normal", pullRequest: { base: "main", title: "Melhora a página inicial", body: "## Alterações\n\nAtualiza a hero.", draft: false, merge: { method: "squash", deleteBranch: true } } },
       { path: "backend", reset: null, files: ["src/server.ts"], branch: null, commitMessage: "fix(api): validate request", push: "none", pullRequest: null },
     ] } },
@@ -100,7 +100,7 @@ it("sends a publication observation back for revision instead of presenting it a
   const request: PendingAuthoring = {
     turnId: "turn-4", toolId: "tool-4", action: "publish", catalogRevision: null,
     summary: "Publicar somente os arquivos aprovados.", agentReferences: [],
-    target: { kind: "publication", after: { summary: "Publicar somente os arquivos aprovados.", repositories: [
+    target: { kind: "publication", after: { summary: "Publicar somente os arquivos aprovados.", authorization: null, repositories: [
       { path: ".", reset: null, files: ["src/App.tsx", "docs/picpay.ofx"], branch: null, commitMessage: "fix: adjust publication", push: "normal", pullRequest: null },
     ] } },
   };
@@ -119,7 +119,7 @@ it("shows a supervised soft reset without requiring a commit", () => {
     turnId: "turn-4", toolId: "tool-4", action: "publish", catalogRevision: null,
     summary: "Desfazer o último commit e manter as alterações preparadas.",
     agentReferences: [],
-    target: { kind: "publication", after: { summary: "Desfazer o último commit e manter as alterações preparadas.", repositories: [
+    target: { kind: "publication", after: { summary: "Desfazer o último commit e manter as alterações preparadas.", authorization: null, repositories: [
       { path: "movart-express-back", reset: { mode: "soft", target: "HEAD^" }, files: [], branch: null, commitMessage: null, push: "none", pullRequest: null },
     ] } },
   };

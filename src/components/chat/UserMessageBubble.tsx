@@ -22,7 +22,7 @@ export function UserMessageBubble({ message }: UserMessageBubbleProps) {
                 className="flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-border bg-card px-3.5 py-2 text-xs text-foreground shadow-sm"
               >
                 <FileCode2 className="size-3.5 shrink-0 text-[#61afef]" />
-                <Hint content={att.name}><span className="min-w-0 truncate font-mono text-[11px] text-foreground">
+                <Hint content={att.name} whenTruncated><span className="min-w-0 truncate font-mono text-[11px] text-foreground">
                   {att.name}
                 </span></Hint>
                 {att.size && (

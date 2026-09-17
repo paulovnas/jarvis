@@ -18,7 +18,7 @@ export function LibraryItemMenu({
 }: {
   children: ReactElement;
   disabled: boolean;
-  onEdit: () => void;
+  onEdit?: () => void;
   onDelete: () => void;
   onMove?: () => void;
 }) {
@@ -28,15 +28,17 @@ export function LibraryItemMenu({
       <ContextMenuTrigger render={children} />
       <ContextMenuContent>
         <ContextMenuGroup>
-          <ContextMenuItem
-            className="cursor-pointer"
-            disabled={disabled}
-            onClick={onEdit}
-          >
-            <Pencil />
-            Editar
-          </ContextMenuItem>
-          <ContextMenuSeparator />
+          {onEdit && <>
+            <ContextMenuItem
+              className="cursor-pointer"
+              disabled={disabled}
+              onClick={onEdit}
+            >
+              <Pencil />
+              Editar
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>}
           {onMove && <ContextMenuItem className="cursor-pointer" onClick={onMove}><FolderInput />Mover para outro workspace</ContextMenuItem>}
           <ContextMenuItem variant="destructive" className="cursor-pointer" disabled={disabled} onClick={onDelete}>
             <Trash2 />

@@ -82,7 +82,7 @@ export function FileWorkspace({ files, browser, terminalLauncher, children }: { 
     {active && files && <TabsContent value={`file:${active}`} className="m-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3 text-xs text-muted-foreground">
         <FileIcon path={active} />
-        <Hint content={active}><span className="min-w-0 flex-1 truncate font-mono">{active}</span></Hint>
+        <Hint content={active} whenTruncated><span className="min-w-0 flex-1 truncate font-mono">{active}</span></Hint>
         <Badge variant="outline" className="h-6 gap-1.5 rounded-md border-onedark-yellow/30 bg-onedark-yellow/10 px-2.5 text-xs font-medium text-onedark-yellow">
           <LockKeyhole aria-hidden="true" />
           Somente leitura

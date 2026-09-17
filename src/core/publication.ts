@@ -33,6 +33,10 @@ const pullRequestProposalSchema = z.object({
 
 export const publicationProposalSchema = z.object({
   summary: z.string(),
+  authorization: z.object({
+    mode: z.enum(["explicit_request", "autonomous"]),
+    evidence: z.string().min(1).max(1_000),
+  }).nullable().default(null),
   repositories: z.array(z.object({
     path: z.string(),
     reset: resetProposalSchema.nullable().default(null),

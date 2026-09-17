@@ -1,6 +1,7 @@
 import { Check, ChevronDown } from "lucide-react";
 import type { ProviderAccount, ProviderModel } from "@/core/provider-accounts";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { aliasSuffix } from "@/core/provider-usage";
 import { reasoningLabel } from "@/core/reasoning";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Hint } from "@/components/ui/hint";
@@ -18,19 +19,23 @@ export interface ProviderModelGroup {
 
 
 export type ModelSelection = { model: string; reasoning: string | null };
-export function ModelPicker({ modelGroups, selection, onSelect, disabled = false, ariaLabel = "Selecionar modelo de IA" }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; disabled?: boolean; ariaLabel?: string }) {
+export function ModelPicker({ modelGroups, selection, onSelect, disabled = false, ariaLabel = "Selecionar modelo de IA", showProviderIdentity = false }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; disabled?: boolean; ariaLabel?: string; showProviderIdentity?: boolean }) {
+  const currentGroup = modelGroups.find(group => group.models.some(model => model.value === selection?.model));
   const currentModelDef = modelGroups.flatMap(group => group.models).find(model => model.value === selection?.model);
   const reasoning = selection?.reasoning;
   const displayModelLabel = currentModelDef ? `${currentModelDef.label}${reasoning ? ` · ${reasoningLabel(reasoning)}` : ""}` : selection ? `${selection.model.split("/").pop()} · Indisponível` : modelGroups.length ? "Escolher modelo" : "Nenhum modelo conectado";
+  const providerLabel = showProviderIdentity && currentGroup ? aliasSuffix(currentGroup.provider) : null;
+  const displayLabel = providerLabel ? `${providerLabel} · ${displayModelLabel}` : displayModelLabel;
   return (<DropdownMenu>
-              <Hint content={selection?.model}><DropdownMenuTrigger
+              <DropdownMenuTrigger
                 aria-label={ariaLabel}
                 disabled={disabled}
                 className="composer-model flex h-7.5 max-w-full cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 font-mono text-[10px] font-medium text-foreground shadow-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
               >
-                <span className="truncate">{displayModelLabel}</span>
+                {providerLabel && <ProviderIcon kind={currentGroup?.providerKind ?? "custom"} className="size-3.5 text-onedark-cyan" />}
+                <Hint content={showProviderIdentity ? displayLabel : selection?.model} whenTruncated><span className="min-w-0 truncate">{displayLabel}</span></Hint>
                 <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-              </DropdownMenuTrigger></Hint>
+              </DropdownMenuTrigger>
 
               <DropdownMenuContent
                 align="end"

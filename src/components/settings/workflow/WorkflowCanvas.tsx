@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { isBuiltinAgent, type CustomFlow, type FlowAgent, type WorkflowGraph } from "@/core/workflow-catalog";
 import type { WorkflowAppearance } from "@/core/workflow-appearance";
 import { WorkflowIdentityIcon } from "@/components/agents/WorkflowIdentityIcon";
+import { Hint } from "@/components/ui/hint";
 import "@xyflow/react/dist/style.css";
 import "./workflow-canvas.css";
 
@@ -36,7 +37,7 @@ function reconcileNodes(previous: AgentNode[], flow: WorkflowGraph, agents: Flow
 }
 function CanvasControls() {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
-  return <Panel position="bottom-left" className="flex gap-1 rounded-md border border-border bg-card p-1"><Button type="button" variant="ghost" size="icon" className="size-7 cursor-pointer" aria-label="Aumentar zoom" onClick={() => void zoomIn()}><Plus /></Button><Button type="button" variant="ghost" size="icon" className="size-7 cursor-pointer" aria-label="Diminuir zoom" onClick={() => void zoomOut()}><Minus /></Button><Button type="button" variant="ghost" size="icon" className="size-7 cursor-pointer" aria-label="Enquadrar fluxo" onClick={() => void fitView({ padding: 0.2 })}><Maximize /></Button></Panel>;
+  return <Panel position="bottom-left" className="flex gap-1 rounded-md border border-border bg-card p-1"><Hint content="Aumentar zoom"><Button type="button" variant="ghost" size="icon" className="size-7 cursor-pointer" aria-label="Aumentar zoom" onClick={() => void zoomIn()}><Plus /></Button></Hint><Hint content="Diminuir zoom"><Button type="button" variant="ghost" size="icon" className="size-7 cursor-pointer" aria-label="Diminuir zoom" onClick={() => void zoomOut()}><Minus /></Button></Hint><Hint content="Enquadrar fluxo"><Button type="button" variant="ghost" size="icon" className="size-7 cursor-pointer" aria-label="Enquadrar fluxo" onClick={() => void fitView({ padding: 0.2 })}><Maximize /></Button></Hint></Panel>;
 }
 export default function WorkflowCanvas({ flow, agents, selected, onSelect, onChange, disabled }: { flow: WorkflowGraph; agents: FlowAgent[]; selected: string | null; onSelect: (id: string | null) => void; onChange: (flow: CustomFlow) => void; disabled: boolean }) {
   const [state, setState] = useState(() => ({ flow, agents, selected, nodes: reconcileNodes([], flow, agents, selected) }));

@@ -14,9 +14,10 @@ import { BeadsBoard } from "./BeadsBoard";
 import { DashboardSkeleton } from "./DashboardSkeleton";
 import { ProjectOptions } from "./ProjectOptions";
 import { Hint } from "@/components/ui/hint";
+import type { LibraryController } from "@/hooks/use-library";
 import "./dashboard.css";
 
-export function ProjectDashboard({ project, onSelectSession, navigation, initialTab = "general" }: { project: Project; onSelectSession: (id: string) => void; navigation?: ReactNode; initialTab?: "general" | "beads" | "options" }) {
+export function ProjectDashboard({ project, projectUpdater, onSelectSession, navigation, initialTab = "general" }: { project: Project; projectUpdater: Pick<LibraryController, "pending" | "error" | "clearError" | "updateProject">; onSelectSession: (id: string) => void; navigation?: ReactNode; initialTab?: "general" | "beads" | "options" }) {
   const [tab, setTab] = useState<string>(initialTab);
   const core = useCore();
   const metrics = useDashboardQuery("get_project_metrics", project.id, projectMetricsSchema);
@@ -39,7 +40,7 @@ export function ProjectDashboard({ project, onSelectSession, navigation, initial
         {board.error && <DashboardError message={board.error} retry={board.refresh} />}
         {!board.data ? !board.error && <DashboardSkeleton board /> : <BeadsBoard projectName={project.name} projectId={project.id} issues={board.data} onChanged={board.refresh} />}
       </TabsContent>
-      <TabsContent value="options" className="min-h-0 overflow-y-auto"><ProjectOptions projectId={project.id} projectPath={project.path} /></TabsContent>
+      <TabsContent value="options" className="min-h-0 overflow-y-auto"><ProjectOptions project={project} projectUpdater={projectUpdater} /></TabsContent>
     </Tabs>
   </main>;
 }

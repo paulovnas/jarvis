@@ -278,7 +278,7 @@ fn version_two_upgrade_preserves_onboarding_and_provider_accounts_without_seeds(
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        20
+        21
     );
 }
 
@@ -733,7 +733,14 @@ fn renaming_preserves_paths_ids_history_and_selection_after_restart() {
     let bytes = fs::read(&path).unwrap();
     state
         .with_connection(&home.0, |connection| {
-            rename_project_record(connection, &project.id, "  Meu projeto  ")
+            update_project_record(
+                connection,
+                &project.id,
+                "  Meu projeto  ",
+                Path::new(&project.path),
+                "rocket",
+                "purple",
+            )
         })
         .unwrap();
     let renamed = state
@@ -744,6 +751,8 @@ fn renaming_preserves_paths_ids_history_and_selection_after_restart() {
     assert_eq!(renamed.selection, created.selection);
     assert_eq!(renamed.projects[0].path, project.path);
     assert_eq!(renamed.projects[0].name, "Meu projeto");
+    assert_eq!(renamed.projects[0].icon, "rocket");
+    assert_eq!(renamed.projects[0].color, "purple");
     assert_eq!(renamed.conversations[0].title, "Planejar autenticação");
     assert_eq!(renamed.conversations[0].initial_title, "Nova Conversa");
     assert_eq!(fs::read(&path).unwrap(), bytes);
@@ -764,6 +773,86 @@ fn renaming_preserves_paths_ids_history_and_selection_after_restart() {
             .unwrap(),
         renamed
     );
+}
+
+#[test]
+fn moving_a_project_keeps_existing_conversations_and_history_readable() {
+    let home = TestHome::new();
+    let mut connection = database();
+    let project = setup_project(&mut connection, &home);
+    let created = insert_conversation(&mut connection, &home.0, &project.id, "Histórico").unwrap();
+    let conversation_id = created.selection.conversation_id.unwrap();
+    let history_path = session_path(&home.0, &project.id, &conversation_id, false).unwrap();
+    let history = fs::read(&history_path).unwrap();
+    let moved = home.project("moved");
+
+    let updated = update_project_record(
+        &mut connection,
+        &project.id,
+        "Projeto movido",
+        &moved,
+        "folder-code",
+        "green",
+    )
+    .unwrap();
+
+    assert_eq!(
+        updated.projects[0].path,
+        fs::canonicalize(&moved).unwrap().to_string_lossy()
+    );
+    assert_eq!(updated.projects[0].icon, "folder-code");
+    assert_eq!(updated.projects[0].color, "green");
+    let details = read_conversation(&connection, &home.0, &conversation_id).unwrap();
+    assert_eq!(details.project.path, updated.projects[0].path);
+    assert_eq!(fs::read(history_path).unwrap(), history);
+}
+
+#[test]
+fn project_updates_reject_duplicate_paths_and_unknown_appearance_values() {
+    let home = TestHome::new();
+    let mut connection = database();
+    let first = setup_project(&mut connection, &home);
+    let second_path = home.project("second");
+    let second = insert_project(&mut connection, &first.workspace_id, &second_path)
+        .unwrap()
+        .projects
+        .into_iter()
+        .find(|project| project.path == fs::canonicalize(&second_path).unwrap().to_string_lossy())
+        .unwrap();
+    let before = snapshot(&connection).unwrap();
+
+    assert_eq!(
+        update_project_record(
+            &mut connection,
+            &first.id,
+            "Primeiro",
+            Path::new(&second.path),
+            "folder",
+            "cyan",
+        )
+        .unwrap_err()
+        .code,
+        "duplicate_project"
+    );
+    for (icon, color, code) in [
+        ("unknown", "cyan", "invalid_project_icon"),
+        ("folder", "orange", "invalid_project_color"),
+    ] {
+        assert_eq!(
+            update_project_record(
+                &mut connection,
+                &first.id,
+                "Primeiro",
+                Path::new(&first.path),
+                icon,
+                color,
+            )
+            .unwrap_err()
+            .code,
+            code
+        );
+    }
+    assert_eq!(snapshot(&connection).unwrap(), before);
 }
 
 #[test]
@@ -805,9 +894,16 @@ fn invalid_or_failed_renames_preserve_existing_metadata_and_history() {
     let bytes = fs::read(&path).unwrap();
     for invalid in ["", " \t ", "Title\nline", &"x".repeat(121)] {
         assert_eq!(
-            rename_project_record(&mut connection, &project.id, invalid)
-                .unwrap_err()
-                .code,
+            update_project_record(
+                &mut connection,
+                &project.id,
+                invalid,
+                Path::new(&project.path),
+                "folder",
+                "cyan",
+            )
+            .unwrap_err()
+            .code,
             "invalid_name"
         );
         assert_eq!(
@@ -818,9 +914,16 @@ fn invalid_or_failed_renames_preserve_existing_metadata_and_history() {
         );
     }
     assert_eq!(
-        rename_project_record(&mut connection, "missing", "Title")
-            .unwrap_err()
-            .code,
+        update_project_record(
+            &mut connection,
+            "missing",
+            "Title",
+            Path::new(&project.path),
+            "folder",
+            "cyan",
+        )
+        .unwrap_err()
+        .code,
         "not_found"
     );
     assert_eq!(
@@ -916,6 +1019,8 @@ fn serialized_project_path_drops_the_windows_verbatim_prefix() {
         workspace_id: "w".into(),
         name: "proj".into(),
         path: stored.into(),
+        icon: "folder".into(),
+        color: "cyan".into(),
         created_at: 1,
     };
     let value = serde_json::to_value(&project).unwrap();

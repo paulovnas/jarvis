@@ -5,6 +5,7 @@ use crate::persistence::initialize_database;
 fn publication_contract_reuses_evidence_and_does_not_expand_into_a_whole_project_audit() {
     assert!(DEFAULT_PUBLISH_PROMPT.contains("Reuse valid checks already performed"));
     assert!(DEFAULT_PUBLISH_PROMPT.contains("whole-codebase audit"));
+    assert!(DEFAULT_PUBLISH_PROMPT.contains("ask only for a material choice"));
     let contract =
         crate::agent::workflow::catalog::builtin_agent(crate::agent::workflow::Role::Github)
             .unwrap()
@@ -12,6 +13,9 @@ fn publication_contract_reuses_evidence_and_does_not_expand_into_a_whole_project
     assert!(contract.contains("jarvis_inspect_publication"));
     assert!(contract.contains("Inspect the relevant diff once"));
     assert!(contract.contains("do not repeat an uncertain action"));
+    assert!(contract.contains("never ask the user to decide it again"));
+    assert!(contract.contains("autonomous"));
+    assert!(contract.contains("Recoverable errors"));
 }
 
 fn database() -> Connection {
@@ -145,6 +149,11 @@ fn publication_tool_exposes_typed_multi_repository_review() {
         repository["properties"]["push"]["enum"][2],
         "force_with_lease"
     );
+    assert_eq!(
+        definition["parameters"]["properties"]["authorization"]["anyOf"][1]["properties"]["mode"]
+            ["enum"][1],
+        "autonomous"
+    );
     let settings = Settings {
         project_id: "p1".into(),
         publish_prompt: "Use focused commits".into(),
@@ -154,17 +163,171 @@ fn publication_tool_exposes_typed_multi_repository_review() {
     };
     let prompt = instructions(&settings);
     assert!(prompt.contains("jarvis_propose_publication"));
-    assert!(prompt.contains("Never infer merge authorization"));
+    assert!(prompt.contains("authority matrix"));
+    assert!(prompt.contains("do not ask whether to perform them again"));
+    assert!(prompt.contains("without another review"));
     assert!(prompt.contains("Never send the user to a terminal"));
     assert!(prompt.contains("reused automatically"));
     assert!(prompt.contains("revision_requested"));
-    assert!(prompt.contains("revised proposal for explicit approval"));
+    assert!(prompt.contains("submit a revised proposal"));
     assert!(prompt.contains(PR_QUESTION_ID));
     assert!(prompt.contains("Use focused commits"));
     assert_eq!(
         prompt_data("Use <scope> & keep it"),
         "Use &lt;scope&gt; &amp; keep it"
     );
+}
+
+fn authorized_proposal(
+    mode: UserAuthorizationMode,
+    evidence: &str,
+    repository: RepositoryProposal,
+) -> Proposal {
+    Proposal {
+        summary: "Executar publicação solicitada".into(),
+        authorization: Some(UserAuthorization {
+            mode,
+            evidence: evidence.into(),
+        }),
+        repositories: vec![repository],
+    }
+}
+
+#[test]
+fn explicit_current_request_avoids_redundant_pr_question_but_keeps_review() {
+    let user = "Faça commit e push de tudo que está pendente.";
+    let mut repository = repo_proposal(".", &["app.txt"]);
+    repository.push = PushMode::Normal;
+    let proposal = authorized_proposal(UserAuthorizationMode::ExplicitRequest, user, repository);
+
+    validate_user_authorization(&proposal, user).unwrap();
+
+    assert!(!requires_publication_question(
+        PullRequestMode::AskPrMerge,
+        &proposal,
+        false
+    ));
+    assert!(!executes_without_review(&proposal));
+}
+
+#[test]
+fn autonomous_current_request_executes_all_named_operations_without_another_review() {
+    let user = "Faça commit, push, PR e merge; pode executar direto, sem me perguntar novamente.";
+    let mut repository = repo_proposal(".", &["app.txt"]);
+    repository.push = PushMode::Normal;
+    repository.pull_request = Some(PullRequestProposal {
+        base: "main".into(),
+        title: "Publicar alteração".into(),
+        body: "Alteração solicitada e validada.".into(),
+        draft: false,
+        merge: Some(MergeProposal {
+            method: MergeMethod::Squash,
+            delete_branch: false,
+        }),
+    });
+    let proposal = authorized_proposal(UserAuthorizationMode::Autonomous, user, repository);
+
+    validate_user_authorization(&proposal, user).unwrap();
+
+    assert!(executes_without_review(&proposal));
+    assert!(!requires_publication_question(
+        PullRequestMode::AskPrMerge,
+        &proposal,
+        false
+    ));
+}
+
+#[test]
+fn autonomous_soft_reset_uses_the_typed_action_when_the_user_named_it() {
+    let user = "Execute git reset --soft HEAD^ sem me perguntar novamente.";
+    let proposal = authorized_proposal(
+        UserAuthorizationMode::Autonomous,
+        user,
+        RepositoryProposal {
+            path: "movart-express-back".into(),
+            reset: Some(ResetProposal {
+                mode: ResetMode::Soft,
+                target: "HEAD^".into(),
+            }),
+            files: vec![],
+            branch: None,
+            commit_message: None,
+            push: PushMode::None,
+            pull_request: None,
+        },
+    );
+
+    validate_user_authorization(&proposal, user).unwrap();
+    assert!(executes_without_review(&proposal));
+}
+
+#[test]
+fn autonomous_mode_rejects_missing_scope_or_a_non_verbatim_claim() {
+    let user = "Faça commit e push sem me perguntar novamente.";
+    let mut repository = repo_proposal(".", &["app.txt"]);
+    repository.push = PushMode::Normal;
+    repository.pull_request = Some(PullRequestProposal {
+        base: "main".into(),
+        title: "Publicar alteração".into(),
+        body: "Alteração solicitada e validada.".into(),
+        draft: false,
+        merge: Some(MergeProposal {
+            method: MergeMethod::Squash,
+            delete_branch: false,
+        }),
+    });
+    let proposal = authorized_proposal(UserAuthorizationMode::Autonomous, user, repository);
+    let error = validate_user_authorization(&proposal, user).unwrap_err();
+    assert_eq!(error.code, "invalid_publication_authorization");
+    assert!(error.message.contains("pull request"));
+    assert!(error.message.contains("merge"));
+
+    let mut invalid_quote = proposal;
+    invalid_quote.authorization.as_mut().unwrap().evidence =
+        "Faça também a pull request e o merge.".into();
+    let error = validate_user_authorization(&invalid_quote, user).unwrap_err();
+    assert_eq!(error.code, "invalid_publication_authorization");
+    assert!(error.message.contains("literalmente"));
+}
+
+#[test]
+fn autonomy_accepts_delegated_judgment_but_rejects_an_explicit_review_caveat() {
+    let autonomous = "Faça commit e push; pode fazer o que for necessário e use seu julgamento.";
+    let mut repository = repo_proposal(".", &["app.txt"]);
+    repository.push = PushMode::Normal;
+    let proposal = authorized_proposal(
+        UserAuthorizationMode::Autonomous,
+        autonomous,
+        repository.clone(),
+    );
+    validate_user_authorization(&proposal, autonomous).unwrap();
+
+    let review =
+        "Faça commit e push, você decide os detalhes, mas confirme antes para minha aprovação.";
+    let proposal = authorized_proposal(UserAuthorizationMode::Autonomous, review, repository);
+    let error = validate_user_authorization(&proposal, review).unwrap_err();
+    assert_eq!(error.code, "invalid_publication_authorization");
+    assert!(error.message.contains("dispense explicitamente"));
+}
+
+#[test]
+fn configured_pr_question_remains_required_when_the_current_request_has_no_decision() {
+    let proposal = Proposal {
+        summary: "Publicar alteração".into(),
+        authorization: None,
+        repositories: vec![repo_proposal(".", &["app.txt"])],
+    };
+
+    assert!(requires_publication_question(
+        PullRequestMode::AskPr,
+        &proposal,
+        false
+    ));
+    assert!(!requires_publication_question(
+        PullRequestMode::AskPr,
+        &proposal,
+        true
+    ));
 }
 
 #[test]

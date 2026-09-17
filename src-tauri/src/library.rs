@@ -38,6 +38,8 @@ pub struct Project {
     name: String,
     #[serde(serialize_with = "serialize_display_path")]
     path: String,
+    icon: String,
+    color: String,
     created_at: i64,
 }
 
@@ -162,6 +164,47 @@ fn name(value: &str) -> Result<&str, LibraryError> {
     Ok(value)
 }
 
+const PROJECT_ICONS: &[&str] = &[
+    "bot",
+    "workflow",
+    "route",
+    "brain",
+    "search",
+    "code",
+    "palette",
+    "shield",
+    "terminal",
+    "wrench",
+    "book",
+    "sparkles",
+    "target",
+    "pen",
+    "lightbulb",
+    "rocket",
+    "folder",
+    "folder-code",
+    "package",
+    "database",
+    "globe",
+    "app-window",
+];
+const PROJECT_COLORS: &[&str] = &[
+    "blue", "green", "cyan", "yellow", "red", "purple", "neutral",
+];
+
+fn project_appearance<'a>(
+    value: &'a str,
+    accepted: &[&str],
+    code: &'static str,
+    message: &'static str,
+) -> Result<&'a str, LibraryError> {
+    if accepted.contains(&value) {
+        Ok(value)
+    } else {
+        Err(LibraryError::new(code, message))
+    }
+}
+
 fn workspace_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Workspace> {
     Ok(Workspace {
         id: row.get(0)?,
@@ -176,7 +219,9 @@ fn project_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
         workspace_id: row.get(1)?,
         name: row.get(2)?,
         path: row.get(3)?,
-        created_at: row.get(4)?,
+        icon: row.get(4)?,
+        color: row.get(5)?,
+        created_at: row.get(6)?,
     })
 }
 
@@ -205,7 +250,7 @@ fn workspace(connection: &Connection, id: &str) -> Result<Workspace, LibraryErro
 fn project(connection: &Connection, id: &str) -> Result<Project, LibraryError> {
     connection
         .query_row(
-            "SELECT id, workspace_id, name, path, created_at FROM projects WHERE id = ?1",
+            "SELECT id, workspace_id, name, path, icon, color, created_at FROM projects WHERE id = ?1",
             [id],
             project_row,
         )
@@ -229,7 +274,7 @@ fn snapshot(connection: &Connection) -> Result<LibrarySnapshot, LibraryError> {
         .prepare("SELECT id, name, created_at FROM workspaces ORDER BY created_at, rowid")?
         .query_map([], workspace_row)?
         .collect::<Result<Vec<_>, _>>()?;
-    let projects = connection.prepare("SELECT id, workspace_id, name, path, created_at FROM projects ORDER BY created_at, rowid")?
+    let projects = connection.prepare("SELECT id, workspace_id, name, path, icon, color, created_at FROM projects ORDER BY created_at, rowid")?
         .query_map([], project_row)?.collect::<Result<Vec<_>, _>>()?;
     let conversations = connection.prepare("SELECT id, project_id, COALESCE(display_title, title), created_at, title, COALESCE(last_activity_at, created_at) FROM conversations ORDER BY COALESCE(last_activity_at, created_at) DESC, rowid DESC")?
         .query_map([], conversation_row)?.collect::<Result<Vec<_>, _>>()?;
@@ -669,7 +714,6 @@ fn read_conversation(
         || header.version != 1
         || header.id != id
         || header.project_id != project.id
-        || header.cwd != project.path
         || header.title != conversation.initial_title
         || header.created_at != conversation.created_at
     {
@@ -740,17 +784,49 @@ pub(crate) fn save_generated_title(
     })
 }
 
-fn rename_project_record(
+fn update_project_record(
     connection: &mut Connection,
     id: &str,
     value: &str,
+    directory: &Path,
+    icon: &str,
+    color: &str,
 ) -> Result<LibrarySnapshot, LibraryError> {
     let value = name(value)?;
+    let icon = project_appearance(
+        icon,
+        PROJECT_ICONS,
+        "invalid_project_icon",
+        "Selecione um ícone válido para o projeto.",
+    )?;
+    let color = project_appearance(
+        color,
+        PROJECT_COLORS,
+        "invalid_project_color",
+        "Selecione uma cor válida para o projeto.",
+    )?;
+    let directory = canonical_directory(directory)?;
+    let path = directory.to_str().ok_or_else(|| {
+        LibraryError::new(
+            "project_directory",
+            "O caminho da pasta contém caracteres não compatíveis.",
+        )
+    })?;
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     project(&tx, id)?;
+    if tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE path = ?1 AND id <> ?2)",
+        params![path, id],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Err(LibraryError::new(
+            "duplicate_project",
+            "Esta pasta já pertence a outro projeto.",
+        ));
+    }
     tx.execute(
-        "UPDATE projects SET name = ?1 WHERE id = ?2",
-        params![value, id],
+        "UPDATE projects SET name = ?1, path = ?2, icon = ?3, color = ?4 WHERE id = ?5",
+        params![value, path, icon, color, id],
     )?;
     let result = snapshot(&tx)?;
     tx.commit()?;
@@ -950,14 +1026,17 @@ pub async fn create_conversation(
 }
 
 #[tauri::command]
-pub async fn rename_project(
+pub async fn update_project(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     name: String,
+    path: String,
+    icon: String,
+    color: String,
 ) -> Result<LibrarySnapshot, LibraryError> {
     run(app, state.inner().clone(), move |connection, _| {
-        rename_project_record(connection, &id, &name)
+        update_project_record(connection, &id, &name, Path::new(&path), &icon, &color)
     })
     .await
 }

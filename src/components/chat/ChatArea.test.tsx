@@ -241,7 +241,14 @@ describe("Persistent live conversation", () => {
     };
     call.mockResolvedValue({ ...emptyChat(), activeTurnId: turn.id, turns: [turn] });
     render(<TestChat />);
-    expect(await screen.findByLabelText("Tempo total da execução")).toHaveTextContent(/1[1-3]s/);
+    const status = await screen.findByTestId("active-execution-status");
+    expect(status).toHaveTextContent("Conferindo o contrato");
+    expect(within(status).getByLabelText("Tempo total da execução")).toHaveTextContent(/1[1-3]s/);
+    expect(within(screen.getByLabelText("Histórico de mensagens")).queryByLabelText("Tempo total da execução")).not.toBeInTheDocument();
+
+    await update({ ...emptyChat(), revision: 2, activeTurnId: null, turns: [{ ...turn, status: "completed", durationMs: 12_000 }] });
+    await waitFor(() => expect(screen.queryByTestId("active-execution-status")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Trabalhou por 12s/ })).toHaveAttribute("aria-expanded", "false");
   });
   it("restaura os registros de compactação na posição da conversa e não os duplica nos updates", async () => {
     const turn = savedTurn();
@@ -377,6 +384,7 @@ describe("Persistent live conversation", () => {
     } : running);
     render(<TestChat />);
     const card = await screen.findByRole("region", { name: "Perguntas do Jarvis" });
+    expect(screen.getByTestId("active-execution-status")).toHaveTextContent("Aguardando sua resposta");
     const composer = await screen.findByRole("textbox", { name: "Mensagem" });
     await user.type(composer, "Meu rascunho");
     expect(screen.getByRole("region", { name: "Mensagens agendadas" })).toHaveTextContent(queue[0].content);
@@ -387,6 +395,10 @@ describe("Persistent live conversation", () => {
     expect(screen.queryByRole("region", { name: "Perguntas do Jarvis" })).not.toBeInTheDocument();
     expect(composer).toHaveTextContent("Meu rascunho");
     expect(composer).toHaveFocus();
+    const assistant = screen.getByTestId("assistant-message-turn1");
+    const activity = within(assistant).getByRole("button", { name: /Fez perguntas.*1 ação/ });
+    expect(within(assistant).queryByRole("button", { name: "Feita 1 pergunta" })).not.toBeInTheDocument();
+    await user.click(activity);
     const history = screen.getByRole("button", { name: "Feita 1 pergunta" });
     expect(history).toHaveAttribute("aria-expanded", "false");
     await user.click(history);

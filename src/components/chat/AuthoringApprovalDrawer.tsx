@@ -109,7 +109,7 @@ function PublicationReview({ proposal }: { proposal: PublicationProposal }) {
       <CardHeader className="flex flex-row items-start gap-3 border-b border-border bg-sidebar/45 p-4">
         <div className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-background"><FolderGit2 className="size-4 text-onedark-cyan" /></div>
         <div className="min-w-0 flex-1"><p className="micro-label text-muted-foreground">Repositório</p><CardTitle className="mt-1 break-all font-mono text-sm">{repository.path === "." ? "Raiz do projeto" : repository.path}</CardTitle></div>
-        {repository.branch && <Hint content={repository.branch}><Badge variant="outline" className="max-w-52 shrink truncate font-mono text-[10px] text-primary">{repository.branch}</Badge></Hint>}
+        {repository.branch && <Hint content={repository.branch} whenTruncated><Badge variant="outline" className="max-w-52 shrink truncate font-mono text-[10px] text-primary">{repository.branch}</Badge></Hint>}
       </CardHeader>
       <CardContent className="space-y-4 p-4">
         {repository.reset && <section className="rounded-md border border-onedark-yellow/25 bg-onedark-yellow/5 p-3">

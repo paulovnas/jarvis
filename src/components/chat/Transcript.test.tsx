@@ -121,7 +121,8 @@ describe("estado do turno", () => {
 
     const observation = await screen.findByText("Vou inspecionar os arquivos relevantes.");
     expect(observation.closest("[data-execution-observation]")).not.toBeNull();
-    expect(screen.getByRole("button", { name: /Em execução/ })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Atividades da execução atual")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Trabalhou por/ })).not.toBeInTheDocument();
 
     rerender(<TurnBody turn={{
       ...running,

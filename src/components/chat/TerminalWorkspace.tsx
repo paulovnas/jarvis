@@ -234,7 +234,7 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
                         </ContextMenuContent>
                       </ContextMenu>
                       {/* Center without a transform: Button's pressed animation also uses translate. */}
-                      <Button type="button" variant="ghost" size="icon" aria-label={`Fechar ${terminal.title}`} aria-haspopup="dialog" className="absolute inset-y-0 right-0.5 z-10 my-auto size-5 cursor-pointer opacity-0 transition-opacity group-hover/tab:opacity-100 focus-visible:opacity-100" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setClosing(terminal); }}><X className="size-3" /></Button>
+                      <Hint content={`Fechar ${terminal.title}`}><Button type="button" variant="ghost" size="icon" aria-label={`Fechar ${terminal.title}`} aria-haspopup="dialog" className="absolute inset-y-0 right-0.5 z-10 my-auto size-5 cursor-pointer opacity-0 transition-opacity group-hover/tab:opacity-100 focus-visible:opacity-100" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); setClosing(terminal); }}><X className="size-3" /></Button></Hint>
                       <RenameTerminalPopover key={`${terminal.id}:${renamingId === terminal.id ? terminal.title : "closed"}`} open={renamingId === terminal.id} terminal={terminal} pending={renamingPending} onOpenChange={next => { if (!next) setRenamingId(null); }} onRename={title => rename(terminal, title)} />
                     </div>)}
                   </TabsList>

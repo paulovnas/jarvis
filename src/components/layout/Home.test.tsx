@@ -45,6 +45,7 @@ describe("Home shell", () => {
     expect(content).toContain("um ou mais repositórios Git independentes");
     expect(content).toContain("cada raiz Git que contenha alterações");
     expect(content).toContain("todos os repositórios afetados em uma única proposta");
+    expect(content).toContain("envie authorization como null");
     expect(content).toContain("Use jarvis_propose_publication");
   });
   it("keeps independent drafts through dashboard and empty-workspace navigation", async () => {
@@ -211,7 +212,7 @@ describe("Home shell", () => {
     expect(screen.getByRole("complementary", { name: "Workspace" })).toBeInTheDocument();
     await screen.findByRole("heading", { name: "Primeira conversa" });
     expect(screen.getByRole("combobox", { name: "Selecionar workspace" })).toHaveTextContent("Pessoal");
-    expect(screen.getByRole("button", { name: "Novo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adicionar projeto ou workspace" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Detalhes" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Atividades" })).not.toBeInTheDocument();
     expect(screen.getByRole("main", { name: "Conversa" })).toBeInTheDocument();

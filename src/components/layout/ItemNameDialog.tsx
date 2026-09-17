@@ -18,9 +18,8 @@ import { Input } from "@/components/TextInput";
 import { Spinner } from "@/components/ui/spinner";
 
 interface ItemNameDialogProps {
-  kind: "workspace" | "project" | "conversation";
+  kind: "workspace" | "conversation";
   initialValue?: string;
-  projectPath?: string;
   pending: boolean;
   error: string | null;
   onClose: () => void;
@@ -30,7 +29,6 @@ interface ItemNameDialogProps {
 export function ItemNameDialog({
   kind,
   initialValue = "",
-  projectPath,
   pending,
   error,
   onClose,
@@ -80,16 +78,12 @@ export function ItemNameDialog({
             <DialogTitle>
               {isWorkspace
                 ? "Novo workspace"
-                : kind === "project"
-                  ? "Editar projeto"
-                  : "Editar conversa"}
+                : "Editar conversa"}
             </DialogTitle>
             <DialogDescription>
               {isWorkspace
                 ? "Agrupe seus projetos. O workspace não possui pasta nem configurações próprias."
-                : kind === "project"
-                  ? "Altere o nome exibido para este projeto. A pasta permanece a mesma."
-                  : "Escolha um título curto para identificar a conversa."}
+                : "Escolha um título curto para identificar a conversa."}
             </DialogDescription>
           </DialogHeader>
           <FieldGroup>
@@ -97,9 +91,7 @@ export function ItemNameDialog({
               <FieldLabel htmlFor={id}>
                 {isWorkspace
                   ? "Nome do workspace"
-                  : kind === "project"
-                    ? "Nome do projeto"
-                    : "Título da conversa"}
+                  : "Título da conversa"}
               </FieldLabel>
               <Input
                 id={id}
@@ -119,12 +111,6 @@ export function ItemNameDialog({
                 </FieldError>
               )}
             </Field>
-            {kind === "project" && (
-              <Field>
-                <FieldLabel htmlFor={`${id}-path`}>Local do projeto</FieldLabel>
-                <Input id={`${id}-path`} value={projectPath ?? ""} readOnly />
-              </Field>
-            )}
           </FieldGroup>
           <DialogFooter>
             <Button

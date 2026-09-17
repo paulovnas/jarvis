@@ -92,6 +92,20 @@ describe("Persistent sidebar", () => {
     expect(within(conversation).getByRole("img", { name: "2 terminais abertos" })).toBeVisible();
     expect(screen.queryByRole("img", { name: /terminal aberto$/ })).not.toBeInTheDocument();
   });
+  it("reveals the full conversation title when the sidebar clips it", async () => {
+    const user = userEvent.setup();
+    const stored = populatedLibrary();
+    stored.conversations[0].title = "Revisão completa da ordem de serviço e seus pagamentos";
+    call.mockResolvedValue(stored);
+    render(<Harness />);
+    const title = await screen.findByText(stored.conversations[0].title);
+    Object.defineProperties(title, {
+      clientWidth: { configurable: true, value: 96 },
+      scrollWidth: { configurable: true, value: 280 },
+    });
+    await user.hover(title);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(stored.conversations[0].title);
+  });
   it("opens project Details first and reveals recent sessions three then ten at a time", async () => {
     const user = userEvent.setup();
     const stored = populatedLibrary();
@@ -218,7 +232,7 @@ describe("Persistent sidebar", () => {
       await screen.findByText("Organize seus projetos"),
     ).toBeInTheDocument();
     expect(screen.queryByText("Jarvis")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Novo" }));
+    await user.click(screen.getByRole("button", { name: "Adicionar projeto ou workspace" }));
     expect(await screen.findByRole("menuitem", { name: "Adicionar projeto" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.queryByRole("menuitem", { name: "Nova conversa" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("menuitem", { name: "Novo workspace" }));
@@ -252,7 +266,7 @@ describe("Persistent sidebar", () => {
     call.mockResolvedValueOnce(initial);
     render(<Harness />);
     await screen.findByText("Nenhum projeto");
-    await user.click(screen.getByRole("button", { name: "Novo" }));
+    await user.click(screen.getByRole("button", { name: "Adicionar projeto ou workspace" }));
     const add = await screen.findByRole("menuitem", { name: "Adicionar projeto" });
     call.mockResolvedValueOnce(null);
     await user.click(add);
@@ -263,7 +277,7 @@ describe("Persistent sidebar", () => {
       conversations: [],
       selection: { workspaceId: "w1", projectId: "p1", conversationId: null },
     });
-    await user.click(screen.getByRole("button", { name: "Novo" }));
+    await user.click(screen.getByRole("button", { name: "Adicionar projeto ou workspace" }));
     await user.click(await screen.findByRole("menuitem", { name: "Adicionar projeto" }));
     const projectButton = await screen.findByRole("button", { name: "Jarvis" });
     expect(projectButton).not.toHaveAttribute("title");
@@ -292,7 +306,7 @@ describe("Persistent sidebar", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(create).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Novo" }),
+      screen.getByRole("button", { name: "Adicionar projeto ou workspace" }),
     ).toBeDisabled();
     await act(async () => finish({ bad: "payload" }));
     expect(screen.getByRole("alert")).toHaveTextContent("dados recebidos");
@@ -347,8 +361,7 @@ describe("Persistent sidebar", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("edits the right-clicked project without changing its folder or selecting it", async () => {
-    const user = userEvent.setup();
+  it("keeps project editing in Details options and preserves chat editing", async () => {
     const stored = populatedLibrary();
     stored.projects.push({
       id: "p3",
@@ -363,40 +376,24 @@ describe("Persistent sidebar", () => {
       name: "Website",
     });
     fireEvent.contextMenu(target);
-    await user.click(await screen.findByRole("menuitem", { name: "Editar" }));
-    const dialog = screen.getByRole("dialog", { name: "Editar projeto" });
-    const name = within(dialog).getByLabelText("Nome do projeto");
-    expect(name).toHaveValue("Website");
-    expect(within(dialog).getByLabelText("Local do projeto")).toHaveValue(
-      "/projects/website",
-    );
-    expect(within(dialog).getByLabelText("Local do projeto")).toHaveAttribute(
-      "readonly",
-    );
-    await user.clear(name);
-    expect(
-      within(dialog).getByRole("button", { name: "Salvar" }),
-    ).toBeDisabled();
-    await user.type(name, "  Meu site  ");
-    const renamed = structuredClone(stored);
-    renamed.projects[2].name = "Meu site";
-    call.mockResolvedValueOnce(renamed);
-    await user.click(within(dialog).getByRole("button", { name: "Salvar" }));
-    expect(call).toHaveBeenLastCalledWith("rename_project", {
-      id: "p3",
-      name: "Meu site",
-    });
-    expect(
-      await screen.findByRole("button", {
-        name: "Meu site",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Primeira conversa" }),
-    ).toHaveAttribute("aria-current", "page");
-    expect(
-      call.mock.calls.filter(([command]) => command === "select_library_item"),
-    ).toHaveLength(0);
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).queryByRole("menuitem", { name: "Editar" })).not.toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Mover para outro workspace" })).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: "Excluir" })).toBeVisible();
+  });
+
+  it("uses the project icon and color for the active project and conversation", async () => {
+    const stored = populatedLibrary();
+    stored.projects[0].icon = "rocket";
+    stored.projects[0].color = "purple";
+    call.mockResolvedValueOnce(stored);
+    render(<Harness />);
+
+    const group = await screen.findByRole("group", { name: "Projeto Jarvis" });
+    expect(group.closest("[data-project-color]")).toHaveAttribute("data-project-color", "purple");
+    const projectButton = within(group).getByRole("button", { name: "Jarvis" });
+    expect(projectButton.querySelector('svg[style*="color"]')).toHaveStyle({ color: "var(--color-onedark-purple)" });
+    expect(within(group).getByRole("button", { name: "Primeira conversa" }).getAttribute("style")).toContain("--color-onedark-purple");
   });
 
   it(
@@ -486,7 +483,7 @@ describe("Persistent sidebar", () => {
     render(<Harness />);
     await screen.findByText("Primeira conversa");
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Novo" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Adicionar projeto ou workspace" })).toHaveLength(1);
     const project = screen.getByRole("button", { name: "Jarvis" });
     expect(project).toHaveTextContent(/^Jarvis$/);
     await user.click(project);
@@ -494,7 +491,7 @@ describe("Persistent sidebar", () => {
     expect(call).not.toHaveBeenCalledWith("select_library_item", expect.anything());
     await user.click(project);
     expect(await screen.findByRole("button", { name: "Primeira conversa" })).toHaveAttribute("aria-current", "page");
-    await user.click(screen.getByRole("button", { name: "Novo" }));
+    await user.click(screen.getByRole("button", { name: "Adicionar projeto ou workspace" }));
     expect((await screen.findAllByRole("menuitem")).map(item => item.textContent)).toEqual(["Adicionar projeto", "Novo workspace"]);
   });
 

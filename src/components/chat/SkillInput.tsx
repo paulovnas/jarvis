@@ -10,6 +10,7 @@ import { UndoRedo } from "@tiptap/extensions";
 import { BookOpen, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
 import { Command, CommandItem, CommandList } from "@/components/ui/command";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,7 +22,7 @@ function SkillNode({ node, deleteNode, editor }: NodeViewProps) {
   return <NodeViewWrapper as="span" className="inline" contentEditable={false}>
     <Badge variant="outline" className="mx-0.5 inline-flex gap-1 border-[#c678dd]/30 bg-[#c678dd]/10 align-baseline text-[#c678dd]">
       <BookOpen aria-hidden="true" />{name}
-      <Button type="button" variant="ghost" size="icon" className="size-4 cursor-pointer rounded-full p-0 text-current hover:bg-[#c678dd]/20" aria-label={`Remover skill ${name}`} disabled={!editor.isEditable} onClick={() => { if (editor.isEditable) { deleteNode(); editor.view.focus(); } }}><X /></Button>
+      <Hint content={`Remover ${name}`}><Button type="button" variant="ghost" size="icon" className="size-4 cursor-pointer rounded-full p-0 text-current hover:bg-[#c678dd]/20" aria-label={`Remover skill ${name}`} disabled={!editor.isEditable} onClick={() => { if (editor.isEditable) { deleteNode(); editor.view.focus(); } }}><X /></Button></Hint>
     </Badge>
   </NodeViewWrapper>;
 }

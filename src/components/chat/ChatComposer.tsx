@@ -282,11 +282,11 @@ export function ChatComposer({
               <span className="whitespace-nowrap">Validação manual</span>
             </Label></Hint>}
 
-            <ModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} disabled={!modelsReady || running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} />
+            <ModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} disabled={!modelsReady || running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} showProviderIdentity />
 
             {/* Botão redondo com seta pra cima no canto inferior direito */}
-            {running && !compacting && <Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button>}
-            <Button
+            {running && !compacting && <Hint content="Interromper execução"><Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button></Hint>}
+            <Hint content={running ? "Agendar mensagem" : "Enviar mensagem"}><Button
               type="button"
               size="icon"
               onClick={() => { void handleSend(); }}
@@ -299,7 +299,7 @@ export function ChatComposer({
               }`}
             >
               <ArrowUp className="size-3.5 stroke-[2.5]" />
-            </Button>
+            </Button></Hint>
           </div>
         </div>
       </SkillInput></Suspense>

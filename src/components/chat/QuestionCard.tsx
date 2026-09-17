@@ -66,11 +66,11 @@ export function QuestionCard({ request, drafts, draftKey, onAnswer }: {
           <span className="sr-only">{remainingSeconds === null ? "Calculando tempo para resposta recomendada automática" : remainingSeconds > 0 ? `Resposta recomendada automática em ${remainingSeconds} segundos` : "Enviando respostas recomendadas"}</span>
         </Badge></Hint>}
         {request.questions.length > 1 && <>
-          <Button variant="ghost" size="icon-xs" className="cursor-pointer" aria-label="Pergunta anterior" disabled={pending || draft.index === 0} onClick={() => navigate(draft.index - 1)}><ChevronLeft /></Button>
+          <Hint content="Pergunta anterior"><Button variant="ghost" size="icon-xs" className="cursor-pointer" aria-label="Pergunta anterior" disabled={pending || draft.index === 0} onClick={() => navigate(draft.index - 1)}><ChevronLeft /></Button></Hint>
           <span className="text-xs tabular-nums text-muted-foreground">{draft.index + 1} de {request.questions.length}</span>
-          <Button variant="ghost" size="icon-xs" className="cursor-pointer" aria-label="Próxima pergunta" disabled={pending || last} onClick={() => navigate(draft.index + 1)}><ChevronRight /></Button>
+          <Hint content="Próxima pergunta"><Button variant="ghost" size="icon-xs" className="cursor-pointer" aria-label="Próxima pergunta" disabled={pending || last} onClick={() => navigate(draft.index + 1)}><ChevronRight /></Button></Hint>
         </>}
-        <Button variant="ghost" size="icon-xs" className="cursor-pointer" aria-label="Cancelar perguntas" disabled={pending} onClick={() => submit(true)}><X /></Button>
+        <Hint content="Cancelar perguntas"><Button variant="ghost" size="icon-xs" className="cursor-pointer" aria-label="Cancelar perguntas" disabled={pending} onClick={() => submit(true)}><X /></Button></Hint>
       </div>
     </CardHeader>
     <CardContent>

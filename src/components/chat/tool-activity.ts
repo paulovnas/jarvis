@@ -16,6 +16,7 @@ const actionLabels = {
   media: "processou imagens e anexos",
   jarvis: "configurou o Jarvis",
   integrations: "usou integrações",
+  questions: "fez perguntas",
   other: "executou outras ações",
 } as const;
 
@@ -50,6 +51,7 @@ function actionKind(name: string): ActionKind {
   if (["vision", "generate_image", "read_attachment"].includes(name)) return "media";
   if (name.startsWith("jarvis_")) return "jarvis";
   if (name.startsWith("mcp_")) return "integrations";
+  if (name === "ask_user") return "questions";
   return "other";
 }
 

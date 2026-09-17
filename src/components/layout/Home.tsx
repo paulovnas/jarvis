@@ -73,7 +73,7 @@ export function Home() {
   const publishChanges = useCallback(async () => {
     if (!publicationOptions) return false;
     return chat.send(
-      "Prepare a publicação das alterações atuais deste projeto. A pasta do projeto pode agrupar um ou mais repositórios Git independentes: descubra cada raiz Git que contenha alterações e trate separadamente seu status, diff, validações, branch, commit, push e eventual pull request ou merge. Siga as opções configuradas em Detalhes → Opções e reúna todos os repositórios afetados em uma única proposta completa no painel para minha aprovação. Use jarvis_propose_publication para propor e, depois da aprovação, executar as ações de cada repositório.",
+      "Prepare a publicação das alterações atuais deste projeto. A pasta do projeto pode agrupar um ou mais repositórios Git independentes: descubra cada raiz Git que contenha alterações e trate separadamente seu status, diff, validações, branch, commit, push e eventual pull request ou merge. Siga as opções configuradas em Detalhes → Opções e reúna todos os repositórios afetados em uma única proposta completa no painel para minha aprovação. Como este fluxo foi iniciado pelo botão Publicar e exige revisão no painel, envie authorization como null. Use jarvis_propose_publication para propor e, depois da aprovação, executar as ações de cada repositório.",
       { account: publicationOptions.account, model: publicationOptions.model, reasoning: publicationOptions.reasoning, mode: "build", workflow: "publication", approvalMode: "yolo" },
     );
   }, [chat, publicationOptions]);
@@ -193,7 +193,7 @@ export function Home() {
           minSize="360px"
           className="h-full min-h-0 min-w-0"
         >
-          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea drafts={drafts} questionDrafts={questionDrafts} onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} modelBindings={references.bindings} modelsReady={accountsReady && !references.loading} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
+          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} projectUpdater={library} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea drafts={drafts} questionDrafts={questionDrafts} onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} modelBindings={references.bindings} modelsReady={accountsReady && !references.loading} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
         </ResizablePanel>
 
         {!dashboardProject && <><ResizableHandle

@@ -1,3 +1,9 @@
+import {
+  projectAppearance,
+  projectAppearanceSchema,
+  type ProjectAppearance,
+} from "./workflow-appearance";
+
 export interface Workspace {
   id: string;
   name: string;
@@ -7,6 +13,24 @@ export interface Workspace {
 export interface Project extends Workspace {
   workspaceId: string;
   path: string;
+  icon?: ProjectAppearance["icon"];
+  color?: ProjectAppearance["color"];
+}
+
+export interface ProjectUpdate {
+  name: string;
+  path: string;
+  icon: ProjectAppearance["icon"];
+  color: ProjectAppearance["color"];
+}
+
+export function appearanceOfProject(
+  project: Pick<Project, "icon" | "color">,
+): ProjectAppearance {
+  return {
+    icon: project.icon ?? projectAppearance.icon,
+    color: project.color ?? projectAppearance.color,
+  };
 }
 
 export interface Conversation {
@@ -79,10 +103,16 @@ function workspace(value: unknown): Workspace {
 
 function project(value: unknown): Project {
   const item = record(value);
+  const appearance = projectAppearanceSchema.safeParse({
+    icon: item.icon ?? projectAppearance.icon,
+    color: item.color ?? projectAppearance.color,
+  });
+  if (!appearance.success) invalid();
   return {
     ...workspace(item),
     workspaceId: text(item.workspaceId),
     path: text(item.path),
+    ...appearance.data,
   };
 }
 

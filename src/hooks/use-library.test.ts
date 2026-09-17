@@ -22,11 +22,18 @@ describe("Library generated title refresh", () => {
     const { result } = renderHook(() => useLibrary());
     await waitFor(() => expect(result.current.snapshot).toEqual(initial));
     let rename!: Promise<boolean>;
-    act(() => { rename = result.current.renameProject("p1", "Renamed"); });
+    act(() => { rename = result.current.updateProject("p1", { name: "Renamed", path: "/projects/jarvis", icon: "rocket", color: "purple" }); });
     await act(async () => { handler?.({ event:"library:changed", id:1, payload:"c1" }); });
     expect(reads).toBe(1);
     await act(async () => { resolve(renamed); await rename; });
     await waitFor(() => expect(result.current.snapshot?.conversations[0].title).toBe("Título gerado"));
     expect(result.current.snapshot?.projects[0].name).toBe("Renamed");
+    expect(invoke).toHaveBeenCalledWith("update_project", {
+      id: "p1",
+      name: "Renamed",
+      path: "/projects/jarvis",
+      icon: "rocket",
+      color: "purple",
+    });
   });
 });

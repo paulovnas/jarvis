@@ -420,10 +420,10 @@ fn prepare(
 
 pub(super) async fn execute(
     session: &Session,
+    owner: &Session,
     state: &AppState,
     oauth: &OpenAiCodexState,
     home: &Path,
-    project_id: &str,
     tool: &ToolCall,
     mut signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
@@ -441,14 +441,34 @@ pub(super) async fn execute(
                     .flat_map(|step| &step.tools)
                     .any(publication::answered_publication_question)
             });
+        let current_user_request = owner
+            .data
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .turns
+            .last()
+            .map(|turn| turn.turn.user.clone())
+            .ok_or_else(AgentError::internal)?;
         let proposal = publication::prepare(
             state,
             home,
-            project_id,
+            owner.project_id()?,
             &session.root,
+            &current_user_request,
             question_answered,
             tool,
         )?;
+        if publication::executes_without_review(&proposal) {
+            if *signal.borrow() {
+                return Err(AgentError::cancelled());
+            }
+            let root = session.root.clone();
+            return tauri::async_runtime::spawn_blocking(move || {
+                publication::apply(&root, &proposal, None)
+            })
+            .await
+            .map_err(|_| AgentError::internal());
+        }
         (
             PendingProposal {
                 turn_id: String::new(),

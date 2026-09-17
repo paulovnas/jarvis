@@ -106,8 +106,13 @@ describe("App bootstrap and onboarding", () => {
     expect(backgroundEvent.defaultPrevented).toBe(true);
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     fireEvent.contextMenu(project);
+    const projectMenu = await screen.findByRole("menu");
+    expect(within(projectMenu).queryByRole("menuitem", { name: "Editar" })).not.toBeInTheDocument();
+    expect(within(projectMenu).getByRole("menuitem", { name: "Mover para outro workspace" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    fireEvent.contextMenu(within(sidebar).getByRole("button", { name: "Primeira conversa" }));
     await user.click(await screen.findByRole("menuitem", { name: "Editar" }));
-    const name = await screen.findByLabelText("Nome do projeto");
+    const name = await screen.findByLabelText("Título da conversa");
     const portalEvent = new MouseEvent("contextmenu", {
       bubbles: true,
       cancelable: true,

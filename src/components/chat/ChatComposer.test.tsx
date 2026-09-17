@@ -267,7 +267,7 @@ describe("ChatComposer model reasoning", () => {
     const plain = await screen.findByRole("menuitem", { name: "Plain" });
     expect(plain).not.toHaveAttribute("aria-haspopup");
     await user.click(plain);
-    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent(/^Plain$/);
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent(/^OpenAI Codex · pessoal · Plain$/);
   });
 
   it("requires reviewing a reasoning level that is no longer available", async () => {

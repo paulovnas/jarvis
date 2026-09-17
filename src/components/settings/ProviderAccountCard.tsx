@@ -61,7 +61,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             <ProviderIcon kind={account.providerKind} className="size-4" />
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <Hint content={account.alias}><CardTitle className="min-w-0 truncate font-mono text-xs!">{account.alias}</CardTitle></Hint>
+            <Hint content={account.alias} whenTruncated><CardTitle className="min-w-0 truncate font-mono text-xs!">{account.alias}</CardTitle></Hint>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Badge variant="outline" className={`shrink-0 ${!account.enabled ? "text-muted-foreground" : !account.modelsAvailable ? "border-[#e5c07b]/30 bg-[#e5c07b]/10 text-[#e5c07b]" : "border-[#98c379]/30 bg-[#98c379]/10 text-[#98c379]"}`}>
                 <CheckCircle2 aria-hidden="true" data-icon="inline-start" />

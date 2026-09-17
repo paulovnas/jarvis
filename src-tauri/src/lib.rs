@@ -175,7 +175,7 @@ pub fn run() {
                 library::create_workspace,
                 library::add_project,
                 library::create_conversation,
-                library::rename_project,
+                library::update_project,
                 library::rename_conversation,
                 library::delete_library_item,
                 library::select_library_item,

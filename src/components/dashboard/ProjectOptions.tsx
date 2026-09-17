@@ -10,10 +10,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { libraryError } from "@/core/library";
+import { libraryError, type Project } from "@/core/library";
+import type { LibraryController } from "@/hooks/use-library";
 import { PULL_REQUEST_MODE_LABELS, publicationSettingsSchema, type PublicationSettings, type PullRequestMode } from "@/core/publication";
 import { ProjectRepositoriesSettings } from "./ProjectRepositoriesSettings";
 import { ExecutionGrantsSettings } from "./ExecutionGrantsSettings";
+import { ProjectIdentitySettings } from "./ProjectIdentitySettings";
 
 type Draft = Pick<PublicationSettings, "publishPrompt" | "prMode" | "prPrompt">;
 
@@ -22,10 +24,12 @@ function draftOf(settings: PublicationSettings): Draft {
 }
 
 function OptionsSkeleton() {
-  return <div role="status" aria-label="Carregando opções do projeto" className="mx-auto w-full max-w-5xl space-y-4 p-6"><Skeleton className="h-24 w-full" /><Skeleton className="h-80 w-full" /></div>;
+  return <div role="status" aria-label="Carregando opções do projeto" className="space-y-4"><Skeleton className="h-24 w-full" /><Skeleton className="h-80 w-full" /></div>;
 }
 
-export function ProjectOptions({ projectId, projectPath }: { projectId: string; projectPath: string }) {
+export function ProjectOptions({ project, projectUpdater }: { project: Project; projectUpdater: Pick<LibraryController, "pending" | "error" | "clearError" | "updateProject"> }) {
+  const projectId = project.id;
+  const projectPath = project.path;
   const [settings, setSettings] = useState<PublicationSettings | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,8 +50,9 @@ export function ProjectOptions({ projectId, projectPath }: { projectId: string; 
   }, [projectId]);
 
   const changed = useMemo(() => settings && draft ? JSON.stringify(draft) !== JSON.stringify(draftOf(settings)) : false, [draft, settings]);
-  if (error) return <div className="p-6"><Alert variant="destructive"><AlertTriangle /><AlertTitle>Opções indisponíveis</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>;
-  if (!settings || !draft) return <OptionsSkeleton />;
+  const identity = <ProjectIdentitySettings key={`${project.id}:${project.name}:${project.path}:${project.icon ?? ""}:${project.color ?? ""}`} project={project} updater={projectUpdater} />;
+  if (error) return <div className="mx-auto w-full max-w-5xl space-y-5 p-6 pb-10">{identity}<Alert variant="destructive"><AlertTriangle /><AlertTitle>Opções de publicação indisponíveis</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>;
+  if (!settings || !draft) return <div className="mx-auto w-full max-w-5xl space-y-5 p-6 pb-10">{identity}<OptionsSkeleton /></div>;
 
   const save = async () => {
     if (saving || !changed) return;
@@ -63,6 +68,8 @@ export function ProjectOptions({ projectId, projectPath }: { projectId: string; 
 
   const modes = Object.entries(PULL_REQUEST_MODE_LABELS).map(([value, label]) => ({ value: value as PullRequestMode, label }));
   return <div className="mx-auto w-full max-w-5xl space-y-5 p-6 pb-10">
+    {identity}
+
     <Card className="border-primary/20 bg-primary/5">
       <CardHeader className="flex flex-row items-start gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-background"><Sparkles className="size-5 text-primary" /></div>

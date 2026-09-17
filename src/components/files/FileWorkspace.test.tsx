@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DesktopLayoutProvider } from "@/components/layout/DesktopLayoutProvider";
@@ -12,6 +12,7 @@ import type { FilePreview } from "@/core/project-files";
 import { useProjectFiles } from "@/hooks/use-project-files";
 import { FileWorkspace } from "./FileWorkspace";
 import { ProjectExplorer } from "./ProjectExplorer";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("./CodeViewer", () => ({ default: ({ file }: { file: FilePreview }) => <div role="textbox" aria-label={`Arquivo ${file.path}`} aria-readonly="true">{file.content}</div> }));
@@ -58,6 +59,17 @@ beforeEach(() => {
     if (command === "read_project_file") return { path: input?.path, content: `${input?.projectId}: ${input?.path}`, size: 20, encoding: "UTF-8" };
     throw new Error(`Unexpected ${command}`);
   });
+});
+
+it("only explains Explorer names when they are clipped or the path adds context", async () => {
+  const user = userEvent.setup();
+  render(<TooltipProvider delay={0}><Workspace /></TooltipProvider>);
+  const rootFile = await screen.findByRole("treeitem", { name: "README.md" });
+  await user.hover(within(rootFile).getByText("README.md"));
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("treeitem", { name: "src" }));
+  await user.hover(await screen.findByText("app.ts"));
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("src/app.ts");
 });
 
 it("opens read-only file tabs without closing or remounting Chat, deduplicates files and closes the requested tab", async () => {

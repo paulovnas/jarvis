@@ -112,7 +112,7 @@ export function QueuedMessagesPanel({
                 disabled={locked || itemBusy}
                 className="size-6 shrink-0 cursor-grab touch-none text-muted-foreground/55 hover:text-foreground active:cursor-grabbing"
               ><GripVertical aria-hidden="true" className="size-3.5" /></Button></Hint> : <CornerDownRight aria-hidden="true" className="mx-1 size-3 shrink-0 text-muted-foreground/45" />}
-              <Hint content={message.content}><div className="min-w-0 flex-1 truncate text-xs text-foreground/85">
+              <Hint content={message.content} whenTruncated><div className="min-w-0 flex-1 truncate text-xs text-foreground/85">
                 <MessageContent content={message.content} parts={message.parts} />
               </div></Hint>
               <Hint content={running ? "Adicionar à execução atual sem interrompê-la" : "Disponível durante uma execução"}><Button

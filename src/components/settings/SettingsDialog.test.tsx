@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import SettingsDialog from "./SettingsDialog";
 import { coreFixture } from "@/test/core-fixtures";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 const { invokeMock, usageMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), usageMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -60,6 +61,32 @@ function renderSettings(onOpenChange = vi.fn()) {
 }
 
 describe("SettingsDialog provider accounts", () => {
+  it("does not repeat visible settings labels in a tooltip", async () => {
+    const user = userEvent.setup();
+    invokeMock.mockResolvedValue([]);
+    render(<TooltipProvider delay={0}><SettingsDialog open onOpenChange={vi.fn()} /></TooltipProvider>);
+    const providers = screen.getByRole("tab", { name: /Provedores/ });
+    await user.hover(providers);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+  it("keeps settings labels available when the navigation collapses to icons", async () => {
+    vi.spyOn(window, "matchMedia").mockReturnValue({
+      matches: true,
+      media: "(max-width: 639px)",
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    });
+    const user = userEvent.setup();
+    invokeMock.mockResolvedValue([]);
+    render(<TooltipProvider delay={0}><SettingsDialog open onOpenChange={vi.fn()} /></TooltipProvider>);
+    const providers = screen.getByRole("tab", { name: /Provedores/ });
+    await user.hover(providers);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Provedores");
+  });
   it("identifica a aba ativa e mantém a navegação disponível ao trocar o conteúdo", async () => {
     const user = userEvent.setup();
     invokeMock.mockResolvedValue([]);

@@ -7,14 +7,12 @@ import { reasoningPreview } from "./reasoning-preview";
 it("shows reconnection progress, its cause and returns to thinking after recovery", () => {
   const work = { durationSeconds: 3, steps: [{ thinking: "Conferindo os testes", commentary: "", tools: [] }], retry: { attempt: 1, maxAttempts: 5 as const, retryAt: 100, message: "HTTP 502 — Bad Gateway. O provedor está temporariamente indisponível." } };
   const { rerender } = render(<AssistantWorkCollapse isStreaming work={work} />);
-  expect(screen.getByText("Reconectando 1/5")).toHaveAttribute("role", "status");
   expect(screen.getByText(work.retry.message)).toBeVisible();
   rerender(<AssistantWorkCollapse isStreaming work={{ ...work, retry: { ...work.retry, attempt: 5 } }} />);
-  expect(screen.getByText("Reconectando 5/5")).toHaveAttribute("role", "status");
+  expect(screen.getByText(work.retry.message)).toBeVisible();
   rerender(<AssistantWorkCollapse isStreaming work={{ ...work, retry: null }} />);
-  expect(screen.queryByText(/Reconectando/)).not.toBeInTheDocument();
   expect(screen.queryByText(work.retry.message)).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /Conferindo os testes/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Analisou o contexto/ })).toBeVisible();
 });
 
 it("does not show a stale reconnection indicator on a finished turn", () => {
@@ -23,11 +21,11 @@ it("does not show a stale reconnection indicator on a finished turn", () => {
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
-it("updates the live provider heading and preserves earlier reasoning on demand", async () => {
+it("updates live activity and preserves earlier reasoning on demand", async () => {
   const user = userEvent.setup();
   const first = { thinking: "**Analisando projeto**\n\nVou conferir as dependências.", commentary: "", tools: [] };
   const { rerender } = render(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 2, steps: [first] }} />);
-  expect(screen.getByRole("button", { name: /Analisando projeto/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Analisou o contexto.*1 ação/ })).toBeVisible();
   rerender(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 3, steps: [first, { ...first, thinking: "**Conferindo testes**\n\nLendo o resultado." }] }} />);
   await user.click(screen.getByRole("button", { name: /Analisou o contexto.*2 ações/ }));
   await user.click(screen.getByRole("button", { name: /Analisando projeto/ }));
@@ -37,7 +35,8 @@ it("updates the live provider heading and preserves earlier reasoning on demand"
 it("keeps live work open and folds it automatically when the turn finishes", () => {
   const work = { durationSeconds: 65, steps: [{ thinking: "Verificando o projeto", commentary: "", tools: [] }] };
   const { rerender } = render(<AssistantWorkCollapse isStreaming work={work} />);
-  expect(screen.getByRole("button", { name: /Em execuçãoVerificando o projeto/ })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByLabelText("Atividades da execução atual")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Trabalhou por/ })).not.toBeInTheDocument();
   rerender(<AssistantWorkCollapse work={work} />);
   expect(screen.getByRole("button", { name: /Trabalhou por 1m 05s/ })).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByRole("button", { name: /Analisou o contexto/ })).not.toBeInTheDocument();
@@ -212,4 +211,39 @@ it("does not reorder actions around a later reasoning step", async () => {
   const firstCommand = screen.getByTestId("tool-call-bash-0");
   expect(lastRead.compareDocumentPosition(laterReasoning) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   expect(laterReasoning.compareDocumentPosition(firstCommand) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+});
+
+it("keeps an answered question in its chronological execution phase", async () => {
+  const user = userEvent.setup();
+  const question = {
+    id: "ask-theme",
+    name: "ask_user",
+    status: "completed" as const,
+    args: { questions: [{ id: "theme", question: "Qual tema prefere?", options: [{ label: "Escuro" }, { label: "Claro" }] }] },
+    output: JSON.stringify({ cancelled: false, answers: [{ id: "theme", value: "Escuro", selectedLabel: "Escuro" }] }),
+  };
+  render(<AssistantWorkCollapse work={{ durationSeconds: 8, steps: [
+    { thinking: "Preparando a pergunta", commentary: "Preciso confirmar uma preferência.", tools: [question] },
+    { thinking: "Aplicando a resposta", commentary: "Com a preferência definida, vou continuar.", tools: [{ id: "read-next", name: "read", status: "completed", args: {}, output: "" }] },
+  ] }} />);
+
+  await user.click(screen.getByRole("button", { name: /Trabalhou por 8s/ }));
+  const phases = within(screen.getByRole("list", { name: "Etapas da execução" }))
+    .getAllByRole("listitem")
+    .filter(item => item.hasAttribute("data-execution-phase"));
+  expect(phases).toHaveLength(2);
+  await user.click(within(phases[0]).getByRole("button", { name: /Fez perguntas.*2 ações/ }));
+  expect(within(phases[0]).getByRole("button", { name: "Feita 1 pergunta" })).toBeVisible();
+  expect(within(phases[1]).queryByRole("button", { name: "Feita 1 pergunta" })).not.toBeInTheDocument();
+  expect(phases[0].compareDocumentPosition(phases[1]) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+});
+
+it("omits a pending question from the transcript while the answer card is active", () => {
+  render(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 2, steps: [{
+    thinking: "Aguardando confirmação",
+    commentary: "",
+    tools: [{ id: "ask-pending", name: "ask_user", status: "running", args: { questions: [] }, output: "" }],
+  }] }} />);
+
+  expect(screen.queryByRole("button", { name: /pergunta/ })).not.toBeInTheDocument();
 });

@@ -14,3 +14,18 @@ it("shows each provider icon by its kind even when aliases are arbitrary", async
   expect(screen.getByRole("menuitem", { name: "Conta 2" }).querySelector("svg.lucide-plug-zap")).toBeInTheDocument();
   expect(within(codex).queryByRole("img")).not.toBeInTheDocument();
 });
+
+it("identifies the selected provider when accounts offer the same model", () => {
+  const model = { label: "GPT-5.6-Sol", reasoningLevels: ["max"], defaultReasoningLevel: "max" };
+  const groups = [
+    { provider: "openai-codex-pessoal", providerKind: "openai-codex" as const, models: [{ ...model, value: "openai-codex-pessoal/gpt-5.6-sol" }] },
+    { provider: "openai-codex-trabalho", providerKind: "openai-codex" as const, models: [{ ...model, value: "openai-codex-trabalho/gpt-5.6-sol" }] },
+  ];
+
+  render(<ModelPicker modelGroups={groups} selection={{ model: "openai-codex-trabalho/gpt-5.6-sol", reasoning: "max" }} onSelect={vi.fn()} showProviderIdentity />);
+
+  const trigger = screen.getByRole("button", { name: "Selecionar modelo de IA" });
+  expect(trigger).toHaveTextContent("trabalho · GPT-5.6-Sol · Máximo");
+  expect(trigger).not.toHaveTextContent("pessoal");
+  expect(trigger.querySelector("[style]")?.getAttribute("style")).toContain("provider-openai.svg");
+});

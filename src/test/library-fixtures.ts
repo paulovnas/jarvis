@@ -21,6 +21,8 @@ export function populatedLibrary(): LibrarySnapshot {
         workspaceId: "w1",
         name: "Jarvis",
         path: "/projects/jarvis",
+        icon: "folder",
+        color: "cyan",
         createdAt: 1,
       },
       {
@@ -28,6 +30,8 @@ export function populatedLibrary(): LibrarySnapshot {
         workspaceId: "w2",
         name: "Outro projeto",
         path: "/projects/other",
+        icon: "folder",
+        color: "cyan",
         createdAt: 2,
       },
     ],

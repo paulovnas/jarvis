@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
 import { AssistantWorkCollapse } from "./AssistantWorkCollapse";
-import { QuestionHistory } from "./QuestionHistory";
 import { GeneratedImageCard } from "./GeneratedImageCard";
 import { BrowserCaptureCard } from "./BrowserCaptureCard";
 import type { ChatMessage } from "./types";
@@ -60,7 +59,6 @@ export function AssistantMessageTurn({ message }: { message: ChatMessage }) {
         <time className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{message.timestamp}</time>
       </header>
       {message.work && <AssistantWorkCollapse work={message.work} isStreaming={message.streaming} />}
-      {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "ask_user").map(tool => <QuestionHistory key={tool.id} tool={tool} />)}
       {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "generate_image").map(tool => <GeneratedImageCard key={tool.id} tool={tool} />)}
       {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "browser_screenshot").map(tool => <BrowserCaptureCard key={tool.id} tool={tool} />)}
       {message.error && <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm"><p className="font-medium">{message.error.title}</p><p className="mt-1 text-muted-foreground">{message.error.message}</p></div>}

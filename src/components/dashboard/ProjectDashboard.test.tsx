@@ -12,6 +12,7 @@ import { coreFixture } from "@/test/core-fixtures";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
 const project = { id: "p1", workspaceId: "w1", name: "Jarvis", path: "/projects/jarvis", createdAt: 1 };
+const projectUpdater = { pending: false, error: null, clearError: vi.fn(), updateProject: vi.fn().mockResolvedValue(true) };
 
 describe("Project Dashboard", () => {
   beforeEach(() => {
@@ -37,7 +38,7 @@ describe("Project Dashboard", () => {
   afterEach(() => vi.restoreAllMocks());
   it("loads real metrics and navigates from overview to sessions and board", async () => {
     const user = userEvent.setup(); const select = vi.fn();
-    render(<ProjectDashboard project={project} onSelectSession={select} />);
+    render(<ProjectDashboard project={project} projectUpdater={projectUpdater} onSelectSession={select} />);
     expect(screen.getByRole("status", { name: "Carregando detalhes" })).toBeInTheDocument();
     await screen.findByText("gpt-6-astra");
     expect(screen.getByText("1.500")).toBeInTheDocument();
@@ -49,13 +50,13 @@ describe("Project Dashboard", () => {
   });
   it.each(["/projects/jarvis", "C:\\Users\\João Silva\\projetos\\Jarvis"])("opens the registered project instead of passing %s to the scoped frontend opener", async path => {
     const user = userEvent.setup();
-    render(<ProjectDashboard project={{ ...project, path }} onSelectSession={vi.fn()} />);
+    render(<ProjectDashboard project={{ ...project, path }} projectUpdater={projectUpdater} onSelectSession={vi.fn()} />);
     await user.click(screen.getByRole("button", { name: "Abrir pasta do projeto Jarvis" }));
     expect(call).toHaveBeenCalledWith("open_project_directory", { projectId: "p1" });
   });
   it("presents General, Kanban and project-scoped Options inside Details", async () => {
     const user = userEvent.setup();
-    render(<ProjectDashboard project={project} onSelectSession={vi.fn()} />);
+    render(<ProjectDashboard project={project} projectUpdater={projectUpdater} onSelectSession={vi.fn()} />);
     expect(screen.getByRole("main", { name: "Detalhes de Jarvis" })).toBeVisible();
     expect(screen.getAllByRole("tab")).toHaveLength(3);
     await user.click(screen.getByRole("tab", { name: "Opções" }));
@@ -68,7 +69,7 @@ describe("Project Dashboard", () => {
     call.mockImplementation((command, args, options) => command === "open_project_directory"
       ? Promise.reject({ code: "project_directory", message: "A pasta do projeto não está disponível." })
       : fallback!(command, args, options));
-    render(<ProjectDashboard project={project} onSelectSession={vi.fn()} />);
+    render(<ProjectDashboard project={project} projectUpdater={projectUpdater} onSelectSession={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: "Abrir pasta do projeto Jarvis" }));
     await waitFor(() => expect(report).toHaveBeenCalledWith("A pasta do projeto não está disponível."));
     expect(screen.getByRole("main", { name: "Detalhes de Jarvis" })).toBeVisible();
@@ -138,10 +139,10 @@ describe("Project Dashboard", () => {
   it("discards an old project response after switching project", async () => {
     let resolve!: (value: unknown) => void;
     call.mockImplementation(command => command === "get_project_metrics" ? new Promise(done => { resolve = done; }) : Promise.resolve([]));
-    const view = render(<ProjectDashboard key="p1" project={project} onSelectSession={vi.fn()} />);
+    const view = render(<ProjectDashboard key="p1" project={project} projectUpdater={projectUpdater} onSelectSession={vi.fn()} />);
     await waitFor(() => expect(call).toHaveBeenCalledWith("get_project_metrics", { projectId: "p1" }));
     const old = resolve;
-    view.rerender(<ProjectDashboard key="p2" project={{ ...project, id: "p2", name: "Outro" }} onSelectSession={vi.fn()} />);
+    view.rerender(<ProjectDashboard key="p2" project={{ ...project, id: "p2", name: "Outro" }} projectUpdater={projectUpdater} onSelectSession={vi.fn()} />);
     await act(async () => old(projectMetrics()));
     expect(screen.queryByText("gpt-6-astra")).not.toBeInTheDocument();
     expect(screen.getByRole("main", { name: "Detalhes de Outro" })).toBeInTheDocument();

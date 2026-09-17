@@ -9,6 +9,7 @@ import {
   type LibrarySnapshot,
   type LibraryTarget,
   type LibraryDeleteTarget,
+  type ProjectUpdate,
 } from "@/core/library";
 
 export function useLibrary() {
@@ -125,8 +126,8 @@ export function useLibrary() {
       perform("add_project", { workspaceId }, "Projeto adicionado"),
     createConversation: (projectId: string) =>
       perform("create_conversation", { projectId }, "Conversa criada"),
-    renameProject: (id: string, name: string) =>
-      perform("rename_project", { id, name }, "Projeto atualizado"),
+    updateProject: (id: string, update: ProjectUpdate) =>
+      perform("update_project", { id, ...update }, "Projeto atualizado"),
     moveProject: (id: string, workspaceId: string) =>
       perform("move_project_workspace", { id, workspaceId }, "Projeto movido"),
     renameConversation: (id: string, title: string) =>

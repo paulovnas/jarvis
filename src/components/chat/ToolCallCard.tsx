@@ -130,7 +130,7 @@ export function ToolCallCard({ tool, detailContext }: { tool: ToolCallItem; deta
     <Collapsible open={open} onOpenChange={next => { setOpen(next); if (next) requestDetails(); }} data-testid={`tool-call-${tool.id}`} className="tool-slot min-w-0">
       <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group flex h-auto min-h-9 w-full cursor-pointer justify-start gap-2 px-2.5 text-left text-[11px]">
         <Icon aria-hidden="true" data-icon="inline-start" className={`size-3.5 shrink-0 ${mutation ? "text-onedark-yellow" : current.name === "bash" ? "text-onedark-green" : current.name.includes("skill") ? "text-onedark-purple" : current.name === "web_search" || current.name.startsWith("ctx_") ? "text-onedark-cyan" : "text-primary"}`} />
-        <Hint content={typeof detail === "string" ? detail : undefined}><span className="min-w-0 flex-1 truncate">
+        <Hint content={typeof detail === "string" ? detail : undefined} whenTruncated><span className="min-w-0 flex-1 truncate">
           <span className="text-muted-foreground">{label}</span>{typeof detail === "string" && <> <span className="mx-1 text-muted-foreground/50">/</span> <span className="font-mono text-[10px] text-foreground">{detail}</span></>}
         </span></Hint>
         <span className="sr-only">{status}</span>

@@ -550,7 +550,7 @@ mod tests {
 
     fn database(project_root: &Path) -> Connection {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("CREATE TABLE workspaces(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT 0); CREATE TABLE projects(id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT NOT NULL, path TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT 0); INSERT INTO workspaces(id,name) VALUES ('w','Workspace');").unwrap();
+        connection.execute_batch("CREATE TABLE workspaces(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT 0); CREATE TABLE projects(id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT NOT NULL, path TEXT NOT NULL, icon TEXT NOT NULL DEFAULT 'folder', color TEXT NOT NULL DEFAULT 'cyan', created_at INTEGER NOT NULL DEFAULT 0); INSERT INTO workspaces(id,name) VALUES ('w','Workspace');").unwrap();
         connection
             .execute(
                 "INSERT INTO projects(id,workspace_id,name,path) VALUES (?1,'w','Project',?2)",

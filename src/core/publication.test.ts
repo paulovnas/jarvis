@@ -20,6 +20,7 @@ describe("publicationProposalSchema", () => {
       push: "none",
       commitMessage: "feat: update app",
     });
+    expect(proposal.authorization).toBeNull();
   });
 
   it("accepts an action-only soft reset without a commit", () => {
@@ -37,5 +38,28 @@ describe("publicationProposalSchema", () => {
     });
 
     expect(proposal.repositories[0].reset).toEqual({ mode: "soft", target: "HEAD^" });
+  });
+
+  it("accepts verified current-request authorization metadata", () => {
+    const proposal = publicationProposalSchema.parse({
+      summary: "Publicar sem nova confirmação",
+      authorization: {
+        mode: "autonomous",
+        evidence: "Faça commit e push sem me perguntar novamente.",
+      },
+      repositories: [{
+        path: ".",
+        files: ["src/App.tsx"],
+        branch: null,
+        commitMessage: "fix: update app",
+        push: "normal",
+        pullRequest: null,
+      }],
+    });
+
+    expect(proposal.authorization).toEqual({
+      mode: "autonomous",
+      evidence: "Faça commit e push sem me perguntar novamente.",
+    });
   });
 });

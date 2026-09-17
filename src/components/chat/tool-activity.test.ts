@@ -42,4 +42,8 @@ describe("grouped tool activity", () => {
       tool("apply_patch", 2),
     ])).toBe("Leu e pesquisou arquivos e alterou arquivos");
   });
+
+  it("identifies answered user questions in activity summaries", () => {
+    expect(summarizeToolActivity([tool("ask_user", 1)])).toBe("Fez perguntas");
+  });
 });

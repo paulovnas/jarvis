@@ -1,5 +1,5 @@
-import { BookOpen, Bot, Brain, CodeXml, Lightbulb, Palette, PenLine, Rocket, Route, Search, ShieldCheck, Sparkles, Target, Terminal, Workflow, Wrench } from "lucide-react";
-import { agentAppearance, type WorkflowAppearance } from "@/core/workflow-appearance";
+import { AppWindow, BookOpen, Bot, Brain, CodeXml, Database, Folder, FolderCode, Globe2, Lightbulb, Package, Palette, PenLine, Rocket, Route, Search, ShieldCheck, Sparkles, Target, Terminal, Workflow, Wrench } from "lucide-react";
+import { agentAppearance, type IdentityAppearance, type WorkflowAppearance } from "@/core/workflow-appearance";
 
 export const WORKFLOW_ICONS = {
   bot: { label: "Robô", Icon: Bot }, workflow: { label: "Fluxo", Icon: Workflow },
@@ -10,7 +10,12 @@ export const WORKFLOW_ICONS = {
   book: { label: "Livro", Icon: BookOpen }, sparkles: { label: "Estrelas", Icon: Sparkles },
   target: { label: "Alvo", Icon: Target }, pen: { label: "Escrita", Icon: PenLine },
   lightbulb: { label: "Ideia", Icon: Lightbulb }, rocket: { label: "Foguete", Icon: Rocket },
+  folder: { label: "Pasta", Icon: Folder }, "folder-code": { label: "Projeto", Icon: FolderCode },
+  package: { label: "Pacote", Icon: Package }, database: { label: "Banco de dados", Icon: Database },
+  globe: { label: "Web", Icon: Globe2 }, "app-window": { label: "Aplicativo", Icon: AppWindow },
 } as const;
+export const WORKFLOW_ICON_KEYS: readonly WorkflowAppearance["icon"][] = ["bot", "workflow", "route", "brain", "search", "code", "palette", "shield", "terminal", "wrench", "book", "sparkles", "target", "pen", "lightbulb", "rocket"];
+export const PROJECT_ICON_KEYS = Object.keys(WORKFLOW_ICONS) as IdentityAppearance["icon"][];
 export const WORKFLOW_COLORS = {
   blue: { label: "Azul", value: "var(--color-onedark-blue)" },
   green: { label: "Verde", value: "var(--color-onedark-green)" },
@@ -21,7 +26,7 @@ export const WORKFLOW_COLORS = {
   neutral: { label: "Neutro", value: "var(--muted-foreground)" },
 } as const;
 
-export function workflowAppearance(value: WorkflowAppearance | null | undefined, fallback = agentAppearance) {
+export function workflowAppearance(value: IdentityAppearance | null | undefined, fallback: IdentityAppearance = agentAppearance) {
   const appearance = value ?? fallback;
   return { Icon: WORKFLOW_ICONS[appearance.icon].Icon, color: WORKFLOW_COLORS[appearance.color].value };
 }

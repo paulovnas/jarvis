@@ -124,7 +124,7 @@ export function SkillsSettings({ onCountChange }: { onCountChange?: (count: numb
       <Label htmlFor="skills-agents" className="cursor-pointer text-xs">Incluir .agents/skills</Label>
       <Switch id="skills-agents" className="cursor-pointer" checked={snapshot?.includeAgents ?? false} disabled={!snapshot || !!busy} onCheckedChange={enabled => { void perform("agents", async () => { update(await invoke("set_skills_agents", { enabled })); }); }} />
     </div>
-    {snapshot && <Hint content={snapshot.directory}><span className="truncate font-mono text-[11px] text-muted-foreground">{snapshot.directory}</span></Hint>}
+    {snapshot && <Hint content={snapshot.directory} whenTruncated><span className="truncate font-mono text-[11px] text-muted-foreground">{snapshot.directory}</span></Hint>}
     {checkingUpdates && <Alert role="status" aria-live="polite" className="border-onedark-yellow/25 bg-onedark-yellow/5 text-onedark-yellow">
       <RefreshCw aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />
       <AlertTitle className="text-xs">Verificando atualizações das skills</AlertTitle>

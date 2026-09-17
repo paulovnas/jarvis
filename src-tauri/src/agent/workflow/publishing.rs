@@ -28,7 +28,7 @@ fn prepare(hub: &Hub) -> Result<Job, AgentError> {
         acceptance: vec![
             "Inspect every changed Git repository inside the project root.".into(),
             "Run the relevant checks and present one supervised publication proposal.".into(),
-            "Apply only the actions approved by the user and verify the resulting state.".into(),
+            "Apply only actions authorized by the current user request or approved in review, then verify the resulting state.".into(),
         ],
         scope: vec![".".into()],
         bead_id: None,

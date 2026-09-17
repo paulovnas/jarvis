@@ -511,20 +511,20 @@ export function SkillsMarketplace({
                           </Avatar>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">
-                              <Hint content={skill.name}><span
+                              <Hint content={skill.name} whenTruncated><span
                                 className="truncate text-sm font-semibold text-[#e5e5e6] group-hover:text-[#61afef] transition-colors"
                               >
                                 {skill.name}
                               </span></Hint>
                             </div>
                             {skill.skillId !== skill.name ? (
-                              <Hint content={skill.skillId}><span
+                              <Hint content={skill.skillId} whenTruncated><span
                                 className="block truncate font-mono text-[11px] text-muted-foreground"
                               >
                                 {skill.skillId}
                               </span></Hint>
                             ) : (
-                              <Hint content={skill.source}><span
+                              <Hint content={skill.source} whenTruncated><span
                                 className="block truncate text-xs text-muted-foreground"
                               >
                                 {skill.source}
@@ -633,7 +633,7 @@ export function SkillsMarketplace({
             <Pagination className="mx-0 w-auto" aria-label="Paginação do Marketplace">
               <PaginationContent>
                 <PaginationItem>
-                  <Button
+                  <Hint content="Página anterior"><Button
                     variant="ghost"
                     size="icon-sm"
                     className="cursor-pointer"
@@ -642,7 +642,7 @@ export function SkillsMarketplace({
                     onClick={() => setPage(currentPage - 1)}
                   >
                     <ChevronLeft />
-                  </Button>
+                  </Button></Hint>
                 </PaginationItem>
                 <PaginationItem>
                   <span aria-live="polite" className="px-2 tabular-nums">
@@ -650,7 +650,7 @@ export function SkillsMarketplace({
                   </span>
                 </PaginationItem>
                 <PaginationItem>
-                  <Button
+                  <Hint content="Próxima página"><Button
                     variant="ghost"
                     size="icon-sm"
                     className="cursor-pointer"
@@ -659,7 +659,7 @@ export function SkillsMarketplace({
                     onClick={() => setPage(currentPage + 1)}
                   >
                     <ChevronRight />
-                  </Button>
+                  </Button></Hint>
                 </PaginationItem>
               </PaginationContent>
             </Pagination>

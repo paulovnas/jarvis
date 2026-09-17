@@ -107,8 +107,14 @@ export const projects = sqliteTable("projects", {
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id),
   name: text("name").notNull(),
   path: text("path").notNull().unique(),
+  icon: text("icon", { enum: ["bot", "workflow", "route", "brain", "search", "code", "palette", "shield", "terminal", "wrench", "book", "sparkles", "target", "pen", "lightbulb", "rocket", "folder", "folder-code", "package", "database", "globe", "app-window"] }).notNull().default("folder"),
+  color: text("color", { enum: ["blue", "green", "cyan", "yellow", "red", "purple", "neutral"] }).notNull().default("cyan"),
   createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
-}, (table) => [index("projects_workspace_idx").on(table.workspaceId)]);
+}, (table) => [
+  index("projects_workspace_idx").on(table.workspaceId),
+  check("projects_icon_check", sql`${table.icon} IN ('bot','workflow','route','brain','search','code','palette','shield','terminal','wrench','book','sparkles','target','pen','lightbulb','rocket','folder','folder-code','package','database','globe','app-window')`),
+  check("projects_color_check", sql`${table.color} IN ('blue','green','cyan','yellow','red','purple','neutral')`),
+]);
 
 export const projectPublicationSettings = sqliteTable("project_publication_settings", {
   projectId: text("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),

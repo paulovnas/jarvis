@@ -13,6 +13,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/TextInput";
 import { MCP_TEMPLATE, mcpCheckSchema, mcpServersSchema, validateMcpJson, type McpServer } from "@/core/mcp";
 import { McpServerCard } from "./McpServerCard";
+import { Hint } from "@/components/ui/hint";
 
 function message(error: unknown): string {
   if (typeof error === "object" && error !== null && "code" in error && error.code === "mcp_error" && "message" in error && typeof error.message === "string") return error.message;
@@ -93,7 +94,7 @@ export function McpSettings({ onCountChange }: { onCountChange?: (count: number)
     <div className="flex items-start justify-between gap-3">
       <h2 className="text-sm font-medium">MCPs</h2>
       <div className="flex gap-1">
-        <Button variant="ghost" size="icon-sm" aria-label="Atualizar MCPs" className="cursor-pointer" disabled={loading || busy} onClick={() => { setLoading(true); setReload((value) => value + 1); }}><RefreshCw aria-hidden="true" /></Button>
+        <Hint content="Atualizar MCPs"><Button variant="ghost" size="icon-sm" aria-label="Atualizar MCPs" className="cursor-pointer" disabled={loading || busy} onClick={() => { setLoading(true); setReload((value) => value + 1); }}><RefreshCw aria-hidden="true" /></Button></Hint>
         <Button size="sm" className="cursor-pointer" disabled={loading || busy || error !== null} onClick={() => { setRaw(""); setEditorError(null); setEditor({ id: null }); }}><Plus aria-hidden="true" />Adicionar MCP</Button>
       </div>
     </div>
