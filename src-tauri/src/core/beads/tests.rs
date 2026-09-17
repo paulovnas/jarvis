@@ -18,6 +18,159 @@ fn store(beads: &Beads) {
     fs::write(beads.workspace().join(".beads/metadata.json"), json!({"database":"dolt", "backend":"dolt", "dolt_mode":"embedded", "dolt_database":beads.prefix()}).to_string()).unwrap();
 }
 
+const OLD_SCHEMA_ERROR: &str = "Error: failed to open database: schema version mismatch: database is at v53, binary expects v66, and the read-only open cannot migrate it; run any bd write command in that workspace to migrate, or set BD_IGNORE_SCHEMA_SKEW=1 to read anyway (queries touching newer schema may fail)";
+
+#[test]
+fn schema_recovery_only_accepts_an_older_database_rejected_by_a_read() {
+    assert!(read_requires_schema_upgrade(&failure(OLD_SCHEMA_ERROR)));
+    for message in [
+        OLD_SCHEMA_ERROR.replace("v53", "v67"),
+        OLD_SCHEMA_ERROR.replace("v53", "v66"),
+        OLD_SCHEMA_ERROR.replace("v53", "invalid"),
+        OLD_SCHEMA_ERROR.replace("v66", "invalid"),
+        "Beads: permission denied".into(),
+        "Beads: connection timed out".into(),
+    ] {
+        assert!(!read_requires_schema_upgrade(&failure(message)));
+    }
+    assert!(!read_requires_schema_upgrade(&CoreError {
+        code: "cancelled",
+        message: OLD_SCHEMA_ERROR.into(),
+    }));
+}
+
+#[cfg(unix)]
+fn outdated_store(home: &Path) -> Beads {
+    use std::os::unix::fs::PermissionsExt;
+
+    let beads = fixture(home);
+    store(&beads);
+    fs::create_dir(&beads.package).unwrap();
+    let binary = beads.package.join("bd");
+    fs::write(
+        &binary,
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> calls
+if [ "$1" = migrate ]; then
+    if [ -f migration-error ]; then cat migration-error >&2; exit 1; fi
+    if [ ! -f stale-after-migration ]; then touch schema-current; fi
+    printf 'Schema already current\n'
+    exit 0
+fi
+if [ ! -f schema-current ]; then cat read-error >&2; exit 1; fi
+if [ "$1" = create ]; then printf '{"id":"created"}\n'; else cat result.json; fi
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(binary, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(beads.workspace().join("read-error"), OLD_SCHEMA_ERROR).unwrap();
+    fs::write(beads.workspace().join("result.json"), "[]").unwrap();
+    beads
+}
+
+#[cfg(unix)]
+fn commands(beads: &Beads) -> Vec<String> {
+    fs::read_to_string(beads.workspace().join("calls"))
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn resume_migrates_private_history_once_and_keeps_queries_read_only() {
+    let home = tempfile::tempdir().unwrap();
+    let mut beads = outdated_store(home.path());
+    beads.plan = true;
+    fs::write(
+        beads.workspace().join("result.json"),
+        json!([{"id":format!("{}-old", beads.prefix()),"title":"Existing plan","status":"open"}])
+            .to_string(),
+    )
+    .unwrap();
+    let (_cancel, signal) = watch::channel(false);
+    let resumed = beads.resume(signal.clone(), || Ok(())).await.unwrap();
+    assert!(resumed.contains("Existing plan"));
+    assert_eq!(beads.resume(signal, || Ok(())).await.unwrap(), resumed);
+    let calls = commands(&beads);
+    assert_eq!(calls.len(), 4);
+    assert_eq!(calls[1], "migrate schema --json --dolt-auto-commit=on");
+    for index in [0, 2, 3] {
+        assert!(calls[index].starts_with("list "));
+        assert!(calls[index].contains("--readonly"));
+        assert_eq!(calls[index], calls[0]);
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn creation_recovers_its_idempotency_read_before_writing_once() {
+    let home = tempfile::tempdir().unwrap();
+    let beads = outdated_store(home.path());
+    let created = call(
+        &beads,
+        "beads_create",
+        json!({"title":"New task","description":"Requested change"}),
+        "create",
+    )
+    .await;
+    assert_eq!(created["id"], "created");
+    let calls = commands(&beads);
+    assert_eq!(calls.len(), 4);
+    assert!(calls[0].starts_with("list "));
+    assert!(calls[1].starts_with("migrate schema "));
+    assert_eq!(calls[0], calls[2]);
+    assert!(calls[3].starts_with("create "));
+    assert!(!calls[3].contains("--readonly"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn migration_failure_preserves_diagnostics_without_replaying_a_query() {
+    let home = tempfile::tempdir().unwrap();
+    let beads = outdated_store(home.path());
+    fs::write(beads.workspace().join("migration-error"), "disk is full").unwrap();
+    let (_cancel, signal) = watch::channel(false);
+    let error = beads.resume(signal, || Ok(())).await.unwrap_err();
+    assert!(error.message.contains("atualizar o banco de tarefas"));
+    assert!(error.message.contains("disk is full"));
+    assert_eq!(commands(&beads).len(), 2);
+    assert!(beads.validate_store().unwrap());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn schema_recovery_does_not_loop_if_migration_does_not_fix_the_read() {
+    let home = tempfile::tempdir().unwrap();
+    let beads = outdated_store(home.path());
+    fs::write(beads.workspace().join("stale-after-migration"), "").unwrap();
+    let (_cancel, signal) = watch::channel(false);
+    let error = beads.resume(signal, || Ok(())).await.unwrap_err();
+    assert!(read_requires_schema_upgrade(&error));
+    assert_eq!(commands(&beads).len(), 3);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn write_failures_are_never_migrated_or_replayed() {
+    let home = tempfile::tempdir().unwrap();
+    let beads = outdated_store(home.path());
+    let (_cancel, signal) = watch::channel(false);
+    let error = beads
+        .execute(
+            "beads_update",
+            &json!({"id":format!("{}-old", beads.prefix()),"notes":"Keep existing work"}),
+            "update",
+            signal,
+            || Ok(()),
+        )
+        .await
+        .unwrap_err();
+    assert!(read_requires_schema_upgrade(&error));
+    assert_eq!(commands(&beads).len(), 1);
+}
+
 #[test]
 fn task_details_keep_comments_in_the_same_agent_snapshot() {
     let value = attach_comments(
@@ -305,18 +458,22 @@ fn task(value: &Value) -> &Value {
 }
 
 #[tokio::test]
-#[ignore = "Uses the installed private Beads binary against an isolated temporary home"]
+#[ignore = "Uses JARVIS_TEST_BEADS_PACKAGE or the installed private binary against an isolated temporary home"]
 async fn installed_beads_lifecycle_smoke() {
     let home = tempfile::tempdir().unwrap();
-    let host = PathBuf::from(
-        std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .unwrap(),
-    );
-    let package = super::super::installed(&host, ComponentId::Beads)
-        .unwrap()
-        .path(&host)
-        .unwrap();
+    let package = std::env::var_os("JARVIS_TEST_BEADS_PACKAGE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let host = PathBuf::from(
+                std::env::var_os("HOME")
+                    .or_else(|| std::env::var_os("USERPROFILE"))
+                    .unwrap(),
+            );
+            super::super::installed(&host, ComponentId::Beads)
+                .unwrap()
+                .path(&host)
+                .unwrap()
+        });
     let mut beads = fixture(home.path());
     beads.package = package;
     let epic = call(

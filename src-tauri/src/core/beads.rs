@@ -24,6 +24,21 @@ fn failure(message: impl Into<String>) -> CoreError {
     }
 }
 
+fn read_requires_schema_upgrade(cause: &CoreError) -> bool {
+    if cause.code != "beads_error" {
+        return false;
+    }
+    let versions = cause
+        .message
+        .split_once("schema version mismatch: database is at v")
+        .and_then(|(_, versions)| versions.split_once(", binary expects v"))
+        .and_then(|(current, rest)| {
+            let (expected, _) = rest.split_once(", and the read-only open cannot migrate it")?;
+            Some((current.parse::<u64>().ok()?, expected.parse::<u64>().ok()?))
+        });
+    matches!(versions, Some((current, expected)) if current < expected)
+}
+
 fn attach_comments(mut issue: Value, comments: Value) -> Result<Value, CoreError> {
     if !comments.is_array() {
         return Err(failure("O Beads retornou comentários inválidos."));
@@ -225,6 +240,36 @@ impl Beads {
     }
 
     async fn run(
+        &self,
+        args: &[String],
+        write: bool,
+        signal: watch::Receiver<bool>,
+    ) -> Result<Value, CoreError> {
+        match self.run_once(args, write, signal.clone()).await {
+            Err(cause) if !write && read_requires_schema_upgrade(&cause) => {
+                // All callers hold the project lock and validate the private store.
+                // Core upgrades may leave its schema behind; migrate only this
+                // Jarvis-owned database, then retry the read exactly once. Writes
+                // with uncertain outcomes and checkout-owned trackers are never retried.
+                let mut command = process::command(&self.package, &self.workspace(), &self.session);
+                command.args(["migrate", "schema", "--json", "--dolt-auto-commit=on"]);
+                process::run(command, signal.clone()).await.map_err(|cause| {
+                    if cause.code == "cancelled" {
+                        cause
+                    } else {
+                        failure(format!(
+                            "Não foi possível atualizar o banco de tarefas do projeto. Nenhuma tarefa foi repetida. Tente novamente. Detalhes: {}",
+                            cause.message
+                        ))
+                    }
+                })?;
+                self.run_once(args, false, signal).await
+            }
+            result => result,
+        }
+    }
+
+    async fn run_once(
         &self,
         args: &[String],
         write: bool,
