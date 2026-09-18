@@ -17,22 +17,21 @@ export function ActiveExecutionStatus({ turn }: { turn: AgentTurn }) {
   return <section
     aria-label="Execução em andamento"
     data-testid="active-execution-status"
-    className="mb-2 flex min-h-11 min-w-0 items-center gap-2.5 rounded-lg border border-border bg-card/95 px-3 py-2 text-muted-foreground shadow-[inset_0_1px_0_#ffffff0d,0_8px_24px_#00000026] backdrop-blur motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 motion-safe:duration-200"
+    className="mb-1 flex min-h-8 min-w-0 items-center gap-2 px-3 py-1.5 text-muted-foreground motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200"
   >
-    <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-md border border-border bg-secondary/70 shadow-[inset_0_1px_0_#ffffff0d]">
-      {status.retry ? <Wifi className="size-3.5 text-onedark-yellow" /> : <Spinner className="text-primary motion-reduce:animate-none" />}
+    <span aria-hidden="true" className="relative grid size-5 shrink-0 place-items-center">
+      <span className={`absolute inset-1 rounded-full opacity-50 blur-[3px] ${status.retry || status.waiting ? "bg-onedark-yellow" : "bg-primary"}`} />
+      {status.retry ? <Wifi className="relative size-3.5 text-onedark-yellow" /> : <Spinner className={`relative size-3.5 motion-reduce:animate-none ${status.waiting ? "text-onedark-yellow" : "text-primary"}`} />}
     </span>
     <Hint content={status.retry?.message ?? status.heading} whenTruncated={!status.retry}>
-      <span role="status" aria-live="polite" aria-atomic="true" className={`min-w-0 flex-1 truncate text-sm font-medium ${status.waiting ? "text-onedark-yellow" : "text-foreground"} ${!status.waiting && !status.retry ? "reasoning-shimmer" : ""}`}>
+      <span role="status" aria-live="polite" aria-atomic="true" className={`min-w-0 flex-1 truncate text-[13px] font-medium ${status.waiting ? "text-onedark-yellow" : "text-foreground/90"} ${!status.waiting && !status.retry ? "reasoning-shimmer" : ""}`}>
         {status.heading}
       </span>
     </Hint>
-    <span aria-hidden="true" className="text-border">·</span>
-    <span aria-label="Tempo total da execução" className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
-      {formatExecutionDuration(durationMs)}
+    <span aria-hidden="true" className="hidden h-3 w-px shrink-0 bg-border/70 sm:block" />
+    <span className="flex shrink-0 items-center gap-1.5 font-mono text-[10px] tabular-nums text-muted-foreground">
+      <span aria-label="Tempo total da execução">{formatExecutionDuration(durationMs)}</span>
+      {status.tools.length > 0 && <span className="hidden items-center gap-1.5 sm:inline-flex"><span aria-hidden="true" className="text-border">·</span><span>{status.tools.length} {status.tools.length === 1 ? "ação" : "ações"}</span></span>}
     </span>
-    {status.tools.length > 0 && <span className="hidden shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground sm:inline">
-      · {status.tools.length} {status.tools.length === 1 ? "ação" : "ações"}
-    </span>}
   </section>;
 }
