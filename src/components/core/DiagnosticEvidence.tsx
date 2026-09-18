@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Hint } from "@/components/ui/hint";
 import { Skeleton } from "@/components/ui/skeleton";
+import { writeClipboardText } from "@/core/clipboard";
 
 const eventKinds = [
   "startup",
@@ -125,7 +126,7 @@ export function DiagnosticEvidence() {
   async function copySummary() {
     if (!summary) return;
     try {
-      await navigator.clipboard.writeText(summary.copyable);
+      await writeClipboardText(summary.copyable);
       toast.success("Diagnóstico copiado");
     } catch {
       toast.error("Não foi possível copiar o diagnóstico.");

@@ -15,7 +15,7 @@ const INDEX_CACHE_ENTRIES: usize = 16;
 const INDEX_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SINGLE_INDEX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SIDECAR_BYTES: usize = 32 * 1024 * 1024;
-const SIDECAR_VERSION: u8 = 3;
+const SIDECAR_VERSION: u8 = 4;
 const MAX_CACHED_PREVIEW_BYTES: usize = 256 * 1024;
 const DEFERRED_DETAIL_KEY: &str = "_jarvisHistoryDetailsDeferred";
 
@@ -193,6 +193,7 @@ struct Index {
     compactions: Vec<compaction::CompactionEvent>,
     files: BTreeMap<String, (u64, usize, diffs::FileSummary)>,
     tail: Option<StoredTurn>,
+    tail_size: usize,
     damaged_turn: Option<String>,
     replay: ReplayCursor,
 }
@@ -280,19 +281,27 @@ impl PersistedIndex {
         }) {
             return None;
         }
-        let running_tail = entries
+        let needs_tail = entries
             .last()
-            .is_some_and(|entry| entry.status == TurnStatus::Running);
-        if running_tail != self.tail.is_some()
+            .is_some_and(|entry| entry.status == TurnStatus::Running)
+            || self.damaged_turn.is_some();
+        if (needs_tail && self.tail.is_none())
+            || (entries.is_empty() && self.tail.is_some())
             || self.tail.as_ref().is_some_and(|tail| {
-                tail.turn.status != TurnStatus::Running
-                    || entries
-                        .last()
-                        .is_none_or(|entry| entry.excerpt.id != tail.turn.id)
+                entries.last().is_none_or(|entry| {
+                    entry.excerpt.id != tail.turn.id || entry.status != tail.turn.status
+                })
             })
         {
             return None;
         }
+        let tail_size = self
+            .tail
+            .as_ref()
+            .map(serde_json::to_vec)
+            .transpose()
+            .ok()?
+            .map_or(0, |bytes| bytes.len());
         if self
             .damaged_turn
             .as_ref()
@@ -311,6 +320,7 @@ impl PersistedIndex {
             compactions: self.compactions,
             files: self.files,
             tail: self.tail,
+            tail_size,
             damaged_turn: self.damaged_turn,
             replay: self.replay,
         };
@@ -472,6 +482,25 @@ impl Index {
             .map_err(|_| AgentError::storage())
     }
 
+    fn restore_tail(&mut self, path: &Path) -> Result<(), AgentError> {
+        if self.tail.is_some() {
+            return Ok(());
+        }
+        let index = self
+            .entries
+            .len()
+            .checked_sub(1)
+            .ok_or_else(AgentError::storage)?;
+        let size = self.entries[index].length;
+        let turn = self.stored_turn(path, index)?;
+        if turn.turn.id != self.entries[index].excerpt.id {
+            return Err(AgentError::storage());
+        }
+        self.tail = Some(turn);
+        self.tail_size = size;
+        Ok(())
+    }
+
     fn load_replay(&self, path: &Path, root: &Path) -> Result<ReplayLoad, AgentError> {
         if self.damaged_turn.is_some() {
             return Err(AgentError::storage());
@@ -582,7 +611,8 @@ impl Index {
                     return Err(AgentError::storage());
                 }
                 let entry = indexed_entry(&turn, self.entries.len(), offset, length)?;
-                self.tail = (turn.turn.status == TurnStatus::Running).then_some(turn);
+                self.tail_size = length;
+                self.tail = Some(turn);
                 self.entries.push(entry);
             }
             "turn_delta" => {
@@ -615,6 +645,9 @@ impl Index {
                     entry.length,
                 )?;
                 *self.entries.last_mut().ok_or_else(AgentError::storage)? = replacement;
+                self.tail_size = serde_json::to_vec(&candidate)
+                    .map_err(|_| AgentError::storage())?
+                    .len();
                 self.tail = Some(candidate);
             }
             "queue_checkpoint" => {
@@ -648,6 +681,12 @@ impl Index {
         expected: Option<&journal::PrefixFingerprint>,
     ) -> Result<Option<journal::ScanSnapshot>, AgentError> {
         let start = self.end;
+        if self.tail.is_none() && !self.entries.is_empty() {
+            // Materialize the latest checkpoint before scan_snapshot acquires
+            // the journal lock. A resumed turn may begin its suffix with a
+            // delta even when the prior checkpoint was terminal.
+            self.restore_tail(path)?;
+        }
         if let Some(expected) = expected {
             journal::scan_snapshot_after_verified_prefix(
                 path,
@@ -709,6 +748,15 @@ impl Index {
         self.replay = self.derive_replay_cursor();
         self.length = snapshot.file_length;
         self.modified = snapshot.modified;
+        if self.damaged_turn.is_none()
+            && self
+                .tail
+                .as_ref()
+                .is_some_and(|tail| tail.turn.status != TurnStatus::Running)
+        {
+            self.tail = None;
+            self.tail_size = 0;
+        }
         if !sidecar_is_current {
             let _ = persist_sidecar(path, self, snapshot.fingerprint);
         }
@@ -919,6 +967,7 @@ impl Index {
                 .map_or(0, |context| context.summary.len())
             + self.files.len() * 512
             + self.compactions.len() * 256
+            + self.tail_size
             + self.damaged_turn.as_ref().map_or(0, String::len)
     }
 
@@ -1602,6 +1651,66 @@ mod tests {
         assert_eq!(index.replay.start_entry, 3);
         assert_eq!(index.replay.wire_base, 6);
         assert_eq!(index.replay.total_items, 6);
+    }
+
+    #[test]
+    fn replay_accepts_a_retry_delta_after_a_terminal_checkpoint() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("retried-turn.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+
+        let mut running = stored(0);
+        running.turn.status = TurnStatus::Running;
+        running.turn.options.workflow = Some(workflow::Flow::Complete);
+        journal::append(&path, &running).unwrap();
+
+        let mut failed = running.clone();
+        failed.turn.status = TurnStatus::Error;
+        failed.turn.error = Some(AgentError::new("provider_error", "Falha transitória."));
+        journal::append_update(&path, &running, &failed).unwrap();
+        let mut index = Index::default();
+        index.refresh(&path).unwrap();
+        assert!(index.tail.is_none());
+
+        let mut retried = failed.clone();
+        retried.turn.status = TurnStatus::Running;
+        retried.turn.error = None;
+        retried.turn.options.workflow = None;
+        retried.turn.steps.push(Step {
+            text: "Retomada no fluxo direto".into(),
+            ..Step::default()
+        });
+        journal::append_update(&path, &failed, &retried).unwrap();
+        index.refresh(&path).unwrap();
+        assert_eq!(
+            index.tail.as_ref().unwrap().turn.status,
+            TurnStatus::Running
+        );
+        assert_eq!(index.tail.as_ref().unwrap().turn.options.workflow, None);
+
+        let mut reloaded = Index::default();
+        reloaded.refresh(&path).unwrap();
+        assert_eq!(
+            reloaded.tail.as_ref().unwrap().turn.status,
+            TurnStatus::Running
+        );
+
+        let mut completed = retried.clone();
+        completed.turn.status = TurnStatus::Completed;
+        journal::append_update(&path, &retried, &completed).unwrap();
+        reloaded.refresh(&path).unwrap();
+        assert!(reloaded.tail.is_none());
+
+        let replay = HistoryState::default()
+            .load_replay(&path, &fixture.root)
+            .unwrap();
+        assert_eq!(replay.turns.len(), 1);
+        assert_eq!(replay.turns[0].turn.status, TurnStatus::Completed);
+        assert_eq!(replay.turns[0].turn.options.workflow, None);
+        assert_eq!(
+            replay.turns[0].turn.steps.last().unwrap().text,
+            "Retomada no fluxo direto"
+        );
     }
 
     #[test]

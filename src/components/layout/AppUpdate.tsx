@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { displayVersion, nativeUpdaterAvailable, PROJECT_URL } from "@/core/app-update";
+import { writeClipboardText } from "@/core/clipboard";
 import { useAppUpdate } from "@/hooks/use-app-update";
 import { cn } from "@/lib/utils";
 
@@ -41,7 +42,7 @@ export function AppUpdate() {
   const stage = !progress ? "Preparando atualização" : progress.stage === "downloading" ? "Baixando atualização" : progress.stage === "verifying" ? "Verificando assinatura" : progress.stage === "installing" ? "Instalando atualização" : "Reabrindo o Jarvis";
   const copyPix = async () => {
     try {
-      await navigator.clipboard.writeText(PIX_COPY_AND_PASTE);
+      await writeClipboardText(PIX_COPY_AND_PASTE);
       setPixCopied(true);
       toast.success("PIX copia e cola copiado");
     } catch {

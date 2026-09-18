@@ -277,7 +277,7 @@ fn seatbelt_profile(writable_root: &Path, network: bool) -> String {
     let root = seatbelt_string(writable_root);
     let network_rule = if network { "(allow network*)\n" } else { "" };
     format!(
-        "(version 1)\n(deny default)\n(allow process*)\n(allow signal*)\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read*)\n(allow file-write* (subpath \"/tmp\"))\n(allow file-write* (subpath \"/private/tmp\"))\n(allow file-write* (subpath \"/var/tmp\"))\n(allow file-write* (subpath \"{root}\"))\n{network_rule}"
+        "(version 1)\n(deny default)\n(allow process-exec)\n(allow process-fork)\n(allow signal (target same-sandbox))\n(allow process-info* (target same-sandbox))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read*)\n(allow file-write* (subpath \"/tmp\"))\n(allow file-write* (subpath \"/private/tmp\"))\n(allow file-write* (subpath \"/var/tmp\"))\n(allow file-write* (subpath \"{root}\"))\n{network_rule}"
     )
 }
 
@@ -351,7 +351,41 @@ mod tests {
         assert!(arguments[1]
             .to_string_lossy()
             .contains("project \\\"quoted\\\""));
+        assert!(arguments[1]
+            .to_string_lossy()
+            .contains("(allow signal (target same-sandbox))"));
+        assert!(!arguments[1].to_string_lossy().contains("signal*"));
         assert_eq!(arguments[2], OsString::from("/bin/bash"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn generated_macos_profile_runs_a_child_and_signals_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let plan = prepare_for(
+            Platform::Macos,
+            AdapterAvailability {
+                seatbelt: Some("/usr/bin/sandbox-exec".into()),
+                bubblewrap: None,
+            },
+            directory.path(),
+            &effects(true, false),
+        );
+        let script = "sleep 5 & child=$!; kill -TERM \"$child\"; wait \"$child\"; code=$?; [ \"$code\" -eq 143 ]";
+        let (program, arguments) = plan.wrap(
+            Path::new("/bin/sh"),
+            [OsString::from("-c"), OsString::from(script)],
+        );
+        let output = std::process::Command::new(program)
+            .args(arguments)
+            .current_dir(directory.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "sandbox-exec failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]

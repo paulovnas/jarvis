@@ -5,6 +5,7 @@
   "webviews": ["main"],
   "permissions": [
     "core:default",
+    "clipboard-manager:allow-write-text",
     "opener:default",
     "dialog:default",
     "core:window:allow-minimize",

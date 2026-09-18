@@ -3,6 +3,7 @@ import hljs from "highlight.js/lib/common";
 import { Check, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { writeClipboardText } from "@/core/clipboard";
 import "highlight.js/styles/atom-one-dark.css";
 
 export function CodeBlock({ code, language = "" }: { code: string; language?: string }) {
@@ -13,7 +14,7 @@ export function CodeBlock({ code, language = "" }: { code: string; language?: st
     catch { return null; }
   }, [code, language]);
   async function copy() {
-    try { await navigator.clipboard.writeText(code); setCopied(true); }
+    try { await writeClipboardText(code); setCopied(true); }
     catch { toast.error("Não foi possível copiar o código"); }
   }
   return <section className="chat-code-block my-3 min-w-0 overflow-hidden rounded-lg border border-white/10 bg-card shadow-[inset_0_1px_0_#ffffff0a]" aria-label={`Código ${language || "texto"}`}>

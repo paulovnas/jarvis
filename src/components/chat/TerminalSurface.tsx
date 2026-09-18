@@ -2,12 +2,14 @@ import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { toast } from "sonner";
 import { libraryError } from "@/core/library";
 import { DEFAULT_TERMINAL_PREFERENCES, resolveTerminalFont, systemSnapshotSchema, terminalFontFamily, type TerminalPreferences } from "@/core/system-preferences";
 import { terminalOutputEventSchema, terminalSnapshotSchema, type ChatTerminal, type TerminalOutputEvent } from "@/core/terminals";
+import { openTerminalLink } from "./terminal-links";
 
 function terminalTheme(host: HTMLElement) {
   const styles = getComputedStyle(host);
@@ -38,7 +40,13 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
       theme: terminalTheme(element),
     });
     const fit = new FitAddon();
+    const webLinks = new WebLinksAddon((event, uri) => {
+      void openTerminalLink(event, uri).catch(error => {
+        toast.error(libraryError(error, "Não foi possível abrir o link do terminal."));
+      });
+    });
     xterm.loadAddon(fit);
+    xterm.loadAddon(webLinks);
     let disposed = false;
     let hydrated = false;
     let lastRevision = 0;

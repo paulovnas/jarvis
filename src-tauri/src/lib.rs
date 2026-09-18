@@ -64,6 +64,7 @@ pub fn run() {
         .manage(mcp::McpState::default())
         .manage(updater::UpdateState::default())
         .manage(system::SystemState::default())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

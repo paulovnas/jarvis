@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
+import { writeClipboardText } from "@/core/clipboard";
 import { AssistantWorkCollapse } from "./AssistantWorkCollapse";
 import { GeneratedImageCard } from "./GeneratedImageCard";
 import { BrowserCaptureCard } from "./BrowserCaptureCard";
@@ -17,7 +18,7 @@ function ResponseActions({ content, fileName }: { content: string; fileName: str
   const [saving, setSaving] = useState(false);
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(content);
+      await writeClipboardText(content);
       toast.success("Resposta copiada");
     } catch {
       toast.error("Não foi possível copiar a resposta.");
