@@ -683,6 +683,49 @@ mod tests {
     }
 
     #[test]
+    fn offline_grant_cannot_authorize_a_script_with_network_effects() {
+        let store = GrantStore::default();
+        let requested = outcome("npm test");
+        assert!(requested.effects.uses_network);
+        let mut previous = requested.clone();
+        previous.effects.uses_network = false;
+        store
+            .create(CreateGrant {
+                scope: GrantScope::Project {
+                    project_id: "project".into(),
+                },
+                match_kind: GrantMatch::Exact,
+                duration: GrantDuration::Persistent,
+                outcome: &previous,
+                tool_name: "bash",
+                tool_arguments: &Value::Null,
+                now: 10,
+            })
+            .unwrap();
+        assert!(store
+            .authorize(&requested, "bash", &Value::Null, context(), 11)
+            .unwrap()
+            .is_none());
+        store
+            .create(CreateGrant {
+                scope: GrantScope::Project {
+                    project_id: "project".into(),
+                },
+                match_kind: GrantMatch::Exact,
+                duration: GrantDuration::Session,
+                outcome: &requested,
+                tool_name: "bash",
+                tool_arguments: &Value::Null,
+                now: 12,
+            })
+            .unwrap();
+        assert!(store
+            .authorize(&requested, "bash", &Value::Null, context(), 13)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
     fn expired_grants_are_not_restored_and_revocation_is_persisted() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("grants.json");

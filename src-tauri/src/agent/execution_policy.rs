@@ -326,7 +326,7 @@ pub(super) fn evaluate(request: PolicyRequest<'_>) -> PolicyOutcome {
         return outcome(
             ExecutionDecision::Ask,
             "network_approval_required",
-            "O comando precisa de acesso à rede.",
+            "O comando pode usar rede, incluindo serviços locais, testes e servidores de desenvolvimento.",
             analysis,
             command,
         );
@@ -472,6 +472,11 @@ fn analyze_command(plan: &CommandPlan, scope: &ExecutionScope, persistent: bool)
     for invocation in &plan.invocations {
         analysis.merge(analyze_invocation(invocation, scope));
     }
+    // A script, wrapper or interactive process can open sockets without naming
+    // a network utility. Include that capability in admission and the grant;
+    // approving an opaque command must not leave its children offline.
+    analysis.effects.uses_network |=
+        analysis.effects.dynamic || analysis.effects.unknown || persistent;
     for redirect in &plan.redirections {
         let target = lexical_absolute(&scope.working_directory, Path::new(&redirect.target));
         if redirect.write {
@@ -664,20 +669,15 @@ fn analyze_git(args: &[String], scope: &ExecutionScope, analysis: &mut Analysis)
 }
 
 fn package_command_uses_network(program: &str, args: &[String]) -> bool {
-    let action = args
-        .iter()
-        .find(|arg| !arg.starts_with('-'))
-        .map(String::as_str);
-    match program {
-        "npm" | "pnpm" | "yarn" | "bun" => matches!(
-            action,
-            Some("install" | "add" | "update" | "upgrade" | "publish" | "login" | "dlx" | "x")
-        ),
-        "cargo" => matches!(action, Some("install" | "publish" | "search" | "login")),
-        "go" => matches!(action, Some("get" | "install")),
-        "pip" | "pip3" => matches!(action, Some("install" | "download")),
-        _ => false,
+    if matches!(args, [flag] if matches!(flag.as_str(), "--version" | "-v" | "-V" | "--help" | "-h"))
+    {
+        return false;
     }
+    // Tests/builds can reach local databases, bind worker ports, fetch build
+    // inputs or run arbitrary project code. Only known metadata queries can
+    // exclude network access; a short installer allowlist is not sufficient.
+    !matches!(args, [action] if matches!((program, action.as_str()),
+        ("cargo" | "go", "version" | "help") | ("pip" | "pip3", "help")))
 }
 
 fn program_and_args(argv: &[String]) -> Option<(&str, &[String])> {
@@ -945,6 +945,60 @@ mod tests {
     }
 
     #[test]
+    fn project_scripts_and_opaque_commands_include_network_in_admission() {
+        for command in [
+            "npm test",
+            "npm run check",
+            "npm --prefix backend run build",
+            "pnpm test",
+            "yarn build",
+            "bun run dev",
+            "bun test",
+            "cargo test --locked",
+            "go test ./...",
+            "node scripts/check.js",
+            "python3 manage.py test",
+            "php artisan migrate",
+            "zsh -lc 'npm test'",
+            "env NODE_ENV=test npm test",
+            "psql -h localhost -c 'select 1'",
+            "custom-test-runner",
+            "TMPDIR=\"$PWD/.next/cache/test-tmp\" npm run check",
+        ] {
+            let requested = decide(command, NetworkPolicy::Ask);
+            assert!(requested.effects.uses_network, "{command}");
+            assert_eq!(requested.code, "network_approval_required", "{command}");
+            assert_eq!(
+                decide(command, NetworkPolicy::Deny).decision,
+                ExecutionDecision::Deny,
+                "{command} must not override an explicit network denial"
+            );
+            assert_ne!(
+                decide(command, NetworkPolicy::Allow).decision,
+                ExecutionDecision::Deny,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn known_local_queries_do_not_request_network() {
+        for command in [
+            "git status --short",
+            "rg needle src",
+            "node --version",
+            "npm --version",
+            "python3 --help",
+            "cargo version",
+            "go version",
+        ] {
+            let requested = decide(command, NetworkPolicy::Deny);
+            assert!(!requested.effects.uses_network, "{command}");
+            assert_ne!(requested.decision, ExecutionDecision::Deny, "{command}");
+        }
+    }
+
+    #[test]
     fn dynamic_and_unknown_commands_never_inherit_read_only_allowance() {
         assert_eq!(
             decide("echo $(cat token)", NetworkPolicy::Allow).decision,
@@ -1008,7 +1062,7 @@ mod tests {
             operation: ExecutionOperation::PersistentProcess(parse_command("bun run dev").unwrap()),
         });
         assert_eq!(network.code, "network_approval_required");
-        assert_eq!(process.code, "process_approval_required");
+        assert_eq!(process.code, "network_approval_required");
     }
 
     #[test]
@@ -1052,8 +1106,25 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(shell.outcome.decision, ExecutionDecision::Allow);
-        assert_eq!(terminal.outcome.code, "process_approval_required");
-        assert_eq!(process.outcome.code, "process_approval_required");
+        assert_eq!(terminal.outcome.code, "network_approval_required");
+        assert_eq!(process.outcome.code, "network_approval_required");
         assert_eq!(publication.outcome.code, "network_approval_required");
+    }
+
+    #[test]
+    fn interactive_terminal_admission_covers_later_commands() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = inspect_tool(
+            root.path(),
+            &tool(
+                "terminal_start",
+                serde_json::json!({"command":"git status"}),
+            ),
+            capabilities(Effect::Stateful),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(policy.outcome.effects.uses_network);
+        assert_eq!(policy.outcome.decision, ExecutionDecision::Ask);
     }
 }

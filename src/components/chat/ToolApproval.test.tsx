@@ -83,3 +83,24 @@ it("keeps repository and command-prefix grants unavailable when the policy canno
   await user.click(screen.getByRole("combobox", { name: "Correspondência da autorização" }));
   expect(await screen.findByRole("option", { name: "Comandos com o mesmo prefixo" })).toHaveAttribute("aria-disabled", "true");
 });
+
+it("shows network access before authorizing a project test command", async () => {
+  const user = userEvent.setup();
+  const answer = vi.fn(async () => true);
+  const request = commandRequest({
+    code: "network_approval_required",
+    reason: "O comando pode usar rede, incluindo serviços locais, testes e servidores de desenvolvimento.",
+    command: { invocations: [{ argv: ["npm", "test"] }], redirections: [], dynamic: false },
+    writePaths: ["/projeto"],
+  });
+  request.tool.args = { command: "npm test" };
+  render(<ToolApproval request={request} projectPath="/projeto" onAnswer={answer} />);
+
+  expect(screen.getByText("npm test")).toBeVisible();
+  expect(screen.getByText("Usa rede")).toBeVisible();
+  expect(screen.getByText(/Rede: permitida/)).toBeVisible();
+  expect(screen.getByText(/incluindo serviços locais/)).toBeVisible();
+  expect(answer).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Autorizar uma vez" }));
+  expect(answer).toHaveBeenCalledWith({ approved: true, grant: null });
+});

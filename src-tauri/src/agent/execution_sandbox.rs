@@ -275,9 +275,14 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
 
 fn seatbelt_profile(writable_root: &Path, network: bool) -> String {
     let root = seatbelt_string(writable_root);
+    // macOS normally places TMPDIR under /var/folders, not /tmp. Resolve
+    // symlinks because Seatbelt evaluates the canonical filesystem path.
+    let temporary = std::env::temp_dir();
+    let temporary = std::fs::canonicalize(&temporary).unwrap_or(temporary);
+    let temporary = seatbelt_string(&temporary);
     let network_rule = if network { "(allow network*)\n" } else { "" };
     format!(
-        "(version 1)\n(deny default)\n(allow process-exec)\n(allow process-fork)\n(allow signal (target same-sandbox))\n(allow process-info* (target same-sandbox))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read*)\n(allow file-write* (subpath \"/tmp\"))\n(allow file-write* (subpath \"/private/tmp\"))\n(allow file-write* (subpath \"/var/tmp\"))\n(allow file-write* (subpath \"{root}\"))\n{network_rule}"
+        "(version 1)\n(deny default)\n(allow process-exec)\n(allow process-fork)\n(allow signal (target same-sandbox))\n(allow process-info* (target same-sandbox))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read*)\n(allow file-write* (subpath \"/tmp\"))\n(allow file-write* (subpath \"/private/tmp\"))\n(allow file-write* (subpath \"/var/tmp\"))\n(allow file-write* (subpath \"/private/var/tmp\"))\n(allow file-write* (subpath \"{temporary}\"))\n(allow file-write* (subpath \"{root}\"))\n{network_rule}"
     )
 }
 
@@ -328,6 +333,207 @@ mod tests {
             uses_network: network,
             ..ExecutionEffects::default()
         }
+    }
+
+    fn command_policy(name: &str, command: &str, root: &Path) -> ToolPolicy {
+        use crate::agent::{
+            execution_policy::inspect_tool,
+            tool_contract::{ApprovalPolicy, Capabilities, Effect},
+            ToolCall,
+        };
+        let root = std::fs::canonicalize(root).unwrap();
+        inspect_tool(
+            &root,
+            &ToolCall {
+                id: "sandbox-probe".into(),
+                name: name.into(),
+                args: serde_json::json!({"command": command}),
+                status: "pending".into(),
+                output: String::new(),
+                duration_ms: 0,
+            },
+            Capabilities {
+                effect: Effect::Stateful,
+                approval: ApprovalPolicy::AccordingToTurn,
+                parallel_safe: false,
+            },
+        )
+        .unwrap()
+        .unwrap()
+    }
+
+    #[test]
+    fn script_and_terminal_network_admission_reaches_both_sandbox_adapters() {
+        let root = tempfile::tempdir().unwrap();
+        for (tool, command) in [
+            ("bash", "npm test"),
+            ("bash", "npm run check"),
+            ("bash", "node scripts/check.js"),
+            ("terminal_start", "git status"),
+            ("process_start", "bun run dev"),
+        ] {
+            let policy = command_policy(tool, command, root.path());
+            assert_eq!(
+                policy.outcome.decision,
+                super::super::execution_policy::ExecutionDecision::Ask
+            );
+            for platform in [Platform::Macos, Platform::Linux] {
+                let plan = prepare_for(
+                    platform,
+                    AdapterAvailability {
+                        seatbelt: Some("/usr/bin/sandbox-exec".into()),
+                        bubblewrap: Some("/usr/bin/bwrap".into()),
+                    },
+                    root.path(),
+                    &policy.outcome.effects,
+                );
+                assert_eq!(
+                    plan.report.network,
+                    SandboxNetwork::Allowed,
+                    "{tool}: {command}"
+                );
+                let (_, arguments) = plan.wrap(Path::new("/bin/sh"), std::iter::empty());
+                match platform {
+                    Platform::Macos => {
+                        assert!(arguments[1].to_string_lossy().contains("(allow network*)"))
+                    }
+                    Platform::Linux => {
+                        assert!(!arguments.contains(&OsString::from("--unshare-net")))
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+
+    // Re-enter only this test in a sandboxed copy of the test executable. This
+    // exercises real OS enforcement without requiring Node/Python/PostgreSQL.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sandbox_probe_child() {
+        let Ok(operation) = std::env::var("JARVIS_SANDBOX_PROBE_OPERATION") else {
+            return;
+        };
+        let target = std::env::var("JARVIS_SANDBOX_PROBE_TARGET").unwrap();
+        match operation.as_str() {
+            "connect" => {
+                std::net::TcpStream::connect_timeout(
+                    &target.parse().unwrap(),
+                    std::time::Duration::from_secs(2),
+                )
+                .unwrap();
+            }
+            "bind" => {
+                std::net::TcpListener::bind(&target).unwrap();
+            }
+            "tempfile" => {
+                use std::io::Write;
+                let mut file = tempfile::NamedTempFile::new_in(&target).unwrap();
+                file.write_all(b"jarvis-sandbox-probe").unwrap();
+            }
+            _ => panic!("Unknown sandbox probe"),
+        }
+        println!("jarvis-sandbox-probe-ok");
+    }
+
+    #[cfg(target_os = "macos")]
+    fn run_probe(
+        root: &Path,
+        network: bool,
+        operation: &str,
+        target: &str,
+    ) -> std::process::Output {
+        let plan = prepare_for(
+            Platform::Macos,
+            detect_adapters(),
+            root,
+            &effects(true, network),
+        );
+        assert_eq!(plan.report.backend, SandboxBackend::MacosSeatbelt);
+        let (program, arguments) = plan.wrap(
+            &std::env::current_exe().unwrap(),
+            [
+                "--exact".into(),
+                "agent::execution_sandbox::tests::sandbox_probe_child".into(),
+                "--nocapture".into(),
+            ],
+        );
+        std::process::Command::new(program)
+            .args(arguments)
+            .current_dir(root)
+            .env("JARVIS_SANDBOX_PROBE_OPERATION", operation)
+            .env("JARVIS_SANDBOX_PROBE_TARGET", target)
+            .output()
+            .unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_admitted_script_connects_and_binds_ipv4_and_ipv6_loopback() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = command_policy("bash", "npm test", root.path());
+        for address in ["127.0.0.1:0", "[::1]:0"] {
+            let listener = std::net::TcpListener::bind(address).unwrap();
+            for (operation, target) in [
+                ("connect", listener.local_addr().unwrap().to_string()),
+                ("bind", address.to_owned()),
+            ] {
+                let output = run_probe(
+                    root.path(),
+                    policy.outcome.effects.uses_network,
+                    operation,
+                    &target,
+                );
+                assert!(
+                    output.status.success(),
+                    "{operation} {target}: {}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(String::from_utf8_lossy(&output.stdout).contains("jarvis-sandbox-probe-ok"));
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_offline_profile_still_rejects_loopback_connections() {
+        let root = tempfile::tempdir().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let policy = command_policy("bash", "git status", root.path());
+        let output = run_probe(
+            root.path(),
+            policy.outcome.effects.uses_network,
+            "connect",
+            &listener.local_addr().unwrap().to_string(),
+        );
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("PermissionDenied"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_profile_allows_native_temp_files_but_not_unrelated_project_files() {
+        // Keep the project and canary outside TMPDIR to exercise both roots.
+        let workspace = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = workspace.path().join("project");
+        let outside = workspace.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        for target in [&root, &std::env::temp_dir()] {
+            let output = run_probe(&root, false, "tempfile", &target.to_string_lossy());
+            assert!(
+                output.status.success(),
+                "{}: {}\n{}",
+                target.display(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("jarvis-sandbox-probe-ok"));
+        }
+        let output = run_probe(&root, false, "tempfile", &outside.to_string_lossy());
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("PermissionDenied"));
     }
 
     #[test]
