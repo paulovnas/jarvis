@@ -9,7 +9,18 @@ use std::{
 };
 
 const META: &str = ".jarvis-source.json";
-const MAX_PACKAGE: u64 = 32 * 1024 * 1024;
+const MAX_PACKAGE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_PACKAGE_FILES: usize = 4096;
+
+fn validate_package_limits(bytes: u64, files: usize) -> Result<(), SkillError> {
+    if bytes > MAX_PACKAGE_BYTES || files > MAX_PACKAGE_FILES {
+        return Err(error(
+            "A skill excede o limite de 32 MiB ou 4.096 arquivos.",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Metadata {
@@ -187,11 +198,7 @@ fn package_files(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>, fs::Permissions)>,
                 walk(base, &entry.path(), files, bytes, depth + 1)?;
             } else {
                 *bytes = bytes.saturating_add(meta.len());
-                if *bytes > MAX_PACKAGE || files.len() >= 2000 {
-                    return Err(error(
-                        "A skill excede o limite de 32 MiB ou 2.000 arquivos.",
-                    ));
-                }
+                validate_package_limits(*bytes, files.len().saturating_add(1))?;
                 let data = fs::read(entry.path())?;
                 if data.len() as u64 > meta.len() {
                     return Err(error("O pacote mudou durante a leitura."));
@@ -443,4 +450,17 @@ pub(super) fn update(home: &Path, skill: &Skill) -> Result<(), SkillError> {
         meta.update_error = None;
         replace(home, &dir, &skill.path, &meta)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marketplace_package_accepts_the_salesforce_skill_shape() {
+        assert!(validate_package_limits(16_433_978, 2_137).is_ok());
+        assert!(validate_package_limits(MAX_PACKAGE_BYTES, MAX_PACKAGE_FILES).is_ok());
+        assert!(validate_package_limits(MAX_PACKAGE_BYTES + 1, 1).is_err());
+        assert!(validate_package_limits(1, MAX_PACKAGE_FILES + 1).is_err());
+    }
 }

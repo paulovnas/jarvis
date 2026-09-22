@@ -186,6 +186,47 @@ fn accepts_a_source_manifest_that_lags_the_release_by_one_or_more_patches() {
     )
     .is_err());
 }
+
+#[test]
+fn uses_the_packaged_manifest_when_the_monorepo_version_lags_the_release() {
+    let dir = tempfile::tempdir().unwrap();
+    prepare(
+        std::io::Cursor::new(archive_with_version(
+            "1.2.3",
+            &[(
+                "apps/packaged/package.json",
+                r#"{"name":"@open-design/packaged","version":"1.3.0"}"#,
+            )],
+        )),
+        dir.path(),
+        "1.3.0",
+        &"a".repeat(40),
+        &"b".repeat(64),
+    )
+    .unwrap();
+
+    assert!(dir.path().join("apps/packaged/package.json").is_file());
+    assert!(Pack::at(dir.path(), "1.3.0").is_ok());
+}
+
+#[test]
+fn rejects_an_untrusted_packaged_manifest_name() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(prepare(
+        std::io::Cursor::new(archive_with_version(
+            "1.2.3",
+            &[(
+                "apps/packaged/package.json",
+                r#"{"name":"different-package","version":"1.3.0"}"#,
+            )],
+        )),
+        dir.path(),
+        "1.3.0",
+        &"a".repeat(40),
+        &"b".repeat(64),
+    )
+    .is_err());
+}
 #[cfg(unix)]
 #[test]
 fn resource_symlinks_cannot_escape_the_active_package() {

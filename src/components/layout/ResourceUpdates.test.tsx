@@ -141,4 +141,30 @@ describe("ResourceUpdates", () => {
 
     await act(async () => finishInstall(finished));
   });
+
+  it("shows the failed Core component and its specific installation error", async () => {
+    const current = resources();
+    current.skills = skillSnapshot(false);
+    current.core = coreFixture();
+    current.core.items[3] = {
+      ...current.core.items[3],
+      latestVersion: "0.24.0",
+      updateAvailable: true,
+    };
+    invokeMock.mockImplementation((command) => {
+      if (command === "install_core_component") {
+        return Promise.reject({ message: "Manifesto da distribuição incompatível." });
+      }
+      if (command === "get_core_status") return Promise.resolve(current.core);
+      return Promise.resolve([]);
+    });
+    const user = userEvent.setup();
+
+    render(<BootstrapResourcesProvider initial={current}><ResourceUpdates /></BootstrapResourcesProvider>);
+    await user.click(screen.getByRole("button", { name: "1 atualização de recurso disponível" }));
+    await user.click(screen.getByRole("button", { name: "Instalar atualização" }));
+
+    expect(await screen.findByText("Open Design: Manifesto da distribuição incompatível.")).toBeVisible();
+    expect(screen.queryByText("Uma ou mais ferramentas do Core não puderam ser atualizadas.")).not.toBeInTheDocument();
+  });
 });

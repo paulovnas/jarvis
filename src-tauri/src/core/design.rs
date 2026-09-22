@@ -16,6 +16,7 @@ const SKILLS: &[&str] = &[
     "gpt-tasteskill",
     "impeccable-design-polish",
 ];
+const PACKAGED_MANIFEST: &str = "apps/packaged/package.json";
 
 pub const INSTRUCTIONS: &str = include_str!("design.md");
 
@@ -82,6 +83,9 @@ fn readable(path: &Path) -> bool {
 }
 fn selected(path: &Path) -> bool {
     let parts: Vec<_> = path.iter().filter_map(|p| p.to_str()).collect();
+    if parts == ["apps", "packaged", "package.json"] {
+        return true;
+    }
     if parts.len() == 1 {
         return matches!(parts[0], "package.json" | "LICENSE" | "NOTICE");
     }
@@ -138,8 +142,26 @@ pub(super) fn prepare(
     }
     let package: Value = serde_json::from_str(&text(&destination.join("package.json"), MAX_INDEX)?)
         .map_err(|_| invalid())?;
+    let packaged_path = destination.join(PACKAGED_MANIFEST);
+    let packaged = packaged_path
+        .is_file()
+        .then(|| {
+            serde_json::from_str::<Value>(&text(&packaged_path, MAX_INDEX)?).map_err(|_| invalid())
+        })
+        .transpose()?;
+    // Newer Open Design releases version the distributable package before the
+    // monorepo root. The immutable release tag and commit remain the source of
+    // truth, while the root manifest is retained as a compatibility fallback.
+    let source_version = if let Some(packaged) = packaged.as_ref() {
+        if packaged["name"] != "@open-design/packaged" {
+            return Err(invalid());
+        }
+        &packaged["version"]
+    } else {
+        &package["version"]
+    };
     if package["name"] != "open-design"
-        || !compatible_source_version(&package["version"], version)
+        || !compatible_source_version(source_version, version)
         || !destination.join("LICENSE").is_file()
     {
         return Err(invalid());

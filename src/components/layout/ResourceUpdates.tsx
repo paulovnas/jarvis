@@ -64,9 +64,9 @@ function ResourceUpdatesContent({ bootstrap }: { bootstrap: BootstrapResourcesCo
     try {
       if (selectedCore.length > 0) {
         setOperation({ completed: done, total, label: "Atualizando ferramentas do Core" });
-        const successful = await core.install(selectedCore, { silent: true });
-        if (successful) done += selectedCore.length;
-        else failures.push("Uma ou mais ferramentas do Core não puderam ser atualizadas.");
+        const result = await core.install(selectedCore, { silent: true });
+        done += result.updated;
+        failures.push(...result.errors);
         setOperation({ completed: done, total, label: selectedSkills.length ? "Preparando skills" : "Finalizando" });
       }
 

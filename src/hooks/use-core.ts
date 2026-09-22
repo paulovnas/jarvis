@@ -65,16 +65,27 @@ export function useCore() {
     catch (cause) { if (mounted.current && version === revision.current) toast.error(coreError(cause)); }
   }, [accept]);
   const install = useCallback(async (ids: CoreId[], options: { silent?: boolean } = {}) => {
-    if (busy.current) return false;
+    if (busy.current) return { updated: 0, errors: ["Aguarde a instalação atual terminar."] };
     busy.current = true; setInstalling(true);
+    let updated = 0;
+    const errors: string[] = [];
     try {
-      for (const id of ids) accept(await invoke("install_core_component", { id }));
-      if (!options.silent) toast.success(ids.length > 1 ? "Core instalado" : "Componente instalado");
-      return true;
-    } catch (cause) {
-      if (!options.silent) toast.error(coreError(cause));
-      await refresh();
-      return false;
+      for (const id of ids) {
+        try {
+          accept(await invoke("install_core_component", { id }));
+          updated += 1;
+        } catch (cause) {
+          const name = currentSnapshot.current?.items.find((item) => item.id === id)?.name ?? id;
+          errors.push(`${name}: ${coreError(cause)}`);
+        }
+      }
+      if (errors.length > 0) {
+        if (!options.silent) toast.error(errors[0]);
+        await refresh();
+      } else if (!options.silent) {
+        toast.success(ids.length > 1 ? "Core instalado" : "Componente instalado");
+      }
+      return { updated, errors };
     }
     finally { busy.current = false; if (mounted.current) setInstalling(false); }
   }, [accept, refresh]);
