@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Bot, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, GitCompareArrows, GitMerge, GitPullRequest, LockKeyhole, MessageSquareText, RotateCcw, Route, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
+import { Bot, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, GitCompareArrows, GitMerge, GitPullRequest, LockKeyhole, MessageSquareText, RefreshCw, RotateCcw, Route, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -130,6 +130,10 @@ function PublicationReview({ proposal }: { proposal: PublicationProposal }) {
           <div className="max-h-44 overflow-y-auto rounded-md border border-border bg-background/70 py-1">
             {repository.files.map(file => <p key={file} className="border-b border-border/50 px-3 py-1.5 font-mono text-[11px] last:border-b-0">{file}</p>)}
           </div>
+        </section>}
+        {repository.sync !== "none" && <section className="rounded-md border border-onedark-cyan/25 bg-onedark-cyan/5 p-3">
+          <p className="micro-label flex items-center gap-2 text-onedark-cyan"><RefreshCw className="size-3.5" />Atualizar branch local com origin</p>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">{repository.sync === "ff_only" ? "Busca a branch remota e avança a branch local somente se o histórico permitir fast-forward. Commits locais divergentes permanecem intactos." : "Busca a branch remota e reaplica commits locais sobre ela. Se houver conflito, o rebase é abortado e os commits locais são preservados."} Nenhum push será feito por esta ação.</p>
         </section>}
         {repository.push !== "none" && <section className={`rounded-md border p-3 ${repository.push === "force_with_lease" ? "border-onedark-yellow/25 bg-onedark-yellow/5" : "border-onedark-green/25 bg-onedark-green/5"}`}>
           <p className={`micro-label flex items-center gap-2 ${repository.push === "force_with_lease" ? "text-onedark-yellow" : "text-onedark-green"}`}><Upload className="size-3.5" />{repository.push === "force_with_lease" ? "Push com force-with-lease" : "Push para origin"}</p>

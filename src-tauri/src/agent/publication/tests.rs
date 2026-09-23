@@ -16,6 +16,8 @@ fn publication_contract_reuses_evidence_and_does_not_expand_into_a_whole_project
     assert!(contract.contains("never ask the user to decide it again"));
     assert!(contract.contains("autonomous"));
     assert!(contract.contains("Recoverable errors"));
+    assert!(contract.contains("include sync"));
+    assert!(contract.contains("Never infer a push"));
 }
 
 fn database() -> Connection {
@@ -54,6 +56,7 @@ fn repo_proposal(path: &str, files: &[&str]) -> RepositoryProposal {
         files: files.iter().map(|file| (*file).into()).collect(),
         branch: None,
         commit_message: Some("feat: publish approved change".into()),
+        sync: SyncMode::None,
         push: PushMode::None,
         pull_request: None,
     }
@@ -84,6 +87,35 @@ fn initialize_repository(directory: &Path) {
         directory,
         ["commit", "--no-gpg-sign", "-m", "chore: initial"],
     );
+}
+
+fn linked_hml_repositories() -> (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir) {
+    let local = repository();
+    let remote = tempfile::tempdir().unwrap();
+    let peer = tempfile::tempdir().unwrap();
+    git_ok(local.path(), ["branch", "-M", "hml"]);
+    git_ok(remote.path(), ["init", "--bare"]);
+    git_ok(remote.path(), ["symbolic-ref", "HEAD", "refs/heads/hml"]);
+    git_ok(
+        local.path(),
+        ["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    git_ok(local.path(), ["push", "--set-upstream", "origin", "hml"]);
+    git_ok(peer.path(), ["clone", remote.path().to_str().unwrap(), "."]);
+    git_ok(peer.path(), ["config", "user.name", "Jarvis Peer"]);
+    git_ok(peer.path(), ["config", "user.email", "peer@example.test"]);
+    (local, remote, peer)
+}
+
+fn advance_remote(peer: &Path, file: &str, content: &str) -> String {
+    std::fs::write(peer.join(file), content).unwrap();
+    git_ok(peer, ["add", "--", file]);
+    git_ok(
+        peer,
+        ["commit", "--no-gpg-sign", "-m", "feat: remote change"],
+    );
+    git_ok(peer, ["push", "origin", "hml"]);
+    git_ok(peer, ["rev-parse", "HEAD"])
 }
 
 #[test]
@@ -149,6 +181,8 @@ fn publication_tool_exposes_typed_multi_repository_review() {
         repository["properties"]["push"]["enum"][2],
         "force_with_lease"
     );
+    assert_eq!(repository["properties"]["sync"]["enum"][1], "ff_only");
+    assert_eq!(repository["properties"]["sync"]["enum"][2], "rebase");
     assert_eq!(
         definition["parameters"]["properties"]["authorization"]["anyOf"][1]["properties"]["mode"]
             ["enum"][1],
@@ -167,6 +201,8 @@ fn publication_tool_exposes_typed_multi_repository_review() {
     assert!(prompt.contains("do not ask whether to perform them again"));
     assert!(prompt.contains("without another review"));
     assert!(prompt.contains("Never send the user to a terminal"));
+    assert!(prompt.contains("sync=ff_only"));
+    assert!(prompt.contains("Sync does not imply push"));
     assert!(prompt.contains("reused automatically"));
     assert!(prompt.contains("revision_requested"));
     assert!(prompt.contains("submit a revised proposal"));
@@ -211,6 +247,35 @@ fn explicit_current_request_avoids_redundant_pr_question_but_keeps_review() {
 }
 
 #[test]
+fn a_request_to_update_hml_locally_authorizes_sync_without_push() {
+    let user = "Crie o commit, atualize a hml local com a remota pq acho que ta atras";
+    let mut repository = repo_proposal(".", &["app.txt"]);
+    repository.branch = Some("hml".into());
+    repository.sync = SyncMode::Rebase;
+    let proposal = authorized_proposal(UserAuthorizationMode::ExplicitRequest, user, repository);
+
+    validate_user_authorization(&proposal, user).unwrap();
+    assert!(!proposed_operations(&proposal).contains(&AuthorizedOperation::Push));
+    assert!(!executes_without_review(&proposal));
+}
+
+#[test]
+fn a_pull_request_or_fetch_only_does_not_authorize_local_integration() {
+    let mut repository = repo_proposal(".", &[]);
+    repository.commit_message = None;
+    repository.sync = SyncMode::Rebase;
+    for user in ["Crie uma pull request para hml", "Faça fetch de origin/hml"] {
+        let proposal = authorized_proposal(
+            UserAuthorizationMode::ExplicitRequest,
+            user,
+            repository.clone(),
+        );
+        let failure = validate_user_authorization(&proposal, user).unwrap_err();
+        assert!(failure.message.contains("sincronização"));
+    }
+}
+
+#[test]
 fn autonomous_current_request_executes_all_named_operations_without_another_review() {
     let user = "Faça commit, push, PR e merge; pode executar direto, sem me perguntar novamente.";
     let mut repository = repo_proposal(".", &["app.txt"]);
@@ -252,6 +317,7 @@ fn autonomous_soft_reset_uses_the_typed_action_when_the_user_named_it() {
             files: vec![],
             branch: None,
             commit_message: None,
+            sync: SyncMode::None,
             push: PushMode::None,
             pull_request: None,
         },
@@ -355,6 +421,9 @@ fn shell_publication_mutations_are_blocked_without_false_positives_for_inspectio
     assert!(blocks_unsupervised_tool(&call("bash", "git diff --cached")).is_none());
     assert!(blocks_unsupervised_tool(&call("bash", "rg 'git commit' src")).is_none());
     assert!(blocks_unsupervised_tool(&call("bash", "git commit -m test")).is_some());
+    assert!(blocks_unsupervised_tool(&call("bash", "git fetch origin hml")).is_some());
+    assert!(blocks_unsupervised_tool(&call("bash", "git pull --rebase origin hml")).is_some());
+    assert!(blocks_unsupervised_tool(&call("bash", "git rebase origin/hml")).is_some());
     assert!(blocks_unsupervised_tool(&call(
         "bash",
         "git -C movart-express-back reset --soft HEAD^"
@@ -461,6 +530,7 @@ fn approved_action_only_soft_reset_keeps_the_changes_staged() {
         files: vec![],
         branch: None,
         commit_message: None,
+        sync: SyncMode::None,
         push: PushMode::None,
         pull_request: None,
     };
@@ -488,6 +558,7 @@ fn approved_publication_can_select_an_existing_branch() {
         files: vec![],
         branch: Some("release".into()),
         commit_message: None,
+        sync: SyncMode::None,
         push: PushMode::None,
         pull_request: None,
     };
@@ -522,6 +593,153 @@ fn approved_push_does_not_require_a_pull_request() {
     assert!(remote_commit.starts_with(result.commit.as_deref().unwrap()));
     assert_eq!(result.push, PushMode::Normal);
     assert!(result.pull_request.is_none());
+}
+
+#[test]
+fn approved_sync_fast_forwards_hml_without_pushing() {
+    let (local, _remote, peer) = linked_hml_repositories();
+    let remote_commit = advance_remote(peer.path(), "remote.txt", "remote change\n");
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &[]);
+    proposal.commit_message = None;
+    proposal.branch = Some("hml".into());
+    proposal.sync = SyncMode::FfOnly;
+
+    let result = publish_repository(&root, &proposal, false).unwrap();
+    let sync = result.sync.unwrap();
+
+    assert!(matches!(sync.outcome, SyncOutcome::FastForwarded));
+    assert_eq!(sync.remote_branch, "origin/hml");
+    assert_eq!(git_ok(local.path(), ["rev-parse", "HEAD"]), remote_commit);
+    assert_eq!(result.push, PushMode::None);
+}
+
+#[test]
+fn approved_commit_and_sync_rebase_preserve_local_work_on_new_remote_history() {
+    let (local, remote, peer) = linked_hml_repositories();
+    let remote_commit = advance_remote(peer.path(), "remote.txt", "remote change\n");
+    std::fs::write(local.path().join("app.txt"), "local change\n").unwrap();
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &["app.txt"]);
+    proposal.branch = Some("hml".into());
+    proposal.sync = SyncMode::Rebase;
+
+    let result = publish_repository(&root, &proposal, false).unwrap();
+    let head = git_ok(local.path(), ["rev-parse", "HEAD"]);
+    let sync = result.sync.unwrap();
+
+    assert!(matches!(sync.outcome, SyncOutcome::Rebased));
+    assert_eq!(result.commit.as_deref(), Some(head.as_str()));
+    assert!(is_ancestor(local.path(), &remote_commit, &head).unwrap());
+    assert_eq!(
+        std::fs::read_to_string(local.path().join("app.txt")).unwrap(),
+        "local change\n"
+    );
+    assert_eq!(
+        git_ok(remote.path(), ["rev-parse", "refs/heads/hml"]),
+        remote_commit
+    );
+}
+
+#[test]
+fn fast_forward_sync_refuses_divergence_without_rewriting_local_commits() {
+    let (local, _remote, peer) = linked_hml_repositories();
+    advance_remote(peer.path(), "remote.txt", "remote change\n");
+    std::fs::write(local.path().join("app.txt"), "local change\n").unwrap();
+    git_ok(local.path(), ["add", "app.txt"]);
+    git_ok(
+        local.path(),
+        ["commit", "--no-gpg-sign", "-m", "feat: local change"],
+    );
+    let before = git_ok(local.path(), ["rev-parse", "HEAD"]);
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &[]);
+    proposal.commit_message = None;
+    proposal.sync = SyncMode::FfOnly;
+
+    let failure = publish_repository(&root, &proposal, false).err().unwrap();
+
+    assert_eq!(failure.code, "publication_sync_diverged");
+    assert_eq!(git_ok(local.path(), ["rev-parse", "HEAD"]), before);
+    assert_eq!(
+        std::fs::read_to_string(local.path().join("app.txt")).unwrap(),
+        "local change\n"
+    );
+}
+
+#[test]
+fn conflicted_rebase_is_aborted_and_preserves_local_commit() {
+    let (local, _remote, peer) = linked_hml_repositories();
+    advance_remote(peer.path(), "app.txt", "remote change\n");
+    std::fs::write(local.path().join("app.txt"), "local change\n").unwrap();
+    git_ok(local.path(), ["add", "app.txt"]);
+    git_ok(
+        local.path(),
+        ["commit", "--no-gpg-sign", "-m", "feat: local change"],
+    );
+    let before = git_ok(local.path(), ["rev-parse", "HEAD"]);
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &[]);
+    proposal.commit_message = None;
+    proposal.sync = SyncMode::Rebase;
+
+    let failure = publish_repository(&root, &proposal, false).err().unwrap();
+
+    assert_eq!(failure.code, "publication_sync_conflict");
+    assert!(failure.message.contains(&before));
+    assert_eq!(git_ok(local.path(), ["rev-parse", "HEAD"]), before);
+    assert_eq!(
+        std::fs::read_to_string(local.path().join("app.txt")).unwrap(),
+        "local change\n"
+    );
+    assert!(!rebase_in_progress(local.path()).unwrap());
+}
+
+#[test]
+fn a_sync_failure_after_commit_reports_the_created_commit_for_recovery() {
+    let (local, _remote, peer) = linked_hml_repositories();
+    advance_remote(peer.path(), "app.txt", "remote change\n");
+    std::fs::write(local.path().join("app.txt"), "local change\n").unwrap();
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &["app.txt"]);
+    proposal.sync = SyncMode::Rebase;
+
+    let failure = publish_repository(&root, &proposal, false).err().unwrap();
+    let created = git_ok(local.path(), ["rev-parse", "HEAD"]);
+
+    assert_eq!(failure.code, "publication_sync_conflict");
+    assert!(failure.message.contains(&created));
+    assert_eq!(
+        std::fs::read_to_string(local.path().join("app.txt")).unwrap(),
+        "local change\n"
+    );
+    assert!(!rebase_in_progress(local.path()).unwrap());
+}
+
+#[test]
+fn a_commit_followed_by_sync_conflict_is_reported_as_partial_work() {
+    let (local, _remote, peer) = linked_hml_repositories();
+    advance_remote(peer.path(), "app.txt", "remote change\n");
+    std::fs::write(local.path().join("app.txt"), "local change\n").unwrap();
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let before = git_ok(local.path(), ["rev-parse", "HEAD"]);
+    let mut repository = repo_proposal(".", &["app.txt"]);
+    repository.sync = SyncMode::Rebase;
+    let proposal = Proposal {
+        summary: "Commit e sincronização da hml".into(),
+        authorization: None,
+        repositories: vec![repository],
+    };
+
+    let result: Value = serde_json::from_str(&apply(&root, &proposal, None)).unwrap();
+
+    assert_eq!(result["status"], "partial");
+    assert_eq!(result["error"]["code"], "publication_sync_conflict");
+    assert_eq!(result["failedRepository"]["before"]["head"], before);
+    assert_eq!(
+        result["failedRepository"]["after"]["head"],
+        git_ok(local.path(), ["rev-parse", "HEAD"])
+    );
 }
 
 struct ExistingPullRequestGithub {
@@ -595,6 +813,7 @@ fn approved_merge_reuses_an_existing_pull_request_without_creating_a_duplicate()
         files: vec![],
         branch: None,
         commit_message: None,
+        sync: SyncMode::None,
         push: PushMode::None,
         pull_request: Some(PullRequestProposal {
             base: "hml".into(),

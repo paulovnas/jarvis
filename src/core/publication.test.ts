@@ -17,6 +17,7 @@ describe("publicationProposalSchema", () => {
 
     expect(proposal.repositories[0]).toMatchObject({
       reset: null,
+      sync: "none",
       push: "none",
       commitMessage: "feat: update app",
     });
@@ -61,5 +62,14 @@ describe("publicationProposalSchema", () => {
       mode: "autonomous",
       evidence: "Faça commit e push sem me perguntar novamente.",
     });
+  });
+
+  it("accepts remote synchronization without implying a push", () => {
+    const proposal = publicationProposalSchema.parse({
+      summary: "Atualizar hml local com a remota",
+      repositories: [{ path: "portal", branch: "hml", sync: "rebase" }],
+    });
+
+    expect(proposal.repositories[0]).toMatchObject({ sync: "rebase", push: "none", commitMessage: null });
   });
 });

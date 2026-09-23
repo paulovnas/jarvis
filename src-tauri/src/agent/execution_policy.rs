@@ -221,8 +221,13 @@ fn publication_operation(arguments: &serde_json::Value, root: &Path) -> Executio
         for repository in repositories {
             let path = repository["path"].as_str().unwrap_or(".");
             write_paths.push(root.join(path));
-            network |= repository["push"] != "none" || !repository["pullRequest"].is_null();
+            network |= repository["sync"]
+                .as_str()
+                .is_some_and(|sync| sync != "none")
+                || repository["push"] != "none"
+                || !repository["pullRequest"].is_null();
             destructive |= !repository["reset"].is_null();
+            destructive |= repository["sync"] == "rebase";
         }
     }
     ExecutionOperation::Declared {
@@ -1109,6 +1114,35 @@ mod tests {
         assert_eq!(terminal.outcome.code, "network_approval_required");
         assert_eq!(process.outcome.code, "network_approval_required");
         assert_eq!(publication.outcome.code, "network_approval_required");
+    }
+
+    #[test]
+    fn publication_sync_declares_network_and_rebase_history_effects() {
+        let root = tempfile::tempdir().unwrap();
+        let sync = publication_operation(
+            &serde_json::json!({"repositories":[{"path":"portal","sync":"ff_only","push":"none","pullRequest":null,"reset":null}]}),
+            root.path(),
+        );
+        assert!(matches!(
+            sync,
+            ExecutionOperation::Declared {
+                network: true,
+                destructive: false,
+                ..
+            }
+        ));
+        let rebase = publication_operation(
+            &serde_json::json!({"repositories":[{"path":"portal","sync":"rebase","push":"none","pullRequest":null,"reset":null}]}),
+            root.path(),
+        );
+        assert!(matches!(
+            rebase,
+            ExecutionOperation::Declared {
+                network: true,
+                destructive: true,
+                ..
+            }
+        ));
     }
 
     #[test]

@@ -43,6 +43,7 @@ export const publicationProposalSchema = z.object({
     files: z.array(z.string()).default([]),
     branch: z.string().nullable().default(null),
     commitMessage: z.string().nullable().default(null),
+    sync: z.enum(["none", "ff_only", "rebase"]).default("none"),
     push: z.enum(["none", "normal", "force_with_lease"]).default("none"),
     pullRequest: pullRequestProposalSchema.nullable().default(null),
   })),
