@@ -118,6 +118,11 @@ fn advance_remote(peer: &Path, file: &str, content: &str) -> String {
     git_ok(peer, ["rev-parse", "HEAD"])
 }
 
+fn assert_local_change_survived(directory: &Path) {
+    let content = std::fs::read_to_string(directory.join("app.txt")).unwrap();
+    assert_eq!(content.lines().collect::<Vec<_>>(), ["local change"]);
+}
+
 #[test]
 fn settings_default_to_local_commits_and_require_gh_for_pr_questions() {
     let mut database = database();
@@ -631,10 +636,7 @@ fn approved_commit_and_sync_rebase_preserve_local_work_on_new_remote_history() {
     assert!(matches!(sync.outcome, SyncOutcome::Rebased));
     assert_eq!(result.commit.as_deref(), Some(head.as_str()));
     assert!(is_ancestor(local.path(), &remote_commit, &head).unwrap());
-    assert_eq!(
-        std::fs::read_to_string(local.path().join("app.txt")).unwrap(),
-        "local change\n"
-    );
+    assert_local_change_survived(local.path());
     assert_eq!(
         git_ok(remote.path(), ["rev-parse", "refs/heads/hml"]),
         remote_commit
@@ -661,10 +663,7 @@ fn fast_forward_sync_refuses_divergence_without_rewriting_local_commits() {
 
     assert_eq!(failure.code, "publication_sync_diverged");
     assert_eq!(git_ok(local.path(), ["rev-parse", "HEAD"]), before);
-    assert_eq!(
-        std::fs::read_to_string(local.path().join("app.txt")).unwrap(),
-        "local change\n"
-    );
+    assert_local_change_survived(local.path());
 }
 
 #[test]
@@ -688,10 +687,7 @@ fn conflicted_rebase_is_aborted_and_preserves_local_commit() {
     assert_eq!(failure.code, "publication_sync_conflict");
     assert!(failure.message.contains(&before));
     assert_eq!(git_ok(local.path(), ["rev-parse", "HEAD"]), before);
-    assert_eq!(
-        std::fs::read_to_string(local.path().join("app.txt")).unwrap(),
-        "local change\n"
-    );
+    assert_local_change_survived(local.path());
     assert!(!rebase_in_progress(local.path()).unwrap());
 }
 
@@ -709,10 +705,7 @@ fn a_sync_failure_after_commit_reports_the_created_commit_for_recovery() {
 
     assert_eq!(failure.code, "publication_sync_conflict");
     assert!(failure.message.contains(&created));
-    assert_eq!(
-        std::fs::read_to_string(local.path().join("app.txt")).unwrap(),
-        "local change\n"
-    );
+    assert_local_change_survived(local.path());
     assert!(!rebase_in_progress(local.path()).unwrap());
 }
 
