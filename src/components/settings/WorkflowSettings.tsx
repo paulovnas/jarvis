@@ -26,9 +26,9 @@ type Editor = { kind: "agent"; value: CustomAgent; revision: number; creating: b
 const roles = ["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer", "github"] as const;
 const mutedCard = "instrument-panel flex w-full cursor-pointer items-center gap-3 rounded-md border border-border bg-sidebar/50 p-3 text-left text-muted-foreground hover:border-primary/40 hover:bg-card focus-visible:ring-2 focus-visible:ring-ring";
 
-export function WorkflowSettings({ accounts }: { accounts: ProviderAccount[] }) {
+export function WorkflowSettings({ accounts, initialTab = "flows" }: { accounts: ProviderAccount[]; initialTab?: "flows" | "agents" }) {
   const catalog = useWorkflowCatalog();
-  const [tab, setTab] = useState("flows");
+  const [tab, setTab] = useState(initialTab);
   const [builtin, setBuiltin] = useState<BuiltinFlow | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [deleting, setDeleting] = useState<{ kind: "agent" | "flow"; id: string; name: string; revision: number } | null>(null);

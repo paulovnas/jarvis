@@ -1,4 +1,5 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { CheckCircle2, ChevronRight, Pencil, RefreshCw, Unplug } from "lucide-react";
 import { protocolLabels } from "@/core/custom-provider";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -11,6 +12,8 @@ import { Switch } from "@/components/ui/switch";
 import type { ProviderAccount, ProviderUsageAlert } from "@/core/provider-accounts";
 import { ProviderUsageAlertSettings } from "./ProviderUsageAlertSettings";
 import { Hint } from "@/components/ui/hint";
+import { enabledModels } from "@/core/provider-accounts";
+import { providerReferencesSchema, type ProviderReference } from "@/core/provider-references";
 
 const ACCOUNT_TYPE_LABELS: Record<ProviderAccount["accountType"], string> = {
   personal: "Pessoal",
@@ -25,24 +28,45 @@ function formatConnectionDate(timestamp: number): string {
   });
 }
 
-export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, onUsageChange, onUsageAlertChange, onEdit, onReauthorize, saving = false }: {
+export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, onUsageChange, onUsageAlertChange, onModelEnabledChange, onRefreshModels, refreshing = false, onReviewAgents, onEdit, onReauthorize, saving = false }: {
   account: ProviderAccount;
   onDisconnect: (alias: string) => void;
   onEnabledChange: (alias: string, enabled: boolean) => void;
   onUsageChange?: (alias: string, showUsage: boolean, showThirdPartyUsage: boolean) => void;
   onUsageAlertChange?: (alias: string, alert: ProviderUsageAlert | null) => void;
+  onModelEnabledChange?: (alias: string, modelId: string, enabled: boolean) => void;
+  onRefreshModels?: (alias: string) => void;
+  refreshing?: boolean;
+  onReviewAgents?: (tab: "flows" | "agents") => void;
   saving?: boolean;
   onEdit?: (account: ProviderAccount) => void;
   onReauthorize?: (account: ProviderAccount) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [references, setReferences] = useState<ProviderReference[] | null>(null);
+  const [referenceError, setReferenceError] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    void Promise.resolve().then(() => invoke("get_provider_model_references")).then(value => {
+      if (active) { setReferences(providerReferencesSchema.parse(value).references); setReferenceError(false); }
+    }).catch(() => { if (active) setReferenceError(true); });
+    return () => { active = false; };
+  }, [open]);
   const custom = account.providerKind === "custom";
   const summaryId = useId();
+  const activeModels = enabledModels(account);
+  const activeModelIds = new Set(activeModels.map(model => model.id));
+  const affectedAgents = account.modelsAvailable ? (references ?? []).filter(reference =>
+    reference.choice.account === account.alias
+    && (reference.kind === "builtin_agent" || reference.kind === "custom_agent")
+    && !activeModelIds.has(reference.choice.model),
+  ) : [];
   const modelSummary = !account.enabled ? "Desativada" : !account.modelsAvailable
     ? "Modelos indisponíveis"
     : account.models.length === 0
       ? "Nenhum modelo"
-      : `${account.models.length} ${account.models.length === 1 ? "modelo" : "modelos"}`;
+      : `${activeModels.length} ${activeModels.length === 1 ? "modelo ativo" : "modelos ativos"}`;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}><Card size="sm"
@@ -103,19 +127,25 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
           </div><ProviderUsageAlertSettings key={`${account.usageAlert?.window ?? "off"}/${account.usageAlert?.remainingPercent ?? 20}`} account={account} saving={saving || !onUsageAlertChange} onChange={(alias, alert) => onUsageAlertChange?.(alias, alert)} /></>}
           <Separator />
           <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2"><span className="micro-label text-muted-foreground">Modelos disponíveis</span><Badge variant="secondary">{account.models.length}</Badge></div>
+            <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="micro-label text-muted-foreground">Modelos para seleção</span><Badge variant="secondary">{activeModels.length}/{account.models.length}</Badge></div>{!custom && <Button type="button" size="sm" variant="outline" disabled={saving || refreshing || !account.enabled || !onRefreshModels} onClick={() => onRefreshModels?.(account.alias)} className="cursor-pointer"><RefreshCw aria-hidden="true" data-icon="inline-start" className={refreshing ? "animate-spin" : undefined} />{refreshing ? "Consultando…" : "Atualizar modelos"}</Button>}</div>
+            <p className="text-xs leading-5 text-muted-foreground">{custom ? "Escolha quais modelos cadastrados neste endpoint poderão ser usados. Para mudar o catálogo, edite a conta Custom." : "A consulta pode demorar. Modelos novos são ativados automaticamente. Modelos retirados pelo provedor deixam de aparecer; agentes que ainda os usam precisam de outro modelo."}</p>
             {!account.enabled ? <p className="text-muted-foreground">Ative a conta para disponibilizar seus modelos.</p> : !account.modelsAvailable ? (
               <p className="text-muted-foreground">Não foi possível consultar os modelos agora.</p>
             ) : account.models.length === 0 ? (
-              <p className="text-muted-foreground">A assinatura não retornou modelos.</p>
+              <p className="text-muted-foreground">{custom ? "Nenhum modelo cadastrado." : "A assinatura não retornou modelos."}</p>
             ) : (
-              <div className="flex flex-wrap gap-1.5">
+              <div className="divide-y divide-border/70 rounded-md border border-border/70">
                 {account.models.map((model) => (
-                  <Hint key={model.id} content={`${model.id}${model.contextWindow ? ` · ${model.contextWindow.toLocaleString("pt-BR")} tokens` : ""}`}><Badge variant="outline" className="max-w-full"><span className="truncate">{model.name}</span></Badge></Hint>
+                  <div key={model.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
+                    <span className="min-w-0"><span className="block truncate font-medium text-foreground">{model.name}</span><span className="block truncate font-mono text-[10px] text-muted-foreground">{model.id}{model.contextWindow ? ` · ${model.contextWindow.toLocaleString("pt-BR")} tokens` : ""}</span></span>
+                    <Switch aria-label={`Disponibilizar ${model.name}`} checked={activeModelIds.has(model.id)} disabled={saving || refreshing || !onModelEnabledChange} onCheckedChange={enabled => onModelEnabledChange?.(account.alias, model.id, enabled)} className="cursor-pointer" />
+                  </div>
                 ))}
               </div>
             )}
           </div>
+          {affectedAgents.length > 0 && <div role="alert" className="space-y-2 rounded-md border border-onedark-yellow/30 bg-onedark-yellow/5 p-3 text-xs"><p className="font-medium text-foreground">{affectedAgents.length} {affectedAgents.length === 1 ? "agente precisa" : "agentes precisam"} revisar o modelo</p><ul className="space-y-1 text-muted-foreground">{affectedAgents.map(reference => <li key={reference.id}><span className="text-foreground">{reference.label}</span>{reference.details[0] && <span> ({reference.details[0]})</span>} · <span className="font-mono">{reference.choice.model}</span> {account.models.some(model => model.id === reference.choice.model) ? "desativado" : "retirado do catálogo"}</li>)}</ul>{onReviewAgents && <Button type="button" variant="outline" size="sm" onClick={() => { setOpen(false); onReviewAgents(affectedAgents.some(reference => reference.kind === "custom_agent") ? "agents" : "flows"); }} className="cursor-pointer">Revisar no Workflow</Button>}</div>}
+          {referenceError && <p role="status" className="text-xs text-muted-foreground">Não foi possível verificar os agentes vinculados agora.</p>}
         </div>
         <DialogFooter className="shrink-0 flex-row flex-wrap items-center justify-between gap-3 sm:justify-between">
           <label className="flex cursor-pointer items-center gap-2 text-xs">

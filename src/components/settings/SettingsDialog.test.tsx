@@ -61,6 +61,31 @@ function renderSettings(onOpenChange = vi.fn()) {
 }
 
 describe("SettingsDialog provider accounts", () => {
+  it("persists model availability and replaces the catalog from the provider without reauthentication", async () => {
+    const user = userEvent.setup();
+    const oldModel = { id: "old", name: "Antigo", reasoningLevels: [], defaultReasoningLevel: null };
+    const newModel = { id: "gpt-6-sol", name: "GPT 6 Sol", reasoningLevels: [], defaultReasoningLevel: null };
+    const provider = account("openai-codex-pessoal", { models: [oldModel] });
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_provider_accounts") return Promise.resolve([provider]);
+      if (command === "get_provider_model_references") return Promise.resolve({ references: [], bindings: [] });
+      if (command === "set_provider_model_enabled") return Promise.resolve(["old"]);
+      if (command === "refresh_provider_models") return Promise.resolve([{ ...provider, models: [newModel], disabledModels: ["old"] }]);
+      return Promise.resolve(undefined);
+    });
+    const changed = vi.fn();
+    render(<SettingsDialog open onOpenChange={vi.fn()} onAccountsChange={changed} />);
+    await user.click(screen.getByRole("tab", { name: /Provedores/ }));
+    await user.click(await screen.findByRole("button", { name: `Detalhes de ${provider.alias}` }));
+    await user.click(screen.getByRole("switch", { name: "Disponibilizar Antigo" }));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Disponibilizar Antigo" })).not.toBeChecked());
+    expect(invokeMock).toHaveBeenCalledWith("set_provider_model_enabled", { alias: provider.alias, modelId: "old", enabled: false });
+    await user.click(screen.getByRole("button", { name: "Atualizar modelos" }));
+    expect(await screen.findByText("GPT 6 Sol")).toBeVisible();
+    expect(screen.queryByText("Antigo")).not.toBeInTheDocument();
+    expect(changed).toHaveBeenLastCalledWith([expect.objectContaining({ models: [newModel], disabledModels: ["old"] })]);
+    expect(invokeMock).not.toHaveBeenCalledWith("reauthorize_provider_account", expect.anything());
+  });
   it("does not repeat visible settings labels in a tooltip", async () => {
     const user = userEvent.setup();
     invokeMock.mockResolvedValue([]);
@@ -249,7 +274,7 @@ describe("SettingsDialog provider accounts", () => {
     renderSettings();
 
     const card = await screen.findByTestId(`provider-account-${connected.alias}`);
-    expect(within(card).getByText("OpenAI Codex · 2 modelos")).toBeInTheDocument();
+    expect(within(card).getByText("OpenAI Codex · 2 modelos ativos")).toBeInTheDocument();
     expect(within(card).queryByText("dev@empresa.com")).not.toBeInTheDocument();
     expect(within(card).queryByText("GPT-5.6 Luna")).not.toBeInTheDocument();
     await user.click(within(card).getByRole("button", { name: `Detalhes de ${connected.alias}` }));
@@ -266,10 +291,14 @@ describe("SettingsDialog provider accounts", () => {
     const renewed = { ...existing, modelsAvailable: true, email: "dev@example.com", models: [{ id: "model-new", name: "Modelo do novo plano", reasoningLevels: [], defaultReasoningLevel: null }] };
     const wait = deferred<ProviderAccount>();
     const authorizationUrl = "https://example.test/reauthorize";
-    invokeMock.mockResolvedValueOnce([existing])
-      .mockResolvedValueOnce({ flowId: "reauth-flow", authorizationUrl })
-      .mockReturnValueOnce(wait.promise)
-      .mockResolvedValueOnce([renewed]);
+    let lists = 0;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_provider_accounts") return Promise.resolve(lists++ === 0 ? [existing] : [renewed]);
+      if (command === "reauthorize_provider_account") return Promise.resolve({ flowId: "reauth-flow", authorizationUrl });
+      if (command === "wait_openai_codex_connection") return wait.promise;
+      if (command === "get_provider_model_references") return Promise.resolve({ references: [], bindings: [] });
+      return Promise.resolve(undefined);
+    });
     const success = vi.spyOn(toast, "success");
     renderSettings();
     await user.click(await screen.findByRole("button", { name: `Detalhes de ${existing.alias}` }));

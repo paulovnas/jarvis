@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { ProviderAccount } from "@/core/provider-accounts";
+import { enabledModels, type ProviderAccount } from "@/core/provider-accounts";
 import { webSearchConfigSchema } from "@/core/web-search";
 import { modelProblem } from "@/core/provider-references";
 import { useModelProblemNotice } from "@/hooks/use-provider-references";
@@ -34,9 +34,9 @@ export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange 
     return () => { active = false; mounted.current = false; };
   }, [kind, retry]);
   const supports = (provider: ProviderAccount, model: string) => provider.providerKind === "custom" ? kind === "vision" && provider.custom?.models.some(item => item.id === model && item.supportsImages) : kind === "vision" ? /^(gpt-|gemini-|claude|o3|o4)/.test(model) : provider.providerKind === "openai-codex" || model.startsWith("gemini-");
-  const compatible = accounts.filter(account => account.enabled && (imageGeneration ? account.providerKind === "antigravity" : account.models.some(model => supports(account, model.id))));
+  const compatible = accounts.filter(account => account.enabled && (imageGeneration ? account.providerKind === "antigravity" : enabledModels(account).some(model => supports(account, model.id))));
   const selected = compatible.find(account => account.alias === config.accountAlias);
-  const models = imageGeneration ? [imageModel] : (selected?.models ?? []).filter(model => selected && supports(selected, model.id));
+  const models = imageGeneration ? [imageModel] : selected ? enabledModels(selected).filter(model => supports(selected, model.id)) : [];
   const unavailable = config.accountAlias !== null && !selected;
   const problem = !loading && !error && !config.inheritChat && config.accountAlias ? modelProblem({ account: config.accountAlias, model: imageGeneration ? imageModel.id : config.model ?? "", reasoning: null }, accounts, kind) : null;
   useModelProblemNotice(title, problem);
@@ -61,7 +61,7 @@ export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange 
           if (!value) return;
           if (value === OFF || value === INHERIT) { void save({ accountAlias: null, model: null, inheritChat: value === INHERIT }); return; }
           const account = compatible.find(item => item.alias === value);
-          const model = imageGeneration ? imageModel : account?.models.find(item => supports(account, item.id));
+          const model = imageGeneration ? imageModel : account && enabledModels(account).find(item => supports(account, item.id));
           if (!model) { toast.error("Nenhum modelo disponível nesta conta."); return; }
           void save({ accountAlias: value, model: model.id, inheritChat: false });
         }}>

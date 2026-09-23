@@ -227,4 +227,5 @@ fn catalog_filters_internal_models_and_offers_model_specific_reasoning() {
     assert_eq!(models[2].context_window, Some(1048576));
     assert_eq!(normalize_models(&json!({"models":{}})), Some(vec![]));
     assert!(normalize_models(&json!({"error":"no"})).is_none());
+    assert!(normalize_models(&json!({"models":{"bad":null}})).is_none());
 }

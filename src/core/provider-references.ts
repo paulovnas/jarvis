@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { modelChoiceSchema } from "./workflow-catalog";
-import type { ProviderAccount, ProviderModel } from "./provider-accounts";
+import { enabledModels, type ProviderAccount, type ProviderModel } from "./provider-accounts";
 
 export type ModelChoice = z.infer<typeof modelChoiceSchema>;
 export const providerReferenceSchema = z.object({
@@ -23,7 +23,7 @@ export function compatibleModels(account: ProviderAccount, kind: ReferenceKind):
   if (!account.enabled) return [];
   if (kind === "image_generation") return account.providerKind === "antigravity" ? [imageModel] : [];
   if (!account.modelsAvailable) return [];
-  return account.models.filter(model => kind === "web_search" ? account.providerKind === "openai-codex" || (account.providerKind === "antigravity" && model.id.startsWith("gemini-")) : kind === "vision" ? account.providerKind === "custom" ? account.custom?.models.some(item => item.id === model.id && item.supportsImages) : /^(gpt-|gemini-|claude|o3|o4)/.test(model.id) : true);
+  return enabledModels(account).filter(model => kind === "web_search" ? account.providerKind === "openai-codex" || (account.providerKind === "antigravity" && model.id.startsWith("gemini-")) : kind === "vision" ? account.providerKind === "custom" ? account.custom?.models.some(item => item.id === model.id && item.supportsImages) : /^(gpt-|gemini-|claude|o3|o4)/.test(model.id) : true);
 }
 
 export function modelProblem(choice: ModelChoice, accounts: ProviderAccount[], kind: ReferenceKind = "custom_agent"): string | null {

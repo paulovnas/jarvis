@@ -10,7 +10,7 @@ import { AgentInstructionsDialog } from "./AgentInstructionsDialog";
 import { ModelPicker } from "@/components/chat/ModelPicker";
 import { useAgentModels } from "@/hooks/use-agent-models";
 import { FLOW_LABELS, ROLE_LABELS, ROLE_COLORS, type Workflow, type WorkflowAgent } from "@/core/workflow";
-import type { ProviderAccount } from "@/core/provider-accounts";
+import { enabledModels, type ProviderAccount } from "@/core/provider-accounts";
 import { modelProblem } from "@/core/provider-references";
 import { useModelProblemNotice } from "@/hooks/use-provider-references";
 import { Hint } from "@/components/ui/hint";
@@ -36,7 +36,7 @@ export function AgentSettings({ accounts, flowFilter }: { accounts: ProviderAcco
   const models = useAgentModels();
   const problems = Object.entries(models.data ?? {}).filter(([key]) => !flowFilter || key.startsWith(`${flowFilter}/`)).flatMap(([, choice]) => modelProblem(choice, accounts) ?? []);
   useModelProblemNotice("Agentes Jarvis", problems.length ? [...new Set(problems)].join(" ") : null);
-  const groups = accounts.filter(account => account.enabled && account.modelsAvailable).map(account => ({ provider: account.alias, providerKind: account.providerKind, models: account.models.map(model => ({ value: `${account.alias}/${model.id}`, label: model.name, reasoningLevels: model.reasoningLevels, defaultReasoningLevel: model.defaultReasoningLevel })) }));
+  const groups = accounts.filter(account => account.enabled && account.modelsAvailable).map(account => ({ provider: account.alias, providerKind: account.providerKind, models: enabledModels(account).map(model => ({ value: `${account.alias}/${model.id}`, label: model.name, reasoningLevels: model.reasoningLevels, defaultReasoningLevel: model.defaultReasoningLevel })) }));
   if (models.error) return <div role="alert" className="space-y-3 text-xs"><p className="text-destructive">{models.error}</p><Button variant="outline" className="cursor-pointer" onClick={() => void models.refresh()}>Tentar novamente</Button></div>;
   if (!models.data) return <div role="status" aria-label="Carregando modelos dos agentes" className="grid grid-cols-2 gap-3"><Skeleton className="h-24" /><Skeleton className="h-24" /><Skeleton className="h-24" /><Skeleton className="h-24" /></div>;
   return <TooltipProvider delay={150}><div className="space-y-6">{GROUPS.filter(group => !flowFilter || group.flow === flowFilter).map(({ flow, roles }) => <section key={flow} aria-label={`Agentes do fluxo ${FLOW_LABELS[flow]}`}>

@@ -102,6 +102,8 @@ pub(crate) struct ProviderAccount {
     pub(crate) models: Vec<ProviderModel>,
     #[serde(rename = "modelsAvailable")]
     pub(crate) models_available: bool,
+    #[serde(default, rename = "disabledModels")]
+    pub(crate) disabled_models: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) custom: Option<custom::Config>,
 }
@@ -128,6 +130,7 @@ impl ProviderAccount {
                 .map_or(ProviderAccountType::Unknown, classify_account_type),
             models,
             models_available,
+            disabled_models: Vec::new(),
             custom: None,
         }
     }
@@ -857,6 +860,7 @@ mod tests {
             account_type: ProviderAccountType::Personal,
             models: Vec::new(),
             models_available: false,
+            disabled_models: Vec::new(),
             custom: None,
         };
         let value = serde_json::to_value(account).expect("metadata JSON");
@@ -931,6 +935,22 @@ mod tests {
                     default_reasoning_level: Some("none".to_owned()),
                 },
             ])
+        );
+    }
+
+    #[test]
+    fn malformed_catalog_does_not_retire_models_but_an_explicit_empty_catalog_does() {
+        assert_eq!(
+            normalize_codex_models(&serde_json::json!({"error": "temporary"})),
+            None
+        );
+        assert_eq!(
+            normalize_codex_models(&serde_json::json!({"models": []})),
+            Some(Vec::new())
+        );
+        assert_eq!(
+            normalize_codex_models(&serde_json::json!({"models": [{}]})),
+            None
         );
     }
 
@@ -1235,15 +1255,63 @@ impl OAuthManager {
         records
             .into_iter()
             .map(|record| {
-                if record.provider_kind == "custom" {
-                    return custom::account(app_state, home_dir, record);
-                }
-                Ok(account_details(
+                let account = if record.provider_kind == "custom" {
+                    custom::account(app_state, home_dir, record)?
+                } else {
+                    account_details(record, self.secret_store.as_ref(), &self.endpoints, client)
+                };
+                attach_model_exclusions(app_state, home_dir, account)
+            })
+            .collect()
+    }
+
+    fn refresh_models(
+        &self,
+        app_state: &persistence::AppState,
+        home_dir: &std::path::Path,
+        alias: Option<&str>,
+    ) -> Result<Vec<ProviderAccount>, ProviderError> {
+        let _guard = self
+            .credentials_guard
+            .lock()
+            .map_err(|_| ProviderError::internal())?;
+        let records = app_state
+            .list_provider_accounts(home_dir)
+            .map_err(|_| ProviderError::database())?;
+        if alias.is_some_and(|selected| {
+            !records.iter().any(|record| {
+                record.alias == selected
+                    && record.enabled
+                    && matches!(
+                        record.provider_kind.as_str(),
+                        "openai-codex" | "antigravity"
+                    )
+            })
+        }) {
+            return Err(ProviderError::new(
+                "account_unavailable",
+                "Ative uma conta OpenAI/Codex ou Antigravity conectada para atualizar seus modelos.",
+            ));
+        }
+        let client = build_codex_client().ok();
+        records
+            .into_iter()
+            .filter(|record| {
+                record.enabled
+                    && matches!(
+                        record.provider_kind.as_str(),
+                        "openai-codex" | "antigravity"
+                    )
+                    && alias.is_none_or(|selected| record.alias == selected)
+            })
+            .map(|record| {
+                let account = account_details(
                     record,
                     self.secret_store.as_ref(),
                     &self.endpoints,
-                    client,
-                ))
+                    client.as_ref(),
+                );
+                attach_model_exclusions(app_state, home_dir, account)
             })
             .collect()
     }
@@ -1578,7 +1646,12 @@ impl OpenAiCodexState {
                 ));
             }
             let config = custom::load(state, home, alias)?;
-            let models = config.catalog();
+            let disabled = state
+                .with_connection(home, |db| {
+                    persistence::list_provider_model_exclusions(db, alias)
+                })
+                .map_err(|_| ProviderError::database())?;
+            let models = visible_models(config.catalog(), &disabled);
             credential.custom = Some(config);
             return Ok((credential, models));
         }
@@ -1604,7 +1677,12 @@ impl OpenAiCodexState {
                 "Não foi possível verificar os modelos da conta. Tente novamente.",
             )
         })?;
-        Ok((credential, models))
+        let disabled = state
+            .with_connection(home, |db| {
+                persistence::list_provider_model_exclusions(db, alias)
+            })
+            .map_err(|_| ProviderError::database())?;
+        Ok((credential, visible_models(models, &disabled)))
     }
 }
 
@@ -2497,13 +2575,13 @@ fn model_reasoning(
 
 fn normalize_codex_models(payload: &serde_json::Value) -> Option<Vec<ProviderModel>> {
     let payload = payload.as_object()?;
-    let entries = if let Some(entries) = payload.get("models").or_else(|| payload.get("data")) {
-        entries.as_array()?.as_slice()
-    } else {
-        &[]
-    };
+    let entries = payload
+        .get("models")
+        .or_else(|| payload.get("data"))?
+        .as_array()?;
     let mut seen = std::collections::HashSet::with_capacity(entries.len());
     let mut models = Vec::with_capacity(entries.len());
+    let mut recognized = false;
 
     for entry in entries {
         let Some(entry) = entry.as_object() else {
@@ -2514,6 +2592,7 @@ fn normalize_codex_models(payload: &serde_json::Value) -> Option<Vec<ProviderMod
         else {
             continue;
         };
+        recognized = true;
         let visibility = non_empty_model_string(entry.get("visibility"));
         if visibility.is_some_and(|value| {
             value.eq_ignore_ascii_case("hide") || value.eq_ignore_ascii_case("hidden")
@@ -2543,6 +2622,9 @@ fn normalize_codex_models(payload: &serde_json::Value) -> Option<Vec<ProviderMod
         ));
     }
 
+    if !entries.is_empty() && !recognized {
+        return None;
+    }
     models.sort_by(|left, right| {
         left.0
             .total_cmp(&right.0)
@@ -2574,6 +2656,24 @@ fn fetch_plan_type(
 ) -> Option<String> {
     let payload = codex_json(client, base_url, "wham/usage", credential, false)?;
     normalized_claim(payload.get("plan_type"), 64)
+}
+
+fn attach_model_exclusions(
+    app_state: &persistence::AppState,
+    home_dir: &std::path::Path,
+    mut account: ProviderAccount,
+) -> Result<ProviderAccount, ProviderError> {
+    account.disabled_models = app_state
+        .with_connection(home_dir, |db| {
+            persistence::list_provider_model_exclusions(db, &account.alias)
+        })
+        .map_err(|_| ProviderError::database())?;
+    Ok(account)
+}
+
+fn visible_models(mut models: Vec<ProviderModel>, disabled: &[String]) -> Vec<ProviderModel> {
+    models.retain(|model| !disabled.contains(&model.id));
+    models
 }
 
 fn account_details(
@@ -2678,6 +2778,87 @@ pub async fn list_provider_accounts(
     tauri::async_runtime::spawn_blocking(move || {
         let client = build_codex_client().ok();
         manager.list_accounts(&persistence_state, &home_dir, client.as_ref())
+    })
+    .await
+    .map_err(|_| ProviderError::internal())?
+}
+
+#[tauri::command]
+pub async fn refresh_provider_models(
+    app: tauri::AppHandle,
+    persistence_state: tauri::State<'_, persistence::AppState>,
+    oauth_state: tauri::State<'_, OpenAiCodexState>,
+    alias: Option<String>,
+) -> Result<Vec<ProviderAccount>, ProviderError> {
+    if let Some(alias) = alias.as_deref() {
+        custom::validate_alias(alias)?;
+    }
+    let home = home_dir(&app)?;
+    let state = persistence_state.inner().clone();
+    let manager = oauth_state.manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager.refresh_models(&state, &home, alias.as_deref())
+    })
+    .await
+    .map_err(|_| ProviderError::internal())?
+}
+
+fn update_provider_model_enabled(
+    state: &persistence::AppState,
+    home: &std::path::Path,
+    alias: &str,
+    model_id: &str,
+    enabled: bool,
+) -> Result<Vec<String>, ProviderError> {
+    custom::validate_alias(alias)?;
+    if model_id.is_empty() || model_id.len() > 256 || model_id.chars().any(char::is_control) {
+        return Err(ProviderError::new(
+            "invalid_model",
+            "Selecione um modelo válido da conta.",
+        ));
+    }
+    state.with_connection(home, |db| {
+        let exists: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1)",
+                [alias],
+                |row| row.get(0),
+            )
+            .map_err(|_| ProviderError::database())?;
+        if !exists {
+            return Err(ProviderError::new(
+                "account_missing",
+                "A conta não está mais cadastrada.",
+            ));
+        }
+        if enabled {
+            db.execute(
+                "DELETE FROM provider_model_exclusions WHERE account_alias = ?1 AND model_id = ?2",
+                rusqlite::params![alias, model_id],
+            )
+        } else {
+            db.execute(
+                "INSERT OR IGNORE INTO provider_model_exclusions(account_alias, model_id) VALUES (?1, ?2)",
+                rusqlite::params![alias, model_id],
+            )
+        }
+        .map_err(|_| ProviderError::database())?;
+        persistence::list_provider_model_exclusions(db, alias).map_err(|_| ProviderError::database())
+    })
+}
+
+#[tauri::command]
+pub async fn set_provider_model_enabled(
+    app: tauri::AppHandle,
+    persistence_state: tauri::State<'_, persistence::AppState>,
+    alias: String,
+    model_id: String,
+    enabled: bool,
+) -> Result<Vec<String>, ProviderError> {
+    let home = home_dir(&app)?;
+    let state = persistence_state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        update_provider_model_enabled(&state, &home, &alias, &model_id, enabled)
     })
     .await
     .map_err(|_| ProviderError::internal())?
@@ -2789,6 +2970,67 @@ mod oauth_tests {
         thread::JoinHandle,
         time::Duration,
     };
+
+    #[test]
+    fn model_visibility_persists_and_is_removed_with_its_account() {
+        let home = test_home();
+        let state = persistence::AppState::default();
+        let alias = "openai-codex-visibility";
+        state
+            .with_connection(&home, |db| {
+                persistence::insert_provider_account(db, alias, "visibility-account")?;
+                Ok::<_, PersistenceError>(())
+            })
+            .expect("provider account");
+
+        assert_eq!(
+            update_provider_model_enabled(&state, &home, alias, "gpt-6-sol", false).unwrap(),
+            ["gpt-6-sol"]
+        );
+        assert_eq!(
+            update_provider_model_enabled(&state, &home, alias, "gpt-6-sol", false).unwrap(),
+            ["gpt-6-sol"]
+        );
+        let disabled = state
+            .with_connection(&home, |db| {
+                persistence::list_provider_model_exclusions(db, alias)
+            })
+            .unwrap();
+        assert_eq!(disabled, ["gpt-6-sol"]);
+        assert_eq!(
+            update_provider_model_enabled(&state, &home, alias, "gpt-6-sol", true).unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            update_provider_model_enabled(&state, &home, alias, "gpt-6-sol", false).unwrap(),
+            ["gpt-6-sol"]
+        );
+
+        state
+            .with_connection(&home, |db| {
+                db.execute("DELETE FROM provider_accounts WHERE alias = ?1", [alias])
+                    .map_err(PersistenceError::from)
+            })
+            .unwrap();
+        let orphans: i64 = state
+            .with_connection(&home, |db| {
+                db.query_row(
+                    "SELECT COUNT(*) FROM provider_model_exclusions",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(PersistenceError::from)
+            })
+            .unwrap();
+        assert_eq!(orphans, 0);
+        assert_eq!(
+            update_provider_model_enabled(&state, &home, alias, "gpt-6-sol", false)
+                .unwrap_err()
+                .code,
+            "account_missing"
+        );
+        std::fs::remove_dir_all(home).unwrap();
+    }
 
     #[test]
     fn disabled_account_is_preserved_and_rejected_before_keychain_or_network() {

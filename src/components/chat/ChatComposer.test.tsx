@@ -36,6 +36,25 @@ async function openModel(user: ReturnType<typeof userEvent.setup>, name: RegExp)
 }
 
 describe("ChatComposer model reasoning", () => {
+  it("confirms an online catalog refresh without reauthenticating and keeps the composer usable", async () => {
+    const user = userEvent.setup();
+    const refresh = vi.fn().mockResolvedValue({ accounts: [], refreshed: ["openai-codex-pessoal"], failed: [] });
+    const notice = vi.spyOn(toast, "success");
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={vi.fn()} onRefreshModels={refresh} />);
+    await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Rascunho em andamento");
+    await user.click(screen.getByRole("button", { name: "Atualizar modelos" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("pode demorar");
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Não será necessário entrar nas contas novamente");
+    expect(refresh).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(refresh).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Atualizar modelos" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Atualizar modelos" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(notice).toHaveBeenCalledWith("Modelos atualizados", expect.anything());
+    expect(screen.getByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho em andamento");
+  });
   it("honors a new manual choice over an old remap and still applies later replacements", async () => {
     const source = { account: "pessoal", model: "compact", reasoning: "xhigh" };
     const bindings = [{ itemKey: "chat:c1", source, target: { account: "pessoal", model: "flexible", reasoning: "high" } }];

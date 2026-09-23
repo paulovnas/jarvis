@@ -25,6 +25,7 @@ export type ProviderAccount = {
   accountType: "personal" | "enterprise" | "unknown";
   models: ProviderModel[];
   modelsAvailable: boolean;
+  disabledModels?: string[];
   custom?: CustomConfig;
 };
 
@@ -73,10 +74,39 @@ function isProviderAccount(value: unknown): value is ProviderAccount {
       account.accountType === "unknown") &&
     Array.isArray(account.models) &&
     account.models.every(isProviderModel) &&
+    (account.disabledModels === undefined || (Array.isArray(account.disabledModels) && account.disabledModels.every((id: unknown) => typeof id === "string" && id.length > 0))) &&
     typeof account.modelsAvailable === "boolean"
   );
 }
 
 export function accountList(value: unknown): ProviderAccount[] {
   return Array.isArray(value) ? value.filter(isProviderAccount) : [];
+}
+
+export function enabledModels(account: ProviderAccount): ProviderModel[] {
+  const disabled = new Set(account.disabledModels ?? []);
+  return account.models.filter(model => !disabled.has(model.id));
+}
+
+export type ModelCatalogRefresh = {
+  accounts: ProviderAccount[];
+  refreshed: string[];
+  failed: string[];
+};
+
+export function mergeModelCatalogRefresh(current: ProviderAccount[], fetched: ProviderAccount[]): ModelCatalogRefresh {
+  const byAlias = new Map(fetched.map(account => [account.alias, account]));
+  const refreshed: string[] = [];
+  const failed: string[] = [];
+  const accounts = current.map(account => {
+    if (!account.enabled || !["openai-codex", "antigravity"].includes(account.providerKind)) return account;
+    const next = byAlias.get(account.alias);
+    if (!next || next.providerKind !== account.providerKind || !next.modelsAvailable) {
+      failed.push(account.alias);
+      return account;
+    }
+    refreshed.push(account.alias);
+    return { ...account, models: next.models, modelsAvailable: true, disabledModels: next.disabledModels ?? account.disabledModels ?? [] };
+  });
+  return { accounts, refreshed, failed };
 }

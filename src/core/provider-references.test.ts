@@ -11,6 +11,7 @@ it("explains missing, disabled and invalid model choices without a fallback", ()
   expect(modelProblem({ ...choice, model: "missing" }, [account])).toContain("não está disponível");
   expect(modelProblem({ ...choice, reasoning: "impossible" }, [account])).toContain("raciocínio");
   expect(modelProblem(choice, [account])).toBeNull();
+  expect(modelProblem(choice, [{ ...account, disabledModels: [choice.model] }])).toContain("não está disponível");
 });
 
 it("offers destinations compatible with the selected tool", () => {

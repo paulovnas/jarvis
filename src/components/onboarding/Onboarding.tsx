@@ -9,7 +9,7 @@ import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { CorePanel } from "@/components/settings/CoreSettings";
 import { BackupSettings } from "@/components/settings/BackupSettings";
 import { useCore } from "@/hooks/use-core";
-import type { ProviderAccount } from "@/core/provider-accounts";
+import { enabledModels, type ProviderAccount } from "@/core/provider-accounts";
 import { OptionalToolsStep } from "./OptionalToolsStep";
 
 const Providers = lazy(() => import("@/components/settings/SettingsDialog").then(module => ({ default: module.SettingsDialog })));
@@ -24,7 +24,7 @@ export function Onboarding({ saving, onComplete }: { saving: boolean; onComplete
   const [backupRestored, setBackupRestored] = useState(false);
   const [optionalBusy, setOptionalBusy] = useState(true);
   const core = useCore();
-  const providerReady = accounts.some(account => account.enabled && account.modelsAvailable && account.models.length > 0);
+  const providerReady = accounts.some(account => account.enabled && account.modelsAvailable && enabledModels(account).length > 0);
   const blocked = saving || (step === 1 && (!core.snapshot?.ready || core.busy)) || (step === 2 && optionalBusy) || (step === 3 && (!providerReady || providerBusy)) || (step === 4 && (!core.snapshot?.ready || !providerReady));
   const navigatingBusy = saving || core.busy || (step === 2 && optionalBusy) || (step === 3 && providerBusy);
   return <main className="flex min-h-0 flex-1 items-center justify-center p-4 sm:p-6">

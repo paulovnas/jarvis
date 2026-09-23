@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/resizable";
 import { ChatArea } from "@/components/chat/ChatArea";
 import { SettingsSkeleton } from "./LoadingSkeletons";
-import { accountList, type ProviderAccount } from "@/core/provider-accounts";
+import { accountList, enabledModels, mergeModelCatalogRefresh, type ProviderAccount } from "@/core/provider-accounts";
 import { Inspector } from "./Inspector";
 import { AppSidebar } from "./Sidebar";
 import { useLibrary } from "@/hooks/use-library";
@@ -108,6 +108,8 @@ export function Home() {
   const [localAccountsReady, setLocalAccountsReady] = useState(() => bootstrapResources?.resources.loaded.accounts ?? false);
   const accounts = bootstrapResources ? bootstrapResources.resources.accounts : localAccounts;
   const accountsReady = bootstrapResources ? bootstrapResources.resources.loaded.accounts : localAccountsReady;
+  const accountsRef = useRef(accounts);
+  useEffect(() => { accountsRef.current = accounts; }, [accounts]);
   const references = useProviderReferences(accounts, accountsReady);
   const accountsVersion = useRef(0);
   const loadAccountsInitially = useRef(!(bootstrapResources?.resources.loaded.accounts ?? false));
@@ -116,6 +118,22 @@ export function Home() {
     if (updateBootstrapAccounts) updateBootstrapAccounts(updated);
     else { setLocalAccounts(updated); setLocalAccountsReady(true); }
   }, [updateBootstrapAccounts]);
+  const [refreshingModels, setRefreshingModels] = useState(false);
+  const refreshInFlight = useRef(false);
+  const refreshModels = useCallback(async () => {
+    if (refreshInFlight.current) return null;
+    refreshInFlight.current = true;
+    setRefreshingModels(true);
+    try {
+      const fetched = accountList(await invoke<unknown>("refresh_provider_models", { alias: null }));
+      const report = mergeModelCatalogRefresh(accountsRef.current, fetched);
+      if (report.refreshed.length > 0) updateAccounts(report.accounts);
+      return report;
+    } finally {
+      refreshInFlight.current = false;
+      setRefreshingModels(false);
+    }
+  }, [updateAccounts]);
 
   useEffect(() => {
     if (!loadAccountsInitially.current) return;
@@ -136,17 +154,18 @@ export function Home() {
   }, [updateAccounts]);
 
   const modelGroups = accounts
-    .filter((account) => account.enabled && account.modelsAvailable && account.models.length > 0)
+    .filter((account) => account.enabled && account.modelsAvailable && enabledModels(account).length > 0)
     .map((account) => ({
       provider: account.alias,
       providerKind: account.providerKind,
-      models: account.models.map((model) => ({
+      models: enabledModels(account).map((model) => ({
         value: `${account.alias}/${model.id}`,
         label: model.name,
         reasoningLevels: model.reasoningLevels,
         defaultReasoningLevel: model.defaultReasoningLevel,
       })),
     }));
+  const canRefreshModels = accounts.some(account => account.enabled && (account.providerKind === "openai-codex" || account.providerKind === "antigravity"));
 
   const workspace = library.snapshot?.workspaces.find(item => item.id === library.snapshot?.selection.workspaceId);
   if (workspace && !library.snapshot?.projects.some(project => project.workspaceId === workspace.id)) {
@@ -193,7 +212,7 @@ export function Home() {
           minSize="360px"
           className="h-full min-h-0 min-w-0"
         >
-          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} projectUpdater={library} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea drafts={drafts} questionDrafts={questionDrafts} onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} modelBindings={references.bindings} modelsReady={accountsReady && !references.loading} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
+          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} projectUpdater={library} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea drafts={drafts} questionDrafts={questionDrafts} onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} modelBindings={references.bindings} modelsReady={accountsReady && !references.loading} onRefreshModels={canRefreshModels ? refreshModels : undefined} refreshingModels={refreshingModels} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
         </ResizablePanel>
 
         {!dashboardProject && <><ResizableHandle

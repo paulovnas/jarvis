@@ -1,8 +1,12 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { customAccountFixture } from "@/test/custom-provider-fixtures";
+
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
+beforeEach(() => { invokeMock.mockReset().mockResolvedValue({ references: [], bindings: [] }); });
 
 it("mostra configuração Custom sem simular conexão ou cotas e permite editar", async () => {
   const account = customAccountFixture(); const edit = vi.fn(); const user = userEvent.setup();
@@ -44,7 +48,7 @@ describe("ProviderAccountCard", () => {
     render(<ProviderAccountCard account={account} onDisconnect={onDisconnect} onEnabledChange={vi.fn()} />);
     const trigger = screen.getByRole("button", { name: `Detalhes de ${account.alias}` });
     expect(trigger).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByText("OpenAI Codex · 1 modelo")).toBeVisible();
+    expect(screen.getByText("OpenAI Codex · 1 modelo ativo")).toBeVisible();
     expect(screen.queryByText(account.email!)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Desconectar" })).not.toBeInTheDocument();
 
@@ -82,5 +86,23 @@ describe("ProviderAccountCard", () => {
     expect(screen.getByText("A assinatura não retornou modelos.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Desconectar" }));
     expect(onDisconnect).toHaveBeenCalledExactlyOnceWith(account.alias);
+  });
+
+  it("configura a seleção, confirma a recarga e aponta agentes com modelo retirado", async () => {
+    const user = userEvent.setup();
+    const onModelEnabledChange = vi.fn();
+    const onRefreshModels = vi.fn();
+    const onReviewAgents = vi.fn();
+    invokeMock.mockResolvedValue({ references: [{ id: "agent:1", itemKey: "agent:1", kind: "custom_agent", label: "Agente de dados", details: [], choice: { account: account.alias, model: "retired", reasoning: null } }], bindings: [] });
+    render(<ProviderAccountCard account={account} onDisconnect={vi.fn()} onEnabledChange={vi.fn()} onModelEnabledChange={onModelEnabledChange} onRefreshModels={onRefreshModels} onReviewAgents={onReviewAgents} />);
+    await user.click(screen.getByRole("button", { name: `Detalhes de ${account.alias}` }));
+    expect(await screen.findByText("Agente de dados")).toBeVisible();
+    expect(screen.getByText(/retirado do catálogo/)).toBeVisible();
+    await user.click(screen.getByRole("switch", { name: "Disponibilizar Modelo de teste" }));
+    expect(onModelEnabledChange).toHaveBeenCalledWith(account.alias, "test-model", false);
+    await user.click(screen.getByRole("button", { name: "Atualizar modelos" }));
+    expect(onRefreshModels).toHaveBeenCalledWith(account.alias);
+    await user.click(screen.getByRole("button", { name: "Revisar no Workflow" }));
+    expect(onReviewAgents).toHaveBeenCalledExactlyOnceWith("agents");
   });
 });

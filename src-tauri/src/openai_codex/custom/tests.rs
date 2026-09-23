@@ -213,6 +213,21 @@ fn custom_inference_uses_offline_catalog_and_never_refreshes_api_keys() {
     assert!(oauth
         .inference_model(&state, home.path(), alias, &model.id, Some("unsupported"))
         .is_err());
+    super::super::update_provider_model_enabled(&state, home.path(), alias, &model.id, false)
+        .unwrap();
+    assert_eq!(
+        oauth
+            .inference_model(&state, home.path(), alias, &model.id, None)
+            .err()
+            .expect("disabled model error")
+            .code,
+        "invalid_model"
+    );
+    super::super::update_provider_model_enabled(&state, home.path(), alias, &model.id, true)
+        .unwrap();
+    assert!(oauth
+        .inference_model(&state, home.path(), alias, &model.id, None)
+        .is_ok());
     store.fail_store(true);
     assert!(
         oauth

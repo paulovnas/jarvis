@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Home from "./Home";
@@ -23,6 +23,19 @@ const invokeMock = vi.mocked(invoke);
 const accountsMock = vi.fn<() => Promise<ProviderAccount[]>>();
 
 describe("Home shell", () => {
+  it("reloads connected provider models from the composer without reconnecting the account", async () => {
+    const user = userEvent.setup();
+    const account: ProviderAccount = { alias: "openai-codex-pessoal", providerKind: "openai-codex", enabled: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, models: [{ id: "old", name: "Antigo", reasoningLevels: [], defaultReasoningLevel: null }] };
+    accountsMock.mockResolvedValueOnce([account]).mockResolvedValueOnce([{ ...account, models: [{ id: "gpt-6-sol", name: "GPT 6 Sol", reasoningLevels: ["high"], defaultReasoningLevel: "high" }] }]);
+    render(<Home />);
+    const reload = await screen.findByRole("button", { name: "Atualizar modelos" });
+    await waitFor(() => expect(reload).toBeEnabled());
+    await user.click(reload);
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Atualizar modelos" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("GPT 6 Sol"));
+    expect(accountsMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock).not.toHaveBeenCalledWith("reauthorize_provider_account", expect.anything());
+  });
   it("starts a supervised publication turn with the dedicated GitHub agent model", async () => {
     const user = userEvent.setup();
     const chat = { ...emptyChat(), turns: [savedTurn()] };
@@ -176,7 +189,7 @@ describe("Home shell", () => {
       if (command === "get_agent_activity") return Promise.resolve([]);
       if (command === "get_terminal_activity") return Promise.resolve([]);
       if (command === "get_project_beads" || command === "get_agent_file_changes") return Promise.resolve([]);
-      if (command === "list_provider_accounts") return accountsMock();
+      if (command === "list_provider_accounts" || command === "refresh_provider_models") return accountsMock();
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
   });

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
-import { ArrowUp, Plus, Square } from "lucide-react";
+import { ArrowUp, Plus, RefreshCw, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/TextInput";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,6 +26,7 @@ import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Hint } from "@/components/ui/hint";
+import type { ModelCatalogRefresh } from "@/core/provider-accounts";
 
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
@@ -41,6 +42,8 @@ interface ChatComposerProps {
   modelGroups: ProviderModelGroup[];
   modelBindings?: ModelBinding[];
   modelsReady?: boolean;
+  onRefreshModels?: () => Promise<ModelCatalogRefresh | null>;
+  refreshingModels?: boolean;
   draftKey?: string;
   drafts?: Map<string, ChatDraft>;
   queuedMessages?: QueuedMessage[];
@@ -59,6 +62,8 @@ export function ChatComposer({
   modelGroups,
   modelBindings = [],
   modelsReady = true,
+  onRefreshModels,
+  refreshingModels = false,
   disabled = false,
   running = false,
   compacting = false,
@@ -81,6 +86,7 @@ export function ChatComposer({
   const fileInput = useRef<HTMLInputElement>(null);
   const importing = useRef(false);
   const [uploading, setUploading] = useState(false);
+  const [refreshDialogOpen, setRefreshDialogOpen] = useState(false);
   const attachments = draft.parts?.filter(part => part.type === "attachment") ?? [];
   const removeLocks = useRef(new Set<string>());
   const setDraft = (value: ChatDraft) => {
@@ -230,6 +236,24 @@ export function ChatComposer({
     if (next === "standard" || next === "designer" || next.startsWith("agent:")) setManualValidation(false);
   };
 
+  const refreshModels = async () => {
+    setRefreshDialogOpen(false);
+    if (!onRefreshModels) return;
+    try {
+      const report = await onRefreshModels();
+      if (!report) return;
+      if (report.failed.length === 0) {
+        toast.success("Modelos atualizados", { description: `${report.refreshed.length} conta(s) consultada(s).` });
+      } else if (report.refreshed.length > 0) {
+        toast.warning("Atualização parcial dos modelos", { description: `Não foi possível atualizar: ${report.failed.join(", ")}. Os modelos anteriores foram mantidos.` });
+      } else {
+        toast.error("Não foi possível atualizar os modelos", { description: `Contas: ${report.failed.join(", ")}. Os modelos anteriores foram mantidos.` });
+      }
+    } catch (error) {
+      toast.error("Não foi possível atualizar os modelos", { description: libraryError(error, "Verifique a conexão e tente novamente.") });
+    }
+  };
+
   return (
     <div className="w-full">
       {modelError && <p role="alert" className="px-4 py-2 text-xs text-destructive">{modelError}</p>}
@@ -283,6 +307,15 @@ export function ChatComposer({
             </Label></Hint>}
 
             <ModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} disabled={!modelsReady || running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} showProviderIdentity />
+            <Hint content="Consultar modelos disponíveis"><Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={refreshingModels ? "Atualizando modelos" : "Atualizar modelos"}
+              disabled={!onRefreshModels || refreshingModels}
+              onClick={() => setRefreshDialogOpen(true)}
+              className="size-7.5 shrink-0 cursor-pointer text-muted-foreground hover:text-primary"
+            ><RefreshCw className={`size-3.5 ${refreshingModels ? "animate-spin motion-reduce:animate-none" : ""}`} /></Button></Hint>
 
             {/* Botão redondo com seta pra cima no canto inferior direito */}
             {running && !compacting && <Hint content="Interromper execução"><Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button></Hint>}
@@ -312,6 +345,18 @@ export function ChatComposer({
           <AlertDialogFooter>
             <AlertDialogCancel className="cursor-pointer">Manter fluxo atual</AlertDialogCancel>
             <AlertDialogAction data-confirm-action className="cursor-pointer" onClick={() => { if (pendingWorkflow) { setWorkflow(pendingWorkflow); if (pendingWorkflow === "standard" || pendingWorkflow === "designer" || pendingWorkflow.startsWith("agent:")) setManualValidation(false); } setPendingWorkflow(null); }}>Trocar fluxo</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={refreshDialogOpen} onOpenChange={setRefreshDialogOpen}>
+        <AlertDialogContent className="dark">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Atualizar modelos disponíveis?</AlertDialogTitle>
+            <AlertDialogDescription>O Jarvis consultará os catálogos das contas OpenAI/Codex e Antigravity conectadas. Esse processo pode demorar alguns minutos. Não será necessário entrar nas contas novamente; se uma consulta falhar, os modelos atuais serão mantidos.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="cursor-pointer">Cancelar</AlertDialogCancel>
+            <AlertDialogAction data-confirm-action className="cursor-pointer" onClick={() => { void refreshModels(); }}>Atualizar modelos</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -56,7 +56,7 @@ import { Label } from "@/components/ui/label";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { accountList, type ProviderAccount, type ProviderUsageAlert } from "@/core/provider-accounts";
+import { accountList, enabledModels, type ProviderAccount, type ProviderUsageAlert } from "@/core/provider-accounts";
 import { ProviderAccountCard } from "./ProviderAccountCard";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
@@ -144,6 +144,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   const bootstrap = useBootstrapResources();
   const { layout, updateLayout } = useDesktopLayout();
   const activeTab = layout.settingsTab;
+  const [workflowInitialTab, setWorkflowInitialTab] = useState<"flows" | "agents">("flows");
   const setActiveTab = (value: string) => { if (value === "general" || value === "terminal" || value === "tools" || value === "providers" || value === "agents" || value === "skills" || value === "mcps" || value === "workspaces") updateLayout({ settingsTab: value }); };
   const [mcpCount, setMcpCount] = useState<number | null>(null);
   const [skillCount, setSkillCount] = useState<number | null>(() => bootstrap?.resources.skills?.skills.length ?? null);
@@ -173,6 +174,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   const [disconnectAlias, setDisconnectAlias] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
+  const [refreshingAlias, setRefreshingAlias] = useState<string | null>(null);
   const togglingRef = useRef(false);
 
   const activeConnectionRef = useRef<ActiveConnection | null>(null);
@@ -184,7 +186,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   const preloadedAccounts = useRef(bootstrap?.resources.loaded.accounts ?? false);
   const [searchBusy, setSearchBusy] = useState(false);
   const [visionBusy, setVisionBusy] = useState(false);
-  useEffect(() => { onBusyChange?.(view !== "list" || editingCustom !== null || listState !== "ready" || toggling || disconnecting !== null || searchBusy || visionBusy); }, [view, editingCustom, listState, toggling, disconnecting, searchBusy, visionBusy, onBusyChange]);
+  useEffect(() => { onBusyChange?.(view !== "list" || editingCustom !== null || listState !== "ready" || toggling || refreshingAlias !== null || disconnecting !== null || searchBusy || visionBusy); }, [view, editingCustom, listState, toggling, refreshingAlias, disconnecting, searchBusy, visionBusy, onBusyChange]);
   useEffect(() => {
     closeRequestedRef.current = false;
     return () => {
@@ -477,6 +479,37 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
     }
   };
 
+  const handleModelEnabledChange = async (alias: string, modelId: string, enabled: boolean) => {
+    if (togglingRef.current) return;
+    togglingRef.current = true; setToggling(true);
+    try {
+      const disabledModels = await invoke<string[]>("set_provider_model_enabled", { alias, modelId, enabled });
+      if (!Array.isArray(disabledModels) || !disabledModels.every(id => typeof id === "string")) throw new Error("invalid response");
+      updateAccounts(accounts.map(account => account.alias === alias ? { ...account, disabledModels } : account));
+      toast.success(enabled ? "Modelo disponibilizado" : "Modelo oculto da seleção");
+    } catch { toast.error("Não foi possível salvar a disponibilidade do modelo."); }
+    finally { togglingRef.current = false; setToggling(false); }
+  };
+
+  const handleRefreshModels = async (alias: string) => {
+    if (refreshingAlias !== null || togglingRef.current) return;
+    setRefreshingAlias(alias);
+    try {
+      const fetched = accountList(await invoke("refresh_provider_models", { alias }));
+      const refreshed = fetched.find(account => account.alias === alias);
+      if (!refreshed || !refreshed.modelsAvailable) {
+        toast.error("Não foi possível atualizar os modelos", { description: "O catálogo anterior foi mantido. Confira a conexão e tente novamente." });
+        return;
+      }
+      const previous = accounts.find(account => account.alias === alias);
+      const removed = previous?.models.filter(model => !refreshed.models.some(next => next.id === model.id)) ?? [];
+      updateAccounts(accounts.map(account => account.alias === alias ? refreshed : account));
+      toast.success("Modelos atualizados", { description: removed.length ? `${removed.length} modelo(s) saíram do catálogo. Revise os agentes vinculados abaixo.` : `${refreshed.models.length} modelo(s) encontrados.` });
+    } catch (error) {
+      toast.error("Não foi possível atualizar os modelos", { description: safeErrorMessage(error, "O catálogo anterior foi mantido.") });
+    } finally { setRefreshingAlias(null); }
+  };
+
   const handleUsageChange = async (alias: string, showUsage: boolean, showThirdPartyUsage: boolean) => {
     if (togglingRef.current) return;
     togglingRef.current = true; setToggling(true);
@@ -574,7 +607,11 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
               <ProviderAccountCard
                 key={account.alias}
                 account={account}
-                saving={toggling || starting || cancelling}
+                saving={toggling || starting || cancelling || refreshingAlias !== null}
+                refreshing={refreshingAlias === account.alias}
+                onModelEnabledChange={(alias, modelId, enabled) => { void handleModelEnabledChange(alias, modelId, enabled); }}
+                onRefreshModels={(alias) => { void handleRefreshModels(alias); }}
+                onReviewAgents={embeddedProviders ? undefined : tab => { setWorkflowInitialTab(tab); setActiveTab("agents"); }}
                 onEdit={setEditingCustom}
                 onReauthorize={handleReauthorize}
                 onUsageChange={(alias, showUsage, showThirdPartyUsage) => { void handleUsageChange(alias, showUsage, showThirdPartyUsage); }}
@@ -587,7 +624,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
             ))}
           </div>
         )}
-        {(!embeddedProviders || accounts.some(account => account.enabled && account.modelsAvailable && account.models.length > 0)) && <section className="space-y-3" aria-label="Ferramentas"><h3 className="micro-label text-muted-foreground">Ferramentas</h3><div className="grid gap-3 sm:grid-cols-3"><WebSearchSettings accounts={accounts} onBusyChange={embeddedProviders ? setSearchBusy : undefined} /><WebSearchSettings accounts={accounts} kind="vision" onBusyChange={embeddedProviders ? setVisionBusy : undefined} /><WebSearchSettings accounts={accounts} kind="image_generation" /></div></section>}
+        {(!embeddedProviders || accounts.some(account => account.enabled && account.modelsAvailable && enabledModels(account).length > 0)) && <section className="space-y-3" aria-label="Ferramentas"><h3 className="micro-label text-muted-foreground">Ferramentas</h3><div className="grid gap-3 sm:grid-cols-3"><WebSearchSettings accounts={accounts} onBusyChange={embeddedProviders ? setSearchBusy : undefined} /><WebSearchSettings accounts={accounts} kind="vision" onBusyChange={embeddedProviders ? setVisionBusy : undefined} /><WebSearchSettings accounts={accounts} kind="image_generation" /></div></section>}
       </div>
     );
   };
@@ -769,7 +806,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
               <TabsContent value="terminal" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "terminal" && <TerminalSettings />}</TabsContent>
               <TabsContent value="workspaces" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "workspaces" && <WorkspaceSettings />}</TabsContent>
               <TabsContent value="tools" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "tools" && <CoreSettings />}</TabsContent>
-              <TabsContent value="agents" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "agents" && <WorkflowSettings accounts={accounts} />}</TabsContent>
+              <TabsContent value="agents" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "agents" && <WorkflowSettings accounts={accounts} initialTab={workflowInitialTab} />}</TabsContent>
               <TabsContent value="skills" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</TabsContent>
               <TabsContent value="providers" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{renderList()}</TabsContent>
               <TabsContent value="mcps" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "mcps" && <div className="w-full"><McpSettings onCountChange={updateMcpCount} /></div>}</TabsContent>

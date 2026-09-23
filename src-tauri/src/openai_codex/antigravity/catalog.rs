@@ -45,6 +45,9 @@ fn family(
 
 pub(super) fn models(payload: &Value) -> Option<Models> {
     let raw = payload["models"].as_object()?;
+    if !raw.is_empty() && !raw.values().any(Value::is_object) {
+        return None;
+    }
     let mut models: Models = raw
         .iter()
         .filter(|(id, v)| {

@@ -237,6 +237,8 @@ pub fn run() {
                 agent::questions::answer_agent_question,
                 agent::authoring::answer_agent_authoring,
                 openai_codex::list_provider_accounts,
+                openai_codex::refresh_provider_models,
+                openai_codex::set_provider_model_enabled,
                 openai_codex::custom::save_custom_provider,
                 openai_codex::custom::discovery::lookup_custom_model,
                 openai_codex::set_provider_enabled,

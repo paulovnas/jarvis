@@ -97,6 +97,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 21,
         sql: include_str!("../../drizzle/0020_project_appearance.sql"),
     },
+    Migration {
+        version: 22,
+        sql: include_str!("../../drizzle/0021_provider_model_visibility.sql"),
+    },
 ];
 
 #[test]
@@ -358,6 +362,20 @@ pub(crate) fn list_provider_accounts(
     )?;
     let rows = statement.query_map([], provider_account_from_row)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+pub(crate) fn list_provider_model_exclusions(
+    connection: &Connection,
+    alias: &str,
+) -> Result<Vec<String>, PersistenceError> {
+    let mut statement = connection.prepare(
+        "SELECT model_id FROM provider_model_exclusions WHERE account_alias = ?1 ORDER BY model_id",
+    )?;
+    let models = statement
+        .query_map([alias], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(Into::into);
+    models
 }
 
 pub(crate) fn provider_account_exists(
@@ -795,7 +813,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 21);
+        assert_eq!(version, 22);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -918,7 +936,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 21);
+        assert_eq!(version, 22);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {
