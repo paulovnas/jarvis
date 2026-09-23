@@ -3029,6 +3029,7 @@ mod oauth_tests {
                 .code,
             "account_missing"
         );
+        drop(state);
         std::fs::remove_dir_all(home).unwrap();
     }
 
