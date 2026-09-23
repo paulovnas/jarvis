@@ -17,7 +17,9 @@ const ANTIGRAVITY_KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.antigravity";
 #[cfg(target_os = "macos")]
 const DEVELOPMENT_ANTIGRAVITY_KEYCHAIN_SERVICE: &str = "com.foxtag.jarvis.dev.antigravity";
 pub(crate) const OPENAI_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
-pub(crate) const OPENAI_CODEX_CLIENT_VERSION: &str = "0.153.0";
+// The Codex catalog gates new models by client_version. Use this client's
+// release version so model discovery does not stay pinned to an old Codex CLI.
+pub(crate) const OPENAI_CODEX_CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const OPENAI_CODEX_PROFILE_CLAIM: &str = "https://api.openai.com/profile";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -935,6 +937,56 @@ mod tests {
                     default_reasoning_level: Some("none".to_owned()),
                 },
             ])
+        );
+    }
+
+    #[test]
+    fn codex_model_discovery_uses_jarvis_release_version() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("model endpoint");
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("model request");
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let count = socket.read(&mut buffer).expect("request bytes");
+                assert!(count > 0 && request.len() < 16 * 1024);
+                request.extend_from_slice(&buffer[..count]);
+            }
+            let request = String::from_utf8(request).expect("HTTP request");
+            assert!(request.contains(&format!(
+                "GET /codex/models?client_version={} HTTP/1.1",
+                env!("CARGO_PKG_VERSION")
+            )));
+            assert!(request.contains(&format!("version: {}\r\n", env!("CARGO_PKG_VERSION"))));
+            let payload = r#"{"models":[{"slug":"gpt-6-sol","display_name":"GPT-6-Sol","priority":2},{"slug":"gpt-6-luna","display_name":"GPT-6-Luna","priority":3}]}"#;
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{payload}",
+                payload.len()
+            )
+            .expect("model response");
+        });
+
+        let models = fetch_codex_models(
+            &build_codex_client().unwrap(),
+            &base_url,
+            &credential("account-one"),
+        )
+        .expect("catalog");
+        server.join().expect("model request assertion");
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["gpt-6-sol", "gpt-6-luna"]
         );
     }
 

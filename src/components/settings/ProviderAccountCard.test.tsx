@@ -88,6 +88,20 @@ describe("ProviderAccountCard", () => {
     expect(onDisconnect).toHaveBeenCalledExactlyOnceWith(account.alias);
   });
 
+  it("mantém nomes extensos de modelos legíveis sem rolagem horizontal", async () => {
+    const user = userEvent.setup();
+    const longName = "Modelo de codificação com descrição extensa para seleção";
+    const longId = "gpt-6-sol-preview-with-a-long-provider-specific-identifier";
+    render(<ProviderAccountCard account={{ ...account, models: [{ id: longId, name: longName, reasoningLevels: [], defaultReasoningLevel: null }] }} onDisconnect={vi.fn()} onEnabledChange={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: `Detalhes de ${account.alias}` }));
+    const settings = screen.getByRole("region", { name: `Configurações de ${account.alias}` });
+    expect(settings).toHaveClass("overflow-x-hidden");
+    expect(screen.getByText(longName)).toBeVisible();
+    expect(screen.getByText(longId)).toBeVisible();
+    expect(screen.getByRole("switch", { name: `Disponibilizar ${longName}` })).toBeVisible();
+  });
+
   it("configura a seleção, confirma a recarga e aponta agentes com modelo retirado", async () => {
     const user = userEvent.setup();
     const onModelEnabledChange = vi.fn();

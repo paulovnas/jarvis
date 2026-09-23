@@ -106,7 +106,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             <span className="min-w-0 break-words">{account.alias}</span>
           </DialogTitle>
         </DialogHeader>
-        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto py-1">
+        <div role="region" aria-label={`Configurações de ${account.alias}`} className="flex min-h-0 min-w-0 flex-col gap-4 overflow-x-hidden overflow-y-auto py-1">
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-3 text-xs">
             {custom ? <><dt className="text-muted-foreground">Endpoint</dt><dd className="text-right">{account.custom ? protocolLabels[account.custom.protocol] : "Indisponível"}</dd><dt className="text-muted-foreground">URL base</dt><dd className="break-all text-right font-mono text-xs">{account.custom?.baseUrl}</dd></> : <><dt className="text-muted-foreground">E-mail</dt>
             <dd className="break-all text-right">{account.email ?? "Não informado"}</dd>
@@ -134,10 +134,10 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             ) : account.models.length === 0 ? (
               <p className="text-muted-foreground">{custom ? "Nenhum modelo cadastrado." : "A assinatura não retornou modelos."}</p>
             ) : (
-              <div className="divide-y divide-border/70 rounded-md border border-border/70">
+              <div className="min-w-0 divide-y divide-border/70 rounded-md border border-border/70">
                 {account.models.map((model) => (
-                  <div key={model.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
-                    <span className="min-w-0"><span className="block truncate font-medium text-foreground">{model.name}</span><span className="block truncate font-mono text-[10px] text-muted-foreground">{model.id}{model.contextWindow ? ` · ${model.contextWindow.toLocaleString("pt-BR")} tokens` : ""}</span></span>
+                  <div key={model.id} className="flex min-w-0 items-center justify-between gap-3 px-3 py-2.5 text-xs">
+                    <span className="min-w-0 flex-1"><span className="block break-words font-medium text-foreground">{model.name}</span><span className="block break-all font-mono text-[10px] text-muted-foreground">{model.id}{model.contextWindow ? ` · ${model.contextWindow.toLocaleString("pt-BR")} tokens` : ""}</span></span>
                     <Switch aria-label={`Disponibilizar ${model.name}`} checked={activeModelIds.has(model.id)} disabled={saving || refreshing || !onModelEnabledChange} onCheckedChange={enabled => onModelEnabledChange?.(account.alias, model.id, enabled)} className="cursor-pointer" />
                   </div>
                 ))}
