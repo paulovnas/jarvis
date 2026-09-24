@@ -33,6 +33,9 @@ const MAX_TOOLS: usize = 96;
 const MAX_OUTPUT: usize = 48_000;
 const MAX_ACTIVE_SERVERS: usize = 3;
 const MAX_LOADED_TOOLS: usize = 8;
+const SEARCH_SCHEMA_BYTES: usize = 24 * 1024;
+const SEARCH_AUTOLOAD_LIMIT: usize = 3;
+const LOADED_SCHEMA_BYTES: usize = 64 * 1024;
 const EAGER_TOOL_LIMIT: usize = 3;
 const EAGER_SCHEMA_BYTES: usize = 8 * 1024;
 const MAX_ARGUMENT_BYTES: usize = 64 * 1024;
@@ -777,7 +780,7 @@ fn search_tools_definition(servers: &[String]) -> Value {
     json!({
         "type":"function",
         "name":MCP_SEARCH_TOOLS,
-        "description":"Search deferred tools inside the already selected or activated MCP servers. Use 2-4 precise capability keywords, preferably matching the MCP vocabulary. Results are bounded summaries; call mcp_load_tool with one returned tool ID before using it. Once a matching tool is loaded, call it instead of searching again unless its schema proves it cannot perform the requested operation.",
+        "description":"Search deferred tools inside selected or activated MCP servers using 2-4 precise capability keywords. Automatically expose up to three best matching validated schemas within a bounded budget on the next model step. Call a matching loaded tool directly; refine ambiguous searches. mcp_load_tool is only needed for a returned result marked loaded:false.",
         "parameters":{
             "type":"object",
             "properties":{
@@ -993,7 +996,7 @@ impl TurnClients {
         let catalog_guidance = if self.deferred_tools.is_empty() {
             ""
         } else {
-            " A large MCP catalog is deferred: start with one focused mcp_search_tools call using precise capability keywords, then mcp_load_tool for exactly one returned tool. Its validated schema appears on the next step and remains available. Call it directly; search again only when no result matches or the loaded schema cannot perform the requested operation. Do not reload an available schema, guess hidden tool names or load unrelated tools."
+            " A large MCP catalog is deferred: start with one focused mcp_search_tools call using precise capability keywords. Search automatically exposes a small set of best matching validated schemas on the next step. Call it directly when the schema matches; search again only when no result matches or the loaded schema cannot perform the requested operation. mcp_load_tool is an optional compatibility control for a returned result that was not automatically loaded. Do not reload available schemas, guess hidden names or load unrelated tools."
         };
         match self.exposure {
             Exposure::Explicit => format!(
@@ -1013,7 +1016,7 @@ impl TurnClients {
         let discovery = if self.deferred_tools.is_empty() {
             "Call one of its exposed tools"
         } else {
-            "Use mcp_search_tools, load one relevant result with mcp_load_tool, and call that tool"
+            "Use mcp_search_tools and call a relevant tool whose schema is exposed on the next step"
         };
         format!(
             "The user explicitly requested MCP {}. Before answering, {discovery}. If it cannot be used, report the focused MCP blocker; do not use another integration.",
@@ -1036,9 +1039,8 @@ impl TurnClients {
                     .is_some_and(|name| visible.contains(name))
             })
         });
-        let deferred_catalog = !self.deferred_tools.is_empty()
-            && visible.contains(MCP_SEARCH_TOOLS)
-            && visible.contains(MCP_LOAD_TOOL);
+        let deferred_catalog =
+            !self.deferred_tools.is_empty() && visible.contains(MCP_SEARCH_TOOLS);
         if direct_tool || deferred_catalog {
             Ok(())
         } else {
@@ -1255,8 +1257,7 @@ impl TurnClients {
             .retain(|name| self.deferred_tools.contains(name));
 
         let mut definitions = Vec::new();
-        let catalog_controls =
-            !self.deferred_tools.is_empty() && allowed(MCP_SEARCH_TOOLS) && allowed(MCP_LOAD_TOOL);
+        let catalog_controls = !self.deferred_tools.is_empty() && allowed(MCP_SEARCH_TOOLS);
         if catalog_controls {
             let servers = self
                 .clients
@@ -1268,7 +1269,10 @@ impl TurnClients {
                 })
                 .map(|client| client.server.name.clone())
                 .collect::<Vec<_>>();
-            definitions.extend([search_tools_definition(&servers), load_tool_definition()]);
+            definitions.push(search_tools_definition(&servers));
+            if allowed(MCP_LOAD_TOOL) {
+                definitions.push(load_tool_definition());
+            }
         }
         if self.exposure == Exposure::OnDemand
             && self.clients.len() < MAX_ACTIVE_SERVERS
@@ -1407,10 +1411,21 @@ impl TurnClients {
                 .then_with(|| left.2.original.cmp(&right.2.original))
         });
         let total = matches.len();
+        let best_score = matches.first().map(|item| item.0);
+        let mut schema_bytes = 0;
+        let mut autoload = Vec::new();
         let selected = matches
             .into_iter()
             .take(limit)
-            .map(|(_, client, tool, name)| {
+            .map(|(score, client, tool, name)| {
+                let size = tool.definition.to_string().len();
+                if Some(score) == best_score
+                    && autoload.len() < SEARCH_AUTOLOAD_LIMIT
+                    && schema_bytes + size <= SEARCH_SCHEMA_BYTES
+                {
+                    schema_bytes += size;
+                    autoload.push(name.to_owned());
+                }
                 let description: String = tool.description.chars().take(280).collect();
                 (
                     name.to_owned(),
@@ -1426,15 +1441,22 @@ impl TurnClients {
             })
             .collect::<Vec<_>>();
         self.last_search_tools = selected.iter().map(|(name, _)| name.clone()).collect();
+        for name in &autoload {
+            self.load_tool(&json!({"tool":name}), read_only)?;
+        }
         let matches = selected
             .into_iter()
-            .map(|(_, result)| result)
+            .map(|(name, mut result)| {
+                result["loaded"] = json!(self.loaded_tools.iter().any(|loaded| loaded == &name));
+                result
+            })
             .collect::<Vec<_>>();
         serde_json::to_string(&json!({
             "query":query,
             "totalMatches":total,
             "matches":matches,
-            "next":"Call mcp_load_tool with exactly one returned tool ID. Refine the query if no result matches the requested capability."
+            "autoLoaded":autoload,
+            "next":"Use a matching loaded tool directly with its validated schema on the next step. Refine the query if ambiguous or unrelated. Only use mcp_load_tool for a returned result marked loaded:false."
         }))
         .map_err(|_| protocol_error())
     }
@@ -1519,16 +1541,35 @@ impl TurnClients {
             }))
             .map_err(|_| protocol_error());
         }
-        let evicted = (self.loaded_tools.len() == MAX_LOADED_TOOLS)
-            .then(|| self.loaded_tools.pop_front())
-            .flatten();
+        let schema_size = |name: &str| {
+            self.clients
+                .iter()
+                .flat_map(|client| &client.tools)
+                .find(|tool| registered_name(tool) == Some(name))
+                .map_or(0, |tool| tool.definition.to_string().len())
+        };
+        let requested_bytes = schema_size(name);
+        let mut loaded_bytes: usize = self.loaded_tools.iter().map(|name| schema_size(name)).sum();
+        let mut evicted = Vec::new();
+        // A deliberately loaded single large schema remains usable. Older
+        // schemas must not make the total grow without bound across searches.
+        while self.loaded_tools.len() >= MAX_LOADED_TOOLS
+            || (!self.loaded_tools.is_empty()
+                && loaded_bytes.saturating_add(requested_bytes) > LOADED_SCHEMA_BYTES)
+        {
+            if let Some(old) = self.loaded_tools.pop_front() {
+                loaded_bytes = loaded_bytes.saturating_sub(schema_size(&old));
+                evicted.push(old);
+            }
+        }
         self.loaded_tools.push_back(name.to_owned());
         serde_json::to_string(&json!({
             "tool":name,
             "server":server,
             "name":original,
             "alreadyLoaded":false,
-            "evicted":evicted,
+            "evicted":evicted.first(),
+            "evictedTools":evicted,
             "next":"Call the loaded MCP tool using the validated schema shown on the next model step."
         }))
         .map_err(|_| protocol_error())
@@ -1676,7 +1717,7 @@ impl TurnClients {
         {
             return Err(coded_error(
                 "mcp_scope_violation",
-                "A ferramenta MCP ainda não foi carregada. Use mcp_search_tools e mcp_load_tool antes da execução.",
+                "A ferramenta MCP ainda não foi carregada. Use mcp_search_tools para disponibilizar o schema antes da execução.",
             ));
         }
         let (client_index, initial_tool_index) = self

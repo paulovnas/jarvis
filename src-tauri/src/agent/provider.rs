@@ -27,6 +27,13 @@ pub(super) enum Delta {
     Summary(String),
     Retry(Option<retry::Status>),
     Reset,
+    /// Fully delimited call, never a fragment of function arguments.
+    ToolReady(Box<ReadyCall>),
+}
+pub(super) struct ReadyCall {
+    pub call: ToolCall,
+    /// Exact completed provider prefix, including private replay signatures.
+    pub envelope: Vec<Value>,
 }
 #[derive(Debug)]
 pub(super) struct Response {
@@ -118,7 +125,7 @@ impl TurnSession {
                 "O modelo selecionado não aceita as ferramentas obrigatórias do Jarvis. Escolha um modelo com suporte a ferramentas.",
             ));
         }
-        let input = provider_input(step.input());
+        let input = provider_input(step.input().to_vec());
         if !step.capabilities().accepts_input(&input) {
             return Err(AgentError::new(
                 "provider_images_unsupported",
@@ -134,6 +141,14 @@ impl TurnSession {
             ));
         }
         let tools = ordered_tools(step.tools().to_vec());
+        let mut forward = |mut delta: Delta| {
+            if let Delta::ToolReady(ready) = &mut delta {
+                if let Some(config) = &self.credential.custom {
+                    custom::scope_ready_output(config, step.options(), &mut ready.envelope);
+                }
+            }
+            on_delta(delta)
+        };
         if self.incremental_enabled {
             let request = if let Some(config) = &self.credential.custom {
                 custom::incremental_request(
@@ -167,7 +182,7 @@ impl TurnSession {
             };
             let mut transport = self.incremental.lock().await;
             if let Some(mut response) = transport
-                .attempt(request, signal.clone(), &mut on_delta)
+                .attempt(request, signal.clone(), &mut forward)
                 .await?
             {
                 if let Some(config) = &self.credential.custom {
@@ -187,7 +202,7 @@ impl TurnSession {
             tools,
             telemetry: self.telemetry.clone(),
         }
-        .run(signal, on_delta, Duration::from_secs(2))
+        .run(signal, forward, Duration::from_secs(2))
         .await
     }
 }
@@ -212,6 +227,7 @@ pub(super) struct Sse {
 struct StreamOutput {
     pending: HashSet<u64>,
     done: BTreeMap<u64, Value>,
+    emitted: u64,
 }
 impl StreamOutput {
     fn item(&mut self, event: &Value, finished: bool) -> Result<(), AgentError> {
@@ -779,7 +795,27 @@ fn stream_event(
 ) -> Result<Option<Response>, AgentError> {
     match event["type"].as_str() {
         Some("response.output_item.added") => output.item(event, false)?,
-        Some("response.output_item.done") => output.item(event, true)?,
+        Some("response.output_item.done") => {
+            output.item(event, true)?;
+            while let Some(item) = output.done.get(&output.emitted) {
+                let index = output.emitted;
+                output.emitted += 1;
+                if item["type"] != "function_call" {
+                    continue;
+                }
+                let response = Response::from_output(vec![item.clone()], None)?;
+                for call in response.calls {
+                    on_delta(Delta::ToolReady(Box::new(ReadyCall {
+                        call,
+                        envelope: output
+                            .done
+                            .range(..=index)
+                            .map(|(_, item)| item.clone())
+                            .collect(),
+                    })))?;
+                }
+            }
+        }
         Some("response.output_text.delta" | "response.refusal.delta") => {
             if let Some(text) = event["delta"].as_str() {
                 on_delta(Delta::Text(text.into()))?;
@@ -869,6 +905,68 @@ pub(super) fn tool_calls(output: &[Value]) -> Result<Vec<ToolCall>, AgentError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn out_of_order_completed_items_preserve_mutation_barriers() {
+        let mut output = StreamOutput::default();
+        let mut ready = Vec::new();
+        stream_event(&mut output, &json!({"type":"response.output_item.done", "output_index":1, "item":{"type":"function_call", "call_id":"read", "name":"read", "arguments":"{\"path\":\"file.txt\"}"}}), &mut |delta| {
+            if let Delta::ToolReady(call) = delta { ready.push(call); }
+            Ok(())
+        }).unwrap();
+        assert!(ready.is_empty());
+        stream_event(&mut output, &json!({"type":"response.output_item.done", "output_index":0, "item":{"type":"function_call", "call_id":"write", "name":"write", "arguments":"{\"path\":\"file.txt\",\"content\":\"changed\"}"}}), &mut |delta| {
+            if let Delta::ToolReady(call) = delta { ready.push(call); }
+            Ok(())
+        }).unwrap();
+        assert_eq!(
+            ready
+                .iter()
+                .map(|item| item.call.name.as_str())
+                .collect::<Vec<_>>(),
+            ["write", "read"]
+        );
+        assert_eq!(ready[1].envelope.len(), 2);
+    }
+
+    #[test]
+    fn completed_calls_arrive_before_terminal_frames_and_malformed_arguments_cannot_dispatch() {
+        let mut output = StreamOutput::default();
+        let mut ready = Vec::new();
+        let mut emit = |delta| {
+            if let Delta::ToolReady(call) = delta {
+                ready.push(call);
+            }
+            Ok(())
+        };
+        stream_event(
+            &mut output,
+            &json!({"type":"response.output_item.added", "output_index":0}),
+            &mut emit,
+        )
+        .unwrap();
+        stream_event(
+            &mut output,
+            &json!({"type":"response.function_call_arguments.delta", "delta":"{\"path\":"}),
+            &mut emit,
+        )
+        .unwrap();
+        stream_event(&mut output, &json!({"type":"response.output_item.done", "output_index":0, "item":{"type":"function_call", "call_id":"read1", "name":"read", "arguments":"{\"path\":\"README.md\"}"}}), &mut emit).unwrap();
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].call.args["path"], "README.md");
+        let mut invalid = StreamOutput::default();
+        let mut malformed = Vec::new();
+        stream_event(
+            &mut invalid,
+            &json!({"type":"response.output_item.done", "output_index":0, "item":{"type":"function_call", "call_id":"bad", "name":"read", "arguments":"{"}}),
+            &mut |delta| { if let Delta::ToolReady(ready) = delta { malformed.push(ready.call); } Ok(()) },
+        ).unwrap();
+        let runtime = crate::agent::tool_contract::Orchestrator::new(
+            &crate::agent::tools::definitions(Mode::Build),
+        );
+        assert_eq!(malformed.len(), 1);
+        assert!(runtime.preflight(&malformed[0]).is_err());
+    }
     use crate::agent::{ApprovalMode, Mode};
     #[test]
     fn provider_input_strips_all_jarvis_journal_metadata() {

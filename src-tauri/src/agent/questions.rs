@@ -209,21 +209,24 @@ pub(super) async fn execute(
         .unwrap_or(u64::MAX);
     let deadline_at = now.saturating_add(u64::from(timeout_seconds) * 1_000);
     let mut turn_id = String::new();
-    session.update(true, |data| {
-        if let Some(active) = &mut data.active {
-            turn_id.clone_from(&active.id);
-            active.wait_for_question(Pending {
-                request: PendingQuestion {
-                    turn_id: active.id.clone(),
-                    tool_id: tool.id.clone(),
-                    questions: request.questions,
-                    deadline_at,
-                },
-                started: std::time::Instant::now(),
-                reply,
-            });
-        }
-    })?;
+    session
+        .update_async(|data| {
+            if let Some(active) = &mut data.active {
+                turn_id.clone_from(&active.id);
+                active.wait_for_question(Pending {
+                    request: PendingQuestion {
+                        turn_id: active.id.clone(),
+                        tool_id: tool.id.clone(),
+                        questions: request.questions,
+                        deadline_at,
+                    },
+                    started: std::time::Instant::now(),
+                    reply,
+                });
+            }
+        })
+        .await?;
+    let _human_wait = session.measure(super::telemetry::Phase::HumanWait);
     let timeout = tokio::time::sleep(std::time::Duration::from_secs(u64::from(timeout_seconds)));
     tokio::pin!(timeout);
     tokio::select! {

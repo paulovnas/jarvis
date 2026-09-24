@@ -98,6 +98,7 @@ struct Scan {
     visited: usize,
     skills: Vec<Skill>,
     warnings: Vec<String>,
+    watched: Vec<super::runtime_cache::Stamp>,
 }
 fn walk(
     path: &Path,
@@ -111,6 +112,7 @@ fn walk(
         return Ok(());
     }
     scan.visited += 1;
+    scan.watched.push(super::runtime_cache::Stamp::read(path));
     let canonical = match path.canonicalize() {
         Ok(path) => path,
         Err(_) => return Ok(()),
@@ -119,6 +121,10 @@ fn walk(
         return Ok(());
     }
     if let Some(file) = skill_file(&canonical) {
+        scan.watched.push(super::runtime_cache::Stamp::read(&file));
+        scan.watched.push(super::runtime_cache::Stamp::read(
+            &canonical.join(".jarvis-source.json"),
+        ));
         match parse(&file) {
             Ok((name, description, automatic)) => {
                 let file = file.canonicalize()?;
@@ -180,6 +186,17 @@ pub(super) fn discover(
     project: Option<&Path>,
     config: &Config,
 ) -> Result<(Vec<Skill>, Vec<String>), SkillError> {
+    let (skills, warnings, _) = discover_watched(home, project, config)?;
+    Ok((skills, warnings))
+}
+
+type Discovery = (Vec<Skill>, Vec<String>, Vec<super::runtime_cache::Stamp>);
+
+pub(super) fn discover_watched(
+    home: &Path,
+    project: Option<&Path>,
+    config: &Config,
+) -> Result<Discovery, SkillError> {
     let own = root(home).join("skills");
     fs::create_dir_all(&own)?;
     let mut scan = Scan {
@@ -187,12 +204,11 @@ pub(super) fn discover(
         visited: 0,
         skills: Vec::new(),
         warnings: Vec::new(),
+        watched: Vec::new(),
     };
     walk(&own, "jarvis", false, 0, config, &mut scan)?;
     let builtin = super::builtin::root(home);
-    if builtin.exists() {
-        walk(&builtin, "jarvis", true, 0, config, &mut scan)?;
-    }
+    walk(&builtin, "jarvis", true, 0, config, &mut scan)?;
     if config.include_agents {
         if let Some(project) = project {
             walk(
@@ -223,7 +239,7 @@ pub(super) fn discover(
             .cmp(&b.name.to_lowercase())
             .then(a.id.cmp(&b.id))
     });
-    Ok((scan.skills, scan.warnings))
+    Ok((scan.skills, scan.warnings, scan.watched))
 }
 pub(super) fn resource(skill: &Skill, relative: &str) -> Result<String, SkillError> {
     let path = Path::new(relative);

@@ -30,7 +30,10 @@ enum Operation {
 enum Command {
     Write(Operation),
     Flush(mpsc::Sender<Result<(), ()>>),
-    Shutdown(mpsc::Sender<Result<(), ()>>),
+    AsyncFlush(tokio::sync::oneshot::Sender<Result<(), ()>>),
+    Shutdown,
+    #[cfg(test)]
+    Pause(mpsc::Receiver<()>),
 }
 
 pub(super) struct SessionWriter {
@@ -40,6 +43,12 @@ pub(super) struct SessionWriter {
 }
 
 impl SessionWriter {
+    #[cfg(test)]
+    pub(super) fn pause(&self) -> mpsc::Sender<()> {
+        let (release, gate) = mpsc::channel();
+        self.sender.send(Command::Pause(gate)).unwrap();
+        release
+    }
     pub(super) fn start(
         path: PathBuf,
         conversation_id: String,
@@ -90,6 +99,18 @@ impl SessionWriter {
         }
     }
 
+    /// Dropping the waiter never cancels the already queued writes or barrier.
+    pub(super) async fn flush_async(&self) -> Result<(), AgentError> {
+        let (reply, received) = tokio::sync::oneshot::channel();
+        self.sender
+            .send(Command::AsyncFlush(reply))
+            .map_err(|_| self.failure())?;
+        match tokio::time::timeout(FLUSH_TIMEOUT, received).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            _ => Err(self.failure()),
+        }
+    }
+
     fn failure(&self) -> AgentError {
         crate::diagnostics::record_storage_failure(
             "session_journal_writer",
@@ -101,14 +122,11 @@ impl SessionWriter {
 
 impl Drop for SessionWriter {
     fn drop(&mut self) {
-        let (reply, received) = mpsc::channel();
-        if self.sender.send(Command::Shutdown(reply)).is_ok() {
-            let _ = received.recv_timeout(FLUSH_TIMEOUT);
-        }
+        // Explicit barriers own durability. Drop only queues a final drain and
+        // detaches the OS worker: executor threads must not join a slow disk.
+        let _ = self.sender.send(Command::Shutdown);
         if let Ok(worker) = self.worker.get_mut() {
-            if let Some(worker) = worker.take() {
-                let _ = worker.join();
-            }
+            let _ = worker.take();
         }
     }
 }
@@ -117,6 +135,10 @@ fn run(path: PathBuf, mut durable_turn: Option<StoredTurn>, receiver: mpsc::Rece
     let mut pending = VecDeque::new();
     while let Ok(command) = receiver.recv() {
         match command {
+            #[cfg(test)]
+            Command::Pause(gate) => {
+                let _ = gate.recv();
+            }
             Command::Write(operation) => {
                 pending.push_back(operation);
                 let _ = drain_once(&path, &mut durable_turn, &mut pending);
@@ -124,8 +146,11 @@ fn run(path: PathBuf, mut durable_turn: Option<StoredTurn>, receiver: mpsc::Rece
             Command::Flush(reply) => {
                 let _ = reply.send(drain_with_retry(&path, &mut durable_turn, &mut pending));
             }
-            Command::Shutdown(reply) => {
+            Command::AsyncFlush(reply) => {
                 let _ = reply.send(drain_with_retry(&path, &mut durable_turn, &mut pending));
+            }
+            Command::Shutdown => {
+                let _ = drain_with_retry(&path, &mut durable_turn, &mut pending);
                 break;
             }
         }
@@ -209,6 +234,135 @@ fn write_operation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn disk_wait_yields_and_cancelled_waiter_preserves_queued_events() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        std::fs::write(&path, "{}\n").unwrap();
+        let writer = SessionWriter::start(path.clone(), "async".into(), None).unwrap();
+        let release = writer.pause();
+        writer
+            .append_event("queue_checkpoint", &serde_json::json!([]))
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), writer.flush_async())
+                .await
+                .is_err()
+        );
+        release.send(()).unwrap();
+        writer.flush_async().await.unwrap();
+        assert!(std::fs::read_to_string(path)
+            .unwrap()
+            .contains("queue_checkpoint"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn async_update_releases_state_lock_while_disk_is_slow() {
+        use crate::agent::tests::{options, session, Fixture};
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve("hello".into(), options(crate::agent::ApprovalMode::Yolo))
+            .unwrap();
+        let release = session.writer.pause();
+        let update = session.update_async(|data| {
+            data.turns
+                .last_mut()
+                .unwrap()
+                .turn
+                .steps
+                .push(crate::agent::Step::default())
+        });
+        tokio::pin!(update);
+        tokio::select! {
+            _ = &mut update => panic!("must wait for disk"),
+            _ = tokio::time::sleep(Duration::from_millis(20)) => {},
+        }
+        assert!(session.data.try_lock().is_ok());
+        assert_eq!(session.snapshot().unwrap().turns[0].steps.len(), 1);
+        release.send(()).unwrap();
+        update.await.unwrap();
+        assert_eq!(
+            journal::load_all(&session.journal).unwrap().0[0]
+                .turn
+                .steps
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn acknowledgement_emits_only_its_own_revision_during_concurrent_updates() {
+        use crate::agent::tests::{options, session, Fixture};
+        use std::sync::Arc;
+
+        let fixture = Fixture::new();
+        let mut session = session(&fixture);
+        let emitted = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&emitted);
+        Arc::get_mut(&mut session).unwrap().emit = Arc::new(move |snapshot| {
+            sink.lock().unwrap().push(snapshot);
+        });
+        session
+            .reserve("hello".into(), options(crate::agent::ApprovalMode::Yolo))
+            .unwrap();
+        emitted.lock().unwrap().clear();
+        let release_first = session.writer.pause();
+        let first = session.update_async(|data| {
+            data.turns
+                .last_mut()
+                .unwrap()
+                .turn
+                .steps
+                .push(crate::agent::Step::default());
+        });
+        tokio::pin!(first);
+        tokio::select! {
+            biased;
+            _ = &mut first => panic!("first acknowledgement is paused"),
+            _ = tokio::task::yield_now() => {},
+        }
+        let release_second = session.writer.pause();
+        let second = session.update_async(|data| {
+            data.turns
+                .last_mut()
+                .unwrap()
+                .turn
+                .steps
+                .push(crate::agent::Step::default());
+        });
+        tokio::pin!(second);
+        tokio::select! {
+            biased;
+            _ = &mut second => panic!("second acknowledgement is paused"),
+            _ = tokio::task::yield_now() => {},
+        }
+        assert!(emitted.lock().unwrap().is_empty());
+        release_first.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), &mut first)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(emitted.lock().unwrap()[0].turns[0].steps.len(), 1);
+        assert_eq!(
+            journal::load_all(&session.journal).unwrap().0[0]
+                .turn
+                .steps
+                .len(),
+            1
+        );
+        release_second.send(()).unwrap();
+        second.await.unwrap();
+        assert_eq!(emitted.lock().unwrap()[1].turns[0].steps.len(), 2);
+        assert_eq!(
+            journal::load_all(&session.journal).unwrap().0[0]
+                .turn
+                .steps
+                .len(),
+            2
+        );
+    }
 
     #[test]
     fn transient_failure_retries_the_same_operation_and_preserves_order() {

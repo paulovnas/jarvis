@@ -12,8 +12,11 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, OnceLock,
+    },
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 const SCHEMA_VERSION: u8 = 1;
@@ -39,6 +42,97 @@ struct Inner {
     run_id: String,
     app_version: String,
     write_lock: Mutex<()>,
+    dropped_records: AtomicU64,
+}
+
+/// Phase durations may overlap. Their sum is work, never turn wall time.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Phase {
+    Preparation,
+    Journal,
+    ToolQueue,
+    ToolHandler,
+    CorePostprocessing,
+    HumanWait,
+}
+
+pub(crate) struct PhaseSpan {
+    context: TraceContext,
+    phase: Phase,
+    timestamp: u64,
+    started: Instant,
+}
+
+pub(crate) fn phase(context: &TraceContext, phase: Phase) -> PhaseSpan {
+    PhaseSpan {
+        context: context.clone(),
+        phase,
+        timestamp: now(),
+        started: Instant::now(),
+    }
+}
+
+impl Drop for PhaseSpan {
+    fn drop(&mut self) {
+        record(
+            &self.context,
+            Event::PhaseFinished {
+                phase: self.phase,
+                started_at: self.timestamp,
+                duration_ms: self
+                    .started
+                    .elapsed()
+                    .as_millis()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            },
+        );
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Distribution {
+    samples: u64,
+    p50_ms: u64,
+    p95_ms: u64,
+}
+
+fn distribution(mut values: Vec<u64>) -> Distribution {
+    values.sort_unstable();
+    let percentile = |percent: usize| {
+        values
+            .get((values.len() * percent).div_ceil(100).saturating_sub(1))
+            .copied()
+            .unwrap_or(0)
+    };
+    Distribution {
+        samples: values.len() as u64,
+        p50_ms: percentile(50),
+        p95_ms: percentile(95),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PhaseReport {
+    phase: Phase,
+    distribution: Distribution,
+    work_ms: u64,
+    /// Union within each turn, not the sum of concurrent spans.
+    occupied_ms: u64,
+}
+
+fn occupied(intervals: &mut [(u64, u64)]) -> u64 {
+    intervals.sort_unstable();
+    let mut end = 0;
+    let mut total = 0_u64;
+    for &(start, next_end) in intervals.iter() {
+        total = total.saturating_add(next_end.saturating_sub(start.max(end)));
+        end = end.max(next_end);
+    }
+    total
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +256,11 @@ pub(crate) enum CompactionReason {
     deny_unknown_fields
 )]
 pub(crate) enum Event {
+    PhaseFinished {
+        phase: Phase,
+        started_at: u64,
+        duration_ms: u64,
+    },
     TurnStarted {
         context_items: u64,
         context_bytes: u64,
@@ -259,6 +358,7 @@ struct SanitizedExport<'a> {
     schema_version: u8,
     created_at: u64,
     records: &'a [Record],
+    dropped_records_current_run: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -280,6 +380,9 @@ pub(crate) struct HarnessTraceError {
 pub(crate) struct HarnessReport {
     schema_version: u8,
     records: u64,
+    dropped_records_current_run: u64,
+    turn_duration: Distribution,
+    phases: Vec<PhaseReport>,
     turns_started: u64,
     turns_finished: u64,
     successful_turns: u64,
@@ -357,6 +460,11 @@ impl Record {
 impl Event {
     fn valid(&self) -> bool {
         match self {
+            Self::PhaseFinished {
+                started_at,
+                duration_ms,
+                ..
+            } => *started_at > 0 && duration(*duration_ms),
             Self::TurnStarted {
                 context_items,
                 context_bytes,
@@ -475,6 +583,7 @@ impl TelemetryState {
                 run_id,
                 app_version,
                 write_lock: Mutex::new(()),
+                dropped_records: AtomicU64::new(0),
             }),
         }
     }
@@ -482,12 +591,18 @@ impl TelemetryState {
     fn record(&self, context: &TraceContext, event: Event) -> bool {
         let record = Record::new(self, context, event);
         if !record.valid() {
+            self.inner.dropped_records.fetch_add(1, Ordering::Relaxed);
             return false;
         }
         let Ok(_guard) = self.inner.write_lock.try_lock() else {
+            self.inner.dropped_records.fetch_add(1, Ordering::Relaxed);
             return false;
         };
-        write_record(&self.inner.root, &record).is_ok()
+        let written = write_record(&self.inner.root, &record).is_ok();
+        if !written {
+            self.inner.dropped_records.fetch_add(1, Ordering::Relaxed);
+        }
+        written
     }
 
     fn records(&self) -> io::Result<Vec<Record>> {
@@ -546,6 +661,7 @@ impl TelemetryState {
             schema_version: SCHEMA_VERSION,
             created_at: now(),
             records: &records,
+            dropped_records_current_run: self.inner.dropped_records.load(Ordering::Relaxed),
         };
         let mut temporary = tempfile::NamedTempFile::new_in(parent)
             .map_err(|_| export_error("Não foi possível preparar o arquivo do trace."))?;
@@ -578,15 +694,35 @@ impl TelemetryState {
         let mut report = HarnessReport {
             schema_version: SCHEMA_VERSION,
             records: u64::try_from(records.len()).unwrap_or(u64::MAX),
+            dropped_records_current_run: self.inner.dropped_records.load(Ordering::Relaxed),
             ..HarnessReport::default()
         };
         let mut providers: BTreeMap<ProviderKind, ProviderReport> = BTreeMap::new();
         let mut first_event_total = 0_u64;
         let mut first_event_samples = 0_u64;
+        let mut turn_durations = Vec::new();
+        let mut phases: BTreeMap<Phase, Vec<u64>> = BTreeMap::new();
+        let mut intervals: BTreeMap<(Phase, String, String), Vec<(u64, u64)>> = BTreeMap::new();
         for record in records {
             match record.event {
+                Event::PhaseFinished {
+                    phase,
+                    started_at,
+                    duration_ms,
+                } => {
+                    phases.entry(phase).or_default().push(duration_ms);
+                    intervals
+                        .entry((phase, record.run_id, record.trace_id))
+                        .or_default()
+                        .push((started_at, started_at.saturating_add(duration_ms)));
+                }
                 Event::TurnStarted { .. } => report.turns_started += 1,
-                Event::TurnFinished { outcome, .. } => {
+                Event::TurnFinished {
+                    outcome,
+                    duration_ms,
+                    ..
+                } => {
+                    turn_durations.push(duration_ms);
                     report.turns_finished += 1;
                     if outcome == Outcome::Succeeded {
                         report.successful_turns += 1;
@@ -693,6 +829,24 @@ impl TelemetryState {
         report.average_first_event_ms =
             (first_event_samples > 0).then(|| first_event_total / first_event_samples);
         report.providers = providers.into_values().collect();
+        report.turn_duration = distribution(turn_durations);
+        report.phases = phases
+            .into_iter()
+            .map(|(phase, durations)| {
+                let work_ms = durations.iter().copied().fold(0_u64, u64::saturating_add);
+                let occupied_ms = intervals
+                    .iter_mut()
+                    .filter(|((p, _, _), _)| *p == phase)
+                    .map(|(_, spans)| occupied(spans))
+                    .fold(0_u64, u64::saturating_add);
+                PhaseReport {
+                    phase,
+                    distribution: distribution(durations),
+                    work_ms,
+                    occupied_ms,
+                }
+            })
+            .collect();
         let cache_basis_points = if report.input_tokens == 0 {
             0
         } else {
@@ -1021,6 +1175,47 @@ fn write_record(root: &Path, record: &Record) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reports_overlap_percentiles_and_event_loss_without_content() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        let context = TraceContext::fixture("a");
+        {
+            let _held = state.inner.write_lock.lock().unwrap();
+            assert!(!state.record(
+                &context,
+                Event::PhaseFinished {
+                    phase: Phase::Journal,
+                    started_at: 1000,
+                    duration_ms: 10,
+                }
+            ));
+        }
+        for (start, duration_ms) in [(1000, 100), (1050, 200), (1400, 50)] {
+            assert!(state.record(
+                &context,
+                Event::PhaseFinished {
+                    phase: Phase::ToolHandler,
+                    started_at: start,
+                    duration_ms,
+                }
+            ));
+        }
+        let report = state.report().unwrap();
+        assert_eq!(report.dropped_records_current_run, 1);
+        let phase = &report.phases[0];
+        assert_eq!(
+            phase.distribution,
+            Distribution {
+                samples: 3,
+                p50_ms: 100,
+                p95_ms: 200
+            }
+        );
+        assert_eq!(phase.work_ms, 350);
+        assert_eq!(phase.occupied_ms, 300);
+    }
 
     fn state(root: &Path) -> TelemetryState {
         TelemetryState::new(root, "1.1.2".into(), "a".repeat(32))

@@ -2,6 +2,7 @@ mod builtin;
 mod cache;
 mod catalog;
 mod marketplace;
+mod runtime_cache;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -299,16 +300,12 @@ pub fn search(skills: &[Skill], args: &serde_json::Value) -> Result<String, Skil
     let results: Vec<_> = found.iter().skip(offset).take(20).map(|s|serde_json::json!({"id":s.id,"name":s.name,"description":s.description,"automatic":s.automatic})).collect();
     Ok(serde_json::json!({"total":found.len(),"skills":results}).to_string())
 }
-pub async fn active(home: &Path, project: &Path) -> Result<Vec<Skill>, SkillError> {
+pub async fn active(home: &Path, project: &Path) -> Result<std::sync::Arc<[Skill]>, SkillError> {
     let home = home.to_path_buf();
     let project = project.to_path_buf();
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = CATALOG_LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
-        Ok(snapshot(&home, Some(&project))?
-            .skills
-            .into_iter()
-            .filter(|s| s.enabled)
-            .collect())
+        runtime_cache::active(&home, &project)
     })
     .await
     .map_err(|_| error("Não foi possível carregar as skills."))?

@@ -4,6 +4,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+#[cfg(test)]
+mod allocation_probe;
+
 const MAX_PROVIDER_CONTEXT_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +60,7 @@ pub(super) struct StepContext {
     instructions: Arc<str>,
     tools: Arc<[Value]>,
     input: Arc<[Value]>,
+    input_bytes: u64,
     authorization: UserAuthorization,
     capabilities: Arc<super::provider::ModelCapabilities>,
 }
@@ -94,7 +98,6 @@ impl StepContext {
         let mut digest = Sha256::new();
         for item in &typed {
             digest.update(item.kind.label().as_bytes());
-            digest.update(serde_json::to_vec(&item.value).map_err(|_| AgentError::internal())?);
         }
         let input: Vec<Value> = typed
             .into_iter()
@@ -131,6 +134,7 @@ impl StepContext {
             instructions: Arc::from(instructions),
             tools: Arc::from(tools.to_vec()),
             input: Arc::from(input),
+            input_bytes: encoded_input.len() as u64,
             authorization: UserAuthorization {
                 values: Arc::from(authorized),
             },
@@ -154,8 +158,12 @@ impl StepContext {
         &self.tools
     }
 
-    pub(super) fn input(&self) -> Vec<Value> {
-        self.input.to_vec()
+    pub(super) fn input(&self) -> &[Value] {
+        &self.input
+    }
+
+    pub(super) fn input_bytes(&self) -> u64 {
+        self.input_bytes
     }
 
     pub(super) fn authorization(&self) -> &UserAuthorization {
@@ -256,5 +264,82 @@ mod tests {
             .unwrap();
         let after = StepContext::capture(&session, &options, "stable", &[], &capabilities).unwrap();
         assert_ne!(before.id(), after.id());
+    }
+
+    #[test]
+    fn harness_evaluation_profiles_preparation_and_inspection_for_128_actions() {
+        use std::{hint::black_box, time::Instant};
+
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        let options = options(ApprovalMode::Yolo);
+        session
+            .reserve("Inspect the project".into(), options.clone())
+            .unwrap();
+        session.update(true, |data| {
+            let wire = &mut data.turns.last_mut().unwrap().wire;
+            for index in 0..128 {
+                wire.push(json!({"type":"function_call", "call_id":format!("read-{index}"), "name":"read", "arguments":"{\"path\":\"fixture.txt\"}"}));
+                wire.push(json!({"type":"function_call_output", "call_id":format!("read-{index}"), "output":"synthetic content\n".repeat(128)}));
+            }
+        }).unwrap();
+        let capabilities = capabilities();
+        let mut timings = [Vec::new(), Vec::new(), Vec::new()];
+        let mut allocations = [Vec::new(), Vec::new(), Vec::new()];
+        let mut bytes = [Vec::new(), Vec::new(), Vec::new()];
+        for _ in 0..25 {
+            let started = Instant::now();
+            let (step, preparation) = allocation_probe::measure(|| {
+                StepContext::capture(&session, &options, "stable", &[], &capabilities).unwrap()
+            });
+            timings[0].push(started.elapsed().as_nanos() as u64);
+            // Reproduce the old telemetry inspection's two input clones and
+            // serialization, not an invented baseline of the entire runtime.
+            let started = Instant::now();
+            let (legacy, copies) = allocation_probe::measure(|| {
+                let items = black_box(step.input().to_vec()).len();
+                let size = serde_json::to_vec(&black_box(step.input().to_vec()))
+                    .unwrap()
+                    .len() as u64;
+                black_box((items, size))
+            });
+            timings[1].push(started.elapsed().as_nanos() as u64);
+            let started = Instant::now();
+            let (current, borrowed) =
+                allocation_probe::measure(|| black_box((step.input().len(), step.input_bytes())));
+            timings[2].push(started.elapsed().as_nanos() as u64);
+            assert_eq!(legacy, current);
+            assert!(current.0 > 256);
+            assert!(copies.allocations > 128);
+            assert_eq!(borrowed.allocations, 0);
+            for (index, counts) in [preparation, copies, borrowed].into_iter().enumerate() {
+                allocations[index].push(counts.allocations);
+                bytes[index].push(counts.bytes);
+            }
+            let replay = journal_input(&session);
+            assert_eq!(step.input(), replay.as_slice());
+        }
+        let stats = |samples: &mut Vec<u64>| {
+            samples.sort_unstable();
+            json!({"samples":samples.len(), "p50":samples[12], "p95":samples[23]})
+        };
+        for (index, phase) in [
+            "current_preparation",
+            "legacy_inspection",
+            "borrowed_inspection",
+        ]
+        .iter()
+        .enumerate()
+        {
+            println!(
+                "{}",
+                json!({"phase":phase, "actions":128, "elapsedNs":stats(&mut timings[index]), "allocations":stats(&mut allocations[index]), "allocatedBytes":stats(&mut bytes[index])})
+            );
+        }
+    }
+
+    fn journal_input(session: &Session) -> Vec<Value> {
+        let (turns, _) = super::super::journal::load_all(&session.journal).unwrap();
+        turns.into_iter().flat_map(|turn| turn.wire).collect()
     }
 }

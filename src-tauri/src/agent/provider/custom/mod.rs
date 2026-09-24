@@ -219,6 +219,19 @@ pub(super) fn scope_responses_output(
     }
 }
 
+pub(super) fn scope_ready_output(config: &Config, options: &TurnOptions, envelope: &mut [Value]) {
+    let scope = request::scope(config, options);
+    for item in envelope
+        .iter_mut()
+        .filter(|item| item["type"] == "reasoning")
+    {
+        if !item["_custom"].is_object() {
+            item["_custom"] = json!({});
+        }
+        item["_custom"]["scope"] = scope.clone();
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn stream_with_client(
     client: &reqwest::Client,

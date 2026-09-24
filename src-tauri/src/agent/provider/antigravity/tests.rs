@@ -67,6 +67,10 @@ fn streaming_preserves_text_thought_signatures_parallel_calls_and_usage() {
     let mut state = Output::default();
     let mut visible = String::new();
     let mut delta = |d| {
+        assert!(
+            !matches!(d, Delta::ToolReady(_)),
+            "Antigravity keeps terminal validation before dispatch"
+        );
         if let Delta::Text(t) = d {
             visible.push_str(&t);
         }

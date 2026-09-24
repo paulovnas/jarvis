@@ -519,17 +519,20 @@ pub(super) async fn execute(
         return Err(AgentError::cancelled());
     }
     let (reply, received) = oneshot::channel();
-    session.update(true, |data| {
-        if let Some(active) = &mut data.active {
-            request.turn_id.clone_from(&active.id);
-            active.wait_for_authoring(Pending {
-                request,
-                mutation,
-                started: std::time::Instant::now(),
-                reply,
-            });
-        }
-    })?;
+    session
+        .update_async(|data| {
+            if let Some(active) = &mut data.active {
+                request.turn_id.clone_from(&active.id);
+                active.wait_for_authoring(Pending {
+                    request,
+                    mutation,
+                    started: std::time::Instant::now(),
+                    reply,
+                });
+            }
+        })
+        .await?;
+    let _human_wait = session.measure(super::telemetry::Phase::HumanWait);
     tokio::select! {
         _ = cancelled(&mut signal) => Err(AgentError::cancelled()),
         result = received => result.map_err(|_| AgentError::cancelled()),

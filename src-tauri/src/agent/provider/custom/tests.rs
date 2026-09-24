@@ -1,5 +1,42 @@
 use super::*;
 
+#[test]
+fn messages_and_completions_keep_terminal_response_validation() {
+    let mut messages = messages::Stream::default();
+    let mut ready = vec![];
+    for event in [
+        json!({"type":"message_start", "message":{"usage":{}}}),
+        json!({"type":"content_block_start", "index":0, "content_block":{"type":"tool_use", "id":"read1", "name":"read", "input":{}}}),
+        json!({"type":"content_block_delta", "index":0, "delta":{"type":"input_json_delta", "partial_json":"{\"path\":\"README.md\"}"}}),
+    ] {
+        messages
+            .event(&event, &mut |delta| {
+                if let Delta::ToolReady(call) = delta {
+                    ready.push(call);
+                }
+                Ok(())
+            })
+            .unwrap();
+    }
+    assert!(ready.is_empty());
+    messages
+        .event(
+            &json!({"type":"content_block_stop", "index":0}),
+            &mut |delta| {
+                if let Delta::ToolReady(call) = delta {
+                    ready.push(call);
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert!(ready.is_empty());
+    assert!(messages.finish(&json!({})).is_err());
+    let mut completions = completions::Stream::default();
+    completions.event(&json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"read","arguments":"{\"path\":\"README.md\"}"}}]}, "finish_reason":null}]}), &mut |delta| { assert!(!matches!(delta, Delta::ToolReady(_))); Ok(()) }).unwrap();
+    assert!(completions.finish(&json!({})).is_err());
+}
+
 #[tokio::test]
 #[ignore = "Uses an explicitly authorized Custom account for a tiny synthetic request; never reads project content"]
 async fn live_custom_completion_smoke() {

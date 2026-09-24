@@ -116,7 +116,7 @@ pub(super) fn captured_result(
 
 /// Checkpoint the accepted result before auxiliary subprocesses can fail, stall
 /// or be cancelled. A bounded replay is sufficient until indexing completes.
-pub(super) fn checkpoint_tool(
+pub(super) async fn checkpoint_tool(
     session: &Session,
     tool: &ToolCall,
     output: &str,
@@ -127,29 +127,30 @@ pub(super) fn checkpoint_tool(
     let replay = structured
         .map(str::to_owned)
         .unwrap_or_else(|| crate::core::context::fallback_result(&tool.name, output));
-    session.update(true, |data| {
-        let current = data.turns.last_mut().unwrap();
-        if !current
-            .wire
-            .iter()
-            .any(|item| item["type"] == "function_call_output" && item["call_id"] == tool.id)
-        {
-            current
+    session
+        .update_async(|data| {
+            let current = data.turns.last_mut().unwrap();
+            if !current
                 .wire
-                .push(json!({"type":"function_call_output", "call_id":tool.id, "output":replay}));
-        }
-        if let Some(item) = current
-            .turn
-            .steps
-            .last_mut()
-            .and_then(|step| step.tools.iter_mut().find(|item| item.id == tool.id))
-        {
-            item.status = status.into();
-            item.output = output.into();
-            item.duration_ms = duration_ms;
-        }
-    })?;
-    session.flush()
+                .iter()
+                .any(|item| item["type"] == "function_call_output" && item["call_id"] == tool.id)
+            {
+                current.wire.push(
+                    json!({"type":"function_call_output", "call_id":tool.id, "output":replay}),
+                );
+            }
+            if let Some(item) = current
+                .turn
+                .steps
+                .last_mut()
+                .and_then(|step| step.tools.iter_mut().find(|item| item.id == tool.id))
+            {
+                item.status = status.into();
+                item.output = output.into();
+                item.duration_ms = duration_ms;
+            }
+        })
+        .await
 }
 
 #[cfg(test)]
@@ -161,8 +162,8 @@ mod tests {
         ApprovalMode, Step,
     };
 
-    #[test]
-    fn completed_action_and_original_output_survive_auxiliary_failure_and_reload() {
+    #[tokio::test]
+    async fn completed_action_and_original_output_survive_auxiliary_failure_and_reload() {
         let fixture = Fixture::new();
         let session = session(&fixture);
         session
@@ -182,7 +183,9 @@ mod tests {
             current.wire.push(json!({"type":"function_call", "call_id":tool.id, "name":tool.name, "arguments":tool.args.to_string()}));
         }).unwrap();
         let output = format!("Arquivo salvo.\n{}", "á".repeat(12_000));
-        checkpoint_tool(&session, &tool, &output, "completed", 12, None).unwrap();
+        checkpoint_tool(&session, &tool, &output, "completed", 12, None)
+            .await
+            .unwrap();
         let captured = Err(crate::core::error("Auxiliary subprocess failed"));
         let (replay, indexed) = captured_result("write", &output, None, &captured);
         assert!(!indexed);

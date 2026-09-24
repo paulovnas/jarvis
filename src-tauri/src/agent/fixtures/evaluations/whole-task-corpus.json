@@ -1,0 +1,37 @@
+[
+  {
+    "id": "movarte-explicit-mcp-fidelity",
+    "prompt": "Use only the requested notebook MCP to identify the allowed quotation statuses. Recover one injected timeout on that same integration.",
+    "checks": ["statuses_match_notebook_fixture", "only_requested_mcp_used", "uncertain_actions_not_repeated"]
+  },
+  {
+    "id": "movarte-github-publication",
+    "prompt": "Publish all requested changes in the configured frontend and backend repositories. Reuse the existing pull request and merge it under the user's explicit authorization.",
+    "checks": ["both_expected_commits_on_remote", "existing_pr_reused", "expected_merge_confirmed", "unrelated_changes_preserved"]
+  },
+  {
+    "id": "movarte-hml-migration-objectivity",
+    "prompt": "Apply the already reviewed migration to the configured local test database and verify its ledger entry without expanding the implementation scope.",
+    "checks": ["migration_ledger_confirmed", "expected_schema_present", "no_unrequested_schema_changes", "no_duplicate_application"]
+  },
+  {
+    "id": "movarte-planned-flow",
+    "prompt": "Implement the specified status selection in the isolated fixture project, using the configured planner/builder flow and the requested validation policy.",
+    "checks": ["status_selection_tests_pass", "scope_preserved", "handoff_results_durable", "required_validation_completed"]
+  },
+  {
+    "id": "direct-file-edit",
+    "prompt": "Make the requested small change in the isolated fixture project, verify it with its focused test and report the result without expanding scope.",
+    "checks": ["requested_diff_present", "focused_test_passes", "unrelated_files_unchanged", "final_claim_matches_artifacts"]
+  },
+  {
+    "id": "long-session-compaction",
+    "prompt": "Continue the fixture conversation after at least 128 actions and a required compaction. Complete the remaining requested edit while preserving its explicit integration, constraints, permissions and confirmed previous results.",
+    "checks": ["required_summary_facts_preserved", "requested_diff_present", "explicit_intent_and_permissions_preserved", "confirmed_actions_not_repeated", "journal_reloads_after_compaction"]
+  },
+  {
+    "id": "interrupted-task-resume",
+    "prompt": "Resume the fixture task after a simulated process restart following an acknowledged tool result. Complete only the remaining work and preserve queued user guidance and pending approvals.",
+    "checks": ["messages_and_results_restored", "confirmed_actions_not_repeated", "queued_guidance_preserved", "approval_state_preserved", "requested_artifacts_complete"]
+  }
+]

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+mod whole_task;
 
 const CASES: [&str; 4] = [
     include_str!("fixtures/evaluations/movarte-explicit-mcp.json"),

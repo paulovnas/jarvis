@@ -586,18 +586,20 @@ async fn harness_evaluation_large_mcp_catalog_loads_individual_tools_with_bounde
     .unwrap();
     assert_eq!(search["matches"][0]["tool"], selected);
     assert_eq!(search["matches"][0]["name"], "catalog_tool_37");
-    clients
-        .execute(
-            &f.mcp,
-            &f.state,
-            &f.home,
-            "mcp_load_tool",
-            &json!({"tool":selected}),
-            false,
-            signal.clone(),
-        )
-        .await
-        .unwrap();
+    assert_eq!(search["matches"][0]["loaded"], true);
+    // Searching alone advertises the tool on the next inference; no load-only
+    // provider round trip is required. Explicit load remains compatible.
+    let discovered = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(discovered
+        .iter()
+        .any(|definition| definition["name"] == selected));
+    let search_only = clients
+        .definitions_with(&f.mcp, &f.state, &f.home, false, |name| {
+            name != "mcp_load_tool"
+        })
+        .await;
+    clients.ensure_scope_visible(&search_only).unwrap();
+    assert!(search_only.iter().any(|tool| tool["name"] == selected));
     assert!(clients.requires_explicit_attempt());
     let loaded = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
     assert_eq!(loaded.len(), 3);
