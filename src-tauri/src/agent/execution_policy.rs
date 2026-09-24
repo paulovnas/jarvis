@@ -483,6 +483,18 @@ fn analyze_command(plan: &CommandPlan, scope: &ExecutionScope, persistent: bool)
     analysis.effects.uses_network |=
         analysis.effects.dynamic || analysis.effects.unknown || persistent;
     for redirect in &plan.redirections {
+        // Discarding output or reading EOF is standard I/O, not a project
+        // mutation. Only the actual Unix null device gets this exception;
+        // operations such as rm/mv still go through the normal path checks.
+        #[cfg(unix)]
+        if redirect.target == "/dev/null" {
+            use std::os::unix::fs::FileTypeExt;
+            if std::fs::symlink_metadata(&redirect.target)
+                .is_ok_and(|metadata| metadata.file_type().is_char_device())
+            {
+                continue;
+            }
+        }
         let target = lexical_absolute(&scope.working_directory, Path::new(&redirect.target));
         if redirect.write {
             analysis.effects.writes_filesystem = true;
@@ -1047,6 +1059,47 @@ mod tests {
         assert!(output
             .write_paths
             .ends_with(&[PathBuf::from("/workspace/project/backend/report.txt")]));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn null_device_redirections_do_not_require_filesystem_write_approval() {
+        for command in [
+            "git log --left-right --oneline main...origin/main > /dev/null",
+            "git status 2>/dev/null",
+            "printf discarded >> /dev/null",
+            "cat README.md < /dev/null",
+        ] {
+            let outcome = decide(command, NetworkPolicy::Deny);
+            assert_eq!(
+                outcome.decision,
+                ExecutionDecision::Allow,
+                "{command}: {outcome:?}"
+            );
+            assert!(!outcome.effects.writes_filesystem, "{command}");
+            assert!(outcome.write_paths.is_empty(), "{command}");
+        }
+    }
+
+    #[test]
+    fn null_device_exception_does_not_allow_other_paths_or_device_removal() {
+        for command in [
+            "printf data > /dev/null-backup",
+            "printf data > /dev/zero",
+            "printf data > /etc/jarvis-test",
+            "printf data > ../../outside",
+            "rm /dev/null",
+            "mv /dev/null replacement",
+        ] {
+            assert_eq!(
+                decide(command, NetworkPolicy::Deny).decision,
+                ExecutionDecision::Deny,
+                "{command}"
+            );
+        }
+        let outcome = decide("printf data > dev/null", NetworkPolicy::Deny);
+        assert_eq!(outcome.decision, ExecutionDecision::Ask);
+        assert!(outcome.effects.writes_filesystem);
     }
 
     #[test]

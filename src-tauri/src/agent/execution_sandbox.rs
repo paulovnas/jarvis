@@ -281,8 +281,10 @@ fn seatbelt_profile(writable_root: &Path, network: bool) -> String {
     let temporary = std::fs::canonicalize(&temporary).unwrap_or(temporary);
     let temporary = seatbelt_string(&temporary);
     let network_rule = if network { "(allow network*)\n" } else { "" };
+    // Git and shells open /dev/null with O_RDWR even for read-only commands.
+    // Permit data I/O on that device without granting writes to the /dev tree.
     format!(
-        "(version 1)\n(deny default)\n(allow process-exec)\n(allow process-fork)\n(allow signal (target same-sandbox))\n(allow process-info* (target same-sandbox))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read*)\n(allow file-write* (subpath \"/tmp\"))\n(allow file-write* (subpath \"/private/tmp\"))\n(allow file-write* (subpath \"/var/tmp\"))\n(allow file-write* (subpath \"/private/var/tmp\"))\n(allow file-write* (subpath \"{temporary}\"))\n(allow file-write* (subpath \"{root}\"))\n{network_rule}"
+        "(version 1)\n(deny default)\n(allow process-exec)\n(allow process-fork)\n(allow signal (target same-sandbox))\n(allow process-info* (target same-sandbox))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read*)\n(allow file-write-data (require-all (literal \"/dev/null\") (vnode-type CHARACTER-DEVICE)))\n(allow file-write* (subpath \"/tmp\"))\n(allow file-write* (subpath \"/private/tmp\"))\n(allow file-write* (subpath \"/var/tmp\"))\n(allow file-write* (subpath \"/private/var/tmp\"))\n(allow file-write* (subpath \"{temporary}\"))\n(allow file-write* (subpath \"{root}\"))\n{network_rule}"
     )
 }
 
@@ -534,6 +536,110 @@ mod tests {
         let output = run_probe(&root, false, "tempfile", &outside.to_string_lossy());
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("PermissionDenied"));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn sandboxed_shell(root: &Path, script: &str) -> std::process::Output {
+        let policy = command_policy("bash", script, root);
+        let plan = prepare(&policy).unwrap();
+        assert_eq!(plan.report.backend, SandboxBackend::MacosSeatbelt);
+        let (program, arguments) = plan.wrap(
+            Path::new("/bin/bash"),
+            ["--noprofile", "--norc", "-c", script].map(OsString::from),
+        );
+        std::process::Command::new(program)
+            .args(arguments)
+            .current_dir(root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_null_device_supports_shell_standard_streams() {
+        let root = tempfile::tempdir().unwrap();
+        for script in [
+            "printf discarded > /dev/null; printf discarded >> /dev/null",
+            "printf discarded 2> /dev/null >&2",
+            "exec 3<> /dev/null; printf discarded >&3; cat < /dev/null",
+        ] {
+            let output = sandboxed_shell(root.path(), &format!("set -e; {script}"));
+            assert!(
+                output.status.success(),
+                "{script}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(output.stdout.is_empty(), "{script}");
+            assert!(output.stderr.is_empty(), "{script}");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_git_inspects_diverged_history_without_null_device_errors() {
+        let root = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=Jarvis Test",
+                    "-c",
+                    "user.email=jarvis@example.test",
+                    "-c",
+                    "commit.gpgSign=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                ])
+                .args(args)
+                .current_dir(root.path())
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{args:?}: {output:?}");
+            String::from_utf8(output.stdout).unwrap()
+        };
+        git(&["init", "--initial-branch=main"]);
+        std::fs::write(root.path().join("history.txt"), "base\n").unwrap();
+        git(&["add", "history.txt"]);
+        git(&["commit", "-m", "base"]);
+        git(&["checkout", "-b", "peer"]);
+        std::fs::write(root.path().join("history.txt"), "remote change\n").unwrap();
+        git(&["commit", "-am", "remote change"]);
+        git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(&["checkout", "main"]);
+        std::fs::write(root.path().join("history.txt"), "local change\n").unwrap();
+        git(&["commit", "-am", "local change"]);
+        let before = git(&["show-ref"]);
+
+        for (script, expected) in [
+            (
+                "git log --left-right --oneline main...origin/main",
+                "remote change",
+            ),
+            ("git show --stat HEAD", "history.txt"),
+            (
+                "git diff origin/main...main -- history.txt",
+                "+local change",
+            ),
+        ] {
+            let output = sandboxed_shell(root.path(), script);
+            assert!(output.status.success(), "{script}: {output:?}");
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(stdout.contains(expected), "{script}: {stdout}");
+            if script.starts_with("git log") {
+                assert!(stdout
+                    .lines()
+                    .any(|line| line.starts_with("< ") && line.ends_with("local change")));
+                assert!(stdout
+                    .lines()
+                    .any(|line| line.starts_with("> ") && line.ends_with("remote change")));
+            }
+        }
+        assert_eq!(git(&["show-ref"]), before);
+        assert!(git(&["status", "--porcelain"]).trim().is_empty());
     }
 
     #[test]
