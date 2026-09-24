@@ -239,6 +239,8 @@ pub fn run() {
                 openai_codex::list_provider_accounts,
                 openai_codex::refresh_provider_models,
                 openai_codex::set_provider_model_enabled,
+                agent::provider_transport::get_provider_transport,
+                agent::provider_transport::set_provider_transport,
                 openai_codex::custom::save_custom_provider,
                 openai_codex::custom::discovery::lookup_custom_model,
                 openai_codex::set_provider_enabled,

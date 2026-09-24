@@ -423,7 +423,7 @@ impl Server {
 pub(super) struct Registry {
     root: PathBuf,
     home: PathBuf,
-    servers: HashMap<ServerKind, Server>,
+    servers: HashMap<ServerKind, std::sync::Arc<tokio::sync::Mutex<Server>>>,
 }
 
 impl Registry {
@@ -446,7 +446,6 @@ impl Registry {
         mut signal: watch::Receiver<bool>,
     ) -> Result<String, AgentError> {
         let path = tools::scoped(&self.root, argument(&tool.args, "path")?, false)?;
-        let text = tools::read_text(&path)?;
         let kind = ServerKind::for_path(&path)?;
         if !self.servers.contains_key(&kind) {
             let root = self.root.clone();
@@ -455,16 +454,36 @@ impl Registry {
                 _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
                 result = Server::start(&root, &home, kind) => result?,
             };
-            self.servers.insert(kind, server);
+            self.servers
+                .insert(kind, std::sync::Arc::new(tokio::sync::Mutex::new(server)));
         }
+        self.execute_ready(tool, signal).await
+    }
+
+    pub(super) fn parallel_ready(&self, tool: &ToolCall) -> bool {
+        tool.args["path"]
+            .as_str()
+            .and_then(|path| ServerKind::for_path(Path::new(path)).ok())
+            .is_some_and(|kind| self.servers.contains_key(&kind))
+    }
+
+    pub(super) async fn execute_ready(
+        &self,
+        tool: &ToolCall,
+        mut signal: watch::Receiver<bool>,
+    ) -> Result<String, AgentError> {
+        let path = tools::scoped(&self.root, argument(&tool.args, "path")?, false)?;
+        let text = tools::read_text(&path)?;
+        let kind = ServerKind::for_path(&path)?;
         let relative = relative_path(&self.root, &path)?;
-        let server = self
-            .servers
-            .get_mut(&kind)
-            .ok_or_else(AgentError::internal)?;
+        let server = self.servers.get(&kind).ok_or_else(AgentError::internal)?;
+        let mut server = tokio::select! {
+            _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+            server = server.lock() => server,
+        };
         tokio::select! {
             _ = cancelled(&mut signal) => Err(AgentError::cancelled()),
-            result = execute_tool(server, tool, &path, &relative, text) => result,
+            result = execute_tool(&mut server, tool, &path, &relative, text) => result,
         }
     }
 
@@ -476,6 +495,7 @@ impl Registry {
         let Some(server) = self.servers.get_mut(&kind) else {
             return Ok(());
         };
+        let mut server = server.lock().await;
         match tools::scoped(&self.root, relative, false)
             .and_then(|path| tools::read_text(&path).map(|text| (path, text)))
         {

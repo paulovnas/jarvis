@@ -112,6 +112,64 @@ fn fixture_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/mcp/fixtures/server.mjs")
 }
 
+#[tokio::test]
+async fn read_only_calls_overlap_on_the_same_mcp_peer_without_exposing_mutations() {
+    let f = Fixture::new();
+    let server = f.local("parallel-docs");
+    let (_cancel, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Use o MCP parallel-docs para consultar documentação.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let name = runtime::wire_name(&server, "lookup");
+    assert!(clients.parallel_ready(&name));
+    let mutation = runtime::wire_name(&server, "mutate");
+    assert!(!clients.parallel_ready(&mutation));
+    assert!(!clients.parallel_ready("mcp_invented"));
+    let first_args = json!({"query":"barrier:first"});
+    let second_args = json!({"query":"barrier:second"});
+    let (first, second) = tokio::join!(
+        clients.execute_parallel_read(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &name,
+            &first_args,
+            signal.clone()
+        ),
+        clients.execute_parallel_read(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &name,
+            &second_args,
+            signal.clone()
+        ),
+    );
+    let first = first.unwrap();
+    let second = second.unwrap();
+    assert!(first.contains("barrier:first"));
+    assert!(!first.contains("barrier:second"));
+    assert!(second.contains("barrier:second"));
+    assert!(!second.contains("fixture-sensitive-value"));
+    assert!(!clients.requires_explicit_attempt());
+    assert!(clients
+        .execute_parallel_read(&f.mcp, &f.state, &f.home, &mutation, &json!({}), signal)
+        .await
+        .is_err());
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\nlookup\n"
+    );
+}
+
 fn explicit_mcp_evaluation_case() -> Value {
     serde_json::from_str(include_str!(
         "../agent/fixtures/evaluations/movarte-explicit-mcp.json"

@@ -133,12 +133,69 @@ struct AdapterAvailability {
 
 pub(super) fn prepare(policy: &ToolPolicy) -> Option<SandboxPlan> {
     policy.outcome.command.as_ref()?;
+    if policy.outcome.native_working_directory.is_some() {
+        return Some(unavailable(&policy.outcome.reason, &policy.outcome.effects));
+    }
     Some(prepare_for(
         current_platform(),
         detect_adapters(),
         &policy.working_directory,
         &policy.outcome.effects,
     ))
+}
+
+/// Preserve partial output and request a new, explicitly approved execution.
+/// A denial can happen after side effects, so recovery never reruns it blindly.
+pub(super) fn command_failure(
+    plan: Option<&SandboxPlan>,
+    args: &serde_json::Value,
+    exit_code: Option<i32>,
+    output: &str,
+) -> super::AgentError {
+    let message = format!(
+        "Código de saída: {}\n{output}",
+        exit_code.map_or("sinal".into(), |code| code.to_string())
+    );
+    let lower = output.to_lowercase();
+    let denied = plan.is_some_and(|plan| plan.report.filesystem_isolated)
+        && [
+            "operation not permitted",
+            "permission denied",
+            "eperm",
+            "eacces",
+            "sandbox-exec:",
+        ]
+        .iter()
+        .any(|text| lower.contains(text));
+    if !denied {
+        return super::AgentError::new("tool_error", &message);
+    }
+    let mut retry = args.clone();
+    retry["sandboxPermissions"] = "require_escalated".into();
+    let guidance = "O ambiente negou um acesso. Verifique os efeitos já produzidos antes de repetir. Se ainda necessário, solicite a execução com sandboxPermissions=require_escalated e justification; o Jarvis apresentará a aprovação e reutilizará uma autorização compatível.";
+    let mut error = super::AgentError::new("sandbox_denied", &format!("{message}\n{guidance}"));
+    error.tool_result = Some(serde_json::json!({"error":{"code":"sandbox_denied","message":message},"recovery":{"arguments":retry,"requiresApproval":true,"sideEffects":"unknown","instructions":guidance}}).to_string());
+    error
+}
+
+pub(super) fn add_permission_parameters(definition: &mut serde_json::Value) {
+    if !matches!(
+        definition["name"].as_str(),
+        Some("bash" | "process_start" | "terminal_start")
+    ) {
+        return;
+    }
+    definition["parameters"]["properties"]["sandboxPermissions"] = serde_json::json!({"type":"string","enum":["use_default","require_escalated"],"description":"Use require_escalated only for a necessary operation blocked by filesystem/network isolation. Requests informed approval for this command; never blindly retry an action whose side effects are uncertain."});
+    definition["parameters"]["properties"]["justification"] = serde_json::json!({"type":"string","minLength":1,"maxLength":1000,"description":"Explain the additional access needed when requesting require_escalated."});
+}
+
+pub(super) fn command_arguments(args: &serde_json::Value) -> serde_json::Value {
+    let mut args = args.clone();
+    if let Some(object) = args.as_object_mut() {
+        object.remove("sandboxPermissions");
+        object.remove("justification");
+    }
+    args
 }
 
 fn prepare_for(
@@ -760,6 +817,40 @@ mod tests {
             &read_only
         )
         .requires_informed_approval(&read_only));
+    }
+
+    #[test]
+    fn denied_execution_preserves_output_and_requests_review_instead_of_repeating() {
+        let directory = tempfile::tempdir().unwrap();
+        let policy = command_policy("bash", "npm test", directory.path());
+        let plan = prepare_for(
+            Platform::Macos,
+            AdapterAvailability {
+                seatbelt: Some("/usr/bin/sandbox-exec".into()),
+                bubblewrap: None,
+            },
+            Path::new("/project"),
+            &policy.outcome.effects,
+        );
+        let error = command_failure(
+            Some(&plan),
+            &serde_json::json!({"command":"npm test"}),
+            Some(1),
+            "migration completed\nconnect EPERM 127.0.0.1",
+        );
+        let result: serde_json::Value =
+            serde_json::from_str(error.tool_result.as_deref().unwrap()).unwrap();
+        assert_eq!(result["recovery"]["sideEffects"], "unknown");
+        assert_eq!(
+            result["recovery"]["arguments"]["sandboxPermissions"],
+            "require_escalated"
+        );
+        assert!(error.message.contains("migration completed"));
+        assert!(
+            command_failure(None, &serde_json::json!({}), Some(1), "EPERM")
+                .tool_result
+                .is_none()
+        );
     }
 
     #[test]

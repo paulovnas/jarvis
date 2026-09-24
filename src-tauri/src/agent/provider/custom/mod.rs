@@ -171,6 +171,54 @@ fn session_request_with_client(
     Ok(request)
 }
 
+#[allow(clippy::too_many_arguments)] // Shares the complete HTTP request contract.
+pub(super) fn incremental_request(
+    client: &reqwest::Client,
+    credential: &CodexCredential,
+    config: &Config,
+    session_id: &str,
+    options: &TurnOptions,
+    capabilities: &ModelCapabilities,
+    instructions: &str,
+    input: Vec<Value>,
+    tools: Vec<Value>,
+) -> Result<reqwest::Request, AgentError> {
+    config.validate()?;
+    if config.protocol != Protocol::OpenaiResponses {
+        return Err(protocol_error());
+    }
+    let model = config
+        .models
+        .iter()
+        .find(|model| model.id == options.model)
+        .ok_or_else(protocol_error)?;
+    let body = request::body_with_capabilities(
+        config,
+        model,
+        options,
+        capabilities,
+        instructions,
+        input,
+        tools,
+    )?;
+    session_request_with_client(client, credential, config, body, session_id)?
+        .build()
+        .map_err(|_| AgentError::internal())
+}
+
+pub(super) fn scope_responses_output(
+    config: &Config,
+    options: &TurnOptions,
+    response: &mut Response,
+) {
+    let scope = request::scope(config, options);
+    for item in &mut response.output {
+        if item["type"] == "reasoning" {
+            item["_custom"] = json!({"scope":scope});
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn stream_with_client(
     client: &reqwest::Client,

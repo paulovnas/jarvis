@@ -68,9 +68,22 @@ impl GrantDuration {
     rename_all_fields = "camelCase"
 )]
 pub(super) enum GrantSubject {
-    CommandExact { plan: CommandPlan },
-    CommandPrefix { argv: Vec<String> },
-    ToolExact { name: String, arguments: Value },
+    CommandExact {
+        plan: CommandPlan,
+    },
+    NativeCommandExact {
+        plan: CommandPlan,
+        working_directory: PathBuf,
+        read_paths: Vec<PathBuf>,
+        write_paths: Vec<PathBuf>,
+    },
+    CommandPrefix {
+        argv: Vec<String>,
+    },
+    ToolExact {
+        name: String,
+        arguments: Value,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -338,6 +351,18 @@ impl From<ExecutionGrant> for ExecutionGrantSummary {
             GrantSubject::CommandExact { plan } => {
                 (GrantMatch::Exact, display_command(plan, false))
             }
+            GrantSubject::NativeCommandExact {
+                plan,
+                working_directory,
+                ..
+            } => (
+                GrantMatch::Exact,
+                format!(
+                    "{} · acesso nativo em {}",
+                    display_command(plan, false),
+                    working_directory.display()
+                ),
+            ),
             GrantSubject::CommandPrefix { argv } => (
                 GrantMatch::CommandPrefix,
                 format!("{} …", display_argv(argv)),
@@ -389,6 +414,24 @@ fn display_argv(argv: &[String]) -> String {
 }
 
 fn subject(request: &CreateGrant<'_>) -> Result<GrantSubject, String> {
+    if let Some(directory) = &request.outcome.native_working_directory {
+        if request.match_kind != GrantMatch::Exact {
+            return Err(
+                "A execução fora do isolamento exige autorização exata do comando e diretório."
+                    .into(),
+            );
+        }
+        return Ok(GrantSubject::NativeCommandExact {
+            plan: request
+                .outcome
+                .command
+                .clone()
+                .ok_or("A autorização nativa exige um comando.")?,
+            working_directory: directory.clone(),
+            read_paths: request.outcome.read_paths.clone(),
+            write_paths: request.outcome.write_paths.clone(),
+        });
+    }
     match (request.outcome.command.as_ref(), request.match_kind) {
         (Some(plan), GrantMatch::Exact) => Ok(GrantSubject::CommandExact { plan: plan.clone() }),
         (Some(plan), GrantMatch::CommandPrefix) => Ok(GrantSubject::CommandPrefix {
@@ -414,6 +457,9 @@ fn safe_prefix(plan: &CommandPlan) -> Result<Vec<String>, String> {
     if argv.len() < 2 {
         return Err("O prefixo precisa incluir o executável e uma operação específica.".into());
     }
+    if argv[1].starts_with('-') {
+        return Err("Opções antes da operação exigem autorização exata para preservar o diretório e a configuração.".into());
+    }
     let mut prefix = vec![argv[0].clone()];
     let operation = argv[1..]
         .iter()
@@ -424,10 +470,11 @@ fn safe_prefix(plan: &CommandPlan) -> Result<Vec<String>, String> {
 }
 
 pub(super) fn can_prefix(outcome: &PolicyOutcome) -> bool {
-    outcome
-        .command
-        .as_ref()
-        .is_some_and(|plan| safe_prefix(plan).is_ok())
+    outcome.native_working_directory.is_none()
+        && outcome
+            .command
+            .as_ref()
+            .is_some_and(|plan| safe_prefix(plan).is_ok())
 }
 
 fn scope_matches(scope: &GrantScope, context: &GrantContext<'_>) -> bool {
@@ -447,13 +494,29 @@ fn subject_matches(
     tool_arguments: &Value,
 ) -> bool {
     match subject {
-        GrantSubject::CommandExact { plan } => outcome.command.as_ref() == Some(plan),
-        GrantSubject::CommandPrefix { argv } => outcome.command.as_ref().is_some_and(|plan| {
-            !plan.dynamic
-                && plan.redirections.is_empty()
-                && plan.invocations.len() == 1
-                && plan.invocations[0].argv.starts_with(argv)
-        }),
+        GrantSubject::CommandExact { plan } => {
+            outcome.native_working_directory.is_none() && outcome.command.as_ref() == Some(plan)
+        }
+        GrantSubject::NativeCommandExact {
+            plan,
+            working_directory,
+            read_paths,
+            write_paths,
+        } => {
+            outcome.command.as_ref() == Some(plan)
+                && outcome.native_working_directory.as_ref() == Some(working_directory)
+                && outcome.read_paths == *read_paths
+                && outcome.write_paths == *write_paths
+        }
+        GrantSubject::CommandPrefix { argv } => {
+            outcome.native_working_directory.is_none()
+                && outcome.command.as_ref().is_some_and(|plan| {
+                    !plan.dynamic
+                        && plan.redirections.is_empty()
+                        && plan.invocations.len() == 1
+                        && plan.invocations[0].argv.starts_with(argv)
+                })
+        }
         GrantSubject::ToolExact { name, arguments } => {
             outcome.command.is_none()
                 && name == tool_name
@@ -581,6 +644,53 @@ mod tests {
             project_id: "project",
             working_directory: Path::new("/project/backend"),
         }
+    }
+
+    #[test]
+    fn native_grants_cannot_be_inherited_from_sandboxed_commands_or_other_directories() {
+        let store = GrantStore::default();
+        let original = outcome("npm test");
+        let create = |outcome: &PolicyOutcome| {
+            store
+                .create(CreateGrant {
+                    scope: GrantScope::Conversation {
+                        conversation_id: "conversation".into(),
+                    },
+                    match_kind: GrantMatch::Exact,
+                    duration: GrantDuration::Session,
+                    outcome,
+                    tool_name: "bash",
+                    tool_arguments: &Value::Null,
+                    now: 10,
+                })
+                .unwrap()
+        };
+        create(&original);
+        let mut native = original.clone();
+        native.native_working_directory = Some(PathBuf::from("/project/backend"));
+        assert!(store
+            .authorize(&native, "bash", &Value::Null, context(), 11)
+            .unwrap()
+            .is_none());
+        assert!(!can_prefix(&native));
+        let grant = create(&native);
+        assert_eq!(
+            store
+                .authorize(&native, "bash", &Value::Null, context(), 12)
+                .unwrap(),
+            Some(grant.id)
+        );
+        native.native_working_directory = Some(PathBuf::from("/project/frontend"));
+        assert!(store
+            .authorize(&native, "bash", &Value::Null, context(), 13)
+            .unwrap()
+            .is_none());
+        native.native_working_directory = Some(PathBuf::from("/project/backend"));
+        native.write_paths.push(PathBuf::from("/other"));
+        assert!(store
+            .authorize(&native, "bash", &Value::Null, context(), 14)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

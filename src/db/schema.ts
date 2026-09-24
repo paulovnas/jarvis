@@ -48,6 +48,11 @@ export const customProviderConfigs = sqliteTable("custom_provider_configs", {
   config: text("config").notNull(),
 });
 
+export const providerTransportPreferences = sqliteTable("provider_transport_preferences", {
+  accountAlias: text("account_alias").primaryKey().references(() => providerAccounts.alias, { onDelete: "cascade" }),
+  incrementalResponses: integer("incremental_responses", { mode: "boolean" }).notNull().default(false),
+}, (table) => [check("provider_transport_incremental_check", sql`${table.incrementalResponses} IN (0, 1)`)]);
+
 export const providerUsageAlertDeliveries = sqliteTable("provider_usage_alert_deliveries", {
   alias: text("alias").notNull().references(() => providerAccounts.alias, { onDelete: "cascade" }),
   windowId: text("window_id").notNull(),

@@ -449,7 +449,15 @@ pub(super) async fn execute(
             .last()
             .map(|turn| turn.turn.user.clone())
             .ok_or_else(AgentError::internal)?;
-        let proposal = publication::prepare(
+        let confirmation = publication::confirmation_receipt(
+            &session
+                .data
+                .lock()
+                .map_err(|_| AgentError::internal())?
+                .turns,
+            tool,
+        );
+        let proposal = publication::prepare_with_confirmation(
             state,
             home,
             owner.project_id()?,
@@ -457,7 +465,11 @@ pub(super) async fn execute(
             &current_user_request,
             question_answered,
             tool,
+            confirmation.as_ref(),
         )?;
+        if tool.args["previewOnly"] == true {
+            return publication::preview(&session.root, &proposal, &tool.id);
+        }
         if publication::executes_without_review(&proposal) {
             if *signal.borrow() {
                 return Err(AgentError::cancelled());

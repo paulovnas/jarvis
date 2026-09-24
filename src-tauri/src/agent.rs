@@ -2,6 +2,7 @@ pub(crate) mod attachments;
 pub(crate) mod authoring;
 pub(crate) mod browser;
 pub(crate) mod cleanup;
+mod command_sessions;
 mod compaction;
 mod context_manager;
 pub(crate) mod dashboard;
@@ -21,12 +22,14 @@ pub(crate) mod journal_maintenance;
 mod lsp;
 pub(crate) mod maintenance;
 mod model_instructions;
+mod parallel_tools;
 mod patch;
 pub(crate) mod processes;
 mod progress;
 mod protocol;
 mod provider;
 pub(crate) mod provider_links;
+pub(crate) mod provider_transport;
 pub(crate) mod publication;
 pub(crate) mod questions;
 pub(crate) mod queue;
@@ -2330,12 +2333,17 @@ fn run_turn<'a>(
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
             result = auth => result.map_err(|_| AgentError::internal())??,
         };
-        let provider_session = provider::TurnSession::new(
+        let mut provider_session = provider::TurnSession::new(
             credential.clone(),
             &model,
             session.id.clone(),
             telemetry.clone(),
         )?;
+        provider_session.set_incremental_transport(provider_transport::enabled(
+            state,
+            home,
+            &options.account,
+        ));
         session.update(true, |data| {
             data.turns.last_mut().unwrap().turn.context_window = model.context_window;
         })?;
@@ -2415,6 +2423,7 @@ fn run_turn<'a>(
         let mut repeated_tools = tool_loop::Guard::default();
         let mut progress_watchdog = progress::Watchdog::default();
         let mut read_reuse = tool_loop::ReadReuseCache::default();
+        let mut command_sessions = command_sessions::CommandSessions::default();
         let mut project_instructions = instructions::Resolver::new(&session.root)?;
         let response_language = crate::system::response_language(home);
         let mut lsp = lsp::Registry::new(&session.root, home)?;
@@ -2702,7 +2711,6 @@ fn run_turn<'a>(
                 Err(error) => return Err(error),
             };
             let calls = response.tool_calls().to_vec();
-            let parallel_batch = tool_runtime.parallel_safe(&calls);
             let previous: HashSet<String> = session
                 .data
                 .lock()
@@ -2731,6 +2739,13 @@ fn run_turn<'a>(
             session.flush()?;
             compaction::record_usage(session, usage.as_ref())?;
             if calls.is_empty() {
+                let running = command_sessions.running_ids();
+                if !running.is_empty() {
+                    session.update(true, |data| {
+                        data.turns.last_mut().unwrap().wire.push(json!({"role":"user","_jarvis_runtime":true,"content":format!("Commands are still running: {}. Use bash_wait to obtain their results or bash_cancel when no longer needed. Do not start duplicate commands or report completion before checking these sessions.", running.join(", "))}));
+                    })?;
+                    continue;
+                }
                 if mcp_clients.requires_explicit_attempt() {
                     if mcp_reminded {
                         return Err(AgentError::new(
@@ -2793,20 +2808,53 @@ fn run_turn<'a>(
                 return Ok(());
             }
             session.transition(turn_state::TurnPhase::ExecutingTools)?;
-            let parallel_native = parallel_batch
-                && execution.is_none()
-                && calls
-                    .iter()
-                    .all(|tool| matches!(tool.name.as_str(), "read" | "search" | "list"))
-                && calls.iter().all(|tool| {
-                    repeated_tools.before_call(tool).is_ok()
-                        && tool_runtime.preflight(tool).is_ok()
-                        && progress_watchdog.preflight(tool).is_ok()
-                        && project_instructions.discover(tool).is_ok()
-                        && tool_runtime.preflight(tool).is_ok_and(|prepared| {
-                            execution_policy::inspect_tool(
+            let mut parallel_results =
+                std::collections::BTreeMap::<String, tools::ParallelExecution>::new();
+            for (call_index, tool) in calls.iter().cloned().enumerate() {
+                if !parallel_results.contains_key(&tool.id) {
+                    let count = parallel_tools::prefix_len(&calls[call_index..], |call| {
+                        let Ok(prepared) = tool_runtime.preflight(call) else {
+                            return false;
+                        };
+                        if !prepared.capabilities.parallel_safe
+                            || prepared.capabilities.effect != tool_contract::Effect::ReadOnly
+                            || prepared.capabilities.approval
+                                != tool_contract::ApprovalPolicy::Never
+                        {
+                            return false;
+                        }
+                        let supported = match prepared.handler {
+                            tool_contract::Handler::Native => {
+                                matches!(call.name.as_str(), "read" | "list" | "search")
+                            }
+                            tool_contract::Handler::Mcp => mcp_clients.parallel_ready(&call.name),
+                            tool_contract::Handler::Lsp => lsp.parallel_ready(call),
+                            tool_contract::Handler::Attachment
+                            | tool_contract::Handler::SkillRead => true,
+                            _ => false,
+                        };
+                        supported
+                            && repeated_tools.before_call(call).is_ok()
+                            && progress_watchdog.preflight(call).is_ok()
+                            && project_instructions.discover(call).is_ok()
+                            && execution
+                                .as_ref()
+                                .is_none_or(|exec| exec.preflight(call).is_none())
+                            && crate::core::hooks::pre_tool(&call.name, &call.args).is_none()
+                            && publication::blocks_unsupervised_tool(call).is_none()
+                            && mcp_clients.tool_metadata(&call.name).is_none_or(
+                                |(server, original, description)| {
+                                    publication::blocks_unsupervised_mcp(
+                                        server,
+                                        original,
+                                        description,
+                                    )
+                                    .is_none()
+                                },
+                            )
+                            && execution_policy::inspect_tool(
                                 &session.root,
-                                tool,
+                                call,
                                 prepared.capabilities,
                             )
                             .is_ok_and(|policy| {
@@ -2815,30 +2863,77 @@ fn run_turn<'a>(
                                         == execution_policy::ExecutionDecision::Allow
                                 })
                             })
+                    });
+                    if count > 1 {
+                        let batch = &calls[call_index..call_index + count];
+                        debug_assert!(tool_runtime.parallel_safe(batch));
+                        crate::persistence::require_enabled_account(state, home, &options.account)?;
+                        session.update(true, |data| {
+                            for item in &mut data
+                                .turns
+                                .last_mut()
+                                .unwrap()
+                                .turn
+                                .steps
+                                .last_mut()
+                                .unwrap()
+                                .tools
+                            {
+                                if batch.iter().any(|tool| tool.id == item.id) {
+                                    item.status = "running".into();
+                                }
+                            }
+                        })?;
+                        let mcp_clients = &mcp_clients;
+                        let lsp = &lsp;
+                        let runtime = &tool_runtime;
+                        let signal = &signal;
+                        parallel_results = parallel_tools::execute(batch, |call| async move {
+                            let output = match runtime.preflight(&call)?.handler {
+                                tool_contract::Handler::Native => {
+                                    return tools::execute_with_revision(
+                                        &session.root,
+                                        &call,
+                                        options.mode,
+                                        signal.clone(),
+                                    )
+                                    .await
+                                }
+                                tool_contract::Handler::Mcp => mcp_clients
+                                    .execute_parallel_read(
+                                        mcp,
+                                        state,
+                                        home,
+                                        &call.name,
+                                        &call.args,
+                                        signal.clone(),
+                                    )
+                                    .await
+                                    .map_err(AgentError::from)?,
+                                tool_contract::Handler::Lsp => {
+                                    lsp.execute_ready(&call, signal.clone()).await?
+                                }
+                                tool_contract::Handler::Attachment => {
+                                    attachments::read_tool(home, &owner.id, &call.args)?
+                                }
+                                tool_contract::Handler::SkillRead => {
+                                    crate::skills::read(home, &session.root, &call.args)
+                                        .await
+                                        .map_err(|cause| {
+                                            AgentError::new("skill_error", &cause.message)
+                                        })?
+                                }
+                                _ => return Err(AgentError::internal()),
+                            };
+                            Ok(tools::ExecutionResult {
+                                output,
+                                revision: None,
+                                read: None,
+                            })
                         })
-                });
-            let mut parallel_results = if parallel_native {
-                session.update(true, |data| {
-                    let step = data
-                        .turns
-                        .last_mut()
-                        .unwrap()
-                        .turn
-                        .steps
-                        .last_mut()
-                        .unwrap();
-                    for tool in &calls {
-                        if let Some(item) = step.tools.iter_mut().find(|item| item.id == tool.id) {
-                            item.status = "running".into();
-                        }
+                        .await;
                     }
-                })?;
-                tools::execute_parallel_reads(&session.root, &calls, options.mode, signal.clone())
-                    .await
-            } else {
-                std::collections::BTreeMap::new()
-            };
-            for tool in calls {
+                }
                 if *signal.borrow() {
                     return Err(AgentError::cancelled());
                 }
@@ -2922,9 +3017,10 @@ fn run_turn<'a>(
                                 && !grant_used
                                 && tool.name != "jarvis_propose_publication";
                             sandbox_requires_approval = !grant_used
-                                && sandbox_plan.as_ref().is_some_and(|sandbox| {
-                                    sandbox.requires_informed_approval(&policy.outcome.effects)
-                                });
+                                && (policy.outcome.native_working_directory.is_some()
+                                    || sandbox_plan.as_ref().is_some_and(|sandbox| {
+                                        sandbox.requires_informed_approval(&policy.outcome.effects)
+                                    }));
                             if policy.outcome.decision == execution_policy::ExecutionDecision::Deny
                             {
                                 policy_preflight = Some(policy.outcome.reason.clone());
@@ -2973,6 +3069,9 @@ fn run_turn<'a>(
                     None => (None, false),
                 };
                 let progress_preflight = progress_watchdog.preflight(&tool).err();
+                let command_preflight = (tool.name == "hub_complete"
+                    && !command_sessions.running_ids().is_empty())
+                    .then(|| "Existem comandos em execução. Use bash_wait para verificar o resultado ou bash_cancel para encerrá-los antes de entregar o handoff.".to_owned());
                 let preflight = execution
                     .as_ref()
                     .and_then(|exec| exec.preflight(&tool))
@@ -2988,6 +3087,7 @@ fn run_turn<'a>(
                         )
                     })
                     .or(instruction_preflight)
+                    .or(command_preflight)
                     .or(terminal_preflight)
                     .or(policy_preflight)
                     .or_else(|| task_preflight.map(str::to_owned));
@@ -3040,6 +3140,22 @@ fn run_turn<'a>(
                 let mut confirmed_mutation = false;
                 let result = if let Some(error) = contract_preflight.or(progress_preflight) {
                     Err(error)
+                } else if permitted && parallel_results.contains_key(&tool.id) {
+                    let parallel = parallel_results
+                        .remove(&tool.id)
+                        .ok_or_else(AgentError::internal)?;
+                    measured_duration = Some(parallel.duration_ms);
+                    parallel.result.map(|result| {
+                        let mut output = result.output;
+                        if let Some(observation) = result.read {
+                            if let Some(reused) = read_reuse.resolve(&observation) {
+                                output = tool_loop::READ_REUSE_MESSAGE.into();
+                                reused_read = Some(reused);
+                            }
+                            read_observation = Some(observation);
+                        }
+                        output
+                    })
                 } else if permitted {
                     let _mutation_guard = match &execution {
                         Some(exec) => {
@@ -3260,12 +3376,22 @@ fn run_turn<'a>(
                                 .map_err(|cause| AgentError::new("skill_error", &cause.message))
                         }
                         Some(tool_contract::Handler::Native) => {
-                            let execution = match parallel_results.remove(&tool.id) {
-                                Some(parallel) => {
-                                    measured_duration = Some(parallel.duration_ms);
-                                    parallel.result
-                                }
-                                None => {
+                            let execution =
+                                if command_sessions::CommandSessions::handles(&tool.name) {
+                                    command_sessions
+                                        .execute(
+                                            &session.root,
+                                            &tool,
+                                            sandbox_plan.as_ref(),
+                                            signal.clone(),
+                                        )
+                                        .await
+                                        .map(|output| tools::ExecutionResult {
+                                            output,
+                                            revision: None,
+                                            read: None,
+                                        })
+                                } else {
                                     tools::execute_with_revision_sandboxed(
                                         &session.root,
                                         &tool,
@@ -3274,8 +3400,7 @@ fn run_turn<'a>(
                                         signal.clone(),
                                     )
                                     .await
-                                }
-                            };
+                                };
                             match execution {
                                 Ok(execution) => {
                                     let tools::ExecutionResult {

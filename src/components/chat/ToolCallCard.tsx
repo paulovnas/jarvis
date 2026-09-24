@@ -90,6 +90,8 @@ const tools = {
   lsp_symbols: { label: "Código · Símbolos", icon: Braces },
   lsp_diagnostics: { label: "Código · Diagnósticos", icon: Stethoscope },
   bash: { label: "Execução no terminal", icon: Terminal },
+  bash_wait: { label: "Aguardar comando", icon: Terminal },
+  bash_cancel: { label: "Encerrar comando", icon: Terminal },
   process_start: { label: "Iniciar processo", icon: Terminal },
   process_list: { label: "Consultar processos", icon: Terminal },
   process_output: { label: "Saída do processo", icon: Terminal },

@@ -187,7 +187,7 @@ impl ProcessState {
             #[serde(default)]
             kind: Option<ProcessKind>,
         }
-        let args: Args = serde_json::from_value(args.clone())
+        let args: Args = serde_json::from_value(super::execution_sandbox::command_arguments(args))
             .map_err(|_| invalid("Informe o nome e o comando do processo."))?;
         if args.title.trim().is_empty()
             || args.title.chars().count() > 80
@@ -285,6 +285,9 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
     if mode == Mode::Build {
         values.push(json!({"type":"function","name":"process_start","description":"Start a persistent development server or watcher in the project directory only when needed for the USER's manual validation. In direct Standard/Designer flows, require the user's request to start a service; do not start one routinely after edits. Check process_list and process_check_port first. Set kind to server and provide the project's actual port for every TCP server; a busy port prevents startup and the command is never run on a fallback port. Set kind to watcher only for a non-network watcher. If occupied, report that no new service was started; do not kill its owner or silently switch ports. Follow the project's packageManager and lockfile. Use verified executables, never invent paths in Jarvis Core runtimes. Run in the foreground (no &, nohup, daemon mode); Jarvis manages lifecycle and logs. Use bash for finite unit/lint/typecheck/build commands. Never automate browser tests. The user manages stopping.","parameters":{"type":"object","properties":{"title":{"type":"string","maxLength":80},"command":{"type":"string","maxLength":8000},"kind":{"type":"string","enum":["server","watcher"],"description":"server for a TCP service; watcher only when no TCP listener is started."},"port":{"type":"integer","minimum":1,"maximum":65535,"description":"Required when kind is server: the actual port from project config/startup command. Omit for a watcher. Availability is rechecked before spawning."}},"required":["title","command","kind"],"additionalProperties":false}}));
     }
+    values
+        .iter_mut()
+        .for_each(super::execution_sandbox::add_permission_parameters);
     values
 }
 #[tauri::command]

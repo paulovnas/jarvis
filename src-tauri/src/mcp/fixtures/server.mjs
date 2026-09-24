@@ -57,9 +57,18 @@ if (process.argv.includes("--http")) {
   });
   server.listen(0, "127.0.0.1", () => process.stdout.write(`${server.address().port}\n`));
 } else {
+  const parallelBarrier = [];
   const input = createInterface({ input: process.stdin });
   input.on("line", (line) => {
     const message = JSON.parse(line);
+    // Neither response can complete until two requests reached the same peer.
+    if (message.method === "tools/call" && message.params.arguments?.query?.startsWith("barrier:")) {
+      parallelBarrier.push(message);
+      if (parallelBarrier.length === 2) {
+        for (const pending of parallelBarrier.splice(0)) process.stdout.write(`${JSON.stringify(respond(pending))}\n`);
+      }
+      return;
+    }
     const delay = message.method === "tools/call" ? (message.params.arguments?.delayMs ?? 0) : 0;
     const reply = () => { const result = respond(message); if (result) process.stdout.write(`${JSON.stringify(result)}\n`); };
     if (delay > 0) setTimeout(reply, delay); else reply();

@@ -1070,8 +1070,9 @@ impl TerminalState {
                     #[serde(default)]
                     command: Option<String>,
                 }
-                let args: Args = serde_json::from_value(call.args.clone())
-                    .map_err(|_| invalid("Informe os dados do terminal."))?;
+                let args: Args =
+                    serde_json::from_value(super::execution_sandbox::command_arguments(&call.args))
+                        .map_err(|_| invalid("Informe os dados do terminal."))?;
                 let input = match args.command.as_deref() {
                     Some(command)
                         if command.trim().is_empty()
@@ -1119,6 +1120,9 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
         values.push(json!({"type":"function","name":"terminal_start","description":"Open a new visible terminal tab owned by this agent in the project root. Use only when the user benefits from a persistent, observable shell; use bash for ordinary finite commands. command, when provided, is sent only to the newly created terminal, never to a user-created tab. Admission includes network access, including localhost, for this interactive shell and its later commands, subject to the active approval mode and scoped grants. Filesystem scope remains restricted.","parameters":{"type":"object","properties":{"title":{"type":"string"},"command":{"type":"string"}},"additionalProperties":false}}));
         values.push(json!({"type":"function","name":"terminal_close","description":"Close or cancel one integrated terminal when it is no longer needed. A terminal opened by this agent during the current execution closes directly; a user terminal or one from another agent or execution requires explicit user approval. Close temporary test terminals before finishing, but keep development services needed for the user's manual validation. Use the exact id returned by terminal_list and explain the reason briefly.","parameters":{"type":"object","properties":{"id":{"type":"string","minLength":1,"maxLength":128},"reason":{"type":"string","minLength":1,"maxLength":300}},"required":["id","reason"],"additionalProperties":false}}));
     }
+    values
+        .iter_mut()
+        .for_each(super::execution_sandbox::add_permission_parameters);
     values
 }
 

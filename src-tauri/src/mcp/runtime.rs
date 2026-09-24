@@ -56,7 +56,7 @@ pub struct Client {
     service: RunningService<RoleClient, Handler>,
     config: Config,
     tools: Vec<RegisteredTool>,
-    reconnect_required: bool,
+    reconnect_required: AtomicBool,
 }
 struct RegisteredTool {
     definition: Value,
@@ -324,7 +324,7 @@ pub async fn connect(
             service,
             config: config.clone(),
             tools: Vec::new(),
-            reconnect_required: false,
+            reconnect_required: AtomicBool::new(false),
         };
         client.refresh().await?;
         Ok(client)
@@ -680,7 +680,7 @@ pub struct TurnClients {
     root: std::path::PathBuf,
     exposure: Exposure,
     explicit_names: Vec<String>,
-    explicit_attempted: bool,
+    explicit_attempted: AtomicBool,
 }
 
 fn registered_name(tool: &RegisteredTool) -> Option<&str> {
@@ -983,7 +983,7 @@ impl TurnClients {
             root: root.to_path_buf(),
             exposure: Exposure::Explicit,
             explicit_names,
-            explicit_attempted: false,
+            explicit_attempted: AtomicBool::new(false),
             ..Self::default()
         })
     }
@@ -1006,7 +1006,7 @@ impl TurnClients {
     }
 
     pub fn requires_explicit_attempt(&self) -> bool {
-        self.exposure == Exposure::Explicit && !self.explicit_attempted
+        self.exposure == Exposure::Explicit && !self.explicit_attempted.load(Ordering::Relaxed)
     }
 
     pub fn explicit_reminder(&self) -> String {
@@ -1085,7 +1085,9 @@ impl TurnClients {
         signal: watch::Receiver<bool>,
     ) -> Result<(), McpError> {
         let server = self.clients[client_index].server.clone();
-        self.clients[client_index].reconnect_required = true;
+        self.clients[client_index]
+            .reconnect_required
+            .store(true, Ordering::Relaxed);
         self.clients[client_index].close().await;
         let (current, config) = active_config(mcp, state, home, &server)
             .await
@@ -1187,7 +1189,7 @@ impl TurnClients {
                 client.close().await;
                 continue;
             }
-            if !client.reconnect_required
+            if !client.reconnect_required.load(Ordering::Relaxed)
                 && !client.service.is_closed()
                 && client.service.service().changed.load(Ordering::Relaxed)
             {
@@ -1206,7 +1208,7 @@ impl TurnClients {
                         },
                     );
                 } else {
-                    client.reconnect_required = true;
+                    client.reconnect_required.store(true, Ordering::Relaxed);
                     client.service.cancellation_token().cancel();
                     mcp.record_check(
                         state,
@@ -1555,7 +1557,7 @@ impl TurnClients {
         name: &str,
         args: &Value,
         read_only: bool,
-        mut signal: watch::Receiver<bool>,
+        signal: watch::Receiver<bool>,
     ) -> Result<String, McpError> {
         if name == MCP_ACTIVATE {
             return self.activate(mcp, state, home, args, signal).await;
@@ -1566,6 +1568,97 @@ impl TurnClients {
         if name == MCP_LOAD_TOOL {
             return self.load_tool(args, read_only);
         }
+
+        // A reconnect starts a configured process or network connection. Reject
+        // out-of-scope/invalid calls through the normal validator before doing it.
+        let visible = self.catalog_ready
+            && self.visible_tools.contains(name)
+            && (!self.deferred_tools.contains(name)
+                || self.loaded_tools.iter().any(|loaded| loaded == name));
+        let client_index = self.clients.iter().position(|client| {
+            visible
+                && mcp.current(state, home, &client.server)
+                && client.tools.iter().any(|tool| {
+                    tool.definition["name"] == name
+                        && (!read_only || tool.read_only)
+                        && args.to_string().len() <= MAX_ARGUMENT_BYTES
+                        && tool.validator.is_valid(args)
+                })
+        });
+        if let Some(index) = client_index {
+            if self.clients[index]
+                .reconnect_required
+                .load(Ordering::Relaxed)
+                || self.clients[index].service.is_closed()
+            {
+                self.reconnect_client(index, mcp, state, home, signal.clone())
+                    .await?;
+            }
+        }
+        let mut result = self
+            .execute_connected(mcp, state, home, name, args, read_only, signal.clone())
+            .await;
+        if let (Err(failure), Some(index)) = (&mut result, client_index) {
+            if self.clients[index]
+                .reconnect_required
+                .load(Ordering::Relaxed)
+                && !*signal.borrow()
+            {
+                match self.reconnect_client(index, mcp, state, home, signal).await {
+                    Ok(()) => failure.metadata.connection_recovered = Some(true),
+                    Err(cause) => {
+                        failure.metadata.connection_recovered = Some(false);
+                        failure.metadata.recovery_error = Some(cause.message);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    pub fn parallel_ready(&self, name: &str) -> bool {
+        self.catalog_ready
+            && self.visible_tools.contains(name)
+            && (!self.deferred_tools.contains(name)
+                || self.loaded_tools.iter().any(|loaded| loaded == name))
+            && self.clients.iter().any(|client| {
+                !client.reconnect_required.load(Ordering::Relaxed)
+                    && !client.service.is_closed()
+                    && client
+                        .tools
+                        .iter()
+                        .any(|tool| tool.definition["name"] == name && tool.read_only)
+            })
+    }
+
+    #[allow(clippy::too_many_arguments)] // Same checked registry and context as serial dispatch.
+    pub async fn execute_parallel_read(
+        &self,
+        mcp: &McpState,
+        state: &AppState,
+        home: &Path,
+        name: &str,
+        args: &Value,
+        signal: watch::Receiver<bool>,
+    ) -> Result<String, McpError> {
+        if !self.parallel_ready(name) {
+            return Err(coded_error("mcp_connection_closed", "A conexão de leitura precisa ser atualizada antes da próxima chamada. Nenhuma ação foi repetida."));
+        }
+        self.execute_connected(mcp, state, home, name, args, true, signal)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)] // Read calls share only the multiplexed peer; reconnect stays exclusive.
+    async fn execute_connected(
+        &self,
+        mcp: &McpState,
+        state: &AppState,
+        home: &Path,
+        name: &str,
+        args: &Value,
+        read_only: bool,
+        mut signal: watch::Receiver<bool>,
+    ) -> Result<String, McpError> {
         if !self.catalog_ready {
             return Err(coded_error(
                 "mcp_scope_violation",
@@ -1604,7 +1697,7 @@ impl TurnClients {
                 )
             })?;
         if self.exposure == Exposure::Explicit {
-            self.explicit_attempted = true;
+            self.explicit_attempted.store(true, Ordering::Relaxed);
         }
         {
             let client = &self.clients[client_index];
@@ -1628,12 +1721,6 @@ impl TurnClients {
                     args,
                 ));
             }
-        }
-        if self.clients[client_index].reconnect_required
-            || self.clients[client_index].service.is_closed()
-        {
-            self.reconnect_client(client_index, mcp, state, home, signal.clone())
-                .await?;
         }
         let tool_index = self.clients[client_index]
             .tools
@@ -1745,7 +1832,9 @@ impl TurnClients {
                 return Err(failure);
             }
             Err(call_failure) => {
-                self.clients[client_index].reconnect_required = true;
+                self.clients[client_index]
+                    .reconnect_required
+                    .store(true, Ordering::Relaxed);
                 self.clients[client_index]
                     .service
                     .cancellation_token()
@@ -1803,16 +1892,6 @@ impl TurnClients {
                         error: Some(failure.message.clone()),
                     },
                 );
-                match self
-                    .reconnect_client(client_index, mcp, state, home, signal.clone())
-                    .await
-                {
-                    Ok(()) => failure.metadata.connection_recovered = Some(true),
-                    Err(cause) => {
-                        failure.metadata.connection_recovered = Some(false);
-                        failure.metadata.recovery_error = Some(cause.message);
-                    }
-                }
                 return Err(failure);
             }
         };

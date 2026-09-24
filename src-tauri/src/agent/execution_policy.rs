@@ -113,6 +113,8 @@ pub(super) struct PolicyOutcome {
     pub command: Option<CommandPlan>,
     pub read_paths: Vec<PathBuf>,
     pub write_paths: Vec<PathBuf>,
+    #[serde(default)]
+    pub native_working_directory: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,13 +193,40 @@ pub(super) fn inspect_tool(
         "jarvis_propose_publication" => publication_operation(&tool.args, project_root),
         _ => return Ok(None),
     };
+    let mut outcome = evaluate(PolicyRequest {
+        tool_name: &tool.name,
+        capabilities,
+        scope: &scope,
+        operation,
+    });
+    let native_requested = tool.args["sandboxPermissions"] == "require_escalated";
+    let external_command = outcome.command.is_some()
+        && matches!(
+            outcome.code.as_str(),
+            "read_scope_escape" | "write_scope_escape"
+        );
+    if native_requested || external_command {
+        if native_requested
+            && !tool.args["justification"]
+                .as_str()
+                .is_some_and(|reason| !reason.trim().is_empty() && reason.len() <= 1_000)
+        {
+            return Err(AgentError::new("permission_justification_required", "Explique o acesso adicional necessário em justification para solicitar autorização."));
+        }
+        if outcome.command.is_some()
+            && (outcome.decision != ExecutionDecision::Deny || external_command)
+        {
+            outcome.decision = ExecutionDecision::Ask;
+            outcome.code = "native_execution_approval_required".into();
+            outcome.reason = format!(
+                "O comando precisa executar fora do isolamento de arquivos e rede do Jarvis. {}",
+                tool.args["justification"].as_str().unwrap_or("A ação acessa caminhos externos ao projeto; revise o comando e os caminhos antes de autorizar.")
+            );
+            outcome.native_working_directory = Some(working_directory.clone());
+        }
+    }
     Ok(Some(ToolPolicy {
-        outcome: evaluate(PolicyRequest {
-            tool_name: &tool.name,
-            capabilities,
-            scope: &scope,
-            operation,
-        }),
+        outcome,
         project_root: project_root.to_path_buf(),
         working_directory,
     }))
@@ -288,24 +317,8 @@ pub(super) fn evaluate(request: PolicyRequest<'_>) -> PolicyOutcome {
             command,
         );
     }
-    if !paths_within(&analysis.reads, &request.scope.readable_roots) {
-        return outcome(
-            ExecutionDecision::Deny,
-            "read_scope_escape",
-            "O comando tenta ler um caminho fora dos roots autorizados.",
-            analysis,
-            command,
-        );
-    }
-    if !paths_within(&analysis.writes, &request.scope.writable_roots) {
-        return outcome(
-            ExecutionDecision::Deny,
-            "write_scope_escape",
-            "O comando tenta alterar um caminho fora dos roots autorizados.",
-            analysis,
-            command,
-        );
-    }
+    // Hard policy restrictions remain final even when a command also accesses
+    // an external path, which can otherwise request informed approval.
     if capability_conflicts(request.capabilities.effect, &analysis.effects) {
         return outcome(
             ExecutionDecision::Deny,
@@ -323,6 +336,24 @@ pub(super) fn evaluate(request: PolicyRequest<'_>) -> PolicyOutcome {
             ExecutionDecision::Deny,
             "network_scope_denied",
             "A rede não está disponível para este escopo de execução.",
+            analysis,
+            command,
+        );
+    }
+    if !paths_within(&analysis.reads, &request.scope.readable_roots) {
+        return outcome(
+            ExecutionDecision::Deny,
+            "read_scope_escape",
+            "O comando tenta ler um caminho fora dos roots autorizados.",
+            analysis,
+            command,
+        );
+    }
+    if !paths_within(&analysis.writes, &request.scope.writable_roots) {
+        return outcome(
+            ExecutionDecision::Deny,
+            "write_scope_escape",
+            "O comando tenta alterar um caminho fora dos roots autorizados.",
             analysis,
             command,
         );
@@ -405,6 +436,7 @@ fn outcome(
         command,
         read_paths: analysis.reads,
         write_paths: analysis.writes,
+        native_working_directory: None,
     }
 }
 
@@ -646,12 +678,44 @@ fn analyze_invocation(invocation: &CommandInvocation, scope: &ExecutionScope) ->
 }
 
 fn analyze_git(args: &[String], scope: &ExecutionScope, analysis: &mut Analysis) {
+    let mut directory = scope.working_directory.clone();
+    let mut additional_roots = Vec::new();
+    let mut index = 0;
+    while let Some(argument) = args.get(index).filter(|arg| arg.starts_with('-')) {
+        match argument.as_str() {
+            "-C" | "--git-dir" | "--work-tree" => {
+                let Some(value) = args.get(index + 1) else {
+                    analysis.effects.unknown = true;
+                    return;
+                };
+                let target = lexical_absolute(&directory, Path::new(value));
+                if argument == "-C" {
+                    directory = target;
+                } else {
+                    additional_roots.push(target);
+                }
+                index += 2;
+            }
+            "-c" | "--config-env" => {
+                analysis.effects.dynamic = true;
+                index += 2;
+            }
+            _ => {
+                if let Some(value) = argument
+                    .strip_prefix("--git-dir=")
+                    .or_else(|| argument.strip_prefix("--work-tree="))
+                {
+                    additional_roots.push(lexical_absolute(&directory, Path::new(value)));
+                } else if argument.starts_with("--config-env=") {
+                    analysis.effects.dynamic = true;
+                }
+                index += 1;
+            }
+        }
+    }
     analysis.effects.reads_filesystem = true;
-    analysis.reads.push(scope.working_directory.clone());
-    let subcommand = args
-        .iter()
-        .find(|arg| !arg.starts_with('-'))
-        .map(String::as_str);
+    analysis.reads.push(directory.clone());
+    let subcommand = args.get(index).map(String::as_str);
     match subcommand {
         Some("status" | "diff" | "log" | "show" | "rev-parse" | "ls-files" | "grep") => {}
         Some("branch")
@@ -669,19 +733,23 @@ fn analyze_git(args: &[String], scope: &ExecutionScope, analysis: &mut Analysis)
             analysis.effects.uses_network = true;
             analysis.effects.writes_filesystem = !matches!(subcommand, Some("push" | "ls-remote"));
             if analysis.effects.writes_filesystem {
-                analysis.writes.push(scope.working_directory.clone());
+                analysis.writes.push(directory.clone());
             }
         }
         Some("clean") => {
             analysis.effects.writes_filesystem = true;
             analysis.effects.destructive = true;
-            analysis.writes.push(scope.working_directory.clone());
+            analysis.writes.push(directory.clone());
         }
         Some(_) => {
             analysis.effects.writes_filesystem = true;
-            analysis.writes.push(scope.working_directory.clone());
+            analysis.writes.push(directory);
         }
         None => analysis.effects.unknown = true,
+    }
+    analysis.reads.extend(additional_roots.iter().cloned());
+    if analysis.effects.writes_filesystem {
+        analysis.writes.extend(additional_roots);
     }
 }
 
@@ -952,6 +1020,75 @@ mod tests {
     }
 
     #[test]
+    fn command_admission_requests_external_access_but_file_tools_stay_scoped() {
+        let root = tempfile::tempdir().unwrap();
+        let canonical = root.path().canonicalize().unwrap();
+        let root = canonical.as_path();
+        let external = root.parent().unwrap().join("jarvis-external-target");
+        let command = tool(
+            "bash",
+            serde_json::json!({"command":format!("cat '{}'", external.display())}),
+        );
+        let admitted = inspect_tool(root, &command, capabilities(Effect::Mutating))
+            .unwrap()
+            .unwrap();
+        assert_eq!(admitted.outcome.decision, ExecutionDecision::Ask);
+        assert!(admitted.outcome.native_working_directory.is_some());
+        assert!(super::super::execution_sandbox::prepare(&admitted).is_some());
+        let file = tool("read", serde_json::json!({"path":external}));
+        assert_eq!(
+            inspect_tool(root, &file, capabilities(Effect::ReadOnly))
+                .unwrap()
+                .unwrap()
+                .outcome
+                .decision,
+            ExecutionDecision::Deny
+        );
+    }
+
+    #[test]
+    fn explicit_native_request_requires_reason_and_cannot_override_hard_policy() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let mut command = tool(
+            "bash",
+            serde_json::json!({"command":"git status","sandboxPermissions":"require_escalated"}),
+        );
+        assert_eq!(
+            inspect_tool(&root, &command, capabilities(Effect::Mutating))
+                .unwrap_err()
+                .code,
+            "permission_justification_required"
+        );
+        command.args["justification"] = "Acesso ao recurso bloqueado".into();
+        assert_eq!(
+            inspect_tool(&root, &command, capabilities(Effect::Mutating))
+                .unwrap()
+                .unwrap()
+                .outcome
+                .code,
+            "native_execution_approval_required"
+        );
+        command.args["command"] = "sudo touch /root/secret".into();
+        let denied = inspect_tool(&root, &command, capabilities(Effect::Mutating))
+            .unwrap()
+            .unwrap();
+        assert_eq!(denied.outcome.decision, ExecutionDecision::Deny);
+        assert!(denied.outcome.native_working_directory.is_none());
+    }
+
+    #[test]
+    fn nested_git_directory_options_do_not_turn_status_into_a_mutation() {
+        let status = decide("git -C front status --short", NetworkPolicy::Deny);
+        assert_eq!(status.decision, ExecutionDecision::Allow);
+        assert!(status
+            .read_paths
+            .ends_with(&[PathBuf::from("/workspace/project/backend/front")]));
+        let outside = decide("git -C ../../outside status", NetworkPolicy::Allow);
+        assert_eq!(outside.code, "read_scope_escape");
+    }
+
+    #[test]
     fn network_follows_the_declared_scope_policy() {
         let denied = decide("git push origin main", NetworkPolicy::Deny);
         let asked = decide("git push origin main", NetworkPolicy::Ask);
@@ -1032,6 +1169,26 @@ mod tests {
         let outcome = decide("sudo git status", NetworkPolicy::Allow);
         assert_eq!(outcome.decision, ExecutionDecision::Deny);
         assert_eq!(outcome.code, "privilege_escalation_denied");
+    }
+
+    #[test]
+    fn explicit_git_metadata_roots_cannot_be_hidden_by_a_local_work_tree() {
+        let outcome = decide(
+            "git --git-dir=/outside/.git --work-tree=. status",
+            NetworkPolicy::Allow,
+        );
+        assert_eq!(outcome.code, "read_scope_escape");
+        assert!(outcome.read_paths.contains(&PathBuf::from("/outside/.git")));
+        let write = decide(
+            "git -C front --git-dir=.git --work-tree=src add app.ts",
+            NetworkPolicy::Allow,
+        );
+        assert!(write
+            .write_paths
+            .contains(&PathBuf::from("/workspace/project/backend/front/.git")));
+        assert!(write
+            .write_paths
+            .contains(&PathBuf::from("/workspace/project/backend/front/src")));
     }
 
     #[test]

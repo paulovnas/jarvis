@@ -1,10 +1,11 @@
 use super::{cancelled, AgentError, Mode, ToolCall};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+#[cfg(test)]
+use std::collections::BTreeMap;
 #[cfg(unix)]
 use std::fs::File;
 use std::{
-    collections::BTreeMap,
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -80,11 +81,12 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
     ];
     tools.extend(super::lsp::definitions());
     if mode == Mode::Build {
+        tools.extend(super::command_sessions::definitions());
         tools.extend([
             definition("write", "Create or replace a UTF-8 project file atomically. Read existing files first. Content is the complete new file.", json!({"path":string,"content":string}), &["path","content"]),
             definition("edit", "Replace exactly one unique occurrence in a UTF-8 project file. oldText must be nonempty and match exactly once.", json!({"path":string,"oldText":string,"newText":string}), &["path","oldText","newText"]),
             super::patch::definition(),
-            definition("bash", &format!("Run a bounded noninteractive command. Use workdir (relative to the project root) for nested repositories instead of shell cd chains. {} Maximum timeout is 120 seconds. Background processes are stopped when the command finishes. Output retains its beginning and end; use Context-mode for large analysis. Jarvis inspects effects before execution and applies the strongest OS sandbox available. Project scripts, tests, builds and opaque commands include potential network access (including localhost) in admission; the active approval mode and scoped grants govern execution. Read-only commands remain network-isolated. Destructive actions and native fallbacks require authorization; paths outside the project remain restricted.", super::shell::prompt()), json!({"command":string,"workdir":{"type":"string","description":"Existing directory inside the project; defaults to '.'"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}), &["command"]),
+            definition("bash", &format!("Start a noninteractive command owned by this execution. Returns status, incremental output, sessionId and cursor. Use workdir (relative to the project root) for nested repositories instead of shell cd chains. {} The initial wait yields after yieldTimeMs (default 1000, max 30000); the command stays alive. Use bash_wait with the returned sessionId to await more output or completion, and bash_cancel when no longer needed. Do not restart a running command. Up to eight commands may run together. On turn cancellation, their process trees are stopped. Output is bounded with a truncation indicator; use Context-mode for large analysis. Jarvis inspects effects before execution and applies the strongest OS sandbox available. Project scripts, tests, builds and opaque commands include potential network access (including localhost) in admission; the active approval mode and scoped grants govern execution. Read-only commands remain network-isolated. Destructive actions and native fallbacks require authorization; external paths and require_escalated requests open an informed approval for the exact command. Never blindly repeat an operation with uncertain effects.", super::shell::prompt()), json!({"command":string,"workdir":{"type":"string","description":"Existing directory inside the project; defaults to '.'"},"yieldTimeMs":{"type":"integer","minimum":1,"maximum":30000},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120,"description":"Legacy initial wait; now yields a session instead of killing the command. Prefer yieldTimeMs."}}), &["command"]),
         ]);
     }
     tools
@@ -95,7 +97,9 @@ pub(super) fn definition(
     properties: Value,
     required: &[&str],
 ) -> Value {
-    json!({"type":"function","name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}})
+    let mut definition = json!({"type":"function","name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}});
+    super::execution_sandbox::add_permission_parameters(&mut definition);
+    definition
 }
 pub(super) fn instructions(root: &Path, mode: Mode) -> String {
     let scope = if mode == Mode::Plan {
@@ -410,6 +414,7 @@ pub(super) async fn execute_with_revision_sandboxed(
     .map_err(|_| AgentError::internal())?
 }
 
+#[cfg(test)]
 pub(super) async fn execute_parallel_reads(
     root: &Path,
     calls: &[ToolCall],
@@ -707,12 +712,12 @@ async fn shell(
     let output = bounded_command(&format!("{stdout}{stderr}"));
     match status {
         Ok(status) if status.success() => Ok(format!("Código de saída: 0\n{output}")),
-        Ok(status) => Err(error(&format!(
-            "Código de saída: {}\n{output}",
-            status
-                .code()
-                .map_or("sinal".into(), |code| code.to_string())
-        ))),
+        Ok(status) => Err(super::execution_sandbox::command_failure(
+            sandbox,
+            args,
+            status.code(),
+            &output,
+        )),
         Err(cause) => Err(AgentError::new(
             &cause.code,
             &format!("{}\n{output}", cause.message),

@@ -235,6 +235,153 @@ fn authorized_proposal(
 }
 
 #[test]
+fn conversational_confirmation_is_bound_to_the_exact_proposal_and_repository_state() {
+    let repo = repository();
+    let root = repo.path().canonicalize().unwrap();
+    std::fs::write(root.join("app.txt"), "approved contents\n").unwrap();
+    let proposal = authorized_proposal(
+        UserAuthorizationMode::ExplicitRequest,
+        "commit",
+        repo_proposal(".", &["app.txt"]),
+    );
+    let receipt: Value =
+        serde_json::from_str(&preview(&root, &proposal, "preview-1").unwrap()).unwrap();
+    let time = receipt["createdAt"].as_u64().unwrap();
+    validate_confirmation(
+        &root,
+        &proposal,
+        "preview-1",
+        "Pode fazer!",
+        Some(&receipt),
+        time + 1,
+    )
+    .unwrap();
+    for reply in [
+        "não",
+        "pode fazer, mas mude a branch",
+        "ignore a revisão",
+        "ok, depois vemos",
+        "execute outra coisa",
+    ] {
+        assert!(
+            validate_confirmation(
+                &root,
+                &proposal,
+                "preview-1",
+                reply,
+                Some(&receipt),
+                time + 1
+            )
+            .is_err(),
+            "{reply}"
+        );
+    }
+    assert!(
+        validate_confirmation(&root, &proposal, "other", "Faça", Some(&receipt), time + 1).is_err()
+    );
+    assert!(validate_confirmation(
+        &root,
+        &proposal,
+        "preview-1",
+        "Faça",
+        Some(&receipt),
+        time + 86_400_001
+    )
+    .is_err());
+    let mut changed = proposal.clone();
+    changed.repositories[0].push = PushMode::Normal;
+    assert!(validate_confirmation(
+        &root,
+        &changed,
+        "preview-1",
+        "Faça",
+        Some(&receipt),
+        time + 1
+    )
+    .is_err());
+    std::fs::write(root.join("app.txt"), "unreviewed contents\n").unwrap();
+    assert!(validate_confirmation(
+        &root,
+        &proposal,
+        "preview-1",
+        "Faça",
+        Some(&receipt),
+        time + 1
+    )
+    .is_err());
+}
+
+#[test]
+fn untrusted_confirmation_id_cannot_bypass_the_runtime_receipt() {
+    let fixture = crate::agent::tests::Fixture::new();
+    let mut tool = call("jarvis_propose_publication", "");
+    tool.args = json!({"summary":"Publicar","authorization":null,"confirmedProposalId":"invented","repositories":[repo_proposal(".", &["app.txt"])]});
+    let result = prepare(
+        &AppState::default(),
+        &fixture.root,
+        "p1",
+        &fixture.root,
+        "Faça",
+        false,
+        &tool,
+    );
+    assert_eq!(result.unwrap_err().code, "publication_confirmation_stale");
+}
+
+#[test]
+fn confirmation_receipts_require_the_latest_turn_and_cannot_be_reused() {
+    use crate::agent::{finish, tests, ApprovalMode, Step};
+    let fixture = tests::Fixture::new();
+    let session = tests::session(&fixture);
+    session
+        .reserve(
+            "Proponha a publicação".into(),
+            tests::options(ApprovalMode::Yolo),
+        )
+        .unwrap();
+    let mut preview = call("jarvis_propose_publication", "");
+    preview.args = json!({"previewOnly":true});
+    preview.id = "preview".into();
+    preview.status = "completed".into();
+    preview.output = json!({"proposalId":"preview","status":"proposed"}).to_string();
+    session
+        .update(true, |data| {
+            let current = data.turns.last_mut().unwrap();
+            current.wire.push(json!({"type":"function_call","call_id":preview.id,"name":preview.name,"arguments":preview.args.to_string()}));
+            current.wire.push(json!({"type":"function_call_output","call_id":preview.id,"output":preview.output}));
+            current.turn.steps.push(Step {
+                tools: vec![preview],
+                ..Step::default()
+            });
+        })
+        .unwrap();
+    finish(&session, Ok(()));
+    session
+        .reserve("Pode fazer".into(), tests::options(ApprovalMode::Yolo))
+        .unwrap();
+    let mut confirmed = call("jarvis_propose_publication", "");
+    confirmed.id = "confirm".into();
+    confirmed.args = json!({"confirmedProposalId":"preview"});
+    let mut turns = session.data.lock().unwrap().turns.clone();
+    assert!(confirmation_receipt(&turns, &confirmed).is_some());
+    turns[0].turn.status = crate::agent::TurnStatus::Error;
+    assert!(confirmation_receipt(&turns, &confirmed).is_none());
+    turns[0].turn.status = crate::agent::TurnStatus::Completed;
+    let mut prior_attempt = confirmed.clone();
+    prior_attempt.id = "already-attempted".into();
+    prior_attempt.status = "error".into();
+    turns.last_mut().unwrap().turn.steps.push(Step {
+        tools: vec![prior_attempt],
+        ..Step::default()
+    });
+    assert!(confirmation_receipt(&turns, &confirmed).is_none());
+    let mut intervening = turns.last().unwrap().clone();
+    intervening.turn.steps.clear();
+    turns.push(intervening);
+    assert!(confirmation_receipt(&turns, &confirmed).is_none());
+}
+
+#[test]
 fn explicit_current_request_avoids_redundant_pr_question_but_keeps_review() {
     let user = "Faça commit e push de tudo que está pendente.";
     let mut repository = repo_proposal(".", &["app.txt"]);

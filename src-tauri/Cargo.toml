@@ -32,6 +32,7 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+futures-util = { version = "0.3", features = ["sink"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 base64 = "0.22"
@@ -61,6 +62,7 @@ quick-xml = "0.42"
 time = { version = "0.3.55", default-features = false, features = ["parsing"] }
 portable-pty = "0.9"
 fontdb = "0.24.0"
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "3.7", default-features = false }
 objc2 = "0.6"

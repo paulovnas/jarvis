@@ -151,6 +151,8 @@ impl Role {
                         | "list"
                         | "search"
                         | "bash"
+                        | "bash_wait"
+                        | "bash_cancel"
                         | "ask_user"
                         | "jarvis_propose_publication"
                         | "jarvis_inspect_publication"

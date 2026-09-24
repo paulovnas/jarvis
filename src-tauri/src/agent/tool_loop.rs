@@ -251,6 +251,8 @@ fn exempt(name: &str) -> bool {
     matches!(
         name,
         "ask_user"
+            | "bash_wait"
+            | "bash_cancel"
             | "process_list"
             | "process_output"
             | "process_check_port"

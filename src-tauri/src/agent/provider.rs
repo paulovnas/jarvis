@@ -15,6 +15,7 @@ mod capabilities;
 mod conformance;
 mod custom;
 mod events;
+mod incremental;
 pub(super) mod retry;
 
 pub(super) use antigravity::grounded_search;
@@ -65,6 +66,8 @@ pub(super) struct TurnSession {
     session_id: String,
     client: reqwest::Client,
     telemetry: super::telemetry::TraceContext,
+    incremental_enabled: bool,
+    incremental: tokio::sync::Mutex<incremental::Transport>,
 }
 
 impl TurnSession {
@@ -75,12 +78,18 @@ impl TurnSession {
         telemetry: super::telemetry::TraceContext,
     ) -> Result<Self, AgentError> {
         let capabilities = std::sync::Arc::new(ModelCapabilities::resolve(&credential, model));
+        let incremental = incremental::Transport::traced(
+            telemetry.clone(),
+            super::telemetry::provider_kind(&credential),
+        );
         Ok(Self {
             credential,
             capabilities,
             session_id,
             client: http_client()?,
             telemetry,
+            incremental_enabled: false,
+            incremental: tokio::sync::Mutex::new(incremental),
         })
     }
 
@@ -88,11 +97,16 @@ impl TurnSession {
         &self.capabilities
     }
 
+    pub(super) fn set_incremental_transport(&mut self, enabled: bool) {
+        self.incremental_enabled =
+            enabled && self.capabilities.protocol == capabilities::WireProtocol::OpenAiResponses;
+    }
+
     pub(super) async fn stream(
         &self,
         step: &super::context_manager::StepContext,
         signal: watch::Receiver<bool>,
-        on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
+        mut on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
     ) -> Result<Response, AgentError> {
         debug_assert!(!step.authorization().values.is_empty());
         if step.capabilities() != self.capabilities.as_ref() {
@@ -119,6 +133,49 @@ impl TurnSession {
                 "O modelo selecionado não aceita configuração de raciocínio.",
             ));
         }
+        let tools = ordered_tools(step.tools().to_vec());
+        if self.incremental_enabled {
+            let request = if let Some(config) = &self.credential.custom {
+                custom::incremental_request(
+                    &self.client,
+                    &self.credential,
+                    config,
+                    &self.session_id,
+                    step.options(),
+                    step.capabilities(),
+                    step.instructions(),
+                    input.clone(),
+                    tools.clone(),
+                )?
+            } else {
+                let body = request_body(
+                    step.options(),
+                    step.capabilities(),
+                    step.instructions(),
+                    input.clone(),
+                    tools.clone(),
+                    &self.session_id,
+                );
+                authenticated_request_with_client(
+                    &self.client,
+                    &self.credential,
+                    &self.session_id,
+                    &body,
+                )?
+                .build()
+                .map_err(|_| AgentError::internal())?
+            };
+            let mut transport = self.incremental.lock().await;
+            if let Some(mut response) = transport
+                .attempt(request, signal.clone(), &mut on_delta)
+                .await?
+            {
+                if let Some(config) = &self.credential.custom {
+                    custom::scope_responses_output(config, step.options(), &mut response);
+                }
+                return Ok(response);
+            }
+        }
         retry::Request {
             client: self.client.clone(),
             credential: &self.credential,
@@ -127,7 +184,7 @@ impl TurnSession {
             instructions: step.instructions(),
             capabilities: step.capabilities().clone(),
             input,
-            tools: ordered_tools(step.tools().to_vec()),
+            tools,
             telemetry: self.telemetry.clone(),
         }
         .run(signal, on_delta, Duration::from_secs(2))
@@ -706,33 +763,44 @@ pub(super) async fn receive(
                         .collect::<Vec<_>>())
                 );
             }
-            match event["type"].as_str() {
-                Some("response.output_item.added") => output.item(&event, false)?,
-                Some("response.output_item.done") => output.item(&event, true)?,
-                Some("response.output_text.delta" | "response.refusal.delta") => {
-                    if let Some(text) = event["delta"].as_str() {
-                        on_delta(Delta::Text(text.into()))?;
-                    }
-                }
-                Some("response.reasoning_summary_text.delta") => {
-                    if let Some(text) = event["delta"].as_str() {
-                        on_delta(Delta::Summary(text.into()))?;
-                    }
-                }
-                Some("response.reasoning_summary_part.done") => {
-                    on_delta(Delta::Summary("\n\n".into()))?
-                }
-                Some("response.completed" | "response.done") => {
-                    return output.finish(event["response"].clone())
-                }
-                Some("response.failed" | "error") => {
-                    return Err(with_response_request_id(event_failure(&event), &response))
-                }
-                Some("response.incomplete") => return Err(protocol_error()),
-                _ => {}
+            if let Some(response_output) = stream_event(&mut output, &event, &mut on_delta)
+                .map_err(|error| with_response_request_id(error, &response))?
+            {
+                return Ok(response_output);
             }
         }
     }
+}
+
+fn stream_event(
+    output: &mut StreamOutput,
+    event: &Value,
+    on_delta: &mut impl FnMut(Delta) -> Result<(), AgentError>,
+) -> Result<Option<Response>, AgentError> {
+    match event["type"].as_str() {
+        Some("response.output_item.added") => output.item(event, false)?,
+        Some("response.output_item.done") => output.item(event, true)?,
+        Some("response.output_text.delta" | "response.refusal.delta") => {
+            if let Some(text) = event["delta"].as_str() {
+                on_delta(Delta::Text(text.into()))?;
+            }
+        }
+        Some("response.reasoning_summary_text.delta") => {
+            if let Some(text) = event["delta"].as_str() {
+                on_delta(Delta::Summary(text.into()))?;
+            }
+        }
+        Some("response.reasoning_summary_part.done") => on_delta(Delta::Summary("\n\n".into()))?,
+        Some("response.completed" | "response.done") => {
+            return std::mem::take(output)
+                .finish(event["response"].clone())
+                .map(Some)
+        }
+        Some("response.failed" | "error") => return Err(event_failure(event)),
+        Some("response.incomplete") => return Err(protocol_error()),
+        _ => {}
+    }
+    Ok(None)
 }
 
 fn completed(response: &Value) -> Result<Response, AgentError> {

@@ -41,6 +41,8 @@ describe("ToolCallCard Web Search", () => {
     ["jarvis_inspect_publication", "Git · Inspecionar repositórios"],
     ["jarvis_propose_publication", "GitHub · Proposta de publicação"],
     ["progress_checkpoint", "Reorganizar próxima ação"],
+    ["bash_wait", "Aguardar comando"],
+    ["bash_cancel", "Encerrar comando"],
     ["apply_patch", "Patch transacional"],
     ["lsp_definition", "Código · Definição"],
     ["lsp_references", "Código · Referências"],
