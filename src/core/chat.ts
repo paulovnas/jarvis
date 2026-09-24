@@ -13,6 +13,7 @@ import {
   type ChatSnapshot as GeneratedChatSnapshot,
   type CompactionEvent as GeneratedCompactionEvent,
   type ContextInfo as GeneratedContextInfo,
+  type CoreActivity as GeneratedCoreActivity,
   type DirectTask as GeneratedDirectTask,
   type FileChange as GeneratedFileChange,
   type HistoryExcerpt as GeneratedHistoryExcerpt,
@@ -104,6 +105,12 @@ export const usageSchema = z.object({
   cacheWriteTokens: z.number().nonnegative().nullable().optional(),
 });
 export const agentStepSchema = z.object({
+  coreActivities: z.array(z.object({
+    component: z.enum(["context-mode", "ponytail", "beads", "open-design", "context7", "lsp"]),
+    action: z.string(), status: z.enum(["applied", "reused", "unavailable"]),
+    summary: z.string(), sources: z.array(z.string()), fingerprint: z.string().nullable().optional(),
+    durationMs: z.number().nonnegative(),
+  })).optional(),
   contextId: z.string().nullable().optional(),
   contextSearches: z.number().int().nonnegative().default(0),
   contextReductions: z.array(z.object({ callId: z.string(), originalBytes: z.number().nonnegative(), retainedBytes: z.number().nonnegative() })).optional(),
@@ -181,6 +188,7 @@ export type QueuedMessage = Omit<GeneratedQueuedMessage, "parts"> & { parts?: Me
 export type FileChange = Omit<GeneratedFileChange, "revision"> & { revision?: number };
 export type FileDiff = z.infer<typeof fileDiffSchema>;
 export type ContextInfo = GeneratedContextInfo;
+export type CoreActivity = GeneratedCoreActivity;
 export type TurnOptions = GeneratedTurnOptions;
 export type AgentStep = Omit<GeneratedAgentStep, "contextSearches"> & { contextSearches?: number };
 export type AgentTurn = Omit<GeneratedAgentTurn, "parts" | "contextWindow" | "steps"> & {

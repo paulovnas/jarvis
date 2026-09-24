@@ -22,6 +22,16 @@ function Harness({ id = "c1", onLatestVisibility }: { id?: string; onLatestVisib
 }
 describe("lazy transcript navigation", () => {
   beforeEach(() => { clearChatStore(); call.mockReset(); vi.mocked(listen).mockResolvedValue(() => {}); });
+  it("retains the work disclosure when a saved turn contains only native Core activity", async () => {
+    const user = userEvent.setup();
+    const turn = savedTurn();
+    turn.steps = [{ ...turn.steps[0], text: "Pronto.", summary: "", tools: [], coreActivities: [{ component: "ponytail", action: "coding_guidance", status: "applied", summary: "Orientações aplicadas", sources: [], durationMs: 0 }] }];
+    render(<TurnBody turn={turn} />);
+    await user.click(screen.getByRole("button", { name: /Trabalhou por/ }));
+    await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+    expect(screen.getByText("Ponytail")).toBeVisible();
+    expect(screen.getByText(/Orientações aplicadas/)).toBeVisible();
+  });
   it("reports reading only at the latest messages and clears visibility when leaving", async () => {
     call.mockResolvedValue({ ...emptyChat(), ...page(80) });
     const onLatestVisibility = vi.fn<LatestVisibility>();

@@ -1,9 +1,9 @@
 # Native Core
 
-The first Core delivery installs Context-mode, Ponytail and Beads. All three
-packages are required before opening the workspace or starting/resuming an
-agent turn. Context-mode, Ponytail and Beads are integrated into agent turns.
-The dedicated Beads planning/activity frontend remains a subsequent delivery.
+Core includes Context-mode, Ponytail, Beads, Open Design, Context7 and managed
+language servers. Installation readiness and actual runtime usage are distinct:
+some components perform host-owned work, while optional documentation and
+navigation queries run only when needed. Context7 requires configured credentials.
 
 ## Installation
 
@@ -33,8 +33,9 @@ state. Offline release checks do not invalidate a working installation.
 
 ## Hooks and tools
 
-The internal pipeline follows Metis' preflight/result middleware model and
-Context-mode's OMP session adapter. It has no user-configurable hook registry:
+The internal pipeline uses an accepted-result boundary (Codex's tool
+registry/orchestrator) and Context-mode's session adapter. It has no
+user-configurable hook registry:
 
 1. Session start opens the private session database and restores its snapshot.
 2. User prompts enter the session event store.
@@ -65,9 +66,80 @@ shell tool, not an operating-system sandbox. Upgrade/purge/doctor tools are not
 exposed: settings owns installation and upgrades.
 
 Hook subprocesses and MCP calls have bounded input, output and timeouts.
-Cancellation terminates their process group. A post-tool hook failure preserves
-the actual tool output in the journal before stopping the turn, preventing a
-completed action from disappearing from history or being retried blindly.
+Cancellation terminates their process group. The tool result, original output
+and bounded provider replay are flushed to the journal **before** auxiliary
+capture runs. Failed memory hooks, recall or indexing produce a Core warning
+and disable repeated automatic attempts of that operation for the turn. They
+do not interrupt an already successful action. Cancellation and journal errors
+remain real execution boundaries. Installation probes remain strict.
+
+Automatic hooks, recall and output indexing each have a three-second deadline.
+If indexing fails, the model receives a bounded head/tail preview explicitly
+stating that the full result is preserved in local history but not searchable.
+Structured tool errors retain their original details. The model is told to
+request focused, read-only excerpts rather than rerun mutations to recover output.
+If the installed Context-mode service cannot start (15-second connection
+deadline), the turn uses native reads and bounded output instead. Its unavailable
+tools and routing rules are omitted together, so fallback never directs the
+agent to a missing tool. Package readiness and installation validation still apply.
+
+## Automatic design preparation
+
+Designer turns (direct and delegated) and custom agents with design resources
+receive local reference preparation before inference. No provider call, network
+request or project write is needed. The host reads up to three bounded identity
+excerpts from DESIGN.md and common stylesheet locations, including explicit
+worker scopes and configured repositories for direct agents. It ranks installed
+Open Design metadata against the request and saved brief and selects up to two
+relevant Markdown excerpts. Existing DESIGN.md excludes automatic selection of a
+replacement design system or template. The reference payload is capped at 8,000
+characters; canonical path containment and binary checks apply to both sources.
+
+References are marked as untrusted data beneath project/user decisions. They do
+not become approvals or replace a saved design brief. The model can use
+design_search/design_read for missing details, without a mandatory search/read
+ceremony. Content fingerprints avoid reinjecting unchanged references within an
+inference loop; local excerpts are revalidated and references are replayed after
+compaction. A new turn uses the current installed generation. Open Design
+unavailability is reported without stopping the Designer's project work.
+
+## Automatic language diagnostics
+
+Successful native write, edit and transactional patch operations contribute
+paths to a shared mutation batch. Results are durable before diagnostics run.
+The host checks supported source files once per batch, with a maximum of four
+files and five seconds. A structured handoff in the same model response first
+consumes pending diagnostics: newly reported compiler errors get one recoverable
+tool response so the agent can fix or explain them before handing off. Missing
+servers or unfinished checks never become workflow blocks or false successes.
+
+Diagnostic validity is tied to file content and native mutation batches. Changes
+to other files, including configuration/deletions, invalidate cached validity;
+identical reports are not repeatedly presented as new errors. Content is checked
+again after the query, and outdated versioned publishDiagnostics are ignored.
+Absent current diagnostics are reported as pending. JSON-RPC frames are read by
+a dedicated task, so request deadlines cannot leave half-consumed frames.
+Server errors/timeouts disable automatic retries for that language for the turn;
+explicit LSP queries remain available. Shell-generated changes are not inferred
+as native file mutations. These checks do not substitute for builds or tests.
+
+The concepts follow OpenCode's post-edit feedback and OMP's deferred diagnostics
+and diagnostic ledger, adapted to Jarvis's Rust loop and durable tool results.
+
+## Durable Core usage
+
+Agent steps carry optional typed Core receipts: component, action, applied/reused/
+unavailable status, summary, sources, content fingerprint and duration where measured.
+They cover memory lifecycle/recall/indexing, Ponytail prompt injection, Beads
+snapshot restoration, design preparation and automatic LSP work. The journal,
+generated IPC contract, incremental renderer deltas and history parser preserve
+the same records. Older histories remain compatible without invented activity.
+
+The chat presents one collapsed "Recursos do Core" summary within work history.
+It aggregates host receipts separately from model-invoked tools, retaining
+warnings and source references. It does not move observations/tools or inflate
+the model action count. Context7 is advertised only when configured and remains
+demand-driven; installing a component is never displayed as proof of usage.
 
 ## Ponytail policy
 
@@ -156,6 +228,17 @@ invalid paths, lazy reads, cancellation and deletion recovery. A frontend test
 verifies that the existing collapsed tool card reveals the saved task on demand.
 
 ## Verification
+
+The 2026-09-24 runtime integration passes the complete frontend check (665 tests,
+one skipped), formatting, Clippy with warnings denied, and the Rust suite (798
+tests, 19 opt-in tests ignored). The installed Context-mode isolation smoke also
+passes separately against 1.0.169 using temporary storage and synthetic data.
+New regressions cover durable accepted results before auxiliary failure,
+structured errors, cancellation, unavailable service routing, design identity/
+reference refresh, bounded/stale LSP diagnostics, live receipts and legacy history.
+Language-server protocol fixtures run on Unix; this change has not been exercised
+through real provider conversations or a manual native UI session. Historical
+native smoke observations below belong to earlier Core deliveries.
 
 The opt-in Rust `official_installation_smoke` downloads releases into a temporary
 home, checks Node FTS5, discovers Context-mode tools, indexes/searches synthetic

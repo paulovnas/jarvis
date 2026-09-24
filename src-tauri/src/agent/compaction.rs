@@ -378,7 +378,7 @@ pub(super) async fn ensure(
             if prepare {
                 if let Some(hooks) = hooks {
                     hooks
-                        .run(
+                        .run_resilient(
                             crate::core::hooks::Event::PreCompact,
                             json!({}),
                             signal.clone(),
@@ -454,7 +454,7 @@ pub(super) async fn ensure(
                 .map(|c| c.summary.clone())
                 .unwrap_or_default();
             hooks
-                .run(
+                .run_resilient(
                     crate::core::hooks::Event::PostCompact,
                     json!({"text":summary}),
                     summary_signal,

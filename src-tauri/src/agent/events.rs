@@ -72,6 +72,9 @@ pub(super) enum Event {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         summary_replace: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        core_activities: Option<Vec<crate::core::activity::Activity>>,
         #[cfg_attr(test, ts(type = "number"))]
         duration_ms: u64,
         retry: Option<super::provider::retry::Status>,
@@ -355,6 +358,7 @@ fn append_step_events(events: &mut Vec<Event>, before: &Turn, after: &Turn) {
             || old.duration_ms != new.duration_ms
             || !same(&old.retry, &new.retry)
             || !same(&old.usage, &new.usage)
+            || !same(&old.core_activities, &new.core_activities)
         {
             events.push(Event::ItemDelta {
                 step_index: index,
@@ -362,6 +366,8 @@ fn append_step_events(events: &mut Vec<Event>, before: &Turn, after: &Turn) {
                 summary_append,
                 text_replace,
                 summary_replace,
+                core_activities: (!same(&old.core_activities, &new.core_activities))
+                    .then(|| new.core_activities.clone()),
                 duration_ms: new.duration_ms,
                 retry: new.retry.clone(),
                 usage: new.usage.clone(),
@@ -500,6 +506,7 @@ mod tests {
             summary_append: "resumo".into(),
             text_replace: None,
             summary_replace: None,
+            core_activities: None,
             duration_ms: 15,
             retry: None,
             usage: None,
@@ -510,6 +517,43 @@ mod tests {
         assert_eq!(serialized["textAppend"], "texto");
         assert!(serialized.get("step_index").is_none());
         assert!(serialized.get("textReplace").is_none());
+    }
+
+    #[test]
+    fn core_receipts_emit_live_deltas_without_text_or_tool_changes() {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve("Implementar".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        session
+            .update(true, |data| {
+                data.turns
+                    .last_mut()
+                    .unwrap()
+                    .turn
+                    .steps
+                    .push(Step::default())
+            })
+            .unwrap();
+        let before = session.snapshot().unwrap();
+        super::super::core_runtime::record(
+            &session,
+            vec![crate::core::activity::Activity::unavailable(
+                crate::core::ComponentId::Lsp,
+                "post_mutation_diagnostics",
+                "Servidor indisponível",
+            )],
+        )
+        .unwrap();
+        let after = session.snapshot().unwrap();
+        let delta = differences(Some(&before), &after);
+        assert!(
+            matches!(delta.as_slice(), [Event::ItemDelta {core_activities: Some(activities), ..}] if activities.len() == 1)
+        );
+        let serialized = serde_json::to_value(&delta[0]).unwrap();
+        assert_eq!(serialized["coreActivities"][0]["component"], "lsp");
+        assert_eq!(serialized["coreActivities"][0]["status"], "unavailable");
     }
 
     #[test]

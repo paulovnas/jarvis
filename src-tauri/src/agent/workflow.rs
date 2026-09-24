@@ -407,7 +407,7 @@ impl Execution {
             .custom_agent
             .ok_or_else(AgentError::internal)
     }
-    fn direct(&self) -> bool {
+    pub(super) fn direct(&self) -> bool {
         self.flow.direct()
             || (self.flow == Flow::Custom
                 && self.id == "main"
@@ -440,6 +440,25 @@ impl Execution {
         self.designer()
             || (self.flow == Flow::Custom
                 && (self.allowed("design_search") || self.allowed("design_read")))
+    }
+    pub(super) fn design_inputs(&self) -> Result<(Vec<String>, String), AgentError> {
+        let state = self
+            .hub
+            .manifest
+            .lock()
+            .map_err(|_| AgentError::internal())?;
+        let scopes = state
+            .jobs
+            .get(&self.id)
+            .map(|job| job.scope.clone())
+            .unwrap_or_else(|| vec![".".into()]);
+        let brief = state
+            .design_briefs
+            .get(&self.id)
+            .or_else(|| state.design_briefs.get("main"))
+            .cloned()
+            .unwrap_or_default();
+        Ok((scopes, brief))
     }
     pub(super) fn role_mode(&self) -> Mode {
         if self.publication() {

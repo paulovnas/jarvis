@@ -33,6 +33,8 @@
     "RetryStatus",
     "Usage",
     "ContextReduction",
+    "CoreActivityStatus",
+    "CoreActivity",
     "AgentStep",
     "TurnStatus",
     "AgentTurn",

@@ -1,4 +1,5 @@
 //! Jarvis-owned packages. Installation readiness is independent of provider setup.
+pub mod activity;
 pub mod beads;
 pub mod context;
 pub mod context7;

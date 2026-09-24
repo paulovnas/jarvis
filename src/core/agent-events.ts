@@ -42,6 +42,7 @@ const agentEventSchema = z.discriminatedUnion("type", [
     type: z.literal("itemDelta"), stepIndex: z.number().int().nonnegative(),
     textAppend: z.string(), summaryAppend: z.string(), textReplace: z.string().optional(), summaryReplace: z.string().optional(),
     durationMs: z.number().nonnegative(), retry: retryStatusSchema.nullable(), usage: usageSchema.nullable(),
+    coreActivities: agentStepSchema.shape.coreActivities,
   }),
   z.object({ type: z.literal("itemCompleted"), stepIndex: z.number().int().nonnegative(), tool: agentToolSchema }),
   z.object({ type: z.literal("tasksUpdated"), tasks: z.array(directTaskSchema) }),
@@ -111,6 +112,7 @@ function applyEvent(snapshot: ChatSnapshot, event: z.infer<typeof agentEventSche
         ...step,
         text: event.textReplace ?? `${step.text}${event.textAppend}`,
         summary: event.summaryReplace ?? `${step.summary}${event.summaryAppend}`,
+        coreActivities: event.coreActivities ?? step.coreActivities,
         durationMs: event.durationMs, retry: event.retry, usage: event.usage,
       })));
     case "itemCompleted":

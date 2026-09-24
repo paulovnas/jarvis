@@ -3,6 +3,14 @@ import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { readChat } from "./chat";
 
 describe("Chat IPC contract", () => {
+  it("preserves automatic Core receipts across history reloads without requiring them in legacy data", () => {
+    const turn = savedTurn();
+    const receipt = { component: "open-design", action: "design_preparation", status: "reused", summary: "Referências reutilizadas", sources: ["project:DESIGN.md"], fingerprint: "digest", durationMs: 4 };
+    turn.steps[0] = { ...turn.steps[0], tools: [] };
+    const payload = { ...emptyChat(), turns: [{ ...turn, steps: [{ ...turn.steps[0], coreActivities: [receipt] }] }] };
+    expect(readChat(JSON.parse(JSON.stringify(payload)), "c1").turns[0].steps[0].coreActivities).toEqual([receipt]);
+    expect(readChat({ ...emptyChat(), turns: [turn] }, "c1").turns[0].steps[0].coreActivities).toBeUndefined();
+  });
   it("preserves live retry state and remains compatible with older history", () => {
     const turn = savedTurn();
     const retry = { attempt: 2, maxAttempts: 5, retryAt: 123, message: "HTTP 502" };

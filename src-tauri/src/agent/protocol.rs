@@ -31,6 +31,7 @@ mod tests {
         execution_policy::{CommandInvocation, CommandPlan, ExecutionEffects, Redirection},
         execution_sandbox::{SandboxAvailability, SandboxBackend, SandboxNetwork, SandboxReport},
     };
+    use crate::core::activity::{Activity as CoreActivity, Status as CoreActivityStatus};
     use std::{fs, path::PathBuf};
     use ts_rs::TS;
 
@@ -66,6 +67,8 @@ mod tests {
         "RetryStatus",
         "Usage",
         "ContextReduction",
+        "CoreActivityStatus",
+        "CoreActivity",
         "AgentStep",
         "TurnStatus",
         "AgentTurn",
@@ -116,6 +119,8 @@ mod tests {
             RetryStatus::decl(),
             Usage::decl(),
             ContextReduction::decl(),
+            CoreActivityStatus::decl(),
+            CoreActivity::decl(),
             Step::decl(),
             TurnStatus::decl(),
             Turn::decl(),

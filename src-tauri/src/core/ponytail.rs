@@ -11,6 +11,8 @@ const HOST_POLICY: &str = "Apply Ponytail only to coding, code review and techni
 
 pub struct Ponytail {
     prompt: String,
+    version: String,
+    digest: String,
 }
 
 #[derive(Deserialize)]
@@ -38,6 +40,8 @@ impl Ponytail {
         let rules = full_rules(&source)?;
         let digest = format!("{:x}", Sha256::digest(source.as_bytes()));
         Ok(Self {
+            version: version.into(),
+            digest: digest.clone(),
             prompt: format!(
                 "\n<ponytail_guidance version=\"{version}\" mode=\"full\" sha256=\"{digest}\">\n{rules}\n</ponytail_guidance>\n\nJarvis policy for the guidance above (takes precedence):\n{HOST_POLICY}\n"
             ),
@@ -46,6 +50,19 @@ impl Ponytail {
 
     pub(super) fn append_to(&self, instructions: &mut String) {
         instructions.push_str(&self.prompt);
+    }
+
+    pub(super) fn activity(&self) -> super::activity::Activity {
+        let mut activity = super::activity::Activity::new(
+            super::ComponentId::Ponytail,
+            "coding_guidance",
+            "Orientações de código aplicadas automaticamente às solicitações ao modelo",
+        );
+        activity
+            .sources
+            .push(format!("ponytail:{}/{SKILL_PATH}", self.version));
+        activity.fingerprint = Some(self.digest.clone());
+        activity
     }
 }
 

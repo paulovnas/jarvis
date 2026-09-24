@@ -10,6 +10,10 @@ use crate::mcp::{
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -85,10 +89,16 @@ pub(super) async fn cancelled(signal: &mut watch::Receiver<bool>) {
         }
     }
 }
+pub(super) fn is_cancelled(signal: &watch::Receiver<bool>) -> bool {
+    *signal.borrow() || signal.has_changed().is_err()
+}
 pub struct ContextMode {
-    client: Client,
+    client: Option<Client>,
     pub hooks: Hooks,
     root: PathBuf,
+    indexing_unavailable: AtomicBool,
+    recall_unavailable: AtomicBool,
+    activity: Mutex<Vec<super::activity::Activity>>,
 }
 impl ContextMode {
     pub async fn open(
@@ -99,10 +109,65 @@ impl ContextMode {
     ) -> Result<Self, CoreError> {
         let package = installed(home, ComponentId::ContextMode)?.path(home)?;
         let hooks = Hooks::new(home, root, session)?;
-        let mut context =
-            Self::at(&package, &storage(home, session), root, session, signal).await?;
-        context.hooks = hooks;
-        Ok(context)
+        // Initialize the private event store before connecting, as installation
+        // probes do, but a failed auxiliary store must not prevent native work.
+        hooks
+            .run_resilient(Event::SessionStart, json!({}), signal.clone())
+            .await?;
+        match Self::connect(
+            &package,
+            &storage(home, session),
+            root,
+            session,
+            hooks,
+            signal,
+        )
+        .await
+        {
+            Ok(context) => Ok(context),
+            Err(cause) if cause.code == "cancelled" => Err(cause),
+            Err(cause) => Ok(Self::without_client(
+                root,
+                Hooks::new(home, root, session)?,
+                &cause,
+            )),
+        }
+    }
+    fn without_client(root: &Path, hooks: Hooks, cause: &CoreError) -> Self {
+        Self {
+            client: None, hooks, root: root.into(),
+            indexing_unavailable: AtomicBool::new(true),
+            recall_unavailable: AtomicBool::new(true),
+            activity: Mutex::new(vec![super::activity::Activity::unavailable(ComponentId::ContextMode,
+                "startup", &format!("Context-mode indisponível nesta execução; leituras nativas e histórico local continuam disponíveis. {}", cause.message.chars().take(300).collect::<String>()))]),
+        }
+    }
+    pub fn available(&self) -> bool {
+        self.client.is_some()
+    }
+    fn client(&self) -> Result<&Client, CoreError> {
+        self.client.as_ref().ok_or_else(|| error("Context-mode indisponível nesta execução. Use leituras nativas focadas; não repita ações já concluídas."))
+    }
+    pub fn instructions(&self) -> &'static str {
+        if self.available() {
+            INSTRUCTIONS
+        } else {
+            "\nContext-mode is unavailable for this turn. Use small, focused native reads/searches and bounded command output. Completed results remain in local history; do not claim indexing or searchable memory, and never rerun mutations merely to retrieve their output. Core installation/repair is managed by Jarvis Settings. Continue the requested work with the available tools.\n"
+        }
+    }
+    pub fn retrieval_hint(&self) -> &'static str {
+        if self.available() {
+            "Use ctx_search for indexed details before repeating research."
+        } else {
+            "Indexed memory is unavailable; continue from the preserved history and focused native reads."
+        }
+    }
+    pub fn pre_tool(&self, name: &str, args: &Value) -> Option<&'static str> {
+        if self.available() {
+            super::hooks::pre_tool(name, args)
+        } else {
+            None
+        }
     }
     async fn at(
         package: &Path,
@@ -116,6 +181,16 @@ impl ContextMode {
         hooks
             .run(Event::SessionStart, json!({}), signal.clone())
             .await?;
+        Self::connect(package, storage, root, session, hooks, signal).await
+    }
+    async fn connect(
+        package: &Path,
+        storage: &Path,
+        root: &Path,
+        session: &str,
+        hooks: Hooks,
+        signal: watch::Receiver<bool>,
+    ) -> Result<Self, CoreError> {
         let config = Config::Local {
             command: vec![
                 install::node_path(package).to_string_lossy().into(),
@@ -128,7 +203,7 @@ impl ContextMode {
             cwd: None,
             environment: environment(package, storage, root, session),
             enabled: true,
-            timeout: 120_000,
+            timeout: 15_000,
             request_timeout: 120_000,
         };
         let server = Server {
@@ -140,9 +215,15 @@ impl ContextMode {
             revision: 1,
             last_check: None,
         };
-        let client = connect(server, config, root, signal)
+        let client = connect(server, config, root, signal.clone())
             .await
-            .map_err(|cause| error(cause.message))?;
+            .map_err(|cause| {
+                if is_cancelled(&signal) {
+                    super::cancelled_error()
+                } else {
+                    error(cause.message)
+                }
+            })?;
         let names: Vec<_> = client
             .core_definitions()
             .iter()
@@ -152,13 +233,19 @@ impl ContextMode {
             return Err(error("O Context-mode instalado não oferece as ferramentas necessárias. Reinstale o Core."));
         }
         Ok(Self {
-            client,
+            client: Some(client),
             hooks,
             root: root.into(),
+            indexing_unavailable: AtomicBool::new(false),
+            recall_unavailable: AtomicBool::new(false),
+            activity: Mutex::new(Vec::new()),
         })
     }
     pub fn definitions(&self, plan: bool) -> Vec<Value> {
-        self.client
+        let Some(client) = &self.client else {
+            return Vec::new();
+        };
+        client
             .core_definitions()
             .into_iter()
             .filter(|definition| {
@@ -181,11 +268,11 @@ impl ContextMode {
         signal: watch::Receiver<bool>,
     ) -> Result<String, CoreError> {
         let result = self
-            .client
+            .client()?
             .core_call("ctx_search", &recall_args(user), signal.clone())
             .await
             .map_err(|cause| {
-                if *signal.borrow() {
+                if is_cancelled(&signal) {
                     super::cancelled_error()
                 } else {
                     error(cause.message)
@@ -205,6 +292,68 @@ impl ContextMode {
             }
         }
         Ok(())
+    }
+    pub async fn recall_resilient(
+        &self,
+        user: &str,
+        signal: watch::Receiver<bool>,
+    ) -> Result<String, CoreError> {
+        if is_cancelled(&signal) {
+            return Err(super::cancelled_error());
+        }
+        if self.recall_unavailable.load(Ordering::Relaxed) {
+            return Ok(String::new());
+        }
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            self.recall(user, signal.clone()),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(error(
+                "Tempo limite da consulta automática de memória atingido.",
+            ))
+        });
+        if is_cancelled(&signal) {
+            return Err(super::cancelled_error());
+        }
+        match result {
+            Ok(value) => {
+                if let Ok(mut activity) = self.activity.lock() {
+                    activity.push(super::activity::Activity::new(
+                        ComponentId::ContextMode,
+                        "memory_recall",
+                        "Memória consultada automaticamente para preparar o contexto",
+                    ));
+                }
+                Ok(value)
+            }
+            Err(cause) if cause.code == "cancelled" => Err(cause),
+            Err(cause) => {
+                self.recall_unavailable.store(true, Ordering::Relaxed);
+                self.notice("memory_recall", "A consulta automática de memória falhou; a execução continuará com o histórico local.", &cause);
+                Ok(String::new())
+            }
+        }
+    }
+    fn notice(&self, action: &str, summary: &str, cause: &CoreError) {
+        if let Ok(mut activity) = self.activity.lock() {
+            activity.push(super::activity::Activity::unavailable(
+                ComponentId::ContextMode,
+                action,
+                &format!(
+                    "{summary} {}",
+                    cause.message.chars().take(300).collect::<String>()
+                ),
+            ));
+        }
+    }
+    pub fn take_activity(&self) -> Vec<super::activity::Activity> {
+        let mut activity = self.hooks.take_activity();
+        if let Ok(mut pending) = self.activity.lock() {
+            activity.extend(std::mem::take(&mut *pending));
+        }
+        activity
     }
     pub async fn execute(
         &self,
@@ -242,18 +391,18 @@ impl ContextMode {
             && routed["intent"]
                 .as_str()
                 .is_none_or(|intent| intent.trim().is_empty())
-            && self.client.core_definitions().iter().any(|definition| {
+            && self.client()?.core_definitions().iter().any(|definition| {
                 definition["name"] == name
                     && definition["parameters"]["properties"]["intent"].is_object()
             })
         {
             routed["intent"] = json!("Relevant findings, failures and results for the current task; index verbose output for focused retrieval.");
         }
-        self.client
+        self.client()?
             .core_call(name, &routed, signal.clone())
             .await
             .map_err(|cause| {
-                if *signal.borrow() {
+                if is_cancelled(&signal) {
                     super::cancelled_error()
                 } else if name == "ctx_search" {
                     error(format!(
@@ -289,7 +438,7 @@ impl ContextMode {
             })
             .collect();
         self.hooks
-            .run(
+            .run_resilient(
                 Event::PostTool,
                 json!({"name":name,"args":hook_args,"output":output,"failed":failed}),
                 signal.clone(),
@@ -300,23 +449,72 @@ impl ContextMode {
         if !should_index(name, output) {
             return Ok(None);
         }
+        if self.indexing_unavailable.load(Ordering::Relaxed) {
+            return Err(error("Indexação auxiliar indisponível nesta execução."));
+        }
         let source = format!("tool-{call_id}");
-        let indexed = self
-            .client
-            .core_call(
+        let indexed = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            self.client()?.core_call(
                 "ctx_index",
                 &json!({"content":output,"source":source}),
-                signal,
-            )
-            .await
-            .map_err(|cause| error(cause.message))?;
+                signal.clone(),
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(crate::mcp::error(
+                "Tempo limite da indexação automática atingido.",
+            ))
+        })
+        .map_err(|cause| {
+            if is_cancelled(&signal) {
+                return super::cancelled_error();
+            }
+            let cause = error(cause.message);
+            self.indexing_unavailable.store(true, Ordering::Relaxed);
+            self.notice(
+                "result_indexing",
+                "A indexação automática falhou; os resultados completos permanecem no histórico.",
+                &cause,
+            );
+            cause
+        })?;
+        if let Ok(mut activity) = self.activity.lock() {
+            let mut receipt = super::activity::Activity::new(
+                ComponentId::ContextMode,
+                "result_indexing",
+                "Resultado extenso indexado automaticamente para consultas focadas",
+            );
+            receipt.sources.push(source.clone());
+            activity.push(receipt);
+        }
         let compact = compact_result(name, output, &source, &indexed);
         // Indexing must actually reduce the replay, including retrieval instructions.
         Ok((compact.len() < output.len()).then_some(compact))
     }
     pub async fn close(&mut self) {
-        self.client.close().await;
+        if let Some(client) = self.client.as_mut() {
+            client.close().await;
+        }
     }
+}
+/// Do not flood the model or claim an index exists when indexing failed. The
+/// caller persists the original output before continuing with this preview.
+pub fn fallback_result(name: &str, output: &str) -> String {
+    if !should_index(name, output) {
+        return output.into();
+    }
+    let start: String = output.chars().take(700).collect();
+    let end: String = output
+        .chars()
+        .rev()
+        .take(700)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{start}\n[…]\n{end}\n\nIndexing is unavailable. The complete result is preserved in local chat history, but is NOT searchable in Context-mode. Request a small read-only excerpt from its original source if needed. Do not rerun mutations to recover output.")
 }
 fn should_index(name: &str, output: &str) -> bool {
     // Skill instructions must be read in full. Their native paginated reader is
@@ -445,6 +643,52 @@ pub(super) async fn verify(package: &Path) -> Result<(), CoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn startup_fallback_does_not_advertise_or_route_to_missing_tools() {
+        let directory = tempfile::tempdir().unwrap();
+        let hooks = Hooks::at(
+            directory.path(),
+            directory.path(),
+            directory.path(),
+            "fallback-test",
+        );
+        let mut context =
+            ContextMode::without_client(directory.path(), hooks, &error("Connection refused"));
+        assert!(!context.available());
+        assert!(context.definitions(false).is_empty());
+        assert!(context
+            .instructions()
+            .contains("Continue the requested work"));
+        assert!(!context.retrieval_hint().contains("ctx_search"));
+        assert!(context
+            .pre_tool("bash", &json!({"command":"curl https://example.com"}))
+            .is_none());
+        let (sender, signal) = watch::channel(false);
+        assert_eq!(
+            context
+                .recall_resilient("user request", signal.clone())
+                .await
+                .unwrap(),
+            ""
+        );
+        assert_eq!(
+            context.take_activity()[0].status,
+            super::super::activity::Status::Unavailable
+        );
+        assert!(context.take_activity().is_empty());
+        sender.send(true).unwrap();
+        assert_eq!(
+            context
+                .recall_resilient("user request", signal)
+                .await
+                .unwrap_err()
+                .code,
+            "cancelled"
+        );
+        context.close().await;
+    }
+
     #[tokio::test]
     #[ignore = "Requires JARVIS_CONTEXT_PACKAGE pointing to the installed Core; isolated temporary data, no provider requests"]
     async fn installed_core_enforces_budget_and_recalls_in_isolation() {

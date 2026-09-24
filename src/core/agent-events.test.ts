@@ -68,6 +68,17 @@ describe("agent event protocol", () => {
     expect(applied.snapshot?.history).toEqual({ start: 21, total: 81 });
   });
 
+  it("shows automatic Core activity immediately and preserves it through later text deltas", () => {
+    const turn = { ...savedTurn(), status: "running" as const };
+    const current = { ...emptyChat(), revision: 4, turns: [turn], activeTurnId: turn.id, history: { start: 0, total: 1 } };
+    const receipt = { component: "lsp", action: "post_mutation_diagnostics", status: "unavailable", summary: "Servidor indisponível", sources: ["src/app.tsx"], durationMs: 10 };
+    const batch = agentEventBatchSchema.parse({ conversationId: "c1", baseRevision: 4, revision: 5, events: [{ type: "itemDelta", stepIndex: 0, textAppend: "", summaryAppend: "", durationMs: 25, retry: null, usage: null, coreActivities: [receipt] }] });
+    const updated = applyAgentEventBatch(current, batch).snapshot!;
+    expect(updated.turns[0].steps[0].coreActivities).toEqual([receipt]);
+    const next = agentEventBatchSchema.parse({ conversationId: "c1", baseRevision: 5, revision: 6, events: [{ type: "itemDelta", stepIndex: 0, textAppend: "Resposta", summaryAppend: "", durationMs: 35, retry: null, usage: null }] });
+    expect(applyAgentEventBatch(updated, next).snapshot?.turns[0].steps[0].coreActivities).toEqual([receipt]);
+  });
+
   it("applies ordered deltas without replacing the complete chat snapshot", () => {
     const turn = { ...savedTurn(), status: "running" as const, steps: [{ ...savedTurn().steps[0], text: "", summary: "", tools: [] }] };
     const current = { ...emptyChat(), revision: 4, turns: [turn], activeTurnId: turn.id, history: { start: 0, total: 1 } };

@@ -20,6 +20,9 @@ const PACKAGED_MANIFEST: &str = "apps/packaged/package.json";
 
 pub const INSTRUCTIONS: &str = include_str!("design.md");
 
+mod preparation;
+pub use preparation::Prepared;
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Resource {
     id: String,

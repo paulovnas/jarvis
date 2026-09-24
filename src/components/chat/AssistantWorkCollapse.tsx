@@ -9,6 +9,7 @@ import { groupToolActivity, isTaskReminder, summarizeToolActivity } from "./tool
 import type { AssistantWorkData, ToolCallItem } from "./types";
 import { reasoningPreview, reasoningSections } from "./reasoning-preview";
 import { describeExecution } from "./execution-status";
+import { CoreActivitySummary } from "./CoreActivitySummary";
 
 const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
 
@@ -19,6 +20,7 @@ export function AssistantWorkCollapse({ work, isStreaming = false }: { work: Ass
   if (isStreaming) return <section aria-label="Atividades da execução atual" className="flex min-w-0 flex-col gap-1.5 text-muted-foreground">
     {retry && <p className="rounded-md border border-onedark-yellow/20 bg-onedark-yellow/5 px-3 py-2 text-xs text-onedark-yellow">{retry.message}</p>}
     <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming />
+    <CoreActivitySummary steps={work.steps} />
     {work.steps.length === 0 && !retry && <p className="py-1 text-xs">Conectando ao provedor…</p>}
   </section>;
 
@@ -34,6 +36,7 @@ export function AssistantWorkCollapse({ work, isStreaming = false }: { work: Ass
       </CollapsibleTrigger>
       <CollapsibleContent className="flex min-w-0 flex-col gap-1.5 py-2">
         <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming={false} />
+        <CoreActivitySummary steps={work.steps} />
         {work.steps.length === 0 && <p className="py-1 text-xs">Nenhuma atividade registrada.</p>}
       </CollapsibleContent>
     </Collapsible>

@@ -456,6 +456,17 @@ pub(crate) fn prompt(
     })
 }
 
+pub(crate) fn configured_paths(
+    state: &AppState,
+    home: &Path,
+    project_id: &str,
+) -> Result<Vec<String>, LibraryError> {
+    state.with_connection(home, |connection| {
+        read_configs(connection, project_id)
+            .map(|configs| configs.into_iter().map(|config| config.path).collect())
+    })
+}
+
 #[tauri::command]
 pub async fn get_project_repositories(
     app: tauri::AppHandle,

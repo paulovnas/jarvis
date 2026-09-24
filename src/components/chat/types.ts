@@ -21,6 +21,7 @@ export interface AssistantWorkData {
     thinking: string;
     commentary: string;
     tools: ToolCallItem[];
+    coreActivities?: import("@/core/chat").CoreActivity[];
   }[];
 }
 

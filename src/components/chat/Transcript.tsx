@@ -44,11 +44,11 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId, onRetry, 
   return <AssistantMessageTurn onRetry={onRetry && retryableTurn(turn) ? () => onRetry(turn.id) : undefined} retrying={retrying} retryUnavailableReason={retryUnavailableReason(turn)} message={{
     id: turn.id, role: "assistant", content: running || repeatedError ? "" : latestText, timestamp,
     model: `${turn.options.account} / ${turn.options.model}`, streaming: running,
-    work: running || turn.steps.some((step, index) => step.summary || step.tools.length || (step.text && index < turn.steps.length - 1)) ? {
+    work: running || turn.steps.some((step, index) => step.summary || step.tools.length || step.coreActivities?.length || (step.text && index < turn.steps.length - 1)) ? {
       retry: running ? turn.steps[turn.steps.length - 1]?.retry : undefined,
       durationSeconds: Math.floor(durationMs / 1000),
       detailContext: conversationId ? { conversationId, turnId: turn.id } : undefined,
-      steps: turn.steps.map((step, index) => ({ thinking: step.summary, tools: step.tools, commentary: running || index < turn.steps.length - 1 ? step.text : "" })),
+      steps: turn.steps.map((step, index) => ({ thinking: step.summary, tools: step.tools, coreActivities: step.coreActivities, commentary: running || index < turn.steps.length - 1 ? step.text : "" })),
     } : undefined,
     error: turn.error ? { title: errorTitle, message: turn.error.message } : undefined,
     exportFileName,

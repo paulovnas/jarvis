@@ -66,7 +66,11 @@ export type Usage = { inputTokens: number, outputTokens: number, cacheReadTokens
 
 export type ContextReduction = { callId: string, originalBytes: number, retainedBytes: number, };
 
-export type AgentStep = { contextId?: string | null, contextSearches: number, contextReductions?: Array<ContextReduction>, readReuses?: Array<ContextReduction>, loopSteers?: number, loopAvoidedCalls?: number, progressEvents?: number, evidenceEvents?: number, progressCheckpoints?: number, progressPauses?: number, retry?: RetryStatus | null, durationMs: number, text: string, summary: string, tools: Array<AgentTool>, usage: Usage | null, };
+export type CoreActivityStatus = "applied" | "reused" | "unavailable";
+
+export type CoreActivity = { component: "context-mode" | "ponytail" | "beads" | "open-design" | "context7" | "lsp", action: string, status: CoreActivityStatus, summary: string, sources: Array<string>, fingerprint?: string | null, durationMs: number, };
+
+export type AgentStep = { coreActivities?: Array<CoreActivity>, contextId?: string | null, contextSearches: number, contextReductions?: Array<ContextReduction>, readReuses?: Array<ContextReduction>, loopSteers?: number, loopAvoidedCalls?: number, progressEvents?: number, evidenceEvents?: number, progressCheckpoints?: number, progressPauses?: number, retry?: RetryStatus | null, durationMs: number, text: string, summary: string, tools: Array<AgentTool>, usage: Usage | null, };
 
 export type TurnStatus = "running" | "completed" | "cancelled" | "error" | "interrupted";
 
@@ -90,7 +94,7 @@ export type StartedItem = { "type": "step", stepIndex: number, step: AgentStep, 
 
 export type SnapshotState = { compacting: boolean, activeTurnId: string | null, pendingApproval: PendingApproval | null, pendingQuestion: unknown | null, pendingAuthoring: unknown | null, queuedMessages: Array<QueuedMessage>, context: ContextInfo, compactions: Array<CompactionEvent>, fileChanges: Array<FileChange>, history: HistoryWindow, };
 
-export type AgentEvent = { "type": "turnStarted", turn: AgentTurn, } | { "type": "itemStarted", item: StartedItem, } | { "type": "itemDelta", stepIndex: number, textAppend: string, summaryAppend: string, textReplace?: string, summaryReplace?: string, durationMs: number, retry: RetryStatus | null, usage: Usage | null, } | { "type": "itemCompleted", stepIndex: number, tool: AgentTool, } | { "type": "tasksUpdated", tasks: Array<DirectTask>, } | { "type": "approvalRequested", approval: PendingApproval | null, } | { "type": "stateChanged", state: SnapshotState, } | { "type": "turnCompleted", turn: AgentTurn, };
+export type AgentEvent = { "type": "turnStarted", turn: AgentTurn, } | { "type": "itemStarted", item: StartedItem, } | { "type": "itemDelta", stepIndex: number, textAppend: string, summaryAppend: string, textReplace?: string, summaryReplace?: string, coreActivities?: Array<CoreActivity>, durationMs: number, retry: RetryStatus | null, usage: Usage | null, } | { "type": "itemCompleted", stepIndex: number, tool: AgentTool, } | { "type": "tasksUpdated", tasks: Array<DirectTask>, } | { "type": "approvalRequested", approval: PendingApproval | null, } | { "type": "stateChanged", state: SnapshotState, } | { "type": "turnCompleted", turn: AgentTurn, };
 
 export type AgentEventBatch = { protocolVersion: number, conversationId: string, baseRevision: number | null, revision: number, events: Array<AgentEvent>, };
 
