@@ -1,6 +1,8 @@
 //! Immutable runtime snapshots. read_skill always rechecks current permissions.
 use super::{catalog, error, read_config, root, store, Config, Skill, SkillError};
+use sha2::{Digest, Sha256};
 use std::{
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -16,11 +18,14 @@ pub(super) struct Stamp {
     path: PathBuf,
     link: Option<PathBuf>,
     metadata: Option<MetadataStamp>,
+    content: Option<[u8; 32]>,
+    entries: Option<Vec<OsString>>,
 }
 
 impl Stamp {
     pub(super) fn read(path: &Path) -> Self {
-        let metadata = fs::metadata(path).ok().map(|m| {
+        let file = fs::metadata(path).ok();
+        let metadata = file.as_ref().map(|m| {
             #[cfg(unix)]
             let identity = {
                 use std::os::unix::fs::MetadataExt;
@@ -37,10 +42,32 @@ impl Stamp {
                 identity.2,
             )
         });
+        // Metadata alone can miss rapid same-size edits on coarse timestamp filesystems.
+        // ponytail: hash bounded skill files; use filesystem notifications if polling becomes costly.
+        let content = file
+            .as_ref()
+            .filter(|m| m.is_file())
+            .and_then(|_| catalog::text(path).ok())
+            .map(|text| Sha256::digest(text.as_bytes()).into());
+        let mut entries = file
+            .as_ref()
+            .filter(|m| m.is_dir())
+            .and_then(|_| fs::read_dir(path).ok())
+            .and_then(|entries| {
+                entries
+                    .map(|entry| entry.map(|e| e.file_name()))
+                    .collect::<std::io::Result<Vec<_>>>()
+                    .ok()
+            });
+        if let Some(names) = &mut entries {
+            names.sort();
+        }
         Self {
             path: path.to_path_buf(),
             link: fs::read_link(path).ok(),
             metadata,
+            content,
+            entries,
         }
     }
     fn valid(&self) -> bool {
@@ -96,6 +123,16 @@ pub(super) fn active(home: &Path, project: &Path) -> Result<Arc<[Skill]>, SkillE
 mod tests {
     use super::*;
 
+    fn suppress_metadata_change(home: &Path, path: &Path) {
+        // Reproduce filesystems that report identical metadata for rapid edits.
+        let metadata = Stamp::read(path).metadata;
+        for entry in CACHE.lock().unwrap().iter_mut().filter(|e| e.home == home) {
+            for stamp in entry.watched.iter_mut().filter(|s| s.path == path) {
+                stamp.metadata = metadata;
+            }
+        }
+    }
+
     #[test]
     fn catalog_refreshes_on_edit_add_disable_remove_and_project_switch() {
         let temp = tempfile::tempdir().unwrap();
@@ -108,12 +145,14 @@ mod tests {
         let first = active(home, home).unwrap();
         assert!(Arc::ptr_eq(&first, &active(home, home).unwrap()));
         fs::write(&file, content.replace("First", "Other")).unwrap();
+        suppress_metadata_change(home, &file);
         let edited = active(home, home).unwrap();
         assert!(edited[0].description.contains("Other"));
         assert!(first[0].description.contains("First"));
         let new = root(home).join("skills/two");
         fs::create_dir_all(&new).unwrap();
         fs::write(new.join("SKILL.md"), content.replace("one", "two")).unwrap();
+        suppress_metadata_change(home, new.parent().unwrap());
         assert_eq!(active(home, home).unwrap().len(), 2);
         super::super::update_config(home, |c| {
             c.disabled.insert(first[0].id.clone());
@@ -124,7 +163,8 @@ mod tests {
             &edited,
             &active(home, &home.join("another-project")).unwrap()
         ));
-        fs::remove_dir_all(new).unwrap();
+        fs::remove_dir_all(&new).unwrap();
+        suppress_metadata_change(home, new.parent().unwrap());
         assert!(active(home, home).unwrap().is_empty());
     }
 }
