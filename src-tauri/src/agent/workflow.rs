@@ -53,7 +53,7 @@ impl Status {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Handoff {
     verdict: Verdict,
@@ -143,6 +143,27 @@ impl Job {
         }
         self.phase != Phase::Discovery && self.role.writes()
     }
+}
+
+fn technically_approved(state: &Manifest, id: &str) -> bool {
+    state.jobs.values().any(|reviewer| {
+        (reviewer.run_id == state.run_id
+            || state.validation.as_ref().is_some_and(|batch| {
+                batch.run_id == reviewer.run_id && batch.approved(state.flow, id)
+            }))
+            && reviewer.role == Role::Reviewer
+            && reviewer.status == Status::Completed
+            && reviewer.handoff.as_ref().is_some_and(|handoff| {
+                handoff.verdict == Verdict::Approved
+                    && handoff.task_ids.iter().any(|task| task == id)
+            })
+            && !state.jobs.values().any(|writer| {
+                writer.run_id == state.run_id
+                    && writer.role.writes()
+                    && dispatch::overlap(&writer.scope, &reviewer.scope)
+                    && (writer.status.active() || writer.updated_at > reviewer.updated_at)
+            })
+    })
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -549,7 +570,17 @@ impl Execution {
                         })
                 }
             })
-            .map(|job| json!({"id":job.id,"parent":job.parent_id,"role":job.role,"status":job.status,"beadId":job.bead_id,"summary":job.handoff.as_ref().map(|h|h.summary.chars().take(300).collect::<String>()),"error":job.error}))
+            .map(|job| {
+                let mut checkpoint = json!({"id":job.id,"parent":job.parent_id,"role":job.role,"status":job.status,"beadId":job.bead_id,"summary":job.handoff.as_ref().map(|h|h.summary.chars().take(300).collect::<String>()),"error":job.error});
+                if assigned.is_some_and(|assigned| assigned.dependencies.contains(&job.id)) {
+                    if let Some(handoff) = job.handoff.as_ref().filter(|h| h.verdict == Verdict::Rework) {
+                        // The implementing worker needs the entire repair contract,
+                        // not the coordinator's paraphrase or a 300-character summary.
+                        checkpoint["reviewFindings"] = json!(handoff);
+                    }
+                }
+                checkpoint
+            })
             .collect();
         text.push_str(&format!(
             "\nRelevant execution checkpoints (reference data; inspect Beads/files before retry; hub_list provides other historical agents on demand): {}\n",
@@ -662,6 +693,20 @@ impl Execution {
         self.role
             .allows(self.flow, name, self.scope.iter().any(|p| p == "."))
     }
+    pub(super) fn record_confirmed_progress(&self) -> Result<(), AgentError> {
+        if self.id == "main" || self.hub.job(&self.id)?.recovery_attempts == 0 {
+            return Ok(());
+        }
+        self.hub.mutate(|state| {
+            state
+                .jobs
+                .get_mut(&self.id)
+                .ok_or_else(AgentError::internal)?
+                .recovery_attempts = 0;
+            Ok(())
+        })
+    }
+
     pub(super) fn preflight(&self, tool: &ToolCall) -> Option<String> {
         if !self.allowed(&tool.name) {
             return Some("Ferramenta indisponível para o papel deste agente.".into());
@@ -709,25 +754,7 @@ impl Execution {
         }
         if tool.name == "beads_close" && self.flow == Flow::Complete {
             let reviewed = self.hub.manifest.lock().is_ok_and(|state| {
-                state.jobs.values().any(|job| {
-                    (job.run_id == state.run_id
-                        || state.validation.as_ref().is_some_and(|batch| {
-                            batch.run_id == job.run_id
-                                && batch.approved(self.flow, tool.args["id"].as_str().unwrap_or(""))
-                        }))
-                        && job.role == Role::Reviewer
-                        && job.status == Status::Completed
-                        && job.handoff.as_ref().is_some_and(|h| {
-                            h.verdict == Verdict::Approved
-                                && h.task_ids.iter().any(|id| tool.args["id"] == *id)
-                        })
-                        && !state.jobs.values().any(|writer| {
-                            writer.run_id == state.run_id
-                                && writer.role.writes()
-                                && dispatch::overlap(&writer.scope, &job.scope)
-                                && (writer.status.active() || writer.updated_at > job.updated_at)
-                        })
-                })
+                technically_approved(&state, tool.args["id"].as_str().unwrap_or(""))
             });
             if !reviewed {
                 return Some("Conclusão bloqueada: peça ao Revisor que verifique este ID exato e o inclua em taskIds no hub_complete com verdict approved. Aprovar apenas o ID da tarefa de revisão não aprova a implementação ou o épico. Não remova dependências para contornar esta regra.".into());

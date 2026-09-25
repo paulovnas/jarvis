@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "movarte-resumed-review",
+  "description": "Sanitized repair contract from the resumed integration workflow: related diagnostic disclosure findings must reach the implementer together.",
+  "handoff": {
+    "verdict": "rework",
+    "summary": "The safe diagnostic report still trusts provider-controlled strings. A field-name filter alone leaves related disclosure paths through short or nested structured values, free-text personal data and unknown codes. Repair the shared report boundary once, covering both the displayed diagnostic and its copied text, without changing the backend integration contract. Preserve the existing known-code mapping and independently verify each affected consumer.",
+    "outcomes": [
+      "Treat structured values, free text and unknown codes as untrusted at the shared diagnostic report boundary.",
+      "Apply the same safe report to UI rendering and clipboard output. Preserve supported known-code behavior."
+    ],
+    "evidence": [
+      "src/integration/diagnostic-report.ts: short and nested values bypass the current field-name filter.",
+      "src/integration/diagnostic-dialog.tsx: visible and copied output must use the same safe report."
+    ],
+    "validation": [
+      "Short and nested structured secret values do not appear in the report.",
+      "Free-text personal data does not appear in the report.",
+      "Unknown provider codes produce a safe fallback; supported codes retain their mapping.",
+      "Both rendered UI and copied report pass the same disclosure regression cases."
+    ],
+    "limitations": ["No live provider or production data is needed for these focused regressions."],
+    "taskIds": ["integration-report"]
+  }
+}

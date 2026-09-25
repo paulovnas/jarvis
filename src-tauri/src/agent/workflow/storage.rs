@@ -445,7 +445,7 @@ pub(super) fn worker(
     };
     session.update(true, |data| {
         let current = data.turns.last_mut().unwrap();
-        current.wire = vec![json!({"role":"user","content":wire})];
+        current.wire = vec![json!({"role":"user","_jarvis_worker_dispatch":true,"content":wire})];
         current.mcp_intent = Some(mcp_intent);
     })?;
     Ok((session, signal))

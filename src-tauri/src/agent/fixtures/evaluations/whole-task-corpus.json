@@ -20,6 +20,11 @@
     "checks": ["status_selection_tests_pass", "scope_preserved", "handoff_results_durable", "required_validation_completed"]
   },
   {
+    "id": "movarte-resumed-review",
+    "prompt": "Continue the isolated integration-report fixture using movarte-resumed-review.json as the complete review handoff. Repair the shared cause across all listed input classes and both consumers in one focused correction, then independently re-review changed evidence while preserving valid unchanged checks. Finish the owned epic and deliver its approved result without repeating confirmed work.",
+    "checks": ["structured_short_and_nested_secrets_removed", "free_text_personal_data_removed", "unknown_codes_safe_and_known_codes_preserved", "ui_and_clipboard_consistent", "independent_approval_preserved", "unchanged_checks_reused", "closed_epic_handoff_accepted"]
+  },
+  {
     "id": "direct-file-edit",
     "prompt": "Make the requested small change in the isolated fixture project, verify it with its focused test and report the result without expanding scope.",
     "checks": ["requested_diff_present", "focused_test_passes", "unrelated_files_unchanged", "final_claim_matches_artifacts"]

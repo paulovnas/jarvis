@@ -3816,6 +3816,9 @@ fn run_turn<'a>(
                 // Flush it before another tool or model step can proceed.
                 session.flush_async().await?;
                 if let Some(exec) = &execution {
+                    if status == "completed" && confirmed_mutation {
+                        exec.record_confirmed_progress()?;
+                    }
                     exec.observe_recovery_inspection(
                         &tool,
                         tool.name.starts_with("mcp_") && requires_task,

@@ -1,6 +1,7 @@
 use super::*;
 use crate::openai_codex::CodexCredential;
 use std::collections::HashSet;
+mod worker_replay;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Measurement {
@@ -109,13 +110,16 @@ pub(super) fn input(data: &SessionData) -> Vec<Value> {
         through = data.local_wire_offset(context.through);
         input.extend(prefix(context));
     }
-    input.extend(
-        data.turns
-            .iter()
-            .flat_map(|turn| turn.wire.iter())
-            .skip(through)
-            .cloned(),
-    );
+    let worker = worker_replay::enabled(data);
+    for (index, turn) in data.turns.iter().enumerate() {
+        let start = through.min(turn.wire.len());
+        through = through.saturating_sub(turn.wire.len());
+        if worker && index + 1 < data.turns.len() {
+            input.extend(worker_replay::project(turn, start));
+        } else {
+            input.extend(turn.wire[start..].iter().cloned());
+        }
+    }
     retain_latest_workflow_checkpoint(&mut input);
     input
 }
@@ -123,17 +127,26 @@ pub(super) fn input(data: &SessionData) -> Vec<Value> {
 fn retain_latest_workflow_checkpoint(input: &mut Vec<Value>) {
     // Workflow checkpoints describe replaceable state, unlike user directions
     // and tool receipts. Keep the journal intact but replay only the latest one.
-    let mut latest_workflow_checkpoint = false;
+    let mut seen = HashSet::new();
     input.reverse();
     input.retain(|item| {
-        if item["role"] == "user"
-            && item["_jarvis_runtime"] == true
-            && item["_jarvis_workflow_checkpoint"] == true
-        {
-            !std::mem::replace(&mut latest_workflow_checkpoint, true)
-        } else {
-            true
+        if item["role"] != "user" || item["_jarvis_runtime"] != true {
+            return true;
         }
+        let bead = item["_jarvis_bead_checkpoint"].as_str().or_else(|| {
+            // Known legacy runtime snapshots are replaceable too, never user prose.
+            let content = item["content"].as_str()?;
+            content
+                .starts_with("Assigned Beads task snapshot at implementation start")
+                .then(|| content.lines().nth(1)?.strip_prefix("Task ID: "))
+                .flatten()
+        });
+        let key = if item["_jarvis_workflow_checkpoint"] == true {
+            Some("workflow".to_owned())
+        } else {
+            bead.map(|id| format!("bead:{id}"))
+        };
+        key.is_none_or(|key| seen.insert(key))
     });
     input.reverse();
 }
@@ -213,7 +226,14 @@ fn continuity(data: &SessionData, raw: &[Value], through: usize) -> (Vec<Value>,
 
 pub(super) fn info(data: &SessionData) -> ContextInfo {
     let context = data.extras.context.as_ref();
-    let measured = context.and_then(|context| context.measured.as_ref());
+    let measured = context
+        .and_then(|context| context.measured.as_ref())
+        .filter(|measurement| {
+            !worker_replay::enabled(data)
+                || data.turns.last().is_some_and(|turn| {
+                    measurement.wire_end > data.absolute_wire_end().saturating_sub(turn.wire.len())
+                })
+        });
     let trailing = measured
         .map(|usage| {
             data.turns
@@ -226,17 +246,7 @@ pub(super) fn info(data: &SessionData) -> ContextInfo {
         .unwrap_or(0);
     let tokens = measured
         .map(|usage| usage.tokens.saturating_add(trailing))
-        .unwrap_or_else(|| {
-            let prefix = context.map_or(0, prefix_tokens);
-            prefix
-                + data
-                    .turns
-                    .iter()
-                    .flat_map(|turn| turn.wire.iter())
-                    .skip(context.map_or(0, |value| data.local_wire_offset(value.through)))
-                    .map(estimate)
-                    .sum::<u64>()
-        });
+        .unwrap_or_else(|| input(data).iter().map(estimate).sum::<u64>());
     ContextInfo {
         tokens,
         limit: data.turns.last().and_then(|turn| turn.turn.context_window),

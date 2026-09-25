@@ -260,6 +260,209 @@ fn beads_dispatch_checks_real_status_and_blocking_dependencies() {
     assert!(validate_bead(&json!([]), &[]).is_err());
 }
 
+fn completed_handoff(id: &str) -> Handoff {
+    Handoff {
+        verdict: Verdict::Completed,
+        summary: "Implementation verified".into(),
+        outcomes: vec!["Acceptance criteria met".into()],
+        evidence: vec!["Focused regression passed".into()],
+        validation: vec![],
+        limitations: vec![],
+        task_ids: vec![id.into()],
+    }
+}
+
+#[test]
+fn approved_closed_epic_can_finish_without_becoming_executable_again() {
+    let (_fixture, hub) = hub();
+    let mut coordinator = job(&hub, Role::Orchestrator, ".");
+    coordinator.bead_id = Some("epic".into());
+    let mut reviewer = job(&hub, Role::Reviewer, ".");
+    reviewer.status = Status::Completed;
+    reviewer.handoff = Some(Handoff {
+        verdict: Verdict::Approved,
+        ..completed_handoff("epic")
+    });
+    let mut state = hub.manifest.lock().unwrap();
+    state.flow = Flow::Complete;
+    state.options.manual_validation = false;
+    state.jobs.insert(reviewer.id.clone(), reviewer.clone());
+    let task = json!({"id":"epic","issue_type":"epic","status":"closed",
+        "assignee":format!("jarvis-{}", state.conversation_id),"comments":[]});
+    let handoff = completed_handoff("epic");
+    assert!(validate_completion_bead(&state, &coordinator, &task, &handoff).is_ok());
+    assert!(validate_bead(&task, &[]).is_err());
+    for status in ["blocked", "deferred"] {
+        let mut blocked = task.clone();
+        blocked["status"] = json!(status);
+        assert!(validate_completion_bead(&state, &coordinator, &blocked, &handoff).is_err());
+    }
+    let mut foreign = task.clone();
+    foreign["assignee"] = json!("another-conversation");
+    assert!(validate_completion_bead(&state, &coordinator, &foreign, &handoff).is_err());
+    state.options.manual_validation = true;
+    assert!(validate_completion_bead(&state, &coordinator, &task, &handoff).is_err());
+    state.validation = Some(validation::Batch {
+        id: "acceptance".into(),
+        flow: Flow::Complete,
+        run_id: state.run_id.clone(),
+        epic_ids: vec!["epic".into()],
+        submitted: true,
+        stale: false,
+        created_at: now(),
+        items: vec![validation::Item {
+            id: "criterion".into(),
+            title: "Acceptance".into(),
+            steps: vec!["Verify the outcome".into()],
+            expected: "Works".into(),
+            decision: validation::Decision::Approved,
+            reason: None,
+        }],
+    });
+    assert!(validate_completion_bead(&state, &coordinator, &task, &handoff).is_ok());
+    state.validation.as_mut().unwrap().stale = true;
+    assert!(validate_completion_bead(&state, &coordinator, &task, &handoff).is_err());
+    state.options.manual_validation = false;
+    state.jobs.remove(&reviewer.id);
+    assert!(validate_completion_bead(&state, &coordinator, &task, &handoff).is_err());
+}
+
+#[tokio::test]
+async fn completion_retries_preserve_the_accepted_handoff() {
+    let (_fixture, hub) = hub();
+    let child = job(&hub, Role::Investigator, ".");
+    hub.mutate(|state| {
+        state.jobs.insert(child.id.clone(), child.clone());
+        Ok(())
+    })
+    .unwrap();
+    let exec = Execution {
+        hub: hub.clone(),
+        id: child.id.clone(),
+        role: child.role,
+        flow: Flow::Complete,
+        scope: child.scope.clone(),
+    };
+    let handoff = completed_handoff("evidence");
+    let (_, signal) = watch::channel(false);
+    complete(&exec, handoff.clone(), signal.clone())
+        .await
+        .unwrap();
+    complete(&exec, handoff.clone(), signal.clone())
+        .await
+        .unwrap();
+    let mut replacement = handoff.clone();
+    replacement.summary = "Different outcome".into();
+    assert!(complete(&exec, replacement, signal).await.is_err());
+    assert_eq!(hub.job(&child.id).unwrap().handoff, Some(handoff));
+}
+
+#[test]
+fn verified_progress_allows_recovery_but_a_failed_child_does_not() {
+    let (_fixture, hub) = hub();
+    let mut parent = job(&hub, Role::Orchestrator, ".");
+    parent.status = Status::Failed;
+    parent.recovery_attempts = 2;
+    let mut child = job(&hub, Role::Builder, "src");
+    child.parent_id = parent.id.clone();
+    child.handoff = Some(completed_handoff("task"));
+    hub.mutate(|state| {
+        state.jobs.insert(parent.id.clone(), parent.clone());
+        state.jobs.insert(child.id.clone(), child.clone());
+        Ok(())
+    })
+    .unwrap();
+    settle(&hub, &child, &Err(AgentError::internal()), None).unwrap();
+    assert_eq!(hub.job(&parent.id).unwrap().recovery_attempts, 2);
+    settle(&hub, &child, &Ok(()), None).unwrap();
+    let mut state = hub.manifest.lock().unwrap();
+    let recovered = prepare_retry(
+        &mut state,
+        "main",
+        Flow::Complete,
+        Role::Planner,
+        &parent.id,
+        None,
+    )
+    .unwrap();
+    assert_eq!(recovered.recovery_attempts, 1);
+    drop(state);
+    let exec = Execution {
+        hub: hub.clone(),
+        id: parent.id.clone(),
+        role: parent.role,
+        flow: Flow::Complete,
+        scope: parent.scope,
+    };
+    exec.record_confirmed_progress().unwrap();
+    assert_eq!(hub.job(&parent.id).unwrap().recovery_attempts, 0);
+    hub.mutate(|state| {
+        let parent = state.jobs.get_mut(&parent.id).unwrap();
+        parent.run_id = "next-run".into();
+        parent.recovery_attempts = 2;
+        Ok(())
+    })
+    .unwrap();
+    settle(&hub, &child, &Ok(()), None).unwrap();
+    assert_eq!(hub.job(&parent.id).unwrap().recovery_attempts, 2);
+}
+
+#[test]
+fn harness_evaluation_resumed_repair_gets_the_entire_finding_contract() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../fixtures/evaluations/movarte-resumed-review.json"
+    ))
+    .unwrap();
+    let handoff: Handoff = serde_json::from_value(fixture["handoff"].clone()).unwrap();
+    assert!(handoff.summary.len() > 300);
+    for role in [Role::Builder, Role::Designer, Role::Custom] {
+        let (_fixture, hub) = hub();
+        let mut reviewer = job(
+            &hub,
+            if role == Role::Custom {
+                Role::Custom
+            } else {
+                Role::Reviewer
+            },
+            "src/integration",
+        );
+        reviewer.status = Status::Blocked;
+        reviewer.handoff = Some(handoff.clone());
+        let mut worker = job(&hub, role, "src/integration");
+        worker.dependencies = vec![reviewer.id.clone()];
+        let unrelated = job(&hub, role, "unrelated");
+        hub.mutate(|state| {
+            for job in [&worker, &reviewer, &unrelated] {
+                state.jobs.insert(job.id.clone(), job.clone());
+            }
+            Ok(())
+        })
+        .unwrap();
+        let exec = Execution {
+            hub: hub.clone(),
+            id: worker.id,
+            role,
+            flow: Flow::Complete,
+            scope: worker.scope,
+        };
+        let context = exec.context().unwrap();
+        assert!(
+            context.contains(&json!(handoff).to_string()),
+            "repair contract was truncated"
+        );
+        let other = Execution {
+            id: unrelated.id,
+            scope: unrelated.scope,
+            ..exec
+        };
+        assert!(!other.context().unwrap().contains("reviewFindings"));
+        assert!(
+            !technically_approved(&hub.manifest.lock().unwrap(), "integration-report"),
+            "a repair contract is not independent approval"
+        );
+    }
+}
+
 #[test]
 fn bead_checkpoint_tracks_requirements_and_comments_without_progress_noise() {
     let source = json!([{

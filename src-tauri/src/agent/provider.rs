@@ -181,6 +181,7 @@ impl TurnSession {
             }
             on_delta(delta)
         };
+        let mut fallback = false;
         if self.incremental_enabled {
             let request = if let Some(config) = &self.credential.custom {
                 custom::incremental_request(
@@ -213,17 +214,40 @@ impl TurnSession {
                 .map_err(|_| AgentError::internal())?
             };
             let mut transport = self.incremental.lock().await;
-            if let Some(mut response) = transport
+            match transport
                 .attempt(request, signal.clone(), &mut forward)
-                .await?
+                .await
             {
-                if let Some(config) = &self.credential.custom {
-                    custom::scope_responses_output(config, step.options(), &mut response);
+                Ok(Some(mut response)) => {
+                    if let Some(config) = &self.credential.custom {
+                        custom::scope_responses_output(config, step.options(), &mut response);
+                    }
+                    return Ok(response);
                 }
-                return Ok(response);
+                Ok(None) => {}
+                Err(error)
+                    if error.code == "provider_transport_interrupted"
+                        && tools.iter().all(|tool| tool["type"] == "function") =>
+                {
+                    // Effectful local tools run only after a complete response. Earlier
+                    // steps' durable receipts are already in input; read-ahead is read-only.
+                    // Replay inference once over HTTP, then use its existing bounded retries.
+                    forward(Delta::Retry(Some(retry::Status {
+                        attempt: 1,
+                        max_attempts: retry::MAX_RETRIES + 1,
+                        retry_at: super::now(),
+                        message: format!(
+                            "{} Reconectando por HTTPS para continuar.",
+                            error.message
+                        ),
+                    })))?;
+                    forward(Delta::Reset)?;
+                    fallback = true;
+                }
+                Err(error) => return Err(error),
             }
         }
-        retry::Request {
+        let result = retry::Request {
             client: self.client.clone(),
             credential: &credential,
             authentication: self.authentication.as_ref(),
@@ -235,8 +259,12 @@ impl TurnSession {
             tools,
             telemetry: self.telemetry.clone(),
         }
-        .run(signal, forward, Duration::from_secs(2))
-        .await
+        .run(signal, &mut forward, Duration::from_secs(2))
+        .await;
+        if fallback {
+            forward(Delta::Retry(None))?;
+        }
+        result
     }
 }
 

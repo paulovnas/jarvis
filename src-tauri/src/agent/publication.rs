@@ -431,8 +431,8 @@ pub(super) fn definition() -> Value {
             "type":"object","additionalProperties":false,"required":["summary","authorization","repositories"],
             "properties":{
                 "summary":{"type":"string","minLength":1,"maxLength":2000},
-                "previewOnly":{"type":"boolean","description":"Prepare a concrete proposal without executing or opening review. Returns proposalId and a repository snapshot. Use only when presenting a proposal for a subsequent conversational decision; normal publication uses the existing review drawer."},
-                "confirmedProposalId":{"type":"string","description":"ID of the latest preview from the immediately preceding conversation turn that the user now explicitly confirms (for example: pode fazer). Repositories and operations must match exactly. A changed repository, extra instruction, expired preview or already attempted publication requires a new proposal/review."},
+                "previewOnly":{"type":"boolean","description":"Default false: submit normal publication requests to the native review drawer. Use true only when the user asks for a conversational preview without opening review. Do not switch to a preview or ask the user to type a confirmation to recover from a validation error; correct the arguments and resubmit for review."},
+                "confirmedProposalId":{"anyOf":[{"type":"null"},{"type":"string"}],"description":"Omit or set null for normal publication; blank strings also mean no prior confirmation. Otherwise use only the ID returned by the latest preview in the immediately preceding turn that the user now confirms. Repositories and operations must match exactly. A changed repository, extra instruction, expired preview or already attempted publication requires a new proposal/review."},
                 "authorization":{"anyOf":[{"type":"null"},authorization]},
                 "repositories":{"type":"array","minItems":1,"maxItems":8,"items":repository}
             }
@@ -514,7 +514,19 @@ fn explicitly_authorizes(operation: AuthorizedOperation, evidence: &str) -> bool
             contains_authorization_word(evidence, "branch")
                 || contains_authorization_word(evidence, "ramificacao")
         }
-        AuthorizedOperation::Commit => contains_authorization_word(evidence, "commit"),
+        AuthorizedOperation::Commit | AuthorizedOperation::Push => {
+            contains_authorization_word(evidence, operation.label())
+                || [
+                    "suba tudo",
+                    "suba as alteracoes",
+                    "publique tudo",
+                    "publique as alteracoes",
+                    "publish the changes",
+                    "publish all changes",
+                ]
+                .iter()
+                .any(|phrase| contains_authorization_phrase(evidence, phrase))
+        }
         AuthorizedOperation::Sync => {
             let without_pull_request = evidence.replace("pull request", " ");
             let remote_named = ["remota", "remoto", "remote", "origin", "upstream"]
@@ -535,7 +547,6 @@ fn explicitly_authorizes(operation: AuthorizedOperation, evidence: &str) -> bool
                                 || contains_authorization_phrase(evidence, "com origin")
                                 || contains_authorization_phrase(evidence, "a partir da remota")))))
         }
-        AuthorizedOperation::Push => contains_authorization_word(evidence, "push"),
         AuthorizedOperation::ForcePush => {
             contains_authorization_word(evidence, "force")
                 || contains_authorization_word(evidence, "forcado")
@@ -1427,7 +1438,7 @@ pub(super) fn prepare_with_confirmation(
     let preview = tool.args["previewOnly"] == true;
     if preview {
         proposal.authorization = None;
-    } else if let Some(id) = tool.args["confirmedProposalId"].as_str() {
+    } else if let Some(id) = confirmed_proposal_id(tool) {
         validate_confirmation(
             root,
             &proposal,
@@ -1566,11 +1577,17 @@ fn validate_confirmation(
     Ok(())
 }
 
+fn confirmed_proposal_id(tool: &ToolCall) -> Option<&str> {
+    tool.args["confirmedProposalId"]
+        .as_str()
+        .filter(|id| !id.trim().is_empty())
+}
+
 pub(super) fn confirmation_receipt(
     turns: &[super::StoredTurn],
     current_call: &ToolCall,
 ) -> Option<Value> {
-    let id = current_call.args["confirmedProposalId"].as_str()?;
+    let id = confirmed_proposal_id(current_call)?;
     let current = turns.last()?;
     if current
         .turn
@@ -1580,7 +1597,7 @@ pub(super) fn confirmation_receipt(
         .any(|tool| {
             tool.name == "jarvis_propose_publication"
                 && tool.id != current_call.id
-                && tool.args["confirmedProposalId"] == id
+                && confirmed_proposal_id(tool) == Some(id)
         })
     {
         return None;

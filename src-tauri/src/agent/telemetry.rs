@@ -933,7 +933,7 @@ pub(crate) fn failure_class(error: &super::AgentError) -> FailureClass {
     match error.code.as_str() {
         "provider_auth" => FailureClass::Authentication,
         "provider_limit" | "provider_output_limit" | "context_overflow" => FailureClass::RateLimit,
-        "provider_network" => FailureClass::Network,
+        "provider_network" | "provider_transport_interrupted" => FailureClass::Network,
         "provider_timeout" => FailureClass::Timeout,
         "provider_unavailable" | "provider_failed" => FailureClass::Unavailable,
         "provider_protocol" | "provider_incomplete" | "provider_retry_exhausted" => {

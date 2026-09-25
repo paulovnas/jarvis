@@ -44,8 +44,21 @@ pub(super) struct Transport {
     telemetry: Option<(telemetry::TraceContext, telemetry::ProviderKind)>,
 }
 
-fn interrupted() -> AgentError {
-    AgentError::new("provider_transport_interrupted", "A conexão incremental foi interrompida após o envio. O conteúdo recebido foi preservado; a solicitação não foi repetida automaticamente. Use Tentar novamente para continuar.")
+fn interrupted(phase: &str, cause: &str, close_code: Option<u16>) -> AgentError {
+    let close = close_code
+        .map(|code| format!(", close {code}"))
+        .unwrap_or_default();
+    let mut error = AgentError::new("provider_transport_interrupted", &format!(
+        "A conexão incremental foi interrompida ({phase}: {cause}{close}). O progresso confirmado foi preservado."
+    ));
+    // Never retain raw socket errors or peer-supplied close reasons (may contain secrets).
+    error.tool_result = Some(
+        serde_json::json!({
+            "code": error.code, "phase": phase, "cause": cause, "closeCode": close_code,
+        })
+        .to_string(),
+    );
+    error
 }
 
 impl Transport {
@@ -162,7 +175,7 @@ impl Transport {
         let socket = self.socket.as_mut().ok_or_else(protocol_error)?;
         let sent = tokio::select! {
             _ = cancelled(&mut signal) => Err(AgentError::cancelled()),
-            result = tokio::time::timeout(Duration::from_secs(15), socket.send(Message::Text(payload_text.into()))) => result.map_err(|_| interrupted()).and_then(|result| result.map_err(|_| interrupted())),
+            result = tokio::time::timeout(Duration::from_secs(15), socket.send(Message::Text(payload_text.into()))) => result.map_err(|_| interrupted("send", "timeout", None)).and_then(|result| result.map_err(|_| interrupted("send", "io", None))),
         };
         let result = match sent {
             Ok(()) => {
@@ -222,7 +235,7 @@ impl Transport {
         loop {
             let frame = tokio::select! {
                 _ = cancelled(signal) => return Err(AgentError::cancelled()),
-                result = tokio::time::timeout(Duration::from_secs(120), socket.next()) => result.map_err(|_| interrupted())?.ok_or_else(interrupted)?.map_err(|_| interrupted())?,
+                result = tokio::time::timeout(Duration::from_secs(120), socket.next()) => result.map_err(|_| interrupted("receive", "timeout", None))?.ok_or_else(|| interrupted("receive", "eof", None))?.map_err(|_| interrupted("receive", "io", None))?,
             };
             let text = match frame {
                 Message::Text(text) => text,
@@ -230,12 +243,18 @@ impl Transport {
                     tokio::select! {
                         _ = cancelled(signal) => return Err(AgentError::cancelled()),
                         result = tokio::time::timeout(Duration::from_secs(15), socket.flush()) => {
-                            result.map_err(|_| interrupted())?.map_err(|_| interrupted())?;
+                            result.map_err(|_| interrupted("pong", "timeout", None))?.map_err(|_| interrupted("pong", "io", None))?;
                         }
                     }
                     continue;
                 }
-                Message::Close(_) => return Err(interrupted()),
+                Message::Close(frame) => {
+                    return Err(interrupted(
+                        "receive",
+                        "close",
+                        frame.map(|frame| u16::from(frame.code)),
+                    ))
+                }
                 _ => return Err(protocol_error()),
             };
             size += text.len();
@@ -438,8 +457,7 @@ mod tests {
         server.await.unwrap();
     }
 
-    #[tokio::test]
-    async fn turn_session_uses_http_after_upgrade_rejection_and_keeps_full_replay() {
+    async fn http_fallback_keeps_full_replay(interrupted: Option<bool>) {
         use crate::agent::{context_manager::StepContext, tests, ApprovalMode};
         use crate::openai_codex::{custom::Config, CodexCredential, ProviderModel};
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -449,6 +467,28 @@ mod tests {
             let mut methods = Vec::new();
             for index in 0..3 {
                 let (mut socket, _) = listener.accept().await.unwrap();
+                if index == 0 && interrupted.is_some() {
+                    let mut socket = accept_async(socket).await.unwrap();
+                    let _ = socket.next().await.unwrap().unwrap();
+                    if interrupted == Some(true) {
+                        socket.send(Message::Text(json!({
+                            "type":"response.created", "response":{"id":"accepted","status":"in_progress"}
+                        }).to_string().into())).await.unwrap();
+                        socket
+                            .send(Message::Text(
+                                json!({
+                                    "type":"response.output_text.delta","delta":"Provisional text"
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await
+                            .unwrap();
+                    }
+                    socket.close(None).await.unwrap();
+                    methods.push("GET".to_owned());
+                    continue;
+                }
                 let mut bytes = Vec::new();
                 let header_end = loop {
                     let mut chunk = [0; 4096];
@@ -490,6 +530,20 @@ mod tests {
                         .unwrap()
                         .iter()
                         .any(|item| item["role"] == "user"));
+                    assert_eq!(
+                        body["input"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .filter(|item| {
+                                item["type"] == "function_call_output"
+                                    && item["call_id"] == "already-written"
+                                    && item["output"] == "File updated successfully"
+                            })
+                            .count(),
+                        1,
+                        "the confirmed prior mutation must be replayed as a receipt"
+                    );
                     let sse = format!("data: {}\n\n", done("http-response"));
                     socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{sse}", sse.len()).as_bytes()).await.unwrap();
                 }
@@ -523,27 +577,61 @@ mod tests {
         session
             .reserve("Return OK".into(), options.clone())
             .unwrap();
+        session.update(true, |data| {
+            data.turns.last_mut().unwrap().wire.extend([
+                json!({"type":"function_call","call_id":"already-written","name":"write","arguments":"{\"path\":\"file.txt\",\"content\":\"done\"}"}),
+                json!({"type":"function_call_output","call_id":"already-written","output":"File updated successfully"}),
+            ]);
+        }).unwrap();
         let step = StepContext::capture(
             &session,
             &options,
             "Be concise",
-            &[],
+            &[json!({"type":"function","name":"write","parameters":{"type":"object","properties":{}}})],
             provider.capabilities(),
         )
         .unwrap();
         let (_cancel, signal) = watch::channel(false);
         for _ in 0..2 {
+            let mut visible = String::new();
+            let mut retrying = false;
             let result = provider
-                .stream(&step, signal.clone(), |_| Ok(()))
+                .stream(&step, signal.clone(), |delta| {
+                    match delta {
+                        Delta::Text(text) => visible.push_str(&text),
+                        Delta::Reset => visible.clear(),
+                        Delta::Retry(status) => retrying = status.is_some(),
+                        _ => {}
+                    }
+                    Ok(())
+                })
                 .await
                 .unwrap();
             assert_eq!(result.text, "OK");
+            assert!(!visible.contains("Provisional text"));
+            assert!(!retrying);
         }
         assert_eq!(server.await.unwrap(), ["GET", "POST", "POST"]);
     }
 
     #[tokio::test]
-    async fn interrupted_stream_preserves_deltas_and_never_replays_automatically() {
+    async fn upgrade_rejection_falls_back_with_full_replay() {
+        http_fallback_keeps_full_replay(None).await;
+    }
+
+    #[tokio::test]
+    async fn closed_socket_before_response_falls_back_with_confirmed_receipts() {
+        http_fallback_keeps_full_replay(Some(false)).await;
+    }
+
+    #[tokio::test]
+    async fn partial_response_falls_back_without_duplicate_text_or_losing_receipts() {
+        http_fallback_keeps_full_replay(Some(true)).await;
+    }
+
+    #[tokio::test]
+    async fn interrupted_socket_preserves_deltas_and_reports_a_sanitized_cause() {
+        use tokio_tungstenite::tungstenite::protocol::{frame::coding::CloseCode, CloseFrame};
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = tokio::spawn(async move {
@@ -558,7 +646,13 @@ mod tests {
                 ))
                 .await
                 .unwrap();
-            socket.close(None).await.unwrap();
+            socket
+                .close(Some(CloseFrame {
+                    code: CloseCode::Away,
+                    reason: "do-not-retain-peer-secret".into(),
+                }))
+                .await
+                .unwrap();
         });
         let (_tx, rx) = watch::channel(false);
         let mut transport = Transport::default();
@@ -573,6 +667,12 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error.code, "provider_transport_interrupted");
+        let detail: Value = serde_json::from_str(error.tool_result.as_deref().unwrap()).unwrap();
+        assert_eq!(detail["phase"], "receive");
+        assert_eq!(detail["cause"], "close");
+        assert_eq!(detail["closeCode"], 1001);
+        assert!(!error.message.contains("do-not-retain-peer-secret"));
+        assert!(!detail.to_string().contains("do-not-retain-peer-secret"));
         assert_eq!(text, "partial");
         assert!(transport.previous.is_none());
         server.await.unwrap();

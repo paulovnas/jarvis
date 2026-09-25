@@ -342,6 +342,142 @@ async fn rejection_never_applies_the_catalog_mutation() {
 }
 
 #[tokio::test]
+async fn publication_without_preview_confirmation_opens_native_review() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let state = AppState::default();
+    let oauth = OpenAiCodexState::default();
+    let root = fixture.root.join("repository");
+    std::fs::create_dir(&root).unwrap();
+    let git = |args: &[&str]| {
+        let output = crate::background::command("git")
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    git(&["init", "--initial-branch=publication-test"]);
+    git(&["config", "user.name", "Jarvis Test"]);
+    git(&["config", "user.email", "jarvis@example.test"]);
+    git(&["commit", "--allow-empty", "--no-gpg-sign", "-m", "initial"]);
+    git(&["branch", "hml"]);
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        fixture.root.join("remote.git").to_str().unwrap(),
+    ]);
+    std::fs::write(root.join("app.txt"), "pending change\n").unwrap();
+    let head = git(&["rev-parse", "HEAD"]);
+    let status = git(&["status", "--porcelain=v1"]);
+    state
+        .with_connection(&fixture.root, |db| -> Result<(), AgentError> {
+            db.execute(
+                "INSERT INTO workspaces (id, name) VALUES ('w1', 'Test')",
+                [],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO projects (id, workspace_id, name, path) VALUES (?1, 'w1', 'Test', ?2)",
+                rusqlite::params![
+                    session.project_id().unwrap(),
+                    fixture.root.to_str().unwrap()
+                ],
+            )
+            .unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+    let cases = [
+        ("Commit, push, pr e merge na hml", false),
+        ("Suba tudo o que estiverpendente, no front e no Back, crie a PR para hml e faça o merge por favor", false),
+        ("Corrija por favor, não era pra ter conflito se só tem nós trabalhando nessa branch", true),
+    ];
+    for (user, sync_only) in cases {
+        for confirmation in [Some(json!("")), Some(json!(" \t")), Some(Value::Null), None] {
+            let signal = session
+                .reserve(
+                    user.into(),
+                    crate::agent::tests::options(ApprovalMode::Yolo),
+                )
+                .unwrap();
+            let mut args = json!({
+                "summary":"Publicar alterações solicitadas",
+                "authorization":{"mode":"explicit_request","evidence":user},
+                "previewOnly":false,
+                "repositories":[{
+                    "path":"repository","reset":null,"files":["app.txt"],"branch":null,
+                    "commitMessage":"fix: approved change","sync":"none","push":"normal","pullRequest":null
+                }]
+            });
+            if let Some(value) = confirmation {
+                args["confirmedProposalId"] = value;
+            }
+            if sync_only {
+                args["authorization"] = Value::Null;
+                args["repositories"][0] = json!({
+                    "path":"repository","reset":null,"files":[],"branch":"hml",
+                    "commitMessage":null,"sync":"ff_only","push":"none","pullRequest":null
+                });
+            }
+            jsonschema::validate(&publication::definition()["parameters"], &args).unwrap();
+            let call = tool("jarvis_propose_publication", args);
+            session.update(true, |data| {
+                let turn = data.turns.last_mut().unwrap();
+                turn.turn.steps.push(Step { tools: vec![call.clone()], ..Step::default() });
+                turn.wire.push(json!({"type":"function_call","call_id":call.id,"name":call.name,"arguments":call.args.to_string()}));
+            }).unwrap();
+            let execution = execute(
+                &session,
+                &session,
+                &state,
+                &oauth,
+                &fixture.root,
+                &call,
+                signal,
+            );
+            tokio::pin!(execution);
+            let pending = tokio::select! {
+                result = &mut execution => panic!("publication returned before review: {result:?}"),
+                pending = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        if let Some(pending) = session.snapshot().unwrap().pending_authoring {
+                            break pending;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                }) => pending.expect("native publication review must be visible"),
+            };
+            assert_eq!(pending.action, Action::Publish);
+            assert!(
+                matches!(pending.target, Target::Publication { ref after } if !publication::executes_without_review(after))
+            );
+            assert_eq!(git(&["rev-parse", "HEAD"]), head);
+            assert_eq!(git(&["status", "--porcelain=v1"]), status);
+            answer_with(
+                &session,
+                &pending.turn_id,
+                &pending.tool_id,
+                false,
+                None,
+                |_, _, _| panic!("rejection must not publish"),
+            )
+            .unwrap();
+            let output: Value = serde_json::from_str(&execution.await.unwrap()).unwrap();
+            assert_eq!(output["status"], "rejected");
+            crate::agent::finish(&session, Ok(()));
+        }
+    }
+}
+
+#[tokio::test]
 async fn publication_approval_with_a_note_requests_revision_without_applying() {
     let (_fixture, session, _signal) = reserve();
     let proposal: publication::Proposal = serde_json::from_value(json!({

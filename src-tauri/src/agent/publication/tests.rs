@@ -399,6 +399,91 @@ fn explicit_current_request_avoids_redundant_pr_question_but_keeps_review() {
 }
 
 #[test]
+fn ordinary_publication_requests_keep_review_and_do_not_expand_mutation_scope() {
+    let mut repository = repo_proposal("movart-express-front", &["app.txt"]);
+    repository.push = PushMode::Normal;
+    repository.pull_request = Some(PullRequestProposal {
+        base: "hml".into(),
+        title: "Publicar alterações".into(),
+        body: "Alterações solicitadas e validadas.".into(),
+        draft: false,
+        merge: Some(MergeProposal {
+            method: MergeMethod::Squash,
+            delete_branch: false,
+        }),
+    });
+    for user in [
+        "Commit, push, pr e merge na hml",
+        "Suba tudo o que estiverpendente, no front e no Back, crie a PR para hml e faça o merge por favor",
+        "Publique as alterações, crie a PR para hml e faça o merge",
+    ] {
+        let mut proposal = authorized_proposal(
+            UserAuthorizationMode::ExplicitRequest,
+            user,
+            repository.clone(),
+        );
+        let mut backend = repository.clone();
+        backend.path = "movart-express-back".into();
+        proposal.repositories.push(backend);
+        validate_user_authorization(&proposal, user).unwrap();
+        assert!(!requires_publication_question(
+            PullRequestMode::AskPrMerge,
+            &proposal,
+            false
+        ));
+        assert!(!executes_without_review(&proposal));
+
+        for unauthorized in [
+            AuthorizedOperation::Sync,
+            AuthorizedOperation::ForcePush,
+            AuthorizedOperation::Reset,
+            AuthorizedOperation::DeleteBranch,
+        ] {
+            let mut expanded = proposal.clone();
+            let repo = &mut expanded.repositories[0];
+            match unauthorized {
+                AuthorizedOperation::Sync => repo.sync = SyncMode::Rebase,
+                AuthorizedOperation::ForcePush => repo.push = PushMode::ForceWithLease,
+                AuthorizedOperation::Reset => {
+                    repo.reset = Some(ResetProposal {
+                        mode: ResetMode::Soft,
+                        target: "HEAD^".into(),
+                    });
+                }
+                AuthorizedOperation::DeleteBranch => {
+                    repo.pull_request.as_mut().unwrap().merge.as_mut().unwrap().delete_branch = true;
+                }
+                _ => unreachable!(),
+            }
+            let error = validate_user_authorization(&expanded, user).unwrap_err();
+            assert!(error.message.contains(unauthorized.label()));
+        }
+    }
+
+    let user = "Suba tudo";
+    let proposal = authorized_proposal(
+        UserAuthorizationMode::ExplicitRequest,
+        user,
+        repository.clone(),
+    );
+    let error = validate_user_authorization(&proposal, user).unwrap_err();
+    assert!(error.message.contains("pull request"));
+    assert!(error.message.contains("merge"));
+    repository.pull_request = None;
+    let proposal = authorized_proposal(UserAuthorizationMode::Autonomous, user, repository.clone());
+    assert_eq!(
+        validate_user_authorization(&proposal, user)
+            .unwrap_err()
+            .code,
+        "invalid_publication_authorization"
+    );
+    let user = "Suba tudo sem me perguntar novamente";
+    let proposal = authorized_proposal(UserAuthorizationMode::Autonomous, user, repository);
+    validate_user_authorization(&proposal, user).unwrap();
+    assert!(executes_without_review(&proposal));
+}
+
+#[test]
 fn a_request_to_update_hml_locally_authorizes_sync_without_push() {
     let user = "Crie o commit, atualize a hml local com a remota pq acho que ta atras";
     let mut repository = repo_proposal(".", &["app.txt"]);
