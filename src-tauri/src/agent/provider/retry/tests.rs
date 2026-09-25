@@ -147,6 +147,7 @@ fn server(replies: Vec<(u16, String)>) -> (String, JoinHandle<Vec<Value>>) {
 
 fn request<'a>(credential: &'a CodexCredential, options: &'a TurnOptions) -> Request<'a> {
     Request {
+        authentication: None,
         client: super::super::http_client().unwrap(),
         credential,
         options,
@@ -156,6 +157,50 @@ fn request<'a>(credential: &'a CodexCredential, options: &'a TurnOptions) -> Req
         input: vec![json!({"role":"user","content":"Continue"})],
         tools: vec![],
         telemetry: super::super::super::telemetry::trace("session", "retry-test"),
+    }
+}
+
+#[tokio::test]
+async fn auth_recovery_replays_only_inference_once_and_never_retries_forbidden() {
+    for statuses in [vec![401, 200], vec![401, 401], vec![403]] {
+        let protocol = Protocol::OpenaiResponses;
+        let (url, server) = server(
+            statuses
+                .iter()
+                .map(|status| {
+                    (
+                        *status,
+                        if *status == 200 {
+                            complete(protocol)
+                        } else {
+                            "{}".into()
+                        },
+                    )
+                })
+                .collect(),
+        );
+        let credential = credential(url, protocol);
+        let options = options();
+        let home = tempfile::tempdir().unwrap();
+        // Synthetic transport exercises the shared retry loop without real OAuth secrets.
+        // Token rotation itself is verified by the OAuth endpoint tests.
+        let auth = auth::Authentication::new(
+            crate::persistence::AppState::default(),
+            crate::openai_codex::OpenAiCodexState::default(),
+            home.path().to_path_buf(),
+            "synthetic".into(),
+            credential.clone(),
+        );
+        let mut inference = request(&credential, &options);
+        inference.authentication = Some(&auth);
+        let (_send, signal) = watch::channel(false);
+        let result = inference.run(signal, |_| Ok(()), Duration::ZERO).await;
+        assert_eq!(result.is_ok(), statuses.last() == Some(&200));
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), statuses.len());
+        if requests.len() == 2 {
+            assert_eq!(requests[0], requests[1]);
+        }
     }
 }
 

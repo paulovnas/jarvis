@@ -38,8 +38,8 @@ pub(super) fn definitions(flow: Flow, role: Role) -> Vec<Value> {
         tools.push(definition("hub_respond_guidance", "Answer a pending child's guidance request using its exact requestId. Resolve from known context or ask_user first; do not invent a user decision. Only its parent can respond.", json!({"requestId":string,"answer":string}), &["requestId","answer"]));
         tools.extend([
             definition("hub_cancel", "Cancel a direct child and its descendants. Wait for completion before replacing its work; cancellation is not successful completion.", json!({"id":string}), &["id"]),
-            definition("hub_spawn", "Start an isolated permitted agent and return its ID immediately. Supply focused context and acceptance criteria. For a narrow operational follow-up, refresh only necessary task state and dispatch one worker directly; do not pre-read source files or runbooks that the worker owns. Dependencies are earlier agent IDs and form a DAG. Implementation roles require a real Beads ID. Designer owns and implements assigned frontend/design work; use Investigator for read-only discovery. Scope is project-relative paths; overlapping writers queue. Use '.' for whole-project shell/MCP access; narrow writers can only read/write their assigned paths and run workflow_check. Up to four independent leaf agents run in parallel.", json!({"role":{"type":"string","enum":spawn_roles},"phase":{"type":"string","enum":["implementation"]},"title":{"type":"string","minLength":1,"maxLength":120},"prompt":string,"acceptance":strings,"scope":strings,"beadId":{"type":["string","null"]},"dependencies":strings}), &["role","title","prompt","acceptance","scope","dependencies"]),
-            definition("hub_retry", "Continue an existing direct child from its durable context, after inspecting the task/files and uncertain side effects. Use for recovery or focused rework/follow-up. No automatic replay; at most two additional rounds. Role, scope, dependencies and permissions stay fixed.", json!({"id":string,"prompt":string}), &["id","prompt"]),
+            definition("hub_spawn", "Start an isolated permitted agent and return its ID immediately. Supply focused context and acceptance criteria. Reuse an existing worker for the same task: hub_send adds instructions while active; hub_retry continues it after completion. If the same task and write scope are already active, this returns the existing ID without scheduling the new instruction. For a narrow operational follow-up, refresh only necessary task state and dispatch one worker directly; do not pre-read source files or runbooks that the worker owns. Dependencies are earlier agent IDs. Implementation roles require a real Beads ID. Designer implements assigned frontend/design work; use Investigator for read-only discovery. Scope limits writes, not project reads; choose disjoint write scopes for parallel work. Overlapping writers queue. Use '.' when whole-project shell/MCP access is necessary; narrow writers can inspect project context and run workflow_check. Up to four independent leaf agents run in parallel.", json!({"role":{"type":"string","enum":spawn_roles},"phase":{"type":"string","enum":["implementation"]},"title":{"type":"string","minLength":1,"maxLength":120},"prompt":string,"acceptance":strings,"scope":strings,"beadId":{"type":["string","null"]},"dependencies":strings}), &["role","title","prompt","acceptance","scope","dependencies"]),
+            definition("hub_retry", "Continue an existing direct child from its durable context for focused rework or follow-up. Reuse the implementing worker and reviewer instead of restarting their investigation. Inspect uncertain side effects before failure recovery; at most two consecutive failed recovery rounds are allowed. Successful follow-ups and actionable review findings do not consume that budget. Role, write scope and permissions stay fixed. Optional dependencies replaces prerequisite agent IDs for this round; use current sibling jobs and avoid dependency cycles.", json!({"id":string,"prompt":string,"dependencies":strings}), &["id","prompt"]),
         ]);
     }
     if role == Role::Designer || role.coordinator() {
@@ -141,6 +141,17 @@ fn workflow_command(root: &Path, check: &str) -> Result<&'static str, AgentError
         let scripts = manifest
             .as_ref()
             .and_then(|manifest| manifest["scripts"].as_object());
+        if check == "bun_typecheck" && !scripts.is_some_and(|scripts| scripts.contains_key(script))
+        {
+            for (alias, command) in [
+                ("type-check", "bun run type-check"),
+                ("type:check", "bun run type:check"),
+            ] {
+                if scripts.is_some_and(|scripts| scripts.contains_key(alias)) {
+                    return Ok(command);
+                }
+            }
+        }
         if !scripts.is_some_and(|scripts| scripts.contains_key(script)) {
             let available = scripts
                 .map(|scripts| scripts.keys().cloned().collect::<Vec<_>>().join(", "))
@@ -233,6 +244,14 @@ pub(super) async fn execute(
             exec,
             tool.args["id"].as_str().unwrap(),
             tool.args["prompt"].as_str().unwrap(),
+            tool.args.get("dependencies").map(|value| {
+                value
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|id| id.as_str().unwrap().to_owned())
+                    .collect()
+            }),
         ),
         "hub_cancel" => {
             let id = tool.args["id"].as_str().unwrap();
@@ -330,7 +349,10 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
         .turn
         .options
         .clone();
-    let job = exec.hub.mutate(|state| {
+    let (job, created) = exec.hub.mutate(|state| {
+        if let Some(existing) = active_duplicate(state, &exec.id, &input) {
+            return Ok((existing.clone(), false));
+        }
         if state.jobs.len() >= MAX_JOBS {
             return Err(invalid(
                 "Limite de agentes deste fluxo atingido. Conclua o trabalho em andamento.",
@@ -345,19 +367,11 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
                 return Err(invalid("Limite de profundidade de delegação atingido."));
             }
         }
-        if input.dependencies.iter().any(|id| {
-            !state
-                .jobs
-                .get(id)
-                .is_some_and(|job| job.parent_id == exec.id)
-        }) {
-            return Err(invalid(
-                "Dependências devem ser agentes já despachados pelo mesmo responsável.",
-            ));
-        }
+        validate_dependencies(state, &exec.id, &id, &input.dependencies)?;
         settings::apply(&mut options, &state.profiles, exec.flow, input.role);
         let job = Job {
             custom_agent: None,
+            custom_step_id: None,
             phase: input.phase,
             id: id.clone(),
             parent_id: exec.id.clone(),
@@ -375,16 +389,85 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
             updated_at: now(),
             duration_ms: 0,
             attempts: 1,
+            recovery_attempts: 0,
             handoff: None,
             error: None,
             recovery: None,
             options,
         };
         state.jobs.insert(id.clone(), job.clone());
-        Ok(job)
+        Ok((job, true))
     })?;
+    if !created {
+        return Ok(json!({
+            "id":job.id,"status":job.status,"existingAgentId":job.id,
+            "instructionScheduled":false,
+            "nextAction":"The same task and write scope already have an active worker. The new prompt and acceptance criteria were NOT scheduled. Send additions with hub_send to this ID, or wait and use hub_retry for a follow-up. Do not spawn a duplicate."
+        }).to_string());
+    }
     launch(exec.hub.clone(), job, None)?;
     Ok(json!({"id":id,"status":"queued"}).to_string())
+}
+
+fn active_duplicate<'a>(state: &'a Manifest, parent: &str, input: &Dispatch) -> Option<&'a Job> {
+    state.jobs.values().find(|job| {
+        job.run_id == state.run_id
+            && job.parent_id == parent
+            && job.status.active()
+            && job.role == input.role
+            && job.phase == input.phase
+            && job.scope.len() == input.scope.len()
+            && input.scope.iter().all(|path| {
+                job.scope
+                    .iter()
+                    .any(|existing| Path::new(path) == Path::new(existing))
+            })
+            && match (&job.bead_id, &input.bead_id) {
+                (Some(existing), Some(requested)) => existing == requested,
+                (None, None) => {
+                    job.title == input.title
+                        && job.prompt == input.prompt
+                        && job.acceptance == input.acceptance
+                }
+                _ => false,
+            }
+    })
+}
+
+fn validate_dependencies(
+    state: &Manifest,
+    parent: &str,
+    target: &str,
+    dependencies: &[String],
+) -> Result<(), AgentError> {
+    if dependencies.len() > 16
+        || dependencies.iter().any(|id| {
+            !state
+                .jobs
+                .get(id)
+                .is_some_and(|job| job.parent_id == parent)
+        })
+    {
+        return Err(invalid(
+            "Dependências devem ser agentes já despachados pelo mesmo responsável (até 16).",
+        ));
+    }
+    let mut pending: Vec<_> = dependencies.iter().map(String::as_str).collect();
+    let mut visited = std::collections::HashSet::new();
+    while let Some(id) = pending.pop() {
+        if id == target {
+            return Err(invalid("A dependência criaria uma espera circular entre os agentes. Use o handoff já concluído ou aguarde a rodada atual antes de retomar."));
+        }
+        if !visited.insert(id) {
+            continue;
+        }
+        // Terminal handoffs are evidence, not pending waits. A Builder and Reviewer
+        // may reuse each other's completed rounds without creating a live wait cycle.
+        if let Some(job) = state.jobs.get(id).filter(|job| job.status.active()) {
+            pending.extend(job.dependencies.iter().map(String::as_str));
+        }
+    }
+    Ok(())
 }
 fn validate_phase(flow: Flow, parent: Role, role: Role, phase: Phase) -> Result<(), AgentError> {
     if phase == Phase::Discovery {
@@ -399,21 +482,94 @@ fn validate_phase(flow: Flow, parent: Role, role: Role, phase: Phase) -> Result<
     }
     Ok(())
 }
-fn retry(exec: &Execution, id: &str, prompt: &str) -> Result<String, AgentError> {
+fn retry(
+    exec: &Execution,
+    id: &str,
+    prompt: &str,
+    dependencies: Option<Vec<String>>,
+) -> Result<String, AgentError> {
     if !bounded(prompt) {
         return Err(invalid("Informe o contexto da retomada."));
     }
-    let job = exec.hub.mutate(|state| {
-        let job = state.jobs.get_mut(id).ok_or_else(|| invalid("Agente não encontrado."))?;
-        if job.parent_id != exec.id || !exec.role.spawns(exec.flow, job.role) || job.status.active() || job.attempts >= 3 { return Err(invalid("Retomada indisponível: confira o responsável, o estado e o limite de duas revisões.")); }
-        validate_phase(exec.flow, exec.role, job.role, job.phase)?;
-        job.attempts += 1; job.status = Status::Queued; job.handoff = None; job.error = None; job.recovery = None; job.updated_at = now(); job.duration_ms = 0; job.run_id = state.run_id.clone();
-        job.options = state.options.clone();
-        settings::apply(&mut job.options, &state.profiles, exec.flow, job.role);
-        Ok(job.clone())
-    })?;
-    launch(exec.hub.clone(), job, Some(format!("Resume from the durable checkpoint. Inspect current Beads and files before repeating any uncertain tool action. Current instruction from your coordinator:\n{prompt}")))?;
+    let job = exec
+        .hub
+        .mutate(|state| prepare_retry(state, &exec.id, exec.flow, exec.role, id, dependencies))?;
+    let continuation = if job.recovery_attempts > 0 {
+        "Resume from the durable checkpoint. Inspect current Beads and affected files before repeating any uncertain tool action."
+    } else {
+        "Continue from this worker's existing context. Address the new instruction and changed evidence; reuse valid prior findings and checks instead of restarting discovery."
+    };
+    launch(
+        exec.hub.clone(),
+        job,
+        Some(format!(
+            "{continuation}\nCurrent instruction from your coordinator:\n{prompt}"
+        )),
+    )?;
     Ok(json!({"id":id,"status":"queued"}).to_string())
+}
+
+fn prepare_retry(
+    state: &mut Manifest,
+    parent: &str,
+    flow: Flow,
+    role: Role,
+    id: &str,
+    dependencies: Option<Vec<String>>,
+) -> Result<Job, AgentError> {
+    let job = state
+        .jobs
+        .get(id)
+        .ok_or_else(|| invalid("Agente não encontrado."))?;
+    if job.parent_id != parent || !role.spawns(flow, job.role) || job.status.active() {
+        return Err(invalid(
+            "Retome apenas um agente filho encerrado e permitido pelo seu papel.",
+        ));
+    }
+    validate_phase(flow, role, job.role, job.phase)?;
+    let follow_up = job.status == Status::Completed
+        || (job.status == Status::Blocked
+            && job
+                .handoff
+                .as_ref()
+                .is_some_and(|handoff| handoff.verdict == Verdict::Rework));
+    let recoveries = if follow_up {
+        0
+    } else if job.run_id != state.run_id {
+        // A new user turn can resume after the external failure was resolved.
+        1
+    } else {
+        job.recovery_attempts.saturating_add(1)
+    };
+    if recoveries > 2 {
+        return Err(invalid("Duas retomadas consecutivas falharam. Resolva a causa ou peça orientação antes de iniciar outra recuperação."));
+    }
+    let dependencies = dependencies.unwrap_or_else(|| job.dependencies.clone());
+    validate_dependencies(state, parent, id, &dependencies)?;
+    let job = state.jobs.get_mut(id).ok_or_else(AgentError::internal)?;
+    job.attempts = job.attempts.saturating_add(1);
+    job.recovery_attempts = recoveries;
+    job.dependencies = dependencies;
+    job.status = Status::Queued;
+    job.handoff = None;
+    job.error = None;
+    job.recovery = if follow_up {
+        None
+    } else {
+        Some(RecoveryCheckpoint::new(
+            job.recovery
+                .take()
+                .map_or_else(Vec::new, |checkpoint| checkpoint.uncertain_tools),
+        ))
+    };
+    job.updated_at = now();
+    job.duration_ms = 0;
+    if job.run_id != state.run_id {
+        job.options = state.options.clone();
+        settings::apply(&mut job.options, &state.profiles, flow, job.role);
+    }
+    job.run_id = state.run_id.clone();
+    Ok(job.clone())
 }
 async fn complete(
     exec: &Execution,
@@ -629,7 +785,15 @@ fn admitted(state: &Manifest, job: &Job) -> Result<bool, AgentError> {
         if dependency.status.active() {
             return Ok(false);
         }
-        if dependency.status != Status::Completed {
+        let repair = matches!(job.role, Role::Builder | Role::Designer)
+            && dependency.run_id == job.run_id
+            && dependency.role == Role::Reviewer
+            && dependency.status == Status::Blocked
+            && dependency
+                .handoff
+                .as_ref()
+                .is_some_and(|handoff| handoff.verdict == Verdict::Rework);
+        if dependency.status != Status::Completed && !repair {
             return Err(invalid("Uma dependência não foi concluída com sucesso."));
         }
     }
@@ -731,7 +895,7 @@ async fn check_bead(
     Ok(Some(bead_checkpoint(&value)?))
 }
 fn review_dependencies(state: &Manifest, job: &Job) -> Vec<String> {
-    if job.role != Role::Reviewer {
+    if !matches!(job.role, Role::Reviewer | Role::Builder | Role::Designer) {
         return vec![];
     }
     job.dependencies
@@ -766,8 +930,8 @@ fn validate_bead(value: &Value, review_ready: &[String]) -> Result<(), AgentErro
             "A tarefa do Beads não está disponível para execução.",
         ));
     }
-    // A review may inspect an explicitly completed implementation before its
-    // Bead closes. Keep the durable edge intact; all other blockers still apply.
+    // A completed implementation can feed its dependent work before final
+    // review closes the Bead. Closure still requires review; blocked tasks do not qualify.
     if task["dependencies"].as_array().is_some_and(|deps| {
         deps.iter().any(|dep| {
             dep["dependency_type"] == "blocks"
@@ -778,7 +942,7 @@ fn validate_bead(value: &Value, review_ready: &[String]) -> Result<(), AgentErro
                         .is_some_and(|id| review_ready.iter().any(|ready| ready == id)))
         })
     }) {
-        return Err(invalid("A tarefa ainda possui dependências em aberto no Beads. Revisores precisam declarar em dependencies os agentes de implementação com handoff concluído; preserve as dependências do Beads."));
+        return Err(invalid("A tarefa ainda possui dependências em aberto no Beads. Declare em dependencies os agentes de implementação com handoff concluído para essas tarefas; preserve as dependências do Beads. Tarefas bloqueadas ainda precisam ser resolvidas."));
     }
     Ok(())
 }

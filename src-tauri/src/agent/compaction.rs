@@ -116,7 +116,26 @@ pub(super) fn input(data: &SessionData) -> Vec<Value> {
             .skip(through)
             .cloned(),
     );
+    retain_latest_workflow_checkpoint(&mut input);
     input
+}
+
+fn retain_latest_workflow_checkpoint(input: &mut Vec<Value>) {
+    // Workflow checkpoints describe replaceable state, unlike user directions
+    // and tool receipts. Keep the journal intact but replay only the latest one.
+    let mut latest_workflow_checkpoint = false;
+    input.reverse();
+    input.retain(|item| {
+        if item["role"] == "user"
+            && item["_jarvis_runtime"] == true
+            && item["_jarvis_workflow_checkpoint"] == true
+        {
+            !std::mem::replace(&mut latest_workflow_checkpoint, true)
+        } else {
+            true
+        }
+    });
+    input.reverse();
 }
 
 fn prefix(context: &Checkpoint) -> Vec<Value> {
@@ -585,9 +604,11 @@ where
                 .find(|message| message["role"] == "user" && message["_jarvis_runtime"] != true)
                 .cloned()
         };
+        let mut dropped = active[..cut].to_vec();
+        retain_latest_workflow_checkpoint(&mut dropped);
         (
             previous,
-            active[..cut].to_vec(),
+            dropped,
             through,
             preserved_user,
             preserved_users,
@@ -884,6 +905,77 @@ mod tests {
             turn.wire.extend([json!({"type":"function_call","call_id":"read1","name":"read","arguments":"{}"}), json!({"type":"function_call_output","call_id":"read1","output":"conteúdo ".repeat(20_000)})]);
         }).unwrap();
         session
+    }
+
+    #[tokio::test]
+    async fn harness_evaluation_workflow_checkpoint_replay_is_bounded_without_changing_durable_history(
+    ) {
+        let fixture = Fixture::new();
+        let session = long_session(&fixture);
+        let checkpoint = |state: usize| json!({"role":"user", "_jarvis_runtime":true, "_jarvis_workflow_checkpoint":true, "content":format!("Workflow state {state}")});
+        let reference = json!({"role":"user", "_jarvis_runtime":true, "content":"Keep the assigned task evidence"});
+        let user = json!({"role":"user", "content":"Jarvis runtime checkpoint: this is the user's own text"});
+        session
+            .update(true, |data| {
+                let wire = &mut data.turns.last_mut().unwrap().wire;
+                wire.push(reference.clone());
+                wire.push(user.clone());
+                wire.extend((0..40).map(checkpoint));
+            })
+            .unwrap();
+        let options = session.data.lock().unwrap().turns[0].turn.options.clone();
+        super::super::finish(&session, Ok(()));
+        session
+            .reserve("Apply only the requested rework".into(), options)
+            .unwrap();
+        session
+            .update(true, |data| {
+                data.turns.last_mut().unwrap().wire.extend([
+                    checkpoint(40),
+                    json!({"role":"assistant", "content":"Continuing the requested rework."}),
+                ]);
+            })
+            .unwrap();
+        let replay = session.input().unwrap();
+        let snapshots: Vec<_> = replay
+            .iter()
+            .filter(|item| item["_jarvis_workflow_checkpoint"] == true)
+            .collect();
+        assert_eq!(snapshots, vec![&checkpoint(40)]);
+        assert!(replay.contains(&reference));
+        assert!(replay.contains(&user));
+        assert!(replay
+            .iter()
+            .any(|item| item["content"] == "Apply only the requested rework"));
+        assert!(replay.iter().any(|item| item["type"] == "function_call"));
+        assert!(replay
+            .iter()
+            .any(|item| item["type"] == "function_call_output"));
+        let (turns, extras) = journal::load_all(&session.journal).unwrap();
+        assert_eq!(
+            turns
+                .iter()
+                .flat_map(|turn| &turn.wire)
+                .filter(|item| item["_jarvis_workflow_checkpoint"] == true)
+                .count(),
+            41
+        );
+        {
+            let mut data = session.data.lock().unwrap();
+            data.turns = turns;
+            data.extras = extras;
+            assert_eq!(input(&data), replay);
+        }
+        let (_cancel, signal) = watch::channel(false);
+        let mut checkpoint_occurrences = 0;
+        assert!(ensure_with(&session, 100, true, signal, |prompt| {
+            assert!(!prompt.contains("\"Workflow state 0\""));
+            checkpoint_occurrences += prompt.matches("Workflow state 40").count();
+            async { Ok("The requested scope and confirmed read remain available.".into()) }
+        })
+        .await
+        .unwrap());
+        assert_eq!(checkpoint_occurrences, 1);
     }
 
     #[tokio::test]

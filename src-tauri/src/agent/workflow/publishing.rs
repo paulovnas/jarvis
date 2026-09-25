@@ -24,6 +24,7 @@ fn prepare(hub: &Hub) -> Result<Job, AgentError> {
     };
     Ok(Job {
         custom_agent: None,
+        custom_step_id: None,
         phase: Phase::Implementation,
         id: library::new_id()?,
         parent_id: "main".into(),
@@ -45,6 +46,7 @@ fn prepare(hub: &Hub) -> Result<Job, AgentError> {
         updated_at: now(),
         duration_ms: 0,
         attempts: 1,
+        recovery_attempts: 0,
         handoff: None,
         error: None,
         recovery: None,

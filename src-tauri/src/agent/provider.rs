@@ -10,6 +10,7 @@ use std::{
 use tokio::sync::watch;
 
 mod antigravity;
+mod auth;
 mod capabilities;
 #[cfg(test)]
 mod conformance;
@@ -69,6 +70,7 @@ impl Response {
 /// model steps without leaking settings from a later turn.
 pub(super) struct TurnSession {
     credential: CodexCredential,
+    authentication: Option<auth::Authentication>,
     capabilities: std::sync::Arc<ModelCapabilities>,
     session_id: String,
     client: reqwest::Client,
@@ -91,6 +93,7 @@ impl TurnSession {
         );
         Ok(Self {
             credential,
+            authentication: None,
             capabilities,
             session_id,
             client: http_client()?,
@@ -107,6 +110,34 @@ impl TurnSession {
     pub(super) fn set_incremental_transport(&mut self, enabled: bool) {
         self.incremental_enabled =
             enabled && self.capabilities.protocol == capabilities::WireProtocol::OpenAiResponses;
+    }
+
+    pub(super) fn set_authentication(
+        &mut self,
+        state: crate::persistence::AppState,
+        oauth: crate::openai_codex::OpenAiCodexState,
+        home: std::path::PathBuf,
+        alias: String,
+    ) {
+        if self.credential.custom.is_none() {
+            self.authentication = Some(auth::Authentication::new(
+                state,
+                oauth,
+                home,
+                alias,
+                self.credential.clone(),
+            ));
+        }
+    }
+
+    pub(super) async fn current_credential(
+        &self,
+        signal: watch::Receiver<bool>,
+    ) -> Result<CodexCredential, AgentError> {
+        match &self.authentication {
+            Some(auth) => auth.credential(false, signal).await,
+            None => Ok(self.credential.clone()),
+        }
     }
 
     pub(super) async fn stream(
@@ -141,6 +172,7 @@ impl TurnSession {
             ));
         }
         let tools = ordered_tools(step.tools().to_vec());
+        let credential = self.current_credential(signal.clone()).await?;
         let mut forward = |mut delta: Delta| {
             if let Delta::ToolReady(ready) = &mut delta {
                 if let Some(config) = &self.credential.custom {
@@ -153,7 +185,7 @@ impl TurnSession {
             let request = if let Some(config) = &self.credential.custom {
                 custom::incremental_request(
                     &self.client,
-                    &self.credential,
+                    &credential,
                     config,
                     &self.session_id,
                     step.options(),
@@ -173,7 +205,7 @@ impl TurnSession {
                 );
                 authenticated_request_with_client(
                     &self.client,
-                    &self.credential,
+                    &credential,
                     &self.session_id,
                     &body,
                 )?
@@ -193,7 +225,8 @@ impl TurnSession {
         }
         retry::Request {
             client: self.client.clone(),
-            credential: &self.credential,
+            credential: &credential,
+            authentication: self.authentication.as_ref(),
             session_id: &self.session_id,
             options: step.options(),
             instructions: step.instructions(),
@@ -533,6 +566,7 @@ pub(super) async fn stream(
     retry::Request {
         client,
         credential,
+        authentication: None,
         session_id,
         options,
         capabilities,

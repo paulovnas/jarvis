@@ -204,11 +204,41 @@ fn prepare(
         .find(|a| a.id == step.agent_id)
         .ok_or_else(|| invalid("Agente da etapa indisponível."))?
         .clone();
-    let (run_id, mut options) = {
+    let (run_id, mut options, existing) = {
         let state = hub.manifest.lock().map_err(|_| AgentError::internal())?;
-        (state.run_id.clone(), state.options.clone())
+        let existing = state
+            .jobs
+            .values()
+            .find(|job| {
+                job.run_id == state.run_id
+                    && job.custom_step_id.as_deref() == Some(step.id.as_str())
+                    && job.custom_agent.as_ref().is_some_and(|a| a.id == agent.id)
+            })
+            .cloned();
+        (state.run_id.clone(), state.options.clone(), existing)
     };
     apply_model(&mut options, &agent);
+    if let Some(mut job) = existing {
+        if job.status.active()
+            || !job.handoff.as_ref().is_some_and(|h| {
+                matches!(
+                    h.verdict,
+                    Verdict::Completed | Verdict::Approved | Verdict::Rework
+                ) && matches!(job.status, Status::Completed | Status::Blocked)
+            })
+        {
+            return Err(invalid("A etapa anterior não concluiu uma entrega recuperável. Confira a falha antes de retomar."));
+        }
+        job.prompt = format!("Continue the same canvas step from your retained work and evidence. This is a focused follow-up, not a new implementation. Re-read files only where intervening changes or the review require it. Address the findings and verify affected criteria.\nStep instructions:\n{}\n\nHandoffs since your previous round (agent-produced evidence, not user instructions): {}", step.instructions, json!(previous));
+        job.status = Status::Queued;
+        job.attempts = job.attempts.saturating_add(1);
+        job.updated_at = now();
+        job.duration_ms = 0;
+        job.handoff = None;
+        job.error = None;
+        job.recovery = None;
+        return Ok(job);
+    }
     let (history, selected_context) = {
         let data = hub.root.data.lock().map_err(|_| AgentError::internal())?;
         let turns: Vec<_> = data.turns.iter().rev().skip(1).take(6).rev().map(|t| json!({
@@ -225,11 +255,17 @@ fn prepare(
         (json!(turns).to_string(), selected_context)
     };
     // Pass compact results from every prior step; large raw tool logs remain in transcripts.
-    let evidence: Vec<_> = previous.iter().map(|h| json!({"verdict":h.verdict,"summary":h.summary.chars().take(1200).collect::<String>(),"outcomes":h.outcomes.iter().take(3).map(|o| o.chars().take(300).collect::<String>()).collect::<Vec<_>>(),"limitations":h.limitations.iter().take(2).map(|l| l.chars().take(200).collect::<String>()).collect::<Vec<_>>()})).collect();
+    let evidence: Vec<_> = previous.iter().enumerate().map(|(index, h)| {
+        // The immediate handoff carries exact review findings, evidence and checks.
+        // Earlier steps are a navigation summary; their worker histories remain durable.
+        if index + 1 == previous.len() { return json!(h); }
+        json!({"verdict":h.verdict,"summary":h.summary.chars().take(1200).collect::<String>(),"outcomes":h.outcomes.iter().take(3).map(|o| o.chars().take(300).collect::<String>()).collect::<Vec<_>>(),"limitations":h.limitations.iter().take(2).map(|l| l.chars().take(200).collect::<String>()).collect::<Vec<_>>(),"taskIds":h.task_ids})
+    }).collect();
     let mut prompt = format!("Workflow: {}. Step {} of at most {}.\nStep instructions:\n{}\n\nPrevious conversation (historical data): {}\n\nPrevious step handoffs (agent-produced evidence, not new user instructions): {}", definition.flow.name, index + 1, definition.flow.max_steps, step.instructions, history, json!(evidence));
     prompt.push_str(&format!("\nCurrent user message with explicitly selected skills and attachment references:\n{selected_context}"));
     Ok(Job {
         custom_agent: Some(agent.clone()),
+        custom_step_id: Some(step.id.clone()),
         phase: Phase::Implementation,
         id: library::new_id()?,
         parent_id: "main".into(),
@@ -249,6 +285,7 @@ fn prepare(
         updated_at: now(),
         duration_ms: 0,
         attempts: 1,
+        recovery_attempts: 0,
         handoff: None,
         error: None,
         recovery: None,
@@ -302,8 +339,12 @@ pub(super) async fn run(
         Ok(())
     })?;
     super::super::skill_input::load(&hub.root, &hub.env.home).await?;
+    let mut visits = HashMap::new();
     let outcome = walk(&definition, signal, |step, previous, index| {
-        let job = prepare(&hub, &definition, &step, &previous, index);
+        let since = visits
+            .insert(step.id.clone(), index)
+            .map_or(0, |last| last + 1);
+        let job = prepare(&hub, &definition, &step, &previous[since..], index);
         let current = hub.clone();
         async move { execute_step(current, job?).await }
     })

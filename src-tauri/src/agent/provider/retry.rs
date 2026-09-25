@@ -32,6 +32,7 @@ pub(super) fn retryable(error: &AgentError) -> bool {
 pub(super) struct Request<'a> {
     pub client: reqwest::Client,
     pub credential: &'a CodexCredential,
+    pub authentication: Option<&'a auth::Authentication>,
     pub session_id: &'a str,
     pub options: &'a TurnOptions,
     pub capabilities: ModelCapabilities,
@@ -49,14 +50,21 @@ impl Request<'_> {
         base_delay: Duration,
     ) -> Result<Response, AgentError> {
         let mut retries = 0_u8;
+        let mut auth_retried = false;
         loop {
             if *signal.borrow() {
                 return Err(AgentError::cancelled());
             }
-            if retries > 0 {
+            let credential = match self.authentication {
+                Some(auth) => {
+                    std::borrow::Cow::Owned(auth.credential(false, signal.clone()).await?)
+                }
+                None => std::borrow::Cow::Borrowed(self.credential),
+            };
+            if retries > 0 || auth_retried {
                 emit(Delta::Reset)?;
             }
-            let attempt = retries.saturating_add(1);
+            let attempt = retries.saturating_add(1 + u8::from(auth_retried));
             let provider = super::super::telemetry::provider_kind(self.credential);
             let model_id = super::super::telemetry::model_id(&self.options.model);
             let input_bytes = super::super::telemetry::serialized_bytes(&self.input)
@@ -76,10 +84,10 @@ impl Request<'_> {
             );
             let request_started = std::time::Instant::now();
             let mut first_event_ms = None;
-            let mut reconnecting = retries > 0;
+            let mut reconnecting = retries > 0 || auth_retried;
             let result = stream_once(
                 &self.client,
-                self.credential,
+                &credential,
                 self.session_id,
                 self.options,
                 &self.capabilities,
@@ -106,10 +114,14 @@ impl Request<'_> {
                 },
             )
             .await;
-            let will_retry = result
-                .as_ref()
-                .err()
-                .is_some_and(|error| retryable(error) && retries < MAX_RETRIES);
+            let recover_auth = !auth_retried
+                && self.authentication.is_some()
+                && result.as_ref().err().is_some_and(auth::unauthorized);
+            let will_retry = recover_auth
+                || result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|error| retryable(error) && retries < MAX_RETRIES);
             let response_error = result.as_ref().err();
             let usage = result
                 .as_ref()
@@ -136,6 +148,13 @@ impl Request<'_> {
                 Ok(response) => {
                     if reconnecting { emit(Delta::Retry(None))?; }
                     return Ok(response);
+                }
+                Err(_) if recover_auth => {
+                    auth_retried = true;
+                    if let Some(auth) = self.authentication {
+                        emit(Delta::Retry(Some(Status { attempt: 1, max_attempts: 1, retry_at: super::super::now(), message: "Renovando a autenticação da conta para continuar.".into() })))?;
+                        auth.credential(true, signal.clone()).await?;
+                    }
                 }
                 Err(error) if !retryable(&error) => return Err(error),
                 Err(error) if retries == MAX_RETRIES => return Err(AgentError::new("provider_retry_exhausted", &format!("Não foi possível reconectar após {MAX_RETRIES} tentativas consecutivas. {} O progresso concluído foi preservado.", error.message))),

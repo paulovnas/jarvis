@@ -231,7 +231,12 @@ fn parse(patch: &str) -> Result<Vec<Hunk>, AgentError> {
                             "Linhas vazias em uma atualização devem ser escritas como uma linha de contexto ' ', adição '+' ou remoção '-'.",
                         ));
                     };
-                    let content = line[1..].to_owned();
+                    let content = line
+                        .get(1..)
+                        .ok_or_else(|| {
+                            error("Use ' ', '-' ou '+' no início de cada linha do trecho.")
+                        })?
+                        .to_owned();
                     match marker {
                         b' ' => {
                             old_lines.push(content.clone());
@@ -678,7 +683,7 @@ fn find_unique_sequence(
         .filter(|at| lines[*at..*at + pattern.len()] == pattern[..])
         .take(2)
         .collect();
-    (matches.len() == 1).then_some(matches[0])
+    (matches.len() == 1).then(|| matches[0])
 }
 
 fn create_parent_directories(
@@ -1049,9 +1054,11 @@ mod tests {
 +wrong
 *** End Patch"#;
         let (_send, signal) = watch::channel(false);
-        assert!(execute(&fixture.root, &args(patch), Mode::Build, signal)
+        let error = execute(&fixture.root, &args(patch), Mode::Build, signal)
             .await
-            .is_err());
+            .err()
+            .unwrap();
+        assert!(error.message.contains("não foi encontrado de forma única"));
         assert_eq!(
             fs::read_to_string(fixture.root.join("first.txt")).unwrap(),
             "original\n"
@@ -1060,6 +1067,15 @@ mod tests {
             fs::read_to_string(fixture.root.join("second.txt")).unwrap(),
             "actual\n"
         );
+    }
+
+    #[test]
+    fn invalid_unicode_marker_returns_a_parse_error() {
+        let error = target_paths(&args(
+            "*** Begin Patch\n*** Update File: file.txt\n@@\né errado\n*** End Patch",
+        ))
+        .unwrap_err();
+        assert!(error.message.contains("no início de cada linha"));
     }
 
     #[tokio::test]

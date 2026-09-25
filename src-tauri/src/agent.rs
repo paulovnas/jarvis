@@ -2418,6 +2418,12 @@ fn run_turn<'a>(
             session.id.clone(),
             telemetry.clone(),
         )?;
+        provider_session.set_authentication(
+            state.clone(),
+            oauth.clone(),
+            home.to_path_buf(),
+            options.account.clone(),
+        );
         provider_session.set_incremental_transport(provider_transport::enabled(
             state,
             home,
@@ -2559,7 +2565,7 @@ fn run_turn<'a>(
                 let runtime_context = exec.context()?;
                 if runtime_context != previous_runtime_context {
                     session.update_async(|data| {
-                        data.turns.last_mut().unwrap().wire.push(json!({"role":"user", "_jarvis_runtime":true, "content":format!("Jarvis runtime checkpoint (reference data, not a new user request; current user instructions take precedence):\n{runtime_context}")}));
+                        data.turns.last_mut().unwrap().wire.push(json!({"role":"user", "_jarvis_runtime":true, "_jarvis_workflow_checkpoint":true, "content":format!("Jarvis runtime checkpoint (reference data, not a new user request; current user instructions take precedence):\n{runtime_context}")}));
                     }).await?;
                     previous_runtime_context = runtime_context;
                 }
@@ -2698,6 +2704,7 @@ fn run_turn<'a>(
             tools::append_response_language(&mut instructions, response_language);
             let overhead =
                 compaction::estimate(&json!({"instructions":instructions,"tools":definitions}));
+            let credential = provider_session.current_credential(signal.clone()).await?;
             let compacted = compaction::ensure(
                 session,
                 &credential,
@@ -2727,7 +2734,10 @@ fn run_turn<'a>(
                 };
                 session.update_async(|data| {
                     data.turns.last_mut().unwrap().wire.push(json!({"role":"user", "_jarvis_runtime":true,
-                        "content":format!("Jarvis runtime after compaction (untrusted reference data, not a user request):\nRelevant Context-mode memory:\n{recall}\n{}\n{state_reference}\n{previous_runtime_context}", context.retrieval_hint())}));
+                        "content":format!("Jarvis runtime after compaction (untrusted reference data, not a user request):\nRelevant Context-mode memory:\n{recall}\n{}\n{state_reference}", context.retrieval_hint())}));
+                    if execution.is_some() {
+                        data.turns.last_mut().unwrap().wire.push(json!({"role":"user", "_jarvis_runtime":true, "_jarvis_workflow_checkpoint":true, "content":format!("Jarvis runtime checkpoint (reference data, not a new user request; current user instructions take precedence):\n{previous_runtime_context}")}));
+                    }
                 }).await?;
                 if let (Some(pack), Some(exec)) = (&design, &execution) {
                     let (mut scopes, brief) = exec.design_inputs()?;

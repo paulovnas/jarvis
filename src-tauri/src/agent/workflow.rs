@@ -106,6 +106,8 @@ impl RecoveryCheckpoint {
 struct Job {
     #[serde(default)]
     custom_agent: Option<catalog::AgentDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    custom_step_id: Option<String>,
     #[serde(default)]
     phase: Phase,
     id: String,
@@ -126,6 +128,8 @@ struct Job {
     #[serde(default)]
     duration_ms: u64,
     attempts: u8,
+    #[serde(default)]
+    recovery_attempts: u8,
     handoff: Option<Handoff>,
     error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -530,9 +534,25 @@ impl Execution {
                 json!(recovery.uncertain_tools)
             ));
         }
-        let jobs: Vec<_> = state.jobs.values().map(|job| json!({"id":job.id,"parent":job.parent_id,"role":job.role,"status":job.status,"beadId":job.bead_id,"summary":job.handoff.as_ref().map(|h|h.summary.chars().take(300).collect::<String>()),"error":job.error})).collect();
+        let assigned = state.jobs.get(&self.id);
+        let jobs: Vec<_> = state
+            .jobs
+            .values()
+            .filter(|job| {
+                if self.id == "main" {
+                    job.run_id == state.run_id
+                } else {
+                    job.id == self.id
+                        || (job.parent_id == self.id && job.run_id == state.run_id)
+                        || assigned.is_some_and(|assigned| {
+                            job.id == assigned.parent_id || assigned.dependencies.contains(&job.id)
+                        })
+                }
+            })
+            .map(|job| json!({"id":job.id,"parent":job.parent_id,"role":job.role,"status":job.status,"beadId":job.bead_id,"summary":job.handoff.as_ref().map(|h|h.summary.chars().take(300).collect::<String>()),"error":job.error}))
+            .collect();
         text.push_str(&format!(
-            "\nExecution checkpoints (historical data; inspect Beads/files before retry): {}\n",
+            "\nRelevant execution checkpoints (reference data; inspect Beads/files before retry; hub_list provides other historical agents on demand): {}\n",
             json!(jobs)
         ));
         if let Some(brief) = state.design_briefs.get(&self.id) {

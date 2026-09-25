@@ -4,6 +4,7 @@ use crate::persistence::{self, PersistenceError, ProviderAccountRecord};
 
 pub(crate) mod antigravity;
 pub(crate) mod custom;
+mod inference_auth;
 mod reauthorization;
 pub(crate) mod usage;
 
@@ -3319,6 +3320,114 @@ mod oauth_tests {
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(serde_json::to_vec(&payload).expect("JWT payload"));
         format!("header.{payload}.signature")
+    }
+
+    #[test]
+    fn running_inference_renews_expired_or_rejected_tokens_without_catalog_discovery() {
+        for force in [false, true] {
+            let home = tempfile::tempdir().unwrap();
+            let state = persistence::AppState::default();
+            let store = Arc::new(InMemorySecretStore::default());
+            let current = CodexCredential::new(
+                "old-access",
+                "old-refresh",
+                if force { i64::MAX } else { 0 },
+                "same-account",
+                None,
+                None,
+            );
+            state
+                .with_connection(home.path(), |db| {
+                    commit_provider_account(db, store.as_ref(), "openai-codex-test", &current)
+                        .unwrap();
+                    Ok::<_, PersistenceError>(())
+                })
+                .unwrap();
+            let access = jwt("same-account");
+            let (url, server) = fake_token_server(serde_json::json!({"access_token":access,"refresh_token":"rotated-refresh","expires_in":3600}).to_string(), "200 OK");
+            let oauth = OpenAiCodexState {
+                manager: new_manager(url, Duration::from_secs(5), store.clone(), vec![]),
+            };
+            let next = oauth
+                .renew_inference_credential(
+                    &state,
+                    home.path(),
+                    "openai-codex-test",
+                    &current,
+                    force,
+                )
+                .unwrap();
+            assert_eq!(next.access, access);
+            assert!(!next.needs_refresh().unwrap());
+            assert_eq!(
+                store.load("openai-codex-test").unwrap().refresh,
+                "rotated-refresh"
+            );
+            assert!(server.join().unwrap().contains("grant_type=refresh_token"));
+            // A second worker still holding the old token reuses the rotation.
+            let reused = oauth
+                .renew_inference_credential(
+                    &state,
+                    home.path(),
+                    "openai-codex-test",
+                    &current,
+                    true,
+                )
+                .unwrap();
+            assert_eq!(reused.access, next.access);
+            state.close();
+        }
+    }
+
+    #[test]
+    fn running_inference_preserves_antigravity_metadata_and_rejects_account_replacement() {
+        let home = tempfile::tempdir().unwrap();
+        let state = persistence::AppState::default();
+        let store = Arc::new(InMemorySecretStore::default());
+        let mut current = CodexCredential::new("old", "refresh", 0, "google:same", None, None);
+        current.project_id = Some("project".into());
+        current.antigravity_endpoint = Some("https://example.invalid".into());
+        current
+            .antigravity_models
+            .insert("model".into(), serde_json::json!({"id":"wire-model"}));
+        let mut fresh = current.clone();
+        fresh.access = "new".into();
+        fresh.expires = i64::MAX;
+        state
+            .with_connection(home.path(), |db| {
+                commit_provider_account(db, store.as_ref(), "antigravity-test", &fresh).unwrap();
+                Ok::<_, PersistenceError>(())
+            })
+            .unwrap();
+        let oauth = OpenAiCodexState {
+            manager: Arc::new(OAuthManager::production(store.clone())),
+        };
+        let next = oauth
+            .renew_inference_credential(&state, home.path(), "antigravity-test", &current, true)
+            .unwrap();
+        assert_eq!(next.access, "new");
+        assert_eq!(next.antigravity_models, current.antigravity_models);
+        assert_eq!(next.antigravity_endpoint, current.antigravity_endpoint);
+        fresh.account_id = "google:other".into();
+        store.store("antigravity-test", &fresh).unwrap();
+        assert_eq!(
+            oauth
+                .renew_inference_credential(&state, home.path(), "antigravity-test", &current, true)
+                .err()
+                .unwrap()
+                .code,
+            "account_mismatch"
+        );
+        store.remove("antigravity-test").unwrap();
+        assert_eq!(
+            oauth
+                .renew_inference_credential(&state, home.path(), "antigravity-test", &current, true)
+                .err()
+                .unwrap()
+                .code,
+            "credential_missing"
+        );
+        state.close();
     }
 
     fn fake_token_server(

@@ -59,6 +59,20 @@ fn workflow_check_rejects_missing_bun_scripts_and_lists_real_options() {
 }
 
 #[test]
+fn workflow_check_uses_the_existing_type_check_script() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"scripts":{"type-check":"tsc --noEmit"}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        workflow_command(directory.path(), "bun_typecheck").unwrap(),
+        "bun run type-check"
+    );
+}
+
+#[test]
 fn designer_is_always_an_implementation_role_and_complete_routes_it_through_orchestrator() {
     assert!(validate_phase(
         Flow::Complete,
@@ -336,6 +350,12 @@ fn review_admits_completed_implementation_without_removing_its_beads_dependency(
     let task = json!({"status":"open","dependencies":[{"id":"implementation","dependency_type":"blocks","status":"in_progress"}]});
     assert!(validate_bead(&task, &review_dependencies(&state, &reviewer)).is_ok());
     assert!(validate_bead(&task, &review_dependencies(&state, &builder)).is_err());
+    for role in [Role::Builder, Role::Designer] {
+        let mut dependent = reviewer.clone();
+        dependent.role = role;
+        dependent.dependencies = vec![builder.id.clone()];
+        assert!(validate_bead(&task, &review_dependencies(&state, &dependent)).is_ok());
+    }
     for status in [Status::Running, Status::Blocked, Status::Failed] {
         state.jobs.get_mut(&builder.id).unwrap().status = status;
         assert!(validate_bead(&task, &review_dependencies(&state, &reviewer)).is_err());
@@ -345,6 +365,41 @@ fn review_admits_completed_implementation_without_removing_its_beads_dependency(
     assert!(validate_bead(&task, &review_dependencies(&state, &reviewer)).is_err());
     let blocked = json!({"status":"open","dependencies":[{"id":"implementation","dependency_type":"blocks","status":"blocked"}]});
     assert!(validate_bead(&blocked, &["implementation".into()]).is_err());
+}
+
+#[test]
+fn repair_can_depend_on_a_review_with_findings_but_not_a_failed_review() {
+    let (_fixture, hub) = hub();
+    let mut review = job(&hub, Role::Reviewer, "backend");
+    review.status = Status::Blocked;
+    review.handoff = Some(Handoff {
+        verdict: Verdict::Rework,
+        summary: "Fix the missing validation".into(),
+        outcomes: vec![],
+        evidence: vec![],
+        validation: vec![],
+        limitations: vec![],
+        task_ids: vec![],
+    });
+    let mut repair = job(&hub, Role::Builder, "backend");
+    repair.dependencies = vec![review.id.clone()];
+    let mut state = hub.manifest.lock().unwrap();
+    state.jobs.insert(review.id.clone(), review.clone());
+    assert!(admitted(&state, &repair).unwrap());
+    repair.role = Role::Reviewer;
+    assert!(admitted(&state, &repair).is_err());
+    repair.role = Role::Builder;
+    state
+        .jobs
+        .get_mut(&review.id)
+        .unwrap()
+        .handoff
+        .as_mut()
+        .unwrap()
+        .verdict = Verdict::Blocked;
+    assert!(admitted(&state, &repair).is_err());
+    state.jobs.get_mut(&review.id).unwrap().status = Status::Failed;
+    assert!(admitted(&state, &repair).is_err());
 }
 
 #[test]
@@ -384,7 +439,7 @@ async fn failed_coordinator_waits_for_children_to_settle_before_retry_can_start(
 }
 
 #[tokio::test]
-async fn cancellation_reaches_nested_workers_and_rework_limit_is_enforced() {
+async fn cancellation_reaches_nested_workers_and_failure_recovery_limit_is_enforced() {
     let (_fixture, hub) = hub();
     let mut parent = job(&hub, Role::Orchestrator, ".");
     parent.status = Status::Running;
@@ -404,6 +459,7 @@ async fn cancellation_reaches_nested_workers_and_rework_limit_is_enforced() {
         let job = state.jobs.get_mut(&parent.id).unwrap();
         job.status = Status::Failed;
         job.attempts = 3;
+        job.recovery_attempts = 2;
         Ok(())
     })
     .unwrap();
@@ -414,5 +470,315 @@ async fn cancellation_reaches_nested_workers_and_rework_limit_is_enforced() {
         flow: Flow::Complete,
         scope: vec![".".into()],
     };
-    assert!(retry(&exec, &parent.id, "Try after inspecting the checkpoint").is_err());
+    assert!(retry(
+        &exec,
+        &parent.id,
+        "Try after inspecting the checkpoint",
+        None
+    )
+    .is_err());
+    let mut state = exec.hub.manifest.lock().unwrap();
+    state.run_id = "new-user-turn-after-provider-repair".into();
+    let recovered = prepare_retry(
+        &mut state,
+        "main",
+        Flow::Complete,
+        Role::Planner,
+        &parent.id,
+        None,
+    )
+    .unwrap();
+    assert_eq!(recovered.recovery_attempts, 1);
+    assert_eq!(recovered.id, parent.id);
+}
+
+fn dispatch_for(job: &Job) -> Dispatch {
+    Dispatch {
+        role: job.role,
+        phase: job.phase,
+        title: job.title.clone(),
+        prompt: job.prompt.clone(),
+        acceptance: job.acceptance.clone(),
+        scope: job.scope.clone(),
+        bead_id: job.bead_id.clone(),
+        dependencies: job.dependencies.clone(),
+    }
+}
+
+#[test]
+fn harness_evaluation_duplicate_active_task_returns_its_worker_without_discarding_new_instructions_silently(
+) {
+    let (_fixture, hub) = hub();
+    let mut worker = job(&hub, Role::Builder, "backend");
+    worker.bead_id = Some("task-api".into());
+    worker.status = Status::Running;
+    hub.mutate(|state| {
+        state.jobs.insert(worker.id.clone(), worker.clone());
+        Ok(())
+    })
+    .unwrap();
+    let exec = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::Planner,
+        flow: Flow::Planned,
+        scope: vec![".".into()],
+    };
+    let mut input = dispatch_for(&worker);
+    input.prompt = "Also test the empty request".into();
+    input.acceptance.push("Reject empty requests".into());
+    let result: Value = serde_json::from_str(&spawn(&exec, input).unwrap()).unwrap();
+    assert_eq!(result["existingAgentId"], worker.id);
+    assert_eq!(result["instructionScheduled"], false);
+    assert!(result["nextAction"].as_str().unwrap().contains("hub_send"));
+    let state = hub.manifest.lock().unwrap();
+    assert_eq!(state.jobs.len(), 1);
+    assert!(state.messages.is_empty());
+    assert_eq!(state.jobs[&worker.id].prompt, worker.prompt);
+    assert_eq!(state.jobs[&worker.id].acceptance, worker.acceptance);
+    assert!(hub.live.lock().unwrap().is_empty());
+}
+
+#[test]
+fn duplicate_detection_preserves_independent_tasks_roles_scopes_and_runs() {
+    let (_fixture, hub) = hub();
+    let mut worker = job(&hub, Role::Builder, "backend");
+    worker.bead_id = Some("task-api".into());
+    let mut state = hub.manifest.lock().unwrap();
+    state.jobs.insert(worker.id.clone(), worker.clone());
+    let mut input = dispatch_for(&worker);
+    assert!(active_duplicate(&state, "main", &input).is_some());
+    input.scope = vec!["frontend".into()];
+    assert!(active_duplicate(&state, "main", &input).is_none());
+    input = dispatch_for(&worker);
+    input.bead_id = Some("other-task".into());
+    assert!(active_duplicate(&state, "main", &input).is_none());
+    input = dispatch_for(&worker);
+    input.role = Role::Reviewer;
+    assert!(active_duplicate(&state, "main", &input).is_none());
+    input = dispatch_for(&worker);
+    assert!(active_duplicate(&state, "other-parent", &input).is_none());
+    state.jobs.get_mut(&worker.id).unwrap().run_id = "old-run".into();
+    assert!(active_duplicate(&state, "main", &input).is_none());
+    let stored = state.jobs.get_mut(&worker.id).unwrap();
+    stored.run_id = "run".into();
+    stored.status = Status::Completed;
+    assert!(active_duplicate(&state, "main", &input).is_none());
+    let stored = state.jobs.get_mut(&worker.id).unwrap();
+    stored.status = Status::Running;
+    stored.bead_id = None;
+    stored.role = Role::Investigator;
+    input = dispatch_for(stored);
+    input.prompt = "Investigate a different part of the feature".into();
+    assert!(active_duplicate(&state, "main", &input).is_none());
+}
+
+#[test]
+fn harness_evaluation_successful_followups_keep_worker_context_and_models_beyond_two_rounds() {
+    let (_fixture, hub) = hub();
+    let mut worker = job(&hub, Role::Builder, "backend");
+    worker.status = Status::Completed;
+    worker.options.account = "worker-account".into();
+    worker.options.model = "worker-model".into();
+    worker.recovery_attempts = 2;
+    let mut state = hub.manifest.lock().unwrap();
+    state.jobs.insert(worker.id.clone(), worker.clone());
+    for round in 2..=9 {
+        let continued = prepare_retry(
+            &mut state,
+            "main",
+            Flow::Planned,
+            Role::Planner,
+            &worker.id,
+            None,
+        )
+        .unwrap();
+        assert_eq!(continued.id, worker.id);
+        assert_eq!(continued.attempts, round);
+        assert_eq!(continued.recovery_attempts, 0);
+        assert_eq!(continued.options.account, "worker-account");
+        assert_eq!(continued.options.model, "worker-model");
+        state.jobs.get_mut(&worker.id).unwrap().status = Status::Completed;
+    }
+    assert_eq!(state.jobs.len(), 1);
+}
+
+#[test]
+fn harness_evaluation_rework_reuses_builder_and_reviewer_with_completed_prior_round_dependencies() {
+    let (_fixture, hub) = hub();
+    let mut builder = job(&hub, Role::Builder, "backend");
+    builder.status = Status::Completed;
+    let mut reviewer = job(&hub, Role::Reviewer, "backend");
+    reviewer.status = Status::Blocked;
+    reviewer.recovery_attempts = 2;
+    reviewer.handoff = Some(Handoff {
+        verdict: Verdict::Rework,
+        summary: "Add the missing validation".into(),
+        outcomes: vec![],
+        evidence: vec!["backend/handler.ts".into()],
+        validation: vec![],
+        limitations: vec![],
+        task_ids: vec![],
+    });
+    reviewer.dependencies = vec![builder.id.clone()];
+    let mut state = hub.manifest.lock().unwrap();
+    state.jobs.insert(builder.id.clone(), builder.clone());
+    state.jobs.insert(reviewer.id.clone(), reviewer.clone());
+    let repairing = prepare_retry(
+        &mut state,
+        "main",
+        Flow::Complete,
+        Role::Orchestrator,
+        &builder.id,
+        Some(vec![reviewer.id.clone()]),
+    )
+    .unwrap();
+    assert!(admitted(&state, &repairing).unwrap());
+    state.jobs.get_mut(&builder.id).unwrap().status = Status::Completed;
+    let rechecking = prepare_retry(
+        &mut state,
+        "main",
+        Flow::Complete,
+        Role::Orchestrator,
+        &reviewer.id,
+        Some(vec![builder.id.clone()]),
+    )
+    .unwrap();
+    assert_eq!(rechecking.recovery_attempts, 0);
+    assert!(admitted(&state, &rechecking).unwrap());
+    assert_eq!(state.jobs.len(), 2);
+}
+
+#[test]
+fn invalid_retry_dependencies_leave_the_checkpoint_unchanged() {
+    let (_fixture, hub) = hub();
+    let mut builder = job(&hub, Role::Builder, "backend");
+    builder.status = Status::Completed;
+    let mut waiting = job(&hub, Role::Reviewer, "backend");
+    waiting.dependencies = vec![builder.id.clone()];
+    let mut stranger = waiting.clone();
+    stranger.id = "stranger".into();
+    stranger.parent_id = "another-parent".into();
+    let mut state = hub.manifest.lock().unwrap();
+    state.jobs.insert(builder.id.clone(), builder.clone());
+    state.jobs.insert(waiting.id.clone(), waiting.clone());
+    state.jobs.insert(stranger.id.clone(), stranger.clone());
+    let before = serde_json::to_value(&*state).unwrap();
+    for dependency in [
+        builder.id.as_str(),
+        waiting.id.as_str(),
+        stranger.id.as_str(),
+        "missing",
+    ] {
+        assert!(prepare_retry(
+            &mut state,
+            "main",
+            Flow::Planned,
+            Role::Planner,
+            &builder.id,
+            Some(vec![dependency.to_owned()])
+        )
+        .is_err());
+        assert_eq!(serde_json::to_value(&*state).unwrap(), before);
+    }
+}
+
+#[tokio::test]
+async fn failure_retry_preserves_uncertain_effects_until_a_successful_inspection() {
+    let (_fixture, hub) = hub();
+    let mut worker = job(&hub, Role::Builder, "backend");
+    worker.status = Status::Interrupted;
+    worker.recovery = Some(RecoveryCheckpoint::new(
+        vec!["apply_patch:uncertain".into()],
+    ));
+    worker.recovery.as_mut().unwrap().inspected = true;
+    hub.mutate(|state| {
+        state.jobs.insert(worker.id.clone(), worker.clone());
+        prepare_retry(
+            state,
+            "main",
+            Flow::Planned,
+            Role::Planner,
+            &worker.id,
+            None,
+        )
+    })
+    .unwrap();
+    let exec = Execution {
+        hub: hub.clone(),
+        id: worker.id.clone(),
+        role: Role::Builder,
+        flow: Flow::Planned,
+        scope: worker.scope.clone(),
+    };
+    assert!(exec.context().unwrap().contains("apply_patch:uncertain"));
+    let mutation = ToolCall {
+        id: "write".into(),
+        name: "write".into(),
+        args: json!({"path":"backend/task.ts","content":"changed"}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    assert!(exec
+        .mutation_guard(&mutation, false, hub.root_signal.clone())
+        .await
+        .is_err());
+    let read = ToolCall {
+        name: "read".into(),
+        ..mutation.clone()
+    };
+    exec.observe_recovery_inspection(&read, false, false)
+        .unwrap();
+    assert!(exec
+        .mutation_guard(&mutation, false, hub.root_signal.clone())
+        .await
+        .is_err());
+    exec.observe_recovery_inspection(&read, false, true)
+        .unwrap();
+    assert!(exec
+        .mutation_guard(&mutation, false, hub.root_signal.clone())
+        .await
+        .is_ok());
+    hub.mutate(|state| {
+        state.jobs.get_mut(&worker.id).unwrap().status = Status::Completed;
+        let followup = prepare_retry(
+            state,
+            "main",
+            Flow::Planned,
+            Role::Planner,
+            &worker.id,
+            None,
+        )?;
+        assert!(followup.recovery.is_none());
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn narrow_write_scope_allows_project_reads_but_rejects_out_of_scope_mutations() {
+    let (_fixture, hub) = hub();
+    let exec = Execution {
+        hub,
+        id: "worker".into(),
+        role: Role::Builder,
+        flow: Flow::Planned,
+        scope: vec!["frontend".into()],
+    };
+    let call = ToolCall {
+        id: "read-contract".into(),
+        name: "read".into(),
+        args: json!({"path":"backend/contracts.ts"}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    assert!(exec.preflight(&call).is_none());
+    assert!(exec
+        .preflight(&ToolCall {
+            name: "write".into(),
+            ..call
+        })
+        .is_some());
 }

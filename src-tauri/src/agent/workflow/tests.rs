@@ -248,6 +248,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
 pub(super) fn job(hub: &Hub, role: Role, scope: &str) -> Job {
     Job {
         custom_agent: None,
+        custom_step_id: None,
         phase: Phase::Implementation,
         id: library::new_id().unwrap(),
         parent_id: "main".into(),
@@ -265,10 +266,67 @@ pub(super) fn job(hub: &Hub, role: Role, scope: &str) -> Job {
         updated_at: now(),
         duration_ms: 0,
         attempts: 1,
+        recovery_attempts: 0,
         handoff: None,
         error: None,
         recovery: None,
         options: hub.manifest.lock().unwrap().options.clone(),
+    }
+}
+
+#[test]
+fn harness_evaluation_workflow_context_keeps_relevant_agents_without_replaying_unrelated_history() {
+    for flow in [Flow::Planned, Flow::Complete, Flow::Custom] {
+        let (_fixture, hub) = hub();
+        let parent = job(&hub, Role::Orchestrator, ".");
+        let mut worker = job(&hub, Role::Designer, "frontend");
+        worker.parent_id = parent.id.clone();
+        let mut dependency = job(&hub, Role::Builder, "backend");
+        dependency.run_id = "previous-run".into();
+        worker.dependencies.push(dependency.id.clone());
+        let mut child = job(&hub, Role::Investigator, "frontend");
+        child.parent_id = worker.id.clone();
+        let sibling = job(&hub, Role::Builder, "unrelated");
+        let mut historical = job(&hub, Role::Reviewer, ".");
+        historical.run_id = "previous-run".into();
+        {
+            let mut state = hub.manifest.lock().unwrap();
+            state.flow = flow;
+            for item in [&parent, &worker, &dependency, &child, &sibling, &historical] {
+                state.jobs.insert(item.id.clone(), item.clone());
+            }
+        }
+        let exec = Execution {
+            hub: hub.clone(),
+            id: worker.id.clone(),
+            role: worker.role,
+            flow,
+            scope: worker.scope.clone(),
+        };
+        let before = exec.context().unwrap();
+        for relevant in [&parent, &worker, &dependency, &child] {
+            assert!(before.contains(&relevant.id));
+        }
+        for unrelated in [&sibling, &historical] {
+            assert!(!before.contains(&unrelated.id));
+        }
+        hub.manifest
+            .lock()
+            .unwrap()
+            .jobs
+            .get_mut(&sibling.id)
+            .unwrap()
+            .status = Status::Completed;
+        assert_eq!(exec.context().unwrap(), before);
+        let root = Execution {
+            id: "main".into(),
+            role: Role::Planner,
+            ..exec
+        };
+        let root_context = root.context().unwrap();
+        assert!(root_context.contains(&sibling.id));
+        assert!(!root_context.contains(&historical.id));
+        assert_eq!(hub.manifest.lock().unwrap().jobs.len(), 6);
     }
 }
 
