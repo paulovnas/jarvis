@@ -401,7 +401,13 @@ async fn publication_without_preview_confirmation_opens_native_review() {
         ("Corrija por favor, não era pra ter conflito se só tem nós trabalhando nessa branch", true),
     ];
     for (user, sync_only) in cases {
-        for confirmation in [Some(json!("")), Some(json!(" \t")), Some(Value::Null), None] {
+        for (confirmation, force_review) in [
+            (Some(json!("")), false),
+            (Some(json!(" \t")), false),
+            (Some(Value::Null), false),
+            (None, false),
+            (None, true),
+        ] {
             let signal = session
                 .reserve(
                     user.into(),
@@ -411,7 +417,7 @@ async fn publication_without_preview_confirmation_opens_native_review() {
             let mut args = json!({
                 "summary":"Publicar alterações solicitadas",
                 "authorization":{"mode":"explicit_request","evidence":user},
-                "previewOnly":false,
+                "previewOnly":force_review,
                 "repositories":[{
                     "path":"repository","reset":null,"files":["app.txt"],"branch":null,
                     "commitMessage":"fix: approved change","sync":"none","push":"normal","pullRequest":null
@@ -431,6 +437,9 @@ async fn publication_without_preview_confirmation_opens_native_review() {
             let call = tool("jarvis_propose_publication", args);
             session.update(true, |data| {
                 let turn = data.turns.last_mut().unwrap();
+                if sync_only && !force_review {
+                    turn.turn.options.approval_mode = ApprovalMode::Manual;
+                }
                 turn.turn.steps.push(Step { tools: vec![call.clone()], ..Step::default() });
                 turn.wire.push(json!({"type":"function_call","call_id":call.id,"name":call.name,"arguments":call.args.to_string()}));
             }).unwrap();
@@ -474,6 +483,67 @@ async fn publication_without_preview_confirmation_opens_native_review() {
             assert_eq!(output["status"], "rejected");
             crate::agent::finish(&session, Ok(()));
         }
+    }
+
+    let signal = session
+        .reserve(
+            "Volte à branch hml para preparar a correção".into(),
+            crate::agent::tests::options(ApprovalMode::Yolo),
+        )
+        .unwrap();
+    let call = tool(
+        "jarvis_propose_publication",
+        json!({
+            "summary":"Selecionar a branch local",
+            "authorization":null,
+            "previewOnly":false,
+            "repositories":[{
+                "path":"repository","reset":null,"files":[],"branch":"hml",
+                "commitMessage":null,"sync":"none","push":"none","pullRequest":null
+            }]
+        }),
+    );
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        execute(
+            &session,
+            &session,
+            &state,
+            &oauth,
+            &fixture.root,
+            &call,
+            signal,
+        ),
+    )
+    .await
+    .expect("local preparation must not wait for publication review")
+    .unwrap();
+    let output: Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(output["status"], "published");
+    assert_eq!(git(&["branch", "--show-current"]).trim(), "hml");
+    assert_eq!(git(&["rev-parse", "HEAD"]), head);
+    assert_eq!(git(&["status", "--porcelain=v1"]), status);
+    assert!(session.snapshot().unwrap().pending_authoring.is_none());
+    crate::agent::finish(&session, Ok(()));
+}
+
+#[test]
+fn natural_publication_reply_is_guidance_for_the_agent_without_another_text_confirmation() {
+    for note in [
+        "Resolva isso de uma vez",
+        "PODE FAZER, MAS OBEDEÇA O QUE ESTOU PEDINDO",
+        "Pode fazer, mas exclua app.txt",
+        "Não publique",
+    ] {
+        let output: Value = serde_json::from_str(&publication_revision_output(note)).unwrap();
+        assert_eq!(output["status"], "revision_requested");
+        assert_eq!(output["approved"], false);
+        assert_eq!(output["note"], note);
+        let guidance = output["guidance"].as_str().unwrap();
+        assert!(guidance.contains("previewOnly=false and confirmedProposalId=null"));
+        assert!(guidance.contains("stop if the user withdraws"));
+        assert!(guidance.contains("Do not create another conversational preview"));
+        assert!(guidance.contains("exact confirmation phrase"));
     }
 }
 

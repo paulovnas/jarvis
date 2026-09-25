@@ -247,7 +247,7 @@ fn conversational_confirmation_is_bound_to_the_exact_proposal_and_repository_sta
     let receipt: Value =
         serde_json::from_str(&preview(&root, &proposal, "preview-1").unwrap()).unwrap();
     let time = receipt["createdAt"].as_u64().unwrap();
-    validate_confirmation(
+    assert!(validate_confirmation(
         &root,
         &proposal,
         "preview-1",
@@ -255,16 +255,18 @@ fn conversational_confirmation_is_bound_to_the_exact_proposal_and_repository_sta
         Some(&receipt),
         time + 1,
     )
-    .unwrap();
+    .unwrap());
     for reply in [
         "não",
         "pode fazer, mas mude a branch",
         "ignore a revisão",
         "ok, depois vemos",
         "execute outra coisa",
+        "Resolva isso de uma vez",
+        "PODE FAZER, MAS OBEDEÇA O QUE ESTOU PEDINDO",
     ] {
         assert!(
-            validate_confirmation(
+            !validate_confirmation(
                 &root,
                 &proposal,
                 "preview-1",
@@ -272,7 +274,7 @@ fn conversational_confirmation_is_bound_to_the_exact_proposal_and_repository_sta
                 Some(&receipt),
                 time + 1
             )
-            .is_err(),
+            .unwrap(),
             "{reply}"
         );
     }
@@ -309,6 +311,163 @@ fn conversational_confirmation_is_bound_to_the_exact_proposal_and_repository_sta
         time + 1
     )
     .is_err());
+}
+
+#[test]
+fn local_preparation_uses_turn_policy_without_granting_publication_or_rewrites() {
+    let mut repository = repo_proposal(".", &[]);
+    repository.commit_message = None;
+    repository.branch = Some("hml".into());
+    let mut proposal = Proposal {
+        summary: "Preparar a correção solicitada".into(),
+        authorization: None,
+        repositories: vec![repository.clone()],
+    };
+    for sync in [SyncMode::None, SyncMode::FfOnly] {
+        proposal.repositories[0].sync = sync;
+        assert!(prepares_locally_without_review(
+            &proposal,
+            "Corrija o conflito",
+            super::super::ApprovalMode::Yolo
+        ));
+        assert!(!prepares_locally_without_review(
+            &proposal,
+            "Corrija o conflito",
+            super::super::ApprovalMode::Manual
+        ));
+        assert!(!prepares_locally_without_review(
+            &proposal,
+            "Corrija, mas confirme antes para minha aprovação",
+            super::super::ApprovalMode::Yolo
+        ));
+    }
+    for mutation in [
+        json!({"sync":"rebase"}),
+        json!({"reset":{"mode":"soft","target":"HEAD^"}}),
+        json!({"commitMessage":"fix: change","files":["app.txt"]}),
+        json!({"push":"normal"}),
+        json!({"push":"force_with_lease"}),
+        json!({"pullRequest":{"base":"main","title":"PR","body":"Changes","draft":false,"merge":null}}),
+    ] {
+        let mut value = serde_json::to_value(&repository).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(mutation.as_object().unwrap().clone());
+        proposal.repositories[0] = serde_json::from_value(value).unwrap();
+        assert!(!prepares_locally_without_review(
+            &proposal,
+            "Corrija o conflito",
+            super::super::ApprovalMode::Yolo
+        ));
+    }
+}
+
+#[test]
+fn legacy_confirmation_with_additional_instructions_returns_revision_without_an_error() {
+    let repo = repository();
+    let root = repo.path().canonicalize().unwrap();
+    std::fs::write(root.join("app.txt"), "pending change\n").unwrap();
+    let proposal = authorized_proposal(
+        UserAuthorizationMode::ExplicitRequest,
+        "commit",
+        repo_proposal(".", &["app.txt"]),
+    );
+    let receipt: Value =
+        serde_json::from_str(&preview(&root, &proposal, "preview-1").unwrap()).unwrap();
+    let mut tool = call("jarvis_propose_publication", "");
+    tool.args = serde_json::to_value(&proposal).unwrap();
+    tool.args["confirmedProposalId"] = json!("preview-1");
+    let head = git_ok(&root, ["rev-parse", "HEAD"]);
+    for reply in [
+        "Resolva isso de uma vez",
+        "PODE FAZER, MAS OBEDEÇA O QUE ESTOU PEDINDO",
+        "Pode fazer, mas exclua app.txt",
+        "Não publique",
+    ] {
+        assert!(matches!(
+            prepare_with_confirmation(
+                &AppState::default(),
+                &root,
+                "p1",
+                &root,
+                reply,
+                false,
+                &tool,
+                Some(&receipt)
+            )
+            .unwrap(),
+            PreparedPublication::RevisionRequested
+        ));
+        assert_eq!(git_ok(&root, ["rev-parse", "HEAD"]), head);
+        assert!(git_ok(&root, ["diff", "--cached", "--name-only"]).is_empty());
+    }
+}
+
+#[test]
+fn publication_uses_configured_questions_or_explicit_native_review() {
+    let repo = repository();
+    let root = repo.path().canonicalize().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    state
+        .with_connection(home.path(), |db| -> Result<(), AgentError> {
+            db.execute_batch(
+                "INSERT INTO workspaces (id, name) VALUES ('w1', 'Test');
+                 INSERT INTO projects (id, workspace_id, name, path) VALUES ('p1', 'w1', 'Test', '/project');",
+            )
+            .unwrap();
+            save(db, "p1", SettingsInput {
+                pr_mode: PullRequestMode::AskPrMerge,
+                ..SettingsInput::default()
+            }, true)?;
+            Ok(())
+        })
+        .unwrap();
+    std::fs::write(repo.path().join("app.txt"), "pending\n").unwrap();
+    let mut tool = call("jarvis_propose_publication", "");
+    tool.args = json!({
+        "summary":"Revisar publicação",
+        "authorization":null,
+        "previewOnly":false,
+        "repositories":[repo_proposal(".", &["app.txt"])]
+    });
+    let prepare = |tool: &ToolCall, answered| {
+        prepare(
+            &state,
+            home.path(),
+            "p1",
+            &root,
+            "Faça o commit",
+            answered,
+            tool,
+        )
+    };
+    assert_eq!(
+        prepare(&tool, false).unwrap_err().code,
+        "publication_question_required"
+    );
+    assert!(matches!(
+        prepare(&tool, true).unwrap(),
+        PreparedPublication::Ready(_)
+    ));
+
+    // Native review presents the complete PR/merge choice itself, without a
+    // second conversational checkpoint. It never grants automatic execution.
+    tool.args["previewOnly"] = json!(true);
+    let PreparedPublication::Ready(proposal) = prepare(&tool, false).unwrap() else {
+        panic!("the native drawer must be available for a concrete proposal");
+    };
+    assert!(proposal.authorization.is_none());
+    assert!(!executes_without_review(&proposal));
+
+    tool.args["previewOnly"] = json!(false);
+    tool.args["authorization"] = json!({"mode":"explicit_request", "evidence":"Faça o commit"});
+    let PreparedPublication::Ready(proposal) = prepare(&tool, false).unwrap() else {
+        panic!("a direct request already resolves the material question");
+    };
+    assert!(proposal.authorization.is_some());
+    assert!(!executes_without_review(&proposal));
 }
 
 #[test]
@@ -781,6 +940,100 @@ fn approved_action_only_soft_reset_keeps_the_changes_staged() {
     );
     assert_eq!(result.reset.unwrap().target, "HEAD^");
     assert!(result.commit.is_none());
+}
+
+#[test]
+fn approved_soft_reset_commits_only_files_still_changed_against_the_new_base() {
+    let repository = repository();
+    let root = std::fs::canonicalize(repository.path()).unwrap();
+    let files = ["app.txt", "dialog.txt", "hml.yml", "pr.yml", "release.yml"];
+    for file in &files[1..] {
+        std::fs::write(root.join(file), "base\n").unwrap();
+    }
+    git_ok(&root, ["add", "--all"]);
+    git_ok(&root, ["commit", "--no-gpg-sign", "-m", "base"]);
+    git_ok(&root, ["branch", "hml"]);
+    let base = git_ok(&root, ["rev-parse", "HEAD"]);
+    for file in files {
+        std::fs::write(root.join(file), "branch change\n").unwrap();
+    }
+    git_ok(&root, ["add", "--all"]);
+    git_ok(&root, ["commit", "--no-gpg-sign", "-m", "old branch"]);
+    for file in &files[2..] {
+        std::fs::write(root.join(file), "base\n").unwrap();
+    }
+    let mut proposal = repo_proposal(".", &files);
+    proposal.reset = Some(ResetProposal {
+        mode: ResetMode::Soft,
+        target: "hml".into(),
+    });
+
+    let result = publish_repository(&root, &proposal, false).unwrap();
+
+    assert!(result.commit.is_some());
+    assert_eq!(git_ok(&root, ["rev-parse", "HEAD^"]), base);
+    assert_eq!(
+        git_ok(&root, ["diff", "--name-only", "hml", "HEAD"]),
+        "app.txt\ndialog.txt"
+    );
+    assert!(git_ok(&root, ["status", "--porcelain=v1"]).is_empty());
+}
+
+#[test]
+fn approved_soft_reset_does_not_create_an_empty_commit_when_changes_cancel_out() {
+    let repository = repository();
+    let root = std::fs::canonicalize(repository.path()).unwrap();
+    let base = git_ok(&root, ["rev-parse", "HEAD"]);
+    std::fs::write(root.join("app.txt"), "branch change\n").unwrap();
+    git_ok(&root, ["add", "app.txt"]);
+    git_ok(&root, ["commit", "--no-gpg-sign", "-m", "old branch"]);
+    std::fs::write(root.join("app.txt"), "before\n").unwrap();
+    let mut proposal = repo_proposal(".", &["app.txt"]);
+    proposal.reset = Some(ResetProposal {
+        mode: ResetMode::Soft,
+        target: base.clone(),
+    });
+
+    let result = publish_repository(&root, &proposal, false).unwrap();
+
+    assert!(result.commit.is_none());
+    assert_eq!(result.reset.unwrap().resolved_commit, base);
+    assert_eq!(git_ok(&root, ["rev-parse", "HEAD"]), base);
+    assert!(git_ok(&root, ["status", "--porcelain=v1"]).is_empty());
+}
+
+#[test]
+fn soft_reset_cannot_commit_files_outside_the_approved_scope() {
+    let repository = repository();
+    let root = std::fs::canonicalize(repository.path()).unwrap();
+    let base = git_ok(&root, ["rev-parse", "HEAD"]);
+    for file in ["app.txt", "outside.txt"] {
+        std::fs::write(root.join(file), "branch change\n").unwrap();
+    }
+    git_ok(&root, ["add", "--all"]);
+    git_ok(&root, ["commit", "--no-gpg-sign", "-m", "old branch"]);
+    let head = git_ok(&root, ["rev-parse", "HEAD"]);
+    let mut proposal = repo_proposal(".", &["app.txt"]);
+    proposal.reset = Some(ResetProposal {
+        mode: ResetMode::Soft,
+        target: base,
+    });
+
+    let result: Value = serde_json::from_str(&apply(
+        &root,
+        &Proposal {
+            summary: "Reaplicar somente a alteração aprovada".into(),
+            authorization: None,
+            repositories: vec![proposal],
+        },
+        None,
+    ))
+    .unwrap();
+
+    assert_eq!(result["error"]["code"], "publication_staged_scope");
+    assert_eq!(result["status"], "failed");
+    assert_eq!(git_ok(&root, ["rev-parse", "HEAD"]), head);
+    assert!(git_ok(&root, ["status", "--porcelain=v1"]).is_empty());
 }
 
 #[test]

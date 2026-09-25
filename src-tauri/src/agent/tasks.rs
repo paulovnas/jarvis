@@ -170,36 +170,73 @@ pub(super) fn requires_active_task(name: &str) -> bool {
 // This exemption affects task bookkeeping only. It never grants execution permission
 // or replaces shell/publication policy. Unknown syntax remains conservative.
 pub(super) fn requires_active_task_for(tool: &super::ToolCall) -> bool {
-    if tool.name == "bash"
-        && tool.args["command"]
+    let read_only = match tool.name.as_str() {
+        "bash" => tool.args["command"]
             .as_str()
-            .is_some_and(read_only_inspection)
-    {
-        return false;
-    }
-    requires_active_task(&tool.name)
+            .is_some_and(read_only_inspection),
+        "ctx_batch_execute" => tool.args["commands"].as_array().is_some_and(|commands| {
+            !commands.is_empty()
+                && commands.iter().all(|command| {
+                    command["command"]
+                        .as_str()
+                        .is_some_and(read_only_inspection)
+                })
+        }),
+        _ => false,
+    };
+    !read_only && requires_active_task(&tool.name)
 }
 
 fn read_only_inspection(command: &str) -> bool {
-    if command.contains([
-        ';', '&', '|', '\n', '\r', '>', '<', '$', '`', '(', ')', '\\', '\'', '"',
-    ]) {
+    // The shared parser does not yet preserve newline command boundaries.
+    if command.contains(['\n', '\r', '$', '`', '(', ')']) {
         return false;
     }
-    let words: Vec<_> = command.split_whitespace().collect();
+    let Ok(plan) = super::execution_policy::parse_command(command) else {
+        return false;
+    };
+    !plan.dynamic
+        && plan
+            .redirections
+            .iter()
+            .all(|redirect| redirect.target == "/dev/null")
+        && plan
+            .invocations
+            .iter()
+            .all(|invocation| read_only_invocation(&invocation.argv))
+}
+
+fn read_only_invocation(argv: &[String]) -> bool {
+    let words: Vec<_> = argv.iter().map(String::as_str).collect();
+    if words.contains(&"&") {
+        return false;
+    }
     match words.as_slice() {
-        ["pwd" | "Get-Location"] => true,
+        ["pwd" | "Get-Location" | "true" | "false"] | ["cd", _] => true,
         ["git", rest @ ..] => {
             let rest = match rest {
                 ["-C", _, rest @ ..] => rest,
                 rest => rest,
             };
-            matches!(
-                rest.first(),
-                Some(&"status" | &"diff" | &"log" | &"show" | &"rev-parse" | &"ls-files")
-            ) && !rest.iter().any(|word| {
+            if rest.iter().any(|word| {
                 word.starts_with("--output") || matches!(*word, "--ext-diff" | "--textconv")
-            })
+            }) {
+                return false;
+            }
+            match rest {
+                ["status" | "diff" | "log" | "show" | "rev-parse" | "ls-files" | "merge-base", ..] => {
+                    true
+                }
+                ["branch", args @ ..] => args.iter().all(|arg| {
+                    matches!(
+                        *arg,
+                        "--list" | "--all" | "--remotes" | "--verbose" | "--show-current"
+                    ) || arg.strip_prefix('-').is_some_and(|flags| {
+                        !flags.is_empty() && flags.chars().all(|flag| "arv".contains(flag))
+                    }) || (args.contains(&"--list") && !arg.starts_with('-'))
+                }),
+                _ => false,
+            }
         }
         ["gh", "pr", "view" | "list" | "status", ..] => true,
         _ => false,
@@ -226,6 +263,9 @@ mod tests {
         for command in [
             "git status --short",
             "git -C backend diff --stat",
+            "git -C 'frontend app' diff --stat && git log -3",
+            "cd movart-express-front && git branch -avv && git rev-parse HEAD origin/hml && git merge-base HEAD origin/hml",
+            "git branch --list hml && git rev-parse --verify refs/heads/hml 2>/dev/null || true; git rev-parse --verify refs/remotes/origin/hml",
             "git log -3",
             "gh pr view --json state",
             "pwd",
@@ -238,12 +278,43 @@ mod tests {
             "git commit -m fix",
             "git diff --output=stolen.txt",
             "git status; rm file",
+            "git status & rm file",
+            "git status\nrm file",
+            "git status && git commit -m fix",
+            "git branch feature",
+            "git branch --list --delete feature",
+            "git branch -l feature",
             "gh api -X POST repos/a/b",
             "git show $(touch file)",
             "git diff > file",
         ] {
             assert!(!read_only_inspection(command), "{command}");
         }
+    }
+
+    #[test]
+    fn inspection_batches_only_skip_task_bookkeeping_when_every_command_is_read_only() {
+        let mut tool = super::super::ToolCall {
+            id: "inspection".into(),
+            name: "ctx_batch_execute".into(),
+            args: json!({"commands":[
+                {"label":"PR", "command":"gh pr list --head paulovnas --base hml --state open"},
+                {"label":"Refs", "command":"git branch -avv && git merge-base HEAD origin/hml"},
+                {"label":"Diff", "command":"git log --oneline --left-right --cherry-pick -n 20 origin/hml...HEAD && git diff --stat origin/hml...HEAD"}
+            ]}),
+            status: "running".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        assert!(!requires_active_task_for(&tool));
+        for command in ["git push origin HEAD", "npm test", "git diff > result.txt"] {
+            tool.args["commands"][1]["command"] = json!(command);
+            assert!(requires_active_task_for(&tool), "{command}");
+        }
+        tool.args = json!({"commands":[]});
+        assert!(requires_active_task_for(&tool));
+        tool.args = json!({"commands":[{"label":"Missing command"}]});
+        assert!(requires_active_task_for(&tool));
     }
 
     fn task(id: &str, title: &str, status: Status) -> Task {

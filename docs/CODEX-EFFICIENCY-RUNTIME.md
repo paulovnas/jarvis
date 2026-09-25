@@ -12,9 +12,11 @@ A failed isolated command preserves output and supplies structured recovery argu
 
 ## Publication confirmation
 
-`jarvis_propose_publication` supports `previewOnly` and `confirmedProposalId`. A preview validates the concrete proposal and returns a runtime-generated receipt without publishing. A short affirmative reply in the immediately following turn can authorize exactly that proposal, avoiding a redundant review.
+`jarvis_propose_publication` uses the native review drawer for new proposals. The compatibility flag `previewOnly=true` forces that review, including for actions that could otherwise execute automatically; it no longer creates a conversational checkpoint or asks the user to type a confirmation phrase.
 
-The receipt is selected from native tool history, not model-authored text. It must be the latest publication proposal from the previous completed turn, cannot have been attempted already in the current turn, and expires after 24 hours. Repository identity, HEAD/branch, selected file contents, index, remote and target revision are checked again. Different operations, changed repository state, negation or a reply containing observations require a revised proposal. Existing explicit current-request authorization and approval with observations retain their contracts.
+Standalone local branch selection/creation and fast-forward synchronization follow the turn approval policy. They cannot include reset, rebase, commit, push or a pull request. An explicit request for review still opens the drawer. These operations use the same typed validation and execution path; no shell bypass is introduced.
+
+`confirmedProposalId` remains compatible with legacy previews already recorded in conversation history. The receipt must come from the previous completed turn, cannot have been attempted in the current turn, expires after 24 hours and binds repository state and operations. A short unambiguous affirmative reply can still confirm it. Fuller replies, observations and refusals return `revision_requested` as guidance for the model instead of a blocking validation error: interpret the user's current intent, incorporate changes or stop as requested, then use native review. They do not authorize the old proposal automatically. Stale or changed receipts require a fresh native proposal, never another literal text confirmation. Explicit autonomous requests and approval with observations retain their scope checks.
 
 ## Finite command sessions
 

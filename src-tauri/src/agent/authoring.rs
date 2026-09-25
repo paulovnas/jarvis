@@ -441,13 +441,13 @@ pub(super) async fn execute(
                     .flat_map(|step| &step.tools)
                     .any(publication::answered_publication_question)
             });
-        let current_user_request = owner
+        let (current_user_request, approval_mode) = owner
             .data
             .lock()
             .map_err(|_| AgentError::internal())?
             .turns
             .last()
-            .map(|turn| turn.turn.user.clone())
+            .map(|turn| (turn.turn.user.clone(), turn.turn.options.approval_mode))
             .ok_or_else(AgentError::internal)?;
         let confirmation = publication::confirmation_receipt(
             &session
@@ -457,7 +457,7 @@ pub(super) async fn execute(
                 .turns,
             tool,
         );
-        let proposal = publication::prepare_with_confirmation(
+        let proposal = match publication::prepare_with_confirmation(
             state,
             home,
             owner.project_id()?,
@@ -466,11 +466,20 @@ pub(super) async fn execute(
             question_answered,
             tool,
             confirmation.as_ref(),
-        )?;
-        if tool.args["previewOnly"] == true {
-            return publication::preview(&session.root, &proposal, &tool.id);
-        }
-        if publication::executes_without_review(&proposal) {
+        )? {
+            publication::PreparedPublication::Ready(proposal) => proposal,
+            publication::PreparedPublication::RevisionRequested => {
+                return Ok(publication_revision_output(&current_user_request));
+            }
+        };
+        if tool.args["previewOnly"] != true
+            && (publication::executes_without_review(&proposal)
+                || publication::prepares_locally_without_review(
+                    &proposal,
+                    &current_user_request,
+                    approval_mode,
+                ))
+        {
             if *signal.borrow() {
                 return Err(AgentError::cancelled());
             }
@@ -543,6 +552,15 @@ pub(super) fn cancelled_output() -> String {
     json!({"approved":false,"status":"cancelled","note":"A solicitação foi cancelada antes de uma decisão."}).to_string()
 }
 
+fn publication_revision_output(note: &str) -> String {
+    json!({
+        "approved":false,
+        "status":"revision_requested",
+        "note":note,
+        "guidance":"Interpret the current user message in the context of the requested task. Incorporate any observations or scope changes before proceeding; stop if the user withdraws the request. Then submit a revised jarvis_propose_publication proposal with previewOnly=false and confirmedProposalId=null for native review. Preserve explicitly granted autonomy only within its scope. Do not create another conversational preview, mark the task blocked, or ask the user to repeat an exact confirmation phrase."
+    }).to_string()
+}
+
 fn answer_with(
     session: &Session,
     turn_id: &str,
@@ -583,13 +601,7 @@ fn answer_with(
         approved && note.is_some() && matches!(&mutation, Mutation::Publication(_));
     let (output, changed) = if publication_revision_requested {
         (
-            json!({
-                "approved":false,
-                "status":"revision_requested",
-                "note":note,
-                "guidance":"Do not execute the previous publication proposal. Incorporate the user's note, re-inspect the current Git and GitHub state, then submit a revised jarvis_propose_publication proposal for explicit approval."
-            })
-            .to_string(),
+            publication_revision_output(note.as_deref().unwrap_or_default()),
             false,
         )
     } else if approved {
