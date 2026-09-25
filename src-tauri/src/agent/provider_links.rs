@@ -273,8 +273,21 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
         }
         let path = library::session_path(home, &project, &id, false).map_err(storage)?;
         for (options, queued) in chat_choices(&path)? {
-            let flow = options.workflow.unwrap_or_default();
-            // A built-in assignment owns this selection and is already listed above.
+            let mut flow = options.workflow.unwrap_or_default();
+            if flow == workflow::Flow::Custom && options.custom_workflow_id.is_none() {
+                // The composer applies GitHub's profile on the next send; queued turns
+                // retain their submitted choice. Custom agents override both at runtime.
+                if !queued && options.custom_agent_id.as_deref() == Some("builtin:github") {
+                    flow = workflow::Flow::Publication;
+                } else if catalog.agents.iter().any(|agent| {
+                    Some(agent.id.as_str()) == options.custom_agent_id.as_deref()
+                        && agent.usage != workflow::catalog::AgentUsage::FlowOnly
+                        && agent.model.is_some()
+                }) {
+                    continue;
+                }
+            }
+            // Configured assignments are already listed above.
             if flow != workflow::Flow::Custom
                 && profiles.contains_key(&workflow::settings::key(flow, flow.root()))
             {

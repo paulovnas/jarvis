@@ -10,6 +10,8 @@ pub enum Status {
     Applied,
     Reused,
     Unavailable,
+    Pending,
+    Issues,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

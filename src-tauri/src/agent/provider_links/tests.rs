@@ -278,6 +278,109 @@ fn stale_review_and_invalid_replacements_leave_every_selection_untouched() {
 }
 
 #[test]
+fn configured_standalone_models_do_not_create_obsolete_chat_references() {
+    let (db, home) = fixture();
+    let workspace = "1".repeat(32);
+    let project = "2".repeat(32);
+    db.execute(
+        "INSERT INTO workspaces(id,name) VALUES(?1,'Workspace')",
+        [&workspace],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO projects(id,workspace_id,name,path) VALUES(?1,?2,'Projeto','/project')",
+        params![project, workspace],
+    )
+    .unwrap();
+    let profiles_path = crate::data_dir::root(home.path()).join("agents.json");
+    std::fs::write(
+        &profiles_path,
+        json!({
+            "publication/github":choice("openai-codex-new", "gpt-6-luna")
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let catalog_path = crate::data_dir::root(home.path()).join("workflow-catalog.json");
+    let mut catalog: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&catalog_path).unwrap()).unwrap();
+    catalog["agents"][0]["usage"] = json!("mixed");
+    catalog["agents"][0]["model"] = json!(choice("openai-codex-new", "gpt-6-luna"));
+    std::fs::write(&catalog_path, catalog.to_string()).unwrap();
+    let agent = "a".repeat(32);
+    let flow = "b".repeat(32);
+    let missing = "d".repeat(32);
+    let cases = [
+        (Some("builtin:github"), None, false, false),
+        // A queued native GitHub turn still uses the choice submitted with it.
+        (Some("builtin:github"), None, true, true),
+        (Some(agent.as_str()), None, false, false),
+        (Some(agent.as_str()), None, true, false),
+        // Custom graphs retain the composer fallback for unassigned step models.
+        (None, Some(flow.as_str()), false, true),
+        (Some(missing.as_str()), None, false, true),
+    ];
+    let mut histories = Vec::new();
+    for (index, (agent_id, flow_id, queued, visible)) in cases.into_iter().enumerate() {
+        let conversation = format!("{:032x}", index + 10);
+        db.execute(
+            "INSERT INTO conversations(id,project_id,title) VALUES(?1,?2,'Chat antigo')",
+            params![conversation, project],
+        )
+        .unwrap();
+        let path = library::session_path(home.path(), &project, &conversation, true).unwrap();
+        let options = json!({
+            "account":"openai-codex-old","model":"gpt-5.6-luna","reasoning":null,
+            "mode":"build","workflow":"custom","customAgentId":agent_id,
+            "customWorkflowId":flow_id,"approvalMode":"yolo"
+        });
+        let queue = if queued {
+            json!([{"id":"queued-1","options":options}])
+        } else {
+            json!([])
+        };
+        let history = format!(
+            "{{}}\n{}\n{}\n",
+            json!({"type":"turn_checkpoint","version":1,"data":{"turn":{"id":"turn-1","options":options}}}),
+            json!({"type":"queue_checkpoint","version":1,"data":queue})
+        );
+        std::fs::write(&path, &history).unwrap();
+
+        let references = inventory(&db, home.path()).unwrap();
+        let chat = references
+            .iter()
+            .find(|item| item.item_key == format!("chat:{conversation}"));
+        assert_eq!(chat.is_some(), visible, "case {index}");
+        if index == 1 {
+            let chat = chat.unwrap();
+            assert!(chat.details.contains(&"Mensagens na fila".into()));
+            assert!(!chat.details.contains(&"Modelo do chat".into()));
+        }
+        assert!(references
+            .iter()
+            .any(|item| item.item_key == "builtin:publication/github"
+                && item.choice.model == "gpt-6-luna"));
+        histories.push((path, history));
+    }
+
+    // Without a configured override, the saved chat choice still needs review.
+    std::fs::write(profiles_path, "{}").unwrap();
+    catalog["agents"][0]["model"] = serde_json::Value::Null;
+    std::fs::write(catalog_path, catalog.to_string()).unwrap();
+    assert_eq!(
+        inventory(&db, home.path())
+            .unwrap()
+            .iter()
+            .filter(|item| item.kind == Kind::Conversation)
+            .count(),
+        histories.len()
+    );
+    for (path, history) in histories {
+        assert_eq!(std::fs::read_to_string(path).unwrap(), history);
+    }
+}
+
+#[test]
 fn chat_replacements_change_future_choices_and_queue_metadata_without_editing_history() {
     let (mut db, home) = fixture();
     let workspace = "1".repeat(32);

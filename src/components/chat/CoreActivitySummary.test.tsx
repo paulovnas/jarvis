@@ -59,3 +59,45 @@ it("does not invent activity for legacy or empty histories", () => {
   const { container } = render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [] }]} />);
   expect(container).toBeEmptyDOMElement();
 });
+
+function diagnostic(path: string, status: CoreActivity["status"], summary: string): CoreActivity {
+  return { ...prepared, component: "lsp", action: "file_diagnostics", sources: [path], status, summary, fingerprint: "current" };
+}
+
+it("distinguishes a partial LSP check from code diagnostics and a failed server", async () => {
+  const user = userEvent.setup();
+  render(<CoreActivitySummary steps={[{ ...step, coreActivities: [
+    diagnostic("pessoas.ts", "issues", "2 erros encontrados: exports ausentes."),
+    diagnostic("service.ts", "pending", "Aguardando diagnósticos da versão atual."),
+  ] }]} />);
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  expect(screen.getByText(/Verificação parcial/)).toBeVisible();
+  expect(screen.getByText(/2 erros encontrados/)).toBeVisible();
+  expect(screen.getByText(/Aguardando diagnósticos/)).toBeVisible();
+  expect(screen.queryByText(/Falha do servidor/)).not.toBeInTheDocument();
+});
+
+it("resolves an old warning only after a fresh successful check of the same file", async () => {
+  const user = userEvent.setup();
+  const warnings = [diagnostic("a.ts", "issues", "Export ausente."), diagnostic("b.ts", "unavailable", "Servidor encerrou.")];
+  const renderSteps = (receipts: CoreActivity[]) => [{ ...step, coreActivities: receipts }];
+  const { rerender } = render(<CoreActivitySummary steps={renderSteps(warnings)} />);
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  const otherFileChecked = [...warnings, diagnostic("b.ts", "applied", "Nenhum diagnóstico encontrado.")];
+  rerender(<CoreActivitySummary steps={renderSteps(otherFileChecked)} />);
+  expect(screen.getByLabelText("Há recursos com avisos")).toBeVisible();
+  expect(screen.getByText(/Export ausente/)).toBeVisible();
+  expect(screen.getByRole("button", { name: /1 aviso resolvido/ })).toBeVisible();
+
+  const stillPending = [...otherFileChecked, diagnostic("a.ts", "pending", "Aguardando diagnóstico."), diagnostic("a.ts", "reused", "Resultado reutilizado.")];
+  rerender(<CoreActivitySummary steps={renderSteps(stillPending)} />);
+  expect(screen.getByLabelText("Há recursos com avisos")).toBeVisible();
+  expect(screen.getByText(/Export ausente/)).toBeVisible();
+
+  rerender(<CoreActivitySummary steps={renderSteps([...stillPending, diagnostic("a.ts", "applied", "Nenhum diagnóstico encontrado.")])} />);
+  expect(screen.queryByLabelText("Há recursos com avisos")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Export ausente/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /2 avisos resolvidos/ }));
+  expect(screen.getByText(/Export ausente/)).toBeVisible();
+  expect(screen.getByText(/Servidor encerrou/)).toBeVisible();
+});

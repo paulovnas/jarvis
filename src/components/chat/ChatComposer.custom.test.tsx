@@ -60,3 +60,15 @@ it("runs the mixed GitHub agent directly with its dedicated configurable model",
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Liste os pull requests abertos{Enter}");
   expect(send).toHaveBeenCalledWith("Liste os pull requests abertos", { account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customAgentId: "builtin:github", approvalMode: "yolo" });
 });
+
+it("reopens an old GitHub chat with its current configured model", async () => {
+  const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true);
+  const modelGroups = [{ provider: "local", models: [{ value: "local/gpt-6-luna", label: "GPT-6 Luna", reasoningLevels: [], defaultReasoningLevel: null }] }];
+  render(<ChatComposer modelGroups={modelGroups} onSendMessage={send}
+    initialOptions={{ account: "local", model: "gpt-5.6-luna", reasoning: null, mode: "build", workflow: "custom", customAgentId: "builtin:github", approvalMode: "yolo" }}
+    agentModels={{ data: { "publication/github": { account: "local", model: "gpt-6-luna", reasoning: null } }, error: null, saving: false, save: vi.fn(), refresh: vi.fn() }} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("GPT-6 Luna"));
+  expect(screen.queryByText(/gpt-5\.6-luna.*indisponível/)).not.toBeInTheDocument();
+  await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Liste as PRs abertas{Enter}");
+  expect(send).toHaveBeenCalledWith("Liste as PRs abertas", expect.objectContaining({ model: "gpt-6-luna", customAgentId: "builtin:github" }));
+});

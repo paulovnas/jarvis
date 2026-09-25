@@ -3,6 +3,12 @@ import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { readChat } from "./chat";
 
 describe("Chat IPC contract", () => {
+  it.each(["pending", "issues"])("preserves the LSP %s state when reloading a conversation", (status) => {
+    const turn = savedTurn();
+    const receipt = { component: "lsp", action: "file_diagnostics", status, summary: "Diagnóstico por arquivo", sources: ["app.ts"], fingerprint: "current", durationMs: 1 };
+    const payload = { ...emptyChat(), turns: [{ ...turn, steps: [{ ...turn.steps[0], coreActivities: [receipt] }] }] };
+    expect(readChat(payload, "c1").turns[0].steps[0].coreActivities).toEqual([receipt]);
+  });
   it("preserves automatic Core receipts across history reloads without requiring them in legacy data", () => {
     const turn = savedTurn();
     const receipt = { component: "open-design", action: "design_preparation", status: "reused", summary: "Referências reutilizadas", sources: ["project:DESIGN.md"], fingerprint: "digest", durationMs: 4 };

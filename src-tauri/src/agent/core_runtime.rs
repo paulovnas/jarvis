@@ -86,7 +86,7 @@ pub(super) async fn diagnose(
     let Some(report) = report else {
         return Ok(false);
     };
-    record(session, vec![report.activity])?;
+    record(session, report.activities)?;
     session.update(true, |data| {
         data.turns.last_mut().unwrap().wire.push(json!({
             "role":"user", "_jarvis_runtime":true,

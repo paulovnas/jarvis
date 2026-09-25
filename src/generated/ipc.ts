@@ -66,7 +66,7 @@ export type Usage = { inputTokens: number, outputTokens: number, cacheReadTokens
 
 export type ContextReduction = { callId: string, originalBytes: number, retainedBytes: number, };
 
-export type CoreActivityStatus = "applied" | "reused" | "unavailable";
+export type CoreActivityStatus = "applied" | "reused" | "unavailable" | "pending" | "issues";
 
 export type CoreActivity = { component: "context-mode" | "ponytail" | "beads" | "open-design" | "context7" | "lsp", action: string, status: CoreActivityStatus, summary: string, sources: Array<string>, fingerprint?: string | null, durationMs: number, };
 

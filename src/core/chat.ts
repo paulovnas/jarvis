@@ -107,7 +107,7 @@ export const usageSchema = z.object({
 export const agentStepSchema = z.object({
   coreActivities: z.array(z.object({
     component: z.enum(["context-mode", "ponytail", "beads", "open-design", "context7", "lsp"]),
-    action: z.string(), status: z.enum(["applied", "reused", "unavailable"]),
+    action: z.string(), status: z.enum(["applied", "reused", "unavailable", "pending", "issues"]),
     summary: z.string(), sources: z.array(z.string()), fingerprint: z.string().nullable().optional(),
     durationMs: z.number().nonnegative(),
   })).optional(),
