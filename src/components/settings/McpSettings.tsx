@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { ExternalLink, Plus, RefreshCw } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
-import { Label } from "@/components/ui/label";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/TextInput";
-import { MCP_TEMPLATE, mcpCheckSchema, mcpServersSchema, validateMcpJson, type McpServer } from "@/core/mcp";
+import { mcpCheckSchema, mcpServersSchema, validateMcpJson, type McpServer } from "@/core/mcp";
 import { McpServerCard } from "./McpServerCard";
+import { McpEditor } from "./McpEditor";
 import { Hint } from "@/components/ui/hint";
 
 function message(error: unknown): string {
@@ -76,13 +74,13 @@ export function McpSettings({ onCountChange }: { onCountChange?: (count: number)
   }
   function update(value: unknown) { const parsed = mcpServersSchema.parse(value); if (mounted.current) { setServers(parsed); onCountChange?.(parsed.length); } }
   function closeEditor() { if (pending.current) return; setEditor(null); setRaw(""); setEditorError(null); }
-  async function save() {
+  async function save(config: string) {
     if (!editor) return;
-    const validation = validateMcpJson(raw);
+    const validation = validateMcpJson(config);
     if (validation) { setEditorError(validation); return; }
     setEditorError(null);
     await perform(async () => {
-      const saved = mcpServersSchema.parse(await invoke("save_mcp_server", { id: editor.id, config: raw }));
+      const saved = mcpServersSchema.parse(await invoke("save_mcp_server", { id: editor.id, config }));
       update(saved);
       if (mounted.current) { setEditor(null); setRaw(""); toast.success("MCP salvo"); }
       const changed = saved.find(server => editor.id ? server.id === editor.id : !servers.some(previous => previous.id === server.id));
@@ -106,15 +104,9 @@ export function McpSettings({ onCountChange }: { onCountChange?: (count: number)
       onTest={() => { void checkServer(server); }}
     />)}</div>}
     <Dialog open={editor !== null} onOpenChange={(open) => { if (!open) closeEditor(); }}>
-      <DialogContent className="dark max-h-[85vh] overflow-auto sm:max-w-2xl">
-        <DialogHeader><DialogTitle>{editor?.id ? "Editar MCP" : "Adicionar MCP"}</DialogTitle><DialogDescription>Configuração no formato OpenCode.</DialogDescription></DialogHeader>
-        <Button variant="link" className="h-auto cursor-pointer justify-start p-0 text-xs" onClick={() => { void openUrl("https://opencode.ai/docs/mcp-servers/").catch(() => toast.error("Não foi possível abrir a documentação")); }}><ExternalLink aria-hidden="true" />Como configurar MCPs no OpenCode</Button>
-        <form className="flex min-w-0 flex-col gap-3" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-          <Label htmlFor="mcp-json">Configuração JSON</Label>
-          <Textarea id="mcp-json" value={raw} onChange={(event) => setRaw(event.currentTarget.value)} placeholder={MCP_TEMPLATE} disabled={busy} autoComplete="off" spellCheck={false} maxLength={65536} aria-invalid={editorError !== null} className="min-h-64 resize-y font-mono text-xs" />
-          {editorError && <p role="alert" className="text-xs text-destructive">{editorError}</p>}
-          <DialogFooter><Button type="button" variant="ghost" className="cursor-pointer" disabled={busy} onClick={closeEditor}>Cancelar</Button><Button type="submit" className="cursor-pointer" disabled={busy || !raw.trim()}>{busy && <Spinner aria-hidden="true" />}Salvar MCP</Button></DialogFooter>
-        </form>
+      <DialogContent className="dark flex max-h-[85vh] flex-col overflow-hidden sm:max-w-2xl">
+        <DialogHeader><DialogTitle>{editor?.id ? "Editar MCP" : "Adicionar MCP"}</DialogTitle><DialogDescription>Conecte ferramentas e fontes de informação aos agentes. Preencha os campos ou use uma configuração JSON.</DialogDescription></DialogHeader>
+        {editor && <McpEditor initialValue={raw} busy={busy} error={editorError} onSave={config => void save(config)} onCancel={closeEditor} />}
       </DialogContent>
     </Dialog>
     <AlertDialog open={deleting !== null} onOpenChange={(open) => { if (!open && !pending.current) setDeleting(null); }}>

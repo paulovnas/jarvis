@@ -10,16 +10,19 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/questions";
 import { ExpandQuestionVisual, QuestionVisual } from "./QuestionVisual";
 
-export function QuestionCard({ request, drafts, draftKey, onAnswer }: {
+export function QuestionCard({ request, drafts, draftKey, onAnswer, onInteract }: {
   request: PendingQuestion;
   drafts: Map<string, QuestionDraft>;
   draftKey: string;
   onAnswer: (request: PendingQuestion, response: QuestionResponse) => Promise<boolean>;
+  onInteract: (request: PendingQuestion) => Promise<boolean>;
 }) {
   const [draft, setDraft] = useState<QuestionDraft>(() => drafts.get(draftKey) ?? { index: 0, answers: {}, custom: {} });
   const [pending, setPending] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const submitting = useRef(false);
+  const pausing = useRef(false);
+  const [pausePending, setPausePending] = useState(false);
   const title = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const inputId = useId();
@@ -29,8 +32,26 @@ export function QuestionCard({ request, drafts, draftKey, onAnswer }: {
   const ready = request.questions.every(item => draft.answers[item.id]?.value.trim());
   const otherAnswersReady = request.questions.every(item => item.id === question.id || draft.answers[item.id]?.value.trim());
   const hasRecommendations = request.questions.every(item => item.options.some(option => option.recommended));
-  const deadline = hasRecommendations ? request.deadlineAt : undefined;
-  const update = (next: QuestionDraft) => { drafts.set(draftKey, next); setDraft(next); };
+  const automaticPaused = hasRecommendations && (draft.automaticPaused || !request.deadlineAt);
+  const deadline = hasRecommendations && !automaticPaused && !pausePending ? request.deadlineAt : undefined;
+  const interact = async () => {
+    if (!request.deadlineAt || automaticPaused || pausing.current || submitting.current) return;
+    pausing.current = true; setPausePending(true);
+    try {
+      if (await onInteract(request)) {
+        setDraft(current => {
+          const next = { ...current, automaticPaused: true };
+          drafts.set(draftKey, next);
+          return next;
+        });
+      }
+    } finally { pausing.current = false; setPausePending(false); }
+  };
+  const update = (next: QuestionDraft) => {
+    void interact();
+    const updated = { ...next, automaticPaused: drafts.get(draftKey)?.automaticPaused };
+    drafts.set(draftKey, updated); setDraft(updated);
+  };
   const navigate = (index: number) => { update({ ...draft, index }); title.current?.focus(); };
   useEffect(() => { title.current?.focus(); }, []);
   const submitResponse = useCallback(async (response: QuestionResponse) => {
@@ -54,13 +75,18 @@ export function QuestionCard({ request, drafts, draftKey, onAnswer }: {
     const timer = window.setInterval(tick, 250);
     return () => { window.clearTimeout(initial); window.clearInterval(timer); };
   }, [deadline, pending]);
-  return <Card size="sm" role="region" aria-label="Perguntas do Jarvis" aria-busy={pending} className="mx-auto mb-3 max-w-4xl rounded-lg" onKeyDown={event => {
+  return <Card size="sm" role="region" aria-label="Perguntas do Jarvis" aria-busy={pending} className="mx-auto mb-3 max-w-4xl rounded-lg"
+    onPointerDownCapture={() => { void interact(); }}
+    onKeyDownCapture={() => { void interact(); }}
+    onFocusCapture={event => { if (event.target !== title.current) void interact(); }}
+    onKeyDown={event => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); submit(true); }
   }}>
     <CardHeader className="flex flex-row items-start justify-between gap-3">
       <CardTitle id={titleId} ref={title} tabIndex={-1} className="min-w-0 flex-1 break-words outline-none" aria-live="polite">{question.question}</CardTitle>
       <div className="flex shrink-0 items-center gap-1">
-        {deadline && <Hint content="As recomendações serão enviadas automaticamente ao fim da contagem."><Badge variant="outline" role={remainingSeconds === 0 ? "status" : undefined} aria-live={remainingSeconds === 0 ? "polite" : undefined} className="mr-1 gap-1 font-mono text-[10px] tabular-nums text-onedark-green">
+        {(automaticPaused || pausePending) && <span role="status" className="text-xs text-muted-foreground">{pausePending ? "Pausando resposta automática…" : "Resposta automática pausada"}</span>}
+        {deadline && <Hint content="As recomendações serão enviadas ao fim da contagem. Interagir com a pergunta pausa a resposta automática."><Badge variant="outline" role={remainingSeconds === 0 ? "status" : undefined} aria-live={remainingSeconds === 0 ? "polite" : undefined} className="mr-1 gap-1 font-mono text-[10px] tabular-nums text-onedark-green">
           <Timer aria-hidden="true" className="size-3" />
           <span aria-hidden="true">{remainingSeconds === null ? "…" : remainingSeconds > 0 ? `${remainingSeconds}s` : "Enviando…"}</span>
           <span className="sr-only">{remainingSeconds === null ? "Calculando tempo para resposta recomendada automática" : remainingSeconds > 0 ? `Resposta recomendada automática em ${remainingSeconds} segundos` : "Enviando respostas recomendadas"}</span>

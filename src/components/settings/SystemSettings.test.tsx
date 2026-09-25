@@ -104,7 +104,7 @@ describe("system preferences", () => {
     await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
     expect(await screen.findByRole("combobox", { name: "Impedir repouso" })).toHaveTextContent("Desligado");
   });
-  it.each(["O macOS recusou a notificação.", "Notificações do Jarvis bloqueadas. Ative Jarvis em Configurações do Windows → Sistema → Notificações."])("reports a native notification delivery failure: %s", async message => {
+  it.each(["O macOS recusou a notificação.", "Notificações do Jarvis bloqueadas. Ative Jarvis em Configurações do Windows → Sistema → Notificações.", "O Linux recusou a notificação. Confira as notificações do Jarvis e o modo Não incomodar no ambiente gráfico."])("reports a native notification delivery failure: %s", async message => {
     call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, notifications: true } });
     const user = userEvent.setup(); render(<SystemSettings />);
     const test = await screen.findByRole("button", { name: "Testar" });

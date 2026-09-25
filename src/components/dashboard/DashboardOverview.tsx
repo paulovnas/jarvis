@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { type Bead, type ProjectMetrics, date, number, statuses } from "@/core/dashboard";
 import type { CoreSnapshot } from "@/core/core-components";
 import { UsageEfficiency } from "./UsageEfficiency";
+import { formatExecutionDuration } from "@/hooks/use-running-clock";
 import { Hint } from "@/components/ui/hint";
 
 const chartConfig = { turns: { label: "Interações", color: "#61afef" } };
@@ -54,7 +55,7 @@ export function DashboardOverview({ data, issues, beadsError, components, onSele
       </CardContent></Card>
       <Card className="dashboard-card gap-4"><CardHeader><CardTitle className="flex items-center gap-2 text-sm"><Zap className="size-4 text-onedark-yellow" />Tokens acumulados</CardTitle></CardHeader><CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-3"><div><p className="micro-label mb-2 flex items-center gap-1 text-muted-foreground"><ArrowDownLeft className="size-3" />Entrada</p><p className="font-mono text-xl">{measured ? number(m.inputTokens) : "—"}</p></div><div><p className="micro-label mb-2 flex items-center gap-1 text-muted-foreground"><ArrowUpRight className="size-3" />Saída</p><p className="font-mono text-xl">{measured ? number(m.outputTokens) : "—"}</p></div></div>
-        <div className="space-y-3 border-t border-border pt-4"><MetricLine label="Compactações" value={m.compactions} /><MetricLine label="Etapas com tokens medidos" value={m.measuredSteps} /><MetricLine label="Tempo de execução" value={m.durationMs < 60_000 ? `${number(m.durationMs / 1000)}s` : `${number(m.durationMs / 60_000)} min`} /></div>
+        <div className="space-y-3 border-t border-border pt-4"><MetricLine label="Compactações" value={m.compactions} /><MetricLine label="Etapas com tokens medidos" value={m.measuredSteps} /><MetricLine label="Tempo acumulado de execução" value={formatExecutionDuration(m.durationMs)} /></div>
       </CardContent></Card>
     </div>
 
@@ -68,7 +69,7 @@ export function DashboardOverview({ data, issues, beadsError, components, onSele
       </CardContent></Card>
     </div>
 
-    <Card className="dashboard-card gap-3"><CardHeader><CardTitle className="text-sm">Jarvis Core</CardTitle></CardHeader><CardContent className="grid grid-cols-3 gap-4">{coreCalls.map(item => { const component = components.find(component => component.name === item.label); return <div key={item.label} className="flex min-w-0 items-start gap-3 rounded-md border border-border bg-background/35 p-3"><item.icon className="mt-0.5 size-4 shrink-0" style={{ color: item.color }} /><div className="min-w-0 flex-1"><p className="truncate text-xs">{item.label}</p><p className="mt-2 font-mono text-lg">{item.count === null ? component?.installed ? "Full" : "—" : number(item.count)}</p><p className="mt-1 truncate text-[10px] text-muted-foreground">{item.count === null ? "Diretrizes" : "Chamadas no chat"}{component?.installedVersion ? ` · v${component.installedVersion}` : ""}</p></div></div>; })}</CardContent></Card>
+    <Card className="dashboard-card gap-3"><CardHeader><CardTitle className="text-sm">Jarvis Core</CardTitle></CardHeader><CardContent className="grid gap-3 @xl:grid-cols-3">{coreCalls.map(item => { const component = components.find(component => component.name === item.label); return <div key={item.label} className="flex min-w-0 items-start gap-3 rounded-md border border-border bg-background/35 p-3"><item.icon className="mt-0.5 size-4 shrink-0" style={{ color: item.color }} /><div className="min-w-0 flex-1"><p className="truncate text-xs">{item.label}</p><p className={`mt-2 ${item.count === null ? "text-sm" : "font-mono text-lg"}`}>{item.count === null ? component?.installed ? "Instalado" : "Não instalado" : number(item.count)}</p><p className="mt-1 truncate text-[10px] text-muted-foreground">{item.count === null ? "Diretrizes de simplicidade" : "Chamadas no chat"}{component?.installedVersion ? ` · v${component.installedVersion}` : ""}</p></div></div>; })}</CardContent></Card>
     <Card className="dashboard-card gap-1"><CardHeader className="flex flex-row items-center justify-between"><CardTitle className="flex items-center gap-2 text-sm"><Activity className="size-4 text-muted-foreground" />Sessões recentes</CardTitle><span className="micro-label text-muted-foreground">Última atividade</span></CardHeader><CardContent className="space-y-1">{data.recent.length ? data.recent.map(session => <Button key={session.id} variant="ghost" className="h-auto w-full cursor-pointer justify-start gap-3 py-3 text-left" onClick={() => onSelectSession(session.id)}><MessageSquare className="size-4 text-muted-foreground" /><span className="min-w-0 flex-1 truncate text-xs">{session.title}</span><span className="shrink-0 font-mono text-[10px] font-normal text-muted-foreground">{date(session.activity, true)}</span><ChevronRight className="size-3 text-muted-foreground" /></Button>) : <QuietEmpty text="Nenhuma conversa ainda" />}</CardContent></Card>
   </div>;
 }

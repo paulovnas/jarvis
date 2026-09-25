@@ -43,6 +43,10 @@ describe("Project Dashboard", () => {
     await screen.findByText("gpt-6-astra");
     expect(screen.getByText("1.500")).toBeInTheDocument();
     expect(screen.getByText("0/1")).toBeInTheDocument();
+    expect(screen.getByText("1m 05s")).toBeVisible();
+    expect(screen.getByText("Instalado")).toBeVisible();
+    expect(screen.getByText("Uso inteligente do contexto")).toBeVisible();
+    expect(screen.queryByText("Full")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Conversa recente/ }));
     expect(select).toHaveBeenCalledWith("c1");
     await user.click(screen.getByRole("button", { name: /Ver quadro/ }));

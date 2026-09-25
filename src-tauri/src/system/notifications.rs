@@ -1,4 +1,8 @@
-//! macOS uses UserNotifications for real authorization and foreground banners.
+//! Native notification adapters retain the platform identity and delivery state.
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub(super) use linux::{authorize, show};
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
@@ -18,14 +22,14 @@ pub(super) fn setup(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(super) async fn authorize() -> Result<(), String> {
     #[cfg(windows)]
     return windows::authorize().await;
     #[cfg(not(windows))]
     Ok(())
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(super) async fn show(title: &str, body: &str) -> Result<(), String> {
     #[cfg(windows)]
     windows::authorize().await?;

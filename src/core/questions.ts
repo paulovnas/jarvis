@@ -23,7 +23,7 @@ export const questionResponseSchema = z.object({
 export type PendingQuestion = z.infer<typeof pendingQuestionSchema>;
 export type QuestionResponse = z.infer<typeof questionResponseSchema>;
 export type QuestionAnswer = QuestionResponse["answers"][number];
-export interface QuestionDraft { index: number; answers: Record<string, QuestionAnswer>; custom: Record<string, string> }
+export interface QuestionDraft { index: number; answers: Record<string, QuestionAnswer>; custom: Record<string, string>; automaticPaused?: boolean }
 export function questionKey(conversationId: string, request: PendingQuestion): string {
   return JSON.stringify([conversationId, request.turnId, request.toolId]);
 }

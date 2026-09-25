@@ -35,7 +35,8 @@ pub struct PendingQuestion {
     pub(super) turn_id: String,
     pub(super) tool_id: String,
     pub(super) questions: Vec<Question>,
-    pub(super) deadline_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) deadline_at: Option<u64>,
 }
 pub(super) struct Pending {
     pub request: PendingQuestion,
@@ -168,7 +169,7 @@ fn recommended_response(request: &Request) -> Option<Response> {
 pub(super) fn definition() -> Value {
     json!({
         "type": "function", "name": "ask_user",
-        "description": "Ask the user 1-3 concise clarification questions and wait for their answers in the Jarvis UI. Use this instead of listing questions/options in chat when missing preferences, requirements or decisions materially affect the task and cannot be resolved from available evidence. Write questions and choices in the response language configured by the shared system instructions. Supply 0-6 distinct choices per question; descriptions are optional and should only explain useful tradeoffs. Mark exactly one option as recommended whenever choices are supplied: after the user's configured countdown, Jarvis may automatically use the recommendation for unanswered questions. The UI always includes a free-text answer: do not add Other/manual answer options. A cancelled response means the user did not answer: do not invent an answer or treat it as authorization. This tool collects user input; it does not replace tool execution approvals.",
+        "description": "Ask the user 1-3 concise clarification questions and wait for their answers in the Jarvis UI. Use this instead of listing questions/options in chat when missing preferences, requirements or decisions materially affect the task and cannot be resolved from available evidence. Write questions and choices in the response language configured by the shared system instructions. Supply 0-6 distinct choices per question; descriptions are optional and should only explain useful tradeoffs. Mark exactly one option as recommended whenever choices are supplied: after the user's configured countdown, Jarvis may automatically use the recommendation only if the user has not interacted with the questions. Typing, selecting or navigating pauses automatic answering for the entire request. The UI always includes a free-text answer: do not add Other/manual answer options. A cancelled response means the user did not answer: do not invent an answer or treat it as authorization. This tool collects user input; it does not replace tool execution approvals.",
         "parameters": {
             "type": "object", "additionalProperties": false, "required": ["questions"],
             "properties": {"questions": {"type": "array", "minItems": 1, "maxItems": 3,
@@ -200,14 +201,16 @@ pub(super) async fn execute(
         return Err(AgentError::cancelled());
     }
     let mut automatic = recommended_response(&request);
-    let (reply, received) = oneshot::channel();
+    let (reply, mut received) = oneshot::channel();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX);
-    let deadline_at = now.saturating_add(u64::from(timeout_seconds) * 1_000);
+    let deadline_at = automatic
+        .as_ref()
+        .map(|_| now.saturating_add(u64::from(timeout_seconds) * 1_000));
     let mut turn_id = String::new();
     session
         .update_async(|data| {
@@ -229,18 +232,57 @@ pub(super) async fn execute(
     let _human_wait = session.measure(super::telemetry::Phase::HumanWait);
     let timeout = tokio::time::sleep(std::time::Duration::from_secs(u64::from(timeout_seconds)));
     tokio::pin!(timeout);
-    tokio::select! {
-        biased;
-        _ = cancelled(&mut signal) => Err(AgentError::cancelled()),
-        result = received => result.map_err(|_| AgentError::cancelled()),
-        _ = &mut timeout, if automatic.is_some() => {
-            let response = automatic.take().ok_or_else(AgentError::internal)?;
-            let output = serde_json::to_string(&response).map_err(|_| AgentError::internal())?;
-            answer(session, &turn_id, &tool.id, response)?;
-            Ok(output)
-        },
+    loop {
+        tokio::select! {
+            biased;
+            _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+            result = &mut received => return result.map_err(|_| AgentError::cancelled()),
+            _ = &mut timeout, if automatic.is_some() => {
+                let response = automatic.take().ok_or_else(AgentError::internal)?;
+                // Check interaction under the same lock that commits an answer. A
+                // paused or manually answered question must never be auto-answered.
+                answer_inner(session, &turn_id, &tool.id, response, true)?;
+            },
+        }
     }
 }
+#[tauri::command]
+pub fn pause_agent_question(
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+    turn_id: String,
+    tool_id: String,
+) -> Result<ChatSnapshot, AgentError> {
+    let session = agent.existing(&conversation_id)?;
+    pause(&session, &turn_id, &tool_id)
+}
+
+pub(super) fn pause(
+    session: &Session,
+    turn_id: &str,
+    tool_id: &str,
+) -> Result<ChatSnapshot, AgentError> {
+    let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
+    let pending = data
+        .active
+        .as_mut()
+        .filter(|active| active.id == turn_id && !*active.cancel.borrow())
+        .and_then(|active| active.pending_question_mut())
+        .filter(|pending| pending.request.tool_id == tool_id)
+        .ok_or_else(|| {
+            AgentError::new(
+                "stale_question",
+                "Esta solicitação de perguntas não está mais ativa.",
+            )
+        })?;
+    pending.request.deadline_at = None;
+    data.revision = next_revision();
+    let snapshot = session.snapshot_data(&data);
+    drop(data);
+    (session.emit)(snapshot.clone());
+    Ok(snapshot)
+}
+
 #[tauri::command]
 pub fn answer_agent_question(
     agent: tauri::State<'_, AgentState>,
@@ -258,6 +300,16 @@ pub(super) fn answer(
     tool_id: &str,
     response: Response,
 ) -> Result<ChatSnapshot, AgentError> {
+    answer_inner(session, turn_id, tool_id, response, false)?.ok_or_else(AgentError::internal)
+}
+
+fn answer_inner(
+    session: &Session,
+    turn_id: &str,
+    tool_id: &str,
+    response: Response,
+    automatic: bool,
+) -> Result<Option<ChatSnapshot>, AgentError> {
     let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
     if data.storage_failed {
         return Err(AgentError::storage());
@@ -267,13 +319,16 @@ pub(super) fn answer(
         .as_ref()
         .filter(|active| active.id == turn_id && !*active.cancel.borrow())
         .and_then(|active| active.pending_question())
-        .filter(|pending| pending.request.tool_id == tool_id)
-        .ok_or_else(|| {
-            AgentError::new(
-                "stale_question",
-                "Esta solicitação de perguntas não está mais ativa.",
-            )
-        })?;
+        .filter(|pending| pending.request.tool_id == tool_id);
+    if automatic && pending.is_none_or(|pending| pending.request.deadline_at.is_none()) {
+        return Ok(None);
+    }
+    let pending = pending.ok_or_else(|| {
+        AgentError::new(
+            "stale_question",
+            "Esta solicitação de perguntas não está mais ativa.",
+        )
+    })?;
     validate_response(&pending.request, &response)?;
     let output = serde_json::to_string(&response).map_err(|_| AgentError::internal())?;
     let elapsed = pending.started.elapsed().as_millis() as u64;
@@ -315,7 +370,7 @@ pub(super) fn answer(
     drop(data);
     (session.emit)(snapshot.clone());
     let _ = pending.reply.send(output);
-    Ok(snapshot)
+    Ok(Some(snapshot))
 }
 
 #[cfg(test)]

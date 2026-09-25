@@ -19,6 +19,39 @@ carry forward a pass from macOS, Windows, another distribution or another packag
 
 ## Linux implementation update — 2026-09-25
 
+### Notification delivery follow-up — 1.5.2
+
+The notification adapter retains its freedesktop D-Bus session connection for
+the lifetime of Jarvis. Cinnamon watches the sender's bus name and can remove
+the notification source when that connection disappears; the previous adapter
+dropped the notification handle immediately after sending. Enabling notifications
+now checks `GetServerInformation` instead of assuming that a Linux notification
+service is available. Delivery failures and timeouts provide recovery guidance.
+Notifications identify `Jarvis.desktop`, escape body markup, and use separate
+notification IDs rather than replacing earlier notices.
+
+Automated tests exercise a private peer-to-peer D-Bus notification service:
+sender lifetime, consecutive delivery, metadata, escaping, service rejection,
+and no replay after uncertain delivery. These protocol tests also run on the
+macOS development host; they do not verify visible Linux desktop banners.
+
+On Linux Mint/Cinnamon, test the installed DEB and AppImage separately:
+
+1. Enable notifications and use **Testar notificação** with Jarvis both focused
+   and in the background. Confirm the banner and the notification center entry.
+2. Send two distinct notifications and confirm the second does not silently
+   replace the first. Close and reopen Jarvis, then test again.
+3. Check execution completion and provider-limit notifications with their
+   preferences enabled. Check **Não incomodar** and the desktop's Jarvis settings
+   if a successful send has no visible banner.
+4. In an isolated session without a notification service, confirm that enabling
+   or testing reports an actionable error rather than a false delivery success.
+
+Visible delivery and persistence in the user's Mint session remain pending
+user validation for 1.5.2.
+
+### Initial Linux implementation
+
 The initial distribution target is **Linux x86_64, DEB and AppImage**. The release
 workflow builds on Ubuntu 22.04; native tests in this working tree run on Linux
 Mint 22.3 (Ubuntu noble), kernel 6.14, glibc 2.39, GTK 3.24.41 and WebKitGTK 2.52.6,

@@ -109,6 +109,10 @@ impl ActiveTurn {
         self.mailbox.question.as_ref()
     }
 
+    pub(super) fn pending_question_mut(&mut self) -> Option<&mut questions::Pending> {
+        self.mailbox.question.as_mut()
+    }
+
     pub(super) fn wait_for_question(&mut self, pending: questions::Pending) {
         self.transition(TurnPhase::WaitingForUser);
         self.mailbox.question = Some(pending);

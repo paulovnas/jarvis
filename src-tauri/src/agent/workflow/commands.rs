@@ -445,6 +445,18 @@ pub fn answer_workflow_question(
 }
 
 #[tauri::command]
+pub fn pause_workflow_question(
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+    agent_id: String,
+    turn_id: String,
+    tool_id: String,
+) -> Result<(), AgentError> {
+    let session = active_worker(&agent, &conversation_id, &agent_id)?;
+    questions::pause(&session, &turn_id, &tool_id).map(|_| ())
+}
+
+#[tauri::command]
 pub async fn answer_workflow_authoring(
     app: tauri::AppHandle,
     persistence: tauri::State<'_, AppState>,

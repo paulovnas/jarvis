@@ -11,7 +11,7 @@ it("shows comparable visual choices, enlarges without answering, and records the
     { label: "Menu lateral", preview: { type: "wireframe", elements: [{ label: "Menu", x: 0, y: 0, width: 20, height: 100 }, { label: "Conteúdo", x: 20, y: 0, width: 80, height: 100 }] } },
     { label: "Azul", preview: { type: "palette", colors: ["#21252b", "#61afef"], sample: "Projeto" } },
   ] }] }) };
-  const view = render(<QuestionCard request={request} drafts={new Map()} draftKey="q" onAnswer={answer} />);
+  const view = render(<QuestionCard request={request} drafts={new Map()} draftKey="q" onAnswer={answer} onInteract={vi.fn().mockResolvedValue(true)} />);
   expect(screen.getByRole("img", { name: "Wireframe: Menu lateral" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Ampliar Menu lateral" }));
   expect(screen.getByRole("dialog", { name: "Menu lateral" })).toBeVisible(); expect(answer).not.toHaveBeenCalled();

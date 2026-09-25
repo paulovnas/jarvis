@@ -268,6 +268,15 @@ export function useChat(conversationId: string | null) {
       return true;
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível enviar as respostas. Tente novamente.")); return false; }
   };
+  const pauseQuestion = async (question: PendingQuestion): Promise<boolean> => {
+    if (!conversationId || snapshot?.activeTurnId !== question.turnId || snapshot.pendingQuestion?.toolId !== question.toolId) return false;
+    const id = conversationId; const request = generation.current;
+    try {
+      const result = await invoke<unknown>("pause_agent_question", { conversationId: id, turnId: question.turnId, toolId: question.toolId });
+      if (generation.current === request) accept(result, id);
+      return true;
+    } catch (cause) { toast.error(libraryError(cause, "Não foi possível pausar a resposta automática. Interaja novamente para tentar pausar.")); return false; }
+  };
   const answerAuthoring = async (proposal: PendingAuthoring, approved: boolean, note: string | null): Promise<boolean> => {
     if (!conversationId || snapshot?.activeTurnId !== proposal.turnId || snapshot.pendingAuthoring?.toolId !== proposal.toolId) return false;
     const id = conversationId; const request = generation.current;
@@ -332,6 +341,6 @@ export function useChat(conversationId: string | null) {
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível compactar o contexto.")); return false; }
     finally { compactLocks.current.delete(id); setCompactingIds(new Set(compactLocks.current)); }
   };
-  return { snapshot, pendingTurn: pendingTurn?.conversationId === conversationId ? pendingTurn.turn : null, loadHistory, historyLoading: historyPending === conversationId && conversationId !== null, historyError: historyError?.id === conversationId ? historyError.message : null, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, retryingTurnIds: new Set([...retryingTurns].filter(key => key.startsWith(`${conversationId}:`)).map(key => key.slice(`${conversationId}:`.length))), send, stop, approve, answerQuestion, answerAuthoring, removeQueued, deleteQueued, reorderQueued, sendQueuedNow, resumeQueue, resumeWorkflow, retryTurn, compact, retry: () => setAttempt(value => value + 1) };
+  return { snapshot, pendingTurn: pendingTurn?.conversationId === conversationId ? pendingTurn.turn : null, loadHistory, historyLoading: historyPending === conversationId && conversationId !== null, historyError: historyError?.id === conversationId ? historyError.message : null, error: error?.id === conversationId ? error.message : null, pending: pendingId === conversationId && conversationId !== null, compacting: (conversationId !== null && compactingIds.has(conversationId)) || snapshot?.context?.compacting === true, retryingTurnIds: new Set([...retryingTurns].filter(key => key.startsWith(`${conversationId}:`)).map(key => key.slice(`${conversationId}:`.length))), send, stop, approve, answerQuestion, pauseQuestion, answerAuthoring, removeQueued, deleteQueued, reorderQueued, sendQueuedNow, resumeQueue, resumeWorkflow, retryTurn, compact, retry: () => setAttempt(value => value + 1) };
 }
 export type ChatController = ReturnType<typeof useChat>;

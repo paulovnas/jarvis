@@ -40,8 +40,10 @@ describe("McpSettings", () => {
     render(<McpSettings />);
     await user.click(await screen.findByRole("button", { name: "Detalhes do MCP context7" }));
     await user.click(screen.getByRole("button", { name: "Editar" }));
+    expect(await screen.findByRole("textbox", { name: "Nome do MCP" })).toHaveValue("context7");
+    await user.click(screen.getByRole("tab", { name: "JSON" }));
     const field = await screen.findByRole("textbox", { name: "Configuração JSON" });
-    expect(field).toHaveValue(MCP_TEMPLATE);
+    expect(JSON.parse((field as HTMLTextAreaElement).value).context7.command).toEqual(JSON.parse(MCP_TEMPLATE).context7.command);
     await user.click(screen.getByRole("button", { name: "Como configurar MCPs no OpenCode" }));
     expect(openUrl).toHaveBeenCalledWith("https://opencode.ai/docs/mcp-servers/");
     const configured = MCP_TEMPLATE.replace("YOUR_API_KEY", "test-only-key");
@@ -63,6 +65,8 @@ describe("McpSettings", () => {
     render(<McpSettings />);
     await screen.findByRole("button", { name: "Detalhes do MCP context7" });
     await user.click(screen.getByRole("button", { name: "Adicionar MCP" }));
+    expect(screen.getByRole("tab", { name: "Visual" })).toHaveAttribute("aria-selected", "true");
+    await user.click(screen.getByRole("tab", { name: "JSON" }));
     const field = screen.getByRole("textbox", { name: "Configuração JSON" });
     expect(field).toHaveAttribute("placeholder", MCP_TEMPLATE);
     fireEvent.change(field, { target: { value: "{" } });
@@ -140,6 +144,7 @@ describe("McpSettings", () => {
     const user = userEvent.setup(); render(<McpSettings />);
     await user.click(await screen.findByRole("button", { name: "Detalhes do MCP context7" }));
     await user.click(screen.getByRole("button", { name: "Editar" }));
+    await user.click(await screen.findByRole("tab", { name: "JSON" }));
     fireEvent.change(await screen.findByRole("textbox", { name: "Configuração JSON" }), { target: { value: MCP_TEMPLATE.replace("YOUR_API_KEY", "test-only-key") } });
     mocked.mockResolvedValueOnce([{ ...server, revision: 1, configured: true }]);
     mocked.mockResolvedValueOnce({ toolCount: 0, tools: [], error: "MCP indisponível" });

@@ -1,56 +1,80 @@
-import { Database, Files, Layers3, ScanEye } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ChevronDown, Database, Files, Layers3 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Progress } from "@/components/ui/progress";
+import { Separator } from "@/components/ui/separator";
 import { emptyEfficiency, number, type ProjectMetrics } from "@/core/dashboard";
+
+const reduction = (original: number, retained: number) => original > 0 ? Math.max(0, Math.min(100, (1 - retained / original) * 100)) : null;
 
 export function UsageEfficiency({ metrics }: { metrics: ProjectMetrics["metrics"] }) {
   const e = metrics.efficiency ?? emptyEfficiency;
   const requests = metrics.measuredSteps + e.auxiliaryRequests;
-  const hitRate = e.cacheReadInputTokens > 0 ? e.cacheReadTokens / e.cacheReadInputTokens * 100 : 0;
-  const reduction = e.originalBytes > 0 ? Math.max(0, 1 - e.retainedBytes / e.originalBytes) * 100 : 0;
-  const readReduction = e.localReadOriginalBytes > 0 ? Math.max(0, 1 - e.localReadRetainedBytes / e.localReadOriginalBytes) * 100 : 0;
-  return <Card className="dashboard-card gap-3">
-    <CardHeader><CardTitle className="text-sm">Eficiência</CardTitle></CardHeader>
-    <CardContent className="grid gap-5 @3xl:grid-cols-2 @6xl:grid-cols-4">
-      <section aria-label="Cache do provedor" className="min-w-0 space-y-3">
-        <p className="micro-label flex items-center gap-2 text-muted-foreground"><Database className="size-3.5 text-onedark-green" />Cache do provedor</p>
-        <p className="font-mono text-xl text-onedark-green">{e.cacheReadRequests ? `${number(hitRate)}%` : "Não informado"}</p>
-        <Progress value={hitRate} className="h-1" aria-label="Entrada reaproveitada do cache" />
-        <Line label="Tokens reutilizados" value={e.cacheReadRequests ? number(e.cacheReadTokens) : "—"} />
-        <Line label="Tokens gravados" value={e.cacheWriteRequests ? number(e.cacheWriteTokens) : "—"} />
-        <p className="text-[11px] text-muted-foreground">{e.cacheReadRequests ? `${number(e.cacheReadRequests)}/${number(requests)} chamadas com leitura de cache informada` : "Histórico sem medição de cache."}</p>
-      </section>
-      <section aria-label="Redução pelo Context-mode" className="min-w-0 space-y-3">
-        <p className="micro-label flex items-center gap-2 text-muted-foreground"><Layers3 className="size-3.5 text-onedark-cyan" />Context-mode automático</p>
-        <p className="font-mono text-xl text-onedark-cyan">{number(e.indexedOutputs)} <span className="text-xs text-muted-foreground">resultados indexados</span></p>
-        <Progress value={reduction} className="h-1" aria-label="Redução dos resultados enviados ao modelo" />
-        <Line label="Redução de conteúdo" value={e.indexedOutputs ? `${number(reduction)}%` : "—"} />
-        <Line label="Consultas automáticas" value={number(e.contextSearches)} />
-        <Line label="Loops orientados" value={number(e.loopSteers)} />
-        <Line label="Repetições bloqueadas" value={number(e.loopAvoidedCalls)} />
-        <Line label="Original → enviado" value={e.indexedOutputs ? `${bytes(e.originalBytes)} → ${bytes(e.retainedBytes)}` : "—"} />
-        <p className="text-[11px] text-muted-foreground">Medição em bytes; conteúdo completo disponível para consulta.</p>
-      </section>
-      <section aria-label="Releituras locais" className="min-w-0 space-y-3">
-        <p className="micro-label flex items-center gap-2 text-muted-foreground"><Files className="size-3.5 text-onedark-yellow" />Releituras locais</p>
-        <p className="font-mono text-xl text-onedark-yellow">{number(e.localReadReuses)} <span className="text-xs text-muted-foreground">resultados reutilizados</span></p>
-        <Progress value={readReduction} className="h-1" aria-label="Redução de releituras locais" />
-        <Line label="Redução de conteúdo" value={e.localReadReuses ? `${number(readReduction)}%` : "—"} />
-        <Line label="Original → enviado" value={e.localReadReuses ? `${bytes(e.localReadOriginalBytes)} → ${bytes(e.localReadRetainedBytes)}` : "—"} />
-        <p className="text-[11px] text-muted-foreground">Revalidado pelo conteúdo completo do arquivo antes de cada reutilização.</p>
-      </section>
-      <section aria-label="Consumo de Vision e Web Search" className="min-w-0 space-y-3">
-        <p className="micro-label flex items-center gap-2 text-muted-foreground"><ScanEye className="size-3.5 text-onedark-purple" />Vision + Web Search</p>
-        <p className="font-mono text-xl">{number(e.auxiliaryRequests)} <span className="text-xs text-muted-foreground">chamadas medidas</span></p>
-        <Line label="Entrada" value={number(e.auxiliaryInputTokens)} />
-        <Line label="Saída" value={number(e.auxiliaryOutputTokens)} />
-        <p className="text-[11px] text-muted-foreground">Incluídas nos tokens acumulados.</p>
-      </section>
+  const hitRate = e.cacheReadRequests > 0 && e.cacheReadInputTokens > 0 ? Math.min(100, e.cacheReadTokens / e.cacheReadInputTokens * 100) : null;
+  const outputReduction = e.indexedOutputs > 0 ? reduction(e.originalBytes, e.retainedBytes) : null;
+  const readReduction = e.localReadReuses > 0 ? reduction(e.localReadOriginalBytes, e.localReadRetainedBytes) : null;
+
+  return <Card className="dashboard-card gap-5">
+    <CardHeader>
+      <CardTitle>Uso inteligente do contexto</CardTitle>
+      <CardDescription>Menos conteúdo repetido nas conversas. Dados acumulados deste projeto.</CardDescription>
+    </CardHeader>
+    <CardContent className="flex flex-col gap-5">
+      <div className="grid gap-6 @3xl:grid-cols-3">
+        <section aria-label="Cache do provedor" className="flex min-w-0 flex-col gap-2">
+          <p className="flex items-center gap-2 text-sm font-medium"><Database className="size-4 text-onedark-green" aria-hidden="true" />Contexto reaproveitado</p>
+          <p className="font-mono text-2xl tabular-nums">{hitRate === null ? <span className="font-sans text-base text-muted-foreground">Sem medição</span> : `${number(hitRate)}%`}</p>
+          {hitRate !== null && <Progress value={hitRate} className="h-1" aria-label="Entrada reaproveitada do cache" />}
+          <p className="text-xs leading-relaxed text-muted-foreground">{hitRate === null ? "O provedor ainda não informou dados suficientes de cache." : "Da entrada medida já era conhecida pelo provedor e foi reutilizada."}</p>
+          {e.cacheReadRequests > 0 && <p className="text-xs text-muted-foreground">Cache informado em {number(e.cacheReadRequests)} de {number(requests)} chamadas.</p>}
+        </section>
+        <section aria-label="Redução pelo Context-mode" className="flex min-w-0 flex-col gap-2">
+          <p className="flex items-center gap-2 text-sm font-medium"><Layers3 className="size-4 text-onedark-cyan" aria-hidden="true" />Resultados resumidos</p>
+          <p className="font-mono text-2xl tabular-nums">{number(e.indexedOutputs)}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Resultados longos de ferramentas enviados de forma compacta. A IA pode consultar o conteúdo completo.</p>
+          {outputReduction !== null && <p className="text-xs text-onedark-cyan">{number(outputReduction)}% menos conteúdo nesses resultados.</p>}
+        </section>
+        <section aria-label="Releituras locais" className="flex min-w-0 flex-col gap-2">
+          <p className="flex items-center gap-2 text-sm font-medium"><Files className="size-4 text-onedark-yellow" aria-hidden="true" />Leituras reaproveitadas</p>
+          <p className="font-mono text-2xl tabular-nums">{number(e.localReadReuses)}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Leituras de arquivos reutilizadas após confirmar que o conteúdo não mudou.</p>
+          {readReduction !== null && <p className="text-xs text-onedark-yellow">{number(readReduction)}% menos conteúdo nas releituras.</p>}
+        </section>
+      </div>
+      <Separator />
+      <Collapsible>
+        <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group w-full justify-between">
+          Ver medições detalhadas<ChevronDown data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-180 motion-reduce:transition-none" />
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="grid gap-6 pt-5 @3xl:grid-cols-2">
+            <section aria-label="Medições de cache e conteúdo" className="flex min-w-0 flex-col gap-3">
+              <h3 className="text-sm font-medium">Cache e conteúdo enviado</h3>
+              <Line label="Tokens reutilizados pelo provedor" value={e.cacheReadRequests ? number(e.cacheReadTokens) : "Não informado"} />
+              <Line label="Tokens gravados no cache" value={e.cacheWriteRequests ? number(e.cacheWriteTokens) : "Não informado"} />
+              <Line label="Context-mode · original → enviado" value={e.indexedOutputs ? `${bytes(e.originalBytes)} → ${bytes(e.retainedBytes)}` : "Sem uso registrado"} />
+              <Line label="Releituras · original → enviado" value={e.localReadReuses ? `${bytes(e.localReadOriginalBytes)} → ${bytes(e.localReadRetainedBytes)}` : "Sem uso registrado"} />
+              <Line label="Consultas ao conteúdo completo" value={number(e.contextSearches)} />
+            </section>
+            <section aria-label="Outras atividades medidas" className="flex min-w-0 flex-col gap-3">
+              <h3 className="text-sm font-medium">Outras atividades</h3>
+              <Line label="Orientações para evitar repetição" value={number(e.loopSteers)} />
+              <Line label="Chamadas repetidas evitadas" value={number(e.loopAvoidedCalls)} />
+              <Line label="Visão e busca na web · chamadas medidas" value={number(e.auxiliaryRequests)} />
+              <Line label="Visão e busca na web · tokens de entrada" value={number(e.auxiliaryInputTokens)} />
+              <Line label="Visão e busca na web · tokens de saída" value={number(e.auxiliaryOutputTokens)} />
+              <p className="text-xs leading-relaxed text-muted-foreground">Visão e busca já estão incluídas nos tokens acumulados do projeto.</p>
+            </section>
+          </div>
+          <p className="mt-5 text-xs leading-relaxed text-muted-foreground">Reduções de conteúdo são medidas em bytes. Não representam uma estimativa de dinheiro ou tempo economizado. O cache considera apenas chamadas em que o provedor informou a medição.</p>
+        </CollapsibleContent>
+      </Collapsible>
     </CardContent>
   </Card>;
 }
 
-function bytes(value: number) { return value >= 1_048_576 ? `${number(value / 1_048_576)} MiB` : `${number(value / 1024)} KiB`; }
+function bytes(value: number) { return value < 1024 ? `${number(value)} B` : value >= 1_048_576 ? `${number(value / 1_048_576)} MiB` : `${number(value / 1024)} KiB`; }
 function Line({ label, value }: { label: string; value: string }) {
-  return <div className="flex justify-between gap-3 text-xs"><span className="text-muted-foreground">{label}</span><span className="font-mono tabular-nums">{value}</span></div>;
+  return <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs"><span className="text-muted-foreground">{label}</span><span className="font-mono tabular-nums">{value}</span></div>;
 }

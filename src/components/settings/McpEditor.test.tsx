@@ -1,0 +1,62 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+import { McpEditor } from "./McpEditor";
+
+describe("MCP visual editor", () => {
+  it("creates a local MCP without JSON and keeps argument order and secrets", async () => {
+    const user = userEvent.setup(); const save = vi.fn();
+    render(<McpEditor initialValue="" busy={false} error={null} onSave={save} onCancel={vi.fn()} />);
+    expect(screen.getByRole("tab", { name: "Visual" })).toHaveAttribute("aria-selected", "true");
+    await user.type(screen.getByLabelText("Nome do MCP"), "docs");
+    await user.type(screen.getByLabelText("Programa"), "npx");
+    await user.click(screen.getByRole("button", { name: "Adicionar argumento" }));
+    await user.type(screen.getByLabelText("Argumento 1"), "-y");
+    await user.click(screen.getByRole("button", { name: "Adicionar argumento" }));
+    await user.type(screen.getByLabelText("Argumento 2"), "example-mcp");
+    await user.click(screen.getByRole("button", { name: "Adicionar variável" }));
+    await user.type(screen.getByLabelText("Nome da variável 1"), "API_KEY");
+    await user.type(screen.getByLabelText("Valor da variável 1"), "test-only-key");
+    expect(screen.getByLabelText("Valor da variável 1")).toHaveAttribute("type", "password");
+    await user.click(screen.getByRole("button", { name: "Salvar MCP" }));
+    expect(JSON.parse(save.mock.calls[0][0])).toEqual({ docs: { type: "local", command: ["npx", "-y", "example-mcp"], environment: { API_KEY: "test-only-key" }, enabled: true, timeout: 30000, requestTimeout: 300000 } });
+  });
+  it("creates a remote MCP and synchronizes edits across both tabs", async () => {
+    const user = userEvent.setup(); const save = vi.fn();
+    render(<McpEditor initialValue="" busy={false} error={null} onSave={save} onCancel={vi.fn()} />);
+    await user.type(screen.getByLabelText("Nome do MCP"), "remote");
+    await user.click(screen.getByRole("combobox", { name: "Conexão" }));
+    await user.click(await screen.findByRole("option", { name: "Servidor remoto (HTTP)" }));
+    await user.type(screen.getByLabelText("URL do servidor"), "https://example.test/mcp");
+    await user.click(screen.getByRole("button", { name: "Adicionar cabeçalho" }));
+    await user.type(screen.getByLabelText("Nome do cabeçalho 1"), "Authorization");
+    await user.type(screen.getByLabelText("Valor do cabeçalho 1"), "Bearer test-only");
+    await user.click(screen.getByRole("tab", { name: "JSON" }));
+    const field = screen.getByRole("textbox", { name: "Configuração JSON" });
+    const config = JSON.parse((field as HTMLTextAreaElement).value);
+    expect(config.remote.headers.Authorization).toBe("Bearer test-only");
+    fireEvent.change(field, { target: { value: JSON.stringify({ remote: { ...config.remote, enabled: false, timeout: 45000, requestTimeout: 700000 } }) } });
+    await user.click(screen.getByRole("tab", { name: "Visual" }));
+    expect(screen.getByRole("switch", { name: "MCP ativado" })).not.toBeChecked();
+    expect(screen.getByLabelText("URL do servidor")).toHaveValue("https://example.test/mcp");
+    await user.click(screen.getByRole("button", { name: "Opções avançadas" }));
+    expect(screen.getByLabelText("Tempo para conectar (ms)")).toHaveValue(45000);
+    await user.click(screen.getByRole("button", { name: "Salvar MCP" }));
+    expect(JSON.parse(save.mock.calls[0][0]).remote.requestTimeout).toBe(700000);
+  });
+  it("keeps invalid JSON and unsupported options intact instead of overwriting the draft", async () => {
+    const user = userEvent.setup();
+    render(<McpEditor initialValue="" busy={false} error={null} onSave={vi.fn()} onCancel={vi.fn()} />);
+    await user.click(screen.getByRole("tab", { name: "JSON" }));
+    const field = screen.getByRole("textbox", { name: "Configuração JSON" });
+    fireEvent.change(field, { target: { value: "{" } });
+    await user.click(screen.getByRole("tab", { name: "Visual" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("JSON inválido");
+    expect(field).toHaveValue("{");
+    const unknown = '{"tools":{"type":"local","command":["node"],"unknown":"keep-me"}}';
+    fireEvent.change(field, { target: { value: unknown } });
+    await user.click(screen.getByRole("tab", { name: "Visual" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("texto foi preservado");
+    expect(field).toHaveValue(unknown);
+  });
+});

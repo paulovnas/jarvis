@@ -81,7 +81,7 @@ mod tests {
             turn_id: "turn".into(),
             tool_id: "question".into(),
             questions: vec![],
-            deadline_at: 1,
+            deadline_at: Some(1),
         });
         assert_eq!(
             attention_key(&snapshot).as_deref(),

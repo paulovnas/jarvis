@@ -33,6 +33,18 @@ beforeEach(() => {
 async function emit(name: string, payload: unknown = null) {
   await act(async () => { listeners.get(name)?.forEach(handler => handler({ event: name, id: 1, payload })); });
 }
+
+it("acknowledges a paused question and keeps its snapshot reactive", async () => {
+  const question = { turnId:"turn1", toolId:"ask-1", deadlineAt:Date.now()+30_000, questions:[{id:"q",question:"Qual opção?",options:[{label:"Uma",recommended:true}]}] };
+  call.mockResolvedValue({ ...running(), pendingQuestion:question });
+  const { result } = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(result.current.snapshot?.pendingQuestion).toEqual(question));
+  call.mockResolvedValue({ ...running(), revision:11, pendingQuestion:{ ...question, deadlineAt:undefined } });
+  await act(async () => { expect(await result.current.pauseQuestion(question)).toBe(true); });
+  expect(call).toHaveBeenCalledWith("pause_agent_question", {conversationId:"c1",turnId:"turn1",toolId:"ask-1"});
+  expect(result.current.snapshot?.pendingQuestion?.deadlineAt).toBeUndefined();
+  expect(result.current.snapshot?.activeTurnId).toBe("turn1");
+});
 function update(beforeRevision: number, next: ChatSnapshot) {
   const turn = next.turns[next.turns.length - 1];
   return {

@@ -6,6 +6,19 @@ import { WorkerRequests } from "./WorkerRequests";
 import type { WorkflowAgent } from "@/core/workflow";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
+it("pauses the automatic answer of the exact worker when the user starts typing", async () => {
+  const user = userEvent.setup();
+  const agent: WorkflowAgent = {
+    id:"child",parentId:"main",role:"builder",title:"Criar arquivo",status:"waiting",createdAt:1,updatedAt:2,startedAt:1,durationMs:1_000,currentThought:null,attempts:1,
+    options:{account:"personal",model:"model",reasoning:null,mode:"build",approvalMode:"manual"},beadId:"task",handoff:null,error:null,activeTurnId:"child-turn",pendingApproval:null,
+    pendingQuestion:{turnId:"child-turn",toolId:"ask-child",deadlineAt:Date.now()+30_000,questions:[{id:"q",question:"Qual opção?",options:[{label:"Uma",recommended:true},{label:"Duas"}]}]},
+  };
+  render(<WorkerRequests conversationId="root" projectPath="/project" agents={[agent]} drafts={new Map()} />);
+  await user.type(screen.getByRole("textbox", { name:"Sua resposta" }), "Outra preferência");
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("pause_workflow_question", {conversationId:"root",agentId:"child",turnId:"child-turn",toolId:"ask-child"}));
+  expect(screen.getByText("Resposta automática pausada")).toBeVisible();
+});
+
 it("routes a Manual approval to the exact worker and turn, without approving the parent", async () => {
   const user = userEvent.setup();
   const agent: WorkflowAgent = {id:"child",parentId:"main",role:"builder",title:"Criar arquivo",status:"waiting",createdAt:1,updatedAt:2,startedAt:1,durationMs:1_000,currentThought:null,attempts:1,options:{account:"personal",model:"model",reasoning:null,mode:"build",approvalMode:"manual"},beadId:"task",handoff:null,error:null,activeTurnId:"child-turn",pendingQuestion:null,pendingApproval:{tool:{id:"write1",name:"write",args:{path:"src/test.ts",content:"example"},status:"pending",output:"",durationMs:0},policy:null}};

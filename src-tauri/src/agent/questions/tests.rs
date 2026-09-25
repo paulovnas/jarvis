@@ -89,13 +89,76 @@ async fn timeout_answers_with_recommendations_even_when_the_question_ui_is_not_o
 }
 
 #[tokio::test]
+async fn interaction_disables_timeout_for_the_current_question_and_preserves_manual_answer() {
+    let fixture = Fixture::new();
+    let (session, tool, signal) = prepare(&fixture);
+    let running = session.clone();
+    let task = tokio::spawn(async move { execute(&running, &tool, signal, 1).await });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while session.snapshot().unwrap().pending_question.is_none() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let pending = session.snapshot().unwrap().pending_question.unwrap();
+    assert!(pause(&session, "wrong-turn", &pending.tool_id).is_err());
+    assert!(pause(&session, &pending.turn_id, "wrong-tool").is_err());
+    assert!(session
+        .snapshot()
+        .unwrap()
+        .pending_question
+        .unwrap()
+        .deadline_at
+        .is_some());
+    for _ in 0..2 {
+        let snapshot = pause(&session, &pending.turn_id, &pending.tool_id).unwrap();
+        assert!(snapshot.pending_question.unwrap().deadline_at.is_none());
+    }
+    // A timeout already scheduled before interaction still cannot commit an answer.
+    assert!(answer_inner(
+        &session,
+        &pending.turn_id,
+        &pending.tool_id,
+        response(),
+        true
+    )
+    .unwrap()
+    .is_none());
+    tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+    assert!(!task.is_finished());
+    let mut manual = response();
+    manual.answers[0].value = "Montanha".into();
+    manual.answers[0].selected_label = Some("Montanha".into());
+    answer(&session, &pending.turn_id, &pending.tool_id, manual).unwrap();
+    // A timeout racing a completed manual answer does not terminate the turn.
+    assert!(answer_inner(
+        &session,
+        &pending.turn_id,
+        &pending.tool_id,
+        response(),
+        true
+    )
+    .unwrap()
+    .is_none());
+    let output = task.await.unwrap().unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&output).unwrap()["answers"][0]["value"],
+        "Montanha"
+    );
+    let (reloaded, _) = journal::load_all(&session.journal).unwrap();
+    assert_eq!(reloaded[0].wire.last().unwrap()["output"], output);
+    assert!(pause(&session, &pending.turn_id, &pending.tool_id).is_err());
+}
+
+#[tokio::test]
 async fn answers_wake_tool_only_after_durable_history_and_survive_restart() {
     let fixture = Fixture::new();
     let (session, tool, signal) = prepare(&fixture);
     let task = start(&session, tool, signal).await;
     assert!(!task.is_finished());
     let pending = session.snapshot().unwrap().pending_question.unwrap();
-    assert!(pending.deadline_at > 0);
+    assert!(pending.deadline_at.is_some_and(|deadline| deadline > 0));
     let snapshot = answer(&session, &pending.turn_id, &pending.tool_id, response()).unwrap();
     assert!(snapshot.pending_question.is_none());
     assert!(snapshot.active_turn_id.is_some());
