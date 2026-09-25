@@ -1,5 +1,5 @@
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
-import { ArrowUp, Plus, RefreshCw, Square } from "lucide-react";
+import { ArrowUp, Plus, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/TextInput";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -306,16 +306,7 @@ export function ChatComposer({
               <span className="whitespace-nowrap">Validação manual</span>
             </Label></Hint>}
 
-            <ModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} disabled={!modelsReady || running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} showProviderIdentity />
-            <Hint content="Consultar modelos disponíveis"><Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={refreshingModels ? "Atualizando modelos" : "Atualizar modelos"}
-              disabled={!onRefreshModels || refreshingModels}
-              onClick={() => setRefreshDialogOpen(true)}
-              className="size-7.5 shrink-0 cursor-pointer text-muted-foreground hover:text-primary"
-            ><RefreshCw className={`size-3.5 ${refreshingModels ? "animate-spin motion-reduce:animate-none" : ""}`} /></Button></Hint>
+            <ModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} disabled={!modelsReady || running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} showProviderIdentity onRefresh={onRefreshModels ? () => setRefreshDialogOpen(true) : undefined} refreshing={refreshingModels} />
 
             {/* Botão redondo com seta pra cima no canto inferior direito */}
             {running && !compacting && <Hint content="Interromper execução"><Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button></Hint>}

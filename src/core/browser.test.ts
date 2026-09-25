@@ -15,3 +15,15 @@ it("hides native content for application dialogs and restores it when they close
   expect(browserOccluded(document)).toBe(false);
   dialog.remove();
 });
+
+it("keeps native content visible while an informational tooltip is open", () => {
+  const tooltip = document.createElement("div");
+  tooltip.setAttribute("role", "tooltip");
+  tooltip.setAttribute("data-slot", "tooltip-content");
+  document.body.append(tooltip);
+  try {
+    expect(browserOccluded(document)).toBe(false);
+  } finally {
+    tooltip.remove();
+  }
+});

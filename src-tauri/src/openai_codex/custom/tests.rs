@@ -185,6 +185,43 @@ fn secure_store_failure_leaves_previous_configuration_intact() {
 }
 
 #[test]
+fn inaccessible_wallet_preserves_custom_config_and_key_until_recovery() {
+    let mut db = Connection::open_in_memory().unwrap();
+    persistence::initialize_database(&mut db).unwrap();
+    let store = InMemorySecretStore::default();
+    let initial = config(Protocol::OpenaiCompletions);
+    save(
+        &mut db,
+        &store,
+        "gateway",
+        &initial,
+        Some("original"),
+        false,
+    )
+    .unwrap();
+    let mut updated = initial.clone();
+    updated.models[0].name = "Updated".into();
+    store.fail_load(true);
+    for key in [None, Some("replacement")] {
+        let error = save(&mut db, &store, "gateway", &updated, key, true).unwrap_err();
+        assert_eq!(error.code, "secret_store");
+        #[cfg(target_os = "linux")]
+        assert!(error.message.contains("desbloqueie"));
+    }
+    let raw: String = db
+        .query_row(
+            "SELECT config FROM custom_provider_configs WHERE alias = 'gateway'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(serde_json::from_str::<Config>(&raw).unwrap(), initial);
+    store.fail_load(false);
+    assert_eq!(store.load("gateway").unwrap().access, "original");
+    save(&mut db, &store, "gateway", &updated, None, true).unwrap();
+}
+
+#[test]
 fn custom_inference_uses_offline_catalog_and_never_refreshes_api_keys() {
     use std::sync::Arc;
     let home = tempfile::tempdir().unwrap();

@@ -63,8 +63,8 @@ export function AppUpdate() {
         {release ? <>
           <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-muted-foreground"><span>{info.currentVersion}</span><span aria-hidden="true">→</span><span>{release.version}</span></div>
           {release.notes ? <LazyChatMarkdown content={release.notes} /> : <p className="text-sm text-muted-foreground">Nova versão disponível.</p>}
-          {!info.installable && <p className="text-xs text-muted-foreground">Abra o Jarvis instalado no computador para atualizar.</p>}
-          {!busy && !installed && <p className="text-xs text-muted-foreground">O Jarvis será reaberto automaticamente após a instalação.</p>}
+          {!info.installable && <p className="text-xs text-muted-foreground">A atualização automática não está disponível nesta instalação. Baixe a nova versão; no Linux, instale o novo DEB ou use um AppImage em uma pasta com permissão de escrita.</p>}
+          {info.installable && !busy && !installed && <p className="text-xs text-muted-foreground">O Jarvis será reaberto automaticamente após a instalação.</p>}
         </> : <>
           <p className="text-sm text-muted-foreground">Ambiente de desenvolvimento com agentes de IA.</p>
           <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm"><dt className="text-muted-foreground">Criado por</dt><dd>Paulo Vitor Nascimento</dd><dt className="text-muted-foreground">Versão</dt><dd className="font-mono text-xs">{info.currentVersion}</dd></dl>
@@ -93,7 +93,7 @@ export function AppUpdate() {
         {upToDate && <Alert role="status" className="border-onedark-green/25 bg-onedark-green/5 text-onedark-green"><CircleCheck /><AlertDescription className="text-onedark-green">A versão mais recente já está instalada.</AlertDescription></Alert>}
       </div>
       <DialogFooter className="shrink-0">
-        {release ? <Button disabled={busy || checking || !info.installable} onClick={() => void install()}><ArrowUpToLine data-icon="inline-start" />{busy ? stage : installed ? "Reabrir Jarvis" : "Atualizar e reiniciar"}</Button> : <>
+        {release ? info.installable ? <Button disabled={busy || checking} onClick={() => void install()}><ArrowUpToLine data-icon="inline-start" />{busy ? stage : installed ? "Reabrir Jarvis" : "Atualizar e reiniciar"}</Button> : <Button className="cursor-pointer" onClick={() => { void openUrl(`${PROJECT_URL}/releases`).catch(() => toast.error("Não foi possível abrir os downloads.")); }}><ExternalLink data-icon="inline-start" />Baixar nova versão</Button> : <>
           <Button variant="ghost" onClick={() => { void openUrl(PROJECT_URL).catch(() => toast.error("Não foi possível abrir o projeto.")); }}><ExternalLink data-icon="inline-start" />GitHub</Button>
           <Button variant="outline" disabled={checking} onClick={() => void check(true)}><RefreshCw data-icon="inline-start" />Verificar atualizações</Button>
         </>}

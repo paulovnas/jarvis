@@ -62,8 +62,9 @@ export function useCore() {
       const value = await invoke("check_core_updates");
       if (version === revision.current) accept(value, true);
     }
-    catch (cause) { if (mounted.current && version === revision.current) toast.error(coreError(cause)); }
-  }, [accept]);
+    catch (cause) { if (mounted.current) toast.error(coreError(cause)); }
+    finally { if (mounted.current && currentSnapshot.current) commit(currentSnapshot.current, true); }
+  }, [accept, commit]);
   const install = useCallback(async (ids: CoreId[], options: { silent?: boolean } = {}) => {
     if (busy.current) return { updated: 0, errors: ["Aguarde a instalação atual terminar."] };
     busy.current = true; setInstalling(true);

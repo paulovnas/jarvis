@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { writeText as writeNativeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
-import { nativeClipboardAvailable, writeClipboardText } from "./clipboard";
+import { readText as readNativeClipboardText, writeText as writeNativeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
+import { nativeClipboardAvailable, readClipboardText, writeClipboardText } from "./clipboard";
 
-vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: vi.fn() }));
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ readText: vi.fn(), writeText: vi.fn() }));
 
 const originalTauriInternals = Object.getOwnPropertyDescriptor(window, "__TAURI_INTERNALS__");
 const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
@@ -45,6 +45,18 @@ describe("clipboard", () => {
 
     expect(browserWriteText).toHaveBeenCalledExactlyOnceWith("bun run dev");
     expect(writeNativeClipboardText).not.toHaveBeenCalled();
+  });
+
+  it("reads pasted text through the native clipboard only in the desktop app", async () => {
+    setNativeRuntime(true);
+    vi.mocked(readNativeClipboardText).mockResolvedValueOnce("texto nativo");
+    await expect(readClipboardText()).resolves.toBe("texto nativo");
+    expect(readNativeClipboardText).toHaveBeenCalledOnce();
+    setNativeRuntime(false);
+    const readText = vi.fn().mockResolvedValue("texto web");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText } });
+    await expect(readClipboardText()).resolves.toBe("texto web");
+    expect(readText).toHaveBeenCalledOnce();
   });
 
   it("reports an unavailable browser clipboard instead of claiming success", async () => {

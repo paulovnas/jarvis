@@ -364,6 +364,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn secure_handshake_failure_returns_to_http_without_panicking() {
+        use tokio::io::AsyncWriteExt;
+        crate::initialize_tls();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut tcp, _) = listener.accept().await.unwrap();
+            let _ = tcp.write_all(b"not a TLS server").await;
+        });
+        let mut request = request(port, &body());
+        request.url_mut().set_scheme("https").unwrap();
+        let (_tx, signal) = watch::channel(false);
+        let mut transport = Transport::default();
+        assert!(transport
+            .attempt(request, signal, &mut |_| Ok(()))
+            .await
+            .unwrap()
+            .is_none());
+        assert!(transport.disabled);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_a_stalled_secure_handshake() {
+        use tokio::io::AsyncReadExt;
+        crate::initialize_tls();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (cancel, signal) = watch::channel(false);
+        let server = tokio::spawn(async move {
+            let (mut tcp, _) = listener.accept().await.unwrap();
+            let mut hello = [0; 4096];
+            assert!(tcp.read(&mut hello).await.unwrap() > 0);
+            cancel.send_replace(true);
+            // Keep the peer connected so only cancellation can end the handshake.
+            cancel.closed().await;
+        });
+        let mut request = request(port, &body());
+        request.url_mut().set_scheme("https").unwrap();
+        let mut transport = Transport::default();
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            transport.attempt(request, signal, &mut |_| Ok(())),
+        )
+        .await
+        .expect("stop must not wait for the handshake timeout");
+        assert_eq!(result.unwrap_err().code, "cancelled");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn handshake_rejection_falls_back_without_submitting_an_inference() {
         use tokio::io::AsyncWriteExt;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

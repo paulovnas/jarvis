@@ -2,8 +2,8 @@ pub mod config;
 pub(crate) mod executable;
 pub mod runtime;
 mod stdio;
-#[cfg(target_os = "windows")]
-mod windows_secrets;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod vault_secrets;
 
 use crate::persistence::{AppState, PersistenceError};
 use config::Config;
@@ -171,33 +171,33 @@ impl Secrets for Keychain {
         }
     }
 }
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 impl Secrets for Keychain {
     fn load(&self, key: &str) -> Result<String, McpError> {
-        windows_secrets::load(key)
+        vault_secrets::load(key)
     }
     fn store(&self, key: &str, value: &str) -> Result<(), McpError> {
-        windows_secrets::store(key, value)
+        vault_secrets::store(key, value)
     }
     fn delete(&self, key: &str) -> Result<(), McpError> {
-        windows_secrets::delete(key)
+        vault_secrets::delete(key)
     }
 }
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 impl Secrets for Keychain {
     fn load(&self, _: &str) -> Result<String, McpError> {
         Err(error(
-            "O armazenamento seguro de MCPs está disponível no macOS.",
+            "O armazenamento seguro de MCPs não está disponível neste sistema.",
         ))
     }
     fn store(&self, _: &str, _: &str) -> Result<(), McpError> {
         Err(error(
-            "O armazenamento seguro de MCPs está disponível no macOS.",
+            "O armazenamento seguro de MCPs não está disponível neste sistema.",
         ))
     }
     fn delete(&self, _: &str) -> Result<(), McpError> {
         Err(error(
-            "O armazenamento seguro de MCPs está disponível no macOS.",
+            "O armazenamento seguro de MCPs não está disponível neste sistema.",
         ))
     }
 }

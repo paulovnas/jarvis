@@ -44,6 +44,15 @@ function stage() {
     if (installers.length !== 1) throw new Error("Não foi possível identificar o instalador Windows da versão.");
     copyFileSync(path.join(nsis, installers[0]), path.join(artifactDirectory, archive));
     copyFileSync(path.join(nsis, `${installers[0]}.sig`), path.join(artifactDirectory, signature));
+  } else if (releaseTarget === "x86_64-unknown-linux-gnu") {
+    const appimage = path.join(bundle, "appimage");
+    const images = readdirSync(appimage).filter(name => name.endsWith(".AppImage") && name.includes(`_${config.version}_`));
+    const deb = path.join(bundle, "deb");
+    const packages = readdirSync(deb).filter(name => name.endsWith(".deb") && name.includes(`_${config.version}_`));
+    if (images.length !== 1 || packages.length !== 1) throw new Error("Não foi possível identificar o AppImage e o DEB da versão.");
+    copyFileSync(path.join(appimage, images[0]), path.join(artifactDirectory, archive));
+    copyFileSync(path.join(appimage, `${images[0]}.sig`), path.join(artifactDirectory, signature));
+    copyFileSync(path.join(deb, packages[0]), path.join(artifactDirectory, `Jarvis_${config.version}_${releaseTarget}.deb`));
   } else {
     const app = path.join(bundle, "macos", `${config.productName}.app`);
     command("codesign", ["--verify", "--deep", "--strict", app]);
@@ -98,7 +107,7 @@ function publishArtifacts() {
   }
   const files = [...assets.platforms.flatMap(asset => asset.names), ...manifests];
   command("gh", ["release", "upload", tag, "--repo", RELEASE_REPOSITORY, "--clobber", ...files.map(name => path.join(artifactDirectory, name))]);
-  // Publish both platforms atomically from one draft, after every required upload.
+  // Publish all platforms atomically from one draft, after every required upload.
   const remote = JSON.parse(command("gh", ["release", "view", tag, "--repo", RELEASE_REPOSITORY, "--json", "assets,isDraft"], true)) as { isDraft: boolean; assets: { name: string; size: number }[] };
   if (!remote.isDraft || files.some(name => !remote.assets.some(asset => asset.name === name && asset.size === statSync(path.join(artifactDirectory, name)).size))) throw new Error("O upload está incompleto; o rascunho foi preservado.");
   command("gh", ["release", "edit", tag, "--repo", RELEASE_REPOSITORY, "--draft=false", `--latest=${!beta}`]);

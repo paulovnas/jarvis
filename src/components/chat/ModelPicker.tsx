@@ -1,9 +1,9 @@
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, RefreshCw } from "lucide-react";
 import type { ProviderAccount, ProviderModel } from "@/core/provider-accounts";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { aliasSuffix } from "@/core/provider-usage";
 import { reasoningLabel } from "@/core/reasoning";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Hint } from "@/components/ui/hint";
 
 export interface ModelOptionDef extends Pick<ProviderModel, "reasoningLevels" | "defaultReasoningLevel"> {
@@ -19,7 +19,7 @@ export interface ProviderModelGroup {
 
 
 export type ModelSelection = { model: string; reasoning: string | null };
-export function ModelPicker({ modelGroups, selection, onSelect, disabled = false, ariaLabel = "Selecionar modelo de IA", showProviderIdentity = false }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; disabled?: boolean; ariaLabel?: string; showProviderIdentity?: boolean }) {
+export function ModelPicker({ modelGroups, selection, onSelect, disabled = false, ariaLabel = "Selecionar modelo de IA", showProviderIdentity = false, onRefresh, refreshing = false }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; disabled?: boolean; ariaLabel?: string; showProviderIdentity?: boolean; onRefresh?: () => void; refreshing?: boolean }) {
   const currentGroup = modelGroups.find(group => group.models.some(model => model.value === selection?.model));
   const currentModelDef = modelGroups.flatMap(group => group.models).find(model => model.value === selection?.model);
   const reasoning = selection?.reasoning;
@@ -127,6 +127,13 @@ export function ModelPicker({ modelGroups, selection, onSelect, disabled = false
                     </DropdownMenuSub>
                   ))
                 )}
+                {onRefresh && <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="cursor-pointer gap-2 text-xs" disabled={refreshing} onClick={onRefresh}>
+                    <RefreshCw className={`size-3.5 ${refreshing ? "animate-spin motion-reduce:animate-none" : ""}`} />
+                    {refreshing ? "Atualizando modelos…" : "Atualizar lista de modelos"}
+                  </DropdownMenuItem>
+                </>}
               </DropdownMenuContent>
             </DropdownMenu>);
 }

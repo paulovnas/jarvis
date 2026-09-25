@@ -15,6 +15,7 @@ import type { BrowserController } from "@/hooks/use-browser";
 
 function NativeViewport({ browser, tab }: { browser: BrowserController; tab: BrowserTab }) {
   const element = useRef<HTMLDivElement>(null);
+  const hasPage = tab.url !== "about:blank";
   useEffect(() => {
     const node = element.current;
     if (!node) return;
@@ -52,7 +53,7 @@ function NativeViewport({ browser, tab }: { browser: BrowserController; tab: Bro
       window.removeEventListener("resize", schedule); document.removeEventListener("visibilitychange", schedule); document.removeEventListener("scroll", schedule, true);
       void serial.then(() => invoke("set_browser_viewport", { conversationId: browser.conversationId, id: tab.id, viewport: null })).catch(() => {});
     };
-  }, [browser.conversationId, tab.id, tab.url]);
+  }, [browser.conversationId, tab.id, hasPage]);
   return <div ref={element} aria-label="Página do navegador" className="relative min-h-0 flex-1 overflow-hidden bg-background">
     <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground"><Globe className="size-8" /><p className="text-sm">{tab.url === "about:blank" ? "Digite um endereço para começar a navegar." : "Conteúdo do navegador"}</p>{tab.loading && <div role="status" aria-label="Carregando página" className="w-56 space-y-2"><Skeleton className="h-3 w-full" /><Skeleton className="h-3 w-3/4" /></div>}</div>
   </div>;

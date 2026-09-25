@@ -28,7 +28,11 @@ describe("Home shell", () => {
     const account: ProviderAccount = { alias: "openai-codex-pessoal", providerKind: "openai-codex", enabled: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, models: [{ id: "old", name: "Antigo", reasoningLevels: [], defaultReasoningLevel: null }] };
     accountsMock.mockResolvedValueOnce([account]).mockResolvedValueOnce([{ ...account, models: [{ id: "gpt-6-sol", name: "GPT 6 Sol", reasoningLevels: ["high"], defaultReasoningLevel: "high" }] }]);
     render(<Home />);
-    const reload = await screen.findByRole("button", { name: "Atualizar modelos" });
+    const selector = await screen.findByRole("button", { name: "Selecionar modelo de IA" });
+    await waitFor(() => expect(selector).toBeEnabled());
+    screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus();
+    await user.keyboard("{Enter}");
+    const reload = await screen.findByRole("menuitem", { name: "Atualizar lista de modelos" });
     await waitFor(() => expect(reload).toBeEnabled());
     await user.click(reload);
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Atualizar modelos" }));

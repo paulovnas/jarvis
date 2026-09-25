@@ -14,13 +14,21 @@ mod model_bindings;
 mod openai_codex;
 mod optional_tools;
 mod persistence;
+#[cfg_attr(target_os = "linux", path = "secrets_linux.rs")]
 mod secrets;
 mod skills;
 mod system;
 mod updater;
 #[cfg(feature = "browser-probe")]
 pub fn run_browser_probe() {
+    initialize_tls();
     agent::browser::probe::run();
+}
+
+fn initialize_tls() {
+    // HTTP and WebSocket dependencies enable different providers; choose one
+    // before either client runs. An existing process default is preserved.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }
 
 fn main_only(
@@ -42,6 +50,7 @@ fn greet(name: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    initialize_tls();
     let builder = tauri::Builder::default();
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {

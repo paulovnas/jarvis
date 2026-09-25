@@ -1,11 +1,13 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { listen, type EventCallback } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AppUpdate } from "./AppUpdate";
-import { APP_VERSION, checkAppUpdate, displayVersion, installAppUpdate, type UpdateInfo, type UpdateProgress } from "@/core/app-update";
+import { APP_VERSION, checkAppUpdate, displayVersion, installAppUpdate, PROJECT_URL, type UpdateInfo, type UpdateProgress } from "@/core/app-update";
 
 vi.mock("@/core/app-update", async original => ({ ...await original<typeof import("@/core/app-update")>(), nativeUpdaterAvailable: () => true, checkAppUpdate: vi.fn(), installAppUpdate: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 const update: UpdateInfo = { currentVersion: APP_VERSION, installable: true, available: { version: "0.8.0-beta.2", notes: "Melhorias no Jarvis.", publishedAt: null } };
 let aboutListener: EventCallback<unknown> | undefined;
 const stopListening = vi.fn();
@@ -20,6 +22,18 @@ beforeEach(() => {
   });
 });
 afterEach(() => vi.useRealTimers());
+
+it("oferece download manual para instalações sem atualização automática", async () => {
+  vi.mocked(checkAppUpdate).mockResolvedValue({ ...update, installable: false });
+  const user = userEvent.setup(); render(<AppUpdate />);
+  await user.click(screen.getByRole("button", { name: /Sobre o Jarvis/ }));
+  await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
+  await user.click(await screen.findByRole("button", { name: "Baixar nova versão" }));
+  expect(screen.getByText(/instale o novo DEB ou use um AppImage/)).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Atualizar e reiniciar" })).not.toBeInTheDocument();
+  expect(installAppUpdate).not.toHaveBeenCalled();
+  expect(openUrl).toHaveBeenCalledWith(`${PROJECT_URL}/releases`);
+});
 
 it("confirma em verde uma verificação manual sem atualização e remove a confirmação ao tentar novamente", async () => {
   vi.mocked(checkAppUpdate).mockResolvedValue({ ...update, available: null });

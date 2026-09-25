@@ -38,6 +38,7 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 base64 = "0.22"
 getrandom = "0.3"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls", "json"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 sha2 = "0.10"
 url = "2.5"
 tauri-plugin-dialog = "2"
@@ -73,8 +74,10 @@ objc2-web-kit = "0.3"
 objc2-app-kit = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
 webkit2gtk = "2.0"
 cairo-rs = { version = "0.18", features = ["png"] }
+keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify-rust = "4"

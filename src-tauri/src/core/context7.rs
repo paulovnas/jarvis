@@ -22,7 +22,14 @@ struct Settings {
     credential_ref: String,
 }
 fn settings(home: &Path) -> Result<Settings, CoreError> {
-    let value: Settings = serde_json::from_slice(&fs::read(root(home).join("context7.json"))?)
+    let bytes = fs::read(root(home).join("context7.json")).map_err(|cause| {
+        if cause.kind() == std::io::ErrorKind::NotFound {
+            error("Configure a chave de API do Context7 para usar a documentação.")
+        } else {
+            cause.into()
+        }
+    })?;
+    let value: Settings = serde_json::from_slice(&bytes)
         .map_err(|_| error("Configure novamente a chave do Context7."))?;
     if !value.credential_ref.starts_with("jarvis-core-context7-") {
         return Err(error("Configuração do Context7 inválida."));
@@ -237,6 +244,20 @@ mod tests {
             self.0.lock().unwrap().remove(key);
             Ok(())
         }
+    }
+    #[test]
+    fn missing_configuration_requests_a_key_instead_of_reporting_a_filesystem_failure() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(!configured(home.path()));
+        assert_eq!(
+            verify_credentials(home.path()).unwrap_err().message,
+            "Configure a chave de API do Context7 para usar a documentação."
+        );
+        fs::create_dir_all(root(home.path()).join("context7.json")).unwrap();
+        assert!(verify_credentials(home.path())
+            .unwrap_err()
+            .message
+            .contains("permissões"));
     }
     #[test]
     fn credentials_stay_out_of_config_and_replacement_retires_previous_key() {

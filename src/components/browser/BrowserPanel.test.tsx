@@ -1,16 +1,20 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useBrowser } from "@/hooks/use-browser";
 import type { BrowserSnapshot } from "@/core/browser";
 import { FileWorkspace } from "@/components/files/FileWorkspace";
 import { Button } from "@/components/ui/button";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { useState } from "react";
+import { BrowserPanel } from "./BrowserPanel";
+import type { BrowserController } from "@/hooks/use-browser";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const mocked = vi.mocked(invoke);
 let stored: BrowserSnapshot;
+afterEach(() => vi.restoreAllMocks());
 
 function Workspace({ conversationId = "chat-1" }: { conversationId?: string }) {
   const browser = useBrowser(conversationId);
@@ -65,4 +69,60 @@ it("restores the selected browser tab and sends normalized URLs, console and cap
   first.unmount(); await act(async () => {});
   render(<Workspace />);
   expect(await screen.findByRole("tab", { name: "Projeto" })).toHaveAttribute("aria-selected", "true");
+});
+
+it("keeps a native page mounted during navigation and hides it only while an overlay is open", async () => {
+  const rect = { x: 210, y: 120, width: 710, height: 520 };
+  const measure = Element.prototype.getBoundingClientRect;
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    return this.getAttribute("aria-label") === "Página do navegador" ? DOMRect.fromRect(rect) : measure.call(this);
+  });
+  const tab = { id: "tab-1", conversationId: "chat-1", title: "Projeto", url: "http://localhost:3000/", loading: false };
+  const browser: BrowserController = { conversationId: "chat-1", snapshot: { tabs: [tab], activeId: tab.id }, busy: false, loaded: true, open: vi.fn(), select: vi.fn(), command: vi.fn() };
+  const viewports = () => mocked.mock.calls.filter(([command]) => command === "set_browser_viewport").map(([, args]) => args);
+  const expected = (viewport: typeof rect | null) => ({ conversationId: "chat-1", id: tab.id, viewport });
+  const { rerender } = render(<BrowserPanel browser={browser} tab={tab} />);
+  await waitFor(() => expect(viewports()).toEqual([expected(rect)]));
+  rerender(<BrowserPanel browser={browser} tab={{ ...tab, url: "http://localhost:3000/next" }} />);
+  await act(async () => { window.dispatchEvent(new Event("resize")); await new Promise(resolve => requestAnimationFrame(resolve)); });
+  expect(viewports()).toEqual([expected(rect)]);
+  const menu = document.createElement("div"); menu.setAttribute("role", "menu");
+  act(() => { document.body.append(menu); });
+  await waitFor(() => expect(viewports()).toEqual([expected(rect), expected(null)]));
+  act(() => { menu.remove(); });
+  await waitFor(() => expect(viewports()).toEqual([expected(rect), expected(null), expected(rect)]));
+  // The native page must follow the browser slot, not the full window, when
+  // side panels resize or the console consumes vertical space.
+  Object.assign(rect, { x: 260, width: 580, height: 344 });
+  mocked.mockClear();
+  await act(async () => { window.dispatchEvent(new Event("resize")); });
+  await waitFor(() => expect(viewports()).toEqual([expected(rect)]));
+});
+
+it("keeps the browser visible when hovering its tab and toolbar tooltips", async () => {
+  const rect = { x: 210, y: 120, width: 710, height: 520 };
+  const measure = Element.prototype.getBoundingClientRect;
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    return this.getAttribute("aria-label") === "Página do navegador" ? DOMRect.fromRect(rect) : measure.call(this);
+  });
+  const url = "http://localhost:5173/";
+  stored = { tabs: [{ id: "tab-1", conversationId: "chat-1", title: "Projeto", url, loading: false }], activeId: "tab-1" };
+  render(<TooltipProvider delay={0}><Workspace /></TooltipProvider>);
+  await waitFor(() => expect(mocked).toHaveBeenCalledWith("set_browser_viewport", { conversationId: "chat-1", id: "tab-1", viewport: rect }));
+  mocked.mockClear();
+  for (const [trigger, content] of [
+    [screen.getByRole("tab", { name: "Projeto" }), url],
+    [screen.getByRole("button", { name: "Recarregar página" }), "Recarregar"],
+  ] as const) {
+    fireEvent.pointerEnter(trigger, { pointerType: "mouse" });
+    fireEvent.mouseEnter(trigger);
+    fireEvent.mouseMove(trigger);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(content);
+    // Let the overlay observer and its native viewport update finish.
+    await act(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); });
+    expect(mocked.mock.calls.filter(([command]) => command === "set_browser_viewport")).toEqual([]);
+    fireEvent.pointerLeave(trigger, { pointerType: "mouse" });
+    fireEvent.mouseLeave(trigger);
+    await waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
+  }
 });

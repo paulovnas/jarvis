@@ -1,5 +1,7 @@
 //! Conversation-owned native browser children. Page content has no application IPC authority.
 mod capture;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(feature = "browser-probe")]
 pub(crate) mod probe;
 #[cfg(test)]
@@ -185,7 +187,7 @@ fn page_changed(
         changed(app, conversation);
     }
 }
-fn ensure_view(app: &tauri::AppHandle, tab: &BrowserTab) -> Result<Webview, AgentError> {
+async fn ensure_view(app: &tauri::AppHandle, tab: &BrowserTab) -> Result<Webview, AgentError> {
     if let Some(view) = app.get_webview(&label(&tab.id)) {
         return Ok(view);
     }
@@ -247,6 +249,11 @@ fn ensure_view(app: &tauri::AppHandle, tab: &BrowserTab) -> Result<Webview, Agen
         .map_err(|_| error("Não foi possível ajustar o navegador."))?;
     view.hide()
         .map_err(|_| error("Não foi possível posicionar o navegador."))?;
+    #[cfg(target_os = "linux")]
+    if let Err(cause) = linux::attach(&view).await {
+        let _ = view.close();
+        return Err(cause);
+    }
     Ok(view)
 }
 async fn evaluate(view: &Webview, script: String) -> Result<Value, AgentError> {
@@ -379,7 +386,7 @@ async fn command(
             Ok(())
         })?;
         if let Err(cause) = if url.is_some() {
-            ensure_view(app, &tab).map(|_| ())
+            ensure_view(app, &tab).await.map(|_| ())
         } else {
             Ok(())
         } {
@@ -437,7 +444,7 @@ async fn command(
     } else {
         tab.clone()
     };
-    let view = ensure_view(app, &view_tab)?;
+    let view = ensure_view(app, &view_tab).await?;
     match request.action.as_str() {
         "navigate" => {
             let url = address(request.url.as_deref().unwrap_or(""))?;
@@ -574,6 +581,9 @@ pub async fn set_browser_viewport(
     let _operation = state.operations.lock().await;
     let snapshot = state.snapshot(&app, &conversation_id)?;
     for tab in &snapshot.tabs {
+        if Some(&tab.id) == id.as_ref() && snapshot.active_id == id {
+            continue;
+        }
         if let Some(view) = app.get_webview(&label(&tab.id)) {
             let _ = view.hide();
         }
@@ -589,10 +599,16 @@ pub async fn set_browser_viewport(
         if tab.url == "about:blank" {
             return Ok(());
         }
-        let view = ensure_view(&app, &tab)?;
-        view.set_position(tauri::LogicalPosition::new(rect.x, rect.y))
-            .and_then(|()| view.set_size(tauri::LogicalSize::new(rect.width, rect.height)))
-            .and_then(|()| view.show())
+        let view = ensure_view(&app, &tab).await?;
+        #[cfg(target_os = "linux")]
+        linux::set_bounds(&view, rect).await?;
+        #[cfg(not(target_os = "linux"))]
+        view.set_bounds(tauri::Rect {
+            position: tauri::LogicalPosition::new(rect.x, rect.y).into(),
+            size: tauri::LogicalSize::new(rect.width, rect.height).into(),
+        })
+        .map_err(|_| error("Não foi possível ajustar o navegador."))?;
+        view.show()
             .map_err(|_| error("Não foi possível ajustar o navegador."))?;
     }
     Ok(())

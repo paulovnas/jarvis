@@ -21,6 +21,7 @@ export function browserAddress(value: string): string {
 }
 
 export function browserOccluded(document: Document): boolean {
-  return Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot="popover-content"], [data-slot="tooltip-content"]'))
+  // Passive tooltips must not hide the native page just because the user hovers.
+  return Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot="popover-content"]'))
     .some(node => !node.hasAttribute("data-closed") && !node.hidden && node.getAttribute("aria-hidden") !== "true" && getComputedStyle(node).display !== "none");
 }

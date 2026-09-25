@@ -15,7 +15,7 @@ function main() {
   const version = releaseVersion(options.version, pkg.version);
   const tag = `v${version}`;
   if (options.dryRun) {
-    console.info(`${tag} → ${RELEASE_REPOSITORY}\nmacOS Apple Silicon + Windows x64\nCommit/tag → push → GitHub Actions: verificações → DMG/NSIS e atualizadores assinados → publicação conjunta.\nNenhum arquivo foi alterado ou publicado.`);
+    console.info(`${tag} → ${RELEASE_REPOSITORY}\nmacOS Apple Silicon + Windows x64 + Linux x64\nCommit/tag → push → GitHub Actions: verificações → DMG/NSIS/DEB/AppImage e atualizadores assinados → publicação conjunta.\nNenhum arquivo foi alterado ou publicado.`);
     return;
   }
   if (command("git", ["status", "--porcelain"], true)) throw new Error("Faça commit das alterações antes de gerar um release.");

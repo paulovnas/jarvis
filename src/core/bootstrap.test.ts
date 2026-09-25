@@ -89,7 +89,7 @@ describe("application bootstrap", () => {
     expect(invokeMock.mock.calls.map(([command]) => command)).not.toContain(undefined);
   });
 
-  it("keeps local Core data available when the remote version check fails", async () => {
+  it("keeps local Core data available without scheduling another automatic check after a remote failure", async () => {
     invokeMock.mockImplementation((command) => {
       if (command === "check_core_updates") return Promise.reject(new Error("offline"));
       if (command === "get_core_status") return Promise.resolve(coreFixture());
@@ -102,7 +102,7 @@ describe("application bootstrap", () => {
     const result = await loadAppBootstrap(() => {}, { onboardingCompleted: true });
 
     expect(result.resources?.core).toEqual(coreFixture());
-    expect(result.resources?.checked.core).toBe(false);
+    expect(result.resources?.checked.core).toBe(true);
     expect(result.resources?.warnings).toContain("Não foi possível verificar as atualizações do Core.");
     expect(invokeMock.mock.calls.map(([command]) => command)).not.toContain(undefined);
   });

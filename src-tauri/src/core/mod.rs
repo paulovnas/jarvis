@@ -248,6 +248,18 @@ struct StateData {
     checking: bool,
     diagnostics: BTreeMap<ComponentId, Vec<health::Check>>,
 }
+impl StateData {
+    fn update_latest(
+        &mut self,
+        id: ComponentId,
+        release: Result<install::Release, CoreError>,
+    ) -> Result<(), CoreError> {
+        // Remote version discovery does not change local installation health
+        // or clear an earlier installation failure.
+        self.latest.insert(id, release?.version());
+        Ok(())
+    }
+}
 #[derive(Clone, Default)]
 pub struct CoreState {
     data: Arc<Mutex<StateData>>,
@@ -378,24 +390,29 @@ pub async fn check_core_updates(
         data.checking = true;
     }
     core.emit(&app, &home);
+    let mut result = Ok(());
     for id in ComponentId::ALL {
-        let result = install::component_release(id).await;
-        if let Ok(mut data) = core.data.lock() {
-            match result {
-                Ok(release) => {
-                    data.latest.insert(id, release.version());
-                    data.errors.remove(&id);
-                }
-                Err(cause) => {
-                    data.errors.insert(id, cause.message);
-                }
-            }
+        let release = install::component_release(id).await;
+        result = core
+            .data
+            .lock()
+            .map_err(|_| error("Core indisponível."))?
+            .update_latest(id, release);
+        if result.is_err() {
+            break;
         }
     }
     if let Ok(mut data) = core.data.lock() {
         data.checking = false;
     }
     core.emit(&app, &home);
+    result.map_err(|cause| CoreError {
+        code: cause.code,
+        message: format!(
+            "Não foi possível verificar atualizações do Core: {}",
+            cause.message
+        ),
+    })?;
     core.snapshot(&home)
 }
 #[tauri::command]

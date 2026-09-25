@@ -52,6 +52,7 @@ pub(crate) mod web_search;
 pub(crate) mod workflow;
 
 use crate::{library, openai_codex::OpenAiCodexState, persistence::AppState};
+use futures_util::FutureExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -1722,6 +1723,25 @@ struct RunControl {
     workflow_recovery: Option<Vec<String>>,
 }
 
+async fn supervise_run(
+    run: impl std::future::Future<Output = Result<(), AgentError>>,
+) -> Result<(), AgentError> {
+    std::panic::AssertUnwindSafe(run)
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|_| Err(AgentError::internal()))
+}
+
+async fn finish_run(
+    session: &Session,
+    run: impl std::future::Future<Output = Result<(), AgentError>>,
+) -> bool {
+    let result = supervise_run(run).await;
+    let completed = result.is_ok();
+    finish(session, result);
+    completed
+}
+
 fn spawn_run(
     session: Arc<Session>,
     state: AppState,
@@ -1750,21 +1770,22 @@ fn spawn_run(
         loop {
             let _ = library::dashboard::touch_activity(&state, &home, &session.id);
             let _ = app.emit("library:changed", ());
-            let result = match library::agent_location(&state, &home, &session.id) {
-                Ok(_) => {
-                    workflow::run(
-                        &session,
-                        (state.clone(), oauth.clone(), mcp.clone(), home.clone()),
-                        &app,
-                        signal,
-                        workflow_recovery.take(),
-                    )
-                    .await
+            let completed = finish_run(&session, async {
+                match library::agent_location(&state, &home, &session.id) {
+                    Ok(_) => {
+                        workflow::run(
+                            &session,
+                            (state.clone(), oauth.clone(), mcp.clone(), home.clone()),
+                            &app,
+                            signal,
+                            workflow_recovery.take(),
+                        )
+                        .await
+                    }
+                    Err(error) => Err(error.into()),
                 }
-                Err(error) => Err(error.into()),
-            };
-            let completed = result.is_ok();
-            finish(&session, result);
+            })
+            .await;
             let _ = library::dashboard::touch_activity(&state, &home, &session.id);
             let _ = app.emit("library:changed", ());
             if !completed {

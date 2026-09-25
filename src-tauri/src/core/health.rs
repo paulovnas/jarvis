@@ -233,7 +233,7 @@ async fn inspect(home: &Path, id: ComponentId) -> Vec<Check> {
         checks.push(Check::result(
             "Chave de API",
             context7::verify_credentials(home),
-            "Chave disponível no Keychain",
+            "Chave disponível no cofre de credenciais",
         ));
     }
     checks

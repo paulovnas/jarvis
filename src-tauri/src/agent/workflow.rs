@@ -1131,7 +1131,7 @@ pub(super) async fn run(
             flow,
             scope: vec![".".into()],
         };
-        let result = super::run_turn(
+        let result = supervise_run(super::run_turn(
             session,
             super::TurnRuntime {
                 grants: &hub.env.grants,
@@ -1142,7 +1142,7 @@ pub(super) async fn run(
             },
             signal,
             Some(execution),
-        )
+        ))
         .await;
         return finish_hub(app, session, hub, result).await;
     }
@@ -1256,25 +1256,29 @@ pub(super) async fn run(
         flow,
         scope: vec![".".into()],
     };
-    let result = if flow == Flow::Publication {
-        publishing::run(hub.clone(), signal).await
-    } else if let Some(definition) = custom_definition {
-        custom::run(hub.clone(), definition, signal).await
-    } else {
-        super::run_turn(
-            session,
-            super::TurnRuntime {
-                grants: &hub.env.grants,
-                state: &hub.env.state,
-                oauth: &hub.env.oauth,
-                mcp: &hub.env.mcp,
-                home: &hub.env.home,
-            },
-            signal,
-            Some(execution),
-        )
-        .await
-    };
+    // Unwinding must still reach hub shutdown and persist a terminal workflow state.
+    let result = supervise_run(async {
+        if flow == Flow::Publication {
+            publishing::run(hub.clone(), signal).await
+        } else if let Some(definition) = custom_definition {
+            custom::run(hub.clone(), definition, signal).await
+        } else {
+            super::run_turn(
+                session,
+                super::TurnRuntime {
+                    grants: &hub.env.grants,
+                    state: &hub.env.state,
+                    oauth: &hub.env.oauth,
+                    mcp: &hub.env.mcp,
+                    home: &hub.env.home,
+                },
+                signal,
+                Some(execution),
+            )
+            .await
+        }
+    })
+    .await;
     finish_hub(app, session, hub, result).await
 }
 

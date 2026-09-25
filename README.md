@@ -121,7 +121,9 @@ Git é necessário para versionamento e publicação. Configure `git config --gl
 
 Não é necessário instalar Bun, Node.js, Python, Rust, Cargo, Visual Studio, Chrome ou Playwright para usar o Jarvis. O Core mantém seus próprios runtimes e o navegador integrado usa o WebView do sistema. Toolchains adicionais pertencem ao projeto aberto: o Jarvis os detecta quando um comando de build, teste ou linguagem realmente precisar deles. No Windows, PowerShell 7, Git Bash e WSL são opções de terminal, não pré-requisitos.
 
-O macOS pode pedir autorização adicional porque as versões atuais ainda não possuem notarização Apple. Use **Ajustes do Sistema → Privacidade e Segurança** se necessário. Atualmente não são distribuídos pacotes para macOS Intel, Windows ARM64 ou Linux.
+O macOS pode pedir autorização adicional porque as versões atuais ainda não possuem notarização Apple. Use **Ajustes do Sistema → Privacidade e Segurança** se necessário. Atualmente não são distribuídos pacotes para macOS Intel, Windows ARM64 ou Linux ARM64.
+
+**Linux x64:** the pipeline now prepares DEB and AppImage packages, available once a release containing this change is published. Use a desktop session with an unlocked Secret Service wallet (GNOME Keyring or a compatible service). Install DEB with the distribution package manager, or make the AppImage executable. Automatic updates require a writable AppImage and parent directory; DEB updates use the package manager. See the [Linux preparation and validation guide](docs/PLAN-VALIDACAO-LINUX.md) for prerequisites and tested scope.
 
 ## Conversas e experiência desktop
 
@@ -135,7 +137,7 @@ O macOS pode pedir autorização adicional porque as versões atuais ainda não 
 
 ## Backup, dados e privacidade
 
-Configurações, conversas, recursos e dados locais ficam em `~/.jarvis`. Credenciais são protegidas pelo **Acesso às Chaves** no macOS e pelo armazenamento seguro do Windows. Prompts, anexos e o conteúdo necessário das ferramentas são enviados somente aos provedores e serviços usados na conversa.
+Configurações, conversas, recursos e dados locais ficam em `~/.jarvis`. Credenciais são protegidas pelo **Acesso às Chaves** no macOS, pelo armazenamento seguro do Windows e pelo **Secret Service** no Linux. Prompts, anexos e o conteúdo necessário das ferramentas são enviados somente aos provedores e serviços usados na conversa.
 
 Em **Configurações → Geral → Exportar e importar**, um arquivo ZIP reúne as preferências gerais, agentes, fluxos, skills e configurações de MCP. Ele não inclui workspaces, projetos, conversas, histórico, pacotes do Core, contas de provedores, credenciais de IA, vínculos de modelos, layout da janela, abas abertas ou dimensões dos painéis. Após a importação, o Jarvis permite associar agentes aos modelos disponíveis nesta instalação.
 
@@ -197,7 +199,7 @@ bun run release 0.9.10-beta --dry-run
 bun run release 0.9.10-beta
 ```
 
-O pipeline valida frontend e Rust no macOS e no Windows, gera DMG e NSIS, assina os pacotes do atualizador e só então publica a release e os manifestos de ambas as plataformas. O comando pode ser iniciado no macOS, Windows ou Linux; Bun, Git e GitHub CLI autenticado são necessários apenas na máquina que dispara o release. As chaves permanecem nos secrets do CI. Consulte [docs/RELEASING.md](docs/RELEASING.md) para configuração, recuperação e limites de distribuição.
+The pipeline validates frontend and Rust on macOS, Windows and Linux, builds DMG, NSIS, DEB and AppImage, verifies updater signatures, and publishes all platform manifests together. The release command works from any of these systems with Bun, Git and authenticated GitHub CLI; signing keys stay in CI secrets. See [docs/RELEASING.md](docs/RELEASING.md) for setup, recovery and artifact details.
 
 ## Autoria
 

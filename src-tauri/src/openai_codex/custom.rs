@@ -299,7 +299,11 @@ fn save(
         return Err(invalid("A chave contém caracteres inválidos."));
     }
     let old_credential = if editing {
-        store.load(alias).ok()
+        match store.load(alias) {
+            Ok(credential) => Some(credential),
+            Err(super::SecretStoreError::Missing) => None,
+            Err(error) => return Err(ProviderError::from_account_error(error.into())),
+        }
     } else {
         None
     };
@@ -325,7 +329,7 @@ fn save(
     if let Some(credential) = &next_credential {
         store
             .store(alias, credential)
-            .map_err(|_| invalid("Não foi possível salvar a chave no armazenamento seguro."))?;
+            .map_err(|error| ProviderError::from_account_error(error.into()))?;
     }
     if transaction.commit().is_err() {
         if next_credential.is_some() {

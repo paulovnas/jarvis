@@ -1,18 +1,24 @@
 import { expect, it } from "vitest";
 import { artifactNames, desktopManifest, notesFromTag, parseReleaseArguments, releaseManifest, releaseTargets, releaseVersion, replaceCargoVersion, supportedTarget, targetPlatforms, validateCIRequest } from "./release-plan";
 
-it("publishes macOS and Windows packages together with distinct updater URLs and signatures", () => {
+it("publishes all desktop packages together with distinct updater URLs and signatures", () => {
   const assets = releaseTargets.map(target => ({ target, archive: artifactNames("0.9.0-beta", target).archive, signature: `signature-${target}` }));
   const manifest = desktopManifest("0.9.0-beta", assets, "Release notes");
-  expect(Object.keys(manifest.platforms)).toEqual(["darwin-aarch64", "windows-x86_64"]);
+  expect(Object.keys(manifest.platforms)).toEqual(["darwin-aarch64", "windows-x86_64", "linux-x86_64"]);
   expect(manifest.platforms["windows-x86_64"]).toEqual({
     signature: "signature-x86_64-pc-windows-msvc",
     url: "https://github.com/paulovnas/jarvis/releases/download/v0.9.0-beta/Jarvis_0.9.0-beta_x86_64-pc-windows-msvc-setup.exe",
   });
   expect(manifest.platforms["darwin-aarch64"].url).toMatch(/\.app\.tar\.gz$/);
+  expect(manifest.platforms["linux-x86_64"]).toEqual({
+    signature: "signature-x86_64-unknown-linux-gnu",
+    url: "https://github.com/paulovnas/jarvis/releases/download/v0.9.0-beta/Jarvis_0.9.0-beta_x86_64-unknown-linux-gnu.AppImage",
+  });
+  expect(artifactNames("0.9.0-beta", "x86_64-unknown-linux-gnu").names).toContain("Jarvis_0.9.0-beta_x86_64-unknown-linux-gnu.deb");
+  expect(() => desktopManifest("0.9.0-beta", assets.slice(0, 2), "")).toThrow("cada plataforma");
   expect(() => desktopManifest("0.9.0-beta", assets.slice(0, 1), "")).toThrow("cada plataforma");
-  expect(() => desktopManifest("0.9.0-beta", [assets[0], assets[0]], "")).toThrow("cada plataforma");
-  expect(() => desktopManifest("0.9.0-beta", [assets[0], { ...assets[1], signature: "" }], "")).toThrow("Assinatura");
+  expect(() => desktopManifest("0.9.0-beta", [assets[0], assets[0], assets[2]], "")).toThrow("cada plataforma");
+  expect(() => desktopManifest("0.9.0-beta", [assets[0], assets[1], { ...assets[2], signature: "" }], "")).toThrow("Assinatura");
   expect(() => supportedTarget(undefined)).toThrow();
   expect(supportedTarget("x86_64-pc-windows-msvc")).toBe("x86_64-pc-windows-msvc");
 });

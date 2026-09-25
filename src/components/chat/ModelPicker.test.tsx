@@ -29,3 +29,19 @@ it("identifies the selected provider when accounts offer the same model", () => 
   expect(trigger).not.toHaveTextContent("pessoal");
   expect(trigger.querySelector("[style]")?.getAttribute("style")).toContain("provider-openai.svg");
 });
+
+it("offers model refresh inside the menu and prevents repeated refresh while loading", async () => {
+  const user = userEvent.setup();
+  const refresh = vi.fn();
+  const { rerender } = render(<ModelPicker modelGroups={[]} onSelect={vi.fn()} onRefresh={refresh} />);
+  expect(screen.queryByRole("button", { name: /Atualizar/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Atualizar lista de modelos" }));
+  expect(refresh).toHaveBeenCalledOnce();
+  rerender(<ModelPicker modelGroups={[]} onSelect={vi.fn()} onRefresh={refresh} refreshing />);
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  const pending = await screen.findByRole("menuitem", { name: "Atualizando modelos…" });
+  expect(pending).toHaveAttribute("aria-disabled", "true");
+  await user.click(pending);
+  expect(refresh).toHaveBeenCalledOnce();
+});

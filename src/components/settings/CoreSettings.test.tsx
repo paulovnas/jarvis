@@ -3,10 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
+import { useCore } from "@/hooks/use-core";
 import { coreFixture } from "@/test/core-fixtures";
-import { CoreSettings } from "./CoreSettings";
+import { CorePanel, CoreSettings } from "./CoreSettings";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 const invokeMock = vi.mocked(invoke);
 const events = new Map<string, EventCallback<unknown>>();
 const diagnosticSummary = {
@@ -23,7 +26,39 @@ const diagnosticSummary = {
 };
 beforeEach(() => {
   invokeMock.mockReset(); events.clear();
+  vi.mocked(toast.error).mockClear();
   vi.mocked(listen).mockImplementation(async (name, callback) => { events.set(name, callback); return () => { events.delete(name); }; });
+});
+
+it.each([false, true])("finishes update discovery despite status events and avoids rechecking on panel remount (failure: %s)", async fail => {
+  const state = coreFixture();
+  const message = "Não foi possível verificar atualizações do Core: O GitHub atingiu o limite temporário de consultas.";
+  let finishCheck!: () => void;
+  invokeMock.mockImplementation(async command => command === "check_core_updates"
+    ? new Promise((resolve, reject) => { finishCheck = () => fail ? reject({ message }) : resolve(state); })
+    : state);
+  function Panel({ visible }: { visible: boolean }) {
+    const core = useCore();
+    return <>{core.checked && <p>Consulta concluída</p>}{visible && <CorePanel core={core} setup />}</>;
+  }
+  const view = render(<Panel visible />);
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
+  await act(async () => {
+    events.get("core:changed")?.({ event: "core:changed", id: 1, payload: { ...state, checking: true } });
+    events.get("core:changed")?.({ event: "core:changed", id: 2, payload: state });
+    finishCheck();
+  });
+  expect(await screen.findByText("Consulta concluída")).toBeVisible();
+  expect(screen.getAllByText("Pronto")).toHaveLength(6);
+  expect(screen.queryByRole("button", { name: /Reinstalar/ })).not.toBeInTheDocument();
+  if (fail) expect(toast.error).toHaveBeenCalledWith(message);
+  else expect(toast.error).not.toHaveBeenCalled();
+  view.rerender(<Panel visible={false} />);
+  view.rerender(<Panel visible />);
+  expect(invokeMock.mock.calls.filter(([command]) => command === "check_core_updates")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Verificar atualizações do Core" }));
+  await waitFor(() => expect(invokeMock.mock.calls.filter(([command]) => command === "check_core_updates")).toHaveLength(2));
+  await act(async () => finishCheck());
 });
 
 it.each([0, 1, 2, 3, 4, 5])("updates real download progress for Core item %i and resets it between stages", async index => {
@@ -113,21 +148,22 @@ it("mostra versões e só oferece atualização quando há release maior", async
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "context-mode" }));
 });
 
-it("validates the optional Context7 key and keeps failed configuration editable", async () => {
+it.each(["Chave inválida", "Desbloqueie o cofre de credenciais do Linux e tente novamente."])("keeps Context7 configuration editable after %s", async message => {
   const state = coreFixture(); state.items[4].configured = false;
   let fail = true;
   invokeMock.mockImplementation(async command => {
-    if (command === "configure_context7") { if (fail) throw { message: "Chave inválida" }; return coreFixture(); }
+    if (command === "configure_context7") { if (fail) throw { message }; return coreFixture(); }
     return state;
   });
   const user = userEvent.setup(); render(<CoreSettings />);
   await user.click(await screen.findByRole("button", { name: "Configurar Context7" }));
+  expect(screen.getByText("A chave será validada e salva no cofre de credenciais do sistema.")).toBeVisible();
   const input = screen.getByLabelText("Chave de API");
   expect(input).toHaveAttribute("type", "password");
   expect(screen.getByRole("button", { name: "Salvar e verificar" })).toBeDisabled();
   await user.type(input, "test-only-key");
   await user.click(screen.getByRole("button", { name: "Salvar e verificar" }));
-  expect(await screen.findByText("Chave inválida")).toBeVisible();
+  expect(await screen.findByText(message)).toBeVisible();
   expect(input).toHaveValue("test-only-key");
   fail = false;
   await user.click(screen.getByRole("button", { name: "Salvar e verificar" }));

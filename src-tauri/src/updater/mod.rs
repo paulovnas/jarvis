@@ -120,19 +120,46 @@ fn select_release(
 }
 
 fn installable(app: &tauri::AppHandle) -> bool {
-    let Ok(binary) = tauri::process::current_binary(&app.env()) else {
+    #[cfg(target_os = "linux")]
+    return linux_appimage_installable(
+        app.env().appimage.as_deref().map(std::path::Path::new),
+        cfg!(debug_assertions),
+    );
+    #[cfg(not(target_os = "linux"))]
+    {
+        let Ok(binary) = tauri::process::current_binary(&app.env()) else {
+            return false;
+        };
+        #[cfg(target_os = "macos")]
+        return binary
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .is_some_and(|p| {
+                p.extension().is_some_and(|e| e == "app") && !p.starts_with("/Volumes")
+            });
+        #[cfg(not(target_os = "macos"))]
+        {
+            !cfg!(debug_assertions) && binary.is_file()
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_appimage_installable(appimage: Option<&std::path::Path>, debug: bool) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Some(path) = appimage.filter(|path| !debug && path.is_absolute() && path.is_file()) else {
         return false;
     };
-    #[cfg(target_os = "macos")]
-    return binary
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .is_some_and(|p| p.extension().is_some_and(|e| e == "app") && !p.starts_with("/Volumes"));
-    #[cfg(not(target_os = "macos"))]
-    {
-        !cfg!(debug_assertions) && binary.is_file()
-    }
+    // The updater replaces the AppImage by rename, which also needs a writable directory.
+    let writable = |path: &std::path::Path, mode| {
+        std::ffi::CString::new(path.as_os_str().as_bytes())
+            .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), mode) == 0 })
+    };
+    writable(path, libc::W_OK)
+        && path
+            .parent()
+            .is_some_and(|parent| writable(parent, libc::W_OK | libc::X_OK))
 }
 
 fn require_idle(app: &tauri::AppHandle) -> Result<(), String> {
@@ -304,6 +331,50 @@ pub async fn install_app_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_only_updates_writable_appimages_outside_development() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let appimage = directory.path().join("Jarvis.AppImage");
+        std::fs::write(&appimage, b"synthetic").unwrap();
+        assert!(linux_appimage_installable(Some(&appimage), false));
+        assert!(!linux_appimage_installable(Some(&appimage), true));
+        // Native packages and standalone binaries have no captured APPIMAGE path.
+        assert!(!linux_appimage_installable(None, false));
+        assert!(!linux_appimage_installable(Some(directory.path()), false));
+        assert!(!linux_appimage_installable(
+            Some(std::path::Path::new("missing.AppImage")),
+            false
+        ));
+        if unsafe { libc::geteuid() } != 0 {
+            std::fs::set_permissions(&appimage, std::fs::Permissions::from_mode(0o444)).unwrap();
+            assert!(!linux_appimage_installable(Some(&appimage), false));
+            std::fs::set_permissions(&appimage, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o555))
+                .unwrap();
+            let eligible = linux_appimage_installable(Some(&appimage), false);
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+            assert!(!eligible);
+        }
+    }
+
+    #[test]
+    fn linux_updates_require_the_linux_manifest() {
+        let (version, endpoint) = select_release(
+            &[
+                release("1.5.0", false, false, "linux-x86_64"),
+                release("1.6.0", false, false, "darwin-aarch64"),
+            ],
+            &semver::Version::parse("1.4.0").unwrap(),
+            "linux-x86_64",
+        )
+        .unwrap();
+        assert_eq!(version.to_string(), "1.5.0");
+        assert!(endpoint.path().ends_with("/latest-linux-x86_64.json"));
+    }
     fn release(version: &str, draft: bool, prerelease: bool, platform: &str) -> Release {
         Release { tag_name: format!("v{version}"), draft, prerelease, assets: vec![ReleaseAsset { name: format!("latest-{platform}.json"), browser_download_url: format!("https://github.com/{REPOSITORY}/releases/download/v{version}/latest-{platform}.json") }] }
     }

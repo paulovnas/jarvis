@@ -218,6 +218,60 @@ fn activity_tracks_loaded_sessions_without_exposing_history() {
     assert!(ended[0].revision > revision);
 }
 
+#[tokio::test]
+async fn panicked_runs_release_the_chat_and_preserve_progress_without_replaying_the_queue() {
+    let fixture = Fixture::new();
+    let mut session = session(&fixture);
+    let emitted = Arc::new(Mutex::new(None));
+    let capture = emitted.clone();
+    Arc::get_mut(&mut session).unwrap().emit = Arc::new(move |snapshot| {
+        *capture.lock().unwrap() = Some(snapshot);
+    });
+    let mut signal = session
+        .reserve("Prepare o projeto".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    session
+        .submit(
+            "Depois confira o resultado".into(),
+            options(ApprovalMode::Yolo),
+        )
+        .unwrap();
+
+    let completed = finish_run(&session, async {
+        session.update(false, |data| {
+            data.turns.last_mut().unwrap().turn.steps.push(Step {
+                text: "Progresso confirmado".into(),
+                ..Step::default()
+            });
+        })?;
+        tokio::task::yield_now().await;
+        panic!("synthetic provider panic containing private details");
+    })
+    .await;
+
+    assert!(!completed, "a failed run must not advance the queue");
+    let snapshot = emitted.lock().unwrap().clone().unwrap();
+    assert!(snapshot.active_turn_id.is_none());
+    assert_eq!(snapshot.turns[0].status, TurnStatus::Error);
+    assert_eq!(snapshot.turns[0].steps[0].text, "Progresso confirmado");
+    let error = snapshot.turns[0].error.as_ref().unwrap();
+    assert_eq!(error.code, "internal");
+    assert!(!error.message.contains("private details"));
+    assert_eq!(snapshot.queued_messages.len(), 1);
+    assert_eq!(
+        snapshot.queued_messages[0].content,
+        "Depois confira o resultado"
+    );
+    let (stored, extras) = journal::read_only(&session.journal).unwrap();
+    assert_eq!(stored[0].turn.status, TurnStatus::Error);
+    assert_eq!(stored[0].turn.steps[0].text, "Progresso confirmado");
+    assert_eq!(extras.queue.len(), 1);
+    tokio::time::timeout(Duration::from_secs(1), cancelled(&mut signal))
+        .await
+        .expect("child cancellation must not retain an abandoned run");
+    assert!(session.reserve_next().unwrap().is_some());
+}
+
 #[test]
 fn harness_evaluation_direct_recovery_preserves_durable_results_and_new_messages() {
     let fixture = Fixture::new();

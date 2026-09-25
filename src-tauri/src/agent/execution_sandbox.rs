@@ -136,12 +136,61 @@ pub(super) fn prepare(policy: &ToolPolicy) -> Option<SandboxPlan> {
     if policy.outcome.native_working_directory.is_some() {
         return Some(unavailable(&policy.outcome.reason, &policy.outcome.effects));
     }
-    Some(prepare_for(
+    let plan = prepare_for(
         current_platform(),
         detect_adapters(),
         &policy.working_directory,
         &policy.outcome.effects,
-    ))
+    );
+    #[cfg(target_os = "linux")]
+    let plan = verify_linux_sandbox(
+        plan,
+        &policy.outcome.effects,
+        std::time::Duration::from_secs(2),
+    );
+    Some(plan)
+}
+
+#[cfg(target_os = "linux")]
+fn verify_linux_sandbox(
+    plan: SandboxPlan,
+    effects: &ExecutionEffects,
+    timeout: std::time::Duration,
+) -> SandboxPlan {
+    use std::process::{Command, Stdio};
+    if plan.report.backend != SandboxBackend::LinuxBubblewrap {
+        return plan;
+    }
+    // Probe the selected profile with no user command or side effects. A real
+    // command is never retried here: existing approval/recovery rules still apply.
+    let (program, arguments) = plan.wrap(Path::new("/bin/true"), std::iter::empty());
+    let usable = Command::new(program)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok_and(|mut child| {
+            let deadline = std::time::Instant::now() + timeout;
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => return status.success(),
+                    Ok(None) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(10))
+                    }
+                    _ => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return false;
+                    }
+                }
+            }
+        });
+    if usable {
+        plan
+    } else {
+        unavailable("O Bubblewrap está instalado, mas não conseguiu iniciar o isolamento neste sistema. O comando será executado nativamente somente após autorização explícita.", effects)
+    }
 }
 
 /// Preserve partial output and request a new, explicitly approved execution.
@@ -386,6 +435,54 @@ fn bubblewrap_arguments(writable_root: &Path, network: bool) -> Vec<OsString> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_unusable_or_stalled_sandbox_requires_informed_approval() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let adapter = root.path().join("bwrap");
+        for (script, expected) in [
+            ("#!/bin/sh\nexit 0\n", true),
+            ("#!/bin/sh\nexit 1\n", false),
+            ("#!/bin/sh\nexec sleep 30\n", false),
+        ] {
+            std::fs::write(&adapter, script).unwrap();
+            std::fs::set_permissions(&adapter, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let effects = effects(true, false);
+            let plan = prepare_for(
+                Platform::Linux,
+                AdapterAvailability {
+                    seatbelt: None,
+                    bubblewrap: Some(adapter.clone()),
+                },
+                root.path(),
+                &effects,
+            );
+            // Match production: parallel tests can delay even a successful
+            // process start beyond 100 ms. The stalled case still times out.
+            let plan = verify_linux_sandbox(plan, &effects, std::time::Duration::from_secs(2));
+            assert_eq!(
+                plan.report.availability == SandboxAvailability::Full,
+                expected
+            );
+            assert_eq!(plan.requires_informed_approval(&effects), !expected);
+            if !expected {
+                assert!(plan.report.reason.unwrap().contains("está instalado"));
+            }
+        }
+        let absent = prepare_for(
+            Platform::Linux,
+            AdapterAvailability::default(),
+            root.path(),
+            &effects(true, false),
+        );
+        assert!(absent
+            .report
+            .reason
+            .unwrap()
+            .contains("não está disponível"));
+    }
+
     fn effects(write: bool, network: bool) -> ExecutionEffects {
         ExecutionEffects {
             writes_filesystem: write,
@@ -467,7 +564,7 @@ mod tests {
 
     // Re-enter only this test in a sandboxed copy of the test executable. This
     // exercises real OS enforcement without requiring Node/Python/PostgreSQL.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn sandbox_probe_child() {
         let Ok(operation) = std::env::var("JARVIS_SANDBOX_PROBE_OPERATION") else {
@@ -495,7 +592,7 @@ mod tests {
         println!("jarvis-sandbox-probe-ok");
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn run_probe(
         root: &Path,
         network: bool,
@@ -503,12 +600,15 @@ mod tests {
         target: &str,
     ) -> std::process::Output {
         let plan = prepare_for(
-            Platform::Macos,
+            current_platform(),
             detect_adapters(),
             root,
             &effects(true, network),
         );
-        assert_eq!(plan.report.backend, SandboxBackend::MacosSeatbelt);
+        assert!(matches!(
+            plan.report.backend,
+            SandboxBackend::MacosSeatbelt | SandboxBackend::LinuxBubblewrap
+        ));
         let (program, arguments) = plan.wrap(
             &std::env::current_exe().unwrap(),
             [
@@ -524,6 +624,31 @@ mod tests {
             .env("JARVIS_SANDBOX_PROBE_TARGET", target)
             .output()
             .unwrap()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires usable Bubblewrap namespaces on a Linux host"]
+    fn linux_sandbox_enforces_filesystem_and_network_boundaries() {
+        let workspace = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = workspace.path().join("project");
+        let outside = workspace.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        assert!(run_probe(&root, false, "tempfile", root.to_str().unwrap())
+            .status
+            .success());
+        assert!(
+            !run_probe(&root, false, "tempfile", outside.to_str().unwrap())
+                .status
+                .success()
+        );
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        assert!(run_probe(&root, true, "connect", &address).status.success());
+        assert!(!run_probe(&root, false, "connect", &address)
+            .status
+            .success());
     }
 
     #[cfg(target_os = "macos")]

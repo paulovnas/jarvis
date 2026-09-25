@@ -1,15 +1,15 @@
 # Jarvis on Linux — readiness audit and native validation guide
 
-This guide prepares validation on a **real Linux desktop**. It was written from
-source inspection on macOS on 2026-09-24; no Linux compilation, installation,
-provider login or desktop acceptance test has been performed for this document.
+This guide prepares validation on a **real Linux desktop**. The original source
+audit was written on macOS on 2026-09-24. Linux implementation and its automated
+evidence are recorded below; authenticated desktop acceptance remains separate.
 
 | Item | Baseline |
 | --- | --- |
 | Application version | 1.4.0 |
 | Source inspected | `6aaae74` plus the six harness improvements from `jarvis-i1q3`, included in this delivery |
 | Documentation task | `jarvis-bssa` |
-| Linux implementation and acceptance follow-up | `jarvis-n18e` |
+| Linux implementation | `jarvis-cpj` (the original `jarvis-n18e` is absent from this local Beads database) |
 | Whole-task performance measurements | `jarvis-8s54` |
 | Related guide | [Windows audit and migration](PLAN-MIGRACAO-WINDOWS.md) |
 
@@ -17,7 +17,128 @@ Beads owns work status. The scenario IDs below identify reproducible tests, not
 a second task tracker. Record results against the exact tested commit; do not
 carry forward a pass from macOS, Windows, another distribution or another package.
 
-## 1. Readiness and confirmed gaps
+## Linux implementation update — 2026-09-25
+
+The initial distribution target is **Linux x86_64, DEB and AppImage**. The release
+workflow builds on Ubuntu 22.04; native tests in this working tree run on Linux
+Mint 22.3 (Ubuntu noble), kernel 6.14, glibc 2.39, GTK 3.24.41 and WebKitGTK 2.52.6,
+with Rust 1.98.1 and Bun 1.4.2. These are distinct build/validation environments.
+Linux ARM64, RPM, Alpine/musl and NixOS are not qualified by this implementation.
+
+- Providers (Codex, Antigravity and Custom), MCPs and Context7 now share the
+  persistent Secret Service backend in `src-tauri/src/secrets_linux.rs`.
+  Development/production and provider/MCP service names are separate. Locked or
+  absent wallets report recovery instructions; there is no plaintext fallback.
+- `keyring` uses `sync-secret-service` and Rust encryption on Linux. This follows
+  Codex's native credential lifecycle while fitting Jarvis's blocking storage
+  contract, without a kernel-only cache. OpenCode's permission-restricted JSON
+  and OMP's permission-restricted SQLite credentials were compared; neither
+  replaces Jarvis's requirement for a system credential vault.
+- A bounded `/bin/true` preflight now exercises the selected Bubblewrap profile.
+  An installed but unusable adapter reports unavailable isolation and uses the
+  existing informed approval path. User commands are never replayed by the probe.
+- Release staging requires DEB, AppImage and its updater signature. Publication
+  requires all three desktop targets and produces `latest-linux-x86_64.json`.
+  Automatic Linux updates are restricted to writable release AppImages; DEB and
+  other installations offer manual downloads.
+- Git/gh installation remains manual on Linux, with the existing official links
+  and recheck flow. It does not require adding an automatic privileged installer.
+
+Run the native credential regression suite with:
+
+```bash
+bash scripts/check-linux-keyring.sh
+cargo test --locked --manifest-path src-tauri/Cargo.toml linux_sandbox_enforces_filesystem_and_network_boundaries -- --ignored
+```
+
+The script creates a temporary private D-Bus session with service activation
+disabled and a disposable GNOME Keyring data directory. Synthetic keys cover all
+consumers, overwrite/delete, profile isolation, service absence, locked access,
+and persistence after restarting/unlocking the daemon. It never changes `HOME`
+or uses the desktop user's wallet. Install `gnome-keyring` and `dbus-x11` for this
+opt-in test. Ordinary `cargo test` does not prompt for or access real credentials.
+
+Implementation Bead `jarvis-cpj` is complete. Native desktop qualification is
+tracked separately in **`jarvis-0jb`**. No commit, push, remote workflow or public
+release was performed. The L01–L39 desktop/provider/upgrade matrix below still
+needs per-environment acceptance evidence; unit tests are not desktop passes.
+
+| Local check on Mint 22.3 | Result |
+| --- | --- |
+| `bun run check` | PASS: lint, TypeScript, 124 test files / 686 tests passed / 1 skipped, Vite build and generated IPC contracts |
+| `cargo clippy --locked --all-targets --features browser-probe -- -D warnings` | PASS, including the native probe |
+| `cargo test --locked` | PASS: 817 passed, 23 opt-in tests ignored |
+| `cargo fmt --check`, shell syntax and release workflow YAML | PASS |
+| Private Secret Service test script | PASS: absent service, all consumers, profile isolation, overwrite/delete, locked read/write/delete, persistence after daemon restart/unlock |
+| Opt-in native Bubblewrap boundary test | PASS: project writes and authorized localhost access; external writes and isolated-network access denied |
+| Native browser probe (isolated X11/Xvfb) | PASS: exact GTK/DOM viewport matching its host slot even after oversized content loads, main-window resize, no page hide during bounds changes, navigation, fill/click, visible/hidden captures and denied remote IPC |
+| Local release binary and `tauri bundle --ci --bundles deb,appimage --no-sign` | PASS: DEB and AppImage generated; no production signing keys used |
+| Package inspection | PASS: amd64/version/dependencies, desktop entry validation, no unresolved binary libraries on this host |
+| Real provider login, clean-machine install, Wayland/X11 and signed A-to-B upgrade | NOT RUN: `jarvis-0jb` |
+
+The onboarding regression tracked by `jarvis-ufp` was reproduced as GitHub's
+anonymous REST quota exhaustion (`403`, `x-ratelimit-remaining: 0`), while npm
+and Node downloads returned `200`. All six existing component directories and
+required files were present; the managed Node, Bun, Beads and Dolt binaries ran
+successfully. Remote update failures now leave installation health intact.
+Release metadata is reused for 30 minutes within the process, rate-limit
+deadlines are respected across repositories, and completed update attempts do
+not repeat when the Core panel remounts. Ponytail source archives use codeload
+directly, verified with the official 4.10.0 package. A missing Context7 key
+configuration now requests a key instead of reporting a filesystem failure.
+Regression tests cover cache expiry, rate-limit recovery, unchanged local
+readiness, preserved installation errors, and update events/remounts.
+
+The first agent execution failure (`jarvis-9lh`) was reproduced with a local WSS
+handshake: both Rustls crypto providers were enabled, so the incremental
+WebSocket client panicked before sending inference. HTTP clients chose their
+provider explicitly, and the existing WebSocket tests used plaintext localhost
+connections. Application startup now selects AWS-LC for the process. Root runs
+also supervise panics, finalize the journal and emit an error instead of leaving
+an orphaned active turn. Workflow failures still reach worker shutdown and
+terminal state persistence. Regression tests cover TLS handshake failure and
+cancellation, preserved partial progress and queued messages after a panic,
+and accepting another message without restarting the app. This identifies a
+transport initialization defect, not a Linux-specific provider limitation.
+
+The subsequent embedded-browser defect (`jarvis-xy0`) was reproduced in the
+native X11 probe: adding a child reduced the main interface's allocation.
+Tauri 2.11.5 builds its Linux children in `GtkBox`; Wry's bounds setters do not
+position those children (see the [GTK container contract](https://docs.rs/wry/0.55.1/wry/trait.WebViewBuilderExtUnix.html)).
+Linux pages now use a GTK overlay with logical position and size, keeping the
+main interface independent of page geometry. The first overlay fix still used
+a minimum size request: after content loaded, WebKit's natural size could grow
+the page over the Inspector and footer. An oversized-page regression reproduced
+an allocation of `1000x680` instead of the requested `880x600`. The overlay now
+assigns exact child bounds through GTK's `get-child-position` signal, independently
+of page content. Viewport updates no longer hide the active page, and navigation
+retains the existing viewport. After page load and dynamic content growth, the
+probe checks translated GTK coordinates and dimensions, the page's DOM viewport,
+its matching host slot, growing/shrinking windows and absence of unmap events.
+It also saves `native-browser-host.png` with the surrounding sidebar, Inspector
+and footer visible, alongside its navigation/capture/IPC checks.
+This is X11 fixture evidence; Wayland and the user's full project flow still
+need desktop acceptance. Frontend checks also cover contextual Copy/Paste
+(including portal fields and composer undo), unchanged scoped menus, and model
+catalog refresh inside the model selector. Passive tab and toolbar tooltips keep
+the native page visible on hover; interactive menus and dialogs still occlude it.
+
+Historical local test artifacts (not published; removed by the required
+`cargo clean` after native builds exceeded 30 GiB). Rebuild to include
+`jarvis-ufp`, `jarvis-9lh` and `jarvis-xy0`; this host's glibc baseline is
+**2.39**, not the CI builder's baseline. Previous hashes are retained as evidence:
+
+| Artifact under `src-tauri/target/release/bundle/` | SHA-256 |
+| --- | --- |
+| `deb/Jarvis_1.4.0_amd64.deb` | `dd502ab6e26701a2e73d920c679d364e4745a701ea079ecceb7fd66b837d57e1` |
+| `appimage/Jarvis_1.4.0_amd64.AppImage` | `d4c688950fbea4c51f921701aa6f7c0c342758530313b3033d5e3db1c736ad9c` |
+
+The local packaging check used a temporary Ubuntu `patchelf` binary because the
+system package was absent. CI installs it explicitly. Native browser builds
+triggered target cleanup at 31 GiB; no app or Rust build process was active
+during cleanup.
+
+## 1. Original readiness audit and confirmed gaps (2026-09-24)
 
 Linux shares Unix process and filesystem behavior with macOS, but uses a
 different WebView, desktop session, credential service and sandbox. Those
@@ -33,10 +154,10 @@ differences are material for this application.
 | P2 | [Optional tools](../src-tauri/src/optional_tools.rs) detect Git/gh, but automatic installation only supports Homebrew and WinGet. | Linux currently needs official manual installation instructions. Validate that onboarding reflects this, supports rechecking, and does not advertise a nonexistent automatic installer. |
 | Validation required | Core asset selection accepts Linux x64/ARM64; native browser capture has a Linux implementation. | This is partial preparation, not proof that upstream binaries, native modules, WebKitGTK screenshots or the packaged application work on the target machine. |
 
-P0 blocks useful authenticated operation. P1 blocks a dependable supported
-release. P2 is an experience improvement or an explicitly documented limitation.
-All native outcomes in this guide start as **NOT RUN**; scenarios dependent on
-missing credential support are **BLOCKED** until that implementation is present.
+In the original audit, P0 blocked authenticated operation and P1 blocked a
+dependable release. The implementation update above addresses those source gaps.
+P2 remains a documented limitation. Native acceptance scenarios start as **NOT
+RUN** and require their own evidence, even after the backend is implemented.
 
 ## 2. Proposed validation matrix
 
@@ -88,7 +209,7 @@ Jarvis end user must install.
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential curl wget file pkg-config \
-  libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev \
+  libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev libdbus-1-dev \
   libayatana-appindicator3-dev librsvg2-dev patchelf git
 ```
 
@@ -113,8 +234,8 @@ Additional environment requirements, with separate failure handling:
 | Dependency | Purpose and expected behavior |
 | --- | --- |
 | WebKitGTK/GTK runtime and CA certificates | Application rendering, native browser, HTTPS and OAuth. A clean-machine package must declare or bundle its required runtime libraries. |
-| Desktop D-Bus and notifications service | Notification delivery and the future persistent credential backend. A successful permission call alone does not prove that a banner appeared. |
-| A compatible persistent credential service | Test unlocked, locked, absent and refused access. GNOME Keyring or a compatible Secret Service implementation are candidates; KDE compatibility must be demonstrated, not inferred from a wallet being installed. |
+| Desktop D-Bus and notifications service | Notification delivery and persistent credentials. A successful permission call alone does not prove that a banner appeared. |
+| A compatible persistent Secret Service | Test unlocked, locked, absent and refused access. GNOME Keyring is used by the automated native test; KDE/KeePassXC desktop integration must still be demonstrated with Secret Service enabled and the wallet unlocked. |
 | `bubblewrap` | Command sandbox adapter. The kernel and desktop security policy must permit the selected namespaces. Missing or unusable support needs a clear, recoverable path. |
 | Git and optional GitHub CLI | Git actions require Git; PR/merge actions require authenticated gh. Missing gh must not prevent local editing or ordinary chat. |
 | FUSE for the chosen AppImage runtime | Verify the distribution's matching package (`libfuse2t64` on Ubuntu 24.04 or `libfuse2` on Debian 12, when required). An extraction workaround is a diagnostic, not a passed normal-launch test. |
@@ -170,8 +291,8 @@ configuration:
 bun run tauri build --bundles deb,appimage -- --locked
 ```
 
-This command builds local Linux candidates; it does not publish or establish
-Linux release support. Inspect actual outputs under
+This command builds local Linux candidates without production signatures; it does
+not publish or qualify a distribution. Inspect actual outputs under
 `src-tauri/target/release/bundle/`, including package dependencies, architecture,
 desktop entry, icon and executable permissions. Keep SHA-256 hashes. Test both
 launcher-menu and terminal startup. For AppImage, record its original file path
@@ -197,8 +318,7 @@ sharing them. Preserve original failure evidence before repair or reinstallation
 
 ## 6. Native acceptance scenarios
 
-Every row is NOT RUN until recorded on the named Linux environment. P0-dependent
-rows remain BLOCKED while the secure backend is missing. Test success means the
+Every row is NOT RUN until recorded on the named Linux environment. Test success means the
 observable result below, not merely that the agent claimed completion.
 
 ### Application, credentials and desktop
@@ -310,11 +430,9 @@ wall time. A fast response with the wrong artifact fails acceptance.
 | L38 | Update while idle, then attempt during active agents, Core installation and open processes; restart twice. | Busy conditions are accurate; accepted restart drains state, releases the single-instance lease and opens exactly one successor at the new version. |
 | L39 | Check updates from DEB/RPM installations. | The chosen package-manager/manual-update policy is explicit. Do not report in-app update support merely because the release binary passes `installable()`. |
 
-The current Tauri v2 updater artifact for Linux is the AppImage itself plus its
-signature. The current Jarvis release scripts do not create Linux manifests.
-Do not run a release command expecting it to publish Linux. First adapt target
-selection, artifact staging/verification, manifest aggregation, tests and native
-CI; retain existing macOS/Windows coverage. Signed update tests must use a
+The Jarvis updater artifact for Linux is the AppImage itself plus its signature.
+The release scripts now stage Linux installers and create Linux manifests as
+part of the complete desktop release. Signed update tests must use a
 controlled test channel/key and an explicitly authorized destination, without
 publishing test packages to the production channel or committing private keys.
 
@@ -332,12 +450,12 @@ publishing test packages to the production channel or committing private keys.
 5. Choose package/update policy, then implement native CI, artifacts and manifests.
    Qualify clean installs and signed upgrades on every claimed target.
 6. Complete the remaining desktop/distribution matrix and paired performance
-   measurements. Track defects in `jarvis-n18e`; keep a failed or blocked cell
+   measurements. Track defects as follow-ups to `jarvis-cpj`; keep a failed or blocked cell
    visible until its exact acceptance test passes.
 
-This document does not implement those platform changes. In particular, it does
-not add Linux credential dependencies, enable a new release target, weaken the
-sandbox or start paid provider sessions.
+The source changes described above implement the credential, packaging and
+preflight steps. Provider sessions, installation, live upgrades and the full
+desktop matrix still require native acceptance; no paid sessions were started.
 
 ## 8. Evidence record and release gate
 
@@ -366,11 +484,10 @@ every advertised session/distribution. Any exclusions must be visible in support
 documentation. Compilation, unit tests, CI artifact creation, installation,
 upgrade and user acceptance are separate results.
 
-**Evidence for this document:** application/reference sources and official Tauri
-prerequisite/AppImage/updater documentation inspected; source links, scenario IDs
-and shell-block syntax checked locally. The Linux commands and scenarios remain
-unexecuted. Existing macOS harness results are documented separately and do not
-qualify Linux.
+**Original audit evidence:** application/reference sources and official Tauri
+prerequisite/AppImage/updater documentation inspected. See the implementation
+update for Linux execution evidence. Existing macOS harness results are documented
+separately and do not qualify Linux.
 
 ## 9. Source and reference map
 

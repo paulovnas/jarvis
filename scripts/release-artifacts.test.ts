@@ -30,6 +30,11 @@ it.each(releaseTargets)("verifies %s packages and rejects wrong commits, empty i
   writeFileSync(metadata, JSON.stringify({ version, sha, target }));
   const verify = () => verifyReleaseArtifacts(directory, version, sha, target, publicText);
   expect(verify()).toMatchObject({ version, target, archive: names.archive, signature });
+  if (target === "x86_64-unknown-linux-gnu") {
+    rmSync(path.join(directory, names.names[0]));
+    expect(verify).toThrow();
+    writeFileSync(path.join(directory, names.names[0]), bytes);
+  }
   writeFileSync(metadata, JSON.stringify({ version, sha: "other", target }));
   expect(verify).toThrow("outra versão, commit ou arquitetura");
   writeFileSync(metadata, JSON.stringify({ version, sha, target }));

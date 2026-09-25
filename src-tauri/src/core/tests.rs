@@ -55,9 +55,39 @@ fn requires_essential_components_without_requiring_context7() {
             .configured
     );
     assert!(snapshot.items[0].update_available);
+    assert!(state
+        .data
+        .lock()
+        .unwrap()
+        .update_latest(
+            ComponentId::ContextMode,
+            Err(error("O GitHub atingiu o limite temporário de consultas.")),
+        )
+        .is_err());
+    let snapshot = state.snapshot(home.path()).unwrap();
+    assert!(snapshot.ready);
+    assert!(snapshot.items.iter().all(|item| item.error.is_none()));
+    assert_eq!(snapshot.items[0].latest_version.as_deref(), Some("1.0.1"));
     fs::remove_file(root(home.path()).join("ponytail/test/verified")).unwrap();
     assert!(!state.snapshot(home.path()).unwrap().ready);
     assert!(require_ready(home.path()).is_err());
+}
+#[test]
+fn successful_version_discovery_preserves_installation_errors() {
+    let mut data = StateData::default();
+    data.errors
+        .insert(ComponentId::ContextMode, "Instalação incompleta".into());
+    let release = serde_json::from_value(serde_json::json!({
+        "tag_name":"v1.2.0", "assets":[], "draft":false, "prerelease":false
+    }))
+    .unwrap();
+    data.update_latest(ComponentId::ContextMode, Ok(release))
+        .unwrap();
+    assert_eq!(data.latest[&ComponentId::ContextMode], "1.2.0");
+    assert_eq!(
+        data.errors[&ComponentId::ContextMode],
+        "Instalação incompleta"
+    );
 }
 #[test]
 fn version_comparison_is_semantic_and_invalid_manifests_fail_closed() {

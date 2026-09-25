@@ -7,6 +7,18 @@ import { customAccountFixture } from "@/test/custom-provider-fixtures";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => { invoke.mockReset(); });
+it("preserva a edição quando o cofre Linux está bloqueado e permite tentar novamente", async () => {
+  const user = userEvent.setup(); const account = customAccountFixture(); const onSaved = vi.fn();
+  invoke.mockRejectedValueOnce({ code: "secret_store", message: "Desbloqueie o cofre de credenciais do Linux e tente novamente." }).mockResolvedValue(account);
+  render(<CustomProviderForm account={account} onSaved={onSaved} onCancel={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("Chave de API"), { target: { value: "synthetic-key" } });
+  await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Desbloqueie o cofre");
+  expect(screen.getByLabelText("Chave de API")).toHaveValue("synthetic-key");
+  expect(onSaved).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+  await waitFor(() => expect(onSaved).toHaveBeenCalledWith(account));
+});
 it("salva alias, endpoint e limites sem iniciar autenticação ou descoberta remota", async () => {
   const user = userEvent.setup(); const onSaved = vi.fn(); const account = customAccountFixture();
   invoke.mockResolvedValue(account);

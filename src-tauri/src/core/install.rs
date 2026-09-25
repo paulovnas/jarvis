@@ -5,7 +5,8 @@ use sha2::{Digest, Sha256, Sha512};
 use std::{
     io::{Cursor, Read},
     process::Stdio,
-    time::{Duration, Instant},
+    sync::OnceLock,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -80,11 +81,18 @@ async fn download_with_progress(
     limit: usize,
     progress: &(impl Fn(DownloadProgress) + Sync),
 ) -> Result<Vec<u8>, CoreError> {
-    let mut response = client()?
+    let response = client()?
         .get(url)
         .send()
         .await
         .map_err(|_| error("Falha de conexão ao baixar o Core. Tente novamente."))?;
+    download_response(response, limit, progress).await
+}
+async fn download_response(
+    mut response: reqwest::Response,
+    limit: usize,
+    progress: &(impl Fn(DownloadProgress) + Sync),
+) -> Result<Vec<u8>, CoreError> {
     if !response.status().is_success() {
         return Err(error(format!(
             "Download indisponível (HTTP {}). Tente novamente mais tarde.",
@@ -114,8 +122,95 @@ async fn download_with_progress(
     Ok(bytes)
 }
 async fn json(url: &str) -> Result<Value, CoreError> {
+    if url.starts_with("https://api.github.com/") {
+        static CACHE: OnceLock<tokio::sync::Mutex<ReleaseMetadata>> = OnceLock::new();
+        return CACHE
+            .get_or_init(Default::default)
+            .lock()
+            .await
+            .get(url)
+            .await;
+    }
     serde_json::from_slice(&download(url, 4 * 1024 * 1024).await?)
         .map_err(|_| error("Resposta de versão inválida."))
+}
+
+#[derive(Default)]
+struct ReleaseMetadata {
+    cached: BTreeMap<String, (Instant, Value)>,
+    retry_at: Option<Instant>,
+}
+impl ReleaseMetadata {
+    async fn get(&mut self, url: &str) -> Result<Value, CoreError> {
+        // Update checks and installs share metadata; repeated UI mounts must
+        // not spend the anonymous GitHub quota on the same release.
+        self.cached
+            .retain(|_, (expires_at, _)| *expires_at > Instant::now());
+        if let Some((_, value)) = self.cached.get(url) {
+            return Ok(value.clone());
+        }
+        if let Some(remaining) = self
+            .retry_at
+            .and_then(|at| at.checked_duration_since(Instant::now()))
+        {
+            return Err(github_rate_limit(remaining));
+        }
+        let response = client()?.get(url).send().await.map_err(|_| {
+            error("Falha de conexão ao consultar versões do Core. Tente novamente.")
+        })?;
+        if let Some(delay) = github_retry_delay(response.status(), response.headers()) {
+            self.retry_at = Instant::now().checked_add(delay);
+            return Err(github_rate_limit(delay));
+        }
+        let value: Value =
+            serde_json::from_slice(&download_response(response, 4 * 1024 * 1024, &|_| {}).await?)
+                .map_err(|_| error("Resposta de versão inválida."))?;
+        self.cached.insert(
+            url.into(),
+            (Instant::now() + Duration::from_secs(30 * 60), value.clone()),
+        );
+        Ok(value)
+    }
+}
+fn github_retry_delay(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+) -> Option<Duration> {
+    if status != reqwest::StatusCode::FORBIDDEN && status != reqwest::StatusCode::TOO_MANY_REQUESTS
+    {
+        return None;
+    }
+    let seconds = |name| headers.get(name)?.to_str().ok()?.parse::<u64>().ok();
+    let exhausted = seconds("x-ratelimit-remaining") == Some(0);
+    let retry = seconds("retry-after");
+    if !exhausted && retry.is_none() && status != reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return None;
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let reset = exhausted
+        .then(|| seconds("x-ratelimit-reset"))
+        .flatten()
+        .map(|reset| reset.saturating_sub(now));
+    Some(Duration::from_secs(
+        retry
+            .into_iter()
+            .chain(reset)
+            .max()
+            .unwrap_or(60)
+            .clamp(1, 86_400),
+    ))
+}
+fn github_rate_limit(delay: Duration) -> CoreError {
+    CoreError {
+        code: "github_rate_limit",
+        message: format!(
+            "O GitHub atingiu o limite temporário de consultas. Tente novamente em cerca de {} min.",
+            delay.as_secs().div_ceil(60).max(1)
+        ),
+    }
 }
 // Source releases contain media unrelated to Jarvis. Spool the bounded archive
 // to disk instead of retaining hundreds of MB while building the resource index.
@@ -803,7 +898,7 @@ pub(super) async fn install(
             stage("Baixando Ponytail");
             let bytes = download_with_progress(
                 &format!(
-                    "https://api.github.com/repos/{}/tarball/{}",
+                    "https://codeload.github.com/{}/tar.gz/{}",
                     id.repository(),
                     release.tag_name
                 ),
@@ -896,6 +991,116 @@ async fn release_for_dolt() -> Result<Release, CoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn metadata_server(
+        responses: Vec<String>,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for response in responses {
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(5), listener.accept())
+                        .await
+                        .unwrap()
+                        .unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    request.push(socket.read_u8().await.unwrap());
+                    assert!(request.len() < 8192);
+                }
+                requests.push(String::from_utf8(request).unwrap());
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        (format!("http://{address}"), task)
+    }
+
+    fn metadata_response(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[tokio::test]
+    async fn release_checks_and_installs_reuse_metadata_and_respect_shared_rate_limits() {
+        let reset = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 300;
+        let (base, server) = metadata_server(vec![
+            metadata_response(r#"{"tag_name":"v1.0.0"}"#),
+            format!("HTTP/1.1 403 Forbidden\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: {reset}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+            metadata_response(r#"{"tag_name":"v1.1.0"}"#),
+        ]).await;
+        let url = format!("{base}/release");
+        let mut cache = ReleaseMetadata::default();
+        assert_eq!(cache.get(&url).await.unwrap()["tag_name"], "v1.0.0");
+        assert_eq!(cache.get(&url).await.unwrap()["tag_name"], "v1.0.0");
+        let error = cache.get(&format!("{base}/other")).await.unwrap_err();
+        assert_eq!(error.code, "github_rate_limit");
+        assert!(error.message.contains("5 min"));
+        assert_eq!(
+            cache.get(&format!("{base}/third")).await.unwrap_err().code,
+            "github_rate_limit"
+        );
+        assert_eq!(cache.get(&url).await.unwrap()["tag_name"], "v1.0.0");
+        cache.cached.get_mut(&url).unwrap().0 = Instant::now();
+        assert_eq!(cache.get(&url).await.unwrap_err().code, "github_rate_limit");
+        cache.retry_at = Some(Instant::now());
+        assert_eq!(cache.get(&url).await.unwrap()["tag_name"], "v1.1.0");
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].starts_with("GET /release "));
+        assert!(requests[1].starts_with("GET /other "));
+        assert!(requests[2].starts_with("GET /release "));
+    }
+
+    #[tokio::test]
+    async fn metadata_errors_without_rate_limit_headers_are_not_cached_or_misclassified() {
+        let (base, server) = metadata_server(vec![
+            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+            metadata_response("invalid JSON"),
+            metadata_response(r#"{"tag_name":"v1.0.0"}"#),
+        ])
+        .await;
+        let mut cache = ReleaseMetadata::default();
+        let error = cache.get(&base).await.unwrap_err();
+        assert_eq!(error.code, "core_error");
+        assert!(error.message.contains("HTTP 403"));
+        assert_eq!(
+            cache.get(&base).await.unwrap_err().message,
+            "Resposta de versão inválida."
+        );
+        assert_eq!(cache.get(&base).await.unwrap()["tag_name"], "v1.0.0");
+        assert_eq!(server.await.unwrap().len(), 3);
+    }
+
+    #[test]
+    fn github_retry_after_handles_secondary_limits_without_hiding_other_http_errors() {
+        use reqwest::{header::HeaderMap, StatusCode};
+        let mut headers = HeaderMap::new();
+        headers.insert("retry-after", "120".parse().unwrap());
+        assert_eq!(
+            github_retry_delay(StatusCode::FORBIDDEN, &headers),
+            Some(Duration::from_secs(120))
+        );
+        assert_eq!(
+            github_retry_delay(StatusCode::TOO_MANY_REQUESTS, &headers),
+            Some(Duration::from_secs(120))
+        );
+        assert_eq!(github_retry_delay(StatusCode::OK, &headers), None);
+        headers.insert("retry-after", "invalid".parse().unwrap());
+        assert_eq!(github_retry_delay(StatusCode::FORBIDDEN, &headers), None);
+        assert_eq!(
+            github_retry_delay(StatusCode::TOO_MANY_REQUESTS, &headers),
+            Some(Duration::from_secs(60))
+        );
+    }
 
     async fn download_server(
         chunked: bool,

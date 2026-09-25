@@ -119,7 +119,8 @@ describe("App bootstrap and onboarding", () => {
     });
     fireEvent(name, portalEvent);
     expect(portalEvent.defaultPrevented).toBe(true);
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "Colar" })).toBeVisible();
+    await user.keyboard("{Escape}");
     unmount();
     const afterUnmount = new MouseEvent("contextmenu", {
       bubbles: true,

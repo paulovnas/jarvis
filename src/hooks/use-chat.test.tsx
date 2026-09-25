@@ -80,6 +80,41 @@ it("recovers a missed completion when the native window regains focus", async ()
   expect(result.current.snapshot?.turns[0].status).toBe("completed");
 });
 
+it("releases a crashed turn, preserves its progress and accepts the next message", async () => {
+  call.mockResolvedValueOnce(observed());
+  const { result } = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(result.current.snapshot?.activeTurnId).toBe("turn1"));
+  const failure: ChatSnapshot = {
+    ...observed(),
+    revision: 12,
+    activeTurnId: null,
+    turns: [{
+      ...observed().turns[0],
+      status: "error",
+      error: { code: "internal", message: "Não foi possível concluir a execução do agente." },
+    }],
+  };
+
+  await emit("agent:event", update(11, failure));
+
+  expect(result.current.snapshot?.activeTurnId).toBeNull();
+  expect(result.current.snapshot?.turns[0].error?.message).toBe("Não foi possível concluir a execução do agente.");
+  expect(result.current.snapshot?.turns[0].steps[0].text).toBe("Vou conferir a configuração agora.");
+  const next: ChatSnapshot = {
+    ...failure,
+    revision: 13,
+    activeTurnId: "turn2",
+    history: { start: 0, total: 2 },
+    turns: [...failure.turns, { ...savedTurn(), id: "turn2", user: "Continue", status: "running", steps: [] }],
+  };
+  call.mockResolvedValueOnce(next);
+  await act(async () => {
+    expect(await result.current.send("Continue", savedTurn().options)).toBe(true);
+  });
+  expect(result.current.snapshot?.activeTurnId).toBe("turn2");
+  expect(result.current.snapshot?.turns[0]).toMatchObject(failure.turns[0]);
+});
+
 it("refreshes on browser focus and discards the result after switching projects", async () => {
   const { result, rerender, unmount } = renderHook(({ id }) => useChat(id), { initialProps: { id: "c1" } });
   await waitFor(() => expect(result.current.snapshot?.activeTurnId).toBe("turn1"));

@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "targets": ["deb", "appimage"],
+    "category": "Development",
+    "linux": {
+      "deb": {
+        "depends": ["libdbus-1-3"],
+        "recommends": ["gnome-keyring", "bubblewrap", "ca-certificates"]
+      }
+    }
+  }
+}

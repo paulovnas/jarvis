@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { BootstrapResourcesProvider } from "@/components/bootstrap/BootstrapResourcesProvider";
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { TitleBar } from "@/components/layout/TitleBar";
+import { TextContextMenu } from "@/components/TextContextMenu";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
@@ -170,13 +171,13 @@ export function App() {
   })();
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground font-sans">
+    <TextContextMenu><div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground font-sans">
       <TitleBar />
       {content}
       {bootstrap.status !== "home" && <StatusBar passive />}
       {/* Global Toast Notification Provider */}
       <Toaster position="top-center" richColors />
-    </div>
+    </div></TextContextMenu>
   );
 }
 

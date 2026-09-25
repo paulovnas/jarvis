@@ -64,7 +64,7 @@ async function loadCore(
     try {
       const snapshot = coreSnapshotSchema.parse(await invoke("get_core_status"));
       report(onProgress, "core", 1, "warning", "Estado local carregado; atualização indisponível");
-      return { snapshot, checked: false };
+      return { snapshot, checked: true };
     } catch {
       report(onProgress, "core", 1, "warning", "Core indisponível neste momento");
       return { snapshot: null, checked: false };

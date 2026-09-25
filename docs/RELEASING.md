@@ -1,6 +1,6 @@
 # Jarvis releases and updates
 
-Jarvis publishes macOS Apple Silicon and Windows x64 together through [GitHub Releases](https://github.com/paulovnas/jarvis/releases). Beta installations accept previews and stable releases; stable installations only accept stable releases. Drafts and releases without the matching platform manifest are ignored.
+The release pipeline publishes macOS Apple Silicon, Windows x64 and Linux x64 together through [GitHub Releases](https://github.com/paulovnas/jarvis/releases). Linux is a new target; package availability starts with the first successful release containing this implementation. Beta installations accept previews and stable releases; stable installations only accept stable releases. Drafts and releases without the matching platform manifest are ignored.
 
 ## Publish from any development platform
 
@@ -22,16 +22,16 @@ Without a notes file, GitHub generates release notes. Use canonical SemVer witho
 
 ## CI and publication boundaries
 
-The build matrix runs macOS Apple Silicon (`aarch64-apple-darwin`, `macos-15`) and Windows x64 (`x86_64-pc-windows-msvc`, `windows-2022`). macOS Intel, Windows ARM64 and Linux packages are not published by this matrix.
+The build matrix runs macOS Apple Silicon (`aarch64-apple-darwin`, `macos-15`), Windows x64 (`x86_64-pc-windows-msvc`, `windows-2022`) and Linux x64 (`x86_64-unknown-linux-gnu`, `ubuntu-22.04`). The older Ubuntu builder limits the glibc baseline; it does not qualify every distribution or desktop. macOS Intel, Windows ARM64, Linux ARM64 and RPM are outside this matrix.
 
 1. Validate the official repository, `main`, tag ancestry, commit and matching versions.
-2. Install locked dependencies and run lint, typecheck, tests, production build, Clippy and Rust tests on both platforms. Rust tests use one test thread to avoid races around process fixtures.
-3. Build the macOS app/DMG using the existing identity imported into a temporary Keychain. Build the Windows NSIS installer with the per-user installer configuration, start-menu shortcut and notification registration hooks.
-4. Sign both updater packages with the existing Tauri updater key. Verify the signatures against the public key embedded in Jarvis; also verify the macOS signer fingerprint and app/DMG signatures.
+2. Install locked dependencies and run lint, typecheck, tests, production build, Clippy and Rust tests on every platform. Rust tests use one test thread to avoid races around process fixtures. Linux also runs the isolated Secret Service test with a disposable D-Bus session and GNOME Keyring wallet.
+3. Build the macOS app/DMG using the existing identity imported into a temporary Keychain. Build the Windows NSIS installer with the per-user installer configuration, start-menu shortcut and notification registration hooks. Build Linux DEB and AppImage with GTK/WebKitGTK and D-Bus prerequisites; DEB declares its D-Bus dependency and recommends a credential service and Bubblewrap.
+4. Sign all updater packages with the existing Tauri updater key. Verify the signatures against the public key embedded in Jarvis; also verify the macOS signer fingerprint and app/DMG signatures. Linux uses the signed AppImage for updates; the DEB is a separate installer.
 5. Upload separate artifacts with platform-specific metadata and retain them for seven days. Remove temporary macOS keys even after failures.
-6. A single publication job requires both builds. It validates each package's version, commit, target and signature again, creates all manifests, uploads the complete set to a draft and promotes it only after confirming every asset and its size.
+6. A single publication job requires all three builds. It validates each package's version, commit, target and updater signature again, creates all manifests, uploads the complete set to a draft and promotes it only after confirming every asset and its size.
 
-Only the publication job has repository contents write permission. The existing environment `macos-release` is shared by the two build jobs to preserve its protected `main` policy and updater key. Apple secrets are provided only to macOS signing/verification steps; Windows receives the updater key only in its build step. No pull-request code runs in this workflow. Actions are pinned by commit SHA.
+Only the publication job has repository contents write permission. The existing environment `macos-release` is shared by the three build jobs to preserve its protected `main` policy and updater key. Apple secrets are provided only to macOS signing/verification steps; Windows and Linux receive the updater key only in their build step. No pull-request code runs in this workflow. Actions are pinned by commit SHA.
 
 The Windows updater signature is **not** an Authenticode certificate. This release pipeline has no Windows publisher certificate configured, so Windows can show an unknown-publisher/SmartScreen notice. macOS signatures are preserved, but Apple notarization is not configured. Neither limitation prevents cryptographic verification by the Jarvis updater.
 
@@ -59,13 +59,13 @@ Setup exports only the selected Apple identity to a temporary password-protected
 
 | Secret in `macos-release` | Purpose |
 | --- | --- |
-| `TAURI_SIGNING_PRIVATE_KEY` | Existing updater private-key contents, shared by both platforms. |
+| `TAURI_SIGNING_PRIVATE_KEY` | Existing updater private-key contents, shared by all platforms. |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Optional updater key password. |
 | `APPLE_CERTIFICATE` | Original Apple identity and private key as base64 PKCS#12. |
 | `APPLE_CERTIFICATE_PASSWORD` | PKCS#12 password. |
 | `APPLE_SIGNING_IDENTITY` | Original certificate SHA-1 fingerprint. |
 
-GitHub cannot return secret values after upload. Keep secure backups outside Git. Replacing the updater key breaks trust for existing installations; do not generate a new key for Windows.
+GitHub cannot return secret values after upload. Keep secure backups outside Git. Replacing the updater key breaks trust for existing installations; do not generate a new production key for Windows or Linux.
 
 ## Failure and retry
 
@@ -81,11 +81,12 @@ Publish fixes with a higher version; the updater does not downgrade.
 
 ## Published files and client behavior
 
-Each release contains eight assets:
+Each complete desktop release contains twelve assets:
 
 - macOS DMG, `.app.tar.gz` updater package and `.app.tar.gz.sig`.
 - Windows `-setup.exe`, reused by the updater, and `-setup.exe.sig`.
-- Combined `latest.json`, `latest-darwin-aarch64.json` and `latest-windows-x86_64.json`.
+- Linux `.deb`, `.AppImage` updater package and `.AppImage.sig`.
+- Combined `latest.json`, `latest-darwin-aarch64.json`, `latest-windows-x86_64.json` and `latest-linux-x86_64.json`.
 
 Each platform manifest contains its own package URL and signature, plus the same version, date and notes. The updater only accepts assets under the corresponding `v<version>` tag in the official repository. Build metadata stays in CI artifacts.
 
@@ -94,6 +95,10 @@ The update UI shows download progress and verifies the package before installati
 Install the first Windows version using NSIS; install the first macOS version by copying the app from the DMG to Applications. Windows uses passive NSIS updates. On macOS, the new process confirms native-window creation with the expected version and a temporary local handshake; if reopening fails, the previous window offers a retry without downloading again. A writable installed app is required; an app running from a mounted DMG cannot update in place.
 
 Publishing does not launch or install the application locally. Unit tests cover channels/platform discovery, signed manifests, complete artifact sets, version/commit mismatches, tampering, launcher guards and update UI. A real installed A-to-B upgrade still requires validation on each destination OS.
+
+On Linux, install the DEB with the distribution package manager, or make the AppImage executable and launch it from a writable location. Both formats require a desktop Secret Service session with an unlocked persistent wallet (GNOME Keyring or a compatible implementation). Development and production use different credential service names. A missing/locked service returns recovery guidance without a plaintext fallback.
+
+Automatic Linux updates require a release AppImage whose file and parent directory are writable. DEB, standalone binaries and development builds offer the downloads page instead. Upgrade DEB using the package manager; Jarvis never overwrites its owned binary with an AppImage. An extracted AppImage is useful for diagnostics but does not qualify normal launch or in-place updating. See [Linux validation](PLAN-VALIDACAO-LINUX.md) for prerequisites and qualification evidence.
 
 ## Reference studied
 

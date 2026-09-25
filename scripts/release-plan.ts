@@ -1,7 +1,7 @@
 import { compare, parse, valid } from "semver";
 
 export const RELEASE_REPOSITORY = "paulovnas/jarvis";
-export const releaseTargets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"] as const;
+export const releaseTargets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"] as const;
 export type ReleaseTarget = typeof releaseTargets[number];
 
 export function supportedTarget(target: string | undefined): ReleaseTarget {
@@ -12,8 +12,9 @@ export function supportedTarget(target: string | undefined): ReleaseTarget {
 
 export function artifactNames(version: string, target: ReleaseTarget) {
   const prefix = `Jarvis_${version}_${target}`;
-  const archive = target === "x86_64-pc-windows-msvc" ? `${prefix}-setup.exe` : `${prefix}.app.tar.gz`;
-  return { archive, signature: `${archive}.sig`, names: [...(target === "aarch64-apple-darwin" ? [`${prefix}.dmg`] : []), archive, `${archive}.sig`] };
+  const archive = target === "x86_64-pc-windows-msvc" ? `${prefix}-setup.exe` : target === "x86_64-unknown-linux-gnu" ? `${prefix}.AppImage` : `${prefix}.app.tar.gz`;
+  const installer = target === "aarch64-apple-darwin" ? [`${prefix}.dmg`] : target === "x86_64-unknown-linux-gnu" ? [`${prefix}.deb`] : [];
+  return { archive, signature: `${archive}.sig`, names: [...installer, archive, `${archive}.sig`] };
 }
 export function parseReleaseArguments(args: string[]) {
   const result = { version: args[0], dryRun: false, notesFile: undefined as string | undefined };
@@ -25,7 +26,7 @@ export function parseReleaseArguments(args: string[]) {
     if (arg === "--dry-run") { result.dryRun = true; continue; }
     if (arg === "--notes-file" && args[i + 1] && !args[i + 1].startsWith("--")) { result.notesFile = args[++i]; continue; }
     if (arg === "--target" && args[i + 1] === "aarch64-apple-darwin") { i++; continue; }
-    throw new Error(`Opção inválida: ${arg}. O CI publica macOS Apple Silicon e Windows x64 juntos. Use --help.`);
+    throw new Error(`Opção inválida: ${arg}. O CI publica macOS Apple Silicon, Windows x64 e Linux x64 juntos. Use --help.`);
   }
   return result;
 }
@@ -52,7 +53,8 @@ export function targetPlatforms(target: string): string[] {
   if (target === "aarch64-apple-darwin") return ["darwin-aarch64"];
   if (target === "x86_64-apple-darwin") return ["darwin-x86_64"];
   if (target === "x86_64-pc-windows-msvc") return ["windows-x86_64"];
-  throw new Error("Target de release não suportado. Use aarch64, x86_64 ou universal-apple-darwin.");
+  if (target === "x86_64-unknown-linux-gnu") return ["linux-x86_64"];
+  throw new Error("Target de release não suportado.");
 }
 export function desktopManifest(version: string, assets: { target: ReleaseTarget; archive: string; signature: string }[], notes: string, date = new Date()) {
   if (assets.length !== releaseTargets.length || releaseTargets.some(target => assets.filter(asset => asset.target === target).length !== 1)) {

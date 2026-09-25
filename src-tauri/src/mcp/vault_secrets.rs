@@ -1,4 +1,4 @@
-//! MCP/Context7 secret access. Delegates to the shared Windows DPAPI vault.
+//! MCP/Context7 access to the shared Windows DPAPI or Linux Secret Service vault.
 //!
 //! The namespace `mcp-secrets` is preserved verbatim so a key saved before this
 //! refactor still decrypts after it: the on-disk directory and per-key hashing
@@ -8,6 +8,10 @@ use super::{storage_error, McpError};
 const NAMESPACE: &str = "mcp-secrets";
 
 fn translate(error: crate::secrets::VaultError) -> McpError {
+    #[cfg(target_os = "linux")]
+    if error != crate::secrets::VaultError::NotFound {
+        return super::coded_error("secret_store", crate::secrets::RECOVERY_MESSAGE);
+    }
     // A missing MCP secret is not a hard storage failure: callers treat an
     // absent config the same as an unreadable one. Keep the existing message.
     let _ = error;

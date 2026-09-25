@@ -262,11 +262,11 @@ pub(crate) fn validate_provider_alias(alias: &str) -> Result<(), AliasValidation
 pub(crate) enum SecretStoreError {
     #[cfg(not(target_os = "macos"))]
     Unavailable,
-    #[cfg(any(target_os = "macos", target_os = "windows", test))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
     OperationFailed,
-    #[cfg(any(target_os = "macos", target_os = "windows", test))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
     Missing,
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     InvalidCredential,
 }
 
@@ -359,9 +359,9 @@ fn finish_disconnect(
     persistence::delete_provider_account(&transaction, alias)?;
     let backup = match secret_store.load(alias) {
         Ok(credential) => Some(credential),
-        #[cfg(any(target_os = "macos", target_os = "windows", test))]
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
         Err(SecretStoreError::Missing) => None,
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         Err(SecretStoreError::InvalidCredential) => None,
         Err(error) => return Err(error.into()),
     };
@@ -377,23 +377,18 @@ fn finish_disconnect(
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
-#[derive(Debug, Default, Clone, Copy)]
-pub(crate) struct KeychainSecretStore;
-
-#[cfg(not(target_os = "macos"))]
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct KeychainSecretStore;
 
 #[cfg(target_os = "macos")]
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn serialize_credential(credential: &CodexCredential) -> Result<Vec<u8>, SecretStoreError> {
     serde_json::to_vec(credential).map_err(|_| SecretStoreError::InvalidCredential)
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn deserialize_credential(value: &[u8]) -> Result<CodexCredential, SecretStoreError> {
     serde_json::from_slice(value).map_err(|_| SecretStoreError::InvalidCredential)
 }
@@ -440,13 +435,13 @@ fn secret_service(alias: &str) -> &'static str {
     }
 }
 
-// Windows: provider credentials live in the shared DPAPI vault. One namespace
+// Windows/Linux: provider credentials live in the shared native vault. One namespace
 // keyed by alias covers OpenAI Codex, Antigravity and Custom — their aliases are
 // already disjoint by prefix, so no per-provider service split is needed.
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 const PROVIDER_NAMESPACE: &str = "provider-secrets";
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn vault_error(error: crate::secrets::VaultError) -> SecretStoreError {
     match error {
         crate::secrets::VaultError::Unavailable => SecretStoreError::Unavailable,
@@ -455,7 +450,7 @@ fn vault_error(error: crate::secrets::VaultError) -> SecretStoreError {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 impl SecretStore for KeychainSecretStore {
     fn load(&self, alias: &str) -> Result<CodexCredential, SecretStoreError> {
         let value = crate::secrets::load(PROVIDER_NAMESPACE, alias).map_err(vault_error)?;
@@ -472,8 +467,7 @@ impl SecretStore for KeychainSecretStore {
     }
 }
 
-// Any other non-macOS target (e.g. Linux) has no secure backend yet.
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 impl SecretStore for KeychainSecretStore {
     fn load(&self, _alias: &str) -> Result<CodexCredential, SecretStoreError> {
         Err(SecretStoreError::Unavailable)
@@ -501,12 +495,17 @@ use std::{
 #[derive(Default)]
 pub(crate) struct InMemorySecretStore {
     entries: Mutex<HashMap<String, CodexCredential>>,
+    fail_loads: AtomicBool,
     fail_stores: AtomicBool,
     fail_removes: AtomicBool,
 }
 
 #[cfg(test)]
 impl InMemorySecretStore {
+    pub(crate) fn fail_load(&self, failed: bool) {
+        self.fail_loads.store(failed, Ordering::Relaxed);
+    }
+
     pub(crate) fn fail_store(&self, failed: bool) {
         self.fail_stores.store(failed, Ordering::Relaxed);
     }
@@ -519,6 +518,9 @@ impl InMemorySecretStore {
 #[cfg(test)]
 impl SecretStore for InMemorySecretStore {
     fn load(&self, alias: &str) -> Result<CodexCredential, SecretStoreError> {
+        if self.fail_loads.load(Ordering::Relaxed) {
+            return Err(SecretStoreError::OperationFailed);
+        }
         self.entries
             .lock()
             .map_err(|_| SecretStoreError::OperationFailed)?
@@ -1145,12 +1147,19 @@ impl ProviderError {
             ProviderAccountError::DuplicateAccount => {
                 Self::new("duplicate_account", "Esta conta já está conectada.")
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(target_os = "linux")]
+            ProviderAccountError::SecretStore(_) => {
+                Self::new("secret_store", crate::secrets::RECOVERY_MESSAGE)
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             ProviderAccountError::SecretStore(SecretStoreError::Unavailable) => Self::new(
                 "secret_store",
                 "O armazenamento seguro não está disponível neste sistema.",
             ),
-            #[cfg(any(target_os = "macos", target_os = "windows", test))]
+            #[cfg(all(
+                not(target_os = "linux"),
+                any(target_os = "macos", target_os = "windows", test)
+            ))]
             ProviderAccountError::SecretStore(_) => Self::new(
                 "secret_store",
                 "Não foi possível salvar a credencial com segurança.",
