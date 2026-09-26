@@ -159,7 +159,7 @@ describe("WebSearchSettings", () => {
     render(<WebSearchSettings accounts={[account("openai-codex-outra")]} />);
     expect(await screen.findByRole("combobox", { name: "Provedor de Web Search" })).toHaveTextContent("openai-codex-ausente · Indisponível");
     expect(screen.getByRole("alert")).toHaveTextContent("O provedor openai-codex-ausente não existe mais");
-    expect(toast.error).toHaveBeenCalledWith("Web Search: modelo indisponível", expect.objectContaining({ description: expect.stringContaining("openai-codex-ausente") }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Web Search: modelo indisponível", expect.objectContaining({ description: expect.stringContaining("openai-codex-ausente") })));
     expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 });

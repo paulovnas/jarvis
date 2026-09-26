@@ -39,7 +39,7 @@ describe("Home shell", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("GPT 6 Sol"));
     expect(accountsMock).toHaveBeenCalledTimes(2);
     expect(invokeMock).not.toHaveBeenCalledWith("reauthorize_provider_account", expect.anything());
-  });
+  }, 15_000); // Full-shell startup and menu interaction need the same CI budget as navigation.
   it("starts a supervised publication turn with the dedicated GitHub agent model", async () => {
     const user = userEvent.setup();
     const chat = { ...emptyChat(), turns: [savedTurn()] };
