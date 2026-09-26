@@ -76,7 +76,7 @@ export type AgentStep = { coreActivities?: Array<CoreActivity>, contextId?: stri
 
 export type TurnStatus = "running" | "completed" | "cancelled" | "error" | "interrupted";
 
-export type AgentTurn = { id: string, createdAt: number, durationMs: number, user: string, parts: Array<MessagePart>, options: TurnOptions, contextWindow?: number | null, status: TurnStatus, tasks?: Array<DirectTask>, steps: Array<AgentStep>, error: AgentError | null, };
+export type AgentTurn = { id: string, createdAt: number, durationMs: number, activeSince?: number | null, user: string, parts: Array<MessagePart>, options: TurnOptions, contextWindow?: number | null, status: TurnStatus, tasks?: Array<DirectTask>, steps: Array<AgentStep>, error: AgentError | null, };
 
 export type QueuedMessage = { id: string, content: string, options: TurnOptions, parts: Array<MessagePart>, auxiliaryFor?: string | null, };
 

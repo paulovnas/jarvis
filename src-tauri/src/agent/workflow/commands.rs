@@ -40,6 +40,7 @@ pub struct AgentCard {
     created_at: u64,
     started_at: u64,
     duration_ms: u64,
+    active_since: Option<u64>,
     current_thought: Option<String>,
     options: TurnOptions,
     bead_id: Option<String>,
@@ -64,19 +65,19 @@ pub struct Snapshot {
     recovery: Option<RecoverySummary>,
 }
 
-fn live_telemetry(data: &SessionData) -> (u64, u64, Option<String>) {
+fn live_telemetry(data: &SessionData) -> (u64, u64, Option<u64>, Option<String>) {
     let Some(turn) = data.turns.last() else {
-        return (0, 0, None);
+        return (0, 0, None, None);
     };
     let running = data
         .active
         .as_ref()
         .is_some_and(|active| active.id == turn.turn.id);
-    let duration = if running {
-        now().saturating_sub(turn.turn.created_at)
-    } else {
-        turn.turn.duration_ms
-    };
+    let (duration, active_since) = data
+        .active
+        .as_ref()
+        .filter(|_| running)
+        .map_or((turn.turn.duration_ms, None), |active| active.timing());
     let thought = running
         .then(|| {
             turn.turn
@@ -90,7 +91,7 @@ fn live_telemetry(data: &SessionData) -> (u64, u64, Option<String>) {
                 .collect::<String>()
         })
         .filter(|thought| !thought.is_empty());
-    (turn.turn.created_at, duration, thought)
+    (turn.turn.created_at, duration, active_since, thought)
 }
 
 fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError> {
@@ -131,6 +132,7 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
         updated_at: state.updated_at,
         started_at: state.updated_at,
         duration_ms: 0,
+        active_since: None,
         current_thought: None,
         options: state.options.clone(),
         bead_id: None,
@@ -144,11 +146,12 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
     }];
     if let Some(hub) = hub {
         let data = hub.root.data.lock().map_err(|_| AgentError::internal())?;
-        let (started_at, duration_ms, current_thought) = live_telemetry(&data);
+        let (started_at, duration_ms, active_since, current_thought) = live_telemetry(&data);
         if started_at > 0 {
             agents[0].started_at = started_at;
         }
         agents[0].duration_ms = duration_ms;
+        agents[0].active_since = active_since;
         agents[0].current_thought = current_thought;
         if data
             .active
@@ -191,6 +194,7 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
             updated_at: job.updated_at,
             started_at: job.updated_at.saturating_sub(job.duration_ms),
             duration_ms: job.duration_ms,
+            active_since: None,
             current_thought: None,
             options: job.options.clone(),
             bead_id: job.bead_id.clone(),
@@ -207,11 +211,12 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
         };
         if let Some(session) = live.as_ref().and_then(|live| live.get(&job.id)) {
             let data = session.data.lock().map_err(|_| AgentError::internal())?;
-            let (started_at, duration_ms, current_thought) = live_telemetry(&data);
+            let (started_at, duration_ms, active_since, current_thought) = live_telemetry(&data);
             if started_at > 0 {
                 card.started_at = started_at;
             }
             card.duration_ms = duration_ms;
+            card.active_since = active_since;
             card.current_thought = current_thought;
             if let Some(active) = &data.active {
                 card.pending_approval = active.pending_approval_request().cloned();
@@ -577,6 +582,9 @@ mod tests {
         let started_at = now().saturating_sub(2_000);
         {
             let mut data = hub.root.data.lock().unwrap();
+            let mut active = data.active.take().unwrap().with_elapsed(2_000);
+            active.transition(super::super::super::turn_state::TurnPhase::Sampling);
+            data.active = Some(active);
             let turn = data.turns.last_mut().unwrap();
             turn.turn.created_at = started_at;
             turn.turn.steps.push(Step {

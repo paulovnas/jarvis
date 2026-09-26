@@ -15,7 +15,10 @@ export function useRunningClock(running: boolean) {
   return now;
 }
 
-export function executionDuration(startedAt: number, durationMs: number, running: boolean, now: number) {
+export function executionDuration(startedAt: number, durationMs: number, running: boolean, now: number, activeSince?: number | null) {
+  if (activeSince !== undefined) {
+    return Math.max(durationMs, 0) + (running && activeSince !== null ? Math.max(now - activeSince, 0) : 0);
+  }
   return running ? Math.max(durationMs, now - startedAt, 0) : Math.max(durationMs, 0);
 }
 

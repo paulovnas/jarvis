@@ -306,6 +306,64 @@ impl Hub {
             .values()
             .any(|job| job.parent_id == id && job.status.active()))
     }
+
+    /// Coordinator time includes useful work by descendants, but not a workflow
+    /// whose remaining workers are all queued or waiting for the user.
+    fn refresh_waiting_clocks(&self) {
+        let sessions = {
+            let Ok(live) = self.live.lock() else { return };
+            let mut sessions = live.clone();
+            sessions.insert("main".into(), self.root.clone());
+            sessions
+        };
+        let working: Vec<_> = sessions
+            .iter()
+            .filter_map(|(id, session)| {
+                session.data.lock().ok().and_then(|data| {
+                    data.active
+                        .as_ref()
+                        .filter(|active| active.doing_work())
+                        .map(|_| id.clone())
+                })
+            })
+            .collect();
+        let ancestors = {
+            let Ok(state) = self.manifest.lock() else {
+                return;
+            };
+            let mut ancestors = std::collections::HashSet::new();
+            for id in working {
+                let mut cursor = id.as_str();
+                let mut visited = std::collections::HashSet::new();
+                while let Some(job) = state.jobs.get(cursor) {
+                    if !visited.insert(cursor) {
+                        break;
+                    }
+                    ancestors.insert(job.parent_id.clone());
+                    cursor = &job.parent_id;
+                }
+            }
+            ancestors
+        };
+        for (id, session) in sessions {
+            let snapshot = {
+                let Ok(mut data) = session.data.lock() else {
+                    continue;
+                };
+                if !data
+                    .active
+                    .as_mut()
+                    .is_some_and(|active| active.set_delegated_running(ancestors.contains(&id)))
+                {
+                    continue;
+                }
+                data.sync_timing();
+                data.revision = next_revision();
+                session.snapshot_data(&data)
+            };
+            (session.emit)(snapshot);
+        }
+    }
     async fn wait(
         &self,
         id: &str,
@@ -796,7 +854,24 @@ impl Execution {
             })
         };
         update(Status::Waiting)?;
+        let session = if self.id == "main" {
+            Some(self.hub.root.clone())
+        } else {
+            self.hub
+                .live
+                .lock()
+                .map_err(|_| AgentError::internal())?
+                .get(&self.id)
+                .cloned()
+        };
+        if let Some(session) = &session {
+            session.transition(super::turn_state::TurnPhase::WaitingForAgents)?;
+        }
+        self.hub.refresh_waiting_clocks();
         let result = self.hub.wait(&self.id, signal).await;
+        if let Some(session) = session {
+            session.transition(super::turn_state::TurnPhase::ExecutingTools)?;
+        }
         update(Status::Running)?;
         result
     }

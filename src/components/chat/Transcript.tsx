@@ -31,8 +31,8 @@ function retryUnavailableReason(turn: AgentTurn): string | undefined {
 
 export const TurnBody = memo(function TurnBody({ turn, conversationId, onRetry, retrying = false }: { turn: AgentTurn; conversationId?: string; onRetry?: (turnId: string) => void; retrying?: boolean }) {
   const running = turn.status === "running";
-  const now = useRunningClock(running);
-  const durationMs = executionDuration(turn.createdAt, turn.durationMs, running, now);
+  const now = useRunningClock(running && turn.activeSince !== null);
+  const durationMs = executionDuration(turn.createdAt, turn.durationMs, running, now, turn.activeSince);
   const timestamp = new Date(turn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   const errorTitle = turn.error?.code === "progress_paused"
     ? "Execução pausada"

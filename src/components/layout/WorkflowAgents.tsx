@@ -36,7 +36,7 @@ function StatusBadge({ agent }: { agent: WorkflowAgent }) {
   const color = agent.status === "completed" ? "var(--color-onedark-green)" : ["failed", "blocked"].includes(agent.status) ? "var(--destructive)" : activeAgent(agent) ? presentation(agent).color : "var(--muted-foreground)";
   return <Badge variant="outline" className="text-[9px]" style={{ color, borderColor: `color-mix(in srgb, ${color} 25%, transparent)`, backgroundColor: `color-mix(in srgb, ${color} 6%, transparent)` }}>{STATUS_LABELS[agent.status]}</Badge>;
 }
-const timingActive = (agent: WorkflowAgent) => agent.status === "running" || agent.status === "waiting";
+const timingActive = (agent: WorkflowAgent) => (agent.status === "running" || agent.status === "waiting") && agent.activeSince !== null;
 function AgentHistory({ conversationId, agent }: { conversationId: string; agent: WorkflowAgent }) {
   const transcript = useWorkflowTranscript(conversationId, agent.id);
   const root = useRef<HTMLDivElement>(null);
@@ -80,7 +80,7 @@ export function WorkflowAgents({ workflow, conversationId }: { workflow?: Workfl
       : !currentAgents.length ? <p className="text-xs text-muted-foreground">Nenhum agente em execução.</p>
       : <div className="space-y-2">{ordered.map(agent => {
         const { Icon, color, label } = presentation(agent);
-        const duration = executionDuration(agent.startedAt, agent.durationMs, timingActive(agent), now);
+        const duration = executionDuration(agent.startedAt, agent.durationMs, timingActive(agent), now, agent.activeSince);
         const thought = agent.currentThought ? reasoningPreview(agent.currentThought) : "";
         const requiresAttention = Boolean(agent.pendingApproval || agent.pendingQuestion || agent.pendingAuthoring);
         return <Button key={agent.id} variant="ghost" data-status={agent.status} style={agent.status === "waiting" || agent.status === "queued" ? { borderColor: agent.role === "custom" ? `color-mix(in srgb, ${color} 50%, transparent)` : `${color}80` } : undefined} onClick={() => setSelected(agent.id)} aria-label={`Abrir agente ${label}: ${agent.title}`} className="agent-execution relative isolate h-auto w-full cursor-pointer flex-col items-stretch gap-2 rounded-md border border-border bg-card/60 p-3 text-left whitespace-normal shadow-[inset_0_1px_0_#ffffff0a] hover:border-primary/40">

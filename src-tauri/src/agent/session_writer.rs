@@ -8,18 +8,42 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{
     collections::VecDeque,
+    fs::{File, OpenOptions},
     path::{Path, PathBuf},
     sync::{mpsc, Mutex},
     thread::JoinHandle,
     time::Duration,
 };
 
-const FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 const RETRY_DELAYS: [Duration; 3] = [
     Duration::from_millis(20),
     Duration::from_millis(75),
     Duration::from_millis(200),
 ];
+
+/// Acquired before replay, held until the previous writer has fully drained.
+/// Lock a stable sidecar because journal maintenance may replace the JSONL inode.
+pub(super) struct WriterLease {
+    path: PathBuf,
+    _lock: File,
+}
+
+impl WriterLease {
+    pub(super) fn acquire(path: &Path) -> Result<Self, AgentError> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path.with_extension("writer.lock"))
+            .map_err(|_| AgentError::storage())?;
+        file.lock().map_err(|_| AgentError::storage())?;
+        Ok(Self {
+            path: path.to_owned(),
+            _lock: file,
+        })
+    }
+}
 
 #[derive(Clone)]
 enum Operation {
@@ -49,15 +73,24 @@ impl SessionWriter {
         self.sender.send(Command::Pause(gate)).unwrap();
         release
     }
+    #[cfg(test)]
     pub(super) fn start(
         path: PathBuf,
+        conversation_id: String,
+        durable_turn: Option<StoredTurn>,
+    ) -> Result<Self, AgentError> {
+        Self::start_with_lease(WriterLease::acquire(&path)?, conversation_id, durable_turn)
+    }
+
+    pub(super) fn start_with_lease(
+        lease: WriterLease,
         conversation_id: String,
         durable_turn: Option<StoredTurn>,
     ) -> Result<Self, AgentError> {
         let (sender, receiver) = mpsc::channel();
         let worker = std::thread::Builder::new()
             .name(format!("jarvis-journal-{conversation_id}"))
-            .spawn(move || run(path, durable_turn, receiver))
+            .spawn(move || run(lease, durable_turn, receiver))
             .map_err(|_| AgentError::storage())?;
         Ok(Self {
             conversation_id,
@@ -93,7 +126,7 @@ impl SessionWriter {
         self.sender
             .send(Command::Flush(reply))
             .map_err(|_| self.failure())?;
-        match received.recv_timeout(FLUSH_TIMEOUT) {
+        match received.recv() {
             Ok(Ok(())) => Ok(()),
             Ok(Err(())) | Err(_) => Err(self.failure()),
         }
@@ -105,8 +138,10 @@ impl SessionWriter {
         self.sender
             .send(Command::AsyncFlush(reply))
             .map_err(|_| self.failure())?;
-        match tokio::time::timeout(FLUSH_TIMEOUT, received).await {
-            Ok(Ok(Ok(()))) => Ok(()),
+        // A slow fsync is not a failed write. Timing out here used to abandon
+        // an active writer and let recovery race its still-pending operations.
+        match received.await {
+            Ok(Ok(())) => Ok(()),
             _ => Err(self.failure()),
         }
     }
@@ -131,8 +166,27 @@ impl Drop for SessionWriter {
     }
 }
 
-fn run(path: PathBuf, mut durable_turn: Option<StoredTurn>, receiver: mpsc::Receiver<Command>) {
+fn run(
+    lease: WriterLease,
+    mut durable_turn: Option<StoredTurn>,
+    receiver: mpsc::Receiver<Command>,
+) {
+    let path = &lease.path;
     let mut pending = VecDeque::new();
+    let mut failed_append = None;
+    let mut write = |path: &Path, durable: &mut Option<StoredTurn>, operation: &Operation| {
+        if let Some(start) = failed_append {
+            journal::rollback_append(path, start)?;
+        }
+        failed_append = Some(
+            std::fs::metadata(path)
+                .map_err(|_| AgentError::storage())?
+                .len(),
+        );
+        write_operation(path, durable, operation)?;
+        failed_append = None;
+        Ok(())
+    };
     while let Ok(command) = receiver.recv() {
         match command {
             #[cfg(test)]
@@ -141,34 +195,38 @@ fn run(path: PathBuf, mut durable_turn: Option<StoredTurn>, receiver: mpsc::Rece
             }
             Command::Write(operation) => {
                 pending.push_back(operation);
-                let _ = drain_once(&path, &mut durable_turn, &mut pending);
+                let _ = drain_once_using(path, &mut durable_turn, &mut pending, &mut write);
             }
             Command::Flush(reply) => {
-                let _ = reply.send(drain_with_retry(&path, &mut durable_turn, &mut pending));
+                let _ = reply.send(drain_with_retry_using(
+                    path,
+                    &mut durable_turn,
+                    &mut pending,
+                    &RETRY_DELAYS,
+                    &mut write,
+                ));
             }
             Command::AsyncFlush(reply) => {
-                let _ = reply.send(drain_with_retry(&path, &mut durable_turn, &mut pending));
+                let _ = reply.send(drain_with_retry_using(
+                    path,
+                    &mut durable_turn,
+                    &mut pending,
+                    &RETRY_DELAYS,
+                    &mut write,
+                ));
             }
             Command::Shutdown => {
-                let _ = drain_with_retry(&path, &mut durable_turn, &mut pending);
+                let _ = drain_with_retry_using(
+                    path,
+                    &mut durable_turn,
+                    &mut pending,
+                    &RETRY_DELAYS,
+                    &mut write,
+                );
                 break;
             }
         }
     }
-}
-
-fn drain_with_retry(
-    path: &Path,
-    durable_turn: &mut Option<StoredTurn>,
-    pending: &mut VecDeque<Operation>,
-) -> Result<(), ()> {
-    drain_with_retry_using(
-        path,
-        durable_turn,
-        pending,
-        &RETRY_DELAYS,
-        &mut write_operation,
-    )
 }
 
 fn drain_with_retry_using(
@@ -188,14 +246,6 @@ fn drain_with_retry_using(
         }
     }
     Err(())
-}
-
-fn drain_once(
-    path: &Path,
-    durable_turn: &mut Option<StoredTurn>,
-    pending: &mut VecDeque<Operation>,
-) -> Result<(), ()> {
-    drain_once_using(path, durable_turn, pending, &mut write_operation)
 }
 
 fn drain_once_using(
@@ -234,6 +284,57 @@ fn write_operation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn slow_acknowledgement_does_not_turn_a_successful_write_into_storage_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("slow.jsonl");
+        std::fs::write(&path, "{}\n").unwrap();
+        let writer = SessionWriter::start(path.clone(), "slow".into(), None).unwrap();
+        let release = writer.pause();
+        writer
+            .append_event("queue_checkpoint", &serde_json::json!([]))
+            .unwrap();
+        let delayed_disk = async {
+            tokio::time::sleep(Duration::from_millis(5_100)).await;
+            release.send(()).unwrap();
+        };
+        let (result, ()) = tokio::join!(writer.flush_async(), delayed_disk);
+        result.unwrap();
+        assert!(std::fs::read_to_string(path)
+            .unwrap()
+            .contains("queue_checkpoint"));
+    }
+
+    #[test]
+    fn recovery_waits_for_the_previous_writer_before_replaying_its_journal() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("resume.jsonl");
+        std::fs::write(&path, "{}\n").unwrap();
+        let writer = SessionWriter::start(path.clone(), "resume".into(), None).unwrap();
+        let release = writer.pause();
+        writer
+            .append_event("queue_checkpoint", &serde_json::json!([]))
+            .unwrap();
+        drop(writer);
+        let (result, received) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let lease = WriterLease::acquire(&path).unwrap();
+            let text = std::fs::read_to_string(&path).unwrap();
+            result.send(text).unwrap();
+            drop(lease);
+        });
+        assert!(matches!(
+            received.recv_timeout(Duration::from_millis(30)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        release.send(()).unwrap();
+        assert!(received
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .contains("queue_checkpoint"));
+        reader.join().unwrap();
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn disk_wait_yields_and_cancelled_waiter_preserves_queued_events() {
@@ -419,6 +520,7 @@ mod tests {
         let writer = SessionWriter::start(path.clone(), "conversation".into(), None).unwrap();
         let turn = StoredTurn {
             turn: super::super::Turn {
+                active_since: None,
                 id: "turn".into(),
                 created_at: 1,
                 duration_ms: 0,

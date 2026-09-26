@@ -318,6 +318,10 @@ struct Turn {
     created_at: u64,
     #[cfg_attr(test, ts(type = "number"))]
     duration_ms: u64,
+    // Timestamp of the duration sample while running; null freezes the clock.
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "number | null", optional = nullable))]
+    active_since: Option<u64>,
     user: String,
     #[serde(default)]
     parts: Vec<skill_input::MessagePart>,
@@ -504,6 +508,18 @@ struct SessionData {
     manual_compaction: bool,
 }
 impl SessionData {
+    fn sync_timing(&mut self) {
+        if let Some(active) = &self.active {
+            if let Some(turn) = self
+                .turns
+                .last_mut()
+                .filter(|turn| turn.turn.id == active.id)
+            {
+                (turn.turn.duration_ms, turn.turn.active_since) = active.timing();
+            }
+        }
+    }
+
     fn total_turns(&self) -> usize {
         self.turn_base.saturating_add(self.turns.len())
     }
@@ -656,6 +672,7 @@ impl Session {
                 return Err(AgentError::storage());
             }
             change(&mut data);
+            data.sync_timing();
             data.revision = next_revision();
             if let Some(turn) = data.turns.last() {
                 self.writer.append_turn(turn.clone())?;
@@ -673,7 +690,16 @@ impl Session {
     fn transition(&self, phase: turn_state::TurnPhase) -> Result<(), AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
         let active = data.active.as_mut().ok_or_else(AgentError::cancelled)?;
+        let was_running = active.timing().1.is_some();
         active.transition(phase);
+        let changed = was_running != active.timing().1.is_some();
+        data.sync_timing();
+        if changed {
+            data.revision = next_revision();
+            let snapshot = self.snapshot_data(&data);
+            drop(data);
+            (self.emit)(snapshot);
+        }
         Ok(())
     }
     #[cfg(test)]
@@ -712,6 +738,7 @@ impl Session {
                 id: id.clone(),
                 created_at: now(),
                 duration_ms: 0,
+                active_since: None,
                 user: content,
                 parts,
                 options,
@@ -781,7 +808,8 @@ impl Session {
             self.persist_turn(&mut data, &candidate)?;
         }
         let (cancel, signal) = watch::channel(false);
-        data.active = Some(Active::new(id, cancel));
+        let duration_ms = data.turns.last().map_or(0, |turn| turn.turn.duration_ms);
+        data.active = Some(Active::new(id, cancel).with_elapsed(duration_ms));
         data.recovery = None;
         data.revision = next_revision();
         Ok(Some(signal))
@@ -868,7 +896,8 @@ impl Session {
         data.turns[index] = current;
         let id = data.turns[index].turn.id.clone();
         let (cancel, signal) = watch::channel(false);
-        data.active = Some(Active::new(id, cancel));
+        let duration_ms = data.turns[index].turn.duration_ms;
+        data.active = Some(Active::new(id, cancel).with_elapsed(duration_ms));
         data.recovery = None;
         data.revision = next_revision();
         Ok((signal, workflow.then_some(uncertain)))
@@ -882,7 +911,14 @@ impl Session {
             turns: data
                 .turns
                 .last()
-                .map(|item| vec![item.turn.clone()])
+                .map(|item| {
+                    let mut turn = item.turn.clone();
+                    if let Some(active) = data.active.as_ref().filter(|active| active.id == turn.id)
+                    {
+                        (turn.duration_ms, turn.active_since) = active.timing();
+                    }
+                    vec![turn]
+                })
                 .unwrap_or_default(),
             history: history::Window {
                 start: data
@@ -991,6 +1027,7 @@ impl Session {
             return Err(AgentError::storage());
         }
         change(&mut data);
+        data.sync_timing();
         data.revision = next_revision();
         if durable {
             if let Some(last) = data.turns.last().cloned() {
@@ -1285,6 +1322,7 @@ impl AgentState {
         }
         let _loading = self.begin_session_load(id)?;
         let (path, root) = library::agent_location(state, home, id)?;
+        let writer_lease = session_writer::WriterLease::acquire(&path)?;
         let recovery_started = std::time::Instant::now();
         let recovery_trace = telemetry::trace(id, "session_load");
         let journal_bytes = std::fs::metadata(&path)
@@ -1366,8 +1404,8 @@ impl AgentState {
         let protocol = Arc::new(events::ProtocolEmitter::new(handle.clone()));
         let event_protocol = protocol.clone();
         let durable_turn = turns.last().cloned();
-        let writer = session_writer::SessionWriter::start(
-            path.clone(),
+        let writer = session_writer::SessionWriter::start_with_lease(
+            writer_lease,
             id.to_owned(),
             durable_turn.clone(),
         )?;
@@ -3914,9 +3952,10 @@ fn finish(session: &Session, result: Result<(), AgentError>) {
             if let Some(active) = data.active.as_mut() {
                 active.transition(turn_state::TurnPhase::Draining);
             }
+            data.sync_timing();
             let current = data.turns.last_mut().unwrap();
             journal::interrupt_tools(current);
-            current.turn.duration_ms = now().saturating_sub(current.turn.created_at);
+            current.turn.active_since = None;
             let mut recovery = None;
             match result {
                 Ok(()) => current.turn.status = TurnStatus::Completed,
@@ -3942,8 +3981,14 @@ fn finish(session: &Session, result: Result<(), AgentError>) {
     if update.is_err() {
         // Surface journal failure even if the final checkpoint could not be written.
         let _ = session.update(false, |data| {
+            if let Some(active) = data.active.as_mut() {
+                active.transition(turn_state::TurnPhase::Draining);
+            }
+            data.sync_timing();
             data.active = None;
             if let Some(current) = data.turns.last_mut() {
+                journal::interrupt_tools(current);
+                current.turn.active_since = None;
                 current.turn.status = TurnStatus::Error;
                 current.turn.error = Some(AgentError::storage());
             }

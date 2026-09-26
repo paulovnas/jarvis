@@ -356,10 +356,14 @@ fn worker_session(
     path: PathBuf,
     turns: Vec<StoredTurn>,
     extras: journal::Extras,
+    writer_lease: session_writer::WriterLease,
 ) -> Result<Arc<Session>, AgentError> {
     let durable_turn = turns.last().cloned();
-    let writer =
-        session_writer::SessionWriter::start(path.clone(), job.id.clone(), durable_turn.clone())?;
+    let writer = session_writer::SessionWriter::start_with_lease(
+        writer_lease,
+        job.id.clone(),
+        durable_turn.clone(),
+    )?;
     let weak = Arc::downgrade(hub);
     Ok(Arc::new(Session {
         id: job.id.clone(),
@@ -383,6 +387,7 @@ fn worker_session(
         }),
         emit: Arc::new(move |snapshot| {
             if let Some(hub) = weak.upgrade() {
+                hub.refresh_waiting_clocks();
                 (hub.attention)(&snapshot);
                 (hub.emit)(&hub.root.id);
             }
@@ -396,8 +401,13 @@ pub(super) fn worker(
     resume: Option<String>,
 ) -> Result<(Arc<Session>, watch::Receiver<bool>), AgentError> {
     let path = hub.directory.join(format!("{}.jsonl", job.id));
+    let writer_lease = session_writer::WriterLease::acquire(&path)?;
     let (turns, extras) = if path.exists() {
-        journal::load_all(&path)?
+        if job.recovery.is_some() {
+            journal::load_for_recovery(&path)?
+        } else {
+            journal::load_all(&path)?
+        }
     } else {
         let mut file = fs::OpenOptions::new()
             .write(true)
@@ -419,8 +429,51 @@ pub(super) fn worker(
         file.sync_all().map_err(|_| AgentError::storage())?;
         (vec![], journal::Extras::default())
     };
-    let session = worker_session(hub, job, path, turns, extras)?;
+    let retry_turn = turns
+        .last()
+        .filter(|turn| {
+            job.recovery.is_some()
+                && (super::super::resumable_workflow_turn(turn)
+                    || super::super::retryable_without_workflow_checkpoint(turn))
+        })
+        .map(|turn| turn.turn.id.clone());
+    let session = worker_session(hub, job, path, turns, extras, writer_lease)?;
     let content = resume.unwrap_or_else(|| job.prompt.clone());
+    let mcp_intent = hub
+        .manifest
+        .lock()
+        .map_err(|_| AgentError::internal())?
+        .mcp_intent
+        .clone();
+    if let Some(turn_id) = retry_turn {
+        let (signal, uncertain) = session.retry_failed_turn(&turn_id)?;
+        if let Some(uncertain) = uncertain {
+            hub.mutate(|state| {
+                if let Some(checkpoint) = state
+                    .jobs
+                    .get_mut(&job.id)
+                    .and_then(|job| job.recovery.as_mut())
+                {
+                    for tool in uncertain {
+                        if !checkpoint.uncertain_tools.contains(&tool) {
+                            checkpoint.uncertain_tools.push(tool);
+                        }
+                    }
+                }
+                Ok(())
+            })?;
+        }
+        session.update(true, |data| {
+            let current = data.turns.last_mut().unwrap();
+            current.turn.options = job.options.clone();
+            current.mcp_intent = Some(mcp_intent);
+            current.wire.push(json!({
+                "role":"user", "_jarvis_runtime":true,
+                "content":format!("Current coordinator guidance for the same interrupted assignment (not a new user request):\n{content}")
+            }));
+        })?;
+        return Ok((session, signal));
+    }
     let original = hub
         .root
         .data
@@ -431,12 +484,6 @@ pub(super) fn worker(
         .ok_or_else(AgentError::internal)?
         .turn
         .user
-        .clone();
-    let mcp_intent = hub
-        .manifest
-        .lock()
-        .map_err(|_| AgentError::internal())?
-        .mcp_intent
         .clone();
     let wire = format!("Original user request (preserve exact paths, constraints and acceptance; a coordinator cannot silently replace these):\n{original}\n\nNative dispatch from {} (assigned subset of the original request):\n{content}\nBeads: {}\nScope: {}\nAcceptance criteria: {}\nIf the dispatch conflicts with the original request, return the discrepancy to your coordinator before implementing. Return a structured hub_complete handoff when finished.", job.parent_id, job.bead_id.as_deref().unwrap_or("research/planning"), json!(job.scope), json!(job.acceptance));
     let signal = {
@@ -463,15 +510,17 @@ pub(super) fn resume_worker(
             Some("The previous runtime stopped before this worker created a durable turn. Inspect current Beads and project state, then continue the assigned work without assuming that no external state changed.".into()),
         );
     }
+    let writer_lease = session_writer::WriterLease::acquire(&path)?;
     let (turns, extras) = journal::load_for_recovery(&path)?;
     if turns.is_empty() {
+        drop(writer_lease);
         return worker(
             hub,
             job,
             Some("The previous runtime stopped before this worker created a durable turn. Inspect current Beads and project state, then continue the assigned work without assuming that no external state changed.".into()),
         );
     }
-    let session = worker_session(hub, job, path, turns, extras)?;
+    let session = worker_session(hub, job, path, turns, extras, writer_lease)?;
     let (signal, _) = session.resume_interrupted_workflow_turn()?;
     Ok((session, signal))
 }

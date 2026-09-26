@@ -6,6 +6,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
+    time::{Duration, Instant},
 };
 use tokio::sync::watch;
 
@@ -17,6 +18,7 @@ pub(super) enum TurnPhase {
     ExecutingTools,
     WaitingForApproval,
     WaitingForUser,
+    WaitingForAgents,
     Draining,
     Cancelling,
 }
@@ -39,6 +41,8 @@ pub(super) struct ActiveTurn {
     pub id: String,
     pub cancel: watch::Sender<bool>,
     pub phase: TurnPhase,
+    elapsed: Duration,
+    running_since: Option<Instant>,
     mailbox: TurnMailbox,
 }
 
@@ -48,6 +52,8 @@ impl ActiveTurn {
             id,
             cancel,
             phase: TurnPhase::Reserved,
+            elapsed: Duration::ZERO,
+            running_since: None,
             mailbox: TurnMailbox {
                 approval: None,
                 question: None,
@@ -59,11 +65,65 @@ impl ActiveTurn {
     }
 
     pub(super) fn transition(&mut self, phase: TurnPhase) {
+        self.transition_at(phase, Instant::now());
+    }
+
+    fn transition_at(&mut self, phase: TurnPhase, now: Instant) {
+        let running = matches!(
+            phase,
+            TurnPhase::Preparing | TurnPhase::Sampling | TurnPhase::ExecutingTools
+        );
+        self.set_running_at(running, now);
         self.phase = phase;
         if matches!(phase, TurnPhase::Draining | TurnPhase::Cancelling) {
             self.mailbox.accepting_auxiliary = false;
             self.mailbox.delivery = MailboxDelivery::NextTurn;
         }
+    }
+
+    fn set_running_at(&mut self, running: bool, now: Instant) {
+        match (self.running_since, running) {
+            (Some(start), false) => {
+                self.elapsed += now.saturating_duration_since(start);
+                self.running_since = None;
+            }
+            (None, true) => self.running_since = Some(now),
+            _ => {}
+        }
+    }
+
+    pub(super) fn set_delegated_running(&mut self, running: bool) -> bool {
+        if self.phase != TurnPhase::WaitingForAgents || self.running_since.is_some() == running {
+            return false;
+        }
+        self.set_running_at(running, Instant::now());
+        true
+    }
+
+    pub(super) fn doing_work(&self) -> bool {
+        self.phase != TurnPhase::WaitingForAgents && self.running_since.is_some()
+    }
+
+    pub(super) fn with_elapsed(mut self, duration_ms: u64) -> Self {
+        self.elapsed = Duration::from_millis(duration_ms);
+        self
+    }
+
+    pub(super) fn timing(&self) -> (u64, Option<u64>) {
+        (
+            self.elapsed_at(Instant::now()),
+            self.running_since.map(|_| super::now()),
+        )
+    }
+
+    fn elapsed_at(&self, now: Instant) -> u64 {
+        (self.elapsed
+            + self
+                .running_since
+                .map_or(Duration::ZERO, |start| now.saturating_duration_since(start)))
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
     }
 
     pub(super) fn is_waiting(&self) -> bool {
@@ -255,6 +315,28 @@ impl DrainLease {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn execution_clock_excludes_queue_human_wait_and_time_between_retries() {
+        let (cancel, _) = watch::channel(false);
+        let mut active = ActiveTurn::new("turn".into(), cancel).with_elapsed(2_000);
+        let start = Instant::now();
+        let hour = Duration::from_secs(3_600);
+        assert_eq!(active.elapsed_at(start + 9 * hour), 2_000);
+        active.transition_at(TurnPhase::Preparing, start + 9 * hour);
+        active.transition_at(
+            TurnPhase::WaitingForApproval,
+            start + 9 * hour + Duration::from_secs(5),
+        );
+        active.transition_at(TurnPhase::WaitingForUser, start + 10 * hour);
+        assert_eq!(active.elapsed_at(start + 18 * hour), 7_000);
+        active.transition_at(TurnPhase::ExecutingTools, start + 18 * hour);
+        active.transition_at(
+            TurnPhase::Draining,
+            start + 18 * hour + Duration::from_secs(3),
+        );
+        assert_eq!(active.elapsed_at(start + 20 * hour), 10_000);
+    }
 
     #[test]
     fn drain_rejects_new_turns_and_only_starts_when_idle() {

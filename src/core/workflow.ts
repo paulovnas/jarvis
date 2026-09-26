@@ -13,7 +13,7 @@ export const STATUS_LABELS = { queued: "Na fila", running: "Executando", waiting
 export const agentCardSchema = z.object({
   id: z.string(), parentId: z.string().nullable(), role: z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer", "github", "custom"]),
   title: z.string(), status: z.enum(["queued", "running", "waiting", "completed", "blocked", "failed", "cancelled", "interrupted"]),
-  createdAt: z.number(), updatedAt: z.number(), startedAt: z.number(), durationMs: z.number().nonnegative(), currentThought: z.string().nullable(), attempts: z.number(), options: turnOptionsSchema, beadId: z.string().nullable(),
+  createdAt: z.number(), updatedAt: z.number(), startedAt: z.number(), durationMs: z.number().nonnegative(), activeSince: z.number().nullable().optional(), currentThought: z.string().nullable(), attempts: z.number(), options: turnOptionsSchema, beadId: z.string().nullable(),
   handoff: z.object({ verdict: z.enum(["completed", "approved", "rework", "blocked"]), summary: z.string() }).nullable(),
   error: z.string().nullable(), activeTurnId: z.string().nullable(),
   pendingApproval: pendingApprovalSchema.nullable(),

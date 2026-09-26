@@ -866,6 +866,7 @@ fn isolated_worker_journals_keep_role_context_and_permissions_on_recovery() {
         .all(|item| !item.to_string().contains("Private first evidence")));
     assert_ne!(a.journal, b.journal);
     finish(&a, Err(AgentError::cancelled()));
+    drop(a);
     let (resumed, _) = storage::worker(
         &hub,
         &first,

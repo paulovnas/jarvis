@@ -283,6 +283,7 @@ fn harness_evaluation_direct_recovery_preserves_durable_results_and_new_messages
         mcp_intent: None,
         turn: Turn {
             id: "recovered-turn".into(),
+            active_since: None,
             created_at: 1,
             duration_ms: 0,
             user: "Ajuste o layout".into(),
@@ -436,10 +437,11 @@ fn explicit_retry_continues_failed_direct_turn_without_replaying_uncertain_tools
     let session = session(&fixture);
     let mut direct = options(ApprovalMode::Yolo);
     direct.workflow = Some(workflow::Flow::Designer);
-    let failed = StoredTurn {
+    let mut failed = StoredTurn {
         mcp_intent: None,
         turn: Turn {
             id: "failed-turn".into(),
+            active_since: None,
             created_at: 1,
             duration_ms: 3_000,
             user: "Ajuste o layout".into(),
@@ -469,6 +471,11 @@ fn explicit_retry_continues_failed_direct_turn_without_replaying_uncertain_tools
             json!({"type":"function_call","call_id":"write-1","name":"write","arguments":"{}"}),
         ],
     };
+    let evidence = "saved result 🦀\n".repeat(700_000);
+    failed
+        .wire
+        .push(json!({"role":"assistant","content":evidence}));
+    assert!(serde_json::to_vec(&failed).unwrap().len() > 10 * 1024 * 1024);
     journal::append(&session.journal, &failed).unwrap();
     session.data.lock().unwrap().turns.push(failed);
 
@@ -483,8 +490,16 @@ fn explicit_retry_continues_failed_direct_turn_without_replaying_uncertain_tools
     assert_eq!(snapshot.turns[0].status, TurnStatus::Running);
     assert!(snapshot.turns[0].error.is_none());
 
+    // The previous 3s are preserved; the time since created_at (including an
+    // overnight stop) must never be charged to the resumed execution.
+    assert_eq!(snapshot.turns[0].duration_ms, 3_000);
+    assert!(snapshot.turns[0].active_since.is_none());
+    session.transition(turn_state::TurnPhase::Sampling).unwrap();
+    assert!(session.snapshot().unwrap().turns[0].duration_ms < 4_000);
+
     let (stored, _) = journal::read_only(&session.journal).unwrap();
     let retried = stored.last().unwrap();
+    assert!(retried.wire.iter().any(|item| item["content"] == evidence));
     assert_eq!(
         retried
             .wire
@@ -520,6 +535,7 @@ fn explicit_retry_restarts_workflow_preparation_when_no_manifest_was_created() {
         mcp_intent: None,
         turn: Turn {
             id: "planned-turn".into(),
+            active_since: None,
             created_at: 1,
             duration_ms: 500,
             user: "Planeje e implemente".into(),
@@ -559,6 +575,7 @@ fn explicit_retry_restarts_publication_with_current_repository_state() {
         mcp_intent: None,
         turn: Turn {
             id: "publication-turn".into(),
+            active_since: None,
             created_at: 1,
             duration_ms: 500,
             user: "Faça commit, push, PR e merge".into(),
@@ -600,6 +617,7 @@ fn harness_evaluation_coordinated_recovery_pairs_uncertain_tools_without_replay(
         mcp_intent: None,
         turn: Turn {
             id: "workflow-turn".into(),
+            active_since: None,
             created_at: 1,
             duration_ms: 0,
             user: "Execute o fluxo".into(),
@@ -1272,6 +1290,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                 wire: vec![json!({"encrypted_content":"private-replay"})],
                 mcp_intent: None,
                 turn: Turn {
+                    active_since: None,
                     id: "turn".into(),
                     user: "hello".into(),
                     parts: vec![],

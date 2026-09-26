@@ -4,6 +4,7 @@ use super::{
     queue::QueuedMessage,
     AgentError, StoredTurn, TurnStatus,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -17,6 +18,8 @@ use std::{
 };
 
 const MAX_RECORD: usize = 10 * 1024 * 1024;
+// Leave room for base64 and the envelope within the physical record limit.
+const CHUNK_BYTES: usize = MAX_RECORD / 2;
 const FINGERPRINT_WINDOW: u64 = 4 * 1024;
 #[cfg(not(test))]
 const VACUUM_MIN_BYTES: u64 = 16 * 1024 * 1024;
@@ -29,12 +32,23 @@ const UNKNOWN_TOOL_OUTPUT: &str =
     "Execução interrompida; resultado desconhecido. Verifique o estado atual antes de repetir a operação.";
 #[cfg(test)]
 static FAIL_VACUUM_PATH: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+#[cfg(test)]
+static FAIL_APPEND_PATH: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Record {
     pub r#type: String,
     pub version: u8,
     pub data: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordChunk {
+    index: usize,
+    count: usize,
+    digest: [u8; 32],
+    payload: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -205,6 +219,24 @@ pub(super) fn repair_incomplete_tail(path: &Path, known_valid_end: u64) -> Resul
     let valid_end = scan_unlocked(path, known_valid_end, |_, _, _| Ok(()))?;
     if valid_end < file_bytes {
         preserve_and_truncate_unlocked(path, valid_end)?;
+    }
+    Ok(())
+}
+
+// Only the owning writer may discard its unacknowledged suffix before retry.
+// Preserve the bytes first, including a complete record whose fsync failed.
+pub(super) fn rollback_append(path: &Path, start: u64) -> Result<(), AgentError> {
+    let lock = journal_lock(path)?;
+    let _guard = lock.write().map_err(|_| AgentError::internal())?;
+    let length = open(path, false)?
+        .metadata()
+        .map_err(|_| AgentError::storage())?
+        .len();
+    if length < start {
+        return Err(AgentError::storage());
+    }
+    if length > start {
+        preserve_and_truncate_unlocked(path, start)?;
     }
     Ok(())
 }
@@ -427,29 +459,65 @@ fn append_event_unlocked(
 ) -> Result<(), AgentError> {
     let bytes = event_bytes(kind, value)?;
     let mut file = open(path, true)?;
+    #[cfg(test)]
+    {
+        let mut failure = FAIL_APPEND_PATH
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .map_err(|_| AgentError::internal())?;
+        if failure.as_deref() == Some(path) {
+            *failure = None;
+            file.write_all(&bytes[..bytes.len() / 2])
+                .map_err(|_| AgentError::storage())?;
+            return Err(AgentError::storage());
+        }
+    }
     file.write_all(&bytes)
         .and_then(|()| file.sync_all())
         .map_err(|_| AgentError::storage())
 }
 
 fn event_bytes(kind: &str, value: &impl Serialize) -> Result<Vec<u8>, AgentError> {
-    let mut bytes = serde_json::to_vec(&Record {
+    let bytes = encode_record(&Record {
         r#type: kind.into(),
         version: 1,
         data: serde_json::to_value(value).map_err(|_| AgentError::storage())?,
-    })
-    .map_err(|_| AgentError::storage())?;
-    bytes.push(b'\n');
-    if bytes.len() > MAX_RECORD {
-        return Err(AgentError::new(
-            "history_limit",
-            "Esta interação atingiu o limite de histórico local.",
-        ));
+    })?;
+    if bytes.len() <= MAX_RECORD {
+        return Ok(bytes);
     }
+    // Keep one self-contained journal. Index offsets span the complete logical
+    // record; replay exposes it only after all chunks and their digest validate.
+    let digest = Sha256::digest(&bytes).into();
+    let count = bytes.len().div_ceil(CHUNK_BYTES);
+    let mut framed = Vec::new();
+    for (index, payload) in bytes.chunks(CHUNK_BYTES).enumerate() {
+        let chunk = RecordChunk {
+            index,
+            count,
+            digest,
+            payload: BASE64.encode(payload),
+        };
+        let encoded = encode_record(&Record {
+            r#type: "record_chunk".into(),
+            version: 2,
+            data: serde_json::to_value(chunk).map_err(|_| AgentError::storage())?,
+        })?;
+        if encoded.len() > MAX_RECORD {
+            return Err(AgentError::storage());
+        }
+        framed.extend(encoded);
+    }
+    Ok(framed)
+}
+
+fn encode_record(record: &Record) -> Result<Vec<u8>, AgentError> {
+    let mut bytes = serde_json::to_vec(record).map_err(|_| AgentError::storage())?;
+    bytes.push(b'\n');
     Ok(bytes)
 }
 
-// Scan one bounded record at a time. The journal itself can grow beyond memory.
+// Physical reads are bounded. Only the current logical record is assembled.
 pub(super) fn scan(
     path: &Path,
     start: u64,
@@ -550,39 +618,96 @@ fn scan_unlocked(
         .map_err(|_| AgentError::storage())?;
     let mut reader = BufReader::new(file);
     let mut offset = start;
-    loop {
-        let mut line = Vec::new();
-        (&mut reader)
-            .take(MAX_RECORD as u64 + 1)
-            .read_until(b'\n', &mut line)
-            .map_err(|_| AgentError::storage())?;
-        if line.len() > MAX_RECORD {
-            return Err(AgentError::storage());
-        }
-        if !line.ends_with(b"\n") {
-            break;
-        }
-        if offset > 0 {
-            let record: Record = serde_json::from_slice(&line).map_err(|_| {
-                AgentError::new(
-                    "invalid_history",
-                    "O histórico contém um registro inválido. O arquivo original foi preservado.",
-                )
-            })?;
-            if record.version != 1 {
-                return Err(AgentError::storage());
-            }
-            visit(offset, line.len(), record)?;
-        }
-        offset += line.len() as u64;
+    if offset == 0 {
+        let Some(header) = read_line(&mut reader)? else {
+            return Ok(0);
+        };
+        offset = header.len() as u64;
+    }
+    while let Some((length, record)) = read_record(&mut reader)? {
+        visit(offset, length, record)?;
+        offset += length as u64;
     }
     Ok(offset)
 }
 
-pub(super) fn record_at(path: &Path, offset: u64, length: usize) -> Result<Record, AgentError> {
-    if length > MAX_RECORD {
+fn read_line(reader: &mut impl BufRead) -> Result<Option<Vec<u8>>, AgentError> {
+    let mut line = Vec::new();
+    reader
+        .take(MAX_RECORD as u64 + 1)
+        .read_until(b'\n', &mut line)
+        .map_err(|_| AgentError::storage())?;
+    if line.len() > MAX_RECORD {
         return Err(AgentError::storage());
     }
+    Ok(line.ends_with(b"\n").then_some(line))
+}
+
+fn parse_record(bytes: &[u8]) -> Result<Record, AgentError> {
+    serde_json::from_slice(bytes).map_err(|_| {
+        AgentError::new(
+            "invalid_history",
+            "O histórico contém um registro inválido. O arquivo original foi preservado.",
+        )
+    })
+}
+
+fn read_record(reader: &mut impl BufRead) -> Result<Option<(usize, Record)>, AgentError> {
+    let Some(line) = read_line(reader)? else {
+        return Ok(None);
+    };
+    let mut length = line.len();
+    let mut record = parse_record(&line)?;
+    if record.version == 1 {
+        return Ok(Some((length, record)));
+    }
+    let mut bytes = Vec::new();
+    let mut expected = None;
+    for index in 0usize.. {
+        if record.version != 2 || record.r#type != "record_chunk" {
+            return Err(AgentError::storage());
+        }
+        let chunk: RecordChunk =
+            serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+        let (count, digest) = *expected.get_or_insert((chunk.count, chunk.digest));
+        if count < 2 || chunk.index != index || chunk.count != count || chunk.digest != digest {
+            return Err(AgentError::storage());
+        }
+        let payload = BASE64
+            .decode(&chunk.payload)
+            .map_err(|_| AgentError::storage())?;
+        if payload.is_empty()
+            || payload.len() > CHUNK_BYTES
+            || (index + 1 < count && payload.len() != CHUNK_BYTES)
+        {
+            return Err(AgentError::storage());
+        }
+        bytes.extend(payload);
+        if index + 1 == count {
+            let actual: [u8; 32] = Sha256::digest(&bytes).into();
+            if actual != digest {
+                return Err(AgentError::storage());
+            }
+            let record = parse_record(&bytes)?;
+            if record.version != 1 {
+                return Err(AgentError::storage());
+            }
+            return Ok(Some((length, record)));
+        }
+        // A crash may leave complete chunks but no final chunk. The caller's
+        // valid end still points before the entire uncommitted logical record.
+        let Some(line) = read_line(reader)? else {
+            return Ok(None);
+        };
+        length = length
+            .checked_add(line.len())
+            .ok_or_else(AgentError::storage)?;
+        record = parse_record(&line)?;
+    }
+    Err(AgentError::storage())
+}
+
+pub(super) fn record_at(path: &Path, offset: u64, length: usize) -> Result<Record, AgentError> {
     let lock = journal_lock(path)?;
     {
         let _guard = lock.write().map_err(|_| AgentError::internal())?;
@@ -592,10 +717,12 @@ pub(super) fn record_at(path: &Path, offset: u64, length: usize) -> Result<Recor
     let mut file = open(path, false)?;
     file.seek(SeekFrom::Start(offset))
         .map_err(|_| AgentError::storage())?;
-    let mut bytes = vec![0; length];
-    file.read_exact(&mut bytes)
-        .map_err(|_| AgentError::storage())?;
-    serde_json::from_slice(&bytes).map_err(|_| AgentError::storage())
+    let mut reader = BufReader::new(file.take(length as u64));
+    let (read, record) = read_record(&mut reader)?.ok_or_else(AgentError::storage)?;
+    if read != length {
+        return Err(AgentError::storage());
+    }
+    Ok(record)
 }
 
 pub(super) fn load_all(path: &Path) -> Result<(Vec<StoredTurn>, Extras), AgentError> {
@@ -698,6 +825,17 @@ fn read_unlocked(
                     .map(|turn| turn.turn.id.clone())
                     .ok_or_else(AgentError::storage)?;
                 let delta = serde_json::from_value::<TurnDelta>(record.data);
+                // Older versions could time out a writer and resume before its
+                // queue drained. A sealed older turn cannot be reopened by those
+                // late deltas. Keep the raw records, but trust its terminal checkpoint.
+                if delta.as_ref().is_ok_and(|delta| {
+                    delta.turn_id != current_id
+                        && turns.iter().any(|turn| {
+                            turn.turn.id == delta.turn_id && turn.turn.status != TurnStatus::Running
+                        })
+                }) {
+                    return Ok(());
+                }
                 if let Some(damaged) = &damaged_turn {
                     if delta.as_ref().is_ok_and(|delta| delta.turn_id != *damaged) {
                         return Err(AgentError::storage());
@@ -1139,6 +1277,7 @@ pub(super) fn safe_to_resume(turn: &StoredTurn) -> bool {
 pub(super) fn mark_interrupted(turn: &mut StoredTurn) {
     interrupt_tools(turn);
     turn.turn.status = TurnStatus::Interrupted;
+    turn.turn.active_since = None;
     turn.turn.error = Some(AgentError::new(
         "interrupted",
         "O Jarvis foi encerrado durante esta execução. Revise os arquivos antes de continuar; ferramentas não foram repetidas.",
@@ -1155,6 +1294,7 @@ mod tests {
             mcp_intent: None,
             turn: Turn {
                 id: "turn-1".into(),
+                active_since: None,
                 created_at: 1,
                 duration_ms: 0,
                 user: "Read".into(),
@@ -1178,6 +1318,204 @@ mod tests {
                 error: None,
             },
             wire: vec![json!({"role":"user", "content":"Read"})],
+        }
+    }
+
+    fn long_turn() -> StoredTurn {
+        let mut item = turn();
+        let output = "ação 🦀\n\"".repeat(512 * 1024);
+        item.turn.steps.push(Step {
+            tools: vec![ToolCall {
+                id: "confirmed".into(),
+                name: "read".into(),
+                args: json!({"path":"large.txt"}),
+                status: "completed".into(),
+                output: output.clone(),
+                duration_ms: 1,
+            }],
+            ..Step::default()
+        });
+        item.wire.extend([
+            json!({"type":"function_call","call_id":"confirmed","name":"read","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"confirmed","output":output}),
+        ]);
+        assert!(serde_json::to_vec(&item).unwrap().len() > MAX_RECORD);
+        item
+    }
+
+    #[test]
+    fn long_turns_finalize_cancel_and_vacuum_without_losing_results() {
+        for status in [TurnStatus::Completed, TurnStatus::Cancelled] {
+            let fixture = Fixture::new();
+            let path = fixture.root.join("long.jsonl");
+            fs::write(&path, "{}\n").unwrap();
+            let mut item = long_turn();
+            let writer = crate::agent::session_writer::SessionWriter::start(
+                path.clone(),
+                "long".into(),
+                None,
+            )
+            .unwrap();
+            writer.append_turn(item.clone()).unwrap();
+            writer.flush().unwrap();
+            item.turn.status = status;
+            writer.append_turn(item.clone()).unwrap();
+            writer.flush().unwrap();
+            drop(writer);
+            assert!(fs::read(&path)
+                .unwrap()
+                .split_inclusive(|byte| *byte == b'\n')
+                .all(|line| line.len() <= MAX_RECORD));
+            let expected = serde_json::to_value(&item).unwrap();
+            assert_eq!(
+                serde_json::to_value(&load(&path).unwrap()[0]).unwrap(),
+                expected
+            );
+            assert!(compact(&path).unwrap() > 0);
+            assert_eq!(
+                serde_json::to_value(&load(&path).unwrap()[0]).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn large_deltas_and_interrupted_checkpoints_preserve_uncertain_effects() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("long-delta.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        let before = turn();
+        append(&path, &before).unwrap();
+        let mut item = long_turn();
+        // A confirmed result must survive, but an unacknowledged write must
+        // still require inspection before it can be repeated after recovery.
+        item.wire.push(
+            json!({"type":"function_call","call_id":"uncertain","name":"write","arguments":"{}"}),
+        );
+        let (kind, value) = update_event(&before, &item).unwrap().unwrap();
+        assert_eq!(kind, "turn_delta");
+        assert!(serde_json::to_vec(&value).unwrap().len() > MAX_RECORD);
+        append_update(&path, &before, &item).unwrap();
+        let recovered = load_for_recovery(&path).unwrap().0.remove(0);
+        assert_eq!(
+            serde_json::to_value(&recovered).unwrap(),
+            serde_json::to_value(&item).unwrap()
+        );
+        assert_eq!(uncertain_tool_names(&recovered), vec!["write"]);
+        assert!(!safe_to_resume(&recovered));
+        let interrupted = load(&path).unwrap().remove(0);
+        assert_eq!(interrupted.turn.status, TurnStatus::Interrupted);
+        assert_eq!(interrupted.wire, item.wire);
+        assert_eq!(uncertain_tool_names(&interrupted), vec!["write"]);
+        assert_eq!(load(&path).unwrap()[0].wire, item.wire);
+    }
+
+    #[test]
+    fn writer_retries_a_partial_large_append_without_replaying_its_prefix() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("retry-chunks.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        let before = turn();
+        append(&path, &before).unwrap();
+        let writer = crate::agent::session_writer::SessionWriter::start(
+            path.clone(),
+            "retry-chunks".into(),
+            Some(before),
+        )
+        .unwrap();
+        *FAIL_APPEND_PATH
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap() = Some(path.clone());
+        let after = long_turn();
+        writer.append_turn(after.clone()).unwrap();
+        writer.flush().unwrap();
+        assert_eq!(
+            serde_json::to_value(&read_only(&path).unwrap().0[0]).unwrap(),
+            serde_json::to_value(&after).unwrap()
+        );
+        let mut records = 0;
+        scan(&path, 0, |_, _, _| {
+            records += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(records, 2);
+        assert!(fs::read_dir(&fixture.root).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("retry-chunks.recovery-")));
+    }
+
+    #[test]
+    fn incomplete_chunks_recover_at_the_previous_logical_record() {
+        let fixture = Fixture::new();
+        let mut before = turn();
+        before.turn.status = TurnStatus::Completed;
+        let mut after = long_turn();
+        after.turn.status = TurnStatus::Completed;
+        let framed = event_bytes("turn_checkpoint", &after).unwrap();
+        let boundaries: Vec<_> = framed
+            .iter()
+            .enumerate()
+            .filter_map(|(i, byte)| (*byte == b'\n' && i + 1 < framed.len()).then_some(i + 1))
+            .chain(std::iter::once(framed.len() - 1))
+            .collect();
+        for (index, boundary) in boundaries.into_iter().enumerate() {
+            let path = fixture.root.join(format!("torn-{index}.jsonl"));
+            fs::write(&path, "{}\n").unwrap();
+            append(&path, &before).unwrap();
+            let valid_end = fs::metadata(&path).unwrap().len();
+            open(&path, true)
+                .unwrap()
+                .write_all(&framed[..boundary])
+                .unwrap();
+            let original = fs::read(&path).unwrap();
+            assert_eq!(scan(&path, 0, |_, _, _| Ok(())).unwrap(), valid_end);
+            assert_eq!(load(&path).unwrap()[0].wire, before.wire);
+            assert_eq!(fs::metadata(&path).unwrap().len(), valid_end);
+            let prefix = format!("torn-{index}.recovery-");
+            let backup = fs::read_dir(&fixture.root)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|entry| {
+                    entry
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with(&prefix)
+                })
+                .unwrap();
+            assert_eq!(fs::read(backup).unwrap(), original);
+            append(&path, &after).unwrap();
+            assert_eq!(load(&path).unwrap()[0].wire, after.wire);
+        }
+    }
+
+    #[test]
+    fn corrupt_or_reordered_chunks_are_preserved_and_rejected() {
+        let fixture = Fixture::new();
+        let framed = event_bytes("turn_checkpoint", &long_turn()).unwrap();
+        let lines: Vec<_> = framed.split_inclusive(|byte| *byte == b'\n').collect();
+        for corrupt_digest in [false, true] {
+            let path = fixture.root.join(format!("corrupt-{corrupt_digest}.jsonl"));
+            let mut bytes = b"{}\n".to_vec();
+            for line in &lines {
+                let mut record = parse_record(line).unwrap();
+                if corrupt_digest {
+                    // Consistent metadata across chunks still cannot hide a bad payload.
+                    record.data["digest"][0] =
+                        json!((record.data["digest"][0].as_u64().unwrap() + 1) % 256);
+                } else if record.data["index"] == 1 {
+                    record.data["index"] = json!(2);
+                }
+                bytes.extend(encode_record(&record).unwrap());
+            }
+            fs::write(&path, &bytes).unwrap();
+            assert!(load(&path).is_err());
+            assert!(compact(&path).is_err());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
         }
     }
 

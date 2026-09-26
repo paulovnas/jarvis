@@ -433,6 +433,7 @@ mod tests {
             wire: vec![],
             mcp_intent: None,
             turn: Turn {
+                active_since: None,
                 id: "turn".into(),
                 created_at: 1,
                 duration_ms: 0,

@@ -251,7 +251,12 @@ impl PersistedIndex {
     }
 
     fn into_index(self) -> Option<Index> {
-        if self.version != SIDECAR_VERSION || self.fingerprint.length == 0 {
+        if self.version != SIDECAR_VERSION
+            || self.fingerprint.length == 0
+            || self.damaged_turn.is_some()
+        {
+            // Re-evaluate damaged tails from the source journal, including old
+            // indexes poisoned by late writes from a superseded worker.
             return None;
         }
         let end = self.fingerprint.length;
@@ -622,6 +627,16 @@ impl Index {
                     .map(|turn| turn.turn.id.clone())
                     .ok_or_else(AgentError::storage)?;
                 let delta = serde_json::from_value::<journal::TurnDelta>(record.data);
+                // Match journal recovery: late writes from a superseded writer
+                // cannot reopen a sealed turn or corrupt the newer conversation.
+                if delta.as_ref().is_ok_and(|delta| {
+                    delta.turn_id != current_id
+                        && self.entries.iter().any(|entry| {
+                            entry.excerpt.id == delta.turn_id && entry.status != TurnStatus::Running
+                        })
+                }) {
+                    return Ok(());
+                }
                 if let Some(damaged) = &self.damaged_turn {
                     if delta.as_ref().is_ok_and(|delta| delta.turn_id != *damaged) {
                         return Err(AgentError::storage());
@@ -1187,6 +1202,7 @@ impl AgentState {
             }
         }
         let (path, root) = library::agent_location(state, home, id)?;
+        let writer_lease = session_writer::WriterLease::acquire(&path)?;
         let extras = self.histories.with(&path, |index| {
             let mut extras = journal::Extras::default();
             for (name, (offset, length, _)) in &index.files {
@@ -1217,7 +1233,8 @@ impl AgentState {
             diffs::load_legacy(&root, &legacy, &mut extras.files);
             Ok(extras)
         })?;
-        let writer = session_writer::SessionWriter::start(path.clone(), id.into(), None)?;
+        let writer =
+            session_writer::SessionWriter::start_with_lease(writer_lease, id.into(), None)?;
         let file_session = Arc::new(Session {
             id: id.into(),
             journal: path,
@@ -1463,6 +1480,7 @@ mod tests {
             mcp_intent: None,
             turn: Turn {
                 id: format!("t{index}"),
+                active_since: None,
                 created_at: index as u64,
                 duration_ms: 0,
                 user: format!("Pedido {index}"),
@@ -2007,6 +2025,43 @@ mod tests {
     }
 
     #[test]
+    fn late_worker_deltas_preserve_sealed_history_and_the_newer_cancelled_turn() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("late-worker.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        let mut original = stored(0);
+        original.turn.status = TurnStatus::Running;
+        journal::append(&path, &original).unwrap();
+        let mut interrupted = original.clone();
+        journal::mark_interrupted(&mut interrupted);
+        journal::append(&path, &interrupted).unwrap();
+        let mut latest = stored(1);
+        latest.turn.status = TurnStatus::Cancelled;
+        journal::append(&path, &latest).unwrap();
+        let mut late = original.clone();
+        late.turn.steps.push(Step {
+            text: "Late unconfirmed work".into(),
+            ..Step::default()
+        });
+        journal::append_update(&path, &original, &late).unwrap();
+        let bytes = fs::read(&path).unwrap();
+
+        let (turns, _) = journal::read_only(&path).unwrap();
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].turn.status, TurnStatus::Interrupted);
+        assert_eq!(turns[0].turn.steps.len(), original.turn.steps.len());
+        assert_eq!(turns[0].turn.steps[0].text, "Resposta 0");
+        assert_eq!(turns[1].turn.status, TurnStatus::Cancelled);
+        let mut index = Index::default();
+        index.refresh(&path).unwrap();
+        let page = index.page(&path, "conversation", None, None, None).unwrap();
+        assert_eq!(page.turns.len(), 2);
+        assert_eq!(page.turns[1].status, TurnStatus::Cancelled);
+        assert!(index.damaged_turn.is_none());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+
+    #[test]
     fn safe_direct_interruption_is_loaded_for_automatic_recovery() {
         let fixture = Fixture::new();
         let path = fixture.root.join("history.jsonl");
@@ -2269,8 +2324,9 @@ mod tests {
         let path = fixture.root.join("deferred-details.jsonl");
         fs::write(&path, "{}\n").unwrap();
         let mut turn = stored(0);
-        let content = "x".repeat(512 * 1024);
-        let output = "y".repeat(512 * 1024);
+        // A logical checkpoint exceeds the 10 MiB physical record limit.
+        let content = "x".repeat(6 * 1024 * 1024);
+        let output = "y".repeat(6 * 1024 * 1024);
         turn.turn.steps[0].tools.push(ToolCall {
             id: "large-read".into(),
             name: "read".into(),
@@ -2280,11 +2336,13 @@ mod tests {
             duration_ms: 8,
         });
         journal::append(&path, &turn).unwrap();
+        journal::append(&path, &turn).unwrap();
+        journal::append(&path, &stored(1)).unwrap();
         let mut index = Index::default();
         index.refresh(&path).unwrap();
         assert!(index.entries[0].preview.is_some());
 
-        let page = index.page(&path, "chat", None, None, None).unwrap();
+        let page = index.page(&path, "chat", None, None, Some(0)).unwrap();
         let preview = &page.turns[0].steps[0].tools[0];
         assert_eq!(preview.args[DEFERRED_DETAIL_KEY], true);
         assert_eq!(preview.args["path"], "src/large.ts");
@@ -2293,8 +2351,33 @@ mod tests {
         assert!(serde_json::to_vec(&page).unwrap().len() < 16 * 1024);
 
         let detail = index.tool_call(&path, "t0", "large-read").unwrap();
-        assert_eq!(detail.args["content"].as_str().unwrap().len(), 512 * 1024);
-        assert_eq!(detail.output.len(), 512 * 1024);
+        assert_eq!(
+            detail.args["content"].as_str().unwrap().len(),
+            6 * 1024 * 1024
+        );
+        assert_eq!(detail.output.len(), 6 * 1024 * 1024);
+
+        // Reopen the offset index without relying on the in-memory preview.
+        let mut reopened = Index::default();
+        reopened.refresh(&path).unwrap();
+        assert_eq!(
+            reopened
+                .tool_call(&path, "t0", "large-read")
+                .unwrap()
+                .output,
+            detail.output
+        );
+        assert_eq!(reopened.stored_turn(&path, 0).unwrap().turn.id, "t0");
+        reopened.page(&path, "chat", None, None, Some(0)).unwrap();
+        assert!(journal::compact(&path).unwrap() > 0);
+        reopened.refresh(&path).unwrap();
+        assert_eq!(
+            reopened
+                .tool_call(&path, "t0", "large-read")
+                .unwrap()
+                .output,
+            detail.output
+        );
     }
 
     #[test]
@@ -2349,6 +2432,7 @@ mod tests {
         let files = agent.file_session(&state, &fixture.root, &id).unwrap();
         assert!(files.data.lock().unwrap().turns.is_empty());
         assert!(agent.sessions.lock().unwrap().is_empty());
+        drop(files);
         let page = agent
             .history_page(&state, &fixture.root, &id, None, None, Some(3))
             .unwrap();

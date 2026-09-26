@@ -1057,6 +1057,7 @@ fn launch_inner(
         // waiting forever or retain an active runtime after its task has gone.
         let result = tauri::async_runtime::spawn(async move {
             await_admission(&task_hub, &task_job, signal.clone()).await?;
+            task_session.transition(super::super::turn_state::TurnPhase::Preparing)?;
             if let Some(checkpoint) = check_bead(&task_hub, &task_job, None, signal.clone()).await?
             {
                 task_hub.mutate(|state| {
@@ -1187,7 +1188,7 @@ fn settle(
             Err(error) if error.code == "progress_paused" => Status::Interrupted,
             Err(_) => Status::Failed,
         };
-        job.updated_at = now(); job.duration_ms = duration_ms.unwrap_or_else(|| job.updated_at.saturating_sub(original.updated_at)); job.error = result.as_ref().err().map(|error| error.message.clone());
+        job.updated_at = now(); job.duration_ms = duration_ms.unwrap_or(0); job.error = result.as_ref().err().map(|error| error.message.clone());
         job.recovery = result
             .as_ref()
             .err()

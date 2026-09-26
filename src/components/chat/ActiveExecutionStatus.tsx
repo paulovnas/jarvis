@@ -1,4 +1,4 @@
-import { Wifi } from "lucide-react";
+import { Pause, Wifi } from "lucide-react";
 import type { AgentTurn } from "@/core/chat";
 import { Hint } from "@/components/ui/hint";
 import { Spinner } from "@/components/ui/spinner";
@@ -6,13 +6,19 @@ import { executionDuration, formatExecutionDuration, useRunningClock } from "@/h
 import { describeExecution } from "./execution-status";
 
 export function ActiveExecutionStatus({ turn }: { turn: AgentTurn }) {
-  const now = useRunningClock(true);
-  const durationMs = executionDuration(turn.createdAt, turn.durationMs, true, now);
+  const now = useRunningClock(turn.activeSince !== null);
+  const durationMs = executionDuration(turn.createdAt, turn.durationMs, true, now, turn.activeSince);
   const status = describeExecution({
     durationSeconds: Math.floor(durationMs / 1_000),
     retry: turn.steps[turn.steps.length - 1]?.retry,
     steps: turn.steps.map(step => ({ thinking: step.summary, commentary: step.text, tools: step.tools })),
   }, true);
+  const paused = turn.activeSince === null;
+  const waiting = paused || status.waiting;
+  const waitingForAgents = turn.steps[turn.steps.length - 1]?.tools.some(tool => tool.name === "hub_wait" && tool.status === "running");
+  const heading = paused
+    ? !turn.steps.length ? "Preparando execução…" : waitingForAgents ? "Aguardando agentes" : "Aguardando sua resposta"
+    : status.heading;
 
   return <section
     aria-label="Execução em andamento"
@@ -20,12 +26,12 @@ export function ActiveExecutionStatus({ turn }: { turn: AgentTurn }) {
     className="mb-1 flex min-h-8 min-w-0 items-center gap-2 px-3 py-1.5 text-muted-foreground motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200"
   >
     <span aria-hidden="true" className="relative grid size-5 shrink-0 place-items-center">
-      <span className={`absolute inset-1 rounded-full opacity-50 blur-[3px] ${status.retry || status.waiting ? "bg-onedark-yellow" : "bg-primary"}`} />
-      {status.retry ? <Wifi className="relative size-3.5 text-onedark-yellow" /> : <Spinner className={`relative size-3.5 motion-reduce:animate-none ${status.waiting ? "text-onedark-yellow" : "text-primary"}`} />}
+      <span className={`absolute inset-1 rounded-full opacity-50 blur-[3px] ${status.retry || waiting ? "bg-onedark-yellow" : "bg-primary"}`} />
+      {paused ? <Pause className="relative size-3.5 text-onedark-yellow" /> : status.retry ? <Wifi className="relative size-3.5 text-onedark-yellow" /> : <Spinner className={`relative size-3.5 motion-reduce:animate-none ${waiting ? "text-onedark-yellow" : "text-primary"}`} />}
     </span>
-    <Hint content={status.retry?.message ?? status.heading} whenTruncated={!status.retry}>
-      <span role="status" aria-live="polite" aria-atomic="true" className={`min-w-0 flex-1 truncate text-[13px] font-medium ${status.waiting ? "text-onedark-yellow" : "text-foreground/90"} ${!status.waiting && !status.retry ? "reasoning-shimmer" : ""}`}>
-        {status.heading}
+    <Hint content={status.retry?.message ?? heading} whenTruncated={!status.retry}>
+      <span role="status" aria-live="polite" aria-atomic="true" className={`min-w-0 flex-1 truncate text-[13px] font-medium ${waiting ? "text-onedark-yellow" : "text-foreground/90"} ${!waiting && !status.retry ? "reasoning-shimmer" : ""}`}>
+        {heading}
       </span>
     </Hint>
     <span aria-hidden="true" className="hidden h-3 w-px shrink-0 bg-border/70 sm:block" />

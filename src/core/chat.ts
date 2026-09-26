@@ -130,6 +130,7 @@ export const agentStepSchema = z.object({
 });
 export const agentTurnSchema = z.object({
   id: z.string(), createdAt: z.number().nonnegative(), durationMs: z.number().nonnegative(),
+  activeSince: z.number().nonnegative().nullable().optional(),
   user: z.string(), options: turnOptionsSchema,
   parts: z.array(messagePartSchema).default([]),
   contextWindow: z.number().int().positive().nullable().default(null),

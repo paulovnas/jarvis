@@ -1,6 +1,107 @@
 use super::super::tests::{hub, job};
 use super::*;
 
+#[test]
+fn retry_keeps_the_same_worker_turn_and_confirmed_results() {
+    let (_fixture, hub) = hub();
+    let mut worker = job(&hub, Role::Builder, ".");
+    let (session, _) = storage::worker(&hub, &worker, None).unwrap();
+    let original = session.snapshot().unwrap().turns[0].id.clone();
+    session.update(true, |data| {
+        let turn = data.turns.last_mut().unwrap();
+        turn.wire.push(json!({"type":"function_call_output","call_id":"confirmed","output":"Already applied"}));
+        turn.turn.steps.push(Step { text: "Verified existing result".into(), ..Step::default() });
+    }).unwrap();
+    finish(&session, Err(AgentError::internal()));
+    drop(session);
+    worker.recovery = Some(RecoveryCheckpoint::new(vec![]));
+    worker.options.model = "updated-model".into();
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(worker.id.clone(), worker.clone());
+    let (resumed, _) =
+        storage::worker(&hub, &worker, Some("Finish the remaining test".into())).unwrap();
+    let data = resumed.data.lock().unwrap();
+    assert_eq!(data.turns.len(), 1);
+    let turn = &data.turns[0];
+    assert_eq!(turn.turn.id, original);
+    assert_eq!(turn.turn.user, worker.prompt);
+    assert_eq!(turn.turn.options.model, "updated-model");
+    assert_eq!(
+        turn.mcp_intent,
+        Some(hub.manifest.lock().unwrap().mcp_intent.clone())
+    );
+    assert_eq!(turn.turn.steps[0].text, "Verified existing result");
+    assert_eq!(
+        turn.wire
+            .iter()
+            .filter(|item| item["call_id"] == "confirmed")
+            .count(),
+        1
+    );
+    assert!(turn.wire.iter().any(|item| item["_jarvis_runtime"] == true
+        && item["content"]
+            .as_str()
+            .is_some_and(|s| s.contains("Finish the remaining test"))));
+}
+
+#[test]
+fn dependency_failure_does_not_count_queued_hours_as_work() {
+    let (_fixture, hub) = hub();
+    let worker = job(&hub, Role::Designer, ".");
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(worker.id.clone(), worker.clone());
+    let (session, _) = storage::worker(&hub, &worker, None).unwrap();
+    session
+        .data
+        .lock()
+        .unwrap()
+        .turns
+        .last_mut()
+        .unwrap()
+        .turn
+        .created_at = now().saturating_sub(9 * 3_600_000);
+    let result = Err(invalid("Uma dependência não foi concluída com sucesso."));
+    finish(&session, result.clone());
+    let duration = session.snapshot().unwrap().turns[0].duration_ms;
+    settle(&hub, &worker, &result, Some(duration)).unwrap();
+    assert_eq!(duration, 0);
+    assert_eq!(hub.job(&worker.id).unwrap().duration_ms, 0);
+}
+
+#[test]
+fn coordinator_clock_runs_only_while_a_descendant_is_doing_work() {
+    use crate::agent::turn_state::TurnPhase;
+    let (_fixture, hub) = hub();
+    let worker = job(&hub, Role::Builder, ".");
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(worker.id.clone(), worker.clone());
+    let (session, _) = storage::worker(&hub, &worker, None).unwrap();
+    hub.live
+        .lock()
+        .unwrap()
+        .insert(worker.id.clone(), session.clone());
+    hub.root.transition(TurnPhase::WaitingForAgents).unwrap();
+    hub.refresh_waiting_clocks();
+    assert!(hub.root.snapshot().unwrap().turns[0].active_since.is_none());
+    session.transition(TurnPhase::Sampling).unwrap();
+    assert!(hub.root.snapshot().unwrap().turns[0].active_since.is_some());
+    session.transition(TurnPhase::WaitingForApproval).unwrap();
+    assert!(hub.root.snapshot().unwrap().turns[0].active_since.is_none());
+    session.transition(TurnPhase::ExecutingTools).unwrap();
+    assert!(hub.root.snapshot().unwrap().turns[0].active_since.is_some());
+    finish(&session, Err(AgentError::cancelled()));
+    assert!(hub.root.snapshot().unwrap().turns[0].active_since.is_none());
+}
+
 fn planned_flow_evaluation_case() -> Value {
     serde_json::from_str(include_str!(
         "../fixtures/evaluations/movarte-planned-flow.json"
