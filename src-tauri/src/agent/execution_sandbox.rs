@@ -75,9 +75,8 @@ impl SandboxPlan {
         &self.report
     }
 
-    /// A native fallback that can mutate state must bypass YOLO and request an
-    /// informed decision. A previously created matching grant already records
-    /// that decision and is handled by the caller.
+    /// Native execution with material effects needs informed approval in manual
+    /// mode. YOLO preauthorizes it; matching grants are handled by the caller.
     pub(super) fn requires_informed_approval(&self, effects: &ExecutionEffects) -> bool {
         self.report.availability != SandboxAvailability::Full && material_effects(effects)
     }
@@ -189,11 +188,11 @@ fn verify_linux_sandbox(
     if usable {
         plan
     } else {
-        unavailable("O Bubblewrap está instalado, mas não conseguiu iniciar o isolamento neste sistema. O comando será executado nativamente somente após autorização explícita.", effects)
+        unavailable("O Bubblewrap está instalado, mas não conseguiu iniciar o isolamento neste sistema. A execução nativa seguirá o modo de aprovação ativo.", effects)
     }
 }
 
-/// Preserve partial output and request a new, explicitly approved execution.
+/// Preserve partial output and describe recovery under the active approval mode.
 /// A denial can happen after side effects, so recovery never reruns it blindly.
 pub(super) fn command_failure(
     plan: Option<&SandboxPlan>,
@@ -221,9 +220,9 @@ pub(super) fn command_failure(
     }
     let mut retry = args.clone();
     retry["sandboxPermissions"] = "require_escalated".into();
-    let guidance = "O ambiente negou um acesso. Verifique os efeitos já produzidos antes de repetir. Se ainda necessário, solicite a execução com sandboxPermissions=require_escalated e justification; o Jarvis apresentará a aprovação e reutilizará uma autorização compatível.";
+    let guidance = "O ambiente negou um acesso. Verifique os efeitos já produzidos antes de repetir. Se ainda necessário, execute com sandboxPermissions=require_escalated e justification. No modo YOLO, a execução já está autorizada e não exige confirmação; no modo manual, o Jarvis solicitará aprovação quando não houver uma autorização compatível.";
     let mut error = super::AgentError::new("sandbox_denied", &format!("{message}\n{guidance}"));
-    error.tool_result = Some(serde_json::json!({"error":{"code":"sandbox_denied","message":message},"recovery":{"arguments":retry,"requiresApproval":true,"sideEffects":"unknown","instructions":guidance}}).to_string());
+    error.tool_result = Some(serde_json::json!({"error":{"code":"sandbox_denied","message":message},"recovery":{"arguments":retry,"approvalPolicy":"according_to_turn","sideEffects":"unknown","instructions":guidance}}).to_string());
     error
 }
 
@@ -234,7 +233,7 @@ pub(super) fn add_permission_parameters(definition: &mut serde_json::Value) {
     ) {
         return;
     }
-    definition["parameters"]["properties"]["sandboxPermissions"] = serde_json::json!({"type":"string","enum":["use_default","require_escalated"],"description":"Use require_escalated only for a necessary operation blocked by filesystem/network isolation. Requests informed approval for this command; never blindly retry an action whose side effects are uncertain."});
+    definition["parameters"]["properties"]["sandboxPermissions"] = serde_json::json!({"type":"string","enum":["use_default","require_escalated"],"description":"Use require_escalated only for a necessary operation blocked by filesystem/network isolation. YOLO preauthorizes this execution; manual mode requests informed approval unless a matching grant exists. Never blindly retry an action whose side effects are uncertain."});
     definition["parameters"]["properties"]["justification"] = serde_json::json!({"type":"string","minLength":1,"maxLength":1000,"description":"Explain the additional access needed when requesting require_escalated."});
 }
 
@@ -294,15 +293,15 @@ fn prepare_for(
             launcher: Launcher::Native,
         },
         (Platform::Macos, None, _) => unavailable(
-            "O sandbox-exec do macOS não está disponível; o comando será executado nativamente somente após autorização explícita.",
+            "O sandbox-exec do macOS não está disponível; a execução nativa seguirá o modo de aprovação ativo.",
             effects,
         ),
         (Platform::Linux, _, None) => unavailable(
-            "O Bubblewrap (bwrap) não está disponível; o comando será executado nativamente somente após autorização explícita.",
+            "O Bubblewrap (bwrap) não está disponível; a execução nativa seguirá o modo de aprovação ativo.",
             effects,
         ),
         (Platform::Other, _, _) => unavailable(
-            "Este sistema não possui um adaptador de sandbox do Jarvis; efeitos externos exigem autorização explícita.",
+            "Este sistema não possui um adaptador de sandbox do Jarvis; a execução nativa seguirá o modo de aprovação ativo.",
             effects,
         ),
     }
@@ -945,7 +944,7 @@ mod tests {
     }
 
     #[test]
-    fn denied_execution_preserves_output_and_requests_review_instead_of_repeating() {
+    fn denied_execution_preserves_output_and_recovers_under_the_active_approval_mode() {
         let directory = tempfile::tempdir().unwrap();
         let policy = command_policy("bash", "npm test", directory.path());
         let plan = prepare_for(
@@ -966,6 +965,8 @@ mod tests {
         let result: serde_json::Value =
             serde_json::from_str(error.tool_result.as_deref().unwrap()).unwrap();
         assert_eq!(result["recovery"]["sideEffects"], "unknown");
+        assert_eq!(result["recovery"]["approvalPolicy"], "according_to_turn");
+        assert!(result["recovery"].get("requiresApproval").is_none());
         assert_eq!(
             result["recovery"]["arguments"]["sandboxPermissions"],
             "require_escalated"

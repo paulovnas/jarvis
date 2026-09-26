@@ -977,12 +977,12 @@ async fn an_approved_decision_creates_a_reusable_project_grant() {
 }
 
 #[tokio::test]
-async fn ownership_sensitive_actions_still_prompt_in_automatic_mode() {
+async fn terminal_control_is_preapproved_in_yolo_and_waits_in_manual_mode() {
     let fixture = Fixture::new();
     let session = session(&fixture);
-    let automatic = options(ApprovalMode::Yolo);
+    let manual = options(ApprovalMode::Manual);
     let signal = session
-        .reserve("Fechar terminal".into(), automatic.clone())
+        .reserve("Fechar terminal".into(), manual.clone())
         .unwrap();
     let tool = ToolCall {
         id: "terminal-close".into(),
@@ -992,8 +992,16 @@ async fn ownership_sensitive_actions_still_prompt_in_automatic_mode() {
         output: String::new(),
         duration_ms: 0,
     };
-    let (task_session, task_tool, task_options) =
-        (session.clone(), tool.clone(), automatic.clone());
+    let automatic = options(ApprovalMode::Yolo);
+    assert!(tokio::time::timeout(
+        Duration::from_secs(1),
+        authorize_with_policy(&session, &tool, &automatic, false, true, signal.clone()),
+    )
+    .await
+    .expect("YOLO must not wait for terminal approval")
+    .unwrap());
+    assert!(session.snapshot().unwrap().pending_approval.is_none());
+    let (task_session, task_tool, task_options) = (session.clone(), tool.clone(), manual);
     let pending = tokio::spawn(async move {
         authorize_with_policy(
             &task_session,
@@ -1016,6 +1024,111 @@ async fn ownership_sensitive_actions_still_prompt_in_automatic_mode() {
     let turn = session.snapshot().unwrap().active_turn_id.unwrap();
     answer_approval(&session, &turn, &tool.id, true).unwrap();
     assert!(pending.await.unwrap().unwrap());
+    assert!(session.snapshot().unwrap().pending_approval.is_none());
+}
+
+#[tokio::test]
+async fn yolo_executes_native_sandbox_recovery_without_waiting_for_permission() {
+    for executor in [
+        crate::claude::Executor::Jarvis,
+        crate::claude::Executor::Claude,
+    ] {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        let mut automatic = options(ApprovalMode::Yolo);
+        automatic.executor = executor;
+        let signal = session
+            .reserve("Executar".into(), automatic.clone())
+            .unwrap();
+        let tool = ToolCall {
+            id: "native-recovery".into(),
+            name: "bash".into(),
+            args: json!({
+                "command": if cfg!(windows) {
+                    "Set-Content -Encoding utf8 result.txt yolo"
+                } else {
+                    "echo yolo > result.txt"
+                },
+                "sandboxPermissions": "require_escalated",
+                "justification": "A verificação precisa executar nativamente."
+            }),
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        let catalog = tool_contract::Catalog::new(&tools::definitions(Mode::Build));
+        catalog.validate(&tool).unwrap();
+        let prepared = tool_contract::PreparedTool {
+            capabilities: catalog.capabilities(&tool.name).unwrap(),
+            handler: tool_contract::Handler::Native,
+        };
+        let policy = execution_policy::inspect_tool(&fixture.root, &tool, prepared.capabilities)
+            .unwrap()
+            .unwrap();
+        let sandbox = execution_sandbox::prepare(&policy).unwrap();
+        assert_eq!(
+            policy.outcome.decision,
+            execution_policy::ExecutionDecision::Ask
+        );
+        assert!(sandbox.requires_informed_approval(&policy.outcome.effects));
+        assert!(tokio::time::timeout(
+            Duration::from_secs(1),
+            authorize_prepared(
+                ApprovalRequest {
+                    session: &session,
+                    tool: &tool,
+                    options: &automatic,
+                    policy: Some(policy),
+                    sandbox: Some(&sandbox),
+                    project_id: Some("project"),
+                    signal: signal.clone(),
+                },
+                prepared,
+                false,
+                true,
+                true,
+            ),
+        )
+        .await
+        .expect("YOLO must not wait for native execution approval")
+        .unwrap());
+        assert!(session.snapshot().unwrap().pending_approval.is_none());
+        tools::execute_with_revision_sandboxed(
+            &fixture.root,
+            &tool,
+            Mode::Build,
+            Some(&sandbox),
+            signal,
+        )
+        .await
+        .unwrap();
+        assert!(fs::read_to_string(fixture.root.join("result.txt"))
+            .unwrap()
+            .contains("yolo"));
+    }
+}
+
+#[tokio::test]
+async fn yolo_does_not_override_cancellation() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let automatic = options(ApprovalMode::Yolo);
+    session
+        .reserve("Executar".into(), automatic.clone())
+        .unwrap();
+    let (_sender, signal) = watch::channel(true);
+    let tool = ToolCall {
+        id: "cancelled-command".into(),
+        name: "bash".into(),
+        args: json!({"command":"echo cancelled"}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    let error = authorize_with_policy(&session, &tool, &automatic, false, true, signal)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "cancelled");
     assert!(session.snapshot().unwrap().pending_approval.is_none());
 }
 

@@ -7,14 +7,12 @@ Research tracking: `jarvis-fs3f`.
 
 Add **Claude as an execution backend for a Jarvis agent**, initially by running the official, unmodified Claude Code CLI from Rust. Keep the agent's role, instructions, project, conversation, and workflow assignment in Jarvis. Let Claude own its inference/tool loop and upstream conversation context.
 
-The intended selection is:
+The unified provider selection is:
 
 ```text
 Agent: Designer
-Execute with: Jarvis | Claude
-
-Jarvis selected: provider account → model → supported effort
-Claude selected: local Claude connection → model → supported effort
+Provider: API account | Claude Code (one local installation)
+Model → supported effort
 ```
 
 This also applies to Github, user-created agents, and workflow assignments. Selecting Claude should not replace the Designer role with a generic chat or require a fake Anthropic provider account in Jarvis.
@@ -25,7 +23,7 @@ The research below informed the implementation described in the delivery section
 
 ## Implementation delivery
 
-The executor selector is now separate from provider accounts in the composer, native agent profiles, custom agents and workflows. Existing records default to Jarvis. Claude selections preserve model/effort through workflow dispatch, publication workers, retry, queues, assisted authoring and settings backup/import. The onboarding can use an authenticated Claude installation without requiring a second API provider.
+Claude Code appears once in Providers settings and in the shared provider/model picker for the composer, native agent profiles, custom agents and workflows. The separate executor menu was removed; the execution route remains explicit in persisted choices. The local provider card shows installation/login status and offers catalog refresh, provider activation and model visibility. These preferences are stored with system settings, participate in backup/import and update all selectors without changing native CLI credentials. Existing records default to Jarvis, and existing Claude selections remain valid with default preferences. The onboarding uses the same provider list and can finish with an authenticated Claude installation alone.
 
 `src-tauri/src/claude` launches the official CLI with structured JSON streams. Authentication remains with that CLI. The status dialog provides installation/login guidance and refreshes its reported model catalog. Initialization-only discovery was qualified against **Claude Code 2.1.250**, including SDK MCP callbacks and live model effort capabilities; no user prompt or inference was sent during that check.
 
@@ -86,6 +84,33 @@ Zed's current documentation makes the same product distinction: external agents 
 Sources: [ACP introduction](https://agentclientprotocol.com/overview/introduction), [Claude ACP adapter](https://github.com/agentclientprotocol/claude-agent-acp), [Zed external agents](https://zed.dev/docs/ai/external-agents), [Claude SDK overview](https://code.claude.com/docs/en/agent-sdk).
 
 ## Authentication and subscription boundaries
+
+### Native quota status (implemented)
+
+The status bar reuses the existing quota display for Claude Code. An isolated,
+non-persistent native process receives `initialize` followed by `get_usage`; it
+receives no user prompt and has no tools, MCP servers or hooks. Authentication and
+the quota request stay inside the unmodified CLI. Jarvis does not read credentials
+or call Anthropic's OAuth usage endpoint itself.
+
+The structured native control was verified with Claude Code **2.1.250**, returning
+`rate_limits_available: false` in the local unauthenticated environment without
+inference. Subscription values are covered by protocol fixtures; a signed-in plan
+quota reading still needs native acceptance. Its response
+is experimental: Jarvis validates `rate_limits_available` and the returned buckets,
+shows unsupported/failed queries explicitly, and never substitutes session token
+counts or costs for subscription quota. Unsupported older CLIs need updating.
+The shared display shows remaining percentages, reset dates, and supplied model/app
+windows. Queries are single-flight and cached for 60 seconds, including failures;
+transient failures retain the last reading as stale. Native status/model refresh
+invalidates this cache. API/third-party modes without subscription quotas clear old
+windows. The provider's visibility preference is included in settings backup/import.
+
+References: Codex's status surfaces select only reported quota windows; OMP's Claude
+usage parser preserves separate session, weekly and model-scoped limits. OMP's direct
+credential-based HTTP strategy is not used here because Jarvis delegates Claude
+authentication to the native runtime. OpenCode/OpenDesign's session token/cost data
+is a different metric and is not repurposed as remaining plan quota.
 
 The current Anthropic documentation explicitly describes running the **unmodified Claude Code binary** in another product, with users authenticating through Anthropic's own flow and being billed under their own agreement. It also says the host must not remove or restrict the binary's authentication methods, intermediate credentials or usage, or misrepresent the product as Anthropic's.
 

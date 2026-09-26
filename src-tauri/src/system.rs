@@ -199,6 +199,7 @@ pub struct Preferences {
     pub ask_user_timeout_seconds: u16,
     pub(crate) response_language: ResponseLanguage,
     pub(crate) terminal: TerminalPreferences,
+    pub(crate) claude: crate::claude::ProviderPreferences,
 }
 
 impl Default for Preferences {
@@ -209,6 +210,7 @@ impl Default for Preferences {
             ask_user_timeout_seconds: DEFAULT_ASK_USER_TIMEOUT_SECONDS,
             response_language: ResponseLanguage::default(),
             terminal: TerminalPreferences::default(),
+            claude: crate::claude::ProviderPreferences::default(),
         }
     }
 }
@@ -219,6 +221,7 @@ impl Preferences {
             return Err("O tempo das perguntas deve ficar entre 1 e 3.600 segundos.".into());
         }
         self.terminal.validate()?;
+        self.claude.validate()?;
         Ok(())
     }
 }
@@ -355,6 +358,10 @@ pub struct SystemState {
     edit: tokio::sync::Mutex<()>,
 }
 impl SystemState {
+    pub(crate) fn claude_preferences(&self) -> Result<crate::claude::ProviderPreferences, String> {
+        Ok(self.preferences()?.claude)
+    }
+
     fn preferences(&self) -> Result<Preferences, String> {
         let store = self
             .store
@@ -636,6 +643,34 @@ pub(crate) fn notify_usage_limit(app: &tauri::AppHandle, title: &str, body: &str
 #[tauri::command]
 pub fn get_system_preferences(state: tauri::State<'_, SystemState>) -> Result<Snapshot, String> {
     state.snapshot()
+}
+
+#[tauri::command]
+pub(crate) async fn save_claude_provider_preferences(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SystemState>,
+    mut preferences: crate::claude::ProviderPreferences,
+) -> Result<crate::claude::ProviderPreferences, String> {
+    preferences.validate()?;
+    preferences.disabled_models.sort();
+    preferences.disabled_models.dedup();
+    let _edit = state.edit.lock().await;
+    {
+        let mut store = state
+            .store
+            .lock()
+            .map_err(|_| "Preferências indisponíveis.")?;
+        let store = store
+            .as_mut()
+            .ok_or("Preferências ainda não carregadas.")?
+            .as_mut()
+            .map_err(|error| error.clone())?;
+        let mut next = store.preferences.clone();
+        next.claude = preferences.clone();
+        store.save(next)?;
+    }
+    state.changed(&app);
+    Ok(preferences)
 }
 
 #[tauri::command]

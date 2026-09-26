@@ -103,7 +103,7 @@ it("onboards with the authenticated Claude CLI without creating a provider accou
   invokeMock.mockImplementation(async command => {
     if (command === "get_core_status" || command === "check_core_updates") return coreFixture();
     if (command === "get_optional_tools_status") return optionalTools;
-    if (command === "get_claude_runtime") return { installed: true, authenticated: true, version: "2", error: null, models: [{ id: "default", name: "Padrão do Claude", description: "", reasoningLevels: [], defaultReasoning: null }] };
+    if (command === "get_claude_runtime" || command === "refresh_claude_runtime") return { installed: true, authenticated: true, version: "2", error: null, models: [{ id: "default", name: "Padrão do Claude", description: "", reasoningLevels: [], defaultReasoning: null }] };
     return [];
   });
   const user = userEvent.setup(); const complete = vi.fn().mockResolvedValue(undefined);
@@ -114,7 +114,10 @@ it("onboards with the authenticated Claude CLI without creating a provider accou
   await screen.findByRole("heading", { name: "Complete seu ambiente" });
   await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Avançar" }));
-  await user.click(await screen.findByRole("tab", { name: "Claude Code" }));
+  expect(screen.queryByRole("tab", { name: "Claude Code" })).not.toBeInTheDocument();
+  await user.click(await screen.findByRole("button", { name: "Detalhes de Claude Code" }));
+  await user.click(await screen.findByRole("button", { name: "Atualizar status e modelos" }));
+  await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Avançar" }));
   await user.click(screen.getByRole("button", { name: "Começar" }));

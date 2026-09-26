@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn claude_provider_preferences_survive_restart_and_preserve_legacy_choices() {
+    let home = tempfile::tempdir().unwrap();
+    let path = crate::data_dir::root(home.path()).join("system.json");
+    let legacy: Preferences = serde_json::from_str(r#"{"notifications":false}"#).unwrap();
+    assert!(legacy.claude.allows("sonnet"));
+    assert!(legacy.claude.show_usage);
+    let mut store = Store::open(path.clone()).unwrap();
+    let mut preferences = legacy;
+    preferences.claude.disabled_models = vec!["opus".into()];
+    preferences.claude.show_usage = false;
+    store.save(preferences.clone()).unwrap();
+    assert_eq!(
+        Store::open(path.clone()).unwrap().preferences.claude,
+        preferences.claude
+    );
+    assert!(crate::claude::validate_available_model(home.path(), "sonnet").is_ok());
+    assert!(crate::claude::validate_available_model(home.path(), "opus")
+        .unwrap_err()
+        .contains("Disponibilize"));
+    preferences.claude.enabled = false;
+    store.save(preferences.clone()).unwrap();
+    assert!(
+        crate::claude::validate_available_model(home.path(), "sonnet")
+            .unwrap_err()
+            .contains("Ative")
+    );
+    preferences.claude.disabled_models = vec!["--invalid".into()];
+    assert!(store.save(preferences).is_err());
+    assert_eq!(
+        Store::open(path)
+            .unwrap()
+            .preferences
+            .claude
+            .disabled_models,
+        ["opus"]
+    );
+    assert!(
+        serde_json::from_str::<crate::claude::ProviderPreferences>(r#"{"alias":"second"}"#)
+            .is_err()
+    );
+}
+
+#[test]
 fn terminal_fonts_prioritize_nerd_fonts_and_report_missing_configurations() {
     let fonts = order_terminal_fonts([
         "Menlo".to_string(),
@@ -83,6 +126,7 @@ fn preferences_restore_all_modes_without_touching_layout() {
                 ResponseLanguage::PortugueseBrazil
             },
             terminal: TerminalPreferences::default(),
+            claude: crate::claude::ProviderPreferences::default(),
         };
         store.save(preferences.clone()).unwrap();
         assert_eq!(Store::open(path.clone()).unwrap().preferences, preferences);
@@ -113,6 +157,7 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
             ask_user_timeout_seconds: 30,
             response_language: ResponseLanguage::Spanish,
             terminal: TerminalPreferences::default(),
+            claude: crate::claude::ProviderPreferences::default(),
         })
         .is_err());
     assert_eq!(store.preferences, Preferences::default());

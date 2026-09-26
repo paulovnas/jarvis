@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::{path::Path, time::Duration};
 use tokio::io::BufReader;
 
-fn fixture(script: &str) -> ClaudeProcess {
+pub(super) fn fixture(script: &str) -> ClaudeProcess {
     let mut command = crate::background::tokio_command("node");
     command.args(["-e", script]);
     transport::ClaudeProcess::spawn_command(command, vec![]).unwrap()
@@ -115,6 +115,7 @@ fn metadata_catalog_uses_reported_models_effort_and_safe_account_fields() {
     assert_eq!(models[1].default_reasoning.as_deref(), Some("high"));
     assert!(models[2].reasoning_levels.is_empty());
     let mut status = metadata::RuntimeStatus {
+        preferences: ProviderPreferences::default(),
         installed: true,
         authenticated: false,
         version: None,

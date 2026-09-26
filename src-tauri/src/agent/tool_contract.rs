@@ -16,6 +16,7 @@ pub(super) enum Effect {
 pub(super) enum ApprovalPolicy {
     Never,
     AccordingToTurn,
+    /// Also prompts in Plan mode; YOLO still preauthorizes execution.
     Always,
 }
 

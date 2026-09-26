@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 mod metadata;
 mod transport;
+mod usage;
 
 pub(crate) use metadata::{ClaudeState, RuntimeStatus};
 pub(crate) use transport::{ClaudeProcess, RunOptions};
@@ -10,15 +11,82 @@ pub(crate) use transport::{ClaudeProcess, RunOptions};
 #[tauri::command]
 pub(crate) async fn get_claude_runtime(
     state: tauri::State<'_, ClaudeState>,
+    system: tauri::State<'_, crate::system::SystemState>,
 ) -> Result<RuntimeStatus, String> {
-    Ok(metadata::cached(&state, false).await)
+    let mut status = metadata::cached(&state, false).await;
+    status.preferences = system.claude_preferences()?;
+    Ok(status)
 }
 
 #[tauri::command]
 pub(crate) async fn refresh_claude_runtime(
     state: tauri::State<'_, ClaudeState>,
+    system: tauri::State<'_, crate::system::SystemState>,
 ) -> Result<RuntimeStatus, String> {
-    Ok(metadata::cached(&state, true).await)
+    *state.usage.lock().await = usage::Cache::default();
+    let mut status = metadata::cached(&state, true).await;
+    status.preferences = system.claude_preferences()?;
+    Ok(status)
+}
+
+#[tauri::command]
+pub(crate) async fn get_claude_usage(
+    state: tauri::State<'_, ClaudeState>,
+    system: tauri::State<'_, crate::system::SystemState>,
+) -> Result<crate::openai_codex::usage::AccountUsage, String> {
+    if !system.claude_preferences()?.enabled {
+        return Err("Ative o Claude Code em Configurações → Provedores.".into());
+    }
+    Ok(usage::cached(&state).await)
+}
+
+/// One local CLI installation, independent of API account credentials.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub(crate) struct ProviderPreferences {
+    pub enabled: bool,
+    pub show_usage: bool,
+    pub disabled_models: Vec<String>,
+}
+
+impl Default for ProviderPreferences {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            show_usage: true,
+            disabled_models: Vec::new(),
+        }
+    }
+}
+
+impl ProviderPreferences {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.disabled_models.len() > 256 {
+            return Err("Selecione até 256 modelos do Claude Code.".into());
+        }
+        for model in &self.disabled_models {
+            validate_selection(model, None)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn allows(&self, model: &str) -> bool {
+        self.enabled && !self.disabled_models.iter().any(|id| id == model)
+    }
+}
+
+pub(crate) fn validate_available_model(home: &std::path::Path, model: &str) -> Result<(), String> {
+    let preferences = crate::system::backup_preferences(home)?.claude;
+    if !preferences.enabled {
+        return Err("Ative o Claude Code em Configurações → Provedores.".into());
+    }
+    if !preferences.allows(model) {
+        return Err(
+            "Disponibilize este modelo do Claude Code em Configurações → Provedores.".into(),
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]

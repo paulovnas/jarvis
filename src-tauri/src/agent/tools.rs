@@ -1,4 +1,4 @@
-use super::{cancelled, AgentError, Mode, ToolCall};
+use super::{cancelled, AgentError, ApprovalMode, Mode, ToolCall};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 #[cfg(test)]
@@ -86,7 +86,7 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
             definition("write", "Create or replace a UTF-8 project file atomically. Read existing files first. Content is the complete new file.", json!({"path":string,"content":string}), &["path","content"]),
             definition("edit", "Replace exactly one unique occurrence in a UTF-8 project file. oldText must be nonempty and match exactly once.", json!({"path":string,"oldText":string,"newText":string}), &["path","oldText","newText"]),
             super::patch::definition(),
-            definition("bash", &format!("Start a noninteractive command owned by this execution. Returns status, incremental output, sessionId and cursor. Use workdir (relative to the project root) for nested repositories instead of shell cd chains. {} The initial wait yields after yieldTimeMs (default 1000, max 30000); the command stays alive. Use bash_wait with the returned sessionId to await more output or completion, and bash_cancel when no longer needed. Do not restart a running command. Up to eight commands may run together. On turn cancellation, their process trees are stopped. Output is bounded with a truncation indicator; use Context-mode for large analysis. Jarvis inspects effects before execution and applies the strongest OS sandbox available. Project scripts, tests, builds and opaque commands include potential network access (including localhost) in admission; the active approval mode and scoped grants govern execution. Read-only commands remain network-isolated. Destructive actions and native fallbacks require authorization; external paths and require_escalated requests open an informed approval for the exact command. Never blindly repeat an operation with uncertain effects.", super::shell::prompt()), json!({"command":string,"workdir":{"type":"string","description":"Existing directory inside the project; defaults to '.'"},"yieldTimeMs":{"type":"integer","minimum":1,"maximum":30000},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120,"description":"Legacy initial wait; now yields a session instead of killing the command. Prefer yieldTimeMs."}}), &["command"]),
+            definition("bash", &format!("Start a noninteractive command owned by this execution. Returns status, incremental output, sessionId and cursor. Use workdir (relative to the project root) for nested repositories instead of shell cd chains. {} The initial wait yields after yieldTimeMs (default 1000, max 30000); the command stays alive. Use bash_wait with the returned sessionId to await more output or completion, and bash_cancel when no longer needed. Do not restart a running command. Up to eight commands may run together. On turn cancellation, their process trees are stopped. Output is bounded with a truncation indicator; use Context-mode for large analysis. Jarvis inspects effects before execution and applies the strongest OS sandbox available. Project scripts, tests, builds and opaque commands include potential network access (including localhost) in admission; the active approval mode and scoped grants govern execution. Read-only commands remain network-isolated. YOLO preauthorizes command execution, including destructive actions, external paths and require_escalated native fallback; manual mode requests approval when needed. Never blindly repeat an operation with uncertain effects.", super::shell::prompt()), json!({"command":string,"workdir":{"type":"string","description":"Existing directory inside the project; defaults to '.'"},"yieldTimeMs":{"type":"integer","minimum":1,"maximum":30000},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120,"description":"Legacy initial wait; now yields a session instead of killing the command. Prefer yieldTimeMs."}}), &["command"]),
         ]);
     }
     tools
@@ -101,7 +101,7 @@ pub(super) fn definition(
     super::execution_sandbox::add_permission_parameters(&mut definition);
     definition
 }
-pub(super) fn instructions(root: &Path, mode: Mode) -> String {
+pub(super) fn instructions(root: &Path, mode: Mode, approval_mode: ApprovalMode) -> String {
     let scope = if mode == Mode::Plan {
         "Plan mode: read and analyze only. Do not edit files or execute commands. Present a plan when useful."
     } else {
@@ -128,6 +128,10 @@ pub(super) fn instructions(root: &Path, mode: Mode) -> String {
             instructions.extend(text.chars().take(24_000));
         }
     }
+    instructions.push_str(match approval_mode {
+        ApprovalMode::Yolo => "\nExecution approval mode: YOLO. The user has preauthorized tool execution needed for their request, including commands, network access, native execution outside isolation and terminal cleanup. Call the tools directly without asking permission or waiting for reconfirmation. Preserve the user's scope, explicit constraints and configured review/validation steps. Use ask_user only for unresolved decisions that materially affect the requested outcome.\n",
+        ApprovalMode::Manual => "\nExecution approval mode: manual. Call the necessary tools; Jarvis presents execution approval when required. Do not duplicate that approval in chat or ask_user.\n",
+    });
     instructions
 }
 
@@ -915,7 +919,7 @@ mod tests {
     #[test]
     fn agent_instructions_bound_repeated_discovery_without_imposing_a_step_limit() {
         let fixture = Fixture::new();
-        let mut prompt = instructions(&fixture.root, Mode::Build);
+        let mut prompt = instructions(&fixture.root, Mode::Build, ApprovalMode::Yolo);
         append_response_language(&mut prompt, crate::system::ResponseLanguage::English);
         assert!(prompt.contains("Reuse Context-mode recall and excerpts already read"));
         assert!(prompt.contains("do not reread unchanged ranges"));
@@ -927,6 +931,17 @@ mod tests {
         assert!(prompt.contains("Use English for user-facing prose"));
         assert!(!prompt.contains("Respond in Brazilian Portuguese"));
         assert!(prompt.ends_with("unless the user explicitly requests another language.\n"));
+    }
+    #[test]
+    fn instructions_keep_the_active_execution_approval_mode_explicit() {
+        let fixture = Fixture::new();
+        let automatic = instructions(&fixture.root, Mode::Build, ApprovalMode::Yolo);
+        assert!(automatic.contains("Execution approval mode: YOLO"));
+        assert!(automatic.contains("without asking permission or waiting for reconfirmation"));
+        assert!(automatic.contains("configured review/validation steps"));
+        let manual = instructions(&fixture.root, Mode::Build, ApprovalMode::Manual);
+        assert!(manual.contains("Execution approval mode: manual"));
+        assert!(!manual.contains("The user has preauthorized"));
     }
     #[tokio::test]
     async fn shell_reports_command_output_within_the_project() {

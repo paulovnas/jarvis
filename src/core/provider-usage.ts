@@ -31,7 +31,7 @@ export function planLabel(plan: string | null | undefined, accountType: string) 
     const value = plan.toLowerCase();
     if (value.includes("business")) return "Business";
     if (value.includes("enterprise")) return "Enterprise";
-    const known: Record<string, string> = { plus: "Plus", pro: "Pro", free: "Grátis", team: "Team", prolite: "Pro Lite", "g1-pro-tier": "Google AI Pro", "g1-ultra-tier": "Google AI Ultra", "free-tier": "Grátis" };
+    const known: Record<string, string> = { plus: "Plus", pro: "Pro", max: "Max", free: "Grátis", team: "Team", prolite: "Pro Lite", "g1-pro-tier": "Google AI Pro", "g1-ultra-tier": "Google AI Ultra", "free-tier": "Grátis" };
     return known[value] ?? plan;
   }
   return ({ personal: "Pessoal", enterprise: "Enterprise" } as Record<string, string>)[accountType] ?? "Não informado";

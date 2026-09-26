@@ -10,6 +10,7 @@ import { emptyLibrary } from "@/test/library-fixtures";
 import { StatusBar } from "./StatusBar";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@/hooks/use-claude-runtime", () => ({ useClaudeRuntime: () => ({ data: null }) }));
 const call = vi.mocked(invoke);
 const account: ProviderAccount = { alias: "openai-codex-paulo", providerKind: "openai-codex", enabled: true, createdAt: 1, email: "paulo@example.test", accountType: "personal", models: [], modelsAvailable: true };
 const report = (alias: string): AccountUsage => ({ alias, fetchedAt: Date.now(), email: account.email, plan: "pro", error: null, resetCredits: { availableCount: 1, expirations: [Date.now() + 86400_000], detailsAvailable: true }, windows: [{ id: "weekly", group: "Codex", thirdParty: false, label: "7d", durationSeconds: 604800, remainingPercent: 36, resetsAt: Date.now() + 60_000 }] });

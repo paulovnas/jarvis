@@ -15,25 +15,41 @@ beforeEach(() => {
   runtime.loading = false; runtime.error = null; runtime.refresh.mockClear();
 });
 
-it("switches executor explicitly and exposes the CLI model effort catalog", async () => {
+it("selects Claude and native providers through the same menu and preserves their execution routes", async () => {
   const user = userEvent.setup(); const selected = vi.fn();
   function Picker() {
     const [selection, setSelection] = useState<ModelSelection>({ model: "account/native", reasoning: null });
     return <ExecutorModelPicker selection={selection} onSelect={next => { selected(next); setSelection(next); }} modelGroups={[{ provider: "account", models: [{ value: "account/native", label: "Native", reasoningLevels: [], defaultReasoningLevel: null }] }]} />;
   }
   render(<Picker />);
-  expect(screen.getByRole("button", { name: "Executor · chat" })).toHaveTextContent("Jarvis");
-  screen.getByRole("button", { name: "Executor · chat" }).focus();
-  await user.keyboard("{Enter}");
-  await user.click(await screen.findByRole("menuitem", { name: "Claude" }));
-  expect(selected).toHaveBeenLastCalledWith({ executor: "claude", model: "sonnet", reasoning: "high" });
+  expect(screen.queryByRole("button", { name: /Executor/ })).not.toBeInTheDocument();
   const trigger = screen.getByRole("button", { name: "Selecionar modelo de IA" });
-  expect(trigger).toHaveTextContent("Claude Sonnet · Alto");
   trigger.focus(); await user.keyboard("{Enter}");
+  expect(await screen.findByRole("menuitem", { name: "account" })).toBeVisible();
   (await screen.findByRole("menuitem", { name: "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
   (await screen.findByRole("menuitem", { name: /Claude Sonnet/ })).focus(); await user.keyboard("{ArrowRight}");
   await user.click(within(await screen.findByRole("group", { name: "Raciocínio" })).getByRole("menuitem", { name: "Baixo" }));
   expect(selected).toHaveBeenLastCalledWith({ executor: "claude", model: "sonnet", reasoning: "low" });
+  expect(trigger).toHaveTextContent("Claude Sonnet · Baixo");
+  trigger.focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: "account" })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Native" }));
+  expect(selected).toHaveBeenLastCalledWith({ executor: "jarvis", model: "account/native", reasoning: null });
+});
+
+it("filters hidden Claude models and removes the disabled local provider", async () => {
+  runtime.data!.preferences = { enabled: true, disabledModels: ["sonnet"] };
+  const user = userEvent.setup();
+  const { rerender } = render(<ExecutorModelPicker modelGroups={[]} onSelect={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  (await screen.findByRole("menuitem", { name: "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
+  expect(screen.queryByRole("menuitem", { name: "Claude Sonnet" })).not.toBeInTheDocument();
+  expect(await screen.findByText(/Configure os modelos em Configurações/)).toBeVisible();
+  await user.keyboard("{Escape}{Escape}");
+  runtime.data!.preferences.enabled = false;
+  rerender(<ExecutorModelPicker modelGroups={[]} onSelect={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  expect(screen.queryByRole("menuitem", { name: "Claude Code" })).not.toBeInTheDocument();
 });
 
 it("offers native login guidance and explicit discovery refresh when disconnected", async () => {
@@ -47,4 +63,14 @@ it("offers native login guidance and explicit discovery refresh when disconnecte
   expect(within(dialog).getByRole("button", { name: "Instalar Claude Code" })).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Atualizar status e modelos" }));
   expect(runtime.refresh).toHaveBeenCalledOnce();
+});
+
+it("keeps a hidden default model unavailable even before the local CLI is installed", async () => {
+  runtime.data = { installed: false, authenticated: false, version: null, models: [], error: null, preferences: { enabled: true, disabledModels: ["default"] } };
+  const user = userEvent.setup();
+  render(<ExecutorModelPicker modelGroups={[]} onSelect={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  (await screen.findByRole("menuitem", { name: "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
+  expect(await screen.findByText(/Configure os modelos em Configurações/)).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "Padrão do Claude Code" })).not.toBeInTheDocument();
 });

@@ -203,10 +203,10 @@ export function ChatComposer({
     return !model || Boolean(choice.reasoning && !model.reasoningLevels.includes(choice.reasoning));
   };
   const invalidAgent = configuredAgents.find(agent => invalidSelection(executionSelection(agent.choice)!))?.name;
-  const claudeProblem = !claudeRequired || claude.loading ? null : claude.error ?? (claude.data && !claude.data.installed ? "Instale o Claude Code e atualize o status no seletor de executor." : claude.data && !claude.data.authenticated ? "Entre na sua conta com claude auth login e atualize o status do Claude Code." : null);
+  const claudeProblem = !claudeRequired || claude.loading ? null : claude.error ?? (claude.data?.preferences?.enabled === false ? "Ative o Claude Code em Configurações → Provedores." : claude.data && !claude.data.installed ? "Instale o Claude Code em Configurações → Provedores e atualize o status." : claude.data && !claude.data.authenticated ? "Entre na sua conta com claude auth login e atualize o status do Claude Code." : null);
   const modelError = claudeProblem ?? (!selectionReady ? null : invalidAgent
     ? `O agente ${invalidAgent} usa um modelo indisponível. Revise o modelo em Configurações → Workflow.`
-    : effectiveSelection && invalidSelection(effectiveSelection) ? `O modelo ${effectiveSelection.model} está indisponível. Revise o executor e o modelo deste chat.` : null);
+    : effectiveSelection && invalidSelection(effectiveSelection) ? `O modelo ${effectiveSelection.model} está indisponível. Revise o provedor e o modelo deste chat.` : null);
   useModelProblemNotice("Chat", modelError, `chat:${draftKey ?? "new"}`);
   const reasoning =
     currentModelDef?.value === effectiveSelection?.model &&

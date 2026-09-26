@@ -9,8 +9,9 @@ vi.mock("@/hooks/use-claude-runtime", () => ({ useClaudeRuntime: () => ({ data: 
 it("saves a custom Claude agent before CLI setup without requiring a Jarvis provider", async () => {
   const user = userEvent.setup(); const save = vi.fn().mockResolvedValue(true); const close = vi.fn();
   render(<CustomAgentEditor initial={customAgent} accounts={[]} saving={false} creating={false} onSave={save} onClose={close} />);
-  await user.click(screen.getByRole("button", { name: "Executor · Modelo do agente customizado" }));
-  await user.click(await screen.findByRole("menuitem", { name: "Claude" }));
+  await user.click(screen.getByRole("button", { name: "Modelo do agente customizado" }));
+  (await screen.findByRole("menuitem", { name: "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Padrão do Claude Code" }));
   expect(screen.getByText("Modelo fixo: Claude Code / default")).toBeVisible();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Salvar agente" }));

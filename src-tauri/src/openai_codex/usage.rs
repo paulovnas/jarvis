@@ -21,13 +21,13 @@ mod tests;
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageWindow {
-    id: String,
-    group: String,
-    third_party: bool,
-    label: String,
-    duration_seconds: Option<f64>,
-    remaining_percent: Option<f64>,
-    resets_at: Option<i64>,
+    pub(crate) id: String,
+    pub(crate) group: String,
+    pub(crate) third_party: bool,
+    pub(crate) label: String,
+    pub(crate) duration_seconds: Option<f64>,
+    pub(crate) remaining_percent: Option<f64>,
+    pub(crate) resets_at: Option<i64>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,13 +39,13 @@ pub struct ResetCredits {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountUsage {
-    alias: String,
-    fetched_at: Option<i64>,
-    email: Option<String>,
-    plan: Option<String>,
-    windows: Vec<UsageWindow>,
-    reset_credits: Option<ResetCredits>,
-    error: Option<String>,
+    pub(crate) alias: String,
+    pub(crate) fetched_at: Option<i64>,
+    pub(crate) email: Option<String>,
+    pub(crate) plan: Option<String>,
+    pub(crate) windows: Vec<UsageWindow>,
+    pub(crate) reset_credits: Option<ResetCredits>,
+    pub(crate) error: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]

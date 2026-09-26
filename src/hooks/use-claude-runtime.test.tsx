@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useClaudeRuntime } from "./use-claude-runtime";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -20,4 +21,12 @@ it("shares one metadata probe across selectors and refreshes all consumers expli
   expect(invoke).toHaveBeenLastCalledWith("refresh_claude_runtime");
   expect(selectors.result.current[1].data).toEqual(connected);
   expect(dormant.result.current.data).toEqual(connected);
+  const changed = vi.mocked(listen).mock.calls.find(([name]) => name === "system:changed")?.[1];
+  expect(changed).toBeDefined();
+  const preferences = { enabled: false, disabledModels: ["default"] };
+  act(() => changed?.({ event: "system:changed", id: 1, payload: { preferences: { claude: preferences } } }));
+  expect(dormant.result.current.data?.preferences).toEqual(preferences);
+  expect(selectors.result.current[1].data?.preferences).toEqual(preferences);
+  act(() => changed?.({ event: "system:changed", id: 2, payload: null }));
+  expect(dormant.result.current.data?.preferences).toEqual(preferences);
 });

@@ -11,7 +11,6 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import type { ProviderAccount, ProviderUsageAlert } from "@/core/provider-accounts";
 import { ProviderUsageAlertSettings } from "./ProviderUsageAlertSettings";
-import { ProviderTransportSettings } from "./ProviderTransportSettings";
 import { Hint } from "@/components/ui/hint";
 import { enabledModels } from "@/core/provider-accounts";
 import { providerReferencesSchema, type ProviderReference } from "@/core/provider-references";
@@ -147,7 +146,6 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
           </div>
           {affectedAgents.length > 0 && <div role="alert" className="space-y-2 rounded-md border border-onedark-yellow/30 bg-onedark-yellow/5 p-3 text-xs"><p className="font-medium text-foreground">{affectedAgents.length} {affectedAgents.length === 1 ? "agente precisa" : "agentes precisam"} revisar o modelo</p><ul className="space-y-1 text-muted-foreground">{affectedAgents.map(reference => <li key={reference.id}><span className="text-foreground">{reference.label}</span>{reference.details[0] && <span> ({reference.details[0]})</span>} · <span className="font-mono">{reference.choice.model}</span> {account.models.some(model => model.id === reference.choice.model) ? "desativado" : "retirado do catálogo"}</li>)}</ul>{onReviewAgents && <Button type="button" variant="outline" size="sm" onClick={() => { setOpen(false); onReviewAgents(affectedAgents.some(reference => reference.kind === "custom_agent") ? "agents" : "flows"); }} className="cursor-pointer">Revisar no Workflow</Button>}</div>}
           {referenceError && <p role="status" className="text-xs text-muted-foreground">Não foi possível verificar os agentes vinculados agora.</p>}
-          {(account.providerKind === "openai-codex" || account.custom?.protocol === "openai-responses") && <ProviderTransportSettings key={account.alias} alias={account.alias} />}
         </div>
         <DialogFooter className="shrink-0 flex-row flex-wrap items-center justify-between gap-3 sm:justify-between">
           <label className="flex cursor-pointer items-center gap-2 text-xs">

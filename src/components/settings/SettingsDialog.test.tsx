@@ -15,7 +15,7 @@ vi.mock("@tauri-apps/api/core", () => ({
     : command === "list_mcp_servers" ? Promise.resolve([])
     : command === "list_skills" ? Promise.resolve({ includeAgents: false, directory: "/home/.jarvis/skills", skills: [], warnings: [] })
     : command === "get_skill_cache_status" ? Promise.resolve({ bytes: 0, repositories: 0, residues: 0 })
-    : command === "get_provider_transport" ? Promise.resolve({ supported: true, enabled: false })
+    : command === "get_claude_runtime" ? Promise.resolve({ installed: false, authenticated: false, version: null, models: [], error: null })
     : command === "get_journal_maintenance_status" ? Promise.resolve({ files: 0, conversationJournals: 0, workerJournals: 0, protectedFiles: 0, invalidFiles: 0, candidates: 0, currentBytes: 0, liveBytes: 0, recoverableBytes: 0, obsoleteRecords: 0, maxAmplificationBps: 100 })
     : command === "get_core_status" || command === "check_core_updates" ? Promise.resolve(coreFixture())
     : args === undefined ? invokeMock(command) : invokeMock(command, args),
@@ -229,7 +229,7 @@ describe("SettingsDialog provider accounts", () => {
     expect(await screen.findByRole("button", { name: "Marketplace" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("tab", { name: /Skills/ })).toHaveTextContent("0"));
     await waitFor(() => expect(screen.getByRole("tab", { name: /MCPs/ })).toHaveTextContent("0"));
-    expect(screen.getByRole("tab", { name: /Provedores/ })).toHaveTextContent("1");
+    expect(screen.getByRole("tab", { name: /Provedores/ })).toHaveTextContent("2");
   });
 
   it("fecha o formulário sem fechar o drawer e restaura o foco", async () => {
@@ -255,7 +255,8 @@ describe("SettingsDialog provider accounts", () => {
     expect(screen.getByRole("status", { name: /carregando contas/i })).toBeInTheDocument();
     list.resolve([]);
 
-    expect(await screen.findByText("Nenhuma conta conectada")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Detalhes de Claude Code" })).toBeInTheDocument();
+    expect(screen.getAllByTestId("provider-account-claude-code")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Adicionar conta" })).toBeInTheDocument();
     expect(await screen.findByRole("combobox", { name: "Provedor de Web Search" })).toHaveTextContent("Desligado");
   });

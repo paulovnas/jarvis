@@ -161,7 +161,7 @@ describe("ChatComposer model reasoning", () => {
     const user = userEvent.setup();
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={vi.fn()} />);
     await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
-    expect((await screen.findAllByRole("menuitem")).map(item => item.textContent)).toEqual([models[0].provider]);
+    expect((await screen.findAllByRole("menuitem")).map(item => item.textContent)).toEqual([models[0].provider, "Claude Code"]);
     screen.getByRole("menuitem", { name: models[0].provider }).focus();
     await user.keyboard("{ArrowRight}");
     const model = await screen.findByRole("menuitem", { name: /Flexible/ });

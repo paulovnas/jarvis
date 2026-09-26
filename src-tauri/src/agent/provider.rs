@@ -75,7 +75,6 @@ pub(super) struct TurnSession {
     session_id: String,
     client: reqwest::Client,
     telemetry: super::telemetry::TraceContext,
-    incremental_enabled: bool,
     incremental: tokio::sync::Mutex<incremental::Transport>,
 }
 
@@ -98,18 +97,12 @@ impl TurnSession {
             session_id,
             client: http_client()?,
             telemetry,
-            incremental_enabled: false,
             incremental: tokio::sync::Mutex::new(incremental),
         })
     }
 
     pub(super) fn capabilities(&self) -> &std::sync::Arc<ModelCapabilities> {
         &self.capabilities
-    }
-
-    pub(super) fn set_incremental_transport(&mut self, enabled: bool) {
-        self.incremental_enabled =
-            enabled && self.capabilities.protocol == capabilities::WireProtocol::OpenAiResponses;
     }
 
     pub(super) fn set_authentication(
@@ -182,7 +175,7 @@ impl TurnSession {
             on_delta(delta)
         };
         let mut fallback = false;
-        if self.incremental_enabled {
+        if self.capabilities.protocol == capabilities::WireProtocol::OpenAiResponses {
             let request = if let Some(config) = &self.credential.custom {
                 custom::incremental_request(
                     &self.client,

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { claudeProviderPreferencesSchema } from "./executors";
 
 export const sleepModes = {
   off: "Desligado",
@@ -39,6 +40,7 @@ export const systemSnapshotSchema = z.object({
     askUserTimeoutSeconds: z.number().int().min(1).max(3600),
     responseLanguage: z.enum(responseLanguageValues).default("pt-BR"),
     terminal: terminalPreferencesSchema.default(DEFAULT_TERMINAL_PREFERENCES),
+    claude: claudeProviderPreferencesSchema.optional(),
   }),
   sleepInhibited: z.boolean(),
   sleepError: z.string().nullable(),

@@ -88,7 +88,7 @@ impl<'a> Bridge<'a> {
             None
         };
         let mut activities = Vec::new();
-        let mut prompt = tools::instructions(&session.root, options.mode);
+        let mut prompt = tools::instructions(&session.root, options.mode, options.approval_mode);
         prompt.push_str("\nExecution backend: Claude Code. Keep your native reasoning and conversation management. All project operations, commands, tasks, questions, workflow coordination, approvals and external integrations are exposed by the Jarvis MCP server. Use these tools rather than describing actions for the user to execute. Jarvis owns their permissions and durable results. Do not create a second task/agent system. For dynamically discovered MCP tools, load their schema then call call_mcp_tool with the exact name and arguments. The native Claude built-in tools are intentionally disabled to preserve the selected Jarvis role, project scope and approval contract.\n");
         prompt.push_str(&crate::library::repositories::prompt(
             runtime.state,

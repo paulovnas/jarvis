@@ -329,7 +329,7 @@ describe("Home shell", () => {
     const selector = await screen.findByRole("button", { name: "Selecionar modelo de IA" });
     await user.click(screen.getByRole("button", { name: "Configurações" }));
     await user.click(await screen.findByRole("tab", { name: /Provedores/ }));
-    expect(await screen.findByText("Nenhuma conta conectada")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Detalhes de Claude Code" })).toBeInTheDocument();
 
     await act(async () => resolveInitial([{
       alias: "openai-codex-removed", providerKind: "openai-codex", enabled: true, createdAt: 1,

@@ -28,6 +28,16 @@ const account: ProviderAccount = {
 };
 
 describe("ProviderAccountCard", () => {
+  it("usa conexão incremental automaticamente sem apresentar opção experimental", async () => {
+    invokeMock.mockResolvedValue({ supported: true, enabled: false, references: [], bindings: [] });
+    const user = userEvent.setup();
+    render(<ProviderAccountCard account={account} onDisconnect={vi.fn()} onEnabledChange={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: `Detalhes de ${account.alias}` }));
+    expect(screen.getByRole("dialog", { name: account.alias })).toBeVisible();
+    expect(screen.queryByText(/Conexão incremental/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /incremental/i })).not.toBeInTheDocument();
+  });
+
   it("desativa e reativa sem desconectar a conta", async () => {
     const user = userEvent.setup();
     const onEnabledChange = vi.fn();

@@ -3,10 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 import { accountUsageSchema, type AccountUsage } from "@/core/provider-usage";
 
-export function useProviderUsage(alias: string, { pollWhileHidden = false }: { pollWhileHidden?: boolean } = {}) {
+export function useProviderUsage(alias: string, { pollWhileHidden = false, source = "account" }: { pollWhileHidden?: boolean; source?: "account" | "claude" } = {}) {
   const bootstrap = useBootstrapResources();
-  const updateBootstrapUsage = bootstrap?.updateUsage;
-  const cached = bootstrap?.resources.usageByAlias[alias];
+  const updateBootstrapUsage = source === "account" ? bootstrap?.updateUsage : undefined;
+  const cached = source === "account" ? bootstrap?.resources.usageByAlias[alias] : undefined;
   const [localData, setLocalData] = useState<AccountUsage | null>(() => cached?.data ?? null);
   const [localError, setLocalError] = useState(() => cached?.error ?? false);
   const data = cached ? cached.data : localData;
@@ -26,7 +26,7 @@ export function useProviderUsage(alias: string, { pollWhileHidden = false }: { p
       if (fetching || (!pollWhileHidden && document.visibilityState === "hidden")) return;
       fetching = true;
       try {
-        const result = accountUsageSchema.parse(await invoke("get_provider_usage", { alias }));
+        const result = accountUsageSchema.parse(await (source === "claude" ? invoke("get_claude_usage") : invoke("get_provider_usage", { alias })));
         if (result.alias !== alias) throw new Error("Account mismatch");
         if (active) store(result, false);
       } catch { if (active) store(latestData.current, true); }
@@ -37,6 +37,6 @@ export function useProviderUsage(alias: string, { pollWhileHidden = false }: { p
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => { active = false; clearInterval(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
-  }, [alias, pollWhileHidden, updateBootstrapUsage]);
+  }, [alias, pollWhileHidden, source, updateBootstrapUsage]);
   return { data, error };
 }

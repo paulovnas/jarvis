@@ -48,6 +48,7 @@ export const customProviderConfigs = sqliteTable("custom_provider_configs", {
   config: text("config").notNull(),
 });
 
+// Legacy storage retained for migration compatibility; transport now follows the protocol.
 export const providerTransportPreferences = sqliteTable("provider_transport_preferences", {
   accountAlias: text("account_alias").primaryKey().references(() => providerAccounts.alias, { onDelete: "cascade" }),
   incrementalResponses: integer("incremental_responses", { mode: "boolean" }).notNull().default(false),

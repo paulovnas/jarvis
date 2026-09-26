@@ -37,7 +37,19 @@ it("persists Claude choices in native profiles instead of fabricating an account
   const user = userEvent.setup(); const save = vi.fn();
   render(<ChatComposer modelGroups={[]} onSendMessage={vi.fn()} agentModels={{ data: {}, saving: false, error: null, save, refresh: vi.fn() }} />);
   await screen.findByRole("textbox", { name: "Mensagem" });
-  screen.getByRole("button", { name: "Executor · chat" }).focus(); await user.keyboard("{Enter}");
-  await user.click(await screen.findByRole("menuitem", { name: "Claude" }));
+  screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
+  (await screen.findByRole("menuitem", { name: "Claude Sonnet" })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
   expect(save).toHaveBeenCalledWith("standard", "builder", { executor: "claude", account: "", model: "sonnet", reasoning: "high" });
+});
+
+it("preserves a selected Claude profile and draft when its provider is disabled", async () => {
+  runtime.data!.preferences = { enabled: false, disabledModels: [] };
+  const user = userEvent.setup(); const send = vi.fn();
+  render(<ChatComposer modelGroups={[]} initialOptions={{ ...chatOptions, executor: "claude", account: "", model: "sonnet", reasoning: "high" }} onSendMessage={send} />);
+  await user.type(await screen.findByRole("textbox", { name: "Mensagem" }), "Continue{Enter}");
+  expect(screen.getByRole("alert")).toHaveTextContent("Ative o Claude Code em Configurações → Provedores.");
+  expect(screen.getByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Continue");
+  expect(send).not.toHaveBeenCalled();
 });

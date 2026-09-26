@@ -31,7 +31,6 @@ mod progress;
 mod protocol;
 mod provider;
 pub(crate) mod provider_links;
-pub(crate) mod provider_transport;
 pub(crate) mod publication;
 pub(crate) mod questions;
 pub(crate) mod queue;
@@ -2231,13 +2230,15 @@ async fn authorize_declared(
     if *request.signal.borrow() {
         return Err(AgentError::cancelled());
     }
-    let force_manual = approval == tool_contract::ApprovalPolicy::Always;
-    let ordinarily_requires_approval = approval != tool_contract::ApprovalPolicy::Never;
     let mutating_mcp = handler == tool_contract::Handler::Mcp
         && approval == tool_contract::ApprovalPolicy::AccordingToTurn;
-    if (!ordinarily_requires_approval && !force_manual)
-        || (!force_manual && request.options.approval_mode == ApprovalMode::Yolo)
-        || (!force_manual && request.options.mode == Mode::Plan && !mutating_mcp)
+    // YOLO preauthorizes execution, including native fallback and terminal control.
+    // Tool validation and explicit workflow reviews are enforced separately.
+    if request.options.approval_mode == ApprovalMode::Yolo
+        || approval == tool_contract::ApprovalPolicy::Never
+        || (approval != tool_contract::ApprovalPolicy::Always
+            && request.options.mode == Mode::Plan
+            && !mutating_mcp)
     {
         return Ok(true);
     }
@@ -2446,11 +2447,6 @@ fn run_turn<'a>(
             home.to_path_buf(),
             options.account.clone(),
         );
-        provider_session.set_incremental_transport(provider_transport::enabled(
-            state,
-            home,
-            &options.account,
-        ));
         session
             .update_async(|data| {
                 data.turns.last_mut().unwrap().turn.context_window = model.context_window;
@@ -2613,7 +2609,8 @@ fn run_turn<'a>(
                     core_activities.push(activity);
                 }
             }
-            let mut instructions = tools::instructions(&session.root, options.mode);
+            let mut instructions =
+                tools::instructions(&session.root, options.mode, options.approval_mode);
             project_instructions.append_prompt(&mut instructions);
             instructions.push_str(&repository_context);
             if let Some(exec) = &execution {

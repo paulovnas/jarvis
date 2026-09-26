@@ -21,5 +21,8 @@ describe("execution choices", () => {
     const runtime = claudeRuntimeSchema.parse({ installed: true, authenticated: true, version: "1", error: null, models: [{ id: "runtime-model", name: "Modelo do CLI", description: "", reasoningLevels: ["low", "high"], defaultReasoning: "high" }] });
     expect(claudeModels(runtime)).toEqual([{ value: "runtime-model", label: "Modelo do CLI", reasoningLevels: ["low", "high"], defaultReasoningLevel: "high" }]);
     expect(claudeModels(null)).toEqual([]);
+    expect(claudeModels({ ...runtime, preferences: { enabled: true, disabledModels: ["runtime-model"] } })).toEqual([]);
+    expect(claudeModels({ ...runtime, preferences: { enabled: false, disabledModels: [] } })).toEqual([]);
+    expect(claudeModels({ ...runtime, preferences: { enabled: true, disabledModels: ["removed-model"] } })).toHaveLength(1);
   });
 });

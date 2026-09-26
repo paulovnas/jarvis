@@ -563,14 +563,13 @@ mod tests {
             default_reasoning_level: None,
             context_window: Some(64000),
         };
-        let mut provider = super::super::TurnSession::new(
+        let provider = super::super::TurnSession::new(
             credential,
             &model,
             "session".into(),
             telemetry::TraceContext::new("fixture", "turn"),
         )
         .unwrap();
-        provider.set_incremental_transport(true);
         let fixture = tests::Fixture::new();
         let session = tests::session(&fixture);
         let options = tests::options(ApprovalMode::Yolo);
@@ -615,7 +614,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upgrade_rejection_falls_back_with_full_replay() {
+    async fn default_transport_falls_back_with_full_replay_when_upgrade_is_rejected() {
         http_fallback_keeps_full_replay(None).await;
     }
 

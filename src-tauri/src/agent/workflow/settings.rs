@@ -52,7 +52,8 @@ pub(crate) fn validate_choice(
 ) -> Result<(), AgentError> {
     choice.validate_shape()?;
     if choice.executor == crate::claude::Executor::Claude {
-        Ok(())
+        crate::claude::validate_available_model(home, &choice.model)
+            .map_err(|message| AgentError::new("claude_provider", &message))
     } else {
         oauth.inference_model(
             state,

@@ -1,5 +1,5 @@
 import { Check, ChevronDown, RefreshCw, TerminalSquare } from "lucide-react";
-import type { ExecutionSelection } from "@/core/executors";
+import { executorOf, type ExecutionSelection } from "@/core/executors";
 import type { ProviderAccount, ProviderModel } from "@/core/provider-accounts";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { aliasSuffix } from "@/core/provider-usage";
@@ -17,15 +17,16 @@ export interface ProviderModelGroup {
   executor?: "claude";
   providerKind?: ProviderAccount["providerKind"];
   models: ModelOptionDef[];
+  emptyMessage?: string;
 }
 
 
 export type ModelSelection = ExecutionSelection;
 export function ModelPicker({ modelGroups, selection, onSelect, disabled = false, ariaLabel = "Selecionar modelo de IA", showProviderIdentity = false, onRefresh, refreshing = false, emptyMessage = "Conecte um provedor em Configurações." }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; disabled?: boolean; ariaLabel?: string; showProviderIdentity?: boolean; onRefresh?: () => void; refreshing?: boolean; emptyMessage?: string }) {
-  const currentGroup = modelGroups.find(group => group.models.some(model => model.value === selection?.model));
-  const currentModelDef = modelGroups.flatMap(group => group.models).find(model => model.value === selection?.model);
+  const currentGroup = modelGroups.find(group => executorOf(group) === executorOf(selection) && group.models.some(model => model.value === selection?.model));
+  const currentModelDef = currentGroup?.models.find(model => model.value === selection?.model);
   const reasoning = selection?.reasoning;
-  const displayModelLabel = currentModelDef ? `${currentModelDef.label}${reasoning ? ` · ${reasoningLabel(reasoning)}` : ""}` : selection ? `${selection.model.split("/").pop()} · Indisponível` : modelGroups.length ? "Escolher modelo" : "Nenhum modelo conectado";
+  const displayModelLabel = currentModelDef ? `${currentModelDef.label}${reasoning ? ` · ${reasoningLabel(reasoning)}` : ""}` : selection ? `${selection.model.split("/").pop()} · Indisponível` : modelGroups.some(group => group.models.length) ? "Escolher modelo" : "Nenhum modelo conectado";
   const providerLabel = showProviderIdentity && currentGroup ? aliasSuffix(currentGroup.provider) : null;
   const displayLabel = providerLabel ? `${providerLabel} · ${displayModelLabel}` : displayModelLabel;
   return (<DropdownMenu>
@@ -34,7 +35,7 @@ export function ModelPicker({ modelGroups, selection, onSelect, disabled = false
                 disabled={disabled}
                 className="composer-model flex h-7.5 max-w-full cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 font-mono text-[10px] font-medium text-foreground shadow-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
               >
-                {providerLabel && <ProviderIcon kind={currentGroup?.providerKind ?? "custom"} className="size-3.5 text-onedark-cyan" />}
+                {providerLabel && (currentGroup?.executor === "claude" ? <TerminalSquare className="size-3.5 text-onedark-cyan" aria-hidden="true" /> : <ProviderIcon kind={currentGroup?.providerKind ?? "custom"} className="size-3.5 text-onedark-cyan" />)}
                 <Hint content={showProviderIdentity ? displayLabel : selection?.model} whenTruncated><span className="min-w-0 truncate">{displayLabel}</span></Hint>
                 <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
               </DropdownMenuTrigger>
@@ -59,8 +60,9 @@ export function ModelPicker({ modelGroups, selection, onSelect, disabled = false
                           {group.provider}
                         </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="max-h-[min(480px,70vh)] min-w-[220px] overflow-y-auto border-border bg-card p-1.5 text-foreground">
+                        {!group.models.length && <DropdownMenuGroup><DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal text-muted-foreground">{group.emptyMessage ?? "Nenhum modelo disponível."}</DropdownMenuLabel></DropdownMenuGroup>}
                         {group.models.map((option) => {
-                          const isSelected = option.value === currentModelDef?.value;
+                          const isSelected = group === currentGroup && option.value === currentModelDef?.value;
 
                           if (option.reasoningLevels.length > 0) {
                             return (
@@ -88,7 +90,7 @@ export function ModelPicker({ modelGroups, selection, onSelect, disabled = false
                                       <DropdownMenuItem
                                         key={level}
                                         onClick={() => {
-                                          onSelect({ model: option.value, reasoning: level });
+                                          onSelect({ ...(group.executor ? { executor: group.executor } : {}), model: option.value, reasoning: level });
                                         }}
                                         className={`flex cursor-pointer items-center justify-between px-2.5 py-1.5 text-xs hover:bg-secondary ${
                                           isSelected && reasoning === level
@@ -112,7 +114,7 @@ export function ModelPicker({ modelGroups, selection, onSelect, disabled = false
                             <DropdownMenuItem
                               key={option.value}
                               onClick={() => {
-                                onSelect({ model: option.value, reasoning: null });
+                                onSelect({ ...(group.executor ? { executor: group.executor } : {}), model: option.value, reasoning: null });
                               }}
                               className={`flex cursor-pointer items-center justify-between py-1.5 pl-3 pr-2 text-xs hover:bg-secondary ${
                                 isSelected

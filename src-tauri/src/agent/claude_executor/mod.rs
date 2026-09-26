@@ -74,6 +74,7 @@ pub(super) async fn run(
     };
     crate::claude::validate_selection(&options.model, options.reasoning.as_deref())
         .map_err(runtime_error)?;
+    crate::claude::validate_available_model(runtime.home, &options.model).map_err(runtime_error)?;
     let preparation_signal = signal.clone();
     let mut bridge = tokio::select! {
         _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),

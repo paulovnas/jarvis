@@ -211,7 +211,7 @@ pub(super) fn inspect_tool(
                 .as_str()
                 .is_some_and(|reason| !reason.trim().is_empty() && reason.len() <= 1_000)
         {
-            return Err(AgentError::new("permission_justification_required", "Explique o acesso adicional necessário em justification para solicitar autorização."));
+            return Err(AgentError::new("permission_justification_required", "Explique em justification o acesso adicional necessário para executar fora do isolamento."));
         }
         if outcome.command.is_some()
             && (outcome.decision != ExecutionDecision::Deny || external_command)
@@ -220,7 +220,7 @@ pub(super) fn inspect_tool(
             outcome.code = "native_execution_approval_required".into();
             outcome.reason = format!(
                 "O comando precisa executar fora do isolamento de arquivos e rede do Jarvis. {}",
-                tool.args["justification"].as_str().unwrap_or("A ação acessa caminhos externos ao projeto; revise o comando e os caminhos antes de autorizar.")
+                tool.args["justification"].as_str().unwrap_or("A ação acessa caminhos externos ao projeto e seguirá o modo de aprovação ativo.")
             );
             outcome.native_working_directory = Some(working_directory.clone());
         }

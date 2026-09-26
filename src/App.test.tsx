@@ -71,6 +71,8 @@ describe("App bootstrap and onboarding", () => {
       if (command === "get_core_status" || command === "check_core_updates") return Promise.resolve(coreFixture());
       if (command === "get_optional_tools_status") return Promise.resolve(optionalTools);
       if (command === "list_provider_accounts") return Promise.resolve([connectedAccount]);
+      if (command === "set_agent_model") return Promise.resolve({});
+      if (command === "get_claude_runtime") return Promise.resolve({ installed: false, authenticated: false, version: null, models: [], error: null });
       if (command === "get_provider_usage") return Promise.resolve({ alias: (args as { alias: string }).alias, fetchedAt: Date.now(), email: null, plan: "plus", windows: [], error: null, resetCredits: null });
       if (command === "list_skills") return Promise.resolve({ includeAgents: false, directory: "/home/.jarvis/skills", skills: [], warnings: [] });
       if (command === "get_web_search_config" || command === "get_vision_config") return Promise.resolve({ accountAlias: null, model: null, inheritChat: true });

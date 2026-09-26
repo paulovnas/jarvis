@@ -2,6 +2,8 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { StatusBar } from "./StatusBar";
 
+vi.mock("@/hooks/use-claude-runtime", () => ({ useClaudeRuntime: () => ({ data: null }) }));
+
 afterEach(() => vi.useRealTimers());
 it("mostra a hora local, atualiza na virada do minuto e limpa o timer", () => {
   vi.useFakeTimers();

@@ -24,6 +24,7 @@ pub(crate) struct Model {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeStatus {
+    pub preferences: super::ProviderPreferences,
     pub installed: bool,
     pub authenticated: bool,
     pub version: Option<String>,
@@ -38,6 +39,7 @@ pub(crate) struct RuntimeStatus {
 pub(crate) struct ClaudeState {
     // One metadata probe per app at a time; refresh explicitly re-reads native state.
     cached: Mutex<Option<RuntimeStatus>>,
+    pub(super) usage: Mutex<super::usage::Cache>,
 }
 
 pub(super) async fn cached(state: &ClaudeState, refresh: bool) -> RuntimeStatus {
@@ -170,6 +172,7 @@ pub(super) fn account_from_status(status: &mut RuntimeStatus, value: &Value) {
 
 async fn discover() -> RuntimeStatus {
     let mut status = RuntimeStatus {
+        preferences: super::ProviderPreferences::default(),
         installed: false,
         authenticated: false,
         version: None,

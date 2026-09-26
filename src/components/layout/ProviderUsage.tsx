@@ -8,6 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Hint } from "@/components/ui/hint";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProviderUsage } from "@/hooks/use-provider-usage";
+import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { aliasSuffix, planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, expectedQuotaRemaining, type UsageWindow } from "@/core/provider-usage";
 
@@ -26,8 +27,15 @@ function WindowBar({ window, now, stale }: { window: UsageWindow; now: number; s
   </div>;
 }
 
-export function ProviderUsage({ account, now }: { account: ProviderAccount; now: number }) {
-  const { data, error } = useProviderUsage(account.alias, { pollWhileHidden: Boolean(account.usageAlert) });
+export function ClaudeUsage({ now }: { now: number }) {
+  const { data: runtime } = useClaudeRuntime();
+  if (!runtime?.installed || !runtime.authenticated || runtime.preferences?.enabled === false || runtime.preferences?.showUsage === false) return null;
+  return <ProviderUsage key={`${runtime.email}/${runtime.authMethod}`} now={now} account={{ alias: "Claude Code", providerKind: "claude-code", email: runtime.email ?? null, accountType: "unknown" }} />;
+}
+
+export function ProviderUsage({ account, now }: { account: Pick<ProviderAccount, "alias" | "providerKind" | "email" | "accountType" | "usageAlert" | "showThirdPartyUsage">; now: number }) {
+  const claude = account.providerKind === "claude-code";
+  const { data, error } = useProviderUsage(account.alias, { pollWhileHidden: Boolean(account.usageAlert), source: claude ? "claude" : "account" });
   const windows = data?.windows.filter(window => account.providerKind !== "antigravity" || !window.thirdParty || account.showThirdPartyUsage === true) ?? [];
   const groups = [...new Set(windows.map(window => window.group))];
   const failed = error || Boolean(data?.error);
@@ -48,9 +56,10 @@ export function ProviderUsage({ account, now }: { account: ProviderAccount; now:
       {failed && <AlertCircle aria-label="Limites desatualizados" className="size-3 text-onedark-yellow" />}
     </PopoverTrigger>
     <PopoverContent aria-label={`Limites de ${account.alias}`} initialFocus={false} side="top" align="end" sideOffset={10} className="dark instrument-panel max-h-[70vh] w-[360px] max-w-[90vw] overflow-y-auto bg-card p-4 gap-0 text-foreground">
-      <div className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3"><div className="min-w-0"><p className="truncate text-xs font-medium">{data?.email ?? account.email ?? account.alias}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{account.providerKind === "antigravity" ? "Antigravity" : "OpenAI Codex"} · {suffix}</p></div><Badge variant="outline" className="max-w-36 shrink-0 truncate text-[10px]">{planLabel(data?.plan, account.accountType)}</Badge></div>
+      <div className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3"><div className="min-w-0"><p className="truncate text-xs font-medium">{data?.email ?? account.email ?? account.alias}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{claude ? "Claude Code · CLI local" : `${account.providerKind === "antigravity" ? "Antigravity" : "OpenAI Codex"} · ${suffix}`}</p></div><Badge variant="outline" className="max-w-36 shrink-0 truncate text-[10px]">{planLabel(data?.plan, account.accountType)}</Badge></div>
       {!data && !error && <div role="status" aria-label="Carregando limites" className="space-y-4"><Skeleton className="h-5" /><Skeleton className="h-2" /><Skeleton className="h-5" /><Skeleton className="h-2" /></div>}
       {failed && <p role="status" className="mb-3 text-[11px] text-onedark-yellow">{data?.fetchedAt ? "Limites desatualizados" : "Limites indisponíveis"}</p>}
+      {claude && data?.error && <p className="mb-3 text-xs text-muted-foreground">{data.error}</p>}
       {data && !windows.length && !failed && <p className="text-xs text-muted-foreground">Nenhuma janela informada.</p>}
       <div className={`grid gap-5 ${groups.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>{groups.map(group => <section key={group} className="min-w-0 space-y-4"><Hint content={group} whenTruncated><h3 className="micro-label truncate text-muted-foreground">{group}</h3></Hint>{windows.filter(window => window.group === group).map(window => <WindowBar key={window.id} window={window} now={now} stale={Boolean(failed) || !data?.fetchedAt || now - data.fetchedAt > 5 * 60_000} />)}</section>)}</div>
       {credits && <section className="mt-4 border-t border-border pt-3"><div className="flex items-center justify-between text-xs"><span>Resets disponíveis</span><span className="font-mono text-primary">{credits.availableCount}</span></div>{credits.availableCount > 0 && <div className="mt-2 space-y-1 text-[10px] text-muted-foreground">{credits.detailsAvailable && credits.expirations.length ? credits.expirations.map((expiry, index) => <p key={index}>{expiry ? `Expira em ${new Date(expiry).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}` : "Validade não informada"}</p>) : <p>Validade indisponível</p>}</div>}</section>}

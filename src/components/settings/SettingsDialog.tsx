@@ -20,7 +20,6 @@ import {
   Layers,
   BookOpen,
   ExternalLink,
-  Link2,
   Plus,
   Plug,
   Settings,
@@ -42,14 +41,6 @@ import {
 } from "@/components/ui/card";
 import { Tabs as SettingsTabs } from "@base-ui/react/tabs";
 import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupText } from "@/components/ui/input-group";
 import { InputGroupInput } from "@/components/TextInput";
 import { Label } from "@/components/ui/label";
@@ -58,6 +49,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { accountList, enabledModels, type ProviderAccount, type ProviderUsageAlert } from "@/core/provider-accounts";
 import { ProviderAccountCard } from "./ProviderAccountCard";
+import { ClaudeProviderCard } from "./ClaudeProviderCard";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
@@ -569,9 +561,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="micro-label text-muted-foreground">Provedores conectados</h2>
+            <h2 className="micro-label text-muted-foreground">Provedores</h2>
           </div>
-          {accounts.length > 0 && (
             <Button
               type="button"
               onClick={openAddView}
@@ -580,29 +571,10 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
               <Plus className="size-3.5" />
               Adicionar conta
             </Button>
-          )}
         </div>
 
-        {accounts.length === 0 ? (
-          <Empty className="min-h-52 gap-4 rounded-lg border border-dashed border-border bg-card/50 p-6 md:p-6">
-            <EmptyHeader>
-              <EmptyMedia variant="icon" className="bg-[#56b6c2]/10 text-[#56b6c2]">
-                <Link2 className="size-5" />
-              </EmptyMedia>
-              <EmptyTitle className="text-base text-foreground">Nenhuma conta conectada</EmptyTitle>
-              <EmptyDescription className="max-w-sm text-xs text-muted-foreground">
-                Adicione uma conta para acessar seus modelos.
-              </EmptyDescription>
-            </EmptyHeader>
-            <EmptyContent>
-              <Button type="button" onClick={openAddView} className="cursor-pointer gap-2 bg-[#61afef] text-xs text-primary-foreground hover:bg-[#61afef]/90">
-                <Plus className="size-4" />
-                Adicionar conta
-              </Button>
-            </EmptyContent>
-          </Empty>
-        ) : (
           <div className="grid items-start gap-3 sm:grid-cols-2">
+            <ClaudeProviderCard />
             {accounts.map((account) => (
               <ProviderAccountCard
                 key={account.alias}
@@ -623,7 +595,6 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
               />
             ))}
           </div>
-        )}
         {(!embeddedProviders || accounts.some(account => account.enabled && account.modelsAvailable && enabledModels(account).length > 0)) && <section className="space-y-3" aria-label="Ferramentas"><h3 className="micro-label text-muted-foreground">Ferramentas</h3><div className="grid gap-3 sm:grid-cols-3"><WebSearchSettings accounts={accounts} onBusyChange={embeddedProviders ? setSearchBusy : undefined} /><WebSearchSettings accounts={accounts} kind="vision" onBusyChange={embeddedProviders ? setVisionBusy : undefined} /><WebSearchSettings accounts={accounts} kind="image_generation" /></div></section>}
       </div>
     );
@@ -793,7 +764,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
                 {SETTINGS_SECTIONS.map(section => <Hint key={section.value} content={section.label} disabled={!compactSettingsNavigation}><TabsTrigger value={section.value} className="h-10 flex-none cursor-pointer justify-center gap-2.5 px-2 text-xs sm:justify-start">
                   <section.Icon aria-hidden="true" className="size-4" />
                   <span className="sr-only min-w-0 flex-1 text-left sm:not-sr-only">{section.label}</span>
-                  <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">{section.value === "providers" && listState === "ready" ? accounts.length : section.value === "skills" ? visibleSkillCount : section.value === "mcps" ? mcpCount : null}</span>
+                  <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">{section.value === "providers" && listState === "ready" ? accounts.length + 1 : section.value === "skills" ? visibleSkillCount : section.value === "mcps" ? mcpCount : null}</span>
                 </TabsTrigger></Hint>)}
               </TabsList>
             </div>

@@ -39,7 +39,12 @@ fn payload() -> SettingsPayload {
 fn round_trip_preserves_portable_settings_and_skill_payload() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("backup.zip");
-    let settings = payload();
+    let mut settings = payload();
+    settings.system.claude = crate::claude::ProviderPreferences {
+        enabled: false,
+        show_usage: false,
+        disabled_models: vec!["opus".into()],
+    };
     let files = vec![SkillFile {
         path: PathBuf::from("review/SKILL.md"),
         bytes: b"# Review\nCheck the diff.".to_vec(),
@@ -58,6 +63,7 @@ fn round_trip_preserves_portable_settings_and_skill_payload() {
     assert_eq!(loaded.manifest.summary.mcps, 1);
     assert_eq!(loaded.payload.catalog.agents[0].name, "Especialista");
     assert_eq!(loaded.payload.catalog.agents[0].model, None);
+    assert_eq!(loaded.payload.system.claude, settings.system.claude);
     assert_eq!(loaded.skill_files[0].path, Path::new("review/SKILL.md"));
     assert_eq!(loaded.skill_files[0].bytes, files[0].bytes);
     assert!(loaded.payload.mcps[0].contains("mcp-secret"));

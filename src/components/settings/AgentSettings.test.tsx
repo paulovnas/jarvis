@@ -8,6 +8,7 @@ import { useAgentModels } from "@/hooks/use-agent-models";
 import type { ProviderAccount } from "@/core/provider-accounts";
 
 vi.mock("@/hooks/use-agent-models", () => ({ useAgentModels: vi.fn() }));
+vi.mock("@/hooks/use-claude-runtime", () => ({ useClaudeRuntime: () => ({ data: { installed: false, authenticated: false, version: null, models: [], error: null }, loading: false, saving: false, error: null, refresh: vi.fn(), savePreferences: vi.fn() }) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
 const save = vi.fn().mockResolvedValue(true);

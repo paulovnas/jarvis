@@ -112,7 +112,7 @@ pub async fn compact_agent_context(
     let skills = crate::skills::active(&skill_home, &session.root)
         .await
         .map_err(|cause| AgentError::new("skill_error", &cause.message))?;
-    let mut instructions = tools::instructions(&session.root, options.mode);
+    let mut instructions = tools::instructions(&session.root, options.mode, options.approval_mode);
     instructions.push_str(crate::core::context::INSTRUCTIONS);
     if !direct_tasks {
         instructions.push_str(crate::core::beads::INSTRUCTIONS);

@@ -28,9 +28,9 @@ fn invalid(message: &str) -> AgentError {
 fn manual_validation_instructions(flow: Flow, enabled: bool) -> &'static str {
     match (flow, enabled) {
         (Flow::Planned | Flow::Complete, true) => "\nFinal manual validation is ENABLED for this run. Preserve concrete user-checkable steps in worker handoffs. The root Planner must publish the final checklist with validation_publish and wait for the user's decisions before closing the epic.\n",
-        (Flow::Planned | Flow::Complete, false) => "\nFinal manual validation is DISABLED for this run. Do not call validation_publish or wait for user acceptance. Finish from technical evidence and close eligible Beads; all normal tool permissions, required questions and destructive-action approvals still apply.\n",
+        (Flow::Planned | Flow::Complete, false) => "\nFinal manual validation is DISABLED for this run. Do not call validation_publish or wait for user acceptance. Finish from technical evidence and close eligible Beads. Follow the active execution approval mode; YOLO preauthorizes tool execution. Ask only for unresolved user decisions.\n",
         (Flow::Custom, true) => "\nFinal manual validation is ENABLED for this custom workflow. Include concise user-checkable steps in hub_complete.validation. The runtime will aggregate them and present the final checklist after the graph finishes.\n",
-        (Flow::Custom, false) => "\nFinal manual validation is DISABLED for this custom workflow. Finish the assigned step normally; all normal tool permissions, required questions and destructive-action approvals still apply.\n",
+        (Flow::Custom, false) => "\nFinal manual validation is DISABLED for this custom workflow. Finish the assigned step normally. Follow the active execution approval mode; YOLO preauthorizes tool execution. Ask only for unresolved user decisions.\n",
         _ => "",
     }
 }

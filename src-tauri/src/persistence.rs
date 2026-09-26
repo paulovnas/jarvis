@@ -623,10 +623,15 @@ pub async fn complete_onboarding(
         .get("standard/builder")
         .is_some_and(|choice| choice.executor == crate::claude::Executor::Claude);
     let external_executor_ready = if claude_selected {
-        let status = crate::claude::get_claude_runtime(app.state())
+        let status = crate::claude::get_claude_runtime(app.state(), app.state())
             .await
             .map_err(PersistenceError::new)?;
-        status.installed && status.authenticated && !status.models.is_empty()
+        status.installed
+            && status.authenticated
+            && status
+                .models
+                .iter()
+                .any(|model| status.preferences.allows(&model.id))
     } else {
         false
     };

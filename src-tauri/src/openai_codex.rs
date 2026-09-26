@@ -2112,7 +2112,6 @@ fn render_callback_html(status: &str, body: &str) -> String {
         };
 
     let logo = embedded_logo_data_uri();
-    let close_script = include_str!("../../src/components/settings/authorization-callback.ts");
     format!(
         r##"<!DOCTYPE html>
 <html lang="pt-BR">
@@ -2210,51 +2209,6 @@ fn render_callback_html(status: &str, body: &str) -> String {
       border-radius: 10px;
       padding: 12px 16px;
     }}
-    .btn {{
-      appearance: none;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      width: 100%;
-      min-height: 40px;
-      margin-top: 24px;
-      padding: 10px 16px;
-      border: 1px solid rgba(97, 175, 239, 0.35);
-      border-radius: 8px;
-      background: rgba(97, 175, 239, 0.12);
-      color: #61afef;
-      font: inherit;
-      font-size: 14px;
-      font-weight: 500;
-      line-height: 1.4;
-      cursor: pointer;
-      transition: background-color 150ms, border-color 150ms, color 150ms;
-    }}
-    .btn:hover:not(:disabled) {{
-      background: rgba(97, 175, 239, 0.25);
-      border-color: rgba(97, 175, 239, 0.6);
-      color: #ffffff;
-    }}
-    .btn:focus-visible {{
-      outline: 2px solid #61afef;
-      outline-offset: 3px;
-    }}
-    .btn:disabled {{
-      cursor: wait;
-      opacity: 0.7;
-    }}
-    .close-feedback {{
-      margin-top: 16px;
-      color: #abb2bf;
-      font-size: 13px;
-      line-height: 1.5;
-      text-wrap: pretty;
-    }}
-    .close-feedback:focus {{ outline: none; }}
-    @media (prefers-reduced-motion: reduce) {{
-      .btn {{ transition: none; }}
-    }}
   </style>
 </head>
 <body>
@@ -2270,13 +2224,7 @@ fn render_callback_html(status: &str, body: &str) -> String {
     <h1>{heading}</h1>
     <p class="desc">{description}</p>
     <div class="callout">{info_text}</div>
-    <button class="btn" id="close-tab" type="button">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
-      Fechar aba
-    </button>
-    <p class="close-feedback" id="close-feedback" role="status" tabindex="-1" hidden></p>
   </div>
-  <script>{close_script}</script>
 </body>
 </html>"##
     )
@@ -2374,7 +2322,7 @@ fn token_profile(access_token: &str, id_token: Option<&str>) -> TokenProfile {
     }
 }
 
-fn current_time_millis() -> Result<i64, ProviderError> {
+pub(crate) fn current_time_millis() -> Result<i64, ProviderError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| ProviderError::internal())?
@@ -3597,9 +3545,9 @@ mod oauth_tests {
         let rejected = request(&start, "/auth/callback?state=wrong&code=authorization-code");
         assert!(rejected.starts_with("HTTP/1.1 400 Bad Request"));
         assert!(rejected.contains("Não foi possível autenticar"));
-        assert!(rejected.contains("id=\"close-tab\" type=\"button\""));
-        assert!(rejected.contains("id=\"close-feedback\" role=\"status\""));
-        assert!(rejected.contains("Seu navegador bloqueou o fechamento pelo botão."));
+        assert!(rejected.contains("Retorne ao Jarvis para tentar iniciar uma nova conexão."));
+        assert!(!rejected.contains("<button"));
+        assert!(!rejected.contains("<script"));
         assert!(!rejected.contains("authorization-code"));
         assert_eq!(
             manager.wait(&start.flow_id).expect_err("state result").code,
@@ -3806,9 +3754,8 @@ mod oauth_tests {
         assert!(callback_response.contains("Jarvis — Autenticação"));
         assert!(callback_response.contains("Autenticação recebida"));
         assert!(callback_response.contains("Você pode fechar esta aba"));
-        assert!(callback_response.contains("id=\"close-tab\" type=\"button\""));
-        assert!(callback_response.contains("Fechar aba"));
-        assert!(callback_response.contains("Seu navegador bloqueou o fechamento pelo botão."));
+        assert!(!callback_response.contains("<button"));
+        assert!(!callback_response.contains("<script"));
         // The page must carry the current brand mark and drop the stale chevron.
         assert!(callback_response.contains("data:image/png;base64,"));
         assert!(!callback_response.contains("jarvisChevron"));
