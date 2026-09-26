@@ -122,16 +122,16 @@ describe("ChatComposer model reasoning", () => {
       manualValidation: true,
     }));
   });
-  it("asks before replacing coordinated-flow agents and pending validations", async () => {
+  it.each(["planned", "custom"] as const)("asks before replacing %s agents and pending validations", async workflow => {
     const user = userEvent.setup();
     await renderComposer(<ChatComposer
       modelGroups={models}
       onSendMessage={vi.fn()}
-      initialOptions={{ ...chatOptions, account: "pessoal", model: "compact", workflow: "planned" }}
+      initialOptions={{ ...chatOptions, account: "pessoal", model: "compact", workflow, ...(workflow === "custom" ? { customWorkflowId: "canvas" } : {}) }}
       workflowSnapshot={{
         conversationId: "c1",
         revision: 1,
-        flow: "planned",
+        flow: workflow,
         agents: [{
           id: "worker", parentId: "main", role: "builder", title: "Implementar ajuste", status: "completed",
           createdAt: 1, updatedAt: 2, startedAt: 1, durationMs: 1_000, currentThought: null, attempts: 1,
@@ -143,19 +143,35 @@ describe("ChatComposer model reasoning", () => {
     />);
 
     const flow = screen.getByRole("button", { name: "Selecionar fluxo" });
-    expect(flow).toHaveTextContent("Planejado");
+    const originalLabel = flow.textContent ?? "";
     await user.click(flow);
     await user.click(await screen.findByRole("menuitem", { name: "Padrão" }));
     expect(await screen.findByRole("alertdialog")).toHaveTextContent("Trocar para um agente direto?");
-    expect(flow).toHaveTextContent("Planejado");
+    expect(flow).toHaveTextContent(originalLabel);
     await user.click(screen.getByRole("button", { name: "Manter fluxo atual" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
-    expect(flow).toHaveTextContent("Planejado");
+    expect(flow).toHaveTextContent(originalLabel);
 
     await user.click(flow);
     await user.click(await screen.findByRole("menuitem", { name: "Padrão" }));
     await user.click(await screen.findByRole("button", { name: "Trocar fluxo" }));
     expect(flow).toHaveTextContent("Padrão");
+  });
+  it("switches an individual custom agent directly without discarding a canvas checkpoint", async () => {
+    const user = userEvent.setup();
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={vi.fn()}
+      initialOptions={{ ...chatOptions, workflow: "custom", customAgentId: "individual" }}
+      workflowSnapshot={{ conversationId: "c1", revision: 1, flow: "custom", agents: [{
+        id: "old-worker", parentId: "main", role: "builder", title: "Histórico", status: "completed",
+        createdAt: 1, updatedAt: 2, startedAt: 1, durationMs: 1000, currentThought: null, attempts: 1,
+        options: chatOptions, beadId: null, handoff: null, error: null, activeTurnId: null,
+        pendingApproval: null, pendingQuestion: null,
+      }], validation: null }}
+    />);
+    await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Padrão" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Selecionar fluxo" })).toHaveTextContent("Padrão");
   });
   it("mostra somente provedores e permite navegar pelos três níveis com teclado", async () => {
     const user = userEvent.setup();

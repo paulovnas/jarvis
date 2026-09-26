@@ -85,6 +85,15 @@ pub(super) fn save(directory: &Path, state: &Manifest) -> Result<(), AgentError>
         .map_err(|_| AgentError::storage())?;
     Ok(())
 }
+fn direct_retry_checkpoint(turn: &StoredTurn) -> Option<RecoveryCheckpoint> {
+    (!super::super::resumable_workflow_turn(turn)
+        && turn
+            .wire
+            .iter()
+            .any(|item| item["_jarvis_runtime"] == true && item["_jarvis_retry"] == true))
+    .then(|| RecoveryCheckpoint::new(journal::uncertain_tool_names(turn)))
+}
+
 pub(super) fn open(
     root: Arc<Session>,
     env: Environment,
@@ -96,7 +105,7 @@ pub(super) fn open(
     let directory_path = path(&env.home, &root.id)?;
     directory(directory_path.parent().ok_or_else(AgentError::storage)?)?;
     directory(&directory_path)?;
-    let (run_id, options, mcp_intent) = {
+    let (run_id, options, mcp_intent, retry_checkpoint) = {
         let data = root.data.lock().map_err(|_| AgentError::internal())?;
         let run_id = data
             .active
@@ -109,9 +118,12 @@ pub(super) fn open(
             run_id,
             current.turn.options.clone(),
             current.mcp_intent.clone().unwrap_or_default(),
+            direct_retry_checkpoint(current),
         )
     };
     let mut manifest = load(&directory_path, &root.id)?.unwrap_or_else(|| Manifest {
+        worker_interruptions: BTreeMap::new(),
+        custom_cursor: None,
         custom_definition: None,
         custom_agent: None,
         validation: None,
@@ -164,8 +176,10 @@ pub(super) fn open(
     manifest.flow = flow;
     manifest.mcp_intent = mcp_intent;
     manifest.custom_definition = None;
+    manifest.custom_cursor = None;
+    manifest.worker_interruptions.clear();
     manifest.custom_agent = None;
-    manifest.root_recovery = None;
+    manifest.root_recovery = retry_checkpoint;
     manifest.root_status = Status::Running;
     manifest.options = options;
     manifest.profiles = profiles;
@@ -209,10 +223,8 @@ pub(super) fn recover(
     signal: watch::Receiver<bool>,
     root_uncertain: Vec<String>,
 ) -> Result<(Arc<Hub>, Vec<Job>), AgentError> {
-    if !matches!(flow, Flow::Planned | Flow::Complete) {
-        return Err(invalid(
-            "A retomada está disponível apenas para fluxos Planejado e Completo.",
-        ));
+    if !matches!(flow, Flow::Planned | Flow::Complete | Flow::Custom) {
+        return Err(invalid("Este fluxo não oferece retomada pelo checkpoint."));
     }
     let directory_path = path(&env.home, &root.id)?;
     directory(directory_path.parent().ok_or_else(AgentError::storage)?)?;
@@ -270,12 +282,32 @@ pub(super) fn prepare_recovery(
             "O checkpoint não corresponde ao fluxo que falhou nesta conversa.",
         ));
     }
+    if flow == Flow::Custom
+        && manifest.custom_cursor.is_none()
+        && manifest.jobs.values().any(|job| job.run_id == run_id)
+    {
+        return Err(invalid("Este fluxo antigo não possui checkpoint de etapas. Os resultados foram preservados; inicie uma nova solicitação com o escopo restante."));
+    }
     manifest.root_status = Status::Running;
     manifest.root_recovery = Some(RecoveryCheckpoint::new(root_uncertain));
     let mut resumed = Vec::new();
     for job in manifest.jobs.values_mut().filter(|job| {
         job.run_id == run_id && matches!(job.status, Status::Interrupted | Status::Failed)
     }) {
+        if flow == Flow::Custom {
+            if let Some(handoff) = &job.handoff {
+                // hub_complete is durable before the worker's final journal write.
+                // Preserve that accepted canvas result across this crash window.
+                job.status = if matches!(handoff.verdict, Verdict::Completed | Verdict::Approved) {
+                    Status::Completed
+                } else {
+                    Status::Blocked
+                };
+                job.error = None;
+                job.recovery = None;
+                continue;
+            }
+        }
         let journal_path = directory.join(format!("{}.jsonl", job.id));
         let tail = if journal_path.exists() {
             journal::read_only(&journal_path)?.0.pop()
@@ -347,6 +379,9 @@ pub(super) fn prepare_recovery(
         .retain(|_, request| request.run_id == run_id && active.contains(&request.from));
     manifest.updated_at = now();
     manifest.revision += 1;
+    for job in &resumed {
+        manifest.worker_interruptions.remove(&job.id);
+    }
     Ok((manifest, resumed))
 }
 
@@ -523,4 +558,41 @@ pub(super) fn resume_worker(
     let session = worker_session(hub, job, path, turns, extras, writer_lease)?;
     let (signal, _) = session.resume_interrupted_workflow_turn()?;
     Ok((session, signal))
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+
+    #[test]
+    fn direct_retries_get_effect_checkpoints_without_becoming_coordinated_flows() {
+        let (_fixture, hub) = super::super::tests::hub();
+        let mut turn = hub.root.data.lock().unwrap().turns.last().unwrap().clone();
+        turn.wire.push(json!({"type":"function_call", "call_id":"uncertain", "name":"write", "arguments":"{\"path\":\"changed.txt\",\"content\":\"new\"}"}));
+        turn.wire.push(json!({"role":"user", "_jarvis_runtime":true, "_jarvis_retry":true, "content":"Retry the same task"}));
+        for flow in [
+            Some(Flow::Standard),
+            Some(Flow::Publication),
+            Some(Flow::Custom),
+            None,
+        ] {
+            turn.turn.options.workflow = flow;
+            turn.turn.options.custom_agent_id =
+                (flow == Some(Flow::Custom)).then(|| "individual".into());
+            let checkpoint = direct_retry_checkpoint(&turn).unwrap();
+            assert!(checkpoint.uncertain_tools.contains(&"write".to_owned()));
+            assert!(!checkpoint.inspected);
+        }
+        turn.turn.options.custom_agent_id = None;
+        for flow in [Flow::Planned, Flow::Complete, Flow::Custom] {
+            turn.turn.options.workflow = Some(flow);
+            assert!(direct_retry_checkpoint(&turn).is_none());
+        }
+        turn.turn.options.workflow = Some(Flow::Standard);
+        turn.wire.retain(|item| item["_jarvis_retry"] != true);
+        assert!(
+            direct_retry_checkpoint(&turn).is_none(),
+            "a new user turn must not inherit recovery restrictions"
+        );
+    }
 }

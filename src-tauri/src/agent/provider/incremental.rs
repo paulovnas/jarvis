@@ -262,18 +262,43 @@ impl Transport {
                 return Err(protocol_error());
             }
             let event: Value = serde_json::from_str(&text).map_err(|_| protocol_error())?;
-            if !accepted
-                && event["type"] == "error"
-                && super::upstream_code(&event).is_some_and(|code| {
-                    matches!(
-                        code.as_str(),
-                        "previous_response_not_found"
-                            | "websocket_not_supported"
-                            | "unsupported_websocket"
-                    )
-                })
-            {
-                return Ok(None);
+            if !accepted && event["type"] == "error" {
+                let error = super::event_failure(&event);
+                let rejected_request = error.code == "provider_request"
+                    && error
+                        .provider_metadata
+                        .as_ref()
+                        .is_some_and(|metadata| metadata.http_status == Some(400));
+                if rejected_request
+                    || super::upstream_code(&event).is_some_and(|code| {
+                        matches!(
+                            code.as_str(),
+                            "previous_response_not_found"
+                                | "websocket_not_supported"
+                                | "unsupported_websocket"
+                        )
+                    })
+                {
+                    // No inference was accepted. Try the authoritative full input
+                    // over HTTP once; attempt disables this socket for later steps.
+                    if let Some((_, provider)) = &self.telemetry {
+                        let label = match provider {
+                            telemetry::ProviderKind::OpenAiCodex => "openai_codex",
+                            telemetry::ProviderKind::Custom => "custom",
+                            telemetry::ProviderKind::Antigravity => "antigravity",
+                            telemetry::ProviderKind::ClaudeCode => "claude_code",
+                        };
+                        crate::diagnostics::record_provider_failure(
+                            label,
+                            request["prompt_cache_key"]
+                                .as_str()
+                                .unwrap_or("incremental"),
+                            &error.code,
+                            error.provider_metadata.as_deref(),
+                        );
+                    }
+                    return Ok(None);
+                }
             }
             accepted = true;
             if let Some(response) = stream_event(&mut output, &event, on_delta)? {
@@ -457,7 +482,7 @@ mod tests {
         server.await.unwrap();
     }
 
-    async fn http_fallback_keeps_full_replay(interrupted: Option<bool>) {
+    async fn http_fallback_keeps_full_replay(interrupted: Option<bool>, rejection: Option<Value>) {
         use crate::agent::{context_manager::StepContext, tests, ApprovalMode};
         use crate::openai_codex::{custom::Config, CodexCredential, ProviderModel};
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -467,10 +492,15 @@ mod tests {
             let mut methods = Vec::new();
             for index in 0..3 {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                if index == 0 && interrupted.is_some() {
+                if index == 0 && (interrupted.is_some() || rejection.is_some()) {
                     let mut socket = accept_async(socket).await.unwrap();
                     let _ = socket.next().await.unwrap().unwrap();
-                    if interrupted == Some(true) {
+                    if let Some(error) = &rejection {
+                        socket
+                            .send(Message::Text(error.to_string().into()))
+                            .await
+                            .unwrap();
+                    } else if interrupted == Some(true) {
                         socket.send(Message::Text(json!({
                             "type":"response.created", "response":{"id":"accepted","status":"in_progress"}
                         }).to_string().into())).await.unwrap();
@@ -615,17 +645,84 @@ mod tests {
 
     #[tokio::test]
     async fn default_transport_falls_back_with_full_replay_when_upgrade_is_rejected() {
-        http_fallback_keeps_full_replay(None).await;
+        http_fallback_keeps_full_replay(None, None).await;
     }
 
     #[tokio::test]
     async fn closed_socket_before_response_falls_back_with_confirmed_receipts() {
-        http_fallback_keeps_full_replay(Some(false)).await;
+        http_fallback_keeps_full_replay(Some(false), None).await;
     }
 
     #[tokio::test]
     async fn partial_response_falls_back_without_duplicate_text_or_losing_receipts() {
-        http_fallback_keeps_full_replay(Some(true)).await;
+        http_fallback_keeps_full_replay(Some(true), None).await;
+    }
+
+    #[tokio::test]
+    async fn rejected_initial_request_falls_back_once_with_confirmed_receipts() {
+        http_fallback_keeps_full_replay(
+            None,
+            Some(json!({"type":"error","error":{"code":"invalid_request","message":"private upstream detail"}})),
+        ).await;
+    }
+
+    #[tokio::test]
+    async fn request_fallback_excludes_accepted_responses_and_other_failure_classes() {
+        for (first_event, code, message, expected) in [
+            (
+                Some("response.created"),
+                "invalid_request",
+                "private",
+                "provider_request",
+            ),
+            (
+                Some("response.output_text.delta"),
+                "invalid_request",
+                "private",
+                "provider_request",
+            ),
+            (None, "authentication_error", "private", "provider_auth"),
+            (None, "rate_limit_exceeded", "private", "provider_limit"),
+            (
+                None,
+                "invalid_request",
+                "maximum context length",
+                "context_overflow",
+            ),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (tcp, _) = listener.accept().await.unwrap();
+                let mut socket = accept_async(tcp).await.unwrap();
+                let _ = socket.next().await.unwrap().unwrap();
+                if let Some(kind) = first_event {
+                    socket.send(Message::Text(json!({
+                        "type":kind,"response":{"id":"accepted","status":"in_progress"},"delta":"partial text"
+                    }).to_string().into())).await.unwrap();
+                }
+                socket
+                    .send(Message::Text(
+                        json!({
+                            "type":"error","status":400,"error":{"code":code,"message":message}
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await
+                    .unwrap();
+            });
+            let (_tx, signal) = watch::channel(false);
+            let mut transport = Transport::default();
+            let error = transport
+                .attempt(request(port, &body()), signal, &mut |_| Ok(()))
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, expected);
+            assert!(!error.message.contains("private"));
+            assert!(transport.disabled);
+            server.await.unwrap();
+        }
     }
 
     #[tokio::test]

@@ -2,6 +2,164 @@ use super::super::tests::{hub, job};
 use super::*;
 
 #[test]
+fn technical_parent_failure_preserves_children_for_durable_recovery_but_user_cancel_does_not() {
+    for parent in ["main", "nested-coordinator"] {
+        for technical in [false, true] {
+            let (_fixture, hub) = hub();
+            let mut worker = job(&hub, Role::Builder, ".");
+            worker.parent_id = parent.into();
+            worker.status = Status::Running;
+            hub.mutate(|state| {
+                state.jobs.insert(worker.id.clone(), worker.clone());
+                Ok(())
+            })
+            .unwrap();
+            let (session, _) = storage::worker(&hub, &worker, None).unwrap();
+            let turn_id = session.snapshot().unwrap().turns[0].id.clone();
+            session.update(true, |data| {
+                data.turns.last_mut().unwrap().wire.push(json!({"type":"function_call_output","call_id":"confirmed","output":"Already applied"}));
+            }).unwrap();
+            if technical {
+                interrupt_descendants(&hub, parent, "Provider unavailable").unwrap();
+                let saved = storage::load(&hub.directory, &hub.root.id)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    saved.worker_interruptions[&worker.id],
+                    "Provider unavailable"
+                );
+            }
+            let result = interrupted_result(&hub, &worker.id, Err(AgentError::cancelled()));
+            finish(&session, result.clone());
+            settle(&hub, &worker, &result, Some(20)).unwrap();
+            drop(session);
+            hub.mutate(|state| {
+                state.root_status = Status::Failed;
+                Ok(())
+            })
+            .unwrap();
+            let saved = storage::load(&hub.directory, &hub.root.id)
+                .unwrap()
+                .unwrap();
+            let (recovered, workers) =
+                storage::prepare_recovery(&hub.directory, saved, Flow::Complete, "run", vec![])
+                    .unwrap();
+            if technical {
+                assert_eq!(workers.len(), 1);
+                assert!(recovered.worker_interruptions.is_empty());
+                *hub.manifest.lock().unwrap() = recovered;
+                let (session, _) = storage::resume_worker(&hub, &workers[0]).unwrap();
+                let data = session.data.lock().unwrap();
+                assert_eq!(data.turns.len(), 1);
+                assert_eq!(data.turns[0].turn.id, turn_id);
+                assert_eq!(
+                    data.turns[0]
+                        .wire
+                        .iter()
+                        .filter(|item| item["call_id"] == "confirmed")
+                        .count(),
+                    1
+                );
+            } else {
+                assert!(workers.is_empty());
+                assert_eq!(recovered.jobs[&worker.id].status, Status::Cancelled);
+            }
+        }
+    }
+}
+
+#[test]
+fn technical_stop_does_not_replace_a_confirmed_handoff() {
+    let (_fixture, hub) = hub();
+    let mut worker = job(&hub, Role::Builder, ".");
+    worker.status = Status::Running;
+    worker.handoff = Some(completed_handoff("task"));
+    hub.mutate(|state| {
+        state.jobs.insert(worker.id.clone(), worker.clone());
+        Ok(())
+    })
+    .unwrap();
+    interrupt_descendants(&hub, "main", "Provider failed").unwrap();
+    let result = interrupted_result(&hub, &worker.id, Ok(()));
+    settle(&hub, &worker, &result, Some(30)).unwrap();
+    assert_eq!(hub.job(&worker.id).unwrap().status, Status::Completed);
+}
+
+#[test]
+fn explicit_stop_wins_over_a_pending_technical_interruption() {
+    let (_fixture, hub) = hub();
+    let mut worker = job(&hub, Role::Builder, ".");
+    worker.status = Status::Running;
+    hub.mutate(|state| {
+        state.jobs.insert(worker.id.clone(), worker.clone());
+        Ok(())
+    })
+    .unwrap();
+    interrupt_descendants(&hub, "main", "Provider failed").unwrap();
+    hub.root
+        .data
+        .lock()
+        .unwrap()
+        .active
+        .as_ref()
+        .unwrap()
+        .cancel
+        .send_replace(true);
+    let error = interrupted_result(&hub, &worker.id, Err(AgentError::cancelled())).unwrap_err();
+    assert_eq!(error.code, "cancelled");
+}
+
+#[tokio::test]
+async fn coordinator_shutdown_persists_interrupted_worker_before_recovery() {
+    let (_fixture, hub) = hub();
+    let mut worker = job(&hub, Role::Builder, ".");
+    worker.status = Status::Running;
+    hub.mutate(|state| {
+        state.jobs.insert(worker.id.clone(), worker.clone());
+        Ok(())
+    })
+    .unwrap();
+    let (session, mut signal) = storage::worker(&hub, &worker, None).unwrap();
+    hub.live
+        .lock()
+        .unwrap()
+        .insert(worker.id.clone(), session.clone());
+    let task_hub = hub.clone();
+    let id = worker.id.clone();
+    let work = tokio::spawn(async move {
+        cancelled(&mut signal).await;
+        let result = interrupted_result(&task_hub, &worker.id, Err(AgentError::cancelled()));
+        finish(&session, result.clone());
+        task_hub.live.lock().unwrap().remove(&worker.id);
+        settle(&task_hub, &worker, &result, Some(12)).unwrap();
+    });
+    // A provider callback can fail while its publication cleanup still needs
+    // draining. That cleanup must not become an explicit user cancellation.
+    hub.root.drain_interactions(true).await;
+    assert!(
+        !*hub.root_signal.borrow(),
+        "technical interaction cleanup must preserve recoverable descendants"
+    );
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        super::stop_workers(&hub, &Err(AgentError::new("provider_request", "Rejected"))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    work.await.unwrap();
+    assert!(hub.live.lock().unwrap().is_empty());
+    let saved = storage::load(&hub.directory, &hub.root.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.jobs[&id].status, Status::Interrupted);
+    let turns = journal::read_only(&hub.directory.join(format!("{id}.jsonl")))
+        .unwrap()
+        .0;
+    assert_eq!(turns.last().unwrap().turn.status, TurnStatus::Interrupted);
+}
+
+#[test]
 fn retry_keeps_the_same_worker_turn_and_confirmed_results() {
     let (_fixture, hub) = hub();
     let mut worker = job(&hub, Role::Builder, ".");
@@ -988,14 +1146,33 @@ fn invalid_retry_dependencies_leave_the_checkpoint_unchanged() {
 }
 
 #[tokio::test]
-async fn failure_retry_preserves_uncertain_effects_until_a_successful_inspection() {
+async fn failure_retry_preserves_uncertain_effects_until_a_specific_inspection_is_resolved() {
     let (_fixture, hub) = hub();
     let mut worker = job(&hub, Role::Builder, "backend");
     worker.status = Status::Interrupted;
-    worker.recovery = Some(RecoveryCheckpoint::new(
-        vec!["apply_patch:uncertain".into()],
-    ));
+    worker.recovery = Some(RecoveryCheckpoint::new(vec!["write".into()]));
     worker.recovery.as_mut().unwrap().inspected = true;
+    let mutation = ToolCall {
+        id: "uncertain-write".into(),
+        name: "write".into(),
+        args: json!({"path":"backend/task.ts","content":"changed"}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    std::fs::create_dir_all(hub.root.root.join("backend")).unwrap();
+    std::fs::write(hub.root.root.join("backend/task.ts"), "changed").unwrap();
+    let (session, _) = storage::worker(&hub, &worker, None).unwrap();
+    session.update(true, |data| {
+        let turn = data.turns.last_mut().unwrap();
+        turn.turn.steps.push(Step { tools: vec![mutation.clone()], ..Step::default() });
+        turn.wire.push(json!({"type":"function_call", "call_id":mutation.id, "name":mutation.name, "arguments":mutation.args.to_string()}));
+    }).unwrap();
+    finish(
+        &session,
+        Err(AgentError::new("interrupted", "Runtime stopped")),
+    );
+    drop(session);
     hub.mutate(|state| {
         state.jobs.insert(worker.id.clone(), worker.clone());
         prepare_retry(
@@ -1008,6 +1185,13 @@ async fn failure_retry_preserves_uncertain_effects_until_a_successful_inspection
         )
     })
     .unwrap();
+    let retry = hub.job(&worker.id).unwrap();
+    let (session, _) =
+        storage::worker(&hub, &retry, Some("Resume from saved effects".into())).unwrap();
+    hub.live
+        .lock()
+        .unwrap()
+        .insert(worker.id.clone(), session.clone());
     let exec = Execution {
         hub: hub.clone(),
         id: worker.id.clone(),
@@ -1015,35 +1199,45 @@ async fn failure_retry_preserves_uncertain_effects_until_a_successful_inspection
         flow: Flow::Planned,
         scope: worker.scope.clone(),
     };
-    assert!(exec.context().unwrap().contains("apply_patch:uncertain"));
-    let mutation = ToolCall {
-        id: "write".into(),
-        name: "write".into(),
-        args: json!({"path":"backend/task.ts","content":"changed"}),
-        status: "pending".into(),
-        output: String::new(),
-        duration_ms: 0,
-    };
-    assert!(exec
-        .mutation_guard(&mutation, false, hub.root_signal.clone())
-        .await
-        .is_err());
+    assert!(exec.context().unwrap().contains("uncertain-write"));
+    assert_eq!(
+        exec.recovery_preflight(&mutation, false).unwrap_err().code,
+        "recovery_inspection_required"
+    );
     let read = ToolCall {
+        id: "inspect-write".into(),
         name: "read".into(),
+        args: json!({"path":"backend/task.ts"}),
+        output: "changed".into(),
         ..mutation.clone()
     };
-    exec.observe_recovery_inspection(&read, false, false)
+    exec.observe_recovery_result(&read, false, false, |_| None)
         .unwrap();
-    assert!(exec
-        .mutation_guard(&mutation, false, hub.root_signal.clone())
-        .await
-        .is_err());
-    exec.observe_recovery_inspection(&read, false, true)
+    let resolve = json!({"callId":mutation.id,"evidenceCallId":read.id,"outcome":"applied"});
+    assert!(exec.resolve_recovery(&resolve).is_err());
+    session
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().wire.push(
+                json!({"type":"function_call_output","call_id":read.id,"output":read.output}),
+            );
+        })
         .unwrap();
-    assert!(exec
-        .mutation_guard(&mutation, false, hub.root_signal.clone())
-        .await
-        .is_ok());
+    exec.observe_recovery_result(&read, false, true, |_| None)
+        .unwrap();
+    assert_eq!(
+        exec.recovery_preflight(&mutation, false).unwrap_err().code,
+        "recovery_inspection_required"
+    );
+    exec.resolve_recovery(&resolve).unwrap();
+    assert_eq!(
+        exec.recovery_preflight(&mutation, false).unwrap_err().code,
+        "recovery_already_applied"
+    );
+    let independent = ToolCall {
+        args: json!({"path":"backend/other.ts","content":"independent"}),
+        ..mutation.clone()
+    };
+    assert!(exec.recovery_preflight(&independent, false).is_ok());
     hub.mutate(|state| {
         state.jobs.get_mut(&worker.id).unwrap().status = Status::Completed;
         let followup = prepare_retry(

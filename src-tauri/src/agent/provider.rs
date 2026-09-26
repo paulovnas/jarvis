@@ -207,10 +207,24 @@ impl TurnSession {
                 .map_err(|_| AgentError::internal())?
             };
             let mut transport = self.incremental.lock().await;
-            match transport
+            let result = transport
                 .attempt(request, signal.clone(), &mut forward)
-                .await
-            {
+                .await;
+            if let Err(error) = &result {
+                if error.code.starts_with("provider_") || error.code == "context_overflow" {
+                    crate::diagnostics::record_provider_failure(
+                        if credential.custom.is_some() {
+                            "custom"
+                        } else {
+                            "openai_codex"
+                        },
+                        &self.session_id,
+                        &error.code,
+                        error.provider_metadata.as_deref(),
+                    );
+                }
+            }
+            match result {
                 Ok(Some(mut response)) => {
                     if let Some(config) = &self.credential.custom {
                         custom::scope_responses_output(config, step.options(), &mut response);
@@ -265,9 +279,29 @@ fn http_client() -> Result<reqwest::Client, AgentError> {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(20))
-        .timeout(Duration::from_secs(600))
+        // Healthy inference can outlive any fixed request deadline. Bound the
+        // wait for headers and every subsequent read instead.
+        .read_timeout(STREAM_IDLE_TIMEOUT)
         .build()
         .map_err(|_| AgentError::internal())
+}
+
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+
+fn connection_error(error: reqwest::Error, message: &str) -> AgentError {
+    if error.is_timeout() {
+        AgentError::new("provider_timeout", "O provedor ficou sem responder.")
+    } else {
+        AgentError::new("provider_network", message)
+    }
+}
+
+fn stream_read_error(error: reqwest::Error) -> AgentError {
+    if error.is_timeout() {
+        AgentError::new("provider_timeout", "O provedor ficou sem responder.")
+    } else {
+        protocol_error()
+    }
 }
 
 #[derive(Default)]
@@ -275,6 +309,8 @@ pub(super) struct Sse {
     pending: Vec<u8>,
     data: Vec<u8>,
     done: bool,
+    first_event_deadline: Option<tokio::time::Instant>,
+    received_event: bool,
 }
 
 #[derive(Default)]
@@ -321,6 +357,16 @@ impl StreamOutput {
     }
 }
 impl Sse {
+    fn wait_timeout(&mut self) -> Duration {
+        if self.received_event {
+            return STREAM_IDLE_TIMEOUT;
+        }
+        // Comments or incomplete JSON cannot prolong the first event forever.
+        self.first_event_deadline
+            .get_or_insert_with(|| tokio::time::Instant::now() + STREAM_IDLE_TIMEOUT)
+            .saturating_duration_since(tokio::time::Instant::now())
+    }
+
     fn push(&mut self, bytes: &[u8]) -> Result<Vec<Value>, AgentError> {
         self.push_bounded(bytes, MAX_EVENT)
     }
@@ -343,6 +389,7 @@ impl Sse {
             if line.is_empty() && !self.data.is_empty() {
                 if self.data != b"[DONE]\n" {
                     events.push(serde_json::from_slice(&self.data).map_err(|_| protocol_error())?);
+                    self.received_event = true;
                 } else {
                     self.done = true;
                 }
@@ -388,19 +435,92 @@ fn request_id(response: &reqwest::Response) -> Option<&str> {
     .find_map(|name| response.headers().get(name)?.to_str().ok())
 }
 fn upstream_code(value: &Value) -> Option<String> {
-    let error = value
+    let error = error_detail(value);
+    error["code"]
+        .as_str()
+        .or_else(|| error["type"].as_str())
+        .map(str::to_owned)
+        .or_else(|| error["code"].as_u64().map(|code| code.to_string()))
+}
+
+fn error_detail(value: &Value) -> &Value {
+    value
         .get("error")
         .or_else(|| {
             value
                 .get("response")
                 .and_then(|response| response.get("error"))
         })
-        .unwrap_or(value);
-    error["code"]
-        .as_str()
-        .or_else(|| error["type"].as_str())
-        .map(str::to_owned)
-        .or_else(|| error["code"].as_u64().map(|code| code.to_string()))
+        .unwrap_or(value)
+}
+
+// Keep only known protocol paths, never echoed input, schema property names or
+// raw provider messages. This detail is safe to persist with the turn's error.
+fn request_parameter(value: &Value) -> Option<String> {
+    let parameter = error_detail(value)["param"].as_str()?;
+    const FIELDS: &[&str] = &[
+        "input",
+        "tools",
+        "model",
+        "reasoning",
+        "effort",
+        "summary",
+        "instructions",
+        "stream",
+        "store",
+        "include",
+        "previous_response_id",
+        "prompt_cache_key",
+        "tool_choice",
+        "parallel_tool_calls",
+        "max_output_tokens",
+        "temperature",
+        "top_p",
+        "type",
+        "name",
+        "parameters",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "call_id",
+        "arguments",
+        "output",
+        "content",
+        "text",
+        "encrypted_content",
+        "id",
+        "status",
+        "role",
+        "format",
+        "strict",
+    ];
+    if parameter.is_empty()
+        || parameter.len() > 96
+        || !parameter
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_.[]".contains(&byte))
+        || !parameter
+            .split(['.', '[', ']'])
+            .next()
+            .is_some_and(|part| FIELDS.contains(&part))
+        || !parameter
+            .split(['.', '[', ']'])
+            .filter(|part| !part.is_empty())
+            .all(|part| FIELDS.contains(&part) || part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return None;
+    }
+    Some(parameter.to_owned())
+}
+
+fn with_request_parameter(mut error: AgentError, parameter: Option<&str>) -> AgentError {
+    if error.code == "provider_request" {
+        if let Some(parameter) = parameter {
+            error.message = format!("O provedor recusou o campo {parameter} da solicitação. O progresso foi preservado.");
+        }
+    }
+    error
 }
 fn with_provider_metadata(
     mut error: AgentError,
@@ -450,14 +570,7 @@ fn http_failure(response: &reqwest::Response, upstream_code: Option<&str>) -> Ag
     )
 }
 fn context_overflow(value: &Value) -> bool {
-    let error = value
-        .get("error")
-        .or_else(|| {
-            value
-                .get("response")
-                .and_then(|response| response.get("error"))
-        })
-        .unwrap_or(value);
+    let error = error_detail(value);
     let code = error["code"].as_str().unwrap_or_default();
     let message = error["message"].as_str().unwrap_or_default().to_lowercase();
     matches!(
@@ -477,40 +590,35 @@ fn overflow_error() -> AgentError {
 }
 fn event_failure(value: &Value) -> AgentError {
     let upstream_code = upstream_code(value);
-    if context_overflow(value) {
-        return with_provider_metadata(overflow_error(), None, upstream_code.as_deref(), None);
-    }
-    let error = value
-        .get("error")
-        .or_else(|| {
-            value
-                .get("response")
-                .and_then(|response| response.get("error"))
-        })
-        .unwrap_or(value);
-    if let Some(status) = error["code"]
+    let error = error_detail(value);
+    let request_id = value["request_id"]
+        .as_str()
+        .or_else(|| error["request_id"].as_str());
+    let status = value["status"]
         .as_u64()
+        .or_else(|| error["code"].as_u64())
         .and_then(|code| u16::try_from(code).ok())
-    {
+        .filter(|code| (400..=599).contains(code));
+    if context_overflow(value) {
         return with_provider_metadata(
-            failure(status),
-            Some(status),
+            overflow_error(),
+            status,
             upstream_code.as_deref(),
-            None,
+            request_id,
         );
     }
-    let mapped_status = match error["code"]
-        .as_str()
-        .or_else(|| error["type"].as_str())
-        .unwrap_or_default()
-    {
-        "invalid_request" | "invalid_request_error" | "invalid_argument" => Some(400),
-        "authentication_error" | "invalid_api_key" => Some(401),
-        "permission_error" | "permission_denied" => Some(403),
-        "rate_limit_error" | "rate_limit_exceeded" => Some(429),
-        "overloaded_error" | "server_error" | "internal_error" => Some(503),
-        _ => None,
-    };
+    let mapped_status = [error["code"].as_str(), error["type"].as_str()]
+        .into_iter()
+        .flatten()
+        .find_map(|code| match code {
+            "invalid_request" | "invalid_request_error" | "invalid_argument" => Some(400),
+            "authentication_error" | "invalid_api_key" => Some(401),
+            "permission_error" | "permission_denied" => Some(403),
+            "rate_limit_error" | "rate_limit_exceeded" => Some(429),
+            "overloaded_error" | "server_error" | "internal_error" => Some(503),
+            _ => None,
+        })
+        .or(status);
     let failure = mapped_status.map_or_else(
         || {
             AgentError::new(
@@ -520,7 +628,15 @@ fn event_failure(value: &Value) -> AgentError {
         },
         failure,
     );
-    with_provider_metadata(failure, mapped_status, upstream_code.as_deref(), None)
+    with_request_parameter(
+        with_provider_metadata(
+            failure,
+            status.or(mapped_status),
+            upstream_code.as_deref(),
+            request_id,
+        ),
+        request_parameter(value).as_deref(),
+    )
 }
 fn request_body(
     options: &TurnOptions,
@@ -754,7 +870,7 @@ pub(super) async fn receive(
 ) -> Result<Response, AgentError> {
     let mut response = tokio::select! {
         _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-        result = request.send() => result.map_err(|_| AgentError::new("provider_network", "Não foi possível conectar ao provedor. Verifique a conexão e tente novamente."))?,
+        result = request.send() => result.map_err(|error| connection_error(error, "Não foi possível conectar ao provedor. Verifique a conexão e tente novamente."))?,
     };
     if !response.status().is_success() {
         if matches!(response.status().as_u16(), 400 | 413) {
@@ -777,11 +893,12 @@ pub(super) async fn receive(
                                 .contains("not supported when using codex with a chatgpt account")),
                     value.as_ref().is_some_and(context_overflow),
                     value.as_ref().and_then(upstream_code),
+                    value.as_ref().and_then(request_parameter),
                 )
             };
-            let (unsupported, overflow, upstream_code) = tokio::select! {
+            let (unsupported, overflow, upstream_code, parameter) = tokio::select! {
                 _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-                result = tokio::time::timeout(Duration::from_secs(5), read_error) => result.unwrap_or((false, false, None)),
+                result = tokio::time::timeout(Duration::from_secs(5), read_error) => result.unwrap_or((false, false, None, None)),
             };
             if overflow {
                 return Err(with_provider_metadata(
@@ -802,7 +919,10 @@ pub(super) async fn receive(
                     request_id(&response),
                 ));
             }
-            return Err(http_failure(&response, upstream_code.as_deref()));
+            return Err(with_request_parameter(
+                http_failure(&response, upstream_code.as_deref()),
+                parameter.as_deref(),
+            ));
         }
         return Err(http_failure(&response, None));
     }
@@ -812,7 +932,7 @@ pub(super) async fn receive(
     loop {
         let chunk = tokio::select! {
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-            result = tokio::time::timeout(Duration::from_secs(120), response.chunk()) => result.map_err(|_| AgentError::new("provider_timeout", "O provedor ficou sem responder."))?.map_err(|_| protocol_error())?,
+            result = tokio::time::timeout(parser.wait_timeout(), response.chunk()) => result.map_err(|_| AgentError::new("provider_timeout", "O provedor ficou sem responder."))?.map_err(stream_read_error)?,
         };
         let Some(chunk) = chunk else {
             return Err(protocol_error());
@@ -1234,6 +1354,269 @@ mod tests {
             }
             server.join().unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn invalid_request_parameters_are_reported_consistently_across_transports() {
+        use std::io::{Read, Write};
+        let rejection = json!({
+            "type": "error", "status": 400, "request_id": "req-safe-123",
+            "error": {"code": "invalid_input_pair", "param": "input[2].call_id", "message": "private content"}
+        });
+        let websocket_error = event_failure(&rejection);
+        assert_eq!(websocket_error.code, "provider_request");
+        assert!(websocket_error.message.contains("input[2].call_id"));
+        assert!(!websocket_error.message.contains("private"));
+        let metadata = websocket_error.provider_metadata.as_deref().unwrap();
+        assert_eq!(metadata.http_status, Some(400));
+        assert_eq!(
+            metadata.upstream_code.as_deref(),
+            Some("invalid_input_pair")
+        );
+        assert_eq!(metadata.request_id.as_deref(), Some("req-safe-123"));
+
+        for (status, body) in [
+            (400, rejection.to_string()),
+            (200, format!("data: {rejection}\n\n")),
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let request =
+                reqwest::Client::new().get(format!("http://{}", listener.local_addr().unwrap()));
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut bytes = [0; 4096];
+                let _ = stream.read(&mut bytes);
+                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nX-Request-ID: req-safe-123\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            });
+            let (_send, signal) = watch::channel(false);
+            let error = receive(request, signal, |_| Ok(())).await.err().unwrap();
+            assert_eq!(error.code, websocket_error.code);
+            assert_eq!(error.message, websocket_error.message);
+            let received_metadata = error.provider_metadata.as_deref().unwrap();
+            assert_eq!(received_metadata.http_status, metadata.http_status);
+            assert_eq!(received_metadata.upstream_code, metadata.upstream_code);
+            assert_eq!(received_metadata.request_id, metadata.request_id);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn request_errors_only_expose_known_protocol_fields() {
+        for parameter in [
+            "reasoning.effort",
+            "input[2].call_id",
+            "tools[0].parameters.required",
+        ] {
+            let value = json!({"error":{"code":"invalid_request", "param":parameter, "message":"private content"}});
+            assert!(event_failure(&value).message.contains(parameter));
+        }
+        for parameter in [
+            "",
+            "123",
+            "[]",
+            "input.secret_value",
+            "tools[0].parameters.properties.customer_name",
+            "input.private content",
+            "https://private.example",
+            "input\ntext",
+            "input.á",
+            &"input".repeat(25),
+        ] {
+            let value = json!({"error":{"code":"invalid_request", "param":parameter, "message":"private content"}});
+            assert!(
+                request_parameter(&value).is_none(),
+                "unexpectedly exposed {parameter:?}"
+            );
+            assert_eq!(event_failure(&value).message, failure(400).message);
+        }
+        for (code, expected) in [
+            ("authentication_error", "provider_auth"),
+            ("rate_limit_exceeded", "provider_limit"),
+            ("context_length_exceeded", "context_overflow"),
+        ] {
+            for status in [None, Some(400)] {
+                let error = event_failure(
+                    &json!({"status":status, "error":{"code":code, "param":"input", "message":"private content"}}),
+                );
+                assert_eq!(error.code, expected);
+                assert!(!error.message.contains("campo"));
+                if let Some(status) = status {
+                    assert_eq!(error.provider_metadata.unwrap().http_status, Some(status));
+                }
+            }
+        }
+    }
+
+    struct ControlledSseServer {
+        request: reqwest::RequestBuilder,
+        connected: tokio::sync::oneshot::Receiver<()>,
+        chunks: std::sync::mpsc::Sender<String>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    fn controlled_sse_server() -> ControlledSseServer {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let request = http_client()
+            .unwrap()
+            .get(format!("http://{}", listener.local_addr().unwrap()));
+        let (connected_tx, connected) = tokio::sync::oneshot::channel();
+        let (chunks, commands) = std::sync::mpsc::channel::<String>();
+        // Keep a blocking task alive so Tokio only advances the paused clock
+        // when requested below, never while the real socket is becoming ready.
+        let task = tokio::task::spawn_blocking(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                stream.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            connected_tx.send(()).unwrap();
+            while let Ok(chunk) = commands.recv_timeout(Duration::from_secs(10)) {
+                if stream.write_all(chunk.as_bytes()).is_err() {
+                    break;
+                }
+            }
+        });
+        ControlledSseServer {
+            request,
+            connected,
+            chunks,
+            task,
+        }
+    }
+
+    fn sse_headers() -> &'static str {
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+    }
+
+    fn text_event() -> &'static str {
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"
+    }
+
+    #[tokio::test]
+    async fn healthy_http_stream_outlives_the_former_ten_minute_deadline() {
+        let ControlledSseServer {
+            request,
+            connected,
+            chunks,
+            task: server,
+        } = controlled_sse_server();
+        let (_cancel, signal) = watch::channel(false);
+        let (deltas, mut observed) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(async move {
+            receive(request, signal, |delta| {
+                if let Delta::Text(text) = delta {
+                    deltas.send(text).unwrap();
+                }
+                Ok(())
+            })
+            .await
+        });
+        connected.await.unwrap();
+        chunks
+            .send(format!("{}{}", sse_headers(), text_event()))
+            .unwrap();
+        assert_eq!(observed.recv().await.as_deref(), Some("OK"));
+        tokio::time::pause();
+        let started = tokio::time::Instant::now();
+        for _ in 0..7 {
+            tokio::time::advance(Duration::from_secs(100)).await;
+            chunks.send(text_event().into()).unwrap();
+            assert_eq!(observed.recv().await.as_deref(), Some("OK"));
+        }
+        chunks.send("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"OK\"}]}]}}\n\n".into()).unwrap();
+        assert_eq!(task.await.unwrap().unwrap().text, "OK");
+        assert_eq!(started.elapsed(), Duration::from_secs(700));
+        drop(chunks);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn http_header_and_body_stalls_still_timeout() {
+        for send_first_event in [false, true] {
+            let ControlledSseServer {
+                request,
+                connected,
+                chunks,
+                task: server,
+            } = controlled_sse_server();
+            let (_cancel, signal) = watch::channel(false);
+            let (deltas, mut observed) = tokio::sync::mpsc::unbounded_channel();
+            let task = tokio::spawn(async move {
+                receive(request, signal, |delta| {
+                    if let Delta::Text(text) = delta {
+                        deltas.send(text).unwrap();
+                    }
+                    Ok(())
+                })
+                .await
+            });
+            connected.await.unwrap();
+            if send_first_event {
+                chunks
+                    .send(format!("{}{}", sse_headers(), text_event()))
+                    .unwrap();
+                assert_eq!(observed.recv().await.as_deref(), Some("OK"));
+            }
+            tokio::time::pause();
+            tokio::time::advance(STREAM_IDLE_TIMEOUT + Duration::from_secs(1)).await;
+            assert_eq!(task.await.unwrap().unwrap_err().code, "provider_timeout");
+            drop(chunks);
+            server.await.unwrap();
+            tokio::time::resume();
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sse_keepalive_comments_do_not_reset_the_first_event_deadline() {
+        let mut parser = Sse::default();
+        assert_eq!(parser.wait_timeout(), STREAM_IDLE_TIMEOUT);
+        tokio::time::advance(Duration::from_secs(100)).await;
+        assert!(parser.push(b": keepalive\n\n").unwrap().is_empty());
+        assert_eq!(parser.wait_timeout(), Duration::from_secs(20));
+        tokio::time::advance(Duration::from_secs(20)).await;
+        assert!(parser.push(b"data: {\"type\":").unwrap().is_empty());
+        assert_eq!(parser.wait_timeout(), Duration::ZERO);
+        assert_eq!(parser.push(b"\"response.created\"}\n\n").unwrap().len(), 1);
+        assert_eq!(parser.wait_timeout(), STREAM_IDLE_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_the_first_event_does_not_wait_for_idle_timeout() {
+        let ControlledSseServer {
+            request,
+            connected,
+            chunks,
+            task: server,
+        } = controlled_sse_server();
+        let (cancel, signal) = watch::channel(false);
+        let (deltas, mut observed) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(async move {
+            receive(request, signal, |delta| {
+                if let Delta::Text(text) = delta {
+                    deltas.send(text).unwrap();
+                }
+                Ok(())
+            })
+            .await
+        });
+        connected.await.unwrap();
+        chunks
+            .send(format!("{}{}", sse_headers(), text_event()))
+            .unwrap();
+        assert_eq!(observed.recv().await.as_deref(), Some("OK"));
+        tokio::time::pause();
+        let started = tokio::time::Instant::now();
+        cancel.send(true).unwrap();
+        assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
+        assert_eq!(started.elapsed(), Duration::ZERO);
+        drop(chunks);
+        server.await.unwrap();
     }
 
     #[tokio::test]

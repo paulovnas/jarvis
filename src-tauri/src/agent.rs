@@ -687,6 +687,106 @@ impl Session {
         Ok(())
     }
 
+    // A claimed interaction remains attached to its active turn until this
+    // receipt is durable, including when cancellation arrives during execution.
+    fn enqueue_interaction_result(
+        &self,
+        turn_id: &str,
+        tool_id: &str,
+        output: &str,
+        duration_ms: u64,
+    ) -> Result<ChatSnapshot, AgentError> {
+        let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
+        if data.storage_failed {
+            return Err(AgentError::storage());
+        }
+        let current = data
+            .turns
+            .last_mut()
+            .filter(|turn| turn.turn.id == turn_id)
+            .ok_or_else(|| {
+                AgentError::new(
+                    "stale_interaction",
+                    "A resposta pertence a uma execução que já foi encerrada.",
+                )
+            })?;
+        let tool = current
+            .turn
+            .steps
+            .iter_mut()
+            .flat_map(|step| &mut step.tools)
+            .find(|tool| tool.id == tool_id)
+            .ok_or_else(AgentError::internal)?;
+        tool.status = "completed".into();
+        tool.output = output.into();
+        tool.duration_ms = duration_ms;
+        if let Some(receipt) = current
+            .wire
+            .iter_mut()
+            .find(|item| item["type"] == "function_call_output" && item["call_id"] == tool_id)
+        {
+            receipt["output"] = json!(output);
+        } else {
+            current
+                .wire
+                .push(json!({"type":"function_call_output", "call_id":tool_id, "output":output}));
+        }
+        if self.writer.append_turn(current.clone()).is_err() {
+            data.storage_failed = true;
+            if let Some(active) = &data.active {
+                active.cancel.send_replace(true);
+            }
+            return Err(AgentError::storage());
+        }
+        data.revision = next_revision();
+        data.last_emit = std::time::Instant::now();
+        Ok(self.snapshot_data(&data))
+    }
+
+    fn record_interaction_result(
+        &self,
+        turn_id: &str,
+        tool_id: &str,
+        output: &str,
+        duration_ms: u64,
+    ) -> Result<ChatSnapshot, AgentError> {
+        let snapshot = self.enqueue_interaction_result(turn_id, tool_id, output, duration_ms)?;
+        self.flush()?;
+        (self.emit)(snapshot.clone());
+        Ok(snapshot)
+    }
+
+    async fn record_interaction_result_async(
+        &self,
+        turn_id: &str,
+        tool_id: &str,
+        output: &str,
+        duration_ms: u64,
+    ) -> Result<ChatSnapshot, AgentError> {
+        let snapshot = self.enqueue_interaction_result(turn_id, tool_id, output, duration_ms)?;
+        self.flush_async().await?;
+        (self.emit)(snapshot.clone());
+        Ok(snapshot)
+    }
+
+    async fn drain_interactions(&self, cancel: bool) {
+        let receipts = self
+            .data
+            .lock()
+            .ok()
+            .and_then(|mut data| {
+                data.active
+                    .as_mut()
+                    .map(|active| active.drain_interactions(cancel))
+            })
+            .unwrap_or_default();
+        // A provider can drop a native-tool future while its blocking publication
+        // worker still owns an effect. Drain that receipt before sealing the turn.
+        for receipt in receipts {
+            let _ = receipt.await;
+        }
+    }
+
     fn transition(&self, phase: turn_state::TurnPhase) -> Result<(), AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
         let active = data.active.as_mut().ok_or_else(AgentError::cancelled)?;
@@ -824,7 +924,7 @@ impl Session {
             if !resumable_workflow_turn(turn) {
                 return Err(AgentError::new(
                     "workflow_recovery_unavailable",
-                    "Esta conversa não possui um fluxo Planejado ou Completo que possa ser retomado.",
+                    "Esta conversa não possui um checkpoint de fluxo que possa ser retomado.",
                 ));
             }
             turn.turn.id.clone()
@@ -835,7 +935,7 @@ impl Session {
             .ok_or_else(|| {
                 AgentError::new(
                     "workflow_recovery_unavailable",
-                    "Esta conversa não possui um fluxo Planejado ou Completo que possa ser retomado.",
+                    "Esta conversa não possui um checkpoint de fluxo que possa ser retomado.",
                 )
             })
     }
@@ -1574,9 +1674,10 @@ fn resumable_workflow_turn(turn: &StoredTurn) -> bool {
                 matches!(error.code.as_str(), "interrupted" | "progress_paused")
             }));
     recoverable_status
+        && !turn.turn.options.direct()
         && matches!(
             turn.turn.options.workflow,
-            Some(workflow::Flow::Planned | workflow::Flow::Complete)
+            Some(workflow::Flow::Planned | workflow::Flow::Complete | workflow::Flow::Custom)
         )
 }
 async fn cancelled(signal: &mut watch::Receiver<bool>) {
@@ -1782,6 +1883,7 @@ async fn finish_run(
 ) -> bool {
     let result = supervise_run(run).await;
     let completed = result.is_ok();
+    session.drain_interactions(!completed).await;
     finish(session, result);
     completed
 }
@@ -2618,6 +2720,14 @@ fn run_turn<'a>(
             queue::inject_pending_auxiliary(session, home).await?;
             if let Some(exec) = &execution {
                 exec.deliver(session)?;
+                exec.refresh_recovery_catalog(
+                    |name| !mcp_clients.requires_active_task(name),
+                    |name| {
+                        mcp_clients
+                            .tool_metadata(name)
+                            .map(|(server, _, _)| server.to_owned())
+                    },
+                )?;
                 let runtime_context = exec.context()?;
                 if runtime_context != previous_runtime_context {
                     session.update_async(|data| {
@@ -3462,8 +3572,10 @@ fn run_turn<'a>(
                         output
                     })
                 } else if permitted {
+                    async {
                     let _mutation_guard = match &execution {
                         Some(exec) => {
+                            exec.recovery_mcp_preflight(&tool, requires_task, mcp_clients.tool_metadata(&tool.name).map(|(server, _, _)| server))?;
                             exec.mutation_guard(
                                 &tool,
                                 tool.name.starts_with("mcp_") && requires_task,
@@ -3678,7 +3790,7 @@ fn run_turn<'a>(
                             .await
                         }
                         Some(tool_contract::Handler::SkillRead) => tokio::select! {
-                            _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+                            _ = cancelled(&mut signal) => Err(AgentError::cancelled()),
                             result = crate::skills::read(home, &session.root, &tool.args) => result.map_err(|cause| AgentError::new("skill_error", &cause.message)),
                         },
                         Some(tool_contract::Handler::SkillSearch) => {
@@ -3745,6 +3857,7 @@ fn run_turn<'a>(
                             "Ferramenta indisponível nesta etapa.",
                         )),
                     }
+                }.await
                 } else {
                     Err(AgentError::new(
                         "denied",
@@ -3876,10 +3989,15 @@ fn run_turn<'a>(
                     if status == "completed" && confirmed_mutation {
                         exec.record_confirmed_progress()?;
                     }
-                    exec.observe_recovery_inspection(
+                    exec.observe_recovery_result(
                         &tool,
                         tool.name.starts_with("mcp_") && requires_task,
                         status == "completed",
+                        |name| {
+                            mcp_clients
+                                .tool_metadata(name)
+                                .map(|(server, _, _)| server.to_owned())
+                        },
                     )?;
                 }
                 // The actual action and original output are durable even if a Core hook failed.
@@ -3962,7 +4080,7 @@ fn finish(session: &Session, result: Result<(), AgentError>) {
                 Err(error) => {
                     current.turn.status = match error.code.as_str() {
                         "cancelled" => TurnStatus::Cancelled,
-                        "progress_paused" => {
+                        "progress_paused" | "interrupted" => {
                             if current.turn.options.direct() {
                                 recovery = Some(current.turn.id.clone());
                             }

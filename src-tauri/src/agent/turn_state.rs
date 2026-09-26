@@ -8,7 +8,17 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
+
+pub(super) struct InteractionReceipt(Option<oneshot::Sender<()>>);
+
+impl Drop for InteractionReceipt {
+    fn drop(&mut self) {
+        if let Some(done) = self.0.take() {
+            let _ = done.send(());
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TurnPhase {
@@ -44,6 +54,8 @@ pub(super) struct ActiveTurn {
     elapsed: Duration,
     running_since: Option<Instant>,
     mailbox: TurnMailbox,
+    interactions: Vec<oneshot::Receiver<()>>,
+    interactions_cancel: watch::Sender<bool>,
 }
 
 impl ActiveTurn {
@@ -61,6 +73,8 @@ impl ActiveTurn {
                 accepting_auxiliary: true,
                 delivery: MailboxDelivery::CurrentTurn,
             },
+            interactions: Vec::new(),
+            interactions_cancel: watch::channel(false).0,
         }
     }
 
@@ -207,6 +221,32 @@ impl ActiveTurn {
         self.mailbox.accepting_auxiliary && self.mailbox.delivery == MailboxDelivery::CurrentTurn
     }
 
+    pub(super) fn accepts_interaction(&self) -> bool {
+        !*self.cancel.borrow() && !matches!(self.phase, TurnPhase::Draining | TurnPhase::Cancelling)
+    }
+
+    pub(super) fn claim_interaction(&mut self) -> InteractionReceipt {
+        self.interactions.retain_mut(|receipt| {
+            matches!(receipt.try_recv(), Err(oneshot::error::TryRecvError::Empty))
+        });
+        let (done, receipt) = oneshot::channel();
+        self.interactions.push(receipt);
+        InteractionReceipt(Some(done))
+    }
+
+    pub(super) fn interaction_cleanup_signal(&self) -> watch::Receiver<bool> {
+        self.interactions_cancel.subscribe()
+    }
+
+    pub(super) fn drain_interactions(&mut self, cancel: bool) -> Vec<oneshot::Receiver<()>> {
+        self.transition(TurnPhase::Draining);
+        if cancel {
+            // Technical cleanup must not masquerade as an explicit user stop.
+            self.interactions_cancel.send_replace(true);
+        }
+        std::mem::take(&mut self.interactions)
+    }
+
     pub(super) fn close_auxiliary(&mut self) {
         self.mailbox.accepting_auxiliary = false;
         self.mailbox.delivery = MailboxDelivery::NextTurn;
@@ -315,6 +355,24 @@ impl DrainLease {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn technical_interaction_cleanup_preserves_explicit_cancellation_channel() {
+        let (cancel, user_signal) = watch::channel(false);
+        let mut active = ActiveTurn::new("turn".into(), cancel);
+        let effect = active.claim_interaction();
+        let cleanup = active.interaction_cleanup_signal();
+        let mut receipts = active.drain_interactions(true);
+        assert!(*cleanup.borrow());
+        assert!(!*user_signal.borrow());
+        assert!(!active.accepts_interaction());
+        assert!(receipts[0].try_recv().is_err());
+        // A later real user stop remains observable by workflow recovery.
+        active.cancel();
+        assert!(*user_signal.borrow());
+        drop(effect);
+        assert!(receipts[0].try_recv().is_ok());
+    }
 
     #[test]
     fn execution_clock_excludes_queue_human_wait_and_time_between_retries() {

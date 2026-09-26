@@ -165,6 +165,11 @@ pub(super) fn publish_custom(hub: &Hub, handoffs: &[Handoff]) -> Result<(), Agen
         if state.flow != Flow::Custom || !state.options.manual_validation() {
             return Ok(());
         }
+        if state.validation.as_ref().is_some_and(|batch| {
+            batch.flow == Flow::Custom && batch.run_id == state.run_id && !batch.stale
+        }) {
+            return Ok(());
+        }
         if state
             .validation
             .as_ref()
@@ -806,6 +811,14 @@ mod tests {
         assert_eq!(batch.items.len(), 1);
         assert_eq!(batch.items[0].steps, handoffs[0].validation);
         assert!(batch.items[0].expected.contains("novo comportamento"));
+        let batch_id = batch.id.clone();
+        drop(state);
+        // Resume after the final handoff and manual round were persisted.
+        publish_custom(&hub, &handoffs).unwrap();
+        assert_eq!(
+            hub.manifest.lock().unwrap().validation.as_ref().unwrap().id,
+            batch_id
+        );
     }
 
     #[test]

@@ -1,5 +1,154 @@
 use super::*;
 
+#[tokio::test]
+async fn canvas_cursor_survives_failure_and_rework_without_repeating_confirmed_steps() {
+    for fail_at in [1, 2] {
+        let (_fixture, hub) = super::super::tests::hub();
+        let definition = definition();
+        let (_sender, signal) = watch::channel(false);
+        let mut visited = vec![];
+        let failure = walk_from(
+            &definition,
+            signal,
+            Cursor::start(&definition),
+            |step, _, index| {
+                visited.push(step.id);
+                async move {
+                    if index == fail_at {
+                        return Err(invalid("Provider unavailable"));
+                    }
+                    Ok(handoff(if index == 1 {
+                        Verdict::Rework
+                    } else {
+                        Verdict::Completed
+                    }))
+                }
+            },
+            |cursor| {
+                hub.mutate(|state| {
+                    state.custom_cursor = Some(cursor.clone());
+                    Ok(())
+                })
+            },
+        )
+        .await;
+        assert!(failure.is_err());
+        let saved = storage::load(&hub.directory, &hub.root.id)
+            .unwrap()
+            .unwrap();
+        let cursor = saved.custom_cursor.unwrap();
+        assert_eq!(cursor.results.len(), fail_at);
+        assert_eq!(cursor.visited.len(), fail_at);
+        let (_sender, signal) = watch::channel(false);
+        let mut resumed = vec![];
+        let result = walk_from(
+            &definition,
+            signal,
+            cursor,
+            |step, previous, index| {
+                resumed.push(step.id);
+                assert_eq!(previous.len(), index);
+                async { Ok(handoff(Verdict::Completed)) }
+            },
+            |_| Ok(()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resumed[0], visited[fail_at]);
+        assert_eq!(result.len(), if fail_at == 1 { 2 } else { 4 });
+        assert_eq!(resumed.len(), if fail_at == 1 { 1 } else { 2 });
+    }
+}
+
+#[test]
+fn failed_canvas_worker_reopens_the_same_turn_and_preserves_tool_receipts() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let definition = definition();
+    hub.mutate(|state| {
+        state.flow = Flow::Custom;
+        state.options.workflow = Some(Flow::Custom);
+        state.custom_definition = Some(definition.clone());
+        state.custom_cursor = Some(Cursor::start(&definition));
+        Ok(())
+    })
+    .unwrap();
+    let mut worker = prepare(&hub, &definition, &definition.flow.steps[0], &[], 0).unwrap();
+    let (session, _) = storage::worker(&hub, &worker, None).unwrap();
+    let original = session.snapshot().unwrap().turns[0].id.clone();
+    session
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().wire.push(
+                json!({"type":"function_call_output","call_id":"saved","output":"Verified result"}),
+            );
+        })
+        .unwrap();
+    super::super::super::finish(&session, Err(AgentError::internal()));
+    drop(session);
+    worker.status = Status::Failed;
+    hub.mutate(|state| {
+        state.root_status = Status::Failed;
+        state.jobs.insert(worker.id.clone(), worker.clone());
+        state.custom_cursor.as_mut().unwrap().active = Some(worker.id.clone());
+        Ok(())
+    })
+    .unwrap();
+    let saved = storage::load(&hub.directory, &hub.root.id)
+        .unwrap()
+        .unwrap();
+    let (recovered, workers) =
+        storage::prepare_recovery(&hub.directory, saved, Flow::Custom, "run", vec![]).unwrap();
+    assert_eq!(workers.len(), 1);
+    *hub.manifest.lock().unwrap() = recovered;
+    let resumed = prepare(&hub, &definition, &definition.flow.steps[0], &[], 0).unwrap();
+    assert_eq!(resumed.id, worker.id);
+    let (session, _) = storage::resume_worker(&hub, &resumed).unwrap();
+    let data = session.data.lock().unwrap();
+    assert_eq!(data.turns.len(), 1);
+    assert_eq!(data.turns[0].turn.id, original);
+    assert_eq!(
+        data.turns[0]
+            .wire
+            .iter()
+            .filter(|item| item["call_id"] == "saved")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn accepted_canvas_handoff_is_reused_after_crash_before_cursor_advance() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let definition = definition();
+    let mut worker = prepare(&hub, &definition, &definition.flow.steps[0], &[], 0).unwrap();
+    // The handoff transaction committed, but the worker never persisted its
+    // final status (nor did the canvas advance its cursor).
+    worker.status = Status::Running;
+    worker.handoff = Some(handoff(Verdict::Completed));
+    hub.mutate(|state| {
+        let mut cursor = Cursor::start(&definition);
+        cursor.active = Some(worker.id.clone());
+        state.flow = Flow::Custom;
+        state.root_status = Status::Failed;
+        state.custom_cursor = Some(cursor);
+        state.jobs.insert(worker.id.clone(), worker.clone());
+        Ok(())
+    })
+    .unwrap();
+    let saved = storage::load(&hub.directory, &hub.root.id)
+        .unwrap()
+        .unwrap();
+    let (recovered, workers) =
+        storage::prepare_recovery(&hub.directory, saved, Flow::Custom, "run", vec![]).unwrap();
+    assert!(workers.is_empty());
+    *hub.manifest.lock().unwrap() = recovered;
+    let recovered = prepare(&hub, &definition, &definition.flow.steps[0], &[], 0).unwrap();
+    assert_eq!(recovered.attempts, 1);
+    let result = execute_step(hub.clone(), recovered).await.unwrap();
+    assert_eq!(result.summary, "Evidence-backed outcome");
+    assert!(hub.live.lock().unwrap().is_empty());
+    assert!(!hub.directory.join(format!("{}.jsonl", worker.id)).exists());
+}
+
 fn definition() -> RunDefinition {
     let c = catalog::tests::example();
     c.resolve(&c.flows[0].id).unwrap()

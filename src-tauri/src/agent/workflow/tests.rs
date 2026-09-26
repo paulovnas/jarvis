@@ -200,6 +200,8 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
     let directory = fixture.root.join("workflow");
     std::fs::create_dir(&directory).unwrap();
     let manifest = Manifest {
+        worker_interruptions: BTreeMap::new(),
+        custom_cursor: None,
         custom_definition: None,
         custom_agent: None,
         validation: None,
@@ -1101,7 +1103,7 @@ fn recovery_restarts_a_worker_that_only_created_its_journal_header() {
 }
 
 #[tokio::test]
-async fn recovered_agents_must_complete_a_read_before_any_new_mutation() {
+async fn recovered_agents_resolve_the_specific_effect_without_blocking_independent_work() {
     let (_fixture, hub) = hub();
     hub.mutate(|state| {
         state.root_recovery = Some(RecoveryCheckpoint::new(vec!["write".into()]));
@@ -1123,23 +1125,53 @@ async fn recovered_agents_must_complete_a_read_before_any_new_mutation() {
         output: String::new(),
         duration_ms: 0,
     };
-    assert!(execution
-        .mutation_guard(&write, false, hub.root_signal.clone())
-        .await
-        .unwrap_err()
-        .message
-        .contains("confira primeiro"));
+    std::fs::create_dir_all(hub.root.root.join("src")).unwrap();
+    std::fs::write(hub.root.root.join("src/app.ts"), "updated").unwrap();
+    hub.root.update(true, |data| {
+        let turn = data.turns.last_mut().unwrap();
+        turn.turn.steps.push(Step { tools: vec![write.clone()], ..Step::default() });
+        turn.wire.push(json!({"type":"function_call", "call_id":write.id, "name":write.name, "arguments":write.args.to_string()}));
+    }).unwrap();
+    assert_eq!(
+        execution
+            .recovery_preflight(&write, false)
+            .unwrap_err()
+            .code,
+        "recovery_inspection_required"
+    );
+    let independent = ToolCall {
+        args: json!({"path":"src/other.ts","content":"independent"}),
+        ..write.clone()
+    };
+    assert!(execution.recovery_preflight(&independent, false).is_ok());
 
     let read = ToolCall {
         id: "read-2".into(),
         name: "read".into(),
         args: json!({"path":"src/app.ts"}),
         status: "completed".into(),
-        output: "current".into(),
+        output: "updated".into(),
         duration_ms: 1,
     };
+    hub.root
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().wire.push(
+                json!({"type":"function_call_output","call_id":read.id,"output":read.output}),
+            );
+        })
+        .unwrap();
     execution
-        .observe_recovery_inspection(&read, false, true)
+        .observe_recovery_result(&read, false, true, |_| None)
+        .unwrap();
+    assert_eq!(
+        execution
+            .recovery_preflight(&write, false)
+            .unwrap_err()
+            .code,
+        "recovery_inspection_required"
+    );
+    execution
+        .resolve_recovery(&json!({"callId":write.id,"evidenceCallId":read.id,"outcome":"applied"}))
         .unwrap();
     assert!(
         hub.manifest
@@ -1150,10 +1182,14 @@ async fn recovered_agents_must_complete_a_read_before_any_new_mutation() {
             .unwrap()
             .inspected
     );
-    assert!(execution
-        .mutation_guard(&write, false, hub.root_signal.clone())
-        .await
-        .is_ok());
+    assert_eq!(
+        execution
+            .recovery_preflight(&write, false)
+            .unwrap_err()
+            .code,
+        "recovery_already_applied"
+    );
+    assert!(execution.recovery_preflight(&independent, false).is_ok());
 }
 
 #[tokio::test]

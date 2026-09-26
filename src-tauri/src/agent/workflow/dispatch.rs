@@ -577,7 +577,9 @@ fn prepare_retry(
         settings::apply(&mut job.options, &state.profiles, flow, job.role);
     }
     job.run_id = state.run_id.clone();
-    Ok(job.clone())
+    let job = job.clone();
+    state.worker_interruptions.remove(&job.id);
+    Ok(job)
 }
 async fn complete(
     exec: &Execution,
@@ -1105,11 +1107,16 @@ fn launch_inner(
         })
         .await
         .unwrap_or_else(|_| Err(AgentError::internal()));
-        if result.is_err() {
+        let result = interrupted_result(&hub, &job.id, result);
+        if let Err(error) = &result {
+            if error.code != "cancelled" {
+                let _ = interrupt_descendants(&hub, &job.id, &error.message);
+            }
             let _ = cancel_tree(&hub, &job.id);
             await_children_settled(&hub, &job.id).await;
         }
         bridge.abort();
+        session.drain_interactions(result.is_err()).await;
         finish(&session, result.clone());
         let duration_ms = session
             .data
@@ -1142,6 +1149,80 @@ async fn await_children_settled(hub: &Hub, id: &str) {
         }
     }
 }
+// Persist the stop cause before signalling descendants. A crash between these
+// operations must not turn a runtime interruption into an explicit cancellation.
+pub(super) fn interrupt_descendants(
+    hub: &Hub,
+    parent: &str,
+    message: &str,
+) -> Result<(), AgentError> {
+    if *hub.root_signal.borrow() {
+        return Ok(());
+    }
+    let already_cancelled: HashSet<_> = hub
+        .live
+        .lock()
+        .map_err(|_| AgentError::internal())?
+        .iter()
+        .filter_map(|(id, session)| {
+            session.data.lock().ok().and_then(|data| {
+                data.active
+                    .as_ref()
+                    .filter(|active| *active.cancel.borrow())
+                    .map(|_| id.clone())
+            })
+        })
+        .collect();
+    hub.mutate(|state| {
+        let mut parents = vec![parent.to_owned()];
+        let mut index = 0;
+        while index < parents.len() {
+            let children: Vec<_> = state
+                .jobs
+                .values()
+                .filter(|job| job.parent_id == parents[index])
+                .map(|job| (job.id.clone(), job.status.active()))
+                .collect();
+            for (id, active) in children {
+                if active && !already_cancelled.contains(&id) {
+                    state
+                        .worker_interruptions
+                        .insert(id.clone(), message.to_owned());
+                }
+                parents.push(id);
+            }
+            index += 1;
+        }
+        Ok(())
+    })
+}
+
+fn interrupted_result(
+    hub: &Hub,
+    id: &str,
+    result: Result<(), AgentError>,
+) -> Result<(), AgentError> {
+    if !*hub.root_signal.borrow()
+        && result
+            .as_ref()
+            .is_err_and(|error| error.code == "cancelled")
+    {
+        if let Some(message) = hub
+            .manifest
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .worker_interruptions
+            .get(id)
+        {
+            return Err(AgentError::new(
+                "interrupted",
+                &format!("Execução interrompida por falha do coordenador: {message}"),
+            ));
+        }
+    }
+    result
+}
+
 fn cancel_tree(hub: &Hub, id: &str) -> Result<(), AgentError> {
     let mut ids = vec![id.to_owned()];
     {
@@ -1185,14 +1266,14 @@ fn settle(
             Ok(()) if job.handoff.as_ref().is_some_and(|h| matches!(h.verdict, Verdict::Completed | Verdict::Approved)) => Status::Completed,
             Ok(()) => Status::Blocked,
             Err(error) if error.code == "cancelled" => Status::Cancelled,
-            Err(error) if error.code == "progress_paused" => Status::Interrupted,
+            Err(error) if matches!(error.code.as_str(), "interrupted" | "progress_paused") => Status::Interrupted,
             Err(_) => Status::Failed,
         };
         job.updated_at = now(); job.duration_ms = duration_ms.unwrap_or(0); job.error = result.as_ref().err().map(|error| error.message.clone());
         job.recovery = result
             .as_ref()
             .err()
-            .filter(|error| error.code == "progress_paused")
+            .filter(|error| matches!(error.code.as_str(), "interrupted" | "progress_paused"))
             .map(|_| RecoveryCheckpoint::new(vec![]));
         let text = json!({"agent":job.id,"role":job.role,"status":job.status,"beadId":job.bead_id,"handoff":job.handoff,"error":job.error}).to_string();
         let parent = job.parent_id.clone();
@@ -1200,6 +1281,7 @@ fn settle(
         let run_id = job.run_id.clone();
         state.messages.push(Message { from: job.id.clone(), to: job.parent_id.clone(), text });
         if completed {
+            state.worker_interruptions.remove(&original.id);
             if let Some(parent) = state.jobs.get_mut(&parent).filter(|parent| parent.run_id == run_id) {
                 // A verified child handoff is progress, unlike polling or elapsed time.
                 parent.recovery_attempts = 0;

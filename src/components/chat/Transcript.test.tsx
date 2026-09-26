@@ -214,16 +214,17 @@ describe("estado do turno", () => {
     expect(retry).toHaveBeenCalledWith(turn.id);
   });
 
-  it("explains why a custom workflow cannot be retried safely", () => {
+  it("continues a failed canvas workflow through the same retry action", async () => {
+    const retry = vi.fn();
     const turn = savedTurn();
     turn.status = "error";
     turn.options.workflow = "custom";
     turn.options.customWorkflowId = "custom-flow";
     turn.error = { code: "workflow_failed", message: "Uma etapa falhou." };
 
-    render(<TurnBody turn={turn} onRetry={vi.fn()} />);
+    render(<TurnBody turn={turn} onRetry={retry} />);
 
-    expect(screen.queryByRole("button", { name: "Tentar novamente" })).not.toBeInTheDocument();
-    expect(screen.getByText(/não possui um checkpoint seguro/i)).toBeVisible();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Tentar novamente" }));
+    expect(retry).toHaveBeenCalledWith(turn.id);
   });
 });

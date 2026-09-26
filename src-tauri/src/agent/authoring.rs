@@ -6,7 +6,14 @@ use super::{
 use crate::{openai_codex::OpenAiCodexState, persistence::AppState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::BTreeSet,
+    path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tauri::{Emitter, Manager};
 use tokio::sync::{oneshot, watch};
 
@@ -64,6 +71,8 @@ pub(super) struct Pending {
     mutation: Mutation,
     started: std::time::Instant,
     reply: oneshot::Sender<String>,
+    claimed: Arc<AtomicBool>,
+    _receipt: Option<super::turn_state::InteractionReceipt>,
 }
 
 #[derive(Clone)]
@@ -419,7 +428,7 @@ fn prepare(
 }
 
 pub(super) async fn execute(
-    session: &Session,
+    session: &Arc<Session>,
     owner: &Session,
     state: &AppState,
     oauth: &OpenAiCodexState,
@@ -483,12 +492,41 @@ pub(super) async fn execute(
             if *signal.borrow() {
                 return Err(AgentError::cancelled());
             }
-            let root = session.root.clone();
+            let (turn_id, receipt, cleanup) = {
+                let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
+                let active = data
+                    .active
+                    .as_mut()
+                    .filter(|active| active.accepts_interaction())
+                    .ok_or_else(AgentError::cancelled)?;
+                (
+                    active.id.clone(),
+                    active.claim_interaction(),
+                    active.interaction_cleanup_signal(),
+                )
+            };
+            let worker = session.clone();
+            let tool_id = tool.id.clone();
             return tauri::async_runtime::spawn_blocking(move || {
-                publication::apply(&root, &proposal, None)
+                let _receipt = receipt;
+                let started = std::time::Instant::now();
+                let output = publication::apply_with_cancel(
+                    &worker.root,
+                    &proposal,
+                    None,
+                    signal,
+                    Some(cleanup),
+                );
+                worker.record_interaction_result(
+                    &turn_id,
+                    &tool_id,
+                    &output,
+                    started.elapsed().as_millis() as u64,
+                )?;
+                Ok(output)
             })
             .await
-            .map_err(|_| AgentError::internal());
+            .map_err(|_| AgentError::internal())?;
         }
         (
             PendingProposal {
@@ -521,7 +559,8 @@ pub(super) async fn execute(
     if *signal.borrow() {
         return Err(AgentError::cancelled());
     }
-    let (reply, received) = oneshot::channel();
+    let (reply, mut received) = oneshot::channel();
+    let claimed = Arc::new(AtomicBool::new(false));
     session
         .update_async(|data| {
             if let Some(active) = &mut data.active {
@@ -531,14 +570,24 @@ pub(super) async fn execute(
                     mutation,
                     started: std::time::Instant::now(),
                     reply,
+                    claimed: claimed.clone(),
+                    _receipt: None,
                 });
             }
         })
         .await?;
     let _human_wait = session.measure(super::telemetry::Phase::HumanWait);
     tokio::select! {
-        _ = cancelled(&mut signal) => Err(AgentError::cancelled()),
-        result = received => result.map_err(|_| AgentError::cancelled()),
+        biased;
+        _ = cancelled(&mut signal) => {
+            // An accepted decision owns its process cleanup and durable receipt.
+            // Keep the turn alive until that receipt arrives, even after cancel.
+            if claimed.load(Ordering::Acquire) {
+                let _ = (&mut received).await;
+            }
+            Err(AgentError::cancelled())
+        },
+        result = &mut received => result.map_err(|_| AgentError::cancelled()),
     }
 }
 
@@ -561,7 +610,12 @@ fn answer_with(
     tool_id: &str,
     approved: bool,
     note: Option<String>,
-    apply: impl FnOnce(Mutation, Option<u64>, Option<&str>) -> Result<(String, bool), AgentError>,
+    apply: impl FnOnce(
+        Mutation,
+        Option<u64>,
+        Option<&str>,
+        (watch::Receiver<bool>, watch::Receiver<bool>),
+    ) -> Result<(String, bool), AgentError>,
 ) -> Result<(ChatSnapshot, bool), AgentError> {
     let note = note
         .map(|note| note.trim().to_owned())
@@ -576,30 +630,62 @@ fn answer_with(
     if data.storage_failed {
         return Err(AgentError::storage());
     }
-    let pending = data
+    let active = data
         .active
-        .as_ref()
-        .filter(|active| active.id == turn_id && !*active.cancel.borrow())
-        .and_then(|active| active.pending_authoring())
-        .filter(|pending| pending.request.tool_id == tool_id)
+        .as_mut()
+        .filter(|active| active.id == turn_id && active.accepts_interaction())
+        .filter(|active| {
+            active
+                .pending_authoring()
+                .is_some_and(|pending| pending.request.tool_id == tool_id)
+        })
         .ok_or_else(|| {
             AgentError::new(
                 "stale_authoring_proposal",
                 "Esta proposta não está mais aguardando aprovação.",
             )
         })?;
-    let mutation = pending.mutation.clone();
+    let signal = active.cancel.subscribe();
+    let cleanup = active.interaction_cleanup_signal();
+    // Claim once before releasing the state lock. A second click cannot apply
+    // the same decision while its durable receipt or external effect is pending.
+    let mut pending = active.take_authoring().ok_or_else(AgentError::internal)?;
+    pending._receipt = Some(active.claim_interaction());
+    pending.claimed.store(true, Ordering::Release);
+    let mutation = pending.mutation;
     let catalog_revision = pending.request.catalog_revision;
     let elapsed = pending.started.elapsed().as_millis() as u64;
     let publication_revision_requested =
         approved && note.is_some() && matches!(&mutation, Mutation::Publication(_));
-    let (output, changed) = if publication_revision_requested {
+    let current = data
+        .turns
+        .iter_mut()
+        .find(|turn| turn.turn.id == turn_id)
+        .ok_or_else(AgentError::internal)?;
+    current.wire.push(json!({
+        "role":"user", "_jarvis_runtime":true, "_jarvis_authoring_decision":true,
+        "content":format!("Native proposal decision for call {tool_id}: {}. This records the user's decision, not proof that the operation executed. Preserve this decision during recovery and inspect actual state before repeating an uncertain effect.",
+            json!({"approved":approved && !publication_revision_requested,"revisionRequested":publication_revision_requested,"note":note}))
+    }));
+    session.writer.append_turn(current.clone())?;
+    data.sync_timing();
+    data.revision = next_revision();
+    let snapshot = session.snapshot_data(&data);
+    drop(data);
+    session.flush()?;
+    (session.emit)(snapshot);
+    let (output, changed) = if *signal.borrow() || *cleanup.borrow() {
+        (cancelled_output(), false)
+    } else if publication_revision_requested {
         (
             publication_revision_output(note.as_deref().unwrap_or_default()),
             false,
         )
     } else if approved {
-        apply(mutation, catalog_revision, note.as_deref())?
+        apply(mutation, catalog_revision, note.as_deref(), (signal, cleanup)).unwrap_or_else(|cause| (
+            json!({"approved":true,"status":"failed","error":{"code":cause.code,"message":cause.message}}).to_string(),
+            false,
+        ))
     } else {
         (
             json!({
@@ -612,48 +698,7 @@ fn answer_with(
             false,
         )
     };
-    let previous = data
-        .turns
-        .last()
-        .filter(|turn| turn.turn.id == turn_id)
-        .cloned()
-        .ok_or_else(AgentError::internal)?;
-    let mut current = previous.clone();
-    let tool = current
-        .turn
-        .steps
-        .iter_mut()
-        .flat_map(|step| &mut step.tools)
-        .find(|tool| {
-            tool.id == tool_id
-                && matches!(
-                    tool.name.as_str(),
-                    "jarvis_propose_agent" | "jarvis_propose_flow" | "jarvis_propose_publication"
-                )
-        })
-        .ok_or_else(AgentError::internal)?;
-    tool.output.clone_from(&output);
-    tool.status = "completed".into();
-    tool.duration_ms = elapsed;
-    current
-        .wire
-        .push(json!({"type":"function_call_output","call_id":tool_id,"output":output}));
-    if session.writer.append_turn(current.clone()).is_err() || session.writer.flush().is_err() {
-        if let Some(active) = &data.active {
-            let _ = active.cancel.send(true);
-        }
-        return Err(AgentError::storage());
-    }
-    *data.turns.last_mut().ok_or_else(AgentError::internal)? = current;
-    let pending = data
-        .active
-        .as_mut()
-        .and_then(|active| active.take_authoring())
-        .ok_or_else(AgentError::internal)?;
-    data.revision = next_revision();
-    let snapshot = session.snapshot_data(&data);
-    drop(data);
-    (session.emit)(snapshot.clone());
+    let snapshot = session.record_interaction_result(turn_id, tool_id, &output, elapsed)?;
     let _ = pending.reply.send(output);
     Ok((snapshot, changed))
 }
@@ -677,7 +722,7 @@ pub(super) fn answer(
         &tool_id,
         approved,
         note,
-        |mutation, catalog_revision, note| match mutation {
+        |mutation, catalog_revision, note, (signal, cleanup)| match mutation {
             Mutation::Catalog(mutation) => {
                 let revision = catalog_revision.ok_or_else(AgentError::internal)?;
                 let revision =
@@ -687,9 +732,16 @@ pub(super) fn answer(
                     true,
                 ))
             }
-            Mutation::Publication(proposal) => {
-                Ok((publication::apply(&session.root, &proposal, note), false))
-            }
+            Mutation::Publication(proposal) => Ok((
+                publication::apply_with_cancel(
+                    &session.root,
+                    &proposal,
+                    note,
+                    signal,
+                    Some(cleanup),
+                ),
+                false,
+            )),
         },
     )?;
     if changed {

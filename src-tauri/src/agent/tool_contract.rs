@@ -57,7 +57,7 @@ impl Handler {
             || name.starts_with("browser_")
             || matches!(
                 name,
-                "workflow_check" | "design_brief" | "validation_publish"
+                "workflow_check" | "design_brief" | "validation_publish" | "recovery_resolve"
             )
         {
             Self::Workflow

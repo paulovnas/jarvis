@@ -16,6 +16,17 @@ fn runtime_error(message: String) -> AgentError {
     AgentError::new("claude_runtime", &message)
 }
 
+fn control_cancellation(signal: &watch::Receiver<bool>) -> AgentError {
+    if *signal.borrow() {
+        AgentError::cancelled()
+    } else {
+        AgentError::new(
+            "interrupted",
+            "O Claude interrompeu uma solicitação de ferramenta. Os resultados confirmados foram preservados; confira o estado da operação antes de tentar novamente.",
+        )
+    }
+}
+
 fn session_reference(data: &SessionData) -> Option<String> {
     data.turns
         .iter()
@@ -159,6 +170,7 @@ pub(super) async fn run(
         ) => result,
     };
     // Terminate only this owned process group, including on a failed callback.
+    session.drain_interactions(result.is_err()).await;
     let cleanup = process.cancel().await;
     core_runtime::record(session, bridge.context.take_activity())?;
     bridge.context.close().await;
@@ -383,7 +395,7 @@ async fn handle_control(
             result = &mut operation => break result?,
             next = process.next_event() => {
                 let next = next.map_err(runtime_error)?.ok_or_else(|| runtime_error("O Claude encerrou durante uma solicitação de ferramenta. Verifique o resultado antes de repetir a ação.".into()))?;
-                if next["type"] == "control_cancel_request" && next["request_id"] == id { return Err(AgentError::cancelled()); }
+                if next["type"] == "control_cancel_request" && next["request_id"] == id { return Err(control_cancellation(signal)); }
                 if next["type"] == "control_request" || next["type"] == "result" {
                     if queued.len() >= 64 { return Err(runtime_error("O Claude excedeu a fila de solicitações pendentes.".into())); }
                     queued.push_back(next);

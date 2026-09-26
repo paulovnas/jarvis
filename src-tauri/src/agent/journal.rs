@@ -28,7 +28,7 @@ const VACUUM_MIN_BYTES: u64 = 64 * 1024;
 const VACUUM_MIN_RECOVERABLE_BYTES: u64 = VACUUM_MIN_BYTES / 4;
 const VACUUM_MIN_AMPLIFICATION_BPS: u64 = 150;
 const VACUUM_MIN_STALE_RECORDS: usize = 128;
-const UNKNOWN_TOOL_OUTPUT: &str =
+pub(super) const UNKNOWN_TOOL_OUTPUT: &str =
     "Execução interrompida; resultado desconhecido. Verifique o estado atual antes de repetir a operação.";
 #[cfg(test)]
 static FAIL_VACUUM_PATH: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();

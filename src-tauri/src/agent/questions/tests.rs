@@ -313,10 +313,62 @@ async fn storage_failure_never_acknowledges_or_delivers_an_answer() {
         "session_storage"
     );
     assert!(task.await.unwrap().is_err());
-    assert!(session.data.lock().unwrap().turns[0]
-        .wire
-        .iter()
-        .all(|item| item["type"] != "function_call_output"));
+    // The in-memory candidate may exist, but no success was acknowledged or
+    // delivered to the waiting tool, and further work cannot use it as durable.
+    assert!(session.data.lock().unwrap().storage_failed);
+}
+
+#[tokio::test]
+async fn answering_during_slow_disk_keeps_snapshot_and_cancellation_available() {
+    use std::time::{Duration, Instant};
+    let fixture = Fixture::new();
+    let (session, tool, signal) = prepare(&fixture);
+    let task = start(&session, tool, signal).await;
+    let pending = session.snapshot().unwrap().pending_question.unwrap();
+    let release = session.writer.pause();
+    let answering = session.clone();
+    let turn_id = pending.turn_id.clone();
+    let tool_id = pending.tool_id.clone();
+    let reply = std::thread::spawn(move || answer(&answering, &turn_id, &tool_id, response()));
+    let started = Instant::now();
+    loop {
+        if session
+            .data
+            .try_lock()
+            .is_ok_and(|data| data.active.as_ref().unwrap().pending_question().is_none())
+        {
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(2));
+        tokio::task::yield_now().await;
+    }
+    assert!(session.snapshot().unwrap().pending_question.is_none());
+    assert!(answer(&session, &pending.turn_id, &pending.tool_id, response()).is_err());
+    session
+        .data
+        .lock()
+        .unwrap()
+        .active
+        .as_mut()
+        .unwrap()
+        .cancel();
+    tokio::task::yield_now().await;
+    assert!(
+        !task.is_finished(),
+        "cancel must drain the already accepted answer"
+    );
+    release.send(()).unwrap();
+    reply.join().unwrap().unwrap();
+    assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
+    let stored = journal::read_only(&session.journal).unwrap().0;
+    assert_eq!(
+        stored[0]
+            .wire
+            .iter()
+            .filter(|item| item["type"] == "function_call_output")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]

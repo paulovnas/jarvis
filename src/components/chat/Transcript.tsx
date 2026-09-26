@@ -18,15 +18,7 @@ function retryableTurn(turn: AgentTurn): boolean {
   const flow = turn.options.workflow;
   return flow === undefined || flow === null || flow === "standard" || flow === "designer"
     || flow === "planned" || flow === "complete" || flow === "publication"
-    || (flow === "custom" && Boolean(turn.options.customAgentId));
-}
-
-function retryUnavailableReason(turn: AgentTurn): string | undefined {
-  if (!turn.error || (turn.status !== "error" && turn.status !== "interrupted")) return undefined;
-  if (turn.options.workflow === "custom" && !turn.options.customAgentId) {
-    return "Este fluxo personalizado não possui um checkpoint seguro para retomar suas etapas sem repetir ações. Envie uma nova mensagem para continuar.";
-  }
-  return undefined;
+    || flow === "custom";
 }
 
 export const TurnBody = memo(function TurnBody({ turn, conversationId, onRetry, retrying = false }: { turn: AgentTurn; conversationId?: string; onRetry?: (turnId: string) => void; retrying?: boolean }) {
@@ -42,7 +34,7 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId, onRetry, 
   const latestText = turn.steps[turn.steps.length - 1]?.text ?? "";
   const repeatedError = turn.error?.message.trim() === latestText.trim();
   const exportFileName = `Resposta-Jarvis-${new Date(turn.createdAt).toISOString().slice(0, 16).replace("T", "-").replace(":", "-")}.md`;
-  return <AssistantMessageTurn onRetry={onRetry && retryableTurn(turn) ? () => onRetry(turn.id) : undefined} retrying={retrying} retryUnavailableReason={retryUnavailableReason(turn)} message={{
+  return <AssistantMessageTurn onRetry={onRetry && retryableTurn(turn) ? () => onRetry(turn.id) : undefined} retrying={retrying} message={{
     id: turn.id, role: "assistant", content: running || repeatedError ? "" : latestText, timestamp,
     model: executionLabel(turn.options), streaming: running,
     work: running || turn.steps.some((step, index) => step.summary || step.tools.length || step.coreActivities?.length || (step.text && index < turn.steps.length - 1)) ? {

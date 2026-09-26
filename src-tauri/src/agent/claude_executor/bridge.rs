@@ -96,7 +96,16 @@ impl<'a> Bridge<'a> {
             owner.project_id()?,
         )?);
         if let Some(exec) = &execution {
+            exec.refresh_recovery_catalog(
+                |name| !clients.requires_active_task(name),
+                |name| {
+                    clients
+                        .tool_metadata(name)
+                        .map(|(server, _, _)| server.to_owned())
+                },
+            )?;
             prompt.push_str(&exec.instructions()?);
+            prompt.push_str(&exec.context()?);
         }
         prompt.push_str(context.instructions());
         if direct_tasks {
@@ -409,6 +418,13 @@ impl<'a> Bridge<'a> {
         let execution = self.execution.clone();
         let _guard = match &execution {
             Some(exec) => {
+                exec.recovery_mcp_preflight(
+                    tool,
+                    requires_task,
+                    self.clients
+                        .tool_metadata(&tool.name)
+                        .map(|(server, _, _)| server),
+                )?;
                 exec.mutation_guard(
                     tool,
                     tool.name.starts_with("mcp_") && requires_task,
@@ -429,10 +445,15 @@ impl<'a> Bridge<'a> {
                 .map_or_else(|error| error.message.as_str(), String::as_str),
         );
         if let Some(exec) = &self.execution {
-            exec.observe_recovery_inspection(
+            exec.observe_recovery_result(
                 tool,
                 tool.name.starts_with("mcp_") && requires_task,
                 result.is_ok(),
+                |name| {
+                    self.clients
+                        .tool_metadata(name)
+                        .map(|(server, _, _)| server.to_owned())
+                },
             )?;
         }
         result

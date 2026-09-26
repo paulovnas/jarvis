@@ -1,7 +1,13 @@
 use super::{cancelled, next_revision, AgentError, AgentState, ChatSnapshot, Session, ToolCall};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tokio::sync::{oneshot, watch};
 mod visual;
 
@@ -42,6 +48,8 @@ pub(super) struct Pending {
     pub request: PendingQuestion,
     started: std::time::Instant,
     reply: oneshot::Sender<String>,
+    claimed: Arc<AtomicBool>,
+    _receipt: Option<super::turn_state::InteractionReceipt>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -202,6 +210,7 @@ pub(super) async fn execute(
     }
     let mut automatic = recommended_response(&request);
     let (reply, mut received) = oneshot::channel();
+    let claimed = Arc::new(AtomicBool::new(false));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -225,6 +234,8 @@ pub(super) async fn execute(
                     },
                     started: std::time::Instant::now(),
                     reply,
+                    claimed: claimed.clone(),
+                    _receipt: None,
                 });
             }
         })
@@ -235,13 +246,21 @@ pub(super) async fn execute(
     loop {
         tokio::select! {
             biased;
-            _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+            _ = cancelled(&mut signal) => {
+                if claimed.load(Ordering::Acquire) {
+                    let _ = (&mut received).await;
+                }
+                return Err(AgentError::cancelled());
+            },
             result = &mut received => return result.map_err(|_| AgentError::cancelled()),
             _ = &mut timeout, if automatic.is_some() => {
                 let response = automatic.take().ok_or_else(AgentError::internal)?;
                 // Check interaction under the same lock that commits an answer. A
                 // paused or manually answered question must never be auto-answered.
-                answer_inner(session, &turn_id, &tool.id, response, true)?;
+                if let Some((pending, output, elapsed)) = claim_answer(session, &turn_id, &tool.id, response, true)? {
+                    session.record_interaction_result_async(&turn_id, &tool.id, &output, elapsed).await?;
+                    let _ = pending.reply.send(output);
+                }
             },
         }
     }
@@ -266,7 +285,7 @@ pub(super) fn pause(
     let pending = data
         .active
         .as_mut()
-        .filter(|active| active.id == turn_id && !*active.cancel.borrow())
+        .filter(|active| active.id == turn_id && active.accepts_interaction())
         .and_then(|active| active.pending_question_mut())
         .filter(|pending| pending.request.tool_id == tool_id)
         .ok_or_else(|| {
@@ -284,7 +303,7 @@ pub(super) fn pause(
 }
 
 #[tauri::command]
-pub fn answer_agent_question(
+pub async fn answer_agent_question(
     agent: tauri::State<'_, AgentState>,
     conversation_id: String,
     turn_id: String,
@@ -292,7 +311,9 @@ pub fn answer_agent_question(
     response: Response,
 ) -> Result<ChatSnapshot, AgentError> {
     let session = agent.existing(&conversation_id)?;
-    answer(&session, &turn_id, &tool_id, response)
+    tauri::async_runtime::spawn_blocking(move || answer(&session, &turn_id, &tool_id, response))
+        .await
+        .map_err(|_| AgentError::internal())?
 }
 pub(super) fn answer(
     session: &Session,
@@ -310,6 +331,23 @@ fn answer_inner(
     response: Response,
     automatic: bool,
 ) -> Result<Option<ChatSnapshot>, AgentError> {
+    let Some((pending, output, elapsed)) =
+        claim_answer(session, turn_id, tool_id, response, automatic)?
+    else {
+        return Ok(None);
+    };
+    let snapshot = session.record_interaction_result(turn_id, tool_id, &output, elapsed)?;
+    let _ = pending.reply.send(output);
+    Ok(Some(snapshot))
+}
+
+fn claim_answer(
+    session: &Session,
+    turn_id: &str,
+    tool_id: &str,
+    response: Response,
+    automatic: bool,
+) -> Result<Option<(Pending, String, u64)>, AgentError> {
     let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
     if data.storage_failed {
         return Err(AgentError::storage());
@@ -317,7 +355,7 @@ fn answer_inner(
     let pending = data
         .active
         .as_ref()
-        .filter(|active| active.id == turn_id && !*active.cancel.borrow())
+        .filter(|active| active.id == turn_id && active.accepts_interaction())
         .and_then(|active| active.pending_question())
         .filter(|pending| pending.request.tool_id == tool_id);
     if automatic && pending.is_none_or(|pending| pending.request.deadline_at.is_none()) {
@@ -332,45 +370,11 @@ fn answer_inner(
     validate_response(&pending.request, &response)?;
     let output = serde_json::to_string(&response).map_err(|_| AgentError::internal())?;
     let elapsed = pending.started.elapsed().as_millis() as u64;
-    // Acknowledge only after both the visible answer and provider result are durable.
-    let previous = data
-        .turns
-        .last()
-        .filter(|turn| turn.turn.id == turn_id)
-        .cloned()
-        .ok_or_else(AgentError::internal)?;
-    let mut current = previous.clone();
-    let tool = current
-        .turn
-        .steps
-        .iter_mut()
-        .flat_map(|step| &mut step.tools)
-        .find(|tool| tool.id == tool_id && tool.name == "ask_user")
-        .ok_or_else(AgentError::internal)?;
-    tool.output = output.clone();
-    tool.status = "completed".into();
-    tool.duration_ms = elapsed;
-    current
-        .wire
-        .push(json!({"type":"function_call_output", "call_id":tool_id, "output":output}));
-    if session.writer.append_turn(current.clone()).is_err() || session.writer.flush().is_err() {
-        if let Some(active) = &data.active {
-            let _ = active.cancel.send(true);
-        }
-        return Err(AgentError::storage());
-    }
-    *data.turns.last_mut().ok_or_else(AgentError::internal)? = current;
-    let pending = data
-        .active
-        .as_mut()
-        .and_then(|active| active.take_question())
-        .ok_or_else(AgentError::internal)?;
-    data.revision = next_revision();
-    let snapshot = session.snapshot_data(&data);
-    drop(data);
-    (session.emit)(snapshot.clone());
-    let _ = pending.reply.send(output);
-    Ok(Some(snapshot))
+    let active = data.active.as_mut().ok_or_else(AgentError::internal)?;
+    let mut pending = active.take_question().ok_or_else(AgentError::internal)?;
+    pending._receipt = Some(active.claim_interaction());
+    pending.claimed.store(true, Ordering::Release);
+    Ok(Some((pending, output, elapsed)))
 }
 
 #[cfg(test)]

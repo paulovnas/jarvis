@@ -6,6 +6,7 @@ mod custom;
 mod dispatch;
 mod guidance;
 mod publishing;
+mod recovery;
 pub(crate) mod settings;
 mod storage;
 #[cfg(test)]
@@ -88,6 +89,10 @@ struct RecoveryCheckpoint {
     uncertain_tools: Vec<String>,
     #[serde(default)]
     inspected: bool,
+    #[serde(default)]
+    loaded: bool,
+    #[serde(default)]
+    calls: Vec<recovery::Call>,
     recovered_at: u64,
 }
 
@@ -96,6 +101,8 @@ impl RecoveryCheckpoint {
         Self {
             uncertain_tools,
             inspected: false,
+            loaded: false,
+            calls: vec![],
             recovered_at: now(),
         }
     }
@@ -176,6 +183,10 @@ struct Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Manifest {
+    #[serde(default)]
+    worker_interruptions: BTreeMap<String, String>,
+    #[serde(default)]
+    custom_cursor: Option<custom::Cursor>,
     #[serde(default)]
     custom_definition: Option<catalog::RunDefinition>,
     #[serde(default)]
@@ -428,6 +439,7 @@ impl Execution {
         mcp_mutating: bool,
         mut signal: watch::Receiver<bool>,
     ) -> Result<Option<tokio::sync::RwLockReadGuard<'_, ()>>, AgentError> {
+        self.recovery_preflight(tool, mcp_mutating)?;
         let mutation = tools::needs_approval(&tool.name)
             || matches!(tool.name.as_str(), "process_start" | "terminal_start")
             || (tool.name.starts_with("mcp_") && mcp_mutating)
@@ -444,11 +456,6 @@ impl Execution {
             );
         if !mutation {
             return Ok(None);
-        }
-        if self.recovery_inspection_pending()? {
-            return Err(invalid(
-                "Retomada protegida: confira primeiro o estado atual com uma ferramenta de leitura antes de executar qualquer mutação.",
-            ));
         }
         let affects_acceptance = matches!(
             tool.name.as_str(),
@@ -585,6 +592,7 @@ impl Execution {
     }
     // Mutable state belongs at the end of replay, not inside the reusable system prefix.
     pub(super) fn context(&self) -> Result<String, AgentError> {
+        self.initialize_recovery()?;
         let mut text = String::new();
         let state = self
             .hub
@@ -604,12 +612,13 @@ impl Execution {
         };
         if let Some(recovery) = recovery {
             text.push_str(&format!(
-                "\nRestart recovery checkpoint: {}. Inspect current files, Beads and relevant process state before any mutation. Calls with an uncertain durable outcome: {}. Never repeat one solely because its prior result is unknown.\n",
+                "\nRestart recovery checkpoint: {}. Inspect the exact affected resource for each unresolved call, then use recovery_resolve with its callId and the successful inspection evidenceCallId. Match the same file, repository, process or MCP server/resource. Unknown outcomes remain unresolved; do not repeat them blindly. Calls: {}. Legacy tool names: {}.\n",
                 if recovery.inspected {
                     "the required post-restart inspection was recorded"
                 } else {
-                    "a successful read inspection is still required"
+                    "specific operation evidence is still required"
                 },
+                json!(recovery.calls),
                 json!(recovery.uncertain_tools)
             ));
         }
@@ -671,33 +680,6 @@ impl Execution {
         Ok(text)
     }
 
-    pub(super) fn observe_recovery_inspection(
-        &self,
-        tool: &ToolCall,
-        mcp_mutating: bool,
-        completed: bool,
-    ) -> Result<(), AgentError> {
-        if !completed || !recovery_inspection_tool(&tool.name, mcp_mutating) {
-            return Ok(());
-        }
-        if !self.recovery_inspection_pending()? {
-            return Ok(());
-        }
-        self.hub.mutate(|state| {
-            let checkpoint = if self.id == "main" {
-                state.root_recovery.as_mut()
-            } else {
-                state
-                    .jobs
-                    .get_mut(&self.id)
-                    .and_then(|job| job.recovery.as_mut())
-            };
-            if let Some(checkpoint) = checkpoint {
-                checkpoint.inspected = true;
-            }
-            Ok(())
-        })
-    }
     pub(super) fn filter(&self, definitions: &mut Vec<Value>) {
         let direct = self.direct();
         definitions.extend(processes::definitions(self.role_mode()));
@@ -712,8 +694,14 @@ impl Execution {
             definitions.push(validation::definition());
         }
         definitions.retain(|d| d["name"].as_str().is_some_and(|name| self.allowed(name)));
+        if self.recovery_inspection_pending().unwrap_or(false) {
+            definitions.push(recovery::definition());
+        }
     }
     pub(super) fn allowed(&self, name: &str) -> bool {
+        if name == recovery::TOOL {
+            return true;
+        }
         if self.direct() && name.starts_with("hub_") {
             return false;
         }
@@ -940,6 +928,9 @@ impl Execution {
         sandbox: Option<&super::execution_sandbox::SandboxPlan>,
         signal: watch::Receiver<bool>,
     ) -> Result<String, AgentError> {
+        if tool.name == recovery::TOOL {
+            return self.resolve_recovery(&tool.args);
+        }
         if tool.name.starts_with("browser_") {
             if !self.allowed(&tool.name)
                 || (super::browser::mutating(&tool.name) && self.role_mode() != Mode::Build)
@@ -1030,7 +1021,10 @@ fn recovery_inspection_tool(name: &str, mcp_mutating: bool) -> bool {
             | "beads_ready"
     ) || name.starts_with("lsp_")
         || name.starts_with("context7_")
-        || name.starts_with("project_beads_")
+        || matches!(
+            name,
+            "project_beads_list" | "project_beads_ready" | "project_beads_show"
+        )
         || (name.starts_with("mcp_") && !mcp_mutating)
 }
 
@@ -1152,7 +1146,7 @@ pub(super) fn recovery_checkpoint_available(
     let turn = data.turns.last().ok_or_else(AgentError::internal)?;
     if !super::resumable_workflow_turn(turn) {
         return Err(invalid(
-            "Esta conversa não possui um fluxo Planejado ou Completo que possa ser retomado.",
+            "Esta conversa não possui um fluxo coordenado que possa ser retomado.",
         ));
     }
     let flow = turn
@@ -1207,10 +1201,8 @@ pub(super) async fn run(
         let flow = options.workflow.ok_or_else(|| {
             invalid("O turno interrompido não possui uma definição de fluxo válida.")
         })?;
-        if !matches!(flow, Flow::Planned | Flow::Complete) {
-            return Err(invalid(
-                "A retomada está disponível apenas para fluxos Planejado e Completo.",
-            ));
+        if !matches!(flow, Flow::Planned | Flow::Complete | Flow::Custom) {
+            return Err(invalid("Este fluxo não oferece retomada pelo checkpoint."));
         }
         let environment = Environment {
             browser_app: Some(app.clone()),
@@ -1237,6 +1229,17 @@ pub(super) async fn run(
             .lock()
             .map_err(|_| AgentError::internal())?
             .insert(session.id.clone(), hub.clone());
+        if flow == Flow::Custom {
+            let definition = hub
+                .manifest
+                .lock()
+                .map_err(|_| AgentError::internal())?
+                .custom_definition
+                .clone()
+                .ok_or_else(|| invalid("A definição salva do fluxo não foi encontrada."))?;
+            let result = supervise_run(custom::run(hub.clone(), definition, signal)).await;
+            return finish_hub(app, session, hub, result).await;
+        }
         for worker in workers {
             let _ = dispatch::resume(hub.clone(), worker);
         }
@@ -1398,6 +1401,18 @@ pub(super) async fn run(
     finish_hub(app, session, hub, result).await
 }
 
+async fn stop_workers(hub: &Hub, result: &Result<(), AgentError>) -> Result<(), AgentError> {
+    let interrupted = result
+        .as_ref()
+        .err()
+        .filter(|error| error.code != "cancelled")
+        .map_or(Ok(()), |error| {
+            dispatch::interrupt_descendants(hub, "main", &error.message)
+        });
+    hub.shutdown().await;
+    interrupted
+}
+
 async fn finish_hub(
     app: &tauri::AppHandle,
     session: &Arc<Session>,
@@ -1407,65 +1422,20 @@ async fn finish_hub(
     let progress_pause = result
         .as_ref()
         .err()
-        .filter(|error| error.code == "progress_paused")
-        .map(|error| error.message.clone());
-    let paused_workers = if progress_pause.is_some() {
-        hub.live
-            .lock()
-            .map_err(|_| AgentError::internal())?
-            .iter()
-            .map(|(id, worker)| (id.clone(), worker.clone()))
-            .collect::<Vec<_>>()
-    } else {
-        vec![]
-    };
-    hub.shutdown().await;
-    let workers_paused = if let Some(message) = &progress_pause {
-        paused_workers.iter().try_for_each(|(_, worker)| {
-            worker.update(true, |data| {
-                if let Some(turn) = data
-                    .turns
-                    .last_mut()
-                    .filter(|turn| turn.turn.status == TurnStatus::Cancelled)
-                {
-                    turn.turn.status = TurnStatus::Interrupted;
-                    turn.turn.error = Some(AgentError::new("progress_paused", message));
-                }
-            })
-        })
-    } else {
-        Ok(())
-    };
+        .filter(|error| error.code == "progress_paused");
+    let interrupted = stop_workers(&hub, &result).await;
     let status = match &result {
         Ok(()) => Status::Completed,
         Err(error) if error.code == "cancelled" => Status::Cancelled,
         Err(error) if error.code == "progress_paused" => Status::Interrupted,
         Err(_) => Status::Failed,
     };
-    let saved = workers_paused.and_then(|()| {
+    let saved = interrupted.and_then(|()| {
         hub.mutate(|state| {
             state.root_status = status;
             state.root_recovery = progress_pause
                 .as_ref()
                 .map(|_| RecoveryCheckpoint::new(vec![]));
-            if let Some(message) = &progress_pause {
-                let paused_ids: HashSet<_> =
-                    paused_workers.iter().map(|(id, _)| id.as_str()).collect();
-                state.messages.retain(|event| {
-                    !paused_ids.contains(event.from.as_str())
-                        || serde_json::from_str::<Value>(&event.text)
-                            .ok()
-                            .is_none_or(|value| value["status"] != "cancelled")
-                });
-                for (id, _) in &paused_workers {
-                    if let Some(job) = state.jobs.get_mut(id) {
-                        job.status = Status::Interrupted;
-                        job.error = Some(message.clone());
-                        job.recovery = Some(RecoveryCheckpoint::new(vec![]));
-                        job.updated_at = now();
-                    }
-                }
-            }
             Ok(())
         })
     });

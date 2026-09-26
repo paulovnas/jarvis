@@ -253,6 +253,8 @@ async fn approval_is_correlated_durable_and_cannot_be_replayed() {
                 mutation: Mutation::Catalog(mutation),
                 started: std::time::Instant::now(),
                 reply,
+                claimed: Arc::new(AtomicBool::new(false)),
+                _receipt: None,
             });
             let current = data.turns.last_mut().unwrap();
             current.turn.steps.push(Step {
@@ -269,7 +271,7 @@ async fn approval_is_correlated_durable_and_cannot_be_replayed() {
         &pending.tool_id,
         true,
         None,
-        |_, _, _| Ok((String::new(), false))
+        |_, _, _, _| Ok((String::new(), false))
     )
     .is_err());
     let applied = Arc::new(AtomicBool::new(false));
@@ -280,7 +282,7 @@ async fn approval_is_correlated_durable_and_cannot_be_replayed() {
         &pending.tool_id,
         true,
         Some("Aprovado para este catálogo".into()),
-        move |mutation, revision, note| {
+        move |mutation, revision, note, _| {
             assert_eq!(revision, Some(0));
             assert_eq!(note, Some("Aprovado para este catálogo"));
             assert!(matches!(
@@ -320,11 +322,149 @@ async fn approval_is_correlated_durable_and_cannot_be_replayed() {
         &pending.tool_id,
         true,
         None,
-        |_, _, _| Ok((String::new(), false))
+        |_, _, _, _| Ok((String::new(), false))
     )
     .unwrap_err()
     .message
     .contains("não está mais"));
+}
+
+#[tokio::test]
+async fn dropped_provider_waiter_drains_claimed_publication_without_blocking_chat() {
+    use std::time::{Duration, Instant};
+    let (_fixture, session, _signal) = reserve();
+    let catalog = workflow::catalog::tests::example();
+    let mut created = catalog.agents[0].clone();
+    created.id = "e".repeat(32);
+    let call = tool(
+        "jarvis_propose_agent",
+        agent_request("create", catalog.revision, &created),
+    );
+    let (mut request, mutation) = prepare(&catalog, &call).unwrap();
+    let (reply, mut received) = oneshot::channel();
+    session.update(true, |data| {
+        let active = data.active.as_mut().unwrap();
+        request.turn_id.clone_from(&active.id);
+        active.wait_for_authoring(Pending {
+            request, mutation: Mutation::Catalog(mutation), started: Instant::now(), reply,
+            claimed: Arc::new(AtomicBool::new(false)),
+            _receipt: None,
+        });
+        let current = data.turns.last_mut().unwrap();
+        current.turn.steps.push(Step { tools: vec![call.clone()], ..Step::default() });
+        current.wire.push(json!({"type":"function_call","call_id":call.id,"name":call.name,"arguments":call.args.to_string()}));
+    }).unwrap();
+    let pending = session.snapshot().unwrap().pending_authoring.unwrap();
+    let release_disk = session.writer.pause();
+    let (applying, applied) = std::sync::mpsc::channel();
+    let (release, proceed) = std::sync::mpsc::channel();
+    let worker = session.clone();
+    let turn_id = pending.turn_id.clone();
+    let tool_id = pending.tool_id.clone();
+    let task = std::thread::spawn(move || {
+        answer_with(
+            &worker,
+            &turn_id,
+            &tool_id,
+            true,
+            None,
+            |_, _, _, (signal, cleanup)| {
+                let stored = journal::read_only(&worker.journal).unwrap().0;
+                assert!(stored[0]
+                    .wire
+                    .iter()
+                    .any(|item| item["_jarvis_authoring_decision"] == true));
+                applying.send(()).unwrap();
+                proceed.recv().unwrap();
+                assert!(!*signal.borrow());
+                assert!(*cleanup.borrow());
+                Ok((
+                    json!({"approved":true,"status":"partial","commit":"recorded-before-cancel"})
+                        .to_string(),
+                    false,
+                ))
+            },
+        )
+    });
+    let started = Instant::now();
+    loop {
+        if session
+            .data
+            .try_lock()
+            .is_ok_and(|data| data.active.as_ref().unwrap().pending_authoring().is_none())
+        {
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(2));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(session.snapshot().unwrap().pending_authoring.is_none());
+    assert!(received.try_recv().is_err());
+    assert!(answer_with(
+        &session,
+        &pending.turn_id,
+        &pending.tool_id,
+        true,
+        None,
+        |_, _, _, _| panic!("duplicate effect")
+    )
+    .is_err());
+    release_disk.send(()).unwrap();
+    applied.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(session.snapshot().unwrap().pending_authoring.is_none());
+    // Claude can drop its control-request future immediately on cancellation.
+    // The accepted effect must remain owned until its durable receipt is saved.
+    drop(received);
+    let finishing = session.clone();
+    let finish = tokio::spawn(async move {
+        crate::agent::finish_run(&finishing, async {
+            Err(AgentError::new("provider_stream", "Provider disconnected"))
+        })
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if session.data.lock().unwrap().active.as_ref().unwrap().phase
+                == crate::agent::turn_state::TurnPhase::Draining
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!finish.is_finished());
+    let options = session.data.lock().unwrap().turns[0].turn.options.clone();
+    assert!(session
+        .reserve("Next request".into(), options.clone())
+        .is_err());
+    release.send(()).unwrap();
+    task.join().unwrap().unwrap();
+    assert!(!tokio::time::timeout(Duration::from_secs(2), finish)
+        .await
+        .unwrap()
+        .unwrap());
+    let stored = journal::read_only(&session.journal).unwrap().0;
+    assert_eq!(
+        stored[0]
+            .wire
+            .iter()
+            .filter(|item| item["type"] == "function_call_output")
+            .count(),
+        1
+    );
+    assert!(stored[0].turn.steps[0].tools[0]
+        .output
+        .contains("recorded-before-cancel"));
+    session.reserve("Next request".into(), options).unwrap();
+    crate::agent::finish_run(&session, async { Ok(()) }).await;
+    let stored = journal::load_all(&session.journal).unwrap().0;
+    assert_eq!(stored.len(), 2);
+    assert!(stored[0].turn.steps[0].tools[0]
+        .output
+        .contains("recorded-before-cancel"));
+    assert_eq!(stored[1].turn.user, "Next request");
 }
 
 #[tokio::test]
@@ -348,6 +488,8 @@ async fn rejection_never_applies_the_catalog_mutation() {
                 mutation: Mutation::Catalog(mutation),
                 started: std::time::Instant::now(),
                 reply,
+                claimed: Arc::new(AtomicBool::new(false)),
+                _receipt: None,
             });
             data.turns.last_mut().unwrap().turn.steps.push(Step {
                 tools: vec![call],
@@ -362,7 +504,7 @@ async fn rejection_never_applies_the_catalog_mutation() {
         &pending.tool_id,
         false,
         Some("Prefiro um nome mais curto".into()),
-        |_, _, _| panic!("a rejected proposal must not mutate the catalog"),
+        |_, _, _, _| panic!("a rejected proposal must not mutate the catalog"),
     )
     .unwrap();
     assert!(!changed);
@@ -507,7 +649,7 @@ async fn publication_without_preview_confirmation_opens_native_review() {
                 &pending.tool_id,
                 false,
                 None,
-                |_, _, _| panic!("rejection must not publish"),
+                |_, _, _, _| panic!("rejection must not publish"),
             )
             .unwrap();
             let output: Value = serde_json::from_str(&execution.await.unwrap()).unwrap();
@@ -534,6 +676,16 @@ async fn publication_without_preview_confirmation_opens_native_review() {
             }]
         }),
     );
+    session
+        .update(true, |data| {
+            let current = data.turns.last_mut().unwrap();
+            current.turn.steps.push(Step {
+                tools: vec![call.clone()],
+                ..Step::default()
+            });
+            current.wire.push(json!({"type":"function_call","call_id":call.id,"name":call.name,"arguments":call.args.to_string()}));
+        })
+        .unwrap();
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         execute(
@@ -556,6 +708,75 @@ async fn publication_without_preview_confirmation_opens_native_review() {
     assert_eq!(git(&["status", "--porcelain=v1"]), status);
     assert!(session.snapshot().unwrap().pending_authoring.is_none());
     crate::agent::finish(&session, Ok(()));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::Duration;
+
+        // A local preparation also runs without a review callback. Dropping its
+        // provider future must not detach the Git effect from the active turn.
+        let hook = root.join(".git/hooks/post-checkout");
+        let started = root.join(".git/publication-hook-started");
+        std::fs::write(
+            &hook,
+            "#!/bin/sh\nprintf started > .git/publication-hook-started\nsleep 30\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let signal = session
+            .reserve(
+                "Volte à branch publication-test para preparar a correção".into(),
+                crate::agent::tests::options(ApprovalMode::Yolo),
+            )
+            .unwrap();
+        let mut call = call.clone();
+        call.id = "local-preparation".into();
+        call.args["repositories"][0]["branch"] = json!("publication-test");
+        session.update(true, |data| {
+            let current = data.turns.last_mut().unwrap();
+            current.turn.steps.push(Step { tools: vec![call.clone()], ..Step::default() });
+            current.wire.push(json!({"type":"function_call","call_id":call.id,"name":call.name,"arguments":call.args.to_string()}));
+        }).unwrap();
+        let worker = session.clone();
+        let home = fixture.root.clone();
+        let user_signal = signal.clone();
+        let execution = tokio::spawn(async move {
+            execute(&worker, &worker, &state, &oauth, &home, &call, signal).await
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !started.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("local publication hook must start");
+        execution.abort();
+        assert!(execution.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            crate::agent::finish_run(&session, async {
+                Err(AgentError::new("provider_stream", "Provider disconnected"))
+            }),
+        )
+        .await
+        .expect("cancellation must drain the owned publication");
+        assert!(
+            !*user_signal.borrow(),
+            "provider cleanup must preserve user intent"
+        );
+        let stored = journal::load_all(&session.journal).unwrap().0;
+        let latest = stored.last().unwrap();
+        let output: Value = serde_json::from_str(&latest.turn.steps[0].tools[0].output).unwrap();
+        assert_eq!(output["status"], "partial");
+        assert!(latest.wire.iter().any(|item| {
+            item["type"] == "function_call_output" && item["call_id"] == "local-preparation"
+        }));
+        assert_eq!(
+            git(&["branch", "--show-current"]).trim(),
+            "publication-test"
+        );
+    }
 }
 
 #[test]
@@ -618,6 +839,8 @@ async fn publication_approval_with_a_note_requests_revision_without_applying() {
                 mutation: Mutation::Publication(proposal),
                 started: std::time::Instant::now(),
                 reply,
+                claimed: Arc::new(AtomicBool::new(false)),
+                _receipt: None,
             });
             data.turns.last_mut().unwrap().turn.steps.push(Step {
                 tools: vec![call],
@@ -635,7 +858,7 @@ async fn publication_approval_with_a_note_requests_revision_without_applying() {
         &pending.tool_id,
         true,
         Some("Ignore docs/picpay.ofx".into()),
-        move |_, _, _| {
+        move |_, _, _, _| {
             marker.store(true, Ordering::SeqCst);
             Ok((String::new(), false))
         },

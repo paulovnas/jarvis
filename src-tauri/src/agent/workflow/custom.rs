@@ -151,22 +151,42 @@ pub(super) fn direct_instructions(agent: &catalog::AgentDefinition) -> String {
     format!("\nUser-defined direct agent: {}.\n{}\n\n{}\nWork as the primary agent in this conversation. Use the native task list to organize multi-step work. Do not call hub tools or behave as a delegated workflow step. Follow current user instructions and project rules.\n", agent.name, include_str!("common.md"), agent.instructions)
 }
 
-async fn walk<F, Fut>(
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Cursor {
+    next: Option<String>,
+    results: Vec<Handoff>,
+    visited: Vec<String>,
+    active: Option<String>,
+}
+
+impl Cursor {
+    fn start(definition: &RunDefinition) -> Self {
+        Self {
+            next: Some(definition.flow.entry.clone()),
+            results: vec![],
+            visited: vec![],
+            active: None,
+        }
+    }
+}
+
+async fn walk_from<F, Fut>(
     definition: &RunDefinition,
     mut signal: watch::Receiver<bool>,
+    mut cursor: Cursor,
     mut execute: F,
+    mut checkpoint: impl FnMut(&Cursor) -> Result<(), AgentError>,
 ) -> Result<Vec<Handoff>, AgentError>
 where
     F: FnMut(catalog::Step, Vec<Handoff>, usize) -> Fut,
     Fut: std::future::Future<Output = Result<Handoff, AgentError>>,
 {
-    let mut next = Some(definition.flow.entry.clone());
-    let mut results = Vec::new();
-    while let Some(id) = next {
+    while let Some(id) = cursor.next.clone() {
         if *signal.borrow() {
             return Err(AgentError::cancelled());
         }
-        if results.len() >= usize::from(definition.flow.max_steps) {
+        if cursor.results.len() >= usize::from(definition.flow.max_steps) {
             return Err(invalid("O fluxo atingiu o limite de execuções. Revise as correções e as conexões antes de iniciar novamente."));
         }
         let step = definition
@@ -178,9 +198,9 @@ where
             .clone();
         let handoff = tokio::select! {
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-            result = execute(step.clone(), results.clone(), results.len()) => result?,
+            result = execute(step.clone(), cursor.results.clone(), cursor.results.len()) => result?,
         };
-        next = match handoff.verdict {
+        cursor.next = match handoff.verdict {
             Verdict::Completed | Verdict::Approved => step.next,
             Verdict::Rework => Some(step.on_rework.ok_or_else(|| {
                 invalid(&format!(
@@ -192,9 +212,32 @@ where
                 return Err(invalid(&format!("Fluxo bloqueado: {}", handoff.summary)))
             }
         };
-        results.push(handoff);
+        cursor.results.push(handoff);
+        cursor.visited.push(id);
+        cursor.active = None;
+        checkpoint(&cursor)?;
     }
-    Ok(results)
+    Ok(cursor.results)
+}
+
+#[cfg(test)]
+async fn walk<F, Fut>(
+    definition: &RunDefinition,
+    signal: watch::Receiver<bool>,
+    execute: F,
+) -> Result<Vec<Handoff>, AgentError>
+where
+    F: FnMut(catalog::Step, Vec<Handoff>, usize) -> Fut,
+    Fut: std::future::Future<Output = Result<Handoff, AgentError>>,
+{
+    walk_from(
+        definition,
+        signal,
+        Cursor::start(definition),
+        execute,
+        |_| Ok(()),
+    )
+    .await
 }
 
 fn prepare(
@@ -212,6 +255,21 @@ fn prepare(
         .clone();
     let (run_id, mut options, existing) = {
         let state = hub.manifest.lock().map_err(|_| AgentError::internal())?;
+        if let Some(id) = state
+            .custom_cursor
+            .as_ref()
+            .and_then(|cursor| cursor.active.as_ref())
+        {
+            let job = state
+                .jobs
+                .get(id)
+                .filter(|job| {
+                    job.run_id == state.run_id
+                        && job.custom_step_id.as_deref() == Some(step.id.as_str())
+                })
+                .ok_or_else(|| invalid("O checkpoint da etapa não corresponde ao fluxo salvo."))?;
+            return Ok(job.clone());
+        }
         let existing = state
             .jobs
             .values()
@@ -301,6 +359,9 @@ fn prepare(
 
 async fn execute_step(hub: Arc<Hub>, job: Job) -> Result<Handoff, AgentError> {
     let mut changed = hub.changed.subscribe();
+    if !job.status.active() {
+        return step_result(job);
+    }
     hub.mutate(|state| {
         // Keep the current run intact; older worker transcripts remain on disk.
         if state.jobs.len() >= MAX_JOBS {
@@ -310,22 +371,23 @@ async fn execute_step(hub: Arc<Hub>, job: Job) -> Result<Handoff, AgentError> {
             return Err(invalid("Limite de etapas atingido."));
         }
         state.jobs.insert(job.id.clone(), job.clone());
+        state
+            .custom_cursor
+            .as_mut()
+            .ok_or_else(AgentError::internal)?
+            .active = Some(job.id.clone());
         Ok(())
     })?;
-    dispatch::launch(hub.clone(), job.clone(), None)?;
+    if job.recovery.is_some() {
+        dispatch::resume(hub.clone(), job.clone())?;
+    } else {
+        dispatch::launch(hub.clone(), job.clone(), None)?;
+    }
     loop {
         changed.borrow_and_update();
         let current = hub.job(&job.id)?;
         if !current.status.active() {
-            if current.status == Status::Cancelled {
-                return Err(AgentError::cancelled());
-            }
-            if let Some(error) = current.error {
-                return Err(invalid(&error));
-            }
-            return current.handoff.ok_or_else(|| {
-                invalid("O agente encerrou sem entregar um resultado estruturado.")
-            });
+            return step_result(current);
         }
         changed
             .changed()
@@ -334,26 +396,56 @@ async fn execute_step(hub: Arc<Hub>, job: Job) -> Result<Handoff, AgentError> {
     }
 }
 
+fn step_result(job: Job) -> Result<Handoff, AgentError> {
+    if job.status == Status::Cancelled {
+        return Err(AgentError::cancelled());
+    }
+    if let Some(error) = job.error {
+        return Err(invalid(&error));
+    }
+    job.handoff
+        .ok_or_else(|| invalid("O agente encerrou sem entregar um resultado estruturado."))
+}
+
 pub(super) async fn run(
     hub: Arc<Hub>,
     definition: RunDefinition,
     signal: watch::Receiver<bool>,
 ) -> Result<(), AgentError> {
-    hub.mutate(|state| {
+    let cursor = hub.mutate(|state| {
+        if state.custom_cursor.is_none() && state.jobs.values().any(|job| job.run_id == state.run_id) {
+            return Err(invalid("Este fluxo antigo não possui checkpoint de etapas. Os resultados foram preservados; inicie uma nova solicitação com o escopo restante."));
+        }
         state.custom_definition = Some(definition.clone());
         state.custom_agent = None;
-        Ok(())
+        Ok(state.custom_cursor.get_or_insert_with(|| Cursor::start(&definition)).clone())
     })?;
     super::super::skill_input::load(&hub.root, &hub.env.home).await?;
-    let mut visits = HashMap::new();
-    let outcome = walk(&definition, signal, |step, previous, index| {
-        let since = visits
-            .insert(step.id.clone(), index)
-            .map_or(0, |last| last + 1);
-        let job = prepare(&hub, &definition, &step, &previous[since..], index);
-        let current = hub.clone();
-        async move { execute_step(current, job?).await }
-    })
+    let mut visits: HashMap<_, _> = cursor
+        .visited
+        .iter()
+        .enumerate()
+        .map(|(index, id)| (id.clone(), index))
+        .collect();
+    let outcome = walk_from(
+        &definition,
+        signal,
+        cursor,
+        |step, previous, index| {
+            let since = visits
+                .insert(step.id.clone(), index)
+                .map_or(0, |last| last + 1);
+            let job = prepare(&hub, &definition, &step, &previous[since..], index);
+            let current = hub.clone();
+            async move { execute_step(current, job?).await }
+        },
+        |cursor| {
+            hub.mutate(|state| {
+                state.custom_cursor = Some(cursor.clone());
+                Ok(())
+            })
+        },
+    )
     .await;
     let outcome = match outcome {
         Ok(results) => validation::publish_custom(&hub, &results).map(|()| results),

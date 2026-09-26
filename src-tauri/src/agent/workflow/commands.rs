@@ -263,7 +263,7 @@ fn recovery_summary(
     directory: &Path,
 ) -> Result<Option<RecoverySummary>, AgentError> {
     if state.root_status != Status::Interrupted
-        || !matches!(state.flow, Flow::Planned | Flow::Complete)
+        || !matches!(state.flow, Flow::Planned | Flow::Complete | Flow::Custom)
     {
         return Ok(None);
     }
@@ -437,7 +437,7 @@ pub fn approve_workflow_tool(
     answer_approval_decision(&agent.grants, &session, &turn_id, &tool_id, decision)
 }
 #[tauri::command]
-pub fn answer_workflow_question(
+pub async fn answer_workflow_question(
     agent: tauri::State<'_, AgentState>,
     conversation_id: String,
     agent_id: String,
@@ -446,7 +446,11 @@ pub fn answer_workflow_question(
     response: questions::Response,
 ) -> Result<(), AgentError> {
     let session = active_worker(&agent, &conversation_id, &agent_id)?;
-    questions::answer(&session, &turn_id, &tool_id, response).map(|_| ())
+    tauri::async_runtime::spawn_blocking(move || {
+        questions::answer(&session, &turn_id, &tool_id, response).map(|_| ())
+    })
+    .await
+    .map_err(|_| AgentError::internal())?
 }
 
 #[tauri::command]
@@ -531,6 +535,19 @@ mod tests {
             .unwrap()
             .unwrap();
 
+        assert_eq!(summary.affected_agents, 2);
+
+        drop(state);
+        hub.root
+            .update(true, |data| {
+                data.turns.last_mut().unwrap().turn.options.workflow = Some(Flow::Custom);
+            })
+            .unwrap();
+        let mut state = hub.manifest.lock().unwrap();
+        state.flow = Flow::Custom;
+        let summary = recovery_summary(&state, &hub.root.journal, &hub.directory)
+            .unwrap()
+            .unwrap();
         assert_eq!(summary.affected_agents, 2);
     }
 

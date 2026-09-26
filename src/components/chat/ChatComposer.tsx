@@ -227,8 +227,10 @@ export function ChatComposer({
     }
   };
   const chooseWorkflow = (next: FlowSelection) => {
-    const currentFlow = flowOptions(workflow).workflow;
-    const leavingCoordinatedFlow = ["planned", "complete"].includes(currentFlow ?? "")
+    const currentOptions = flowOptions(workflow);
+    const currentFlow = currentOptions.workflow;
+    const leavingCoordinatedFlow = (["planned", "complete"].includes(currentFlow ?? "")
+      || currentFlow === "custom" && !!currentOptions.customWorkflowId && !currentOptions.customAgentId)
       && (next === "standard" || next === "designer" || next.startsWith("agent:"));
     const currentSnapshot = workflowSnapshot;
     const hasWorkflowState = currentSnapshot != null && currentSnapshot.flow === currentFlow

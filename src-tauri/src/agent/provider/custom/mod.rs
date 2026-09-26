@@ -95,12 +95,7 @@ fn authenticated_request(
     config: &Config,
     body: &Value,
 ) -> Result<reqwest::RequestBuilder, AgentError> {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(20))
-        .timeout(Duration::from_secs(600))
-        .build()
-        .map_err(|_| AgentError::internal())?;
+    let client = super::http_client()?;
     authenticated_request_with_client(&client, credential, config, body)
 }
 
@@ -334,7 +329,7 @@ async fn receive(
 ) -> Result<Response, AgentError> {
     let mut response = tokio::select! {
         _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-        response = request.send() => response.map_err(|_| AgentError::new("provider_network", "Não foi possível conectar ao endpoint Custom. Confira a URL e sua conexão."))?,
+        response = request.send() => response.map_err(|error| super::connection_error(error, "Não foi possível conectar ao endpoint Custom. Confira a URL e sua conexão."))?,
     };
     if !response.status().is_success() {
         let status = response.status().as_u16();
@@ -380,13 +375,17 @@ async fn receive(
     let mut size = 0;
     loop {
         // A short drain after finish_reason collects the optional trailing usage chunk.
-        let idle = if completions.finished() { 3 } else { 120 };
+        let idle = if completions.finished() {
+            Duration::from_secs(3)
+        } else {
+            parser.wait_timeout()
+        };
         let chunk = tokio::select! {
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-            value = tokio::time::timeout(Duration::from_secs(idle), response.chunk()) => match value {
+            value = tokio::time::timeout(idle, response.chunk()) => match value {
                 Err(_) if completions.finished() => return completions.finish(scope),
                 Err(_) => return Err(AgentError::new("provider_timeout", "O endpoint ficou sem responder.")),
-                Ok(value) => value.map_err(|_| protocol_error())?,
+                Ok(value) => value.map_err(super::stream_read_error)?,
             },
         };
         let Some(chunk) = chunk else {

@@ -1,5 +1,6 @@
 //! Project-scoped publication settings and supervised Git/GitHub execution.
 pub(super) mod inspection;
+mod runner;
 use super::{tools, AgentError, ToolCall};
 use crate::persistence::AppState;
 use regex::Regex;
@@ -123,10 +124,7 @@ fn command(program: impl AsRef<OsStr>) -> std::process::Command {
 }
 
 pub fn gh_available() -> bool {
-    command("gh")
-        .arg("--version")
-        .status()
-        .is_ok_and(|status| status.success())
+    run(Path::new("."), "gh", ["--version"]).is_ok_and(|output| output.status.success())
 }
 
 fn project_exists(connection: &Connection, project_id: &str) -> Result<bool, AgentError> {
@@ -807,16 +805,9 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    command(program)
-        .current_dir(directory)
-        .args(args)
-        .output()
-        .map_err(|_| {
-            error(
-                "publication_command",
-                &format!("Não foi possível executar {program}. Verifique a instalação e o PATH."),
-            )
-        })
+    let mut process = command(program);
+    process.current_dir(directory).args(args);
+    runner::output(process)
 }
 
 fn success<I, S>(directory: &Path, program: &str, args: I) -> Result<String, AgentError>
@@ -1750,6 +1741,7 @@ fn sync_branch(directory: &Path, branch: &str, mode: SyncMode) -> Result<SyncRes
         "git",
         [
             "fetch",
+            "--progress",
             "--no-tags",
             "--no-recurse-submodules",
             "origin",
@@ -1985,7 +1977,11 @@ fn publish_repository_with(
         None
     };
     if proposal.push != PushMode::None {
-        let mut args = vec![OsString::from("push"), OsString::from("--set-upstream")];
+        let mut args = vec![
+            OsString::from("push"),
+            OsString::from("--progress"),
+            OsString::from("--set-upstream"),
+        ];
         if proposal.push == PushMode::ForceWithLease {
             args.push(OsString::from("--force-with-lease"));
         }
@@ -2038,7 +2034,25 @@ fn publish_repository_with(
     })
 }
 
-pub(super) fn apply(root: &Path, proposal: &Proposal, note: Option<&str>) -> String {
+#[cfg(test)]
+fn apply(root: &Path, proposal: &Proposal, note: Option<&str>) -> String {
+    let (_cancel, signal) = tokio::sync::watch::channel(false);
+    apply_with_cancel(root, proposal, note, signal, None)
+}
+
+pub(super) fn apply_with_cancel(
+    root: &Path,
+    proposal: &Proposal,
+    note: Option<&str>,
+    signal: tokio::sync::watch::Receiver<bool>,
+    cleanup: Option<tokio::sync::watch::Receiver<bool>>,
+) -> String {
+    runner::scoped_with_cleanup(signal, cleanup, || apply_inner(root, proposal, note)).unwrap_or_else(|cause| {
+        json!({"approved":true,"status":"failed","error":{"code":cause.code,"message":cause.message}}).to_string()
+    })
+}
+
+fn apply_inner(root: &Path, proposal: &Proposal, note: Option<&str>) -> String {
     let has_gh = gh_available();
     let mut results = Vec::new();
     for repository in &proposal.repositories {

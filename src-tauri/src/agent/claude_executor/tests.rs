@@ -253,6 +253,47 @@ async fn cancelling_a_native_question_preserves_history_and_clears_the_drawer() 
     assert_eq!(snapshot.turns[0].user, "Corrija o comportamento do chat.");
 }
 
+#[tokio::test]
+async fn cli_control_abort_is_retryable_interruption_unless_the_user_stopped() {
+    for user_stopped in [false, true] {
+        let fixture = Fixture::new();
+        let (session, signal) = reserve(&fixture);
+        if user_stopped {
+            session
+                .data
+                .lock()
+                .unwrap()
+                .active
+                .as_mut()
+                .unwrap()
+                .cancel();
+        }
+        let error = control_cancellation(&signal);
+        assert!(!finish_run(&session, async { Err(error) }).await);
+        let snapshot = session.snapshot().unwrap();
+        assert_eq!(
+            snapshot.turns[0].status,
+            if user_stopped {
+                TurnStatus::Cancelled
+            } else {
+                TurnStatus::Interrupted
+            }
+        );
+        assert_eq!(*signal.borrow(), user_stopped);
+        assert_eq!(snapshot.turns[0].user, "Corrija o comportamento do chat.");
+        if !user_stopped {
+            let id = &snapshot.turns[0].id;
+            let (resumed, workflow) = session.retry_failed_turn(id).unwrap();
+            assert!(!*resumed.borrow());
+            assert!(workflow.is_none());
+            let retried = session.snapshot().unwrap();
+            assert_eq!(retried.active_turn_id.as_ref(), Some(id));
+            assert_eq!(retried.turns[0].status, TurnStatus::Running);
+            assert_eq!(retried.history.total, 1);
+        }
+    }
+}
+
 #[test]
 fn auxiliary_delivery_uses_only_new_user_input_without_replaying_tool_results() {
     let fixture = Fixture::new();

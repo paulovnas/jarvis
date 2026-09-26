@@ -668,7 +668,7 @@ async fn send_body(
         .header("user-agent", user_agent())
         .header("accept", "text/event-stream")
         .json(&body);
-    let response = tokio::select! { _=cancelled(&mut signal)=>return Err(AgentError::cancelled()), result=request.send()=>result.map_err(|_|AgentError::new("provider_network","Não foi possível conectar ao Antigravity."))? };
+    let response = tokio::select! { _=cancelled(&mut signal)=>return Err(AgentError::cancelled()), result=request.send()=>result.map_err(|error|super::connection_error(error,"Não foi possível conectar ao Antigravity."))? };
     receive(response, model, signal, &mut on_delta).await
 }
 async fn receive(
@@ -706,7 +706,7 @@ async fn receive(
     let mut output = Output::default();
     let mut size = 0;
     loop {
-        let chunk = tokio::select! { _=cancelled(&mut signal)=>return Err(AgentError::cancelled()), result=tokio::time::timeout(Duration::from_secs(120),response.chunk())=>result.map_err(|_|AgentError::new("provider_timeout","O Antigravity ficou sem responder."))?.map_err(|_|protocol_error())? };
+        let chunk = tokio::select! { _=cancelled(&mut signal)=>return Err(AgentError::cancelled()), result=tokio::time::timeout(parser.wait_timeout(),response.chunk())=>result.map_err(|_|AgentError::new("provider_timeout","O Antigravity ficou sem responder."))?.map_err(super::stream_read_error)? };
         let Some(chunk) = chunk else { break };
         size += chunk.len();
         if size > MAX_STREAM {

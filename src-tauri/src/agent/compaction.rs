@@ -3,6 +3,8 @@ use crate::openai_codex::CodexCredential;
 use std::collections::HashSet;
 mod worker_replay;
 
+const MAX_REPLAY_BYTES: usize = 7 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Measurement {
     pub tokens: u64,
@@ -574,7 +576,7 @@ where
         let oversized = serde_json::to_vec(&replay)
             .map_err(|_| AgentError::internal())?
             .len()
-            > 7 * 1024 * 1024;
+            > MAX_REPLAY_BYTES;
         if !force
             && !oversized
             && context_tokens < auto_threshold(window)
@@ -589,9 +591,17 @@ where
         // An explicit compaction should summarize the full safe history, even
         // when it fits the usual tail budget. Otherwise a tiny first tool result
         // can be selected alone and its summary grows instead of freeing space.
-        let keep = if force { 0 } else { (window / 5).min(20_000) };
+        // Opaque replay is excluded from the token estimate. Under byte pressure,
+        // compact through the last safe boundary instead of retaining a large
+        // encrypted suffix merely because its visible token estimate is small.
+        let keep = if force || oversized {
+            0
+        } else {
+            (window / 5).min(20_000)
+        };
         let Some(cut) = cut_point(active, keep) else {
             if force
+                || oversized
                 || context_tokens >= auto_threshold(window)
                 || projected >= request_limit(window)
             {
@@ -624,14 +634,23 @@ where
             preserved_users,
             tool_receipts,
             window,
+            oversized,
         )
     };
     session.update(false, |data| {
         data.compacting = true;
         data.last_emit = std::time::Instant::now() - Duration::from_secs(1);
     })?;
-    let (previous, dropped, through, preserved_user, preserved_users, tool_receipts, window) =
-        prepared;
+    let (
+        previous,
+        dropped,
+        through,
+        preserved_user,
+        preserved_users,
+        tool_receipts,
+        window,
+        oversized,
+    ) = prepared;
     let result = async {
         let mut history = String::new();
         let mut boundaries = Vec::with_capacity(dropped.len());
@@ -669,11 +688,15 @@ where
         if *signal.borrow() { return Err(AgentError::cancelled()); }
         let context = Checkpoint { through, summary, preserved_user, preserved_users, tool_receipts, count: previous.count + 1, measured: None };
         let old = data.extras.context.replace(context.clone());
-        let reduced = input(&data).iter().map(estimate).sum::<u64>();
+        let replay = input(&data);
+        let reduced = replay.iter().map(estimate).sum::<u64>();
+        let reduced_bytes = serde_json::to_vec(&replay).map(|bytes| bytes.len());
         data.extras.context = old;
+        let reduced_bytes = reduced_bytes.map_err(|_| AgentError::internal())?;
         if reduced >= auto_threshold(window)
             || reduced.saturating_add(overhead) >= request_limit(window)
-            || reduced >= input(&data).iter().map(estimate).sum::<u64>()
+            || reduced_bytes > MAX_REPLAY_BYTES
+            || (!oversized && reduced >= input(&data).iter().map(estimate).sum::<u64>())
         {
             return Err(AgentError::new("compaction_failed", "O resumo não liberou espaço suficiente. O histórico foi preservado; reduza a próxima mensagem ou use um modelo com janela maior."));
         }
@@ -1232,6 +1255,111 @@ mod tests {
         assert_eq!(request_limit(272_000), 231_200);
         assert_eq!(budget_reserve(8_000), 1_200);
         assert_eq!(request_limit(8_000), 6_800);
+    }
+
+    #[tokio::test]
+    async fn byte_pressure_compacts_opaque_replay_before_capturing_the_next_step() {
+        let fixture = Fixture::new();
+        let session = long_session(&fixture);
+        session.update(true, |data| {
+            let turn = data.turns.last_mut().unwrap();
+            turn.turn.context_window = Some(256_000);
+            turn.wire[2]["output"] = json!("Confirmed local read");
+            turn.wire.extend([
+                json!({"type":"function_call","call_id":"write1","name":"write","arguments":"{\"path\":\"src/main.ts\",\"content\":\"confirmed implementation\"}"}),
+                json!({"type":"function_call_output","call_id":"write1","output":"Write completed"}),
+            ]);
+            for index in 0..5 {
+                turn.wire.extend([
+                    json!({"type":"reasoning","id":format!("reasoning-{index}"),"encrypted_content":"x".repeat(1800 * 1024),"summary":[]}),
+                    json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"Confirmed progress"}]}),
+                    json!({"role":"user","content":format!("Continue the original request, step {index}")}),
+                ]);
+            }
+        }).unwrap();
+        let before = input(&session.data.lock().unwrap());
+        assert_eq!(session.input().unwrap_err().code, "context_limit");
+        assert!(serde_json::to_vec(&before).unwrap().len() > 8 * 1024 * 1024);
+        let visible_tokens_before = before.iter().map(estimate).sum::<u64>();
+        assert!(visible_tokens_before < auto_threshold(256_000));
+        let (_cancel, signal) = watch::channel(false);
+        assert!(ensure_with(&session, 0, false, signal, |_| async {
+            Ok("Confirmed read completed. Continue the original implementation. ".repeat(100))
+        })
+        .await
+        .unwrap());
+
+        let options = session
+            .data
+            .lock()
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .turn
+            .options
+            .clone();
+        let credential = CodexCredential::new("fixture", "", 0, "account", None, None);
+        let model = crate::openai_codex::ProviderModel {
+            id: options.model.clone(),
+            name: "Fixture".into(),
+            reasoning_levels: vec![],
+            default_reasoning_level: None,
+            context_window: Some(256_000),
+        };
+        let capabilities = Arc::new(provider::ModelCapabilities::resolve(&credential, &model));
+        let step = context_manager::StepContext::capture(
+            &session,
+            &options,
+            "Continue",
+            &[],
+            &capabilities,
+        )
+        .unwrap();
+        assert!(step.input_bytes() <= MAX_REPLAY_BYTES as u64);
+        // A useful summary can add visible tokens while eliminating megabytes
+        // of opaque reasoning that the visible-token estimate does not count.
+        assert!(step.input().iter().map(estimate).sum::<u64>() > visible_tokens_before);
+        let replay = serde_json::to_string(step.input()).unwrap();
+        assert!(replay.contains("Preserve this request"));
+        assert!(replay.contains("Continue the original request, step 4"));
+        assert!(replay.contains("write1"));
+        assert!(replay.contains("Write completed"));
+        assert!(replay.contains("Recent durable tool receipts"));
+        assert!(!replay.contains("encrypted_content"));
+        assert_eq!(
+            session.data.lock().unwrap().turns.last().unwrap().wire,
+            before
+        );
+    }
+
+    #[tokio::test]
+    async fn compaction_does_not_commit_a_summary_with_an_oversized_preserved_request() {
+        let fixture = Fixture::new();
+        let session = long_session(&fixture);
+        session
+            .update(true, |data| {
+                let turn = data.turns.last_mut().unwrap();
+                // A large custom-model window must not bypass the local byte budget.
+                turn.turn.context_window = Some(100_000_000);
+                turn.wire
+                    .push(json!({"role":"user","content":"user constraints ".repeat(600_000)}));
+            })
+            .unwrap();
+        let (_cancel, signal) = watch::channel(false);
+        let error = ensure_with(&session, 0, false, signal, |_| async {
+            Ok("Confirmed read completed.".into())
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "compaction_failed");
+        let data = session.data.lock().unwrap();
+        assert!(data.extras.context.is_none());
+        assert!(data.extras.compactions.is_empty());
+        assert!(data.turns.last().unwrap().wire.last().unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .starts_with("user constraints "));
     }
 
     #[tokio::test]

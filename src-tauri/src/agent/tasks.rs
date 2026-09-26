@@ -224,9 +224,8 @@ fn read_only_invocation(argv: &[String]) -> bool {
                 return false;
             }
             match rest {
-                ["status" | "diff" | "log" | "show" | "rev-parse" | "ls-files" | "merge-base", ..] => {
-                    true
-                }
+                ["status" | "diff" | "log" | "show" | "rev-parse" | "ls-files" | "ls-remote"
+                | "merge-base", ..] => true,
                 ["branch", args @ ..] => args.iter().all(|arg| {
                     matches!(
                         *arg,
