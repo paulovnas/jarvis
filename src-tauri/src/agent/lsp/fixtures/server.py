@@ -11,10 +11,13 @@ documents = {}
 write_lock = threading.Lock()
 
 
-def send(message):
-    body = json.dumps(message).encode()
+def send(*messages):
+    frames = []
+    for message in messages:
+        body = json.dumps(message).encode()
+        frames.append(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
     with write_lock:
-        sys.stdout.buffer.write(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+        sys.stdout.buffer.write(b"".join(frames))
         sys.stdout.buffer.flush()
 
 
@@ -30,10 +33,12 @@ def publish_later(document, text):
         params = {"uri": document["uri"], "diagnostics": []}
         if Path("incremental-push").exists():
             params["version"] = document["version"]
-        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": params})
-        time.sleep(0.15)
-        params["diagnostics"] = diagnostics(text)
-        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": params})
+        # Keep both reports in one burst: a scheduler-delayed sleep can exceed
+        # the client's debounce window and no longer test a transient report.
+        send(
+            {"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": params},
+            {"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {**params, "diagnostics": diagnostics(text)}},
+        )
         return
     # Neither another URI nor a superseded version may complete the wait.
     for uri, version in [(document["uri"] + ".other", 1), (document["uri"], document["version"] - 1)]:
