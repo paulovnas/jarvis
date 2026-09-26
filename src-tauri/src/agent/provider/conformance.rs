@@ -182,10 +182,16 @@ fn overflow_is_classified_without_retrying_or_exposing_provider_payloads() {
 }
 
 #[test]
-fn compacted_runtime_context_reaches_every_protocol_without_private_markers() {
+fn compacted_and_interrupted_context_reaches_every_protocol_without_private_markers() {
     let input = provider_input(vec![
         json!({"role":"user","content":"Original request"}),
         json!({"role":"user","_jarvis_runtime":true,"content":"Continuation summary: edit src/app.ts"}),
+        json!({"type":"function_call","call_id":"missing","name":"read","arguments":"{}"}),
+        json!({"type":"function_call","call_id":"confirmed","name":"read","arguments":"{}"}),
+        json!({"type":"function_call_output","call_id":"confirmed","output":"Confirmed file contents"}),
+        json!({"type":"function_call","call_id":"next","name":"read","arguments":"{}"}),
+        json!({"type":"function_call_output","call_id":"next","output":"Next confirmed result"}),
+        json!({"role":"user","content":"Continue from the saved progress."}),
     ]);
     let tool = json!({"type":"function","name":"read","description":"Read","parameters":{"type":"object"}});
 
@@ -234,6 +240,30 @@ fn compacted_runtime_context_reaches_every_protocol_without_private_markers() {
     for body in bodies {
         let serialized = body.to_string();
         assert!(serialized.contains("Continuation summary: edit src/app.ts"));
+        assert!(serialized.contains("Confirmed file contents"));
+        assert!(serialized.contains(super::super::journal::UNKNOWN_TOOL_OUTPUT));
+        assert!(serialized.contains("Continue from the saved progress."));
         assert!(!serialized.contains("_jarvis_runtime"));
+        if let Some(messages) = body["messages"].as_array() {
+            let assistant = messages
+                .iter()
+                .position(|message| message["role"] == "assistant")
+                .unwrap();
+            if let Some(calls) = messages[assistant]["tool_calls"].as_array() {
+                assert_eq!(calls.len(), 2);
+                assert_eq!(messages[assistant + 1]["tool_call_id"], "confirmed");
+                assert_eq!(messages[assistant + 2]["tool_call_id"], "missing");
+            } else {
+                assert_eq!(messages[assistant]["content"].as_array().unwrap().len(), 2);
+                assert_eq!(
+                    messages[assistant + 1]["content"][0]["tool_use_id"],
+                    "confirmed"
+                );
+                assert_eq!(
+                    messages[assistant + 1]["content"][1]["tool_use_id"],
+                    "missing"
+                );
+            }
+        }
     }
 }

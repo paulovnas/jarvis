@@ -717,18 +717,45 @@ pub(super) async fn stream(
 }
 
 fn provider_input(input: Vec<Value>) -> Vec<Value> {
-    input
-        .into_iter()
-        .map(|mut item| {
-            if let Some(map) = item.as_object_mut() {
-                // These fields make journal recovery and queued-message
-                // deduplication durable, but provider input schemas reject
-                // application-private properties on conversation items.
-                map.retain(|key, _| !key.starts_with("_jarvis_"));
+    let mut outputs: HashSet<String> = input
+        .iter()
+        .filter(|item| item["type"] == "function_call_output")
+        .filter_map(|item| item["call_id"].as_str().map(str::to_owned))
+        .collect();
+    let mut replay = Vec::with_capacity(input.len());
+    let mut interrupted = Vec::new();
+    let mut after_output = false;
+    for mut item in input {
+        // Interrupted streams can leave calls only in the wire journal. Repair
+        // the provider projection, never the saved history or a confirmed result.
+        // Finish each parallel group before the next message or group of calls.
+        if !matches!(
+            item["type"].as_str(),
+            Some("function_call" | "function_call_output")
+        ) || (after_output && item["type"] == "function_call")
+        {
+            replay.append(&mut interrupted);
+        }
+        after_output = item["type"] == "function_call_output";
+        if item["type"] == "function_call" {
+            if let Some(id) = item["call_id"].as_str() {
+                if outputs.insert(id.to_owned()) {
+                    interrupted.push(json!({
+                        "type": "function_call_output",
+                        "call_id": id,
+                        "output": super::journal::UNKNOWN_TOOL_OUTPUT,
+                    }));
+                }
             }
-            item
-        })
-        .collect()
+        }
+        if let Some(map) = item.as_object_mut() {
+            // Recovery and deduplication metadata is private to the journal.
+            map.retain(|key, _| !key.starts_with("_jarvis_"));
+        }
+        replay.push(item);
+    }
+    replay.append(&mut interrupted);
+    replay
 }
 
 fn ordered_tools(mut tools: Vec<Value>) -> Vec<Value> {
@@ -1162,6 +1189,128 @@ mod tests {
         assert!(input[0].get("_jarvis_queue_id").is_none());
         assert_eq!(input[0]["_custom"], true);
         assert_eq!(input[0]["_antigravity_model"], "gemini-example");
+    }
+
+    #[test]
+    fn provider_input_repairs_interrupted_parallel_calls_before_followup() {
+        let confirmed = json!({"type":"function_call_output", "call_id":"read-1", "output":"Durable file contents"});
+        let followup = json!({"role":"user", "content":"Continue the remaining implementation."});
+        // The provider completed all four calls, but the journal writer failed
+        // after only the first tool was registered. A later turn replays them.
+        let mut input = vec![
+            json!({"type":"function_call", "call_id":"read-1", "name":"read", "arguments":"{}"}),
+            confirmed.clone(),
+        ];
+        for id in ["read-2", "read-3", "read-4"] {
+            input.push(
+                json!({"type":"function_call", "call_id":id, "name":"read", "arguments":"{}"}),
+            );
+        }
+        input.push(followup.clone());
+        let replay = provider_input(input.clone());
+        assert_eq!(replay.len(), input.len() + 3);
+        assert_eq!(replay[1], confirmed);
+        assert_eq!(replay.last(), Some(&followup));
+        assert_eq!(&replay[..5], &input[..5]);
+        for (index, id) in ["read-2", "read-3", "read-4"].iter().enumerate() {
+            assert_eq!(
+                replay[5 + index],
+                json!({"type":"function_call_output", "call_id":id, "output":super::super::journal::UNKNOWN_TOOL_OUTPUT})
+            );
+        }
+        assert_eq!(provider_input(replay.clone()), replay);
+    }
+
+    #[test]
+    fn provider_input_keeps_confirmed_parallel_results_before_missing_outputs() {
+        let input = vec![
+            json!({"type":"function_call", "call_id":"missing", "name":"shell", "arguments":"{}"}),
+            json!({"type":"function_call", "call_id":"complete", "name":"read", "arguments":"{}"}),
+            json!({"type":"function_call_output", "call_id":"complete", "output":"Confirmed"}),
+        ];
+        let replay = provider_input(input.clone());
+        assert_eq!(&replay[..input.len()], &input);
+        assert_eq!(replay.len(), input.len() + 1);
+        assert_eq!(
+            replay[3],
+            json!({"type":"function_call_output", "call_id":"missing", "output":super::super::journal::UNKNOWN_TOOL_OUTPUT})
+        );
+        assert_eq!(provider_input(replay.clone()), replay);
+    }
+
+    #[test]
+    #[ignore = "Requires JARVIS_REPLAY_JOURNAL; validates a private journal copy offline"]
+    fn replay_saved_journal_preserves_results_and_completes_tool_pairs() {
+        use super::super::{compaction, journal, tests};
+        let path = std::env::var_os("JARVIS_REPLAY_JOURNAL")
+            .expect("Set JARVIS_REPLAY_JOURNAL to the journal to inspect");
+        let original = std::fs::read(&path).unwrap();
+        let fixture = tests::Fixture::new();
+        let copy = fixture.root.join("replay.jsonl");
+        std::fs::write(&copy, &original).unwrap();
+        let (turns, extras) = journal::read_only(&copy).unwrap();
+        let session = tests::session(&fixture);
+        let mut data = session.data.lock().unwrap();
+        data.turns = turns;
+        data.extras = extras;
+        let input = compaction::input(&data);
+        let confirmed: Vec<_> = input
+            .iter()
+            .filter(|item| item["type"] == "function_call_output")
+            .cloned()
+            .collect();
+        let calls: Vec<_> = input
+            .iter()
+            .filter(|item| item["type"] == "function_call")
+            .map(|item| item["call_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(calls.len(), calls.iter().collect::<HashSet<_>>().len());
+        let replay = provider_input(input.clone());
+        let mut outputs = BTreeMap::new();
+        for item in &replay {
+            if item["type"] == "function_call_output" {
+                *outputs
+                    .entry(item["call_id"].as_str().unwrap())
+                    .or_insert(0) += 1;
+            }
+        }
+        assert_eq!(calls.len(), outputs.len());
+        for item in &replay {
+            if item["type"] == "function_call" {
+                assert_eq!(outputs.get(item["call_id"].as_str().unwrap()), Some(&1));
+            }
+        }
+        let confirmed_ids: HashSet<_> = confirmed
+            .iter()
+            .map(|item| item["call_id"].as_str().unwrap())
+            .collect();
+        let preserved: Vec<_> = replay
+            .iter()
+            .filter(|item| {
+                item["type"] == "function_call_output"
+                    && item["call_id"]
+                        .as_str()
+                        .is_some_and(|id| confirmed_ids.contains(id))
+            })
+            .cloned()
+            .collect();
+        assert!(preserved == confirmed, "Existing results must be unchanged");
+        assert!(
+            provider_input(replay.clone()) == replay,
+            "Projection must be idempotent"
+        );
+        assert!(
+            std::fs::read(&path).unwrap() == original,
+            "Source journal changed during the diagnostic"
+        );
+        println!(
+            "Offline replay: {} turns, {} input items, {} unique calls, {} preserved results, {} completed pairs",
+            data.turns.len(),
+            input.len(),
+            calls.len(),
+            confirmed.len(),
+            replay.len() - input.len()
+        );
     }
 
     #[test]

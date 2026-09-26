@@ -37,6 +37,7 @@ const snapshotStateSchema = z.object({
 });
 const agentEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("turnStarted"), turn: agentTurnSchema }),
+  z.object({ type: z.literal("turnTimingUpdated"), turnId: z.string(), durationMs: z.number().nonnegative(), activeSince: z.number().nonnegative().nullable() }),
   z.object({ type: z.literal("itemStarted"), item: startedItemSchema }),
   z.object({
     type: z.literal("itemDelta"), stepIndex: z.number().int().nonnegative(),
@@ -89,6 +90,8 @@ function applyEvent(snapshot: ChatSnapshot, event: z.infer<typeof agentEventSche
     }
     case "turnCompleted":
       return replaceLatestTurn(snapshot, turn => turn.id === event.turn.id ? event.turn : turn);
+    case "turnTimingUpdated":
+      return replaceLatestTurn(snapshot, turn => turn.id === event.turnId ? { ...turn, durationMs: event.durationMs, activeSince: event.activeSince } : turn);
     case "itemStarted": {
       const item = event.item;
       return replaceLatestTurn(snapshot, turn => {

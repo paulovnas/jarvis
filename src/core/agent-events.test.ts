@@ -3,6 +3,7 @@ import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { readChat, type ChatSnapshot } from "./chat";
 import { mergeChat } from "./chat-history";
 import { agentEventBatchSchema, applyAgentEventBatch } from "./agent-events";
+import { IPC_PROTOCOL_VERSION } from "@/generated/ipc";
 
 function history(start: number, total: number): ChatSnapshot {
   return { ...emptyChat(), revision: 4, history: { start, total }, turns: Array.from({ length: total - start }, (_, index) => ({ ...savedTurn(), id: `turn-${start + index}`, user: `Mensagem ${start + index}` })) };
@@ -121,6 +122,28 @@ describe("agent event protocol", () => {
     expect(applyAgentEventBatch(current, batch).needsResync).toBe(true);
   });
 
+  it("applies live clock start, pause and resume without changing earlier turns", () => {
+    const original = history(3, 8);
+    let current: ChatSnapshot = { ...original, activeTurnId: "turn-7" };
+    const before = current.turns.slice(0, -1);
+    for (const timing of [
+      { durationMs: 0, activeSince: 1_000 },
+      { durationMs: 2_000, activeSince: null },
+      { durationMs: 2_000, activeSince: 32_401_000 },
+    ]) {
+      const batch = agentEventBatchSchema.parse({
+        conversationId: "c1", baseRevision: current.revision, revision: current.revision + 1,
+        events: [{ type: "turnTimingUpdated", turnId: "turn-7", ...timing }],
+      });
+      const applied = applyAgentEventBatch(current, batch);
+      const updated = applied.snapshot!;
+      expect(applied.needsResync).toBe(false);
+      expect(updated.turns[updated.turns.length - 1]).toMatchObject(timing);
+      expect(updated.turns.slice(0, -1)).toEqual(before);
+      current = updated;
+    }
+  });
+
   it("requests a full snapshot if a cached page has inconsistent positions", () => {
     const current = { ...history(3, 8), history: { start: 7, total: 8 } };
     const batch = agentEventBatchSchema.parse({ conversationId: "c1", baseRevision: 4, revision: 5, events: [] });
@@ -130,7 +153,7 @@ describe("agent event protocol", () => {
 
   it("requests a compatible snapshot for a newer event protocol", () => {
     const current = { ...emptyChat(), revision: 4 };
-    const batch = agentEventBatchSchema.parse({ protocolVersion: 4, conversationId: "c1", baseRevision: 4, revision: 5, events: [] });
+    const batch = agentEventBatchSchema.parse({ protocolVersion: IPC_PROTOCOL_VERSION + 1, conversationId: "c1", baseRevision: 4, revision: 5, events: [] });
     expect(applyAgentEventBatch(current, batch).needsResync).toBe(true);
   });
 

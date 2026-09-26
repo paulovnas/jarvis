@@ -1,5 +1,5 @@
 {
-  "protocolVersion": 3,
+  "protocolVersion": 4,
   "generator": "ts-rs@11",
   "contracts": [
     "AgentError",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { readChat } from "./chat";
+import { IPC_PROTOCOL_VERSION } from "@/generated/ipc";
 
 describe("Chat IPC contract", () => {
   it.each(["pending", "issues"])("preserves the LSP %s state when reloading a conversation", (status) => {
@@ -32,7 +33,7 @@ describe("Chat IPC contract", () => {
     expect(() => readChat({ ...emptyChat(), turns: [{ ...turn, steps: [{ ...turn.steps[0], tools: [{ name: "bash" }] }] }] }, "c1")).toThrow();
   });
   it("rejects snapshots from a newer incompatible protocol", () => {
-    expect(() => readChat({ ...emptyChat(), protocolVersion: 4 }, "c1")).toThrow();
+    expect(() => readChat({ ...emptyChat(), protocolVersion: IPC_PROTOCOL_VERSION + 1 }, "c1")).toThrow();
     expect(readChat({ ...emptyChat(), protocolVersion: 3 }, "c1").protocolVersion).toBe(3);
   });
 });

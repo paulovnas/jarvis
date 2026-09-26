@@ -231,11 +231,12 @@ describe("Persistent live conversation", () => {
     expect(screen.getByText("# Jarvis")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copiar" })).not.toBeInTheDocument();
   });
-  it("shows elapsed chat time from the turn start while execution is active", async () => {
+  it("updates the active clock from live events before the turn finishes", async () => {
     const turn = {
       ...savedTurn(),
       createdAt: Date.now() - 11_000,
       durationMs: 1_000,
+      activeSince: null,
       status: "running" as const,
       steps: [{ durationMs: 1_000, summary: "Conferindo o contrato", text: "", tools: [], usage: null }],
     };
@@ -243,10 +244,18 @@ describe("Persistent live conversation", () => {
     render(<TestChat />);
     const status = await screen.findByTestId("active-execution-status");
     expect(status).toHaveTextContent("Conferindo o contrato");
-    expect(within(status).getByLabelText("Tempo total da execução")).toHaveTextContent(/1[1-3]s/);
+    expect(within(status).getByLabelText("Tempo total da execução")).toHaveTextContent(/^1s$/);
     expect(within(screen.getByLabelText("Histórico de mensagens")).queryByLabelText("Tempo total da execução")).not.toBeInTheDocument();
 
-    await update({ ...emptyChat(), revision: 2, activeTurnId: null, turns: [{ ...turn, status: "completed", durationMs: 12_000 }] });
+    await act(async () => {
+      for (const handler of listeners.get("agent:event") ?? []) handler({ event: "agent:event", id: 1, payload: {
+        conversationId: "c1", baseRevision: 1, revision: 2,
+        events: [{ type: "turnTimingUpdated", turnId: turn.id, durationMs: 1_000, activeSince: Date.now() - 10_000 }],
+      } });
+    });
+    expect(within(status).getByLabelText("Tempo total da execução")).toHaveTextContent(/1[1-3]s/);
+
+    await update({ ...emptyChat(), revision: 3, activeTurnId: null, turns: [{ ...turn, status: "completed", durationMs: 12_000 }] });
     await waitFor(() => expect(screen.queryByTestId("active-execution-status")).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: /Trabalhou por 12s/ })).toHaveAttribute("aria-expanded", "false");
   });
@@ -338,6 +347,7 @@ describe("Persistent live conversation", () => {
     call.mockResolvedValue({ ...emptyChat(), activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running" }], pendingApproval: { tool, policy: null } });
     render(<TestChat />);
     expect(await screen.findByText("before")).toBeInTheDocument(); expect(screen.getByText("after")).toBeInTheDocument();
+    expect(screen.getByTestId("active-execution-status")).toHaveTextContent("Aguardando sua resposta");
     await user.click(screen.getByRole("button", { name: "Recusar" }));
     expect(call).toHaveBeenCalledWith("approve_agent_tool", { conversationId: "c1", turnId: "turn1", toolId: "tool1", decision: { approved: false, grant: null } });
   });
@@ -366,6 +376,7 @@ describe("Persistent live conversation", () => {
     call.mockImplementation(async command => command === "answer_agent_authoring" ? { ...running, revision: 3, pendingAuthoring: null } : running);
     render(<TestChat />);
     expect(await screen.findByRole("heading", { name: "Revisar alteração no Jarvis" })).toBeVisible();
+    expect(screen.getByTestId("active-execution-status")).toHaveTextContent("Aguardando sua resposta");
     await user.click(screen.getByRole("button", { name: "Aprovar e salvar" }));
     expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "c1", decision: { turnId: "turn1", toolId: "author-1", approved: true, note: null } });
     expect(await screen.findByRole("textbox", { name: "Mensagem" })).toBeVisible();
@@ -374,7 +385,7 @@ describe("Persistent live conversation", () => {
     const user = userEvent.setup();
     const pendingQuestion = { turnId: "turn1", toolId: "ask1", questions: [{ id: "theme", question: "Qual tema prefere?", options: [{ label: "Escuro" }, { label: "Claro" }] }] };
     const tool = { id: "ask1", name: "ask_user", status: "running" as const, args: { questions: pendingQuestion.questions }, output: "", durationMs: 0 };
-    const turn = { ...savedTurn(), status: "running" as const, steps: [{ durationMs: 0, text: "", summary: "", usage: null, tools: [tool] }] };
+    const turn = { ...savedTurn(), status: "running" as const, activeSince: null, steps: [{ durationMs: 0, text: "", summary: "", usage: null, tools: [tool] }] };
     const response = { cancelled: false, answers: [{ id: "theme", value: "Escuro", selectedLabel: "Escuro" }] };
     const queue = [{ id: "q1", content: "Depois revise os testes", options: turn.options }];
     const running = { ...emptyChat(), activeTurnId: turn.id, turns: [turn], pendingQuestion, queuedMessages: queue };
@@ -393,6 +404,7 @@ describe("Persistent live conversation", () => {
     await user.click(within(card).getByRole("button", { name: "Enviar respostas" }));
     expect(call).toHaveBeenCalledWith("answer_agent_question", { conversationId: "c1", turnId: "turn1", toolId: "ask1", response });
     expect(screen.queryByRole("region", { name: "Perguntas do Jarvis" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("active-execution-status")).toHaveTextContent("Trabalhando…");
     expect(composer).toHaveTextContent("Meu rascunho");
     expect(composer).toHaveFocus();
     const assistant = screen.getByTestId("assistant-message-turn1");

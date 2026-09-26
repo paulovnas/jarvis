@@ -3,9 +3,9 @@ import { isTaskReminder } from "./tool-activity";
 import type { AssistantWorkData } from "./types";
 import { reasoningPreview } from "./reasoning-preview";
 
-export function describeExecution(work: AssistantWorkData, isStreaming: boolean) {
+export function describeExecution(work: AssistantWorkData, isStreaming: boolean, waitingForUser = false) {
   const allTools = work.steps.flatMap(step => step.tools);
-  const waiting = allTools.some(tool => tool.name === "ask_user" && (tool.status === "running" || tool.status === "pending"));
+  const waiting = isStreaming && waitingForUser;
   const tools = allTools.filter(tool => tool.name !== "ask_user" || (tool.status !== "running" && tool.status !== "pending"));
   const failures = tools.filter(tool => tool.status === "error" && !isTaskReminder(tool)).length;
   const warnings = tools.filter(isTaskReminder).length;

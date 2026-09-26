@@ -59,6 +59,13 @@ pub(super) enum Event {
     TurnStarted {
         turn: Turn,
     },
+    TurnTimingUpdated {
+        turn_id: String,
+        #[cfg_attr(test, ts(type = "number"))]
+        duration_ms: u64,
+        #[cfg_attr(test, ts(type = "number | null"))]
+        active_since: Option<u64>,
+    },
     ItemStarted {
         item: StartedItem,
     },
@@ -304,6 +311,14 @@ fn differences(previous: Option<&ChatSnapshot>, current: &ChatSnapshot) -> Vec<E
                 events.push(Event::TurnCompleted {
                     turn: after.clone(),
                 });
+            } else if before.duration_ms != after.duration_ms
+                || before.active_since != after.active_since
+            {
+                events.push(Event::TurnTimingUpdated {
+                    turn_id: after.id.clone(),
+                    duration_ms: after.duration_ms,
+                    active_since: after.active_since,
+                });
             }
         }
     }
@@ -477,6 +492,43 @@ mod tests {
             differences(Some(&before), &after).as_slice(),
             [Event::TasksUpdated { tasks: updated }] if updated == &tasks
         ));
+    }
+
+    #[test]
+    fn timing_updates_replay_start_pause_and_resume_without_replacing_the_turn() {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve("hello".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        let mut snapshot = session.snapshot().unwrap();
+        let revision = snapshot.revision;
+        let mut buffer = RevisionBuffer::default();
+        buffer.seed(snapshot.clone());
+        let mut expected = Vec::new();
+        for (duration_ms, active_since) in
+            [(0, Some(1_000)), (2_000, None), (2_000, Some(32_401_000))]
+        {
+            snapshot.revision += 1;
+            let turn = snapshot.turns.last_mut().unwrap();
+            turn.duration_ms = duration_ms;
+            turn.active_since = active_since;
+            expected.push(serde_json::json!({
+                "type": "turnTimingUpdated",
+                "turnId": turn.id,
+                "durationMs": duration_ms,
+                "activeSince": active_since,
+            }));
+            buffer.record(&snapshot);
+        }
+        let actual: Vec<_> = buffer
+            .replay(revision)
+            .unwrap()
+            .into_iter()
+            .flat_map(|batch| batch.events)
+            .map(|event| serde_json::to_value(event).unwrap())
+            .collect();
+        assert_eq!(actual, expected);
     }
 
     #[test]
