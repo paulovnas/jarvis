@@ -468,6 +468,7 @@ pub(crate) fn require_enabled_account(
 fn complete_app_config(
     connection: &mut Connection,
     workspace_name: &str,
+    external_executor_ready: bool,
 ) -> Result<AppConfig, PersistenceError> {
     let transaction = connection.transaction()?;
     let existing = read_app_config(&transaction)?;
@@ -481,11 +482,13 @@ fn complete_app_config(
             "Informe um nome de até 120 caracteres, sem quebras de linha.",
         ));
     }
-    if !transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE enabled = 1)",
-        [],
-        |row| row.get::<_, bool>(0),
-    )? {
+    if !external_executor_ready
+        && !transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE enabled = 1)",
+            [],
+            |row| row.get::<_, bool>(0),
+        )?
+    {
         return Err(PersistenceError::new(
             "Conecte um provedor antes de começar.",
         ));
@@ -552,11 +555,12 @@ impl AppState {
         &self,
         home_dir: &Path,
         workspace_name: &str,
+        external_executor_ready: bool,
     ) -> Result<AppConfig, PersistenceError> {
         crate::core::require_ready(home_dir)
             .map_err(|cause| PersistenceError::new(cause.message))?;
         self.with_connection(home_dir, |connection| {
-            complete_app_config(connection, workspace_name)
+            complete_app_config(connection, workspace_name, external_executor_ready)
         })
     }
 
@@ -614,22 +618,37 @@ pub async fn complete_onboarding(
     if state.get_app_config(&home_dir)?.onboarding_completed {
         return state.get_app_config(&home_dir);
     }
-    let accounts =
-        crate::openai_codex::list_provider_accounts(app.clone(), app.state(), app.state())
+    let claude_selected = crate::agent::workflow::settings::read(&home_dir)
+        .map_err(|cause| PersistenceError::new(cause.message()))?
+        .get("standard/builder")
+        .is_some_and(|choice| choice.executor == crate::claude::Executor::Claude);
+    let external_executor_ready = if claude_selected {
+        let status = crate::claude::get_claude_runtime(app.state())
             .await
-            .map_err(|_| {
-                PersistenceError::new("Não foi possível verificar os provedores. Tente novamente.")
-            })?;
-    if !accounts
-        .iter()
-        .any(|account| account.enabled && account.models_available && !account.models.is_empty())
-    {
-        return Err(PersistenceError::new(
-            "Conecte um provedor com modelos disponíveis antes de começar.",
-        ));
+            .map_err(PersistenceError::new)?;
+        status.installed && status.authenticated && !status.models.is_empty()
+    } else {
+        false
+    };
+    if !external_executor_ready {
+        let accounts =
+            crate::openai_codex::list_provider_accounts(app.clone(), app.state(), app.state())
+                .await
+                .map_err(|_| {
+                    PersistenceError::new(
+                        "Não foi possível verificar os provedores. Tente novamente.",
+                    )
+                })?;
+        if !accounts.iter().any(|account| {
+            account.enabled && account.models_available && !account.models.is_empty()
+        }) {
+            return Err(PersistenceError::new(
+                "Conecte um provedor com modelos disponíveis ou selecione o Claude instalado e autenticado antes de começar.",
+            ));
+        }
     }
     tauri::async_runtime::spawn_blocking(move || {
-        state.complete_onboarding(&home_dir, &workspace_name)
+        state.complete_onboarding(&home_dir, &workspace_name, external_executor_ready)
     })
     .await
     .map_err(|error| PersistenceError::new(format!("Database task failed: {error}")))?
@@ -842,14 +861,16 @@ mod tests {
         connection.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('test','openai-codex','test')", []).unwrap();
 
         assert_eq!(
-            complete_app_config(&mut connection, "  Meu espaço  ").expect("first completion"),
+            complete_app_config(&mut connection, "  Meu espaço  ", false)
+                .expect("first completion"),
             AppConfig {
                 onboarding_completed: true,
             }
         );
         initialize_database(&mut connection).expect("idempotent migration check");
         assert_eq!(
-            complete_app_config(&mut connection, "Different name").expect("second completion"),
+            complete_app_config(&mut connection, "Different name", false)
+                .expect("second completion"),
             AppConfig {
                 onboarding_completed: true,
             }
@@ -873,9 +894,9 @@ mod tests {
     #[test]
     fn onboarding_requires_provider_and_invalid_names_leave_no_partial_workspace() {
         let mut connection = in_memory_database();
-        assert!(complete_app_config(&mut connection, "").is_err());
+        assert!(complete_app_config(&mut connection, "", false).is_err());
         connection.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('test','openai-codex','test')", []).unwrap();
-        assert!(complete_app_config(&mut connection, "bad\nname").is_err());
+        assert!(complete_app_config(&mut connection, "bad\nname", false).is_err());
         assert!(!read_app_config(&connection).unwrap().onboarding_completed);
         assert_eq!(
             connection
@@ -884,13 +905,30 @@ mod tests {
                 .unwrap(),
             0
         );
-        complete_app_config(&mut connection, " ").unwrap();
+        complete_app_config(&mut connection, " ", false).unwrap();
         assert_eq!(
             connection
                 .query_row("SELECT name FROM workspaces", [], |row| row
                     .get::<_, String>(0))
                 .unwrap(),
             "Pessoal"
+        );
+    }
+
+    #[test]
+    fn onboarding_accepts_a_verified_external_executor_without_inventing_a_provider() {
+        let mut connection = in_memory_database();
+        assert!(complete_app_config(&mut connection, "Claude workspace", false).is_err());
+        assert!(complete_app_config(&mut connection, "bad\nname", true).is_err());
+        let config = complete_app_config(&mut connection, "Claude workspace", true).unwrap();
+        assert!(config.onboarding_completed);
+        assert!(list_provider_accounts(&connection).unwrap().is_empty());
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM workspaces", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
         );
     }
 

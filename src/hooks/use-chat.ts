@@ -11,6 +11,7 @@ import type { PendingAuthoring } from "@/core/authoring";
 import { agentEventBatchSchema, applyAgentEventBatch, chatSubscriptionSchema, type AgentEventBatch } from "@/core/agent-events";
 import { getChatSnapshot, subscribeChatSnapshot, updateChatSnapshot } from "@/core/chat-store";
 import { IPC_PROTOCOL_VERSION } from "@/generated/ipc";
+import { executorOf } from "@/core/executors";
 
 function eventConversationId(payload: unknown): string | null {
   if (typeof payload === "string") return payload;
@@ -22,6 +23,7 @@ function eventConversationId(payload: unknown): string | null {
 function matchesPendingTurn(observed: AgentTurn | undefined, pending: AgentTurn): boolean {
   return Boolean(observed
     && observed.user === pending.user
+    && executorOf(observed.options) === executorOf(pending.options)
     && observed.options.account === pending.options.account
     && observed.options.model === pending.options.model
     && observed.createdAt >= pending.createdAt - 5_000);

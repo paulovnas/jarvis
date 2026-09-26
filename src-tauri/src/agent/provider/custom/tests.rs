@@ -126,6 +126,7 @@ use crate::{
 
 fn options() -> TurnOptions {
     TurnOptions {
+        executor: crate::claude::Executor::Jarvis,
         account: "My.OpenRouter".into(),
         model: "vendor/model-v4".into(),
         reasoning: None,

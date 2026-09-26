@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 
 fn options(account: &str, model: &str) -> TurnOptions {
     TurnOptions {
+        executor: crate::claude::Executor::Jarvis,
         account: account.into(),
         model: model.into(),
         reasoning: None,
@@ -36,6 +37,13 @@ fn inheritance_uses_each_executing_agents_model_and_explicit_choices_stay_fixed(
         model: Some("gpt-5.6-luna".into()),
     };
     assert_eq!(explicit.resolve(&root), explicit.resolve(&child));
+    let mut external = child.clone();
+    external.executor = crate::claude::Executor::Claude;
+    external.account.clear();
+    external.model = "sonnet".into();
+    assert!(config.resolve(&external).account_alias.is_none());
+    assert!(config.resolve(&external).model.is_none());
+    assert_eq!(explicit.resolve(&external), explicit);
     assert_eq!(
         Config {
             inherit_chat: false,

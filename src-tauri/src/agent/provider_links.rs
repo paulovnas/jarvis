@@ -101,6 +101,7 @@ fn reference(
 
 fn from_options(options: &TurnOptions) -> ModelChoice {
     ModelChoice {
+        executor: options.executor,
         account: options.account.clone(),
         model: options.model.clone(),
         reasoning: options.reasoning.clone(),
@@ -196,6 +197,7 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
                 label.into(),
                 vec!["Ferramentas".into()],
                 ModelChoice {
+                    executor: crate::claude::Executor::Jarvis,
                     account,
                     model: model.unwrap_or_default(),
                     reasoning: None,
@@ -319,6 +321,7 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
             }
         }
     }
+    references.retain(|item| item.choice.executor == crate::claude::Executor::Jarvis);
     Ok(references)
 }
 
@@ -371,21 +374,39 @@ fn apply(
             .iter()
             .find(|item| item.id == replacement.id)
             .ok_or_else(stale)?;
+        replacement
+            .choice
+            .validate_shape()
+            .map_err(|cause| ProviderError {
+                code: "provider_dependencies".into(),
+                message: cause.message,
+            })?;
         if replacement.choice.account == alias {
             return Err(error(
                 "Escolha um provedor diferente daquele que será removido.",
             ));
         }
-        let active: bool = db
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias=?1 AND enabled=1)",
-                [&replacement.choice.account],
-                |row| row.get(0),
-            )
-            .map_err(storage)?;
+        let active: bool = replacement.choice.executor == crate::claude::Executor::Claude
+            || db
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias=?1 AND enabled=1)",
+                    [&replacement.choice.account],
+                    |row| row.get(0),
+                )
+                .map_err(storage)?;
         if !active {
             return Err(error(
                 "Um provedor de destino não está mais disponível. Revise as substituições.",
+            ));
+        }
+        if replacement.choice.executor == crate::claude::Executor::Claude
+            && matches!(
+                item.kind,
+                Kind::WebSearch | Kind::Vision | Kind::ImageGeneration
+            )
+        {
+            return Err(error(
+                "Esta ferramenta requer um provedor Jarvis, não um executor externo.",
             ));
         }
         match item.kind {
@@ -433,9 +454,7 @@ pub(crate) fn resolve_chat(
     options: &mut TurnOptions,
 ) -> Result<(), AgentError> {
     let choice = model_bindings::resolve(db, &format!("chat:{id}"), &from_options(options))?;
-    options.account = choice.account;
-    options.model = choice.model;
-    options.reasoning = choice.reasoning;
+    choice.apply(options);
     Ok(())
 }
 
@@ -496,14 +515,17 @@ pub async fn clear_chat_model_binding(
     let state = state.inner().clone();
     let oauth = oauth.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let stamp = state.with_connection(&home, |db| target_stamp(db, &choice.account))?;
-        oauth.inference_model(
-            &state,
-            &home,
-            &choice.account,
-            &choice.model,
-            choice.reasoning.as_deref(),
-        )?;
+        let stamp = if choice.executor == crate::claude::Executor::Jarvis {
+            Some(state.with_connection(&home, |db| target_stamp(db, &choice.account))?)
+        } else {
+            None
+        };
+        workflow::settings::validate_choice(&state, &oauth, &home, &choice).map_err(|cause| {
+            ProviderError {
+                code: "provider_dependencies".into(),
+                message: cause.message,
+            }
+        })?;
         state.with_connection(&home, |db| {
             let exists: bool = db
                 .query_row(
@@ -515,8 +537,10 @@ pub async fn clear_chat_model_binding(
             if !exists {
                 return Err(error("Esta conversa não está mais disponível."));
             }
-            if target_stamp(db, &choice.account)? != stamp {
-                return Err(stale());
+            if let Some(stamp) = &stamp {
+                if target_stamp(db, &choice.account)? != *stamp {
+                    return Err(stale());
+                }
             }
             model_bindings::forget_choice(db, &format!("chat:{conversation_id}"), &choice)
                 .map_err(storage)
@@ -568,6 +592,22 @@ pub async fn remove(
                 .iter()
                 .find(|item| item.id == replacement.id)
                 .ok_or_else(stale)?;
+            if replacement.choice.executor == crate::claude::Executor::Claude {
+                if matches!(
+                    item.kind,
+                    Kind::WebSearch | Kind::Vision | Kind::ImageGeneration
+                ) {
+                    return Err(error(
+                        "Esta ferramenta requer um provedor Jarvis, não um executor externo.",
+                    ));
+                }
+                workflow::settings::validate_choice(&state, &oauth, &home, &replacement.choice)
+                    .map_err(|cause| ProviderError {
+                        code: "provider_dependencies".into(),
+                        message: cause.message,
+                    })?;
+                continue;
+            }
             if replacement.choice.account == alias {
                 return Err(error("Escolha outro provedor para a substituição."));
             }

@@ -7,7 +7,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Skeleton } from "@/components/ui/skeleton";
 import { DialogTrigger } from "@/components/ui/dialog";
 import { AgentInstructionsDialog } from "./AgentInstructionsDialog";
-import { ModelPicker } from "@/components/chat/ModelPicker";
+import { ExecutorModelPicker } from "@/components/chat/ExecutorModelPicker";
+import { executionChoice, executionSelection, executorOf } from "@/core/executors";
 import { useAgentModels } from "@/hooks/use-agent-models";
 import { FLOW_LABELS, ROLE_LABELS, ROLE_COLORS, type Workflow, type WorkflowAgent } from "@/core/workflow";
 import { enabledModels, type ProviderAccount } from "@/core/provider-accounts";
@@ -50,7 +51,7 @@ export function AgentSettings({ accounts, flowFilter }: { accounts: ProviderAcco
         <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3"><div className="flex min-w-0 items-center gap-2.5"><span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-md border" style={{ color: ROLE_COLORS[role], borderColor: `${ROLE_COLORS[role]}35`, backgroundColor: `${ROLE_COLORS[role]}10` }}><Icon className="size-4" /></span><CardTitle className="text-xs" style={{ color: ROLE_COLORS[role] }}>{ROLE_LABELS[role]}</CardTitle></div>
           <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon" />} aria-label={`Como escolher o modelo de ${ROLE_LABELS[role]} no fluxo ${FLOW_LABELS[flow]}`} className="relative z-20 size-6 cursor-pointer text-muted-foreground"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent side="left" className="max-w-80 border border-border bg-card p-3 text-xs leading-5 text-foreground">{GUIDANCE[role]}</TooltipContent></Tooltip>
         </CardHeader>
-        <CardContent className="flex min-w-0 flex-1 flex-col gap-4 overflow-hidden"><p className="min-h-[4.5em] text-xs leading-5 text-muted-foreground">{AGENT_DESCRIPTIONS[role]}</p><div className="relative z-20 mt-auto flex min-w-0 items-center gap-1 border-t border-border pt-2">{choice && <Hint content={choice.account}><span className="max-w-24 shrink-0 truncate font-mono text-[10px] text-muted-foreground">{aliasSuffix(choice.account)}</span></Hint>}<ModelPicker modelGroups={groups} selection={choice ? { model: `${choice.account}/${choice.model}`, reasoning: choice.reasoning } : null} disabled={models.saving} ariaLabel={`Modelo de ${ROLE_LABELS[role]} no fluxo ${FLOW_LABELS[flow]}`} onSelect={next => { const split = next.model.indexOf("/"); void models.save(flow, role, { account: next.model.slice(0, split), model: next.model.slice(split + 1), reasoning: next.reasoning }); }} /></div></CardContent>
+        <CardContent className="flex min-w-0 flex-1 flex-col gap-4 overflow-hidden"><p className="min-h-[4.5em] text-xs leading-5 text-muted-foreground">{AGENT_DESCRIPTIONS[role]}</p><div className="relative z-20 mt-auto flex min-w-0 flex-wrap items-center gap-1 border-t border-border pt-2">{choice && executorOf(choice) === "jarvis" && <Hint content={choice.account}><span className="max-w-24 shrink-0 truncate font-mono text-[10px] text-muted-foreground">{aliasSuffix(choice.account)}</span></Hint>}<ExecutorModelPicker modelGroups={groups} selection={executionSelection(choice)} disabled={models.saving} ariaLabel={`Modelo de ${ROLE_LABELS[role]} no fluxo ${FLOW_LABELS[flow]}`} onSelect={next => { void models.save(flow, role, executionChoice(next)); }} /></div></CardContent>
         {problem && <p role="alert" className="px-4 pb-3 text-xs text-destructive">{problem}</p>}
       </Card></AgentInstructionsDialog>;
     })}</div>

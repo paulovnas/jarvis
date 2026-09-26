@@ -415,6 +415,7 @@ mod tests {
 
     fn options() -> TurnOptions {
         TurnOptions {
+            executor: crate::claude::Executor::Jarvis,
             account: "account".into(),
             model: "model".into(),
             reasoning: None,

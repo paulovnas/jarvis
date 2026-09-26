@@ -3,6 +3,7 @@ use serde_json::json;
 
 fn choice(account: &str, model: &str) -> ModelChoice {
     ModelChoice {
+        executor: crate::claude::Executor::Jarvis,
         account: account.into(),
         model: model.into(),
         reasoning: None,
@@ -25,6 +26,58 @@ fn fixture() -> (Connection, tempfile::TempDir) {
     .unwrap();
     std::fs::write(crate::data_dir::root(home.path()).join("workflow-catalog.json"), json!({"revision":2,"agents":[{"id":"a".repeat(32),"name":"Analista","description":"","instructions":"Analyze","capability":"read_only","model":choice("openai-codex-old", "old-model")}],"flows":[{"id":"b".repeat(32),"name":"Meu fluxo","description":"","entry":"c".repeat(32),"maxSteps":1,"steps":[{"id":"c".repeat(32),"agentId":"a".repeat(32),"instructions":"","position":{"x":0,"y":0},"next":null,"onRework":null}]}]}).to_string()).unwrap();
     (db, home)
+}
+
+#[test]
+fn external_executor_choices_do_not_require_or_reference_a_jarvis_provider() {
+    let (db, home) = fixture();
+    let external = ModelChoice {
+        executor: crate::claude::Executor::Claude,
+        account: String::new(),
+        model: "sonnet".into(),
+        reasoning: Some("high".into()),
+    };
+    let preview = plan(&db, home.path(), "openai-codex-old").unwrap();
+    let replacements: Vec<_> = preview
+        .items
+        .iter()
+        .filter(|item| matches!(item.kind, Kind::BuiltinAgent | Kind::CustomAgent))
+        .map(|item| Replacement {
+            id: item.id.clone(),
+            choice: external.clone(),
+        })
+        .collect();
+    let result = apply(
+        &db,
+        home.path(),
+        &preview.alias,
+        &preview.revision,
+        &replacements,
+    )
+    .unwrap();
+    assert_eq!(result.replaced, 2);
+    let remaining = inventory(&db, home.path()).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].kind, Kind::WebSearch);
+    let mut options = crate::agent::tests::options(crate::agent::ApprovalMode::Manual);
+    let source = from_options(&options);
+    model_bindings::replace(&db, "chat:existing", &source, &external).unwrap();
+    resolve_chat(&db, "existing", &mut options).unwrap();
+    assert_eq!(options.executor, crate::claude::Executor::Claude);
+    assert!(options.account.is_empty());
+    assert_eq!(options.model, "sonnet");
+    let preview = plan(&db, home.path(), "openai-codex-old").unwrap();
+    assert!(apply(
+        &db,
+        home.path(),
+        &preview.alias,
+        &preview.revision,
+        &[Replacement {
+            id: preview.items[0].id.clone(),
+            choice: external
+        }]
+    )
+    .is_err());
 }
 
 #[test]

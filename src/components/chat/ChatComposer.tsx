@@ -9,7 +9,10 @@ import { attachmentSchema, uploadFile } from "@/core/attachments";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { FlowPicker } from "./FlowPicker";
 import { ComposerSkeleton } from "@/components/layout/LoadingSkeletons";
-import { ModelPicker, type ProviderModelGroup, type ModelSelection } from "./ModelPicker";
+import { type ProviderModelGroup, type ModelSelection } from "./ModelPicker";
+import { ExecutorModelPicker } from "./ExecutorModelPicker";
+import { claudeModels, executionChoice, executionSelection, executorOf } from "@/core/executors";
+import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
 export type { ProviderModelGroup } from "./ModelPicker";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
 import { useWorkflowCatalog } from "@/hooks/use-workflow-catalog";
@@ -121,10 +124,7 @@ export function ChatComposer({
   };
   const [sending, setSending] = useState(false);
   const sendLock = useRef(false);
-  const [selection, setSelection] = useState<{
-    model: string;
-    reasoning: string | null;
-  } | null>(initialOptions ? { model: `${initialOptions.account}/${initialOptions.model}`, reasoning: initialOptions.reasoning } : null);
+  const [selection, setSelection] = useState<ModelSelection | null>(executionSelection(initialOptions));
   const catalog = useWorkflowCatalog();
   const [manualBindings, setManualBindings] = useState<ModelBinding[] | null>(null);
   const [choosingModel, setChoosingModel] = useState(false);
@@ -152,9 +152,9 @@ export function ChatComposer({
     const submitted = draftRef.current;
     const trimmed = submitted.content.trim() || (submitted.parts?.some(part => part.type === "attachment") ? "Analise os anexos." : "");
     if (modelError) { toast.error("Revise o modelo antes de enviar", { description: modelError }); return; }
-    if (!trimmed || disabled || !modelsReady || customUnavailable || compacting || importing.current || agentModels?.saving || choosingModelLock.current || sendLock.current || !currentModelDef) return;
-    const separator = currentModelDef.value.indexOf("/");
-    if (separator < 1) return;
+    if (!trimmed || disabled || !selectionReady || customUnavailable || compacting || importing.current || agentModels?.saving || choosingModelLock.current || sendLock.current || !currentModelDef) return;
+    const choice = executionChoice({ executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning });
+    if (choice.executor === "jarvis" && !choice.account) return;
     sendLock.current = true;
     setSending(true);
     setDraft({ content: "" });
@@ -165,7 +165,7 @@ export function ChatComposer({
         : { ...submitted, parts: submitted.parts ? [...submitted.parts] : undefined });
     };
     try {
-      const options: TurnOptions = running && initialOptions ? { ...initialOptions, approvalMode: "yolo" } : { account: currentModelDef.value.slice(0, separator), model: currentModelDef.value.slice(separator + 1), reasoning, mode: "build", ...selectedFlow, approvalMode: "yolo" };
+      const options: TurnOptions = running && initialOptions ? { ...initialOptions, approvalMode: "yolo" } : { ...choice, mode: "build", ...selectedFlow, approvalMode: "yolo" };
       if (manualValidationAvailable && manualValidation) options.manualValidation = true;
       else delete options.manualValidation;
       const accepted = submitted.parts?.length ? await onSendMessage(trimmed, options, submitted.parts) : await onSendMessage(trimmed, options);
@@ -176,30 +176,37 @@ export function ChatComposer({
     } finally { sendLock.current = false; setSending(false); }
   };
 
-  const availableModels = modelGroups.flatMap((group) => group.models);
-  const profile = githubSelected
+  const nativeModels = modelGroups.flatMap((group) => group.models);
+  const selectedProfile = githubSelected
     ? agentModels?.data?.["publication/github"]
     : selectedFlow.workflow === "custom" ? undefined : agentModels?.data?.[`${workflow}/${rootRole(selectedFlow.workflow ?? "standard")}`];
-  const customAgentSelection = selectedCustomAgent?.model ? { model: `${selectedCustomAgent.model.account}/${selectedCustomAgent.model.model}`, reasoning: selectedCustomAgent.model.reasoning } : null;
-  const separator = selection?.model.indexOf("/") ?? -1;
-  const boundChoice = selection && separator > 0 && manualBindings !== modelBindings ? resolveChatModel(modelBindings, draftKey, { account: selection.model.slice(0, separator), model: selection.model.slice(separator + 1), reasoning: selection.reasoning }) : null;
-  const effectiveSelection = running && initialOptions ? { model: `${initialOptions.account}/${initialOptions.model}`, reasoning: initialOptions.reasoning } : customAgentSelection ?? (profile ? { model: `${profile.account}/${profile.model}`, reasoning: profile.reasoning } : boundChoice ? { model: `${boundChoice.account}/${boundChoice.model}`, reasoning: boundChoice.reasoning } : selection);
+  const defaultProfile = agentModels?.data?.["standard/builder"];
+  const profile = selectedProfile ?? (!nativeModels.length && executorOf(defaultProfile) === "claude" ? defaultProfile : undefined);
+  const boundChoice = selection && manualBindings !== modelBindings ? resolveChatModel(modelBindings, draftKey, executionChoice(selection)) : null;
+  const effectiveSelection = running && initialOptions ? executionSelection(initialOptions) : executionSelection(selectedCustomAgent?.model) ?? executionSelection(profile) ?? executionSelection(boundChoice) ?? selection;
+  const configuredAgents = selectedFlow.customAgentId
+    ? selectedCustomAgent?.model ? [{ name: selectedCustomAgent.name, choice: selectedCustomAgent.model }] : githubSelected && profile ? [{ name: "GitHub", choice: profile }] : []
+    : selectedFlow.workflow === "custom"
+      ? catalog.data?.agents.flatMap(agent => agent.model && customFlow?.steps.some(step => step.agentId === agent.id) ? [{ name: agent.name, choice: agent.model }] : []) ?? []
+      : Object.entries(agentModels?.data ?? {}).flatMap(([key, choice]) => key.startsWith(`${workflow}/`) ? [{ name: key, choice }] : []);
+  const claudeRequired = executorOf(effectiveSelection) === "claude" || configuredAgents.some(agent => executorOf(agent.choice) === "claude");
+  const claude = useClaudeRuntime(claudeRequired);
+  const runtimeModels = claudeModels(claude.data);
+  const availableModels = executorOf(effectiveSelection) === "claude" ? runtimeModels : nativeModels;
+  const selectionReady = (executorOf(effectiveSelection) === "claude" || modelsReady) && (!claudeRequired || Boolean(claude.data) && !claude.loading);
   const currentModelDef =
     availableModels.find((availableModel) => availableModel.value === effectiveSelection?.model) ??
     (effectiveSelection ? undefined : availableModels[0]);
   const invalidSelection = (choice: ModelSelection) => {
-    const model = availableModels.find(item => item.value === choice.model);
+    if (executorOf(choice) === "claude" && !claude.data) return false;
+    const model = (executorOf(choice) === "claude" ? runtimeModels : nativeModels).find(item => item.value === choice.model);
     return !model || Boolean(choice.reasoning && !model.reasoningLevels.includes(choice.reasoning));
   };
-  const invalidAgent = selectedFlow.customAgentId
-    ? selectedCustomAgent?.model && invalidSelection({ model: `${selectedCustomAgent.model.account}/${selectedCustomAgent.model.model}`, reasoning: selectedCustomAgent.model.reasoning }) ? selectedCustomAgent.name
-      : githubSelected && profile && invalidSelection({ model: `${profile.account}/${profile.model}`, reasoning: profile.reasoning }) ? "GitHub" : undefined
-    : selectedFlow.workflow === "custom"
-      ? catalog.data?.agents.find(agent => agent.model && customFlow?.steps.some(step => step.agentId === agent.id) && invalidSelection({ model: `${agent.model.account}/${agent.model.model}`, reasoning: agent.model.reasoning }))?.name
-    : Object.entries(agentModels?.data ?? {}).find(([key, choice]) => key.startsWith(`${workflow}/`) && invalidSelection({ model: `${choice.account}/${choice.model}`, reasoning: choice.reasoning }))?.[0];
-  const modelError = !modelsReady ? null : invalidAgent
+  const invalidAgent = configuredAgents.find(agent => invalidSelection(executionSelection(agent.choice)!))?.name;
+  const claudeProblem = !claudeRequired || claude.loading ? null : claude.error ?? (claude.data && !claude.data.installed ? "Instale o Claude Code e atualize o status no seletor de executor." : claude.data && !claude.data.authenticated ? "Entre na sua conta com claude auth login e atualize o status do Claude Code." : null);
+  const modelError = claudeProblem ?? (!selectionReady ? null : invalidAgent
     ? `O agente ${invalidAgent} usa um modelo indisponível. Revise o modelo em Configurações → Workflow.`
-    : effectiveSelection && invalidSelection(effectiveSelection) ? `O modelo ${effectiveSelection.model} está indisponível. Escolha outro provedor e modelo para este chat.` : null;
+    : effectiveSelection && invalidSelection(effectiveSelection) ? `O modelo ${effectiveSelection.model} está indisponível. Revise o executor e o modelo deste chat.` : null);
   useModelProblemNotice("Chat", modelError, `chat:${draftKey ?? "new"}`);
   const reasoning =
     currentModelDef?.value === effectiveSelection?.model &&
@@ -209,10 +216,9 @@ export function ChatComposer({
       : currentModelDef?.defaultReasoningLevel ?? currentModelDef?.reasoningLevels[0] ?? null;
   const chooseModel = (next: ModelSelection) => {
     if (selectedCustomAgent?.model) return;
-    if (agentModels && (selectedFlow.workflow !== "custom" || githubSelected)) { const targetFlow = githubSelected ? "publication" : selectedFlow.workflow ?? "standard"; void agentModels.save(targetFlow, rootRole(targetFlow), { account: next.model.slice(0, next.model.indexOf("/")), model: next.model.slice(next.model.indexOf("/") + 1), reasoning: next.reasoning }); }
+    if (agentModels && (selectedFlow.workflow !== "custom" || githubSelected)) { const targetFlow = githubSelected ? "publication" : selectedFlow.workflow ?? "standard"; void agentModels.save(targetFlow, rootRole(targetFlow), executionChoice(next)); }
     else {
-      const split = next.model.indexOf("/");
-      const choice = { account: next.model.slice(0, split), model: next.model.slice(split + 1), reasoning: next.reasoning };
+      const choice = executionChoice(next);
       const bound = resolveChatModel(modelBindings, draftKey, choice);
       if (!draftKey || JSON.stringify(choice) === JSON.stringify(bound)) { setSelection(next); return; }
       if (choosingModelLock.current) return;
@@ -306,7 +312,7 @@ export function ChatComposer({
               <span className="whitespace-nowrap">Validação manual</span>
             </Label></Hint>}
 
-            <ModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} disabled={!modelsReady || running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} showProviderIdentity onRefresh={onRefreshModels ? () => setRefreshDialogOpen(true) : undefined} refreshing={refreshingModels} />
+            <ExecutorModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} nativeDisabled={!modelsReady} disabled={running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} showProviderIdentity onRefresh={onRefreshModels ? () => setRefreshDialogOpen(true) : undefined} refreshing={refreshingModels} />
 
             {/* Botão redondo com seta pra cima no canto inferior direito */}
             {running && !compacting && <Hint content="Interromper execução"><Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button></Hint>}
@@ -314,7 +320,7 @@ export function ChatComposer({
               type="button"
               size="icon"
               onClick={() => { void handleSend(); }}
-              disabled={(!text.trim() && !attachments.length) || disabled || !modelsReady || Boolean(modelError) || customUnavailable || compacting || choosingModel || sending || uploading || !currentModelDef}
+              disabled={(!text.trim() && !attachments.length) || disabled || !selectionReady || Boolean(modelError) || customUnavailable || compacting || choosingModel || sending || uploading || !currentModelDef}
               aria-label={running ? "Agendar mensagem" : "Enviar mensagem"}
               className={`size-7.5 cursor-pointer rounded-full transition-all ${
                 text.trim() || attachments.length

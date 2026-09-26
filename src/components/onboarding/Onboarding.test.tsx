@@ -98,3 +98,26 @@ it("keeps tool settings visible after connection and sends the named workspace o
   await user.click(screen.getByRole("button", { name: "Começar" }));
   expect(complete).toHaveBeenCalledWith("Estúdio");
 });
+
+it("onboards with the authenticated Claude CLI without creating a provider account", async () => {
+  invokeMock.mockImplementation(async command => {
+    if (command === "get_core_status" || command === "check_core_updates") return coreFixture();
+    if (command === "get_optional_tools_status") return optionalTools;
+    if (command === "get_claude_runtime") return { installed: true, authenticated: true, version: "2", error: null, models: [{ id: "default", name: "Padrão do Claude", description: "", reasoningLevels: [], defaultReasoning: null }] };
+    return [];
+  });
+  const user = userEvent.setup(); const complete = vi.fn().mockResolvedValue(undefined);
+  render(<Onboarding saving={false} onComplete={complete} />);
+  await user.click(screen.getByRole("button", { name: "Avançar" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Avançar" }));
+  await screen.findByRole("heading", { name: "Complete seu ambiente" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Avançar" }));
+  await user.click(await screen.findByRole("tab", { name: "Claude Code" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Avançar" }));
+  await user.click(screen.getByRole("button", { name: "Começar" }));
+  await waitFor(() => expect(complete).toHaveBeenCalledWith(""));
+  expect(invokeMock).toHaveBeenCalledWith("set_agent_model", { flow: "standard", role: "builder", choice: { executor: "claude", account: "", model: "default", reasoning: null } });
+});

@@ -425,6 +425,7 @@ mod tests {
                 user: "hello".into(),
                 parts: vec![],
                 options: super::super::TurnOptions {
+                    executor: crate::claude::Executor::Jarvis,
                     account: "account".into(),
                     model: "model".into(),
                     reasoning: None,

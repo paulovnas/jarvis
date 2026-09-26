@@ -16,6 +16,7 @@ import { agentAppearance, flowAppearance } from "@/core/workflow-appearance";
 import type { PendingAuthoring } from "@/core/authoring";
 import type { PublicationProposal } from "@/core/publication";
 import { Hint } from "@/components/ui/hint";
+import { executionLabel } from "@/core/executors";
 
 type Decision = (approved: boolean, note: string | null) => Promise<boolean>;
 
@@ -45,7 +46,7 @@ const fieldLabels: Record<string, string> = {
 function ModelSummary({ agent }: { agent: CustomAgent }) {
   return <div className="rounded-md border border-border bg-sidebar/70 p-3">
     <p className="micro-label mb-1.5 text-muted-foreground">Modelo</p>
-    <p className="break-words font-mono text-xs text-foreground">{agent.model ? `${agent.model.account} / ${agent.model.model}${agent.model.reasoning ? ` / ${agent.model.reasoning}` : ""}` : "Herdar do chat"}</p>
+    <p className="break-words font-mono text-xs text-foreground">{agent.model ? `${executionLabel(agent.model)}${agent.model.reasoning ? ` / ${agent.model.reasoning}` : ""}` : "Herdar do chat"}</p>
   </div>;
 }
 

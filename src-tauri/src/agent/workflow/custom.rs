@@ -17,12 +17,16 @@ pub(super) fn resolve(
     for agent in &definition.agents {
         let mut choice = options.clone();
         apply_model(&mut choice, agent);
-        oauth.inference_model(
+        settings::validate_choice(
             state,
+            oauth,
             home,
-            &choice.account,
-            &choice.model,
-            choice.reasoning.as_deref(),
+            &settings::ModelChoice {
+                executor: choice.executor,
+                account: choice.account,
+                model: choice.model,
+                reasoning: choice.reasoning,
+            },
         )?;
     }
     Ok(definition)
@@ -43,21 +47,23 @@ pub(super) fn resolve_agent(
     })?;
     let mut choice = options.clone();
     apply_model(&mut choice, &agent);
-    oauth.inference_model(
+    settings::validate_choice(
         state,
+        oauth,
         home,
-        &choice.account,
-        &choice.model,
-        choice.reasoning.as_deref(),
+        &settings::ModelChoice {
+            executor: choice.executor,
+            account: choice.account,
+            model: choice.model,
+            reasoning: choice.reasoning,
+        },
     )?;
     Ok(agent)
 }
 
 pub(super) fn apply_model(options: &mut TurnOptions, agent: &catalog::AgentDefinition) {
     if let Some(choice) = &agent.model {
-        options.account.clone_from(&choice.account);
-        options.model.clone_from(&choice.model);
-        options.reasoning.clone_from(&choice.reasoning);
+        choice.apply(options);
     }
     options.mode = if agent.capability == Capability::ReadOnly {
         Mode::Plan

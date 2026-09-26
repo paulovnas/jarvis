@@ -4,11 +4,66 @@ use std::fs;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModelChoice {
+    #[serde(default, skip_serializing_if = "crate::claude::Executor::is_jarvis")]
+    pub executor: crate::claude::Executor,
     pub account: String,
     pub model: String,
     pub reasoning: Option<String>,
 }
 pub type ModelSettings = BTreeMap<String, ModelChoice>;
+
+impl ModelChoice {
+    pub(crate) fn validate_shape(&self) -> Result<(), AgentError> {
+        let valid = |value: &str, max: usize| {
+            !value.trim().is_empty() && value.len() <= max && !value.chars().any(char::is_control)
+        };
+        if !valid(&self.model, 200)
+            || self
+                .reasoning
+                .as_ref()
+                .is_some_and(|value| !valid(value, 40))
+            || match self.executor {
+                crate::claude::Executor::Jarvis => !valid(&self.account, 200),
+                crate::claude::Executor::Claude => !self.account.is_empty(),
+            }
+        {
+            return Err(invalid("Escolha um executor e modelo válidos. Claude usa sua própria autenticação, sem provedor Jarvis."));
+        }
+        if self.executor == crate::claude::Executor::Claude {
+            crate::claude::validate_selection(&self.model, self.reasoning.as_deref())
+                .map_err(|message| invalid(&message))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn apply(&self, options: &mut TurnOptions) {
+        options.executor = self.executor;
+        options.account.clone_from(&self.account);
+        options.model.clone_from(&self.model);
+        options.reasoning.clone_from(&self.reasoning);
+    }
+}
+
+pub(crate) fn validate_choice(
+    state: &AppState,
+    oauth: &OpenAiCodexState,
+    home: &Path,
+    choice: &ModelChoice,
+) -> Result<(), AgentError> {
+    choice.validate_shape()?;
+    if choice.executor == crate::claude::Executor::Claude {
+        Ok(())
+    } else {
+        oauth.inference_model(
+            state,
+            home,
+            &choice.account,
+            &choice.model,
+            choice.reasoning.as_deref(),
+        )?;
+        Ok(())
+    }
+}
 
 pub(in crate::agent) fn key(flow: Flow, role: Role) -> String {
     format!(
@@ -34,6 +89,9 @@ pub(crate) fn read(home: &Path) -> Result<ModelSettings, AgentError> {
         serde_json::from_slice(&fs::read(path).map_err(|_| AgentError::storage())?)
             .map_err(|_| AgentError::storage())?;
     if settings.len() > 13
+        || settings
+            .values()
+            .any(|choice| choice.validate_shape().is_err())
         || settings.keys().any(|name| {
             ![
                 Flow::Standard,
@@ -82,9 +140,7 @@ pub(in crate::agent) fn validate(flow: Flow, profiles: &ModelSettings) -> Result
 }
 pub(super) fn apply(options: &mut TurnOptions, profiles: &ModelSettings, flow: Flow, role: Role) {
     if let Some(choice) = profiles.get(&key(flow, role)) {
-        options.account.clone_from(&choice.account);
-        options.model.clone_from(&choice.model);
-        options.reasoning.clone_from(&choice.reasoning);
+        choice.apply(options);
     }
 }
 #[tauri::command]
@@ -125,17 +181,12 @@ pub async fn set_agent_model(
     let oauth = oauth.inner().clone();
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     let result = tauri::async_runtime::spawn_blocking(move || {
-        oauth.inference_model(
-            &state,
-            &home,
-            &choice.account,
-            &choice.model,
-            choice.reasoning.as_deref(),
-        )?;
+        validate_choice(&state, &oauth, &home, &choice)?;
         state.with_connection(&home, |db| {
-            if !crate::persistence::list_provider_accounts(db)?
-                .iter()
-                .any(|account| account.alias == choice.account && account.enabled)
+            if choice.executor == crate::claude::Executor::Jarvis
+                && !crate::persistence::list_provider_accounts(db)?
+                    .iter()
+                    .any(|account| account.alias == choice.account && account.enabled)
             {
                 return Err(invalid(
                     "O provedor foi removido ou desativado. Escolha outro modelo.",
@@ -170,6 +221,49 @@ pub async fn set_agent_model(
 #[cfg(test)]
 mod instruction_tests {
     use super::*;
+
+    #[test]
+    fn executor_choices_default_legacy_records_and_apply_without_a_fake_provider() {
+        let legacy = json!({"account":"existing","model":"existing-model","reasoning":null});
+        let native: ModelChoice = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(native.executor, crate::claude::Executor::Jarvis);
+        assert_eq!(serde_json::to_value(&native).unwrap(), legacy);
+        let choice = ModelChoice {
+            executor: crate::claude::Executor::Claude,
+            account: String::new(),
+            model: "sonnet".into(),
+            reasoning: Some("high".into()),
+        };
+        let home = tempfile::tempdir().unwrap();
+        validate_choice(
+            &AppState::default(),
+            &OpenAiCodexState::default(),
+            home.path(),
+            &choice,
+        )
+        .unwrap();
+        let mut options = crate::agent::tests::options(ApprovalMode::Manual);
+        apply(
+            &mut options,
+            &BTreeMap::from([(key(Flow::Designer, Role::Designer), choice.clone())]),
+            Flow::Designer,
+            Role::Designer,
+        );
+        assert_eq!(options.executor, crate::claude::Executor::Claude);
+        assert!(options.account.is_empty());
+        assert_eq!(options.model, "sonnet");
+        assert_eq!(options.reasoning.as_deref(), Some("high"));
+        assert_eq!(
+            serde_json::from_value::<ModelChoice>(json!(choice)).unwrap(),
+            choice
+        );
+        let mut invalid_choice = choice;
+        invalid_choice.account = "fabricated-provider".into();
+        assert!(invalid_choice.validate_shape().is_err());
+        invalid_choice.account.clear();
+        invalid_choice.reasoning = Some("invalid-effort".into());
+        assert!(invalid_choice.validate_shape().is_err());
+    }
 
     #[test]
     fn all_visible_instructions_are_the_actual_fixed_runtime_contracts() {

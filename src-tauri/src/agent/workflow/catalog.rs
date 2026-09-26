@@ -446,13 +446,10 @@ impl Catalog {
                 || !text_valid(&agent.name, 100, true)
                 || !text_valid(&agent.description, 500, false)
                 || !text_valid(&agent.instructions, 16_000, true)
-                || agent.model.as_ref().is_some_and(|m| {
-                    !text_valid(&m.account, 200, true)
-                        || !text_valid(&m.model, 200, true)
-                        || m.reasoning
-                            .as_ref()
-                            .is_some_and(|r| !text_valid(r, 40, true))
-                })
+                || agent
+                    .model
+                    .as_ref()
+                    .is_some_and(|model| model.validate_shape().is_err())
             {
                 return Err(invalid(
                     "Agente inválido: informe nome e instruções dentro dos limites.",

@@ -116,6 +116,7 @@ async fn attachment_references_survive_queue_and_journal_and_never_inline_binary
         skill_input::normalize(&fixture.root, &fixture.root, String::new(), parts).unwrap();
     assert_eq!(content, "Analise os anexos.");
     let options = TurnOptions {
+        executor: crate::claude::Executor::Jarvis,
         account: "test".into(),
         model: "test".into(),
         reasoning: None,

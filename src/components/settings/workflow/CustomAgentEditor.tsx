@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { ModelPicker } from "@/components/chat/ModelPicker";
+import { ExecutorModelPicker } from "@/components/chat/ExecutorModelPicker";
+import { executionChoice, executionLabel, executionSelection } from "@/core/executors";
 import { type CustomAgent } from "@/core/workflow-catalog";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { accountGroups } from "./workflow-models";
@@ -55,7 +56,7 @@ export function CustomAgentEditor({ initial, accounts, saving, onSave, onClose, 
             <fieldset disabled={saving} className="flex min-w-0 flex-col gap-4">
               <legend className="sr-only">Comportamento e modelo</legend>
               <div className="flex min-h-60 flex-1 flex-col gap-2"><Label htmlFor="custom-agent-instructions">Instruções do agente</Label><Textarea id="custom-agent-instructions" className="min-h-60 flex-1 resize-y font-mono text-xs leading-5" value={agent.instructions} maxLength={16000} required placeholder="Descreva a especialidade, o objetivo e como o agente deve trabalhar." onChange={e => patch({ instructions: e.target.value })} /><p className="text-xs text-muted-foreground">Explique o objetivo, os limites e o resultado esperado.</p></div>
-      <div className="space-y-2 rounded-md border border-border bg-sidebar p-3"><p className="text-xs font-medium">Modelo</p><div className="flex flex-wrap items-center gap-2"><ModelPicker modelGroups={accountGroups(accounts)} selection={agent.model ? { model: `${agent.model.account}/${agent.model.model}`, reasoning: agent.model.reasoning } : null} ariaLabel="Modelo do agente customizado" onSelect={next => { const split = next.model.indexOf("/"); patch({ model: { account: next.model.slice(0, split), model: next.model.slice(split + 1), reasoning: next.reasoning } }); }} /><Button type="button" variant="outline" size="sm" className="cursor-pointer text-xs" onClick={() => patch({ model: null })}>Usar modelo do chat</Button></div><p className="text-xs text-muted-foreground">{agent.model ? `Modelo fixo: ${agent.model.account}/${agent.model.model}` : "Este agente usa o modelo selecionado no composer."}</p></div>
+      <div className="space-y-2 rounded-md border border-border bg-sidebar p-3"><p className="text-xs font-medium">Executor e modelo</p><div className="flex flex-wrap items-center gap-2"><ExecutorModelPicker modelGroups={accountGroups(accounts)} selection={executionSelection(agent.model)} disabled={saving} ariaLabel="Modelo do agente customizado" onSelect={next => patch({ model: executionChoice(next) })} /><Button type="button" variant="outline" size="sm" className="cursor-pointer text-xs" onClick={() => patch({ model: null })}>Usar modelo do chat</Button></div><p className="text-xs text-muted-foreground">{agent.model ? `Modelo fixo: ${executionLabel(agent.model)}` : "Este agente usa o executor e o modelo selecionados no composer."}</p></div>
               {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
             </fieldset>
           </div>

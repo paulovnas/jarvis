@@ -34,8 +34,11 @@ impl Config {
         if self.inherit_chat {
             Self {
                 inherit_chat: false,
-                account_alias: Some(options.account.clone()),
-                model: Some(options.model.clone()),
+                account_alias: options
+                    .executor
+                    .is_jarvis()
+                    .then(|| options.account.clone()),
+                model: options.executor.is_jarvis().then(|| options.model.clone()),
             }
         } else {
             self.clone()

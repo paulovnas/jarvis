@@ -37,6 +37,7 @@ fn reserve() -> (Fixture, Arc<Session>, watch::Receiver<bool>) {
         .reserve(
             "Crie um agente de acessibilidade".into(),
             TurnOptions {
+                executor: crate::claude::Executor::Jarvis,
                 account: "account".into(),
                 model: "model".into(),
                 reasoning: None,
@@ -152,6 +153,36 @@ fn assisted_flow_proposals_can_reference_native_agents() {
     assert_eq!(proposal.agent_references.len(), 1);
     assert_eq!(proposal.agent_references[0].id, "builtin:designer");
     assert_eq!(proposal.agent_references[0].name, "Designer");
+}
+
+#[test]
+fn assisted_agent_proposals_accept_an_external_executor_without_a_provider() {
+    let catalog = workflow::catalog::tests::example();
+    let mut agent = catalog.agents[0].clone();
+    agent.model = Some(workflow::settings::ModelChoice {
+        executor: crate::claude::Executor::Claude,
+        account: String::new(),
+        model: "sonnet".into(),
+        reasoning: Some("high".into()),
+    });
+    let call = tool(
+        "jarvis_propose_agent",
+        agent_request("update", catalog.revision, &agent),
+    );
+    let (proposal, _) = prepare(&catalog, &call).unwrap();
+    let Target::Agent { after, .. } = proposal.target else {
+        panic!("expected an agent proposal")
+    };
+    assert_eq!(after.model, agent.model);
+    agent.model.as_mut().unwrap().account = "fake-provider".into();
+    assert!(prepare(
+        &catalog,
+        &tool(
+            "jarvis_propose_agent",
+            agent_request("update", catalog.revision, &agent)
+        )
+    )
+    .is_err());
 }
 
 #[test]

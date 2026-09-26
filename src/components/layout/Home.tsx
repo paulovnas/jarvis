@@ -74,7 +74,7 @@ export function Home() {
     if (!publicationOptions) return false;
     return chat.send(
       "Prepare a publicação das alterações atuais deste projeto. A pasta do projeto pode agrupar um ou mais repositórios Git independentes: descubra cada raiz Git que contenha alterações e trate separadamente seu status, diff, validações, branch, commit, push e eventual pull request ou merge. Siga as opções configuradas em Detalhes → Opções e reúna todos os repositórios afetados em uma única proposta completa no painel para minha aprovação. Como este fluxo foi iniciado pelo botão Publicar e exige revisão no painel, envie authorization como null. Use jarvis_propose_publication para propor e, depois da aprovação, executar as ações de cada repositório.",
-      { account: publicationOptions.account, model: publicationOptions.model, reasoning: publicationOptions.reasoning, mode: "build", workflow: "publication", approvalMode: "yolo" },
+      { executor: publicationOptions.executor, account: publicationOptions.account, model: publicationOptions.model, reasoning: publicationOptions.reasoning, mode: "build", workflow: "publication", approvalMode: "yolo" },
     );
   }, [chat, publicationOptions]);
   const dashboardProject = !library.snapshot?.selection.conversationId

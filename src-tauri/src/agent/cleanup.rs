@@ -322,6 +322,7 @@ mod tests {
             id: "queued".into(),
             content: "later".into(),
             options: TurnOptions {
+                executor: crate::claude::Executor::Jarvis,
                 account: "test".into(),
                 model: "test".into(),
                 reasoning: None,

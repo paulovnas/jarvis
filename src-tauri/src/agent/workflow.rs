@@ -1055,13 +1055,7 @@ pub(super) fn validate_options(
             settings::validate(flow, &profiles)?;
             for role in settings::roster(flow) {
                 if let Some(choice) = profiles.get(&settings::key(flow, *role)) {
-                    oauth.inference_model(
-                        state,
-                        home,
-                        &choice.account,
-                        &choice.model,
-                        choice.reasoning.as_deref(),
-                    )?;
+                    settings::validate_choice(state, oauth, home, choice)?;
                 }
             }
         }

@@ -26,6 +26,7 @@ fn payload() -> SettingsPayload {
     SettingsPayload {
         system: system::Preferences::default(),
         model_targets: model_targets(&BTreeMap::new(), &catalog).unwrap(),
+        executor_models: BTreeMap::new(),
         catalog,
         skills: skills::PortableConfig::default(),
         mcps: vec![
@@ -70,6 +71,7 @@ fn round_trip_preserves_portable_settings_and_skill_payload() {
 #[test]
 fn sanitized_catalog_and_targets_never_serialize_provider_assignments() {
     let choice = workflow::settings::ModelChoice {
+        executor: crate::claude::Executor::Jarvis,
         account: "openai-codex-private".into(),
         model: "private-model".into(),
         reasoning: Some("high".into()),
@@ -90,9 +92,57 @@ fn sanitized_catalog_and_targets_never_serialize_provider_assignments() {
 }
 
 #[test]
+fn backup_preserves_external_executors_without_provider_mapping_or_credentials() {
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir(crate::data_dir::root(home.path())).unwrap();
+    let mut settings = payload();
+    let choice = workflow::settings::ModelChoice {
+        executor: crate::claude::Executor::Claude,
+        account: String::new(),
+        model: "sonnet".into(),
+        reasoning: Some("high".into()),
+    };
+    settings.catalog.agents[0].model = Some(choice.clone());
+    settings.catalog = clean_catalog(settings.catalog);
+    settings
+        .executor_models
+        .insert("designer/designer".into(), choice.clone());
+    settings.model_targets = model_targets(&settings.executor_models, &settings.catalog).unwrap();
+    assert!(settings.model_targets.is_empty());
+    validate_payload(&settings).unwrap();
+    let path = home.path().join("external-executor.zip");
+    write_archive(&path, &settings, &[]).unwrap();
+    let loaded = read_archive(&path).unwrap();
+    let (catalog, native, _) = prepare_import(
+        &loaded,
+        home.path(),
+        &AppState::default(),
+        &OpenAiCodexState::default(),
+        vec![],
+    )
+    .unwrap();
+    assert_eq!(catalog.agents[0].model, Some(choice.clone()));
+    assert_eq!(native.get("designer/designer"), Some(&choice));
+    assert!(preview(&loaded).model_targets.is_empty());
+    settings
+        .executor_models
+        .get_mut("designer/designer")
+        .unwrap()
+        .account = "must-not-export".into();
+    assert!(validate_payload(&settings).is_err());
+    let mut legacy = serde_json::to_value(payload()).unwrap();
+    legacy.as_object_mut().unwrap().remove("executorModels");
+    assert!(serde_json::from_value::<SettingsPayload>(legacy)
+        .unwrap()
+        .executor_models
+        .is_empty());
+}
+
+#[test]
 fn validation_rejects_embedded_agent_models_and_invalid_paths() {
     let mut invalid = payload();
     invalid.catalog.agents[0].model = Some(workflow::settings::ModelChoice {
+        executor: crate::claude::Executor::Jarvis,
         account: "provider".into(),
         model: "model".into(),
         reasoning: None,

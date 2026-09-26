@@ -137,7 +137,11 @@ struct Arguments {
     ids: Vec<String>,
     question: String,
 }
-fn input(home: &Path, conversation: &str, args: &Value) -> Result<Vec<Value>, AgentError> {
+pub(super) fn input(
+    home: &Path,
+    conversation: &str,
+    args: &Value,
+) -> Result<Vec<Value>, AgentError> {
     let args: Arguments = serde_json::from_value(args.clone())
         .map_err(|_| invalid("Informe imagens e uma pergunta."))?;
     if args.ids.is_empty()
@@ -204,6 +208,7 @@ pub(super) async fn execute(
         }
         crate::persistence::require_enabled_account(state, home, &alias)?;
         let options = TurnOptions {
+            executor: crate::claude::Executor::Jarvis,
             account: alias.clone(),
             model: model.clone(),
             reasoning: catalog.default_reasoning_level,
@@ -285,6 +290,7 @@ mod tests {
         )
         .unwrap();
         let options = TurnOptions {
+            executor: crate::claude::Executor::Jarvis,
             account: "chat".into(),
             model: "gpt-5.6-sol".into(),
             reasoning: None,
@@ -360,6 +366,7 @@ mod tests {
         .unwrap();
         let (_send, signal) = watch::channel(false);
         let options = TurnOptions {
+            executor: crate::claude::Executor::Jarvis,
             account: selected.account_alias.clone().unwrap(),
             model: selected.model.clone().unwrap(),
             reasoning: None,

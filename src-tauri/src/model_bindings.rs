@@ -21,6 +21,9 @@ pub(crate) fn resolve(
     key: &str,
     source: &ModelChoice,
 ) -> Result<ModelChoice, PersistenceError> {
+    if source.executor == crate::claude::Executor::Claude {
+        return Ok(source.clone());
+    }
     let target: Option<String> = db
         .query_row(
             "SELECT target FROM provider_model_bindings WHERE item_key=?1 AND source=?2",
@@ -104,4 +107,32 @@ pub(crate) fn list(db: &Connection) -> Result<Vec<Binding>, PersistenceError> {
         })
     })
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_binding_keys_still_resolve_and_external_choices_stay_independent() {
+        let mut db = Connection::open_in_memory().unwrap();
+        crate::persistence::initialize_database(&mut db).unwrap();
+        let legacy = r#"{"account":"old","model":"old-model","reasoning":null}"#;
+        let source: ModelChoice = serde_json::from_str(legacy).unwrap();
+        let target = ModelChoice {
+            executor: crate::claude::Executor::Claude,
+            account: String::new(),
+            model: "sonnet".into(),
+            reasoning: None,
+        };
+        assert_eq!(encode(&source).unwrap(), legacy);
+        db.execute(
+            "INSERT INTO provider_model_bindings(item_key,source,target) VALUES(?1,?2,?3)",
+            params!["chat:existing", legacy, encode(&target).unwrap()],
+        )
+        .unwrap();
+        assert_eq!(resolve(&db, "chat:existing", &source).unwrap(), target);
+        replace(&db, "chat:existing", &target, &source).unwrap();
+        assert_eq!(resolve(&db, "chat:existing", &target).unwrap(), target);
+    }
 }

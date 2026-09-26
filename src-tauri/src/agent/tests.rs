@@ -22,6 +22,7 @@ impl Drop for Fixture {
 
 pub(super) fn options(approval_mode: ApprovalMode) -> TurnOptions {
     TurnOptions {
+        executor: crate::claude::Executor::Jarvis,
         account: "account".into(),
         model: "model".into(),
         reasoning: None,
@@ -1165,6 +1166,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                     created_at: 1,
                     duration_ms: 0,
                     options: TurnOptions {
+                        executor: crate::claude::Executor::Jarvis,
                         account: "account-alias".into(),
                         model: "model".into(),
                         reasoning: None,

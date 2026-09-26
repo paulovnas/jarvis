@@ -125,7 +125,7 @@ fn agent_schema() -> Value {
             "usage":{"type":"string","enum":["solo","mixed","flow_only"],"description":"Where this agent can run: solo as the primary chat agent, flow_only only as a workflow step, or mixed in both contexts."},
             "capability":{"type":"string","enum":["read_only","write_files","commands"]},
             "deniedTools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":128}},
-            "model":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["account","model","reasoning"],"properties":{"account":{"type":"string","minLength":1,"maxLength":200},"model":{"type":"string","minLength":1,"maxLength":200},"reasoning":{"anyOf":[{"type":"null"},{"type":"string","minLength":1,"maxLength":40}]}}}]},
+            "model":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["account","model","reasoning"],"properties":{"executor":{"type":"string","enum":["jarvis","claude"],"description":"Defaults to jarvis. Claude uses the official local CLI and an empty account; it is not a Jarvis API provider."},"account":{"type":"string","maxLength":200},"model":{"type":"string","minLength":1,"maxLength":200},"reasoning":{"anyOf":[{"type":"null"},{"type":"string","minLength":1,"maxLength":40}]}}}]},
             "appearance":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["icon","color"],"properties":{"icon":{"type":"string","enum":["bot","workflow","route","brain","search","code","palette","shield","terminal","wrench","book","sparkles","target","pen","lightbulb","rocket"]},"color":{"type":"string","enum":["blue","green","cyan","yellow","red","purple","neutral"]}}}]}
         }
     })
@@ -515,13 +515,7 @@ pub(super) async fn execute(
     };
     if let Target::Agent { after, .. } = &request.target {
         if let Some(model) = &after.model {
-            oauth.inference_model(
-                state,
-                home,
-                &model.account,
-                &model.model,
-                model.reasoning.as_deref(),
-            )?;
+            workflow::settings::validate_choice(state, oauth, home, model)?;
         }
     }
     if *signal.borrow() {

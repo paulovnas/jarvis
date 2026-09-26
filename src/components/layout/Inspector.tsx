@@ -24,6 +24,7 @@ import type { ProjectFilesController } from "@/hooks/use-project-files";
 import { DirectTasks } from "./DirectTasks";
 import { Hint } from "@/components/ui/hint";
 import { GithubRepositoriesPanel } from "./GithubRepositoriesPanel";
+import { executorOf } from "@/core/executors";
 
 function ActivitySection({ title, icon, count, children }: { title: string; icon: ReactNode; count?: number; children: ReactNode }) {
   const { layout, updateLayout } = useDesktopLayout();
@@ -83,7 +84,7 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
           </ActivitySection>}
         </div></ScrollArea>
     </div>
-    <ContextUsage key={selectedChat?.conversationId ?? "empty"} context={conversationContext(turns, accounts)} live={selectedChat?.context} onCompact={onCompact} compacting={compacting} disabled={!selectedChat || turns.length === 0 || !!selectedChat.activeTurnId || pending} />
+    <ContextUsage key={selectedChat?.conversationId ?? "empty"} context={conversationContext(turns, accounts)} live={selectedChat?.context} onCompact={onCompact} compacting={compacting} external={executorOf(selectedChat?.latestOptions ?? latestTurn?.options) === "claude"} disabled={!selectedChat || turns.length === 0 || !!selectedChat.activeTurnId || pending} />
       </TabsContent>
       <TabsContent value="github" keepMounted className={`min-h-0 flex-1 ${section === "github" ? "block" : "hidden"}`}>
         {projectId && (githubVisited || section === "github") ? <GithubRepositoriesPanel key={projectId} projectId={projectId} active={section === "github"} /> : section === "github" ? <p className="p-4 text-xs text-muted-foreground">Abra uma conversa para consultar os repositórios do projeto.</p> : null}

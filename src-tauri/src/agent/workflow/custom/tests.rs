@@ -116,6 +116,7 @@ fn custom_capabilities_models_and_instructions_cannot_escape_configured_scope() 
     let (_fixture, hub) = super::super::tests::hub();
     let mut options = hub.manifest.lock().unwrap().options.clone();
     agent.model = Some(settings::ModelChoice {
+        executor: crate::claude::Executor::Jarvis,
         account: "chosen".into(),
         model: "chosen-model".into(),
         reasoning: Some("high".into()),

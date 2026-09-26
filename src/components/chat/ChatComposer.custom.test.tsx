@@ -20,7 +20,7 @@ it("sends the chosen custom graph identity and uses a composer model without mut
   expect(validation).not.toBeChecked();
   await user.click(validation);
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Examine o projeto{Enter}");
-  expect(send).toHaveBeenCalledWith("Examine o projeto", { account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customWorkflowId: customFlow.id, approvalMode: "yolo", manualValidation: true });
+  expect(send).toHaveBeenCalledWith("Examine o projeto", { executor: "jarvis", account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customWorkflowId: customFlow.id, approvalMode: "yolo", manualValidation: true });
   expect(save).not.toHaveBeenCalled();
 });
 
@@ -48,7 +48,7 @@ it("runs a Solo agent as the main chat agent with its fixed model", async () => 
   expect(screen.queryByRole("switch", { name: "Validação manual" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toBeDisabled();
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Analise este chamado{Enter}");
-  expect(send).toHaveBeenCalledWith("Analise este chamado", { account: "local", model: "specialist", reasoning: null, mode: "build", workflow: "custom", customAgentId: solo.id, approvalMode: "yolo" });
+  expect(send).toHaveBeenCalledWith("Analise este chamado", { executor: "jarvis", account: "local", model: "specialist", reasoning: null, mode: "build", workflow: "custom", customAgentId: solo.id, approvalMode: "yolo" });
 });
 
 it("runs the mixed GitHub agent directly with its dedicated configurable model", async () => {
@@ -58,7 +58,7 @@ it("runs the mixed GitHub agent directly with its dedicated configurable model",
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
   await user.click(await screen.findByRole("menuitem", { name: builtinGithubAgent.name }));
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Liste os pull requests abertos{Enter}");
-  expect(send).toHaveBeenCalledWith("Liste os pull requests abertos", { account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customAgentId: "builtin:github", approvalMode: "yolo" });
+  expect(send).toHaveBeenCalledWith("Liste os pull requests abertos", { executor: "jarvis", account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customAgentId: "builtin:github", approvalMode: "yolo" });
 });
 
 it("reopens an old GitHub chat with its current configured model", async () => {

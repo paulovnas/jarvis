@@ -11,6 +11,7 @@ import { AssistantMessageTurn } from "./AssistantMessageTurn";
 import { UserMessageBubble } from "./UserMessageBubble";
 import { CompactionMarker } from "./CompactionMarker";
 import { executionDuration, useRunningClock } from "@/hooks/use-running-clock";
+import { executionLabel } from "@/core/executors";
 
 function retryableTurn(turn: AgentTurn): boolean {
   if (!turn.error || (turn.status !== "error" && turn.status !== "interrupted")) return false;
@@ -43,7 +44,7 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId, onRetry, 
   const exportFileName = `Resposta-Jarvis-${new Date(turn.createdAt).toISOString().slice(0, 16).replace("T", "-").replace(":", "-")}.md`;
   return <AssistantMessageTurn onRetry={onRetry && retryableTurn(turn) ? () => onRetry(turn.id) : undefined} retrying={retrying} retryUnavailableReason={retryUnavailableReason(turn)} message={{
     id: turn.id, role: "assistant", content: running || repeatedError ? "" : latestText, timestamp,
-    model: `${turn.options.account} / ${turn.options.model}`, streaming: running,
+    model: executionLabel(turn.options), streaming: running,
     work: running || turn.steps.some((step, index) => step.summary || step.tools.length || step.coreActivities?.length || (step.text && index < turn.steps.length - 1)) ? {
       retry: running ? turn.steps[turn.steps.length - 1]?.retry : undefined,
       durationSeconds: Math.floor(durationMs / 1000),

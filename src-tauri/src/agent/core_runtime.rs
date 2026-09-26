@@ -142,8 +142,9 @@ pub(super) async fn checkpoint_tool(
             if let Some(item) = current
                 .turn
                 .steps
-                .last_mut()
-                .and_then(|step| step.tools.iter_mut().find(|item| item.id == tool.id))
+                .iter_mut()
+                .flat_map(|step| &mut step.tools)
+                .find(|item| item.id == tool.id)
             {
                 item.status = status.into();
                 item.output = output.into();

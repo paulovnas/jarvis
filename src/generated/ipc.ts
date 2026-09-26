@@ -10,6 +10,8 @@ export type Mode = "plan" | "build";
 
 export type ApprovalMode = "manual" | "yolo";
 
+export type Executor = "jarvis" | "claude";
+
 export type ExecutionEffects = { readsFilesystem: boolean, writesFilesystem: boolean, usesNetwork: boolean, controlsProcesses: boolean, destructive: boolean, dynamic: boolean, unknown: boolean, };
 
 export type CommandInvocation = { argv: Array<string>, };
@@ -52,7 +54,7 @@ export type Attachment = { id: string, conversationId: string, name: string, mim
 
 export type MessagePart = { "type": "text", text: string, } | { "type": "skill", id: string, name: string, } | { "type": "attachment", attachment: Attachment, };
 
-export type TurnOptions = { account: string, model: string, reasoning: string | null, mode: Mode, workflow?: Flow | null, customWorkflowId?: string | null, customAgentId?: string | null, approvalMode: ApprovalMode, manualValidation?: boolean, };
+export type TurnOptions = { executor?: Executor, account: string, model: string, reasoning: string | null, mode: Mode, workflow?: Flow | null, customWorkflowId?: string | null, customAgentId?: string | null, approvalMode: ApprovalMode, manualValidation?: boolean, };
 
 export type TaskStatus = "pending" | "in_progress" | "completed" | "blocked";
 

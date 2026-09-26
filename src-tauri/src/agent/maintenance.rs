@@ -35,6 +35,12 @@ fn begin(session: Arc<Session>) -> Result<(CompactionLease, TurnOptions), AgentE
                 "Ainda não há histórico para compactar.",
             )
         })?;
+    if options.executor == crate::claude::Executor::Claude {
+        return Err(AgentError::new(
+            "external_context",
+            "O Claude gerencia e compacta seu próprio contexto automaticamente.",
+        ));
+    }
     if !compaction::can_compact(&data) {
         return Err(AgentError::new(
             "nothing_to_compact",
@@ -183,11 +189,30 @@ pub async fn compact_agent_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_context_does_not_enter_native_compaction_or_lock_the_chat() {
+        let fixture = crate::agent::tests::Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        let mut options = crate::agent::tests::options(ApprovalMode::Manual);
+        options.executor = crate::claude::Executor::Claude;
+        options.account.clear();
+        options.model = "sonnet".into();
+        session.reserve("Request".into(), options).unwrap();
+        finish(&session, Ok(()));
+        let error = match begin(session.clone()) {
+            Ok(_) => panic!("external context must remain under Claude ownership"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "external_context");
+        assert!(!session.snapshot().unwrap().context.compacting);
+    }
     #[test]
     fn manual_compaction_exclusively_locks_chat_without_creating_a_turn_and_always_unlocks() {
         let fixture = crate::agent::tests::Fixture::new();
         let session = crate::agent::tests::session(&fixture);
         let options = TurnOptions {
+            executor: crate::claude::Executor::Jarvis,
             account: "test".into(),
             model: "model".into(),
             reasoning: None,

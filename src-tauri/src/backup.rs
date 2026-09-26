@@ -122,6 +122,8 @@ struct SettingsPayload {
     system: system::Preferences,
     catalog: workflow::catalog::Catalog,
     model_targets: Vec<ModelTarget>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    executor_models: workflow::settings::ModelSettings,
     skills: skills::PortableConfig,
     mcps: Vec<String>,
 }
@@ -232,18 +234,32 @@ fn model_targets(
     catalog: &workflow::catalog::Catalog,
 ) -> Result<Vec<ModelTarget>, BackupError> {
     let mut targets = Vec::with_capacity(native.len() + catalog.agents.len());
-    for key in native.keys() {
+    for (key, choice) in native {
+        if choice.executor == crate::claude::Executor::Claude {
+            continue;
+        }
         targets.push(
             builtin_target(key)
                 .ok_or_else(|| error("A configuração dos agentes nativos é inválida."))?,
         );
     }
-    targets.extend(catalog.agents.iter().map(|agent| ModelTarget {
-        id: format!("custom:{}", agent.id),
-        kind: ModelTargetKind::CustomAgent,
-        label: agent.name.clone(),
-        details: vec!["Agente customizado".into()],
-    }));
+    targets.extend(
+        catalog
+            .agents
+            .iter()
+            .filter(|agent| {
+                agent
+                    .model
+                    .as_ref()
+                    .is_none_or(|choice| choice.executor == crate::claude::Executor::Jarvis)
+            })
+            .map(|agent| ModelTarget {
+                id: format!("custom:{}", agent.id),
+                kind: ModelTargetKind::CustomAgent,
+                label: agent.name.clone(),
+                details: vec!["Agente customizado".into()],
+            }),
+    );
     targets.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(targets)
 }
@@ -251,7 +267,13 @@ fn model_targets(
 fn clean_catalog(mut catalog: workflow::catalog::Catalog) -> workflow::catalog::Catalog {
     catalog.revision = 0;
     for agent in &mut catalog.agents {
-        agent.model = None;
+        if agent
+            .model
+            .as_ref()
+            .is_some_and(|choice| choice.executor == crate::claude::Executor::Jarvis)
+        {
+            agent.model = None;
+        }
     }
     catalog
 }
@@ -262,14 +284,23 @@ fn validate_payload(payload: &SettingsPayload) -> Result<(), BackupError> {
         .validate()
         .map_err(|message| error(format!("Preferências inválidas no backup: {message}")))?;
     if payload.catalog.revision != 0
-        || payload
-            .catalog
-            .agents
-            .iter()
-            .any(|agent| agent.model.is_some())
+        || payload.catalog.agents.iter().any(|agent| {
+            agent.model.as_ref().is_some_and(|choice| {
+                choice.executor == crate::claude::Executor::Jarvis || !choice.account.is_empty()
+            })
+        })
     {
         return Err(error(
             "O backup contém vínculos de provedores. Por segurança, ele não pode ser importado.",
+        ));
+    }
+    if payload.executor_models.iter().any(|(key, choice)| {
+        builtin_target(key).is_none()
+            || choice.executor != crate::claude::Executor::Claude
+            || choice.validate_shape().is_err()
+    }) {
+        return Err(error(
+            "As configurações de executores do backup são inválidas.",
         ));
     }
     payload
@@ -297,6 +328,12 @@ fn validate_payload(payload: &SettingsPayload) -> Result<(), BackupError> {
         .catalog
         .agents
         .iter()
+        .filter(|agent| {
+            agent
+                .model
+                .as_ref()
+                .is_none_or(|choice| choice.executor == crate::claude::Executor::Jarvis)
+        })
         .map(|agent| format!("custom:{}", agent.id))
         .collect();
     let mut target_custom_ids = BTreeSet::new();
@@ -734,7 +771,7 @@ fn read_archive(path: &Path) -> Result<LoadedBackup, BackupError> {
 
 fn preview(loaded: &LoadedBackup) -> BackupPreview {
     let mut warnings = vec![
-        "Provedores, contas, credenciais de IA e modelos não fazem parte do backup.".into(),
+        "Provedores, contas, credenciais de IA e modelos vinculados a provedores não fazem parte do backup. Seleções do executor Claude são preservadas; sua instalação e autenticação permanecem locais.".into(),
         "A restauração substitui as preferências, os agentes, os fluxos, as skills e os MCPs atuais.".into(),
         "Workspaces, projetos, conversas e pacotes instalados do Core permanecem nesta instalação.".into(),
         "Layout da janela, abas abertas e dimensões dos painéis permanecem nesta instalação.".into(),
@@ -919,15 +956,8 @@ fn prepare_import(
         {
             return Err(error("O mapeamento de modelos é inválido ou repetido."));
         }
-        oauth
-            .inference_model(
-                state,
-                home,
-                &mapping.choice.account,
-                &mapping.choice.model,
-                mapping.choice.reasoning.as_deref(),
-            )
-            .map_err(|cause| error(cause.message))?;
+        workflow::settings::validate_choice(state, oauth, home, &mapping.choice)
+            .map_err(|cause| error(cause.message()))?;
         selected.insert(mapping.target_id, mapping.choice);
     }
 
@@ -938,7 +968,7 @@ fn prepare_import(
         .revision
         .checked_add(1)
         .ok_or_else(|| error("A revisão do catálogo de agentes atingiu o limite."))?;
-    let mut native = BTreeMap::new();
+    let mut native = loaded.payload.executor_models.clone();
     for (target, choice) in selected {
         if let Some(key) = target.strip_prefix("builtin:") {
             native.insert(key.to_owned(), choice);
@@ -1143,6 +1173,10 @@ pub async fn export_settings_backup(
         let payload = SettingsPayload {
             system,
             model_targets: model_targets(&native, &catalog)?,
+            executor_models: native
+                .into_iter()
+                .filter(|(_, choice)| choice.executor == crate::claude::Executor::Claude)
+                .collect(),
             catalog,
             skills: skills::backup_config(&home).map_err(|cause| error(cause.message))?,
             mcps: mcp

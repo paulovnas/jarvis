@@ -130,6 +130,7 @@ mod tests {
             normalize(&fixture.root, &fixture.root, "ignored".into(), parts).unwrap();
         assert_eq!(content, "/manual Verifique 🦀");
         let options = TurnOptions {
+            executor: crate::claude::Executor::Jarvis,
             account: "test".into(),
             model: "test".into(),
             reasoning: None,

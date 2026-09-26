@@ -4,6 +4,7 @@ import type { PendingQuestion } from "./questions";
 import { attachmentSchema } from "./attachments";
 import { pendingAuthoringSchema } from "./authoring";
 import type { PendingAuthoring } from "./authoring";
+import { executorSchema, type Executor } from "./executors";
 import {
   IPC_PROTOCOL_VERSION,
   type ApprovalDecision as GeneratedApprovalDecision,
@@ -44,6 +45,7 @@ export function mergeDrafts(current: ChatDraft, restored: ChatDraft): ChatDraft 
 }
 
 export const turnOptionsSchema = z.object({
+  executor: executorSchema.optional(),
   account: z.string(),
   model: z.string(),
   reasoning: z.string().nullable(),
@@ -189,7 +191,7 @@ export type FileChange = Omit<GeneratedFileChange, "revision"> & { revision?: nu
 export type FileDiff = z.infer<typeof fileDiffSchema>;
 export type ContextInfo = GeneratedContextInfo;
 export type CoreActivity = GeneratedCoreActivity;
-export type TurnOptions = GeneratedTurnOptions;
+export type TurnOptions = Omit<GeneratedTurnOptions, "executor"> & { executor?: Executor };
 export type AgentStep = Omit<GeneratedAgentStep, "contextSearches"> & { contextSearches?: number };
 export type AgentTurn = Omit<GeneratedAgentTurn, "parts" | "contextWindow" | "steps"> & {
   parts?: MessagePart[];

@@ -5,8 +5,9 @@ import { z } from "zod";
 import { toast } from "sonner";
 import { libraryError } from "@/core/library";
 import type { Workflow, WorkflowAgent } from "@/core/workflow";
+import { modelChoiceSchema } from "@/core/workflow-catalog";
 
-const choiceSchema = z.object({ account: z.string(), model: z.string(), reasoning: z.string().nullable() });
+const choiceSchema = modelChoiceSchema;
 const configSchema = z.record(z.string(), choiceSchema);
 export type ModelChoice = z.infer<typeof choiceSchema>;
 export type AgentModelConfig = z.infer<typeof configSchema>;

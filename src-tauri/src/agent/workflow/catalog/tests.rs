@@ -1,5 +1,27 @@
 use super::*;
 
+#[test]
+fn catalog_round_trip_preserves_claude_for_custom_agents_and_flow_steps() {
+    let mut catalog = example();
+    let choice = settings::ModelChoice {
+        executor: crate::claude::Executor::Claude,
+        account: String::new(),
+        model: "sonnet".into(),
+        reasoning: Some("high".into()),
+    };
+    catalog.agents[0].model = Some(choice.clone());
+    catalog.validate().unwrap();
+    let decoded: Catalog = serde_json::from_slice(&serde_json::to_vec(&catalog).unwrap()).unwrap();
+    let resolved = decoded.resolve(&catalog.flows[0].id).unwrap();
+    assert_eq!(resolved.agents[0].model, Some(choice));
+    let mut options = crate::agent::tests::options(ApprovalMode::Manual);
+    custom::apply_model(&mut options, &resolved.agents[0]);
+    assert_eq!(options.executor, crate::claude::Executor::Claude);
+    assert!(options.account.is_empty());
+    catalog.agents[0].model.as_mut().unwrap().account = "fake-claude".into();
+    assert!(catalog.validate().is_err());
+}
+
 pub(crate) fn example() -> Catalog {
     let agent = AgentDefinition {
         id: "a".repeat(32),

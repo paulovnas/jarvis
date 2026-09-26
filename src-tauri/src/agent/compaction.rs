@@ -752,6 +752,7 @@ mod tests {
         let mut credential = CodexCredential::new("test", "test", 0, "test", None, None);
         credential.project_id = Some("project".into());
         let options = TurnOptions {
+            executor: crate::claude::Executor::Jarvis,
             account: "test".into(),
             model: "gemini-3.8-flash".into(),
             reasoning: Some("high".into()),
@@ -830,6 +831,7 @@ mod tests {
         let account = std::env::var("JARVIS_LIVE_ACCOUNT").expect("Select a connected account");
         let home = PathBuf::from(std::env::var_os("HOME").unwrap());
         let options = TurnOptions {
+            executor: crate::claude::Executor::Jarvis,
             account,
             model: "gpt-5.6-luna".into(),
             reasoning: Some("low".into()),
@@ -897,6 +899,7 @@ mod tests {
             .reserve(
                 "Preserve this request".into(),
                 TurnOptions {
+                    executor: crate::claude::Executor::Jarvis,
                     account: "test".into(),
                     model: "model".into(),
                     reasoning: None,

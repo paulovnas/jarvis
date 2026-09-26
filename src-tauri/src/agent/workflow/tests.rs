@@ -183,6 +183,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
     root.id = library::new_id().unwrap();
     let root = Arc::new(root);
     let options = TurnOptions {
+        executor: crate::claude::Executor::Jarvis,
         account: "root-account".into(),
         model: "root-model".into(),
         reasoning: Some("high".into()),
@@ -339,6 +340,7 @@ fn custom_direct_agent_uses_its_primary_contract_model_and_permissions() {
     agent.capability = catalog::Capability::WriteFiles;
     agent.denied_tools = vec!["web_search".into()];
     agent.model = Some(settings::ModelChoice {
+        executor: crate::claude::Executor::Jarvis,
         account: "specialist-account".into(),
         model: "specialist-model".into(),
         reasoning: Some("high".into()),
@@ -1187,6 +1189,7 @@ fn model_preferences_are_per_flow_and_never_change_tool_authorization() {
     profiles.insert(
         settings::key(Flow::Complete, Role::Reviewer),
         settings::ModelChoice {
+            executor: crate::claude::Executor::Jarvis,
             account: "review-account".into(),
             model: "gpt-5.6-sol".into(),
             reasoning: Some("xhigh".into()),

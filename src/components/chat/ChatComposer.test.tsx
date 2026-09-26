@@ -65,7 +65,7 @@ describe("ChatComposer model reasoning", () => {
     const { rerender } = await renderComposer(<ChatComposer {...props} modelBindings={bindings} />);
     const user = userEvent.setup(); const group = await openModel(user, /Compact/);
     await user.click(within(group).getByRole("menuitem", { name: "Extra alto" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("clear_chat_model_binding", { conversationId: "c1", choice: source }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("clear_chat_model_binding", { conversationId: "c1", choice: { ...source, executor: "jarvis" } }));
     expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Compact · Extra alto");
     rerender(<ChatComposer {...props} modelBindings={[]} />);
     expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Compact · Extra alto");
@@ -101,10 +101,10 @@ describe("ChatComposer model reasoning", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Designer" }));
     expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Flexible · Alto");
     await user.type(screen.getByRole("textbox"), "Desenhe o painel{Enter}");
-    expect(send).toHaveBeenCalledWith("Desenhe o painel", { account: "pessoal", model: "flexible", reasoning: "high", mode: "build", workflow: "designer", approvalMode: "yolo" });
+    expect(send).toHaveBeenCalledWith("Desenhe o painel", { executor: "jarvis", account: "pessoal", model: "flexible", reasoning: "high", mode: "build", workflow: "designer", approvalMode: "yolo" });
     const reasoning = await openModel(user, /Compact/);
     await user.click(within(reasoning).getByRole("menuitem", { name: "Extra alto" }));
-    expect(save).toHaveBeenCalledWith("designer", "designer", { account: "pessoal", model: "compact", reasoning: "xhigh" });
+    expect(save).toHaveBeenCalledWith("designer", "designer", { executor: "jarvis", account: "pessoal", model: "compact", reasoning: "xhigh" });
   });
   it("offers final manual validation only for coordinated flows and sends the enabled choice", async () => {
     const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
@@ -255,7 +255,7 @@ describe("ChatComposer model reasoning", () => {
     await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("menuitem", { name: /Plan/ }));
     await user.type(screen.getByRole("textbox"), "Analise o projeto{Enter}");
-    expect(send).toHaveBeenCalledWith("Analise o projeto", { account: "pessoal", model: "compact", reasoning: "medium", mode: "build", workflow: "planned", approvalMode: "yolo" });
+    expect(send).toHaveBeenCalledWith("Analise o projeto", { executor: "jarvis", account: "pessoal", model: "compact", reasoning: "medium", mode: "build", workflow: "planned", approvalMode: "yolo" });
     await waitFor(() => expect(screen.getByRole("textbox")).toHaveTextContent("Analise o projeto"));
   });
   it("uses the provider default and offers only this model's levels", async () => {

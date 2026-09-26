@@ -18,6 +18,7 @@ import { agentAppearance, flowAppearance } from "@/core/workflow-appearance";
 import { reasoningPreview } from "@/components/chat/reasoning-preview";
 import { executionDuration, formatExecutionDuration, useRunningClock } from "@/hooks/use-running-clock";
 import { Hint } from "@/components/ui/hint";
+import { executionLabel, executorOf } from "@/core/executors";
 
 function presentation(agent: WorkflowAgent) {
   return agent.role === "custom"
@@ -26,8 +27,8 @@ function presentation(agent: WorkflowAgent) {
 }
 
 function ModelDetails({ agent }: { agent: WorkflowAgent }) {
-  return <Hint content={`${agent.options.account} / ${agent.options.model}`}><span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-[9px] text-muted-foreground">
-    <span className="max-w-24 truncate text-foreground/75">{aliasSuffix(agent.options.account)}</span><span aria-hidden="true" className="text-border">/</span><span className="truncate">{agent.options.model}</span>
+  return <Hint content={executionLabel(agent.options)}><span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-[9px] text-muted-foreground">
+    <span className="max-w-24 truncate text-foreground/75">{executorOf(agent.options) === "claude" ? "Claude Code" : aliasSuffix(agent.options.account)}</span><span aria-hidden="true" className="text-border">/</span><span className="truncate">{agent.options.model}</span>
     {agent.options.reasoning && <><span aria-hidden="true">·</span><span>{reasoningLabel(agent.options.reasoning)}</span></>}
   </span></Hint>;
 }

@@ -1161,6 +1161,7 @@ mod tests {
                 parts: vec![],
                 context_window: Some(128_000),
                 options: TurnOptions {
+                    executor: crate::claude::Executor::Jarvis,
                     account: "test".into(),
                     model: "model".into(),
                     reasoning: None,

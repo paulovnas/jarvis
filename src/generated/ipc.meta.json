@@ -5,6 +5,7 @@
     "AgentError",
     "Mode",
     "ApprovalMode",
+    "Executor",
     "ExecutionEffects",
     "CommandInvocation",
     "Redirection",

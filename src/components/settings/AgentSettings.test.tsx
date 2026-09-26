@@ -50,7 +50,7 @@ it("saves the selected provider, model and supported effort only for the chosen 
   const group = await screen.findByRole("group",{name:"Raciocínio"});
   expect(within(group).queryByRole("menuitem",{name:"Médio"})).not.toBeInTheDocument();
   await user.click(within(group).getByRole("menuitem",{name:"Extra alto"}));
-  expect(save).toHaveBeenCalledWith("complete","reviewer",{account:"openai-codex-personal",model:"gpt-5.6-sol",reasoning:"xhigh"});
+  expect(save).toHaveBeenCalledWith("complete","reviewer",{executor:"jarvis",account:"openai-codex-personal",model:"gpt-5.6-sol",reasoning:"xhigh"});
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(call).not.toHaveBeenCalled();
 });

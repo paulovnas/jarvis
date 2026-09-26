@@ -8,6 +8,11 @@ const context = conversationContext([]);
 const live = { tokens: 400, limit: 1000, estimated: false, compacting: false, compactions: 0 };
 
 describe("Context meter", () => {
+  it("leaves Claude compaction to its runtime instead of offering the native action", () => {
+    render(<ContextUsage context={context} live={live} onCompact={vi.fn()} external />);
+    expect(screen.queryByRole("button", { name: "Compactar contexto" })).not.toBeInTheDocument();
+    expect(screen.getByText("Contexto gerenciado pelo Claude Code")).toBeInTheDocument();
+  });
   it("shows useful metrics without explanatory copy and moves from green to red", () => {
     const { rerender } = render(<ContextUsage context={context} live={{ ...live, tokens: 0 }} />);
     const footer = screen.getByRole("contentinfo");

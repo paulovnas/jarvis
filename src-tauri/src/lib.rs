@@ -4,6 +4,7 @@ mod agent;
 mod app_menu;
 mod background;
 mod backup;
+mod claude;
 mod core;
 mod data_dir;
 mod desktop;
@@ -67,6 +68,7 @@ pub fn run() {
         .manage(core::CoreState::default())
         .manage(persistence::AppState::default())
         .manage(openai_codex::OpenAiCodexState::default())
+        .manage(claude::ClaudeState::default())
         .manage(agent::AgentState::default())
         .manage(agent::browser::BrowserState::default())
         .manage(agent::dashboard::DashboardState::default())
@@ -114,6 +116,8 @@ pub fn run() {
                 agent::browser::browser_command,
                 agent::browser::set_browser_viewport,
                 greet,
+                claude::get_claude_runtime,
+                claude::refresh_claude_runtime,
                 system::get_system_preferences,
                 system::save_system_preferences,
                 system::test_system_notification,

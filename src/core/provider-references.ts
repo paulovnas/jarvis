@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { modelChoiceSchema } from "./workflow-catalog";
 import { enabledModels, type ProviderAccount, type ProviderModel } from "./provider-accounts";
+import { executorOf } from "./executors";
 
 export type ModelChoice = z.infer<typeof modelChoiceSchema>;
 export const providerReferenceSchema = z.object({
@@ -27,6 +28,7 @@ export function compatibleModels(account: ProviderAccount, kind: ReferenceKind):
 }
 
 export function modelProblem(choice: ModelChoice, accounts: ProviderAccount[], kind: ReferenceKind = "custom_agent"): string | null {
+  if (executorOf(choice) === "claude") return null;
   const account = accounts.find(account => account.alias === choice.account);
   if (!account) return `O provedor ${choice.account} não existe mais. Escolha outro provedor e modelo.`;
   if (!account.enabled) return `O provedor ${choice.account} está desativado. Ative-o ou escolha outro.`;
@@ -38,7 +40,7 @@ export function modelProblem(choice: ModelChoice, accounts: ProviderAccount[], k
 }
 
 export function resolveChatModel(bindings: ModelBinding[], conversationId: string | undefined, choice: ModelChoice): ModelChoice {
-  return bindings.find(binding => binding.itemKey === `chat:${conversationId}` && binding.source.account === choice.account && binding.source.model === choice.model && binding.source.reasoning === choice.reasoning)?.target ?? choice;
+  return bindings.find(binding => binding.itemKey === `chat:${conversationId}` && executorOf(binding.source) === executorOf(choice) && binding.source.account === choice.account && binding.source.model === choice.model && binding.source.reasoning === choice.reasoning)?.target ?? choice;
 }
 
 export function defaultChoice(account: ProviderAccount, model: ProviderModel): ModelChoice {

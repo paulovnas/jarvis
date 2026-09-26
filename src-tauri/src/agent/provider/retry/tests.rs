@@ -29,6 +29,7 @@ fn incomplete_inference_is_retryable_but_output_limits_and_refusals_are_not() {
 
 fn options() -> TurnOptions {
     TurnOptions {
+        executor: crate::claude::Executor::Jarvis,
         account: "synthetic".into(),
         model: "test-model".into(),
         reasoning: None,

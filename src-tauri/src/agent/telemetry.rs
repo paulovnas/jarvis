@@ -168,6 +168,7 @@ pub(crate) enum ProviderKind {
     OpenAiCodex,
     Antigravity,
     Custom,
+    ClaudeCode,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -965,6 +966,36 @@ pub(crate) fn outcome(error: Option<&super::AgentError>, retried: bool) -> Outco
     }
 }
 
+pub(crate) fn record_tool_result(
+    context: &TraceContext,
+    tool: &super::ToolCall,
+    result: &Result<String, super::AgentError>,
+    duration_ms: u64,
+) {
+    record(context, tool_result_event(tool, result, duration_ms));
+}
+
+fn tool_result_event(
+    tool: &super::ToolCall,
+    result: &Result<String, super::AgentError>,
+    duration_ms: u64,
+) -> Event {
+    let error = result.as_ref().err();
+    let output = result.as_ref().map_or_else(
+        |error| error.tool_result.as_deref().unwrap_or(&error.message),
+        String::as_str,
+    );
+    Event::ToolFinished {
+        tool: tool_kind(&tool.name),
+        tool_id: tool_id(&tool.id),
+        outcome: outcome(error, false),
+        duration_ms,
+        input_bytes: serialized_bytes(&tool.args),
+        output_bytes: output.len() as u64,
+        failure: error.map(failure_class),
+    }
+}
+
 pub(crate) fn tool_kind(name: &str) -> ToolKind {
     match name {
         "read" | "read_attachment" | "read_skill" => ToolKind::Read,
@@ -1013,6 +1044,7 @@ fn provider_label(provider: ProviderKind) -> &'static str {
         ProviderKind::OpenAiCodex => "openai_codex",
         ProviderKind::Antigravity => "antigravity",
         ProviderKind::Custom => "custom",
+        ProviderKind::ClaudeCode => "claude_code",
     }
 }
 
@@ -1219,6 +1251,67 @@ mod tests {
 
     fn state(root: &Path) -> TelemetryState {
         TelemetryState::new(root, "1.1.2".into(), "a".repeat(32))
+    }
+
+    #[test]
+    fn claude_messages_and_tool_outcomes_appear_in_the_sanitized_report() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        let context = TraceContext::fixture("b");
+        let tool = super::super::ToolCall {
+            id: "private-call".into(),
+            name: "mcp_private_read".into(),
+            args: serde_json::json!({"token":"secret-argument"}),
+            status: "running".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        let failure = super::super::AgentError::new("tool_arguments", "secret-provider-detail");
+        for event in [
+            Event::ProviderRequest {
+                provider: ProviderKind::ClaudeCode,
+                model_id: model_id("private-model"),
+                attempt: 1,
+                input_items: 0,
+                input_bytes: 0,
+                advertised_tools: 0,
+            },
+            Event::ProviderResponse {
+                provider: ProviderKind::ClaudeCode,
+                model_id: model_id("private-model"),
+                attempt: 1,
+                outcome: Outcome::Succeeded,
+                duration_ms: 90,
+                first_event_ms: None,
+                input_tokens: Some(100),
+                output_tokens: Some(7),
+                cache_read_tokens: Some(80),
+                cache_write_tokens: Some(5),
+                failure: None,
+            },
+            tool_result_event(&tool, &Ok("secret-tool-output".into()), 12),
+            tool_result_event(&tool, &Err(failure), 3),
+        ] {
+            assert!(state.record(&context, event));
+        }
+        let report = state.report().unwrap();
+        assert_eq!(report.provider_requests, 1);
+        assert_eq!(report.provider_retries, 0);
+        assert_eq!(report.providers[0].provider, "claude_code");
+        assert_eq!(report.input_tokens, 100);
+        assert_eq!(report.output_tokens, 7);
+        assert_eq!(report.tool_calls, 2);
+        assert_eq!(report.tool_failures, 1);
+        let records = fs::read_to_string(log_path(&state.inner.root, 0)).unwrap();
+        for private in [
+            "private-call",
+            "private-model",
+            "secret-argument",
+            "secret-tool-output",
+            "secret-provider-detail",
+        ] {
+            assert!(!records.contains(private));
+        }
     }
 
     #[test]

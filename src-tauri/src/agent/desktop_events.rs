@@ -129,6 +129,7 @@ mod tests {
             .extend([("a".into(), a.clone()), ("b".into(), b.clone())]);
         assert!(!agent.has_active_chats());
         let options = TurnOptions {
+            executor: crate::claude::Executor::Jarvis,
             account: "a".into(),
             model: "m".into(),
             reasoning: None,
@@ -154,6 +155,7 @@ mod tests {
             let fixture = Fixture::new();
             let session = session(&fixture);
             let options = TurnOptions {
+                executor: crate::claude::Executor::Jarvis,
                 account: "synthetic".into(),
                 model: "model".into(),
                 reasoning: None,

@@ -1074,6 +1074,7 @@ mod tests {
             .expect("Set JARVIS_LIVE_ACCOUNT to a connected alias");
         let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
         let options = TurnOptions {
+            executor: crate::claude::Executor::Jarvis,
             account,
             model: "gpt-5.6-luna".into(),
             reasoning: Some("low".into()),
@@ -1141,6 +1142,7 @@ mod tests {
     #[test]
     fn selected_model_reasoning_and_stateless_history_are_sent() {
         let options = TurnOptions {
+            executor: crate::claude::Executor::Jarvis,
             account: "a".into(),
             model: "chosen-model".into(),
             reasoning: Some("high".into()),
@@ -1174,6 +1176,7 @@ mod tests {
     #[test]
     fn optional_codex_fields_are_omitted_when_the_step_does_not_use_them() {
         let mut options = TurnOptions {
+            executor: crate::claude::Executor::Jarvis,
             account: "a".into(),
             model: "text-model".into(),
             reasoning: None,

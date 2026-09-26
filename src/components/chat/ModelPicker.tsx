@@ -1,4 +1,5 @@
-import { Check, ChevronDown, RefreshCw } from "lucide-react";
+import { Check, ChevronDown, RefreshCw, TerminalSquare } from "lucide-react";
+import type { ExecutionSelection } from "@/core/executors";
 import type { ProviderAccount, ProviderModel } from "@/core/provider-accounts";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { aliasSuffix } from "@/core/provider-usage";
@@ -13,13 +14,14 @@ export interface ModelOptionDef extends Pick<ProviderModel, "reasoningLevels" | 
 
 export interface ProviderModelGroup {
   provider: string;
+  executor?: "claude";
   providerKind?: ProviderAccount["providerKind"];
   models: ModelOptionDef[];
 }
 
 
-export type ModelSelection = { model: string; reasoning: string | null };
-export function ModelPicker({ modelGroups, selection, onSelect, disabled = false, ariaLabel = "Selecionar modelo de IA", showProviderIdentity = false, onRefresh, refreshing = false }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; disabled?: boolean; ariaLabel?: string; showProviderIdentity?: boolean; onRefresh?: () => void; refreshing?: boolean }) {
+export type ModelSelection = ExecutionSelection;
+export function ModelPicker({ modelGroups, selection, onSelect, disabled = false, ariaLabel = "Selecionar modelo de IA", showProviderIdentity = false, onRefresh, refreshing = false, emptyMessage = "Conecte um provedor em Configurações." }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; disabled?: boolean; ariaLabel?: string; showProviderIdentity?: boolean; onRefresh?: () => void; refreshing?: boolean; emptyMessage?: string }) {
   const currentGroup = modelGroups.find(group => group.models.some(model => model.value === selection?.model));
   const currentModelDef = modelGroups.flatMap(group => group.models).find(model => model.value === selection?.model);
   const reasoning = selection?.reasoning;
@@ -46,14 +48,14 @@ export function ModelPicker({ modelGroups, selection, onSelect, disabled = false
                 {modelGroups.length === 0 ? (
                   <DropdownMenuGroup>
                     <DropdownMenuLabel className="px-2.5 py-2 text-xs font-normal text-muted-foreground">
-                      Conecte um provedor em Configurações.
+                      {emptyMessage}
                     </DropdownMenuLabel>
                   </DropdownMenuGroup>
                 ) : (
                   modelGroups.map((group) => (
                     <DropdownMenuSub key={group.provider}>
                         <DropdownMenuSubTrigger className="cursor-pointer gap-2 py-2 font-mono text-xs text-onedark-cyan">
-                          <ProviderIcon kind={group.providerKind ?? "custom"} className="size-4" />
+                          {group.executor === "claude" ? <TerminalSquare className="size-4" aria-hidden="true" /> : <ProviderIcon kind={group.providerKind ?? "custom"} className="size-4" />}
                           {group.provider}
                         </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="max-h-[min(480px,70vh)] min-w-[220px] overflow-y-auto border-border bg-card p-1.5 text-foreground">

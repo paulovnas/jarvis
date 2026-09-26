@@ -1,6 +1,7 @@
 pub(crate) mod attachments;
 pub(crate) mod authoring;
 pub(crate) mod browser;
+mod claude_executor;
 pub(crate) mod cleanup;
 mod command_sessions;
 mod compaction;
@@ -80,6 +81,9 @@ pub struct AgentError {
     provider_metadata: Option<Box<crate::diagnostics::ProviderMetadata>>,
 }
 impl AgentError {
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
     fn new(code: &str, message: &str) -> Self {
         Self {
             code: code.into(),
@@ -163,6 +167,9 @@ fn is_false(value: &bool) -> bool {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TurnOptions {
+    #[serde(default, skip_serializing_if = "crate::claude::Executor::is_jarvis")]
+    #[cfg_attr(test, ts(as = "Option<crate::claude::Executor>", optional))]
+    executor: crate::claude::Executor,
     account: String,
     model: String,
     reasoning: Option<String>,
@@ -2395,6 +2402,21 @@ fn run_turn<'a>(
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
             result = skill_input::load(session, home) => result?,
         }
+        if options.executor == crate::claude::Executor::Claude {
+            return claude_executor::run(
+                session,
+                TurnRuntime {
+                    grants,
+                    state,
+                    oauth,
+                    mcp,
+                    home,
+                },
+                signal,
+                execution,
+            )
+            .await;
+        }
         let auth_state = state.clone();
         let auth_oauth = oauth.clone();
         let auth_home = home.to_path_buf();
@@ -4015,6 +4037,11 @@ async fn generate_title(
     let oauth = oauth.clone();
     let home_clone = home.clone();
     let options = request.options;
+    if options.executor == crate::claude::Executor::Claude {
+        // The local title already comes from the first user message. Do not open
+        // a second Claude session just to generate a title or use an API account.
+        return;
+    }
     let options_clone = options.clone();
     let auth = tauri::async_runtime::spawn_blocking(move || {
         oauth.inference_credential(

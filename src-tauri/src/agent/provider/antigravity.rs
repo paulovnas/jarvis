@@ -606,6 +606,7 @@ fn grounded_body(
         ));
     }
     let options = TurnOptions {
+        executor: crate::claude::Executor::Jarvis,
         account: String::new(),
         model: model.into(),
         reasoning: None,

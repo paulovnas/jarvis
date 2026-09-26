@@ -26,6 +26,7 @@ fn prepare(fixture: &Fixture) -> (Arc<Session>, ToolCall, watch::Receiver<bool>)
         .reserve(
             "Ajude a escolher".into(),
             TurnOptions {
+                executor: crate::claude::Executor::Jarvis,
                 account: "account".into(),
                 model: "model".into(),
                 reasoning: None,
@@ -328,6 +329,7 @@ async fn available_in_plan_build_manual_yolo_without_an_approval_prompt() {
             .any(|definition| definition["name"] == "ask_user"));
         for approval_mode in [ApprovalMode::Manual, ApprovalMode::Yolo] {
             let options = TurnOptions {
+                executor: crate::claude::Executor::Jarvis,
                 account: "account".into(),
                 model: "model".into(),
                 reasoning: None,

@@ -21,6 +21,7 @@ const PROVIDERS: [FixtureProvider; 5] = [
 
 fn options(model: &str) -> TurnOptions {
     TurnOptions {
+        executor: crate::claude::Executor::Jarvis,
         account: "fixture".into(),
         model: model.into(),
         reasoning: None,
