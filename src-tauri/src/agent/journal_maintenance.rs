@@ -440,6 +440,7 @@ mod tests {
                 duration_ms: 0,
                 user: "Teste".into(),
                 parts: vec![],
+                auxiliary_messages: vec![],
                 options: options(),
                 context_window: None,
                 status: TurnStatus::Completed,

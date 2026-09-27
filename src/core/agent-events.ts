@@ -47,6 +47,7 @@ const agentEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("itemCompleted"), stepIndex: z.number().int().nonnegative(), tool: agentToolSchema }),
   z.object({ type: z.literal("tasksUpdated"), tasks: z.array(directTaskSchema) }),
+  z.object({ type: z.literal("auxiliaryMessagesUpdated"), messages: z.array(queuedMessageSchema) }),
   z.object({ type: z.literal("approvalRequested"), approval: pendingApprovalSchema.nullable() }),
   z.object({ type: z.literal("stateChanged"), state: snapshotStateSchema }),
   z.object({ type: z.literal("turnCompleted"), turn: agentTurnSchema }),
@@ -125,6 +126,8 @@ function applyEvent(snapshot: ChatSnapshot, event: z.infer<typeof agentEventSche
       })));
     case "tasksUpdated":
       return replaceLatestTurn(snapshot, turn => ({ ...turn, tasks: event.tasks }));
+    case "auxiliaryMessagesUpdated":
+      return replaceLatestTurn(snapshot, turn => ({ ...turn, auxiliaryMessages: event.messages }));
     case "approvalRequested":
       return { ...snapshot, pendingApproval: event.approval };
     case "stateChanged": {

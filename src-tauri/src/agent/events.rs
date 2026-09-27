@@ -94,6 +94,9 @@ pub(super) enum Event {
     TasksUpdated {
         tasks: Vec<tasks::Task>,
     },
+    AuxiliaryMessagesUpdated {
+        messages: Vec<queue::QueuedMessage>,
+    },
     ApprovalRequested {
         approval: Option<super::PendingApproval>,
     },
@@ -305,6 +308,11 @@ fn differences(previous: Option<&ChatSnapshot>, current: &ChatSnapshot) -> Vec<E
             if before.tasks != after.tasks {
                 events.push(Event::TasksUpdated {
                     tasks: after.tasks.clone(),
+                });
+            }
+            if !same(&before.auxiliary_messages, &after.auxiliary_messages) {
+                events.push(Event::AuxiliaryMessagesUpdated {
+                    messages: after.auxiliary_messages.clone(),
                 });
             }
             if before.status != after.status || !same(&before.error, &after.error) {
@@ -529,6 +537,31 @@ mod tests {
             .map(|event| serde_json::to_value(event).unwrap())
             .collect();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn auxiliary_messages_are_emitted_without_restarting_the_turn() {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve("hello".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        let before = session.snapshot().unwrap();
+        let mut after = before.clone();
+        let message: queue::QueuedMessage = serde_json::from_value(serde_json::json!({
+            "id": "guidance", "content": "Use dark mode", "options": before.turns[0].options,
+            "auxiliaryFor": before.turns[0].id, "sentAt": 123, "afterStep": 0,
+        }))
+        .unwrap();
+        after.turns[0].auxiliary_messages.push(message);
+        let events = differences(Some(&before), &after);
+        assert!(
+            matches!(events.as_slice(), [Event::AuxiliaryMessagesUpdated { messages }] if messages.len() == 1)
+        );
+        assert_eq!(
+            serde_json::to_value(&events).unwrap()[0]["messages"][0]["content"],
+            "Use dark mode"
+        );
     }
 
     #[test]

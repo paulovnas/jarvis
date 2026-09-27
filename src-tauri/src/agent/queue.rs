@@ -11,6 +11,11 @@ pub(super) struct QueuedMessage {
     pub parts: Vec<skill_input::MessagePart>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) auxiliary_for: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(type = "number", optional))]
+    pub(super) sent_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) after_step: Option<usize>,
 }
 
 impl QueuedMessage {
@@ -77,6 +82,8 @@ impl Session {
             options,
             parts,
             auxiliary_for: None,
+            sent_at: None,
+            after_step: None,
         });
         self.checkpoint(&mut data, "queue_checkpoint", &queue)?;
         data.extras.queue = queue;
@@ -216,6 +223,8 @@ impl Session {
             })?;
         let mut queue = data.extras.queue.clone();
         queue[index].auxiliary_for = Some(turn_id);
+        queue[index].sent_at = Some(now());
+        queue[index].after_step = Some(data.turns.last().map_or(0, |turn| turn.turn.steps.len()));
         self.checkpoint(&mut data, "queue_checkpoint", &queue)?;
         data.extras.queue = queue;
         data.revision = next_revision();
@@ -287,6 +296,13 @@ impl Session {
                 ),
             }));
         }
+        current.turn.auxiliary_messages.extend(
+            data.extras
+                .queue
+                .iter()
+                .filter(|message| delivered_ids.contains(message.id.as_str()))
+                .cloned(),
+        );
         // Persist the turn first. If the following queue checkpoint is interrupted,
         // journal recovery removes entries carrying the same _jarvis_queue_id.
         self.persist_turn(&mut data, &current)?;
@@ -515,6 +531,8 @@ mod tests {
                 options: tests_options(),
                 parts: vec![],
                 auxiliary_for: None,
+                sent_at: None,
+                after_step: None,
             }];
             session
                 .checkpoint(&mut data, "queue_checkpoint", &queue)
@@ -566,8 +584,26 @@ mod tests {
         let fixture = Fixture::new();
         let session = crate::agent::tests::session(&fixture);
         let signal = session.reserve("first".into(), tests_options()).unwrap();
+        session
+            .update(true, |data| {
+                data.turns
+                    .last_mut()
+                    .unwrap()
+                    .turn
+                    .steps
+                    .push(Step::default());
+            })
+            .unwrap();
         session.submit("second".into(), tests_options()).unwrap();
-        session.submit("third".into(), tests_options()).unwrap();
+        session
+            .submit_message(
+                "third".into(),
+                tests_options(),
+                vec![skill_input::MessagePart::Text {
+                    text: "third".into(),
+                }],
+            )
+            .unwrap();
         let queued = session.snapshot().unwrap().queued_messages;
         let second = queued[0].id.clone();
         let third = queued[1].id.clone();
@@ -588,6 +624,15 @@ mod tests {
 
         assert!(session.promote_queued(&third).unwrap());
         assert!(!*signal.borrow());
+        let visible = session.snapshot().unwrap().turns[0]
+            .auxiliary_messages
+            .clone();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id, third);
+        assert_eq!(visible[0].content, "third");
+        assert_eq!(visible[0].parts.len(), 1);
+        assert_eq!(visible[0].after_step, Some(1));
+        assert!(visible[0].sent_at.is_some());
         assert_eq!(
             session
                 .snapshot()
@@ -602,6 +647,21 @@ mod tests {
             .await
             .unwrap();
         let (turns, extras) = journal::load_all(&session.journal).unwrap();
+        assert_eq!(
+            serde_json::to_value(&turns[0].turn.auxiliary_messages).unwrap(),
+            serde_json::to_value(&visible).unwrap()
+        );
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].turn.user, "first");
+        inject_pending_auxiliary(&session, &fixture.root)
+            .await
+            .unwrap();
+        assert_eq!(
+            session.snapshot().unwrap().turns[0]
+                .auxiliary_messages
+                .len(),
+            1
+        );
         let guidance = turns[0]
             .wire
             .iter()
@@ -625,10 +685,19 @@ mod tests {
         let id = session.snapshot().unwrap().queued_messages[0].id.clone();
         assert!(session.promote_queued(&id).unwrap());
         assert!(session.snapshot().unwrap().queued_messages.is_empty());
+        assert_eq!(
+            session.snapshot().unwrap().turns[0]
+                .auxiliary_messages
+                .len(),
+            1
+        );
 
         finish(&session, Err(AgentError::cancelled()));
 
         let queued = session.snapshot().unwrap().queued_messages;
+        assert!(session.snapshot().unwrap().turns[0]
+            .auxiliary_messages
+            .is_empty());
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].content, "guidance");
         assert!(queued[0].auxiliary_for.is_none());

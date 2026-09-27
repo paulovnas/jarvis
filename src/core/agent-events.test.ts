@@ -14,6 +14,17 @@ function stateChanged(snapshot: ChatSnapshot) {
 }
 
 describe("agent event protocol", () => {
+  it("shows auxiliary messages immediately and does not duplicate replayed delivery", () => {
+    const current = { ...history(0, 1), activeTurnId: "turn-0" };
+    const message = { id: "guidance", content: "Considere o modo escuro", parts: [], options: savedTurn().options, auxiliaryFor: "turn-0", sentAt: 123, afterStep: 1 };
+    const batch = agentEventBatchSchema.parse({ conversationId: "c1", baseRevision: 4, revision: 5, events: [{ type: "auxiliaryMessagesUpdated", messages: [message] }] });
+    const next = applyAgentEventBatch(current, batch);
+    expect(next.needsResync).toBe(false);
+    expect(next.snapshot?.activeTurnId).toBe("turn-0");
+    expect(next.snapshot?.turns[0].auxiliaryMessages).toEqual([message]);
+    expect(applyAgentEventBatch(next.snapshot, batch).snapshot?.turns[0].auxiliaryMessages).toEqual([message]);
+    expect(readChat(next.snapshot, "c1").turns[0].auxiliaryMessages).toEqual([message]);
+  });
   it("preserves the loaded page coordinates when the native tail publishes state", () => {
     const current = history(3, 8);
     const tail = { ...current, revision: 5, turns: current.turns.slice(-1), history: { start: 7, total: 8 } };

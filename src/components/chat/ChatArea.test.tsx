@@ -179,22 +179,33 @@ describe("Persistent live conversation", () => {
     expect(screen.getByRole("textbox")).toHaveTextContent("Depois rode os testes");
   }, 15000);
 
-  it("delivers a queued message to the active turn without cancelling it", async () => {
+  it("keeps a delivered auxiliary message visible during execution, after completion and reopening", async () => {
     const user = userEvent.setup();
     const turn = { ...savedTurn(), status: "running" as const };
     const queued = { id: "q1", content: "Considere também o modo escuro", options: turn.options };
     const running = { ...emptyChat(), revision: 1, turns: [turn], activeTurnId: turn.id, queuedMessages: [queued] };
+    const delivered = { ...running, revision: 2, turns: [{ ...turn, auxiliaryMessages: [{ ...queued, parts: [], auxiliaryFor: turn.id, sentAt: turn.createdAt + 1000, afterStep: 1 }] }], queuedMessages: [] };
     call.mockImplementation(async command => {
-      if (command === "send_queued_message_now") return { delivered: true, snapshot: { ...running, revision: 2, queuedMessages: [] } };
+      if (command === "send_queued_message_now") return { delivered: true, snapshot: delivered };
       return running;
     });
 
-    render(<TestChat />);
+    const first = render(<TestChat />);
     await user.click(await screen.findByRole("button", { name: "Enviar mensagem 1 agora" }));
 
     expect(call).toHaveBeenCalledWith("send_queued_message_now", { conversationId: "c1", messageId: "q1" });
     expect(call).not.toHaveBeenCalledWith("cancel_agent_turn", expect.anything());
     await waitFor(() => expect(screen.queryByRole("region", { name: "Mensagens agendadas" })).not.toBeInTheDocument());
+    expect(screen.getByTestId("user-message-q1")).toHaveTextContent(queued.content);
+    expect(screen.getByRole("button", { name: "Interromper execução" })).toBeVisible();
+    const finished: ChatSnapshot = { ...delivered, revision: 3, activeTurnId: null, turns: [{ ...delivered.turns[0], status: "completed" }] };
+    await update(finished);
+    expect(screen.getByTestId("user-message-q1")).toBeVisible();
+    first.unmount();
+    call.mockResolvedValue(finished);
+    render(<TestChat />);
+    expect(await screen.findByTestId("user-message-q1")).toBeVisible();
+    expect(screen.getAllByText(queued.content)).toHaveLength(1);
   });
 
   it("deletes a queued message only after confirmation", async () => {

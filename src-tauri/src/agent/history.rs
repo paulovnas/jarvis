@@ -1525,6 +1525,7 @@ mod tests {
                 duration_ms: 0,
                 user: format!("Pedido {index}"),
                 parts: vec![],
+                auxiliary_messages: vec![],
                 options: TurnOptions {
                     executor: crate::claude::Executor::Jarvis,
                     account: "test".into(),

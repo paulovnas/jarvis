@@ -335,6 +335,8 @@ mod tests {
             },
             parts: vec![],
             auxiliary_for: None,
+            sent_at: None,
+            after_step: None,
         };
         let path = crate::data_dir::root(&fixture.root)
             .join("sessions")

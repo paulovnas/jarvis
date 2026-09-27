@@ -326,6 +326,8 @@ struct Turn {
     user: String,
     #[serde(default)]
     parts: Vec<skill_input::MessagePart>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    auxiliary_messages: Vec<queue::QueuedMessage>,
     options: TurnOptions,
     #[serde(default)]
     #[cfg_attr(test, ts(type = "number | null"))]
@@ -849,6 +851,7 @@ impl Session {
                 active_since: None,
                 user: content,
                 parts,
+                auxiliary_messages: vec![],
                 options,
                 context_window: None,
                 status: TurnStatus::Running,
@@ -1024,6 +1027,18 @@ impl Session {
                     if let Some(active) = data.active.as_ref().filter(|active| active.id == turn.id)
                     {
                         (turn.duration_ms, turn.active_since) = active.timing();
+                    }
+                    // Accepted guidance stays visible while waiting for the next
+                    // inference boundary, then lives in the persisted turn.
+                    for message in &data.extras.queue {
+                        if message.auxiliary_for.as_deref() == Some(turn.id.as_str())
+                            && !turn
+                                .auxiliary_messages
+                                .iter()
+                                .any(|item| item.id == message.id)
+                        {
+                            turn.auxiliary_messages.push(message.clone());
+                        }
                     }
                     vec![turn]
                 })

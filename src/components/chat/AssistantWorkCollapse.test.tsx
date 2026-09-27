@@ -3,6 +3,37 @@ import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 import { AssistantWorkCollapse } from "./AssistantWorkCollapse";
 import { reasoningPreview } from "./reasoning-preview";
+import { savedTurn } from "@/test/chat-fixtures";
+
+it("places auxiliary messages between work steps and keeps them visible when work is collapsed", async () => {
+  const user = userEvent.setup();
+  const work = {
+    durationSeconds: 12,
+    steps: [
+      { thinking: "", commentary: "Vou analisar a tela.", tools: [] },
+      { thinking: "", commentary: "Vou considerar a sua orientação.", tools: [] },
+    ],
+    auxiliaryMessages: [
+      { id: "q1", content: "Use o modo escuro", options: savedTurn().options, afterStep: 1, sentAt: 123 },
+      { id: "q2", content: "Mantenha a disposição atual", options: savedTurn().options, afterStep: 1, sentAt: 124 },
+    ],
+  };
+  const { rerender } = render(<AssistantWorkCollapse work={work} isStreaming />);
+  const before = await screen.findByText("Vou analisar a tela.");
+  const first = screen.getByTestId("user-message-q1");
+  const second = screen.getByTestId("user-message-q2");
+  const after = await screen.findByText("Vou considerar a sua orientação.");
+  expect(before.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(second.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  rerender(<AssistantWorkCollapse work={work} />);
+  expect(screen.getByTestId("user-message-q1")).toBeVisible();
+  expect(screen.getByTestId("user-message-q2")).toBeVisible();
+  expect(screen.queryByText("Vou analisar a tela.")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Trabalhou por 12s/ }));
+  expect(await screen.findByText("Vou analisar a tela.")).toBeVisible();
+  expect(screen.getAllByTestId("user-message-q1")).toHaveLength(1);
+});
 
 it("shows reconnection progress, its cause and returns to thinking after recovery", () => {
   const work = { durationSeconds: 3, steps: [{ thinking: "Conferindo os testes", commentary: "", tools: [] }], retry: { attempt: 1, maxAttempts: 5 as const, retryAt: 100, message: "HTTP 502 — Bad Gateway. O provedor está temporariamente indisponível." } };

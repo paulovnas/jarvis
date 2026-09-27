@@ -128,20 +128,22 @@ export const agentStepSchema = z.object({
   retry: retryStatusSchema.nullable().optional(),
   usage: usageSchema.nullable(),
 });
+export const queuedMessageSchema = z.object({
+  id: z.string(), content: z.string(), options: turnOptionsSchema,
+  parts: z.array(messagePartSchema).default([]), auxiliaryFor: z.string().nullable().optional(),
+  sentAt: z.number().nonnegative().optional(), afterStep: z.number().int().nonnegative().nullable().optional(),
+});
 export const agentTurnSchema = z.object({
   id: z.string(), createdAt: z.number().nonnegative(), durationMs: z.number().nonnegative(),
   activeSince: z.number().nonnegative().nullable().optional(),
   user: z.string(), options: turnOptionsSchema,
   parts: z.array(messagePartSchema).default([]),
+  auxiliaryMessages: z.array(queuedMessageSchema).optional(),
   contextWindow: z.number().int().positive().nullable().default(null),
   status: z.enum(["running", "completed", "cancelled", "error", "interrupted"]),
   tasks: z.array(directTaskSchema).default([]),
   steps: z.array(agentStepSchema),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
-});
-export const queuedMessageSchema = z.object({
-  id: z.string(), content: z.string(), options: turnOptionsSchema,
-  parts: z.array(messagePartSchema).default([]), auxiliaryFor: z.string().nullable().optional(),
 });
 export const fileChangeSchema = z.object({
   path: z.string(), additions: z.number().int().nonnegative().nullable(),

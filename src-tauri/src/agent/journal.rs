@@ -1349,6 +1349,7 @@ mod tests {
                 duration_ms: 0,
                 user: "Read".into(),
                 parts: vec![],
+                auxiliary_messages: vec![],
                 context_window: Some(128_000),
                 options: TurnOptions {
                     executor: crate::claude::Executor::Jarvis,

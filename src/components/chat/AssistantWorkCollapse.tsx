@@ -1,5 +1,5 @@
 import { AlertCircle, BrainCircuit, Check, ChevronRight, Layers3, TriangleAlert } from "lucide-react";
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Hint } from "@/components/ui/hint";
@@ -10,11 +10,13 @@ import type { AssistantWorkData, ToolCallItem } from "./types";
 import { reasoningPreview, reasoningSections } from "./reasoning-preview";
 import { describeExecution } from "./execution-status";
 import { CoreActivitySummary } from "./CoreActivitySummary";
+import { UserMessageBubble } from "./UserMessageBubble";
 
 const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
 
 export function AssistantWorkCollapse({ work, isStreaming = false }: { work: AssistantWorkData; isStreaming?: boolean }) {
-  const phases = useMemo(() => buildExecutionPhases(work.steps), [work.steps]);
+  const [expanded, setExpanded] = useState(false);
+  const phases = useMemo(() => buildExecutionPhases(work.steps, work.auxiliaryMessages), [work.steps, work.auxiliaryMessages]);
   const { failures, heading, retry, tools, warnings } = useMemo(() => describeExecution(work, isStreaming), [work, isStreaming]);
 
   if (isStreaming) return <section aria-label="Atividades da execução atual" className="flex min-w-0 flex-col gap-1.5 text-muted-foreground">
@@ -25,7 +27,7 @@ export function AssistantWorkCollapse({ work, isStreaming = false }: { work: Ass
   </section>;
 
   return (
-    <Collapsible render={<section aria-label="Processamento do Jarvis" />} className="min-w-0 text-muted-foreground">
+    <Collapsible open={expanded} onOpenChange={setExpanded} render={<section aria-label="Processamento do Jarvis" />} className="min-w-0 text-muted-foreground">
       <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-8 max-w-full cursor-pointer justify-start gap-2 px-1 text-left text-[11px]">
         <BrainCircuit aria-hidden="true" data-icon="inline-start" />
         <Hint content={heading} whenTruncated><span className="min-w-0 truncate">{heading}</span></Hint>
@@ -39,6 +41,7 @@ export function AssistantWorkCollapse({ work, isStreaming = false }: { work: Ass
         <CoreActivitySummary steps={work.steps} />
         {work.steps.length === 0 && <p className="py-1 text-xs">Nenhuma atividade registrada.</p>}
       </CollapsibleContent>
+      {!expanded && <ExecutionPhases phases={phases.filter(phase => phase.message)} isStreaming={false} />}
     </Collapsible>
   );
 }
@@ -48,10 +51,17 @@ type ActivityItem =
   | { id: string; kind: "reasoning"; thoughts: ReasoningThought[] }
   | { id: string; kind: "tool-group"; group: ReturnType<typeof groupToolActivity>[number] }
   | { id: string; kind: "tool"; tool: ToolCallItem };
-type ExecutionPhase = { id: string; observation: string; activity: ActivityItem[] };
+type ExecutionPhase = { id: string; observation: string; activity: ActivityItem[]; message?: NonNullable<AssistantWorkData["auxiliaryMessages"]>[number] };
 
-function buildExecutionPhases(steps: AssistantWorkData["steps"]): ExecutionPhase[] {
+function buildExecutionPhases(steps: AssistantWorkData["steps"], messages: AssistantWorkData["auxiliaryMessages"] = []): ExecutionPhase[] {
   const phases: ExecutionPhase[] = [];
+  const messagesAt = new Map<number, NonNullable<AssistantWorkData["auxiliaryMessages"]>>();
+  for (const message of messages) {
+    const boundary = Math.min(message.afterStep ?? steps.length, steps.length);
+    const group = messagesAt.get(boundary) ?? [];
+    group.push(message);
+    messagesAt.set(boundary, group);
+  }
   let current: ExecutionPhase | undefined;
   let pendingTools: ToolCallItem[] = [];
   const ensurePhase = (id: string) => {
@@ -69,6 +79,14 @@ function buildExecutionPhases(steps: AssistantWorkData["steps"]): ExecutionPhase
     pendingTools = [];
   };
 
+  const appendMessages = (afterStep: number) => {
+    const received = messagesAt.get(afterStep);
+    if (!received) return;
+    flushTools();
+    received.forEach(message => phases.push({ id: `user:${message.id}`, message, observation: "", activity: [] }));
+    current = undefined;
+  };
+  appendMessages(0);
   steps.forEach((step, stepIndex) => {
     const thoughts = reasoningSections(step.thinking).map((content, partIndex) => ({ id: `${stepIndex}:thinking:${partIndex}`, content }));
     const observation = step.commentary.trim();
@@ -77,7 +95,7 @@ function buildExecutionPhases(steps: AssistantWorkData["steps"]): ExecutionPhase
       current = { id: `${stepIndex}:observation`, observation, activity: [] };
       phases.push(current);
     }
-    const phase = ensurePhase("phase:initial");
+    const phase = ensurePhase(`${stepIndex}:activity`);
     if (thoughts.length > 0) flushTools();
     if (thoughts.length >= 4) phase.activity.push({ id: thoughts[0].id, kind: "reasoning", thoughts });
     else thoughts.forEach(thought => phase.activity.push({ id: thought.id, kind: "reasoning", thoughts: [thought] }));
@@ -89,9 +107,10 @@ function buildExecutionPhases(steps: AssistantWorkData["steps"]): ExecutionPhase
       flushTools();
       if (tool.status !== "running" && tool.status !== "pending") phase.activity.push({ id: `tool:${tool.id}`, kind: "tool", tool });
     });
+    appendMessages(stepIndex + 1);
   });
   flushTools();
-  return phases.filter(phase => phase.observation || phase.activity.length > 0);
+  return phases.filter(phase => phase.message || phase.observation || phase.activity.length > 0);
 }
 
 function ExecutionPhases({ phases, detailContext, isStreaming }: { phases: ExecutionPhase[]; detailContext?: AssistantWorkData["detailContext"]; isStreaming: boolean }) {
@@ -100,6 +119,7 @@ function ExecutionPhases({ phases, detailContext, isStreaming }: { phases: Execu
     {phases.map((phase, phaseIndex) => {
       const current = isStreaming && phaseIndex === phases.length - 1;
       return <section key={phase.id} role="listitem" data-execution-phase={phase.id} aria-current={current ? "step" : undefined} className="min-w-0">
+        {phase.message && <UserMessageBubble message={{ id: phase.message.id, role: "user", content: phase.message.content, parts: phase.message.parts, timestamp: phase.message.sentAt === undefined ? "" : new Date(phase.message.sentAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />}
         {phase.observation && <div data-execution-observation className={`min-w-0 px-1 py-2 text-sm leading-7 text-foreground ${isStreaming ? "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200" : ""}`}>
           <div className="assistant-prose min-w-0 break-words [&_code]:font-mono [&_p]:my-0">
             <Suspense fallback={<p className="whitespace-pre-wrap">{phase.observation}</p>}><ChatMarkdown content={phase.observation} /></Suspense>

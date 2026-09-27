@@ -37,7 +37,8 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId, onRetry, 
   return <AssistantMessageTurn onRetry={onRetry && retryableTurn(turn) ? () => onRetry(turn.id) : undefined} retrying={retrying} message={{
     id: turn.id, role: "assistant", content: running || repeatedError ? "" : latestText, timestamp,
     model: executionLabel(turn.options), streaming: running,
-    work: running || turn.steps.some((step, index) => step.summary || step.tools.length || step.coreActivities?.length || (step.text && index < turn.steps.length - 1)) ? {
+    work: running || turn.auxiliaryMessages?.length || turn.steps.some((step, index) => step.summary || step.tools.length || step.coreActivities?.length || (step.text && index < turn.steps.length - 1)) ? {
+      auxiliaryMessages: turn.auxiliaryMessages,
       retry: running ? turn.steps[turn.steps.length - 1]?.retry : undefined,
       durationSeconds: Math.floor(durationMs / 1000),
       detailContext: conversationId ? { conversationId, turnId: turn.id } : undefined,

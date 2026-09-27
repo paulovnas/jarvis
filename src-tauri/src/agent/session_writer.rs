@@ -530,6 +530,7 @@ mod tests {
                 duration_ms: 0,
                 user: "hello".into(),
                 parts: vec![],
+                auxiliary_messages: vec![],
                 options: super::super::TurnOptions {
                     executor: crate::claude::Executor::Jarvis,
                     account: "account".into(),
