@@ -7,6 +7,7 @@ fn choice(account: &str, model: &str) -> ModelChoice {
         account: account.into(),
         model: model.into(),
         reasoning: None,
+        fallback: None,
     }
 }
 
@@ -29,6 +30,113 @@ fn fixture() -> (Connection, tempfile::TempDir) {
 }
 
 #[test]
+fn remaps_primary_and_secondary_independently_and_clears_both_on_explicit_edit() {
+    let (mut db, home) = fixture();
+    let native = ModelChoice {
+        executor: crate::claude::Executor::Claude,
+        account: String::new(),
+        model: "sonnet".into(),
+        reasoning: None,
+        fallback: Some(Box::new(choice("openai-codex-old", "old-model"))),
+    };
+    std::fs::write(
+        crate::data_dir::root(home.path()).join("agents.json"),
+        json!({"complete/planner":native}).to_string(),
+    )
+    .unwrap();
+    let mut catalog = workflow::catalog::read(home.path()).unwrap();
+    catalog.agents[0].model.as_mut().unwrap().fallback =
+        Some(Box::new(choice("openai-codex-third", "third-model")));
+    std::fs::write(
+        crate::data_dir::root(home.path()).join("workflow-catalog.json"),
+        serde_json::to_vec(&catalog).unwrap(),
+    )
+    .unwrap();
+    let preview = plan(&db, home.path(), "openai-codex-old").unwrap();
+    assert_eq!(preview.items.len(), 3);
+    assert!(preview
+        .items
+        .iter()
+        .any(|item| item.item_key == "builtin:complete/planner:fallback"
+            && item.details.contains(&"Modelo secundário".into())));
+    let replacements: Vec<_> = preview
+        .items
+        .iter()
+        .map(|item| Replacement {
+            id: item.id.clone(),
+            choice: choice("openai-codex-new", "new-model"),
+        })
+        .collect();
+    let transaction = db.transaction().unwrap();
+    apply(
+        &transaction,
+        home.path(),
+        &preview.alias,
+        &preview.revision,
+        &replacements,
+    )
+    .unwrap();
+    persistence::delete_provider_account(&transaction, &preview.alias).unwrap();
+    transaction.commit().unwrap();
+
+    let resolved = model_bindings::resolve(&db, "builtin:complete/planner", &native).unwrap();
+    assert_eq!(resolved.executor, crate::claude::Executor::Claude);
+    assert_eq!(resolved.model, "sonnet");
+    assert_eq!(
+        resolved.fallback.as_deref(),
+        Some(&choice("openai-codex-new", "new-model"))
+    );
+    let configured = workflow::catalog::read_configured(&db, home.path()).unwrap();
+    let custom = configured.agents[0].model.as_ref().unwrap();
+    assert_eq!(custom.account, "openai-codex-new");
+    assert_eq!(
+        custom.fallback.as_deref(),
+        Some(&choice("openai-codex-third", "third-model"))
+    );
+
+    model_bindings::forget_item(&db, "builtin:complete/planner").unwrap();
+    assert_eq!(
+        model_bindings::resolve(&db, "builtin:complete/planner", &native).unwrap(),
+        native
+    );
+}
+
+#[test]
+fn replacement_cannot_make_secondary_identical_to_primary() {
+    let (mut db, home) = fixture();
+    let mut native = choice("openai-codex-new", "new-model");
+    native.fallback = Some(Box::new(choice("openai-codex-old", "old-model")));
+    std::fs::write(
+        crate::data_dir::root(home.path()).join("agents.json"),
+        json!({"complete/planner":native}).to_string(),
+    )
+    .unwrap();
+    let preview = plan(&db, home.path(), "openai-codex-old").unwrap();
+    let secondary = preview
+        .items
+        .iter()
+        .find(|item| item.item_key.ends_with(":fallback"))
+        .unwrap();
+    let transaction = db.transaction().unwrap();
+    assert!(apply(
+        &transaction,
+        home.path(),
+        &preview.alias,
+        &preview.revision,
+        &[Replacement {
+            id: secondary.id.clone(),
+            choice: choice("openai-codex-new", "new-model"),
+        }]
+    )
+    .is_err());
+    drop(transaction);
+    assert_eq!(
+        model_bindings::resolve(&db, "builtin:complete/planner", &native).unwrap(),
+        native
+    );
+}
+
+#[test]
 fn external_executor_choices_do_not_require_or_reference_a_jarvis_provider() {
     let (db, home) = fixture();
     let external = ModelChoice {
@@ -36,6 +144,7 @@ fn external_executor_choices_do_not_require_or_reference_a_jarvis_provider() {
         account: String::new(),
         model: "sonnet".into(),
         reasoning: Some("high".into()),
+        fallback: None,
     };
     let preview = plan(&db, home.path(), "openai-codex-old").unwrap();
     let replacements: Vec<_> = preview

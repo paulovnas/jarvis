@@ -8,6 +8,13 @@ fn catalog_round_trip_preserves_claude_for_custom_agents_and_flow_steps() {
         account: String::new(),
         model: "sonnet".into(),
         reasoning: Some("high".into()),
+        fallback: Some(Box::new(settings::ModelChoice {
+            executor: crate::claude::Executor::Claude,
+            account: String::new(),
+            model: "opus".into(),
+            reasoning: Some("max".into()),
+            fallback: None,
+        })),
     };
     catalog.agents[0].model = Some(choice.clone());
     catalog.validate().unwrap();

@@ -353,6 +353,10 @@ async fn stops_after_five_reconnections_and_preserves_a_safe_terminal_error() {
     assert_eq!(error.code, "provider_retry_exhausted");
     assert!(error.message.contains("5 tentativas consecutivas"));
     assert!(!error.message.contains("private"));
+    assert_eq!(
+        error.provider_metadata.as_deref().unwrap().http_status,
+        Some(503)
+    );
     assert_eq!(attempts, vec![1, 2, 3, 4, 5]);
     assert_eq!(server.join().unwrap().len(), 6);
 }

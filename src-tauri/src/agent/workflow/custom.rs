@@ -26,6 +26,10 @@ pub(super) fn resolve(
                 account: choice.account,
                 model: choice.model,
                 reasoning: choice.reasoning,
+                fallback: agent
+                    .model
+                    .as_ref()
+                    .and_then(|model| model.fallback.clone()),
             },
         )?;
     }
@@ -37,16 +41,25 @@ pub(super) fn resolve_agent(
     oauth: &OpenAiCodexState,
     home: &Path,
     options: &TurnOptions,
+    preserve_model: bool,
 ) -> Result<catalog::AgentDefinition, AgentError> {
     let id = options
         .custom_agent_id
         .as_deref()
         .ok_or_else(|| invalid("Escolha um agente individual."))?;
-    let agent = state.with_connection(home, |db| {
+    let mut agent = state.with_connection(home, |db| {
         catalog::read_configured(db, home)?.resolve_agent(id)
     })?;
+    // The composer uses the Github profile for its built-in direct agent too.
+    // Keep the complete choice in the manifest, including its secondary model.
+    if agent.native_role == Some(Role::Github) {
+        agent.model =
+            settings::load(state, home)?.remove(&settings::key(Flow::Publication, Role::Github));
+    }
     let mut choice = options.clone();
-    apply_model(&mut choice, &agent);
+    if !preserve_model {
+        apply_model(&mut choice, &agent);
+    }
     settings::validate_choice(
         state,
         oauth,
@@ -56,6 +69,14 @@ pub(super) fn resolve_agent(
             account: choice.account,
             model: choice.model,
             reasoning: choice.reasoning,
+            fallback: (!preserve_model)
+                .then(|| {
+                    agent
+                        .model
+                        .as_ref()
+                        .and_then(|model| model.fallback.clone())
+                })
+                .flatten(),
         },
     )?;
     Ok(agent)
@@ -301,6 +322,7 @@ fn prepare(
         job.handoff = None;
         job.error = None;
         job.recovery = None;
+        job.recovery_attempt_pending = false;
         return Ok(job);
     }
     let (history, selected_context) = {
@@ -350,6 +372,7 @@ fn prepare(
         duration_ms: 0,
         attempts: 1,
         recovery_attempts: 0,
+        recovery_attempt_pending: false,
         handoff: None,
         error: None,
         recovery: None,

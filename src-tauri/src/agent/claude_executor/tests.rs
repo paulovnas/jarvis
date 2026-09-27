@@ -383,3 +383,65 @@ async fn resumed_callbacks_reuse_receipts_but_new_tool_ids_with_the_same_args_ca
     assert_eq!(early_tools[0].status, "completed");
     assert!(resumed.take_tool("write", args, None).is_none());
 }
+#[test]
+fn only_explicit_terminal_provider_failures_allow_secondary_models() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    session
+        .reserve("Continue".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    let result = json!({"type":"result","subtype":"error_during_execution","is_error":true,"errors":["rate limit server error authentication cancelled"]});
+    for (error, expected) in [
+        ("rate_limit", "provider_retry_exhausted"),
+        ("server_error", "provider_retry_exhausted"),
+        ("authentication_failed", "claude_execution"),
+        ("invalid_request", "claude_execution"),
+        ("billing_error", "claude_execution"),
+        ("unknown", "claude_execution"),
+    ] {
+        let mut projection = projection::Projection::default();
+        projection
+            .apply(
+                &session,
+                &json!({"type":"assistant","error":error,"message":{"id":error,"content":[]}}),
+            )
+            .unwrap();
+        assert_eq!(
+            projection.final_result(&result).unwrap().unwrap_err().code,
+            expected
+        );
+        assert!(projection
+            .final_result(&json!({"type":"result","subtype":"success"}))
+            .unwrap()
+            .is_ok());
+        assert_eq!(
+            projection
+                .final_result(&json!({"type":"result","subtype":"error_max_turns","is_error":true}))
+                .unwrap()
+                .unwrap_err()
+                .code,
+            "claude_execution"
+        );
+    }
+    let mut projection = projection::Projection::default();
+    assert_eq!(
+        projection.final_result(&result).unwrap().unwrap_err().code,
+        "claude_execution"
+    );
+    projection.apply(&session, &json!({"type":"assistant","parent_tool_use_id":"child","error":"rate_limit","message":{"id":"child","content":[]}})).unwrap();
+    assert_eq!(
+        projection.final_result(&result).unwrap().unwrap_err().code,
+        "claude_execution"
+    );
+    projection.apply(&session, &json!({"type":"assistant","error":"rate_limit","message":{"id":"limited","content":[]}})).unwrap();
+    projection
+        .apply(
+            &session,
+            &json!({"type":"assistant","message":{"id":"recovered","content":[]}}),
+        )
+        .unwrap();
+    assert_eq!(
+        projection.final_result(&result).unwrap().unwrap_err().code,
+        "claude_execution"
+    );
+}

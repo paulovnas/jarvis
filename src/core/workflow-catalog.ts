@@ -7,7 +7,8 @@ const id = z.string().regex(/^[a-f0-9]{32}$/i);
 const builtinRoleSchema = z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer", "github"]);
 const builtinAgentIdSchema = z.string().regex(/^builtin:(planner|investigator|writer|orchestrator|designer|builder|reviewer|github)$/);
 const agentReferenceIdSchema = z.union([id, builtinAgentIdSchema]);
-export const modelChoiceSchema = z.object({ executor: executorSchema.optional(), account: z.string(), model: z.string(), reasoning: z.string().nullable() });
+const modelTargetSchema = z.object({ executor: executorSchema.optional(), account: z.string(), model: z.string(), reasoning: z.string().nullable() });
+export const modelChoiceSchema = modelTargetSchema.extend({ fallback: modelTargetSchema.strict().nullish() });
 export const customAgentSchema = z.object({
   id, name: z.string().min(1).max(100), description: z.string().max(500), instructions: z.string().min(1).max(16000),
   usage: z.enum(["solo", "mixed", "flow_only"]).default("flow_only"),

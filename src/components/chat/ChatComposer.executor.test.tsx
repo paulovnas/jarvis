@@ -39,7 +39,7 @@ it("persists Claude choices in native profiles instead of fabricating an account
   await screen.findByRole("textbox", { name: "Mensagem" });
   screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
   (await screen.findByRole("menuitem", { name: "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
-  (await screen.findByRole("menuitem", { name: "Claude Sonnet" })).focus(); await user.keyboard("{ArrowRight}");
+  (await screen.findByRole("menuitem", { name: /^Claude Sonnet/ })).focus(); await user.keyboard("{ArrowRight}");
   await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
   expect(save).toHaveBeenCalledWith("standard", "builder", { executor: "claude", account: "", model: "sonnet", reasoning: "high" });
 });
@@ -52,4 +52,16 @@ it("preserves a selected Claude profile and draft when its provider is disabled"
   expect(screen.getByRole("alert")).toHaveTextContent("Ative o Claude Code em Configurações → Provedores.");
   expect(screen.getByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Continue");
   expect(send).not.toHaveBeenCalled();
+});
+
+it("preserves the configured secondary when the composer changes the native primary model", async () => {
+  const user = userEvent.setup(); const save = vi.fn();
+  const fallback = { account: "backup", model: "other", reasoning: null };
+  render(<ChatComposer modelGroups={[]} onSendMessage={vi.fn()} agentModels={{ data: { "standard/builder": { executor: "claude", account: "", model: "sonnet", reasoning: "high", fallback } }, saving: false, error: null, save, refresh: vi.fn() }} />);
+  await screen.findByRole("textbox", { name: "Mensagem" });
+  screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
+  (await screen.findByRole("menuitem", { name: /^Claude Sonnet/ })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
+  expect(save).toHaveBeenCalledWith("standard", "builder", { executor: "claude", account: "", model: "sonnet", reasoning: "high", fallback });
 });

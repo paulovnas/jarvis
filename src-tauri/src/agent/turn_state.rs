@@ -247,6 +247,25 @@ impl ActiveTurn {
         std::mem::take(&mut self.interactions)
     }
 
+    pub(super) fn resume_inference(&mut self) -> bool {
+        if *self.cancel.borrow()
+            || self.phase == TurnPhase::Cancelling
+            || self.is_waiting()
+            || !self.interactions.is_empty()
+        {
+            return false;
+        }
+        if self.phase == TurnPhase::Draining {
+            // Prior cleanup receivers stay cancelled; only this continuation's
+            // new interactions use a fresh signal after their receipts drained.
+            self.interactions_cancel = watch::channel(false).0;
+            self.mailbox.accepting_auxiliary = true;
+            self.mailbox.delivery = MailboxDelivery::CurrentTurn;
+            self.transition(TurnPhase::Preparing);
+        }
+        true
+    }
+
     pub(super) fn close_auxiliary(&mut self) {
         self.mailbox.accepting_auxiliary = false;
         self.mailbox.delivery = MailboxDelivery::NextTurn;
@@ -356,6 +375,31 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[tokio::test]
+    async fn secondary_inference_reopens_drained_interactions_without_reviving_old_effects() {
+        let (cancel, user_signal) = watch::channel(false);
+        let mut active = ActiveTurn::new("turn".into(), cancel);
+        let effect = active.claim_interaction();
+        let old_cleanup = active.interaction_cleanup_signal();
+        assert!(!active.resume_inference());
+        let receipts = active.drain_interactions(true);
+        assert!(!active.accepts_auxiliary());
+        drop(effect);
+        for receipt in receipts {
+            receipt.await.unwrap();
+        }
+        assert!(active.resume_inference());
+        assert!(*old_cleanup.borrow());
+        assert!(!*active.interaction_cleanup_signal().borrow());
+        assert!(!*user_signal.borrow());
+        assert!(active.accepts_interaction());
+        assert!(active.accepts_auxiliary());
+        assert_eq!(active.mailbox.delivery, MailboxDelivery::CurrentTurn);
+        active.cancel();
+        assert!(!active.resume_inference());
+        assert!(!active.accepts_auxiliary());
+    }
+
     #[test]
     fn technical_interaction_cleanup_preserves_explicit_cancellation_channel() {
         let (cancel, user_signal) = watch::channel(false);
@@ -452,6 +496,8 @@ mod tests {
         ));
         assert_eq!(active.phase, TurnPhase::WaitingForApproval);
         assert!(active.is_waiting());
+        assert!(!active.resume_inference());
+        assert_eq!(active.phase, TurnPhase::WaitingForApproval);
         assert!(active.take_approval("other").is_none());
         let approval = active.take_approval("tool").unwrap();
         approval.reply.send(true).unwrap();

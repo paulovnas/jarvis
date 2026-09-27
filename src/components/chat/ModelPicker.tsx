@@ -22,11 +22,11 @@ export interface ProviderModelGroup {
 
 
 export type ModelSelection = ExecutionSelection;
-export function ModelPicker({ modelGroups, selection, onSelect, disabled = false, ariaLabel = "Selecionar modelo de IA", showProviderIdentity = false, onRefresh, refreshing = false, emptyMessage = "Conecte um provedor em Configurações." }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; disabled?: boolean; ariaLabel?: string; showProviderIdentity?: boolean; onRefresh?: () => void; refreshing?: boolean; emptyMessage?: string }) {
+export function ModelPicker({ modelGroups, selection, onSelect, onClear, disabled = false, ariaLabel = "Selecionar modelo de IA", showProviderIdentity = false, onRefresh, refreshing = false, emptyMessage = "Conecte um provedor em Configurações." }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; onClear?: () => void; disabled?: boolean; ariaLabel?: string; showProviderIdentity?: boolean; onRefresh?: () => void; refreshing?: boolean; emptyMessage?: string }) {
   const currentGroup = modelGroups.find(group => executorOf(group) === executorOf(selection) && group.models.some(model => model.value === selection?.model));
   const currentModelDef = currentGroup?.models.find(model => model.value === selection?.model);
   const reasoning = selection?.reasoning;
-  const displayModelLabel = currentModelDef ? `${currentModelDef.label}${reasoning ? ` · ${reasoningLabel(reasoning)}` : ""}` : selection ? `${selection.model.split("/").pop()} · Indisponível` : modelGroups.some(group => group.models.length) ? "Escolher modelo" : "Nenhum modelo conectado";
+  const displayModelLabel = currentModelDef ? `${currentModelDef.label}${reasoning ? ` · ${reasoningLabel(reasoning)}` : ""}` : selection ? `${selection.model.split("/").pop()} · Indisponível` : onClear ? "Nenhum" : modelGroups.some(group => group.models.length) ? "Escolher modelo" : "Nenhum modelo conectado";
   const providerLabel = showProviderIdentity && currentGroup ? aliasSuffix(currentGroup.provider) : null;
   const displayLabel = providerLabel ? `${providerLabel} · ${displayModelLabel}` : displayModelLabel;
   return (<DropdownMenu>
@@ -46,6 +46,7 @@ export function ModelPicker({ modelGroups, selection, onSelect, disabled = false
                 sideOffset={8}
                 className="min-w-[220px] border-border bg-card p-1.5 text-foreground"
               >
+                {onClear && <><DropdownMenuItem className="cursor-pointer justify-between text-xs" onClick={onClear}>Nenhum{!selection && <Check className="size-3 text-primary" />}</DropdownMenuItem><DropdownMenuSeparator /></>}
                 {modelGroups.length === 0 ? (
                   <DropdownMenuGroup>
                     <DropdownMenuLabel className="px-2.5 py-2 text-xs font-normal text-muted-foreground">

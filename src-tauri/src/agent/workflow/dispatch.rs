@@ -390,6 +390,7 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
             duration_ms: 0,
             attempts: 1,
             recovery_attempts: 0,
+            recovery_attempt_pending: false,
             handoff: None,
             error: None,
             recovery: None,
@@ -506,7 +507,7 @@ fn retry(
 }
 
 fn continuation_instructions(job: &Job) -> &'static str {
-    if job.recovery_attempts > 0 {
+    if job.recovery.is_some() {
         "Resume from the durable checkpoint. Inspect current Beads and affected files before repeating any uncertain tool action."
     } else if job.role == Role::Reviewer {
         "Continue the same independent review. Start with changed code, previous findings and affected acceptance criteria. Verify each correction and its related consumers; reuse evidence and checks on unchanged content. Do not restart whole-project discovery or rerun all gates without changed inputs or a concrete unresolved risk. Report all remaining concrete in-scope findings together, with their cause, affected paths and observable regression cases."
@@ -535,6 +536,12 @@ fn prepare_retry(
         ));
     }
     validate_phase(flow, role, job.role, job.phase)?;
+    let dependencies = dependencies.unwrap_or_else(|| job.dependencies.clone());
+    validate_dependencies(state, parent, id, &dependencies)?;
+    let mut candidate = job.clone();
+    candidate.dependencies = dependencies.clone();
+    candidate.run_id = state.run_id.clone();
+    admitted(state, &candidate)?;
     let follow_up = job.status == Status::Completed
         || (job.status == Status::Blocked
             && job
@@ -552,11 +559,11 @@ fn prepare_retry(
     if recoveries > 2 {
         return Err(invalid("Duas retomadas sem progresso confirmado falharam. Resolva a causa ou peça orientação antes de iniciar outra recuperação."));
     }
-    let dependencies = dependencies.unwrap_or_else(|| job.dependencies.clone());
-    validate_dependencies(state, parent, id, &dependencies)?;
     let job = state.jobs.get_mut(id).ok_or_else(AgentError::internal)?;
     job.attempts = job.attempts.saturating_add(1);
-    job.recovery_attempts = recoveries;
+    // A queued recovery has not tried the worker yet; charge it after preflight.
+    job.recovery_attempts = recoveries.saturating_sub(1);
+    job.recovery_attempt_pending = !follow_up;
     job.dependencies = dependencies;
     job.status = Status::Queued;
     job.handoff = None;
@@ -797,13 +804,15 @@ fn inject_bead_checkpoint(
 }
 
 fn admitted(state: &Manifest, job: &Job) -> Result<bool, AgentError> {
+    let mut dependencies_ready = true;
     for id in &job.dependencies {
         let dependency = state
             .jobs
             .get(id)
             .ok_or_else(|| invalid("Checkpoint de dependência indisponível."))?;
         if dependency.status.active() {
-            return Ok(false);
+            dependencies_ready = false;
+            continue;
         }
         let repair = matches!(job.role, Role::Builder | Role::Designer)
             && dependency.run_id == job.run_id
@@ -814,8 +823,13 @@ fn admitted(state: &Manifest, job: &Job) -> Result<bool, AgentError> {
                 .as_ref()
                 .is_some_and(|handoff| handoff.verdict == Verdict::Rework);
         if dependency.status != Status::Completed && !repair {
-            return Err(invalid("Uma dependência não foi concluída com sucesso."));
+            return Err(invalid(&format!(
+                "A dependência {id} não foi concluída com sucesso. Recupere esse agente antes de retomar o trabalho dependente."
+            )));
         }
+    }
+    if !dependencies_ready {
+        return Ok(false);
     }
     let active: Vec<_> = state
         .jobs
@@ -1017,12 +1031,24 @@ pub(super) fn resume(hub: Arc<Hub>, job: Job) -> Result<(), AgentError> {
     launch_inner(hub, job, None, true)
 }
 
+fn begin_recovery_attempt(hub: &Hub, id: &str) -> Result<(), AgentError> {
+    hub.mutate(|state| {
+        let job = state.jobs.get_mut(id).ok_or_else(AgentError::internal)?;
+        if job.recovery_attempt_pending {
+            job.recovery_attempts = job.recovery_attempts.saturating_add(1);
+            job.recovery_attempt_pending = false;
+        }
+        Ok(())
+    })
+}
+
 fn launch_inner(
     hub: Arc<Hub>,
     job: Job,
     prompt: Option<String>,
     recovery: bool,
 ) -> Result<(), AgentError> {
+    let recovery_attempt = job.recovery_attempt_pending;
     let prepared = if recovery {
         storage::resume_worker(&hub, &job)
     } else {
@@ -1091,6 +1117,9 @@ fn launch_inner(
                 flow,
                 scope: task_job.scope.clone(),
             };
+            if recovery_attempt {
+                begin_recovery_attempt(&task_hub, &task_job.id)?;
+            }
             super::super::run_turn(
                 &task_session,
                 super::super::TurnRuntime {

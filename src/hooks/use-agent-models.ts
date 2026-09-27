@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { libraryError } from "@/core/library";
 import type { Workflow, WorkflowAgent } from "@/core/workflow";
 import { modelChoiceSchema } from "@/core/workflow-catalog";
+import { sameExecutionTarget } from "@/core/executors";
 
 const choiceSchema = modelChoiceSchema;
 const configSchema = z.record(z.string(), choiceSchema);
@@ -28,6 +29,7 @@ export function useAgentModels() {
     return () => { active = false; version.current += 1; dispose?.(); };
   }, [refresh]);
   const save = async (flow: Workflow, role: WorkflowAgent["role"], choice: ModelChoice) => {
+    if (choice.fallback && sameExecutionTarget(choice, choice.fallback)) { toast.error("Escolha um modelo secundário diferente do principal."); return false; }
     if (flight.current) return false;
     flight.current = true; setSaving(true); ++version.current;
     try { const config = configSchema.parse(await invoke("set_agent_model", { flow, role, choice })); ++version.current; setData(config); setError(null); return true; }

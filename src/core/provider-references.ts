@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { modelChoiceSchema } from "./workflow-catalog";
 import { enabledModels, type ProviderAccount, type ProviderModel } from "./provider-accounts";
-import { executorOf } from "./executors";
+import { executorOf, sameExecutionTarget } from "./executors";
 
 export type ModelChoice = z.infer<typeof modelChoiceSchema>;
 export const providerReferenceSchema = z.object({
@@ -28,6 +28,14 @@ export function compatibleModels(account: ProviderAccount, kind: ReferenceKind):
 }
 
 export function modelProblem(choice: ModelChoice, accounts: ProviderAccount[], kind: ReferenceKind = "custom_agent"): string | null {
+  const primaryProblem = modelTargetProblem(choice, accounts, kind);
+  if (primaryProblem || !choice.fallback) return primaryProblem;
+  if (sameExecutionTarget(choice, choice.fallback)) return "Escolha um modelo secundário diferente do principal.";
+  const fallbackProblem = modelTargetProblem(choice.fallback, accounts, kind);
+  return fallbackProblem ? `Modelo secundário: ${fallbackProblem}` : null;
+}
+
+function modelTargetProblem(choice: ModelChoice, accounts: ProviderAccount[], kind: ReferenceKind): string | null {
   if (executorOf(choice) === "claude") return null;
   const account = accounts.find(account => account.alias === choice.account);
   if (!account) return `O provedor ${choice.account} não existe mais. Escolha outro provedor e modelo.`;

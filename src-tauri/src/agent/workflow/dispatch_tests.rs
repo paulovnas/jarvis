@@ -644,8 +644,10 @@ fn verified_progress_allows_recovery_but_a_failed_child_does_not() {
         None,
     )
     .unwrap();
-    assert_eq!(recovered.recovery_attempts, 1);
+    assert_eq!(recovered.recovery_attempts, 0);
     drop(state);
+    begin_recovery_attempt(&hub, &parent.id).unwrap();
+    assert_eq!(hub.job(&parent.id).unwrap().recovery_attempts, 1);
     let exec = Execution {
         hub: hub.clone(),
         id: parent.id.clone(),
@@ -950,8 +952,163 @@ async fn cancellation_reaches_nested_workers_and_failure_recovery_limit_is_enfor
         None,
     )
     .unwrap();
-    assert_eq!(recovered.recovery_attempts, 1);
+    assert_eq!(recovered.recovery_attempts, 0);
     assert_eq!(recovered.id, parent.id);
+}
+
+#[test]
+fn failed_retry_dependencies_preserve_the_worker_checkpoint_and_budget() {
+    let (_fixture, hub) = hub();
+    let mut builder = job(&hub, Role::Builder, "backend");
+    builder.status = Status::Failed;
+    let mut active = job(&hub, Role::Reviewer, "other");
+    active.status = Status::Running;
+    let mut designer = job(&hub, Role::Designer, "frontend");
+    designer.status = Status::Failed;
+    designer.error = Some("Provider retry budget exhausted".into());
+    designer.recovery_attempts = 1;
+    designer.dependencies = vec![active.id.clone(), builder.id.clone()];
+    let mut state = hub.manifest.lock().unwrap();
+    state.jobs.insert(builder.id.clone(), builder.clone());
+    state.jobs.insert(active.id.clone(), active);
+    state.jobs.insert(designer.id.clone(), designer.clone());
+    let before = serde_json::to_value(&*state).unwrap();
+    let error = prepare_retry(
+        &mut state,
+        "main",
+        Flow::Planned,
+        Role::Planner,
+        &designer.id,
+        None,
+    )
+    .unwrap_err();
+    assert!(error.message.contains(&builder.id));
+    assert_eq!(serde_json::to_value(&*state).unwrap(), before);
+}
+
+#[tokio::test]
+async fn dependency_failure_while_queued_does_not_spend_the_last_worker_recovery() {
+    let (_fixture, hub) = hub();
+    let mut builder = job(&hub, Role::Builder, "backend");
+    builder.status = Status::Running;
+    let mut designer = job(&hub, Role::Designer, "frontend");
+    designer.status = Status::Failed;
+    designer.recovery_attempts = 1;
+    designer.dependencies = vec![builder.id.clone()];
+    let queued = hub
+        .mutate(|state| {
+            state.jobs.insert(builder.id.clone(), builder.clone());
+            state.jobs.insert(designer.id.clone(), designer.clone());
+            prepare_retry(
+                state,
+                "main",
+                Flow::Planned,
+                Role::Planner,
+                &designer.id,
+                None,
+            )
+        })
+        .unwrap();
+    assert_eq!(queued.recovery_attempts, 1);
+    assert!(continuation_instructions(&queued).contains("uncertain tool action"));
+    launch(
+        hub.clone(),
+        queued,
+        Some("Recover the remaining work".into()),
+    )
+    .unwrap();
+    settle(&hub, &builder, &Err(AgentError::internal()), None).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), await_children_settled(&hub, "main"))
+        .await
+        .unwrap();
+    let failed = hub.job(&designer.id).unwrap();
+    assert_eq!(failed.status, Status::Failed);
+    assert_eq!(failed.recovery_attempts, 1);
+    assert!(failed.error.unwrap().contains(&builder.id));
+    hub.mutate(|state| {
+        state.jobs.get_mut(&builder.id).unwrap().status = Status::Completed;
+        prepare_retry(
+            state,
+            "main",
+            Flow::Planned,
+            Role::Planner,
+            &designer.id,
+            None,
+        )
+    })
+    .unwrap();
+    begin_recovery_attempt(&hub, &designer.id).unwrap();
+    assert_eq!(hub.job(&designer.id).unwrap().recovery_attempts, 2);
+    settle(&hub, &designer, &Err(AgentError::internal()), None).unwrap();
+    assert!(hub
+        .mutate(|state| prepare_retry(
+            state,
+            "main",
+            Flow::Planned,
+            Role::Planner,
+            &designer.id,
+            None,
+        ))
+        .is_err());
+}
+
+#[tokio::test]
+async fn restarted_recovery_charges_only_the_attempt_that_had_not_started() {
+    for started in [false, true] {
+        let (_fixture, hub) = hub();
+        let mut worker = job(&hub, Role::Designer, "frontend");
+        worker.status = Status::Failed;
+        worker.recovery_attempts = 1;
+        let queued = hub
+            .mutate(|state| {
+                state.jobs.insert(worker.id.clone(), worker.clone());
+                prepare_retry(
+                    state,
+                    "main",
+                    Flow::Planned,
+                    Role::Planner,
+                    &worker.id,
+                    None,
+                )
+            })
+            .unwrap();
+        let (session, signal) =
+            storage::worker(&hub, &queued, Some("Resume the repair".into())).unwrap();
+        if started {
+            await_admission(&hub, &queued, signal).await.unwrap();
+            begin_recovery_attempt(&hub, &worker.id).unwrap();
+        }
+        drop(session);
+        let saved: Value =
+            serde_json::from_slice(&std::fs::read(hub.directory.join("state.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            saved["jobs"][&worker.id].get("recoveryAttemptPending"),
+            (!started).then_some(&Value::Bool(true)),
+        );
+        let loaded = storage::load(&hub.directory, &hub.root.id)
+            .unwrap()
+            .unwrap();
+        let (recovered, mut resumed) =
+            storage::prepare_recovery(&hub.directory, loaded, Flow::Complete, "run", vec![])
+                .unwrap();
+        assert_eq!(resumed.len(), 1);
+        assert_eq!(resumed[0].recovery_attempt_pending, !started);
+        assert_eq!(resumed[0].recovery_attempts, if started { 2 } else { 1 });
+        *hub.manifest.lock().unwrap() = recovered;
+        // The isolated fixture has no provider account; reaching that preflight
+        // failure proves the resumed worker started without a network request.
+        resume(hub.clone(), resumed.remove(0)).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), await_children_settled(&hub, "main"))
+            .await
+            .unwrap();
+        let finished = hub.job(&worker.id).unwrap();
+        assert_eq!(finished.status, Status::Failed);
+        assert_eq!(finished.recovery_attempts, 2);
+        assert!(!finished.recovery_attempt_pending);
+        begin_recovery_attempt(&hub, &worker.id).unwrap();
+        assert_eq!(hub.job(&worker.id).unwrap().recovery_attempts, 2);
+    }
 }
 
 fn dispatch_for(job: &Job) -> Dispatch {

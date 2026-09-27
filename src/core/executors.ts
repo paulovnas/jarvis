@@ -6,6 +6,7 @@ export type ExecutionChoice = { executor?: Executor; account: string; model: str
 export type ExecutionSelection = { executor?: Executor; model: string; reasoning: string | null };
 export const executorOf = (choice?: { executor?: Executor } | null): Executor => choice?.executor ?? "jarvis";
 export const executionLabel = (choice: ExecutionChoice) => `${executorOf(choice) === "claude" ? "Claude Code" : choice.account} / ${choice.model}`;
+export const sameExecutionTarget = (first: ExecutionChoice, second: ExecutionChoice) => executorOf(first) === executorOf(second) && first.account === second.account && first.model === second.model;
 
 export function executionSelection(choice?: ExecutionChoice | null): ExecutionSelection | null {
   return choice ? { executor: executorOf(choice), model: executorOf(choice) === "claude" ? choice.model : `${choice.account}/${choice.model}`, reasoning: choice.reasoning } : null;

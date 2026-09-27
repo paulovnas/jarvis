@@ -9,6 +9,8 @@ pub struct ModelChoice {
     pub account: String,
     pub model: String,
     pub reasoning: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<Box<ModelChoice>>,
 }
 pub type ModelSettings = BTreeMap<String, ModelChoice>;
 
@@ -33,6 +35,18 @@ impl ModelChoice {
             crate::claude::validate_selection(&self.model, self.reasoning.as_deref())
                 .map_err(|message| invalid(&message))?;
         }
+        if let Some(fallback) = &self.fallback {
+            if fallback.fallback.is_some()
+                || (self.executor == fallback.executor
+                    && self.account == fallback.account
+                    && self.model == fallback.model)
+            {
+                return Err(invalid(
+                    "Escolha um único modelo secundário diferente do principal.",
+                ));
+            }
+            fallback.validate_shape()?;
+        }
         Ok(())
     }
 
@@ -51,19 +65,21 @@ pub(crate) fn validate_choice(
     choice: &ModelChoice,
 ) -> Result<(), AgentError> {
     choice.validate_shape()?;
-    if choice.executor == crate::claude::Executor::Claude {
-        crate::claude::validate_available_model(home, &choice.model)
-            .map_err(|message| AgentError::new("claude_provider", &message))
-    } else {
-        oauth.inference_model(
-            state,
-            home,
-            &choice.account,
-            &choice.model,
-            choice.reasoning.as_deref(),
-        )?;
-        Ok(())
+    for selection in std::iter::once(choice).chain(choice.fallback.as_deref()) {
+        if selection.executor == crate::claude::Executor::Claude {
+            crate::claude::validate_available_model(home, &selection.model)
+                .map_err(|message| AgentError::new("claude_provider", &message))?;
+        } else {
+            oauth.inference_model(
+                state,
+                home,
+                &selection.account,
+                &selection.model,
+                selection.reasoning.as_deref(),
+            )?;
+        }
     }
+    Ok(())
 }
 
 pub(in crate::agent) fn key(flow: Flow, role: Role) -> String {
@@ -184,14 +200,17 @@ pub async fn set_agent_model(
     let result = tauri::async_runtime::spawn_blocking(move || {
         validate_choice(&state, &oauth, &home, &choice)?;
         state.with_connection(&home, |db| {
-            if choice.executor == crate::claude::Executor::Jarvis
-                && !crate::persistence::list_provider_accounts(db)?
-                    .iter()
-                    .any(|account| account.alias == choice.account && account.enabled)
-            {
-                return Err(invalid(
-                    "O provedor foi removido ou desativado. Escolha outro modelo.",
-                ));
+            let accounts = crate::persistence::list_provider_accounts(db)?;
+            for selection in std::iter::once(&choice).chain(choice.fallback.as_deref()) {
+                if selection.executor == crate::claude::Executor::Jarvis
+                    && !accounts
+                        .iter()
+                        .any(|account| account.alias == selection.account && account.enabled)
+                {
+                    return Err(invalid(
+                        "O provedor foi removido ou desativado. Escolha outro modelo.",
+                    ));
+                }
             }
             let mut config = configured(db, &home)?;
             config.insert(key(flow, role), choice);
@@ -228,12 +247,14 @@ mod instruction_tests {
         let legacy = json!({"account":"existing","model":"existing-model","reasoning":null});
         let native: ModelChoice = serde_json::from_value(legacy.clone()).unwrap();
         assert_eq!(native.executor, crate::claude::Executor::Jarvis);
+        assert!(native.fallback.is_none());
         assert_eq!(serde_json::to_value(&native).unwrap(), legacy);
         let choice = ModelChoice {
             executor: crate::claude::Executor::Claude,
             account: String::new(),
             model: "sonnet".into(),
             reasoning: Some("high".into()),
+            fallback: None,
         };
         let home = tempfile::tempdir().unwrap();
         validate_choice(
@@ -264,6 +285,67 @@ mod instruction_tests {
         invalid_choice.account.clear();
         invalid_choice.reasoning = Some("invalid-effort".into());
         assert!(invalid_choice.validate_shape().is_err());
+    }
+
+    #[test]
+    fn secondary_model_round_trips_and_rejects_duplicate_or_nested_targets() {
+        let mut choice: ModelChoice = serde_json::from_value(json!({
+            "account":"primary","model":"model-a","reasoning":null,
+            "fallback":{"account":"secondary","model":"model-b","reasoning":"high"}
+        }))
+        .unwrap();
+        choice.validate_shape().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir(crate::data_dir::root(home.path())).unwrap();
+        fs::write(
+            crate::data_dir::root(home.path()).join("agents.json"),
+            json!({"standard/builder":choice}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            read(home.path()).unwrap().get("standard/builder"),
+            Some(&choice)
+        );
+
+        let mut duplicate = choice.clone();
+        duplicate.fallback = None;
+        duplicate.reasoning = Some("low".into());
+        choice.fallback = Some(Box::new(duplicate));
+        assert!(choice.validate_shape().is_err());
+        choice.fallback.as_mut().unwrap().account = "secondary".into();
+        choice.validate_shape().unwrap();
+        choice.fallback.as_mut().unwrap().fallback = Some(Box::new(
+            serde_json::from_value(json!({
+                "account":"third","model":"model-c","reasoning":null
+            }))
+            .unwrap(),
+        ));
+        assert!(choice.validate_shape().is_err());
+    }
+
+    #[test]
+    fn secondary_model_requires_an_enabled_account() {
+        let home = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        state
+            .with_connection(home.path(), |db| {
+                crate::persistence::insert_provider_account(
+                    db,
+                    "openai-codex-disabled",
+                    "disabled",
+                )?;
+                db.execute("UPDATE provider_accounts SET enabled=0", [])?;
+                Ok::<_, crate::persistence::PersistenceError>(())
+            })
+            .unwrap();
+        let choice: ModelChoice = serde_json::from_value(json!({
+            "executor":"claude","account":"","model":"sonnet","reasoning":null,
+            "fallback":{"account":"openai-codex-disabled","model":"model-b","reasoning":null}
+        }))
+        .unwrap();
+        let error = validate_choice(&state, &OpenAiCodexState::default(), home.path(), &choice)
+            .unwrap_err();
+        assert!(error.message.contains("Ative a conta"));
     }
 
     #[test]

@@ -500,7 +500,11 @@ pub(super) fn worker(
         }
         session.update(true, |data| {
             let current = data.turns.last_mut().unwrap();
-            current.turn.options = job.options.clone();
+            // The journal commits the effective model before the manifest. Keep
+            // its selection if a crash interrupted synchronization of the latter.
+            if !super::super::model_fallback::used(current) {
+                current.turn.options = job.options.clone();
+            }
             current.mcp_intent = Some(mcp_intent);
             current.wire.push(json!({
                 "role":"user", "_jarvis_runtime":true,

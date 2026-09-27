@@ -23,6 +23,7 @@ mod journal;
 pub(crate) mod journal_maintenance;
 mod lsp;
 pub(crate) mod maintenance;
+mod model_fallback;
 mod model_instructions;
 mod parallel_tools;
 mod patch;
@@ -2476,6 +2477,7 @@ async fn preserve_user_mcp_intent(
     })
 }
 
+#[derive(Clone, Copy)]
 struct TurnRuntime<'a> {
     grants: &'a execution_grants::GrantStore,
     state: &'a AppState,
@@ -2485,6 +2487,44 @@ struct TurnRuntime<'a> {
 }
 
 fn run_turn<'a>(
+    session: &'a Arc<Session>,
+    runtime: TurnRuntime<'a>,
+    signal: watch::Receiver<bool>,
+    execution: Option<workflow::Execution>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + 'a>> {
+    Box::pin(async move {
+        if let Some(execution) = &execution {
+            let effective = {
+                let data = session.data.lock().map_err(|_| AgentError::internal())?;
+                data.turns
+                    .last()
+                    .filter(|turn| model_fallback::used(turn))
+                    .map(|turn| {
+                        let options = &turn.turn.options;
+                        workflow::settings::ModelChoice {
+                            executor: options.executor,
+                            account: options.account.clone(),
+                            model: options.model.clone(),
+                            reasoning: options.reasoning.clone(),
+                            fallback: None,
+                        }
+                    })
+            };
+            if let Some(choice) = effective {
+                execution.set_effective_model(&choice)?;
+            }
+        }
+        let result = run_turn_once(session, runtime, signal.clone(), execution.clone()).await;
+        if let Err(error) = &result {
+            if model_fallback::recover(session, &signal, execution.as_ref(), error).await? {
+                return run_turn_once(session, runtime, signal, execution).await;
+            }
+        }
+        result
+    })
+}
+
+fn run_turn_once<'a>(
     session: &'a Arc<Session>,
     runtime: TurnRuntime<'a>,
     mut signal: watch::Receiver<bool>,

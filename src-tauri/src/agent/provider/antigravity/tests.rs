@@ -348,3 +348,169 @@ async fn cancelled_stream_does_not_finish_or_emit_output() {
         .unwrap();
     assert_eq!(error.code, "cancelled");
 }
+
+#[tokio::test]
+async fn buffered_tool_call_can_arrive_after_two_minutes_of_reasoning_silence() {
+    let super::super::tests::ControlledSseServer {
+        request,
+        connected,
+        chunks,
+        task: server,
+    } = super::super::tests::controlled_sse_server_with_client(
+        super::super::http_client_for(&credential()).unwrap(),
+    );
+    let (_cancel, signal) = watch::channel(false);
+    let (deltas, mut observed) = tokio::sync::mpsc::unbounded_channel();
+    let task = tokio::spawn(async move {
+        receive(
+            request.send().await.unwrap(),
+            "gemini-3.8-flash",
+            signal,
+            &mut |delta| {
+                assert!(!matches!(delta, Delta::ToolReady(_)));
+                if let Delta::Summary(summary) = delta {
+                    deltas.send(summary).unwrap();
+                }
+                Ok(())
+            },
+        )
+        .await
+    });
+    connected.await.unwrap();
+    chunks.send("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Preparing the component\"}]}}]}}\n\n".into()).unwrap();
+    assert_eq!(
+        observed.recv().await.as_deref(),
+        Some("Preparing the component")
+    );
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(121)).await;
+    chunks.send("data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"write\",\"args\":{\"path\":\"component.tsx\",\"content\":\"complete component\"}}}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":100,\"candidatesTokenCount\":5}}}\n\n".into()).unwrap();
+    tokio::time::resume();
+    let result = tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(result.calls.len(), 1);
+    assert_eq!(result.calls[0].name, "write");
+    assert_eq!(result.usage.unwrap().output_tokens, 5);
+    assert!(
+        !server.is_finished(),
+        "STOP must not wait for the server to close SSE"
+    );
+    drop(chunks);
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn silent_or_keepalive_streams_expire_with_phase_and_request_id_after_five_minutes() {
+    for (send_reasoning, keepalives) in [(false, false), (false, true), (true, false), (true, true)]
+    {
+        let super::super::tests::ControlledSseServer {
+            request,
+            connected,
+            chunks,
+            task: server,
+        } = super::super::tests::controlled_sse_server_with_client(
+            super::super::http_client_for(&credential()).unwrap(),
+        );
+        let (_cancel, signal) = watch::channel(false);
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let (deltas, mut observed) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(async move {
+            let response = request.send().await.unwrap();
+            ready.send(()).unwrap();
+            receive(response, "gemini-3.8-flash", signal, &mut |delta| {
+                if let Delta::Summary(summary) = delta {
+                    deltas.send(summary).unwrap();
+                }
+                Ok(())
+            })
+            .await
+        });
+        connected.await.unwrap();
+        chunks.send("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nx-request-id: request-test\r\nConnection: close\r\n\r\n".into()).unwrap();
+        started.await.unwrap();
+        if send_reasoning {
+            chunks.send("data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Thinking\"}]}}]}}\n\n".into()).unwrap();
+            assert_eq!(observed.recv().await.as_deref(), Some("Thinking"));
+        }
+        tokio::time::pause();
+        for _ in 0..2 {
+            tokio::time::advance(Duration::from_secs(100)).await;
+            if keepalives {
+                chunks.send(": keepalive\n\ndata: {}\n\n".into()).unwrap();
+                // Let the local socket deliver its keepalive before advancing time.
+                for _ in 0..16 {
+                    tokio::task::yield_now().await;
+                }
+            }
+        }
+        tokio::time::advance(Duration::from_secs(101)).await;
+        let error = task.await.unwrap().unwrap_err();
+        assert_eq!(error.code, "provider_timeout");
+        assert!(error.message.contains("300 segundos"));
+        assert!(error.message.contains(if send_reasoning {
+            "continuação"
+        } else {
+            "primeiro evento"
+        }));
+        let metadata = error.provider_metadata.unwrap();
+        assert_eq!(metadata.http_status, Some(200));
+        assert_eq!(metadata.request_id.as_deref(), Some("request-test"));
+        drop(chunks);
+        server.await.unwrap();
+        tokio::time::resume();
+    }
+}
+
+#[test]
+fn empty_events_are_not_inference_progress() {
+    let mut state = Output::default();
+    for event in [
+        json!({}),
+        json!({"response":{}}),
+        json!({"response":{"candidates":[{"content":{"parts":[{"text":""}]}}]}}),
+    ] {
+        assert!(!state.event(&event, &mut |_| Ok(())).unwrap());
+    }
+    assert!(state.event(&json!({"response":{"candidates":[{"content":{"parts":[{"thought":true,"text":"Thinking"}]}}]}}), &mut |_| Ok(())).unwrap());
+}
+
+#[tokio::test]
+async fn cancellation_during_buffered_tool_generation_is_immediate() {
+    let super::super::tests::ControlledSseServer {
+        request,
+        connected,
+        chunks,
+        task: server,
+    } = super::super::tests::controlled_sse_server_with_client(
+        super::super::http_client_for(&credential()).unwrap(),
+    );
+    let (cancel, signal) = watch::channel(false);
+    let (deltas, mut observed) = tokio::sync::mpsc::unbounded_channel();
+    let task = tokio::spawn(async move {
+        receive(
+            request.send().await.unwrap(),
+            "gemini-3.8-flash",
+            signal,
+            &mut |delta| {
+                if let Delta::Summary(summary) = delta {
+                    deltas.send(summary).unwrap();
+                }
+                Ok(())
+            },
+        )
+        .await
+    });
+    connected.await.unwrap();
+    chunks.send("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Thinking\"}]}}]}}\n\n".into()).unwrap();
+    assert_eq!(observed.recv().await.as_deref(), Some("Thinking"));
+    tokio::time::pause();
+    let started = tokio::time::Instant::now();
+    cancel.send(true).unwrap();
+    assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
+    assert_eq!(started.elapsed(), Duration::ZERO);
+    drop(chunks);
+    server.await.unwrap();
+}

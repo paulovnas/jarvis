@@ -1,5 +1,47 @@
 use super::*;
 
+#[test]
+fn standalone_github_keeps_the_configured_secondary_and_resumed_effective_model() {
+    let fixture = crate::agent::tests::Fixture::new();
+    let state = AppState::default();
+    state
+        .with_connection(&fixture.root, |_| Ok::<_, AgentError>(()))
+        .unwrap();
+    let choice: settings::ModelChoice = serde_json::from_value(json!({
+        "executor":"claude", "account":"", "model":"sonnet", "reasoning":null,
+        "fallback":{"executor":"claude", "account":"", "model":"opus", "reasoning":null}
+    }))
+    .unwrap();
+    std::fs::write(
+        crate::data_dir::root(&fixture.root).join("agents.json"),
+        json!({"publication/github":choice}).to_string(),
+    )
+    .unwrap();
+    let mut options = crate::agent::tests::options(ApprovalMode::Yolo);
+    options.workflow = Some(Flow::Custom);
+    options.custom_agent_id = Some("builtin:github".into());
+    let agent = resolve_agent(
+        &state,
+        &OpenAiCodexState::default(),
+        &fixture.root,
+        &options,
+        false,
+    )
+    .unwrap();
+    assert_eq!(agent.model.as_ref(), Some(&choice));
+    choice.fallback.as_ref().unwrap().apply(&mut options);
+    let resumed = resolve_agent(
+        &state,
+        &OpenAiCodexState::default(),
+        &fixture.root,
+        &options,
+        true,
+    )
+    .unwrap();
+    assert_eq!(resumed.model.as_ref(), Some(&choice));
+    assert_eq!(options.model, "opus");
+}
+
 #[tokio::test]
 async fn canvas_cursor_survives_failure_and_rework_without_repeating_confirmed_steps() {
     for fail_at in [1, 2] {
@@ -269,6 +311,7 @@ fn custom_capabilities_models_and_instructions_cannot_escape_configured_scope() 
         account: "chosen".into(),
         model: "chosen-model".into(),
         reasoning: Some("high".into()),
+        fallback: None,
     });
     apply_model(&mut options, &agent);
     assert_eq!(options.account, "chosen");

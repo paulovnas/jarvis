@@ -164,6 +164,7 @@ fn assisted_agent_proposals_accept_an_external_executor_without_a_provider() {
         account: String::new(),
         model: "sonnet".into(),
         reasoning: Some("high".into()),
+        fallback: None,
     });
     let call = tool(
         "jarvis_propose_agent",

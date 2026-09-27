@@ -105,6 +105,7 @@ fn from_options(options: &TurnOptions) -> ModelChoice {
         account: options.account.clone(),
         model: options.model.clone(),
         reasoning: options.reasoning.clone(),
+        fallback: None,
     }
 }
 
@@ -201,6 +202,7 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
                     account,
                     model: model.unwrap_or_default(),
                     reasoning: None,
+                    fallback: None,
                 },
             )?);
         }
@@ -321,6 +323,28 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
             }
         }
     }
+    let secondary = references
+        .iter()
+        .filter_map(|item| {
+            item.source
+                .fallback
+                .as_deref()
+                .map(|fallback| (item, fallback))
+        })
+        .map(|(item, fallback)| {
+            let mut details = item.details.clone();
+            details.push("Modelo secundário".into());
+            reference(
+                db,
+                format!("{}:fallback", item.item_key),
+                item.kind,
+                item.label.clone(),
+                details,
+                fallback.clone(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    references.extend(secondary);
     references.retain(|item| item.choice.executor == crate::claude::Executor::Jarvis);
     Ok(references)
 }
@@ -381,6 +405,11 @@ fn apply(
                 code: "provider_dependencies".into(),
                 message: cause.message,
             })?;
+        if replacement.choice.fallback.is_some() {
+            return Err(error(
+                "Substitua o modelo principal e o secundário separadamente.",
+            ));
+        }
         if replacement.choice.account == alias {
             return Err(error(
                 "Escolha um provedor diferente daquele que será removido.",
@@ -433,6 +462,8 @@ fn apply(
                 .map_err(storage)?,
         }
     }
+    // Both replacements must still form a valid primary/secondary pair before commit.
+    inventory(db, home)?;
     db.execute(
         "UPDATE provider_bindings_revision SET revision=revision+1 WHERE id=1",
         [],

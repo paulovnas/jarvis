@@ -770,12 +770,19 @@ pub async fn get_workflow_catalog(
 pub async fn mutate_workflow_catalog(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
+    oauth: tauri::State<'_, OpenAiCodexState>,
     revision: u64,
     mutation: Mutation,
 ) -> Result<CatalogView, AgentError> {
     let state = state.inner().clone();
+    let oauth = oauth.inner().clone();
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     let result = tauri::async_runtime::spawn_blocking(move || {
+        if let Mutation::SaveAgent { agent } = &mutation {
+            if let Some(choice) = &agent.model {
+                settings::validate_choice(&state, &oauth, &home, choice)?;
+            }
+        }
         mutate_configured(&state, &home, revision, mutation)
     })
     .await

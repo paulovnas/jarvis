@@ -157,7 +157,11 @@ impl Request<'_> {
                     }
                 }
                 Err(error) if !retryable(&error) => return Err(error),
-                Err(error) if retries == MAX_RETRIES => return Err(AgentError::new("provider_retry_exhausted", &format!("Não foi possível reconectar após {MAX_RETRIES} tentativas consecutivas. {} O progresso concluído foi preservado.", error.message))),
+                Err(error) if retries == MAX_RETRIES => return Err(AgentError {
+                    code: "provider_retry_exhausted".into(),
+                    message: format!("Não foi possível reconectar após {MAX_RETRIES} tentativas consecutivas. {} O progresso concluído foi preservado.", error.message),
+                    ..error
+                }),
                 Err(error) => {
                     retries += 1;
                     let delay = backoff(retries, base_delay, error.retry_after);

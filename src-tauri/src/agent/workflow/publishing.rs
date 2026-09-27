@@ -47,6 +47,7 @@ fn prepare(hub: &Hub) -> Result<Job, AgentError> {
         duration_ms: 0,
         attempts: 1,
         recovery_attempts: 0,
+        recovery_attempt_pending: false,
         handoff: None,
         error: None,
         recovery: None,

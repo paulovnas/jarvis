@@ -3,6 +3,10 @@
 use super::*;
 use crate::openai_codex::antigravity::{user_agent, ENDPOINTS};
 
+// Gemini may buffer a complete tool argument object after its reasoning chunks.
+// Keep a bounded wait that permits this gap without changing other providers.
+pub(super) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
 fn push_part(contents: &mut Vec<Value>, role: &str, part: Value) {
     if let Some(last) = contents.last_mut().filter(|last| last["role"] == role) {
         if let Some(parts) = last["parts"].as_array_mut() {
@@ -381,7 +385,8 @@ impl Output {
         &mut self,
         event: &Value,
         delta: &mut impl FnMut(Delta) -> Result<(), AgentError>,
-    ) -> Result<(), AgentError> {
+    ) -> Result<bool, AgentError> {
+        let mut progress = false;
         if !event["error"].is_null() {
             if overflow(event) {
                 return Err(overflow_error());
@@ -414,6 +419,7 @@ impl Output {
             for part in parts {
                 if let Some(text) = part["text"].as_str() {
                     if !text.is_empty() {
+                        progress = true;
                         delta(if part["thought"] == true {
                             Delta::Summary(text.into())
                         } else {
@@ -437,6 +443,7 @@ impl Output {
                     }
                 }
                 if part["functionCall"].is_object() || part["text"].is_string() {
+                    progress |= part["functionCall"].is_object();
                     self.parts.push(part.clone());
                 }
             }
@@ -446,6 +453,7 @@ impl Output {
                 return Err(finish_error(reason));
             }
             self.finished = true;
+            progress = true;
         }
         if response["usageMetadata"].is_object() {
             let u = &response["usageMetadata"];
@@ -459,7 +467,7 @@ impl Output {
                     .saturating_add(u["thoughtsTokenCount"].as_u64().unwrap_or(0)),
             });
         }
-        Ok(())
+        Ok(progress)
     }
     fn finish(self, model: &str) -> Result<Response, AgentError> {
         if !self.finished {
@@ -633,7 +641,7 @@ pub(crate) async fn grounded_search(
     signal: watch::Receiver<bool>,
 ) -> Result<Response, AgentError> {
     let body = grounded_body(credential, session, model, query, response_language)?;
-    let client = super::http_client()?;
+    let client = super::http_client_for(credential)?;
     let result = send_body(&client, credential, &body, model, signal, |_| Ok(())).await;
     if let Err(error) = &result {
         if error.code == "context_overflow" || error.code.starts_with("provider_") {
@@ -668,9 +676,33 @@ async fn send_body(
         .header("user-agent", user_agent())
         .header("accept", "text/event-stream")
         .json(&body);
-    let response = tokio::select! { _=cancelled(&mut signal)=>return Err(AgentError::cancelled()), result=request.send()=>result.map_err(|error|super::connection_error(error,"Não foi possível conectar ao Antigravity."))? };
+    let response = tokio::select! {
+        _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+        result = request.send() => result.map_err(|error| {
+            if error.is_timeout() {
+                if error.is_connect() {
+                    AgentError::new("provider_timeout", "A conexão com o Antigravity expirou antes de receber a resposta.")
+                } else {
+                    timeout_error("aguardando os cabeçalhos da resposta")
+                }
+            } else {
+                super::connection_error(error, "Não foi possível conectar ao Antigravity.")
+            }
+        })?,
+    };
     receive(response, model, signal, &mut on_delta).await
 }
+
+fn timeout_error(phase: &str) -> AgentError {
+    AgentError::new(
+        "provider_timeout",
+        &format!(
+            "O Antigravity ficou {} segundos sem responder ({phase}).",
+            STREAM_IDLE_TIMEOUT.as_secs()
+        ),
+    )
+}
+
 async fn receive(
     mut response: reqwest::Response,
     model: &str,
@@ -705,17 +737,47 @@ async fn receive(
     let mut parser = Sse::default();
     let mut output = Output::default();
     let mut size = 0;
+    let mut received_output = false;
+    let mut deadline = tokio::time::Instant::now() + STREAM_IDLE_TIMEOUT;
     loop {
-        let chunk = tokio::select! { _=cancelled(&mut signal)=>return Err(AgentError::cancelled()), result=tokio::time::timeout(parser.wait_timeout(),response.chunk())=>result.map_err(|_|AgentError::new("provider_timeout","O Antigravity ficou sem responder."))?.map_err(super::stream_read_error)? };
+        let phase = if received_output {
+            "aguardando a continuação da resposta"
+        } else {
+            "aguardando o primeiro evento"
+        };
+        let chunk = tokio::select! {
+            _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+            result = tokio::time::timeout_at(deadline, response.chunk()) => {
+                result.map_err(|_| timeout_error(phase)).and_then(|result| {
+                    result.map_err(|error| if error.is_timeout() {
+                        timeout_error(phase)
+                    } else {
+                        super::stream_read_error(error)
+                    })
+                }).map_err(|error| super::with_provider_metadata(
+                    error, Some(response.status().as_u16()), None, super::request_id(&response),
+                ))?
+            }
+        };
         let Some(chunk) = chunk else { break };
         size += chunk.len();
         if size > MAX_STREAM {
             return Err(protocol_error());
         }
         for event in parser.push(&chunk)? {
-            if let Err(error) = output.event(&event, on_delta) {
-                return Err(super::with_response_request_id(error, &response));
+            if output
+                .event(&event, on_delta)
+                .map_err(|error| super::with_response_request_id(error, &response))?
+            {
+                // Comments and empty events are transport keepalives, not progress.
+                received_output = true;
+                deadline = tokio::time::Instant::now() + STREAM_IDLE_TIMEOUT;
             }
+        }
+        // STOP completes the generation even if the server keeps SSE open.
+        // Process the entire chunk first to retain trailing usage metadata.
+        if output.finished {
+            return output.finish(model);
         }
     }
     // Some SSE implementations omit the final blank line at EOF.

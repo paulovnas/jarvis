@@ -2,6 +2,67 @@ use super::*;
 use crate::agent::tests::{options, session, Fixture};
 
 #[test]
+fn secondary_claude_starts_fresh_with_active_turn_receipts_on_first_turn() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let mut choice = options(ApprovalMode::Yolo);
+    choice.executor = crate::claude::Executor::Claude;
+    session
+        .reserve("Implemente sem publicar".into(), choice)
+        .unwrap();
+    let mut data = session.data.lock().unwrap();
+    let turn = data.turns.last_mut().unwrap();
+    turn.wire
+        .push(json!({"_jarvis_claude_session":"primary-session"}));
+    turn.turn.steps.push(Step {
+        text: "Arquivo criado".into(),
+        tools: vec![ToolCall {
+            id: "confirmed-write".into(),
+            name: "write".into(),
+            args: json!({"path":"saved.txt"}),
+            status: "completed".into(),
+            output: "Conteúdo salvo".into(),
+            duration_ms: 1,
+        }],
+        ..Step::default()
+    });
+    turn.wire
+        .push(json!({"role":"user","content":"Preserve o nome atual"}));
+    turn.wire
+        .push(json!({"_jarvis_model_fallback":{"to":"secondary"}}));
+    turn.turn.steps.push(Step {
+        text: "Continuando com o modelo secundário".into(),
+        context_id: Some("model-fallback".into()),
+        ..Step::default()
+    });
+    assert!(session_reference(&data).is_none());
+    let input = initial_input(&data, false).unwrap();
+    for expected in [
+        "sem publicar",
+        "Preserve o nome atual",
+        "confirmed-write",
+        "Conteúdo salvo",
+        "completed",
+        "historyIsPartial",
+        "Arquivo criado",
+    ] {
+        assert!(input.contains(expected), "missing {expected}");
+    }
+    data.turns
+        .last_mut()
+        .unwrap()
+        .wire
+        .push(json!({"_jarvis_claude_session":"secondary-session"}));
+    assert_eq!(
+        session_reference(&data).as_deref(),
+        Some("secondary-session")
+    );
+    assert!(initial_input(&data, true)
+        .unwrap()
+        .contains("interrupted Jarvis turn"));
+}
+
+#[test]
 fn executor_switch_keeps_intent_and_receipts_without_replaying_large_payloads() {
     let fixture = Fixture::new();
     let session = session(&fixture);

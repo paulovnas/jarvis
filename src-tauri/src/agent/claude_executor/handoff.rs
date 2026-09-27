@@ -17,7 +17,12 @@ fn excerpt(text: &str, limit: usize) -> String {
 }
 
 pub(super) fn history(data: &SessionData) -> Value {
-    let previous = &data.turns[..data.turns.len().saturating_sub(1)];
+    let fallback = data.turns.last().is_some_and(|turn| {
+        turn.wire
+            .iter()
+            .any(|item| item.get("_jarvis_model_fallback").is_some())
+    });
+    let previous = &data.turns[..data.turns.len().saturating_sub(usize::from(!fallback))];
     // Keep the original objective and immediately preceding request/corrections
     // verbatim. Those can carry authorizations that a short "continue" relies on.
     let mut requests = Vec::new();
@@ -53,7 +58,7 @@ pub(super) fn history(data: &SessionData) -> Value {
         }
     }
     let mut recent = previous.iter().rev().take(4).map(|turn| {
-        let answer = turn.turn.steps.iter().rev().find(|step| !step.text.is_empty()).map_or("", |step| step.text.as_str());
+        let answer = turn.turn.steps.iter().rev().find(|step| !step.text.is_empty() && step.context_id.as_deref() != Some("model-fallback")).map_or("", |step| step.text.as_str());
         json!({"userExcerpt":excerpt(&turn.turn.user, 1_500), "resultExcerpt":excerpt(answer, 2_000), "status":turn.turn.status})
     }).collect::<Vec<_>>();
     recent.reverse();

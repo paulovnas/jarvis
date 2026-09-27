@@ -113,14 +113,31 @@ pub(super) fn input(data: &SessionData) -> Vec<Value> {
         input.extend(prefix(context));
     }
     let worker = worker_replay::enabled(data);
+    let active = data.turns.last().map(|turn| &turn.turn.options);
     for (index, turn) in data.turns.iter().enumerate() {
         let start = through.min(turn.wire.len());
         through = through.saturating_sub(turn.wire.len());
-        if worker && index + 1 < data.turns.len() {
-            input.extend(worker_replay::project(turn, start));
+        let mut items = if worker && index + 1 < data.turns.len() {
+            worker_replay::project(turn, start)
         } else {
-            input.extend(turn.wire[start..].iter().cloned());
+            turn.wire[start..].to_vec()
+        };
+        if active.is_some_and(|options| {
+            options.executor != turn.turn.options.executor
+                || options.account != turn.turn.options.account
+                || options.model != turn.turn.options.model
+        }) {
+            super::model_fallback::portable(&mut items);
         }
+        input.extend(items);
+    }
+    if let Some(boundary) = input
+        .iter()
+        .rposition(|item| item["_jarvis_model_fallback"].is_object())
+    {
+        let after = input.split_off(boundary);
+        super::model_fallback::portable(&mut input);
+        input.extend(after);
     }
     retain_latest_workflow_checkpoint(&mut input);
     input

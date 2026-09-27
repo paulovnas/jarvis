@@ -137,6 +137,8 @@ struct Job {
     attempts: u8,
     #[serde(default)]
     recovery_attempts: u8,
+    #[serde(default, skip_serializing_if = "is_false")]
+    recovery_attempt_pending: bool,
     handoff: Option<Handoff>,
     error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -480,6 +482,45 @@ impl Execution {
     }
     pub(super) fn root(&self) -> &Arc<Session> {
         &self.hub.root
+    }
+    pub(super) fn secondary_model(&self) -> Result<Option<settings::ModelChoice>, AgentError> {
+        let state = self
+            .hub
+            .manifest
+            .lock()
+            .map_err(|_| AgentError::internal())?;
+        let custom = if self.id == "main" {
+            state.custom_agent.as_ref()
+        } else {
+            state
+                .jobs
+                .get(&self.id)
+                .and_then(|job| job.custom_agent.as_ref())
+        };
+        let choice = custom
+            .and_then(|agent| agent.model.as_ref())
+            .or_else(|| state.profiles.get(&settings::key(self.flow, self.role)));
+        Ok(choice
+            .and_then(|choice| choice.fallback.as_deref())
+            .cloned())
+    }
+
+    pub(super) fn set_effective_model(
+        &self,
+        choice: &settings::ModelChoice,
+    ) -> Result<(), AgentError> {
+        self.hub.mutate(|state| {
+            if self.id == "main" {
+                choice.apply(&mut state.options);
+            } else {
+                let job = state
+                    .jobs
+                    .get_mut(&self.id)
+                    .ok_or_else(AgentError::internal)?;
+                choice.apply(&mut job.options);
+            }
+            Ok(())
+        })
     }
     fn custom_agent(&self) -> Result<catalog::AgentDefinition, AgentError> {
         if self.id == "main" {
@@ -1111,7 +1152,7 @@ pub(super) fn validate_options(
                 custom::resolve(state, oauth, home, options)?;
             }
             (None, Some(_)) => {
-                custom::resolve_agent(state, oauth, home, options)?;
+                custom::resolve_agent(state, oauth, home, options, false)?;
             }
             _ => return Err(invalid("Escolha um agente ou fluxo customizado válido.")),
         }
@@ -1266,19 +1307,19 @@ pub(super) async fn run(
         return finish_hub(app, session, hub, result).await;
     }
     super::preserve_user_mcp_intent(session, &env.2, &env.0, &env.3, signal.clone()).await?;
-    let mut options = session
-        .data
-        .lock()
-        .map_err(|_| AgentError::internal())?
-        .turns
-        .last()
-        .ok_or_else(AgentError::internal)?
-        .turn
-        .options
-        .clone();
-    env.0.with_connection(&env.3, |db| {
-        super::provider_links::resolve_chat(db, &session.id, &mut options)
-    })?;
+    let (mut options, using_secondary) = {
+        let data = session.data.lock().map_err(|_| AgentError::internal())?;
+        let current = data.turns.last().ok_or_else(AgentError::internal)?;
+        (
+            current.turn.options.clone(),
+            super::model_fallback::used(current),
+        )
+    };
+    if !using_secondary {
+        env.0.with_connection(&env.3, |db| {
+            super::provider_links::resolve_chat(db, &session.id, &mut options)
+        })?;
+    }
     // Legacy Plan history keeps its read-only meaning until the user chooses a flow.
     if options.workflow.is_none() && options.mode == Mode::Plan {
         session.update(true, |data| {
@@ -1310,8 +1351,11 @@ pub(super) async fn run(
                 None,
             ),
             (None, Some(_)) => {
-                let agent = custom::resolve_agent(&env.0, &env.1, &env.3, &options)?;
-                custom::apply_model(&mut options, &agent);
+                let agent =
+                    custom::resolve_agent(&env.0, &env.1, &env.3, &options, using_secondary)?;
+                if !using_secondary {
+                    custom::apply_model(&mut options, &agent);
+                }
                 (None, Some(agent))
             }
             _ => return Err(invalid("Escolha um agente ou fluxo customizado válido.")),
@@ -1329,12 +1373,14 @@ pub(super) async fn run(
     };
     settings::validate(flow, &profiles)?;
     session.update(true, |data| {
-        settings::apply(
-            &mut data.turns.last_mut().unwrap().turn.options,
-            &profiles,
-            flow,
-            flow.root(),
-        );
+        if !using_secondary {
+            settings::apply(
+                &mut data.turns.last_mut().unwrap().turn.options,
+                &profiles,
+                flow,
+                flow.root(),
+            );
+        }
     })?;
     let environment = Environment {
         browser_app: Some(app.clone()),

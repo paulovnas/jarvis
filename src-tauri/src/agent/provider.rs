@@ -90,12 +90,13 @@ impl TurnSession {
             telemetry.clone(),
             super::telemetry::provider_kind(&credential),
         );
+        let client = http_client_for(&credential)?;
         Ok(Self {
             credential,
             authentication: None,
             capabilities,
             session_id,
-            client: http_client()?,
+            client,
             telemetry,
             incremental: tokio::sync::Mutex::new(incremental),
         })
@@ -276,14 +277,26 @@ impl TurnSession {
 }
 
 fn http_client() -> Result<reqwest::Client, AgentError> {
+    http_client_with_timeout(STREAM_IDLE_TIMEOUT)
+}
+
+fn http_client_with_timeout(idle_timeout: Duration) -> Result<reqwest::Client, AgentError> {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(20))
         // Healthy inference can outlive any fixed request deadline. Bound the
         // wait for headers and every subsequent read instead.
-        .read_timeout(STREAM_IDLE_TIMEOUT)
+        .read_timeout(idle_timeout)
         .build()
         .map_err(|_| AgentError::internal())
+}
+
+fn http_client_for(credential: &CodexCredential) -> Result<reqwest::Client, AgentError> {
+    if credential.project_id.is_some() {
+        http_client_with_timeout(antigravity::STREAM_IDLE_TIMEOUT)
+    } else {
+        http_client()
+    }
 }
 
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -698,7 +711,7 @@ pub(super) async fn stream(
     signal: watch::Receiver<bool>,
     on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
-    let client = http_client()?;
+    let client = http_client_for(credential)?;
     let capabilities = ModelCapabilities::resolve_for_options(credential, options);
     retry::Request {
         client,
@@ -1695,19 +1708,23 @@ mod tests {
         }
     }
 
-    struct ControlledSseServer {
-        request: reqwest::RequestBuilder,
-        connected: tokio::sync::oneshot::Receiver<()>,
-        chunks: std::sync::mpsc::Sender<String>,
-        task: tokio::task::JoinHandle<()>,
+    pub(super) struct ControlledSseServer {
+        pub(super) request: reqwest::RequestBuilder,
+        pub(super) connected: tokio::sync::oneshot::Receiver<()>,
+        pub(super) chunks: std::sync::mpsc::Sender<String>,
+        pub(super) task: tokio::task::JoinHandle<()>,
     }
 
     fn controlled_sse_server() -> ControlledSseServer {
+        controlled_sse_server_with_client(http_client().unwrap())
+    }
+
+    pub(super) fn controlled_sse_server_with_client(
+        client: reqwest::Client,
+    ) -> ControlledSseServer {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let request = http_client()
-            .unwrap()
-            .get(format!("http://{}", listener.local_addr().unwrap()));
+        let request = client.get(format!("http://{}", listener.local_addr().unwrap()));
         let (connected_tx, connected) = tokio::sync::oneshot::channel();
         let (chunks, commands) = std::sync::mpsc::channel::<String>();
         // Keep a blocking task alive so Tokio only advances the paused clock

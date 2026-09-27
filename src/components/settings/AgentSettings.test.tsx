@@ -56,6 +56,33 @@ it("saves the selected provider, model and supported effort only for the chosen 
   expect(call).not.toHaveBeenCalled();
 });
 
+it("shows no secondary by default, saves it for one native agent, restores it and removes it", async () => {
+  const user = userEvent.setup();
+  const primary = { account: accounts[0].alias, model: "gpt-5.6-sol", reasoning: "high" };
+  const fallback = { executor: "jarvis" as const, ...primary, account: "backup", reasoning: "xhigh" };
+  const providerAccounts = [...accounts, { ...accounts[0], alias: "backup" }];
+  vi.mocked(useAgentModels).mockReturnValue({ data: { "planned/planner": primary }, error: null, saving: false, save, refresh: vi.fn() });
+  const { rerender } = render(<AgentSettings accounts={providerAccounts} flowFilter="planned" />);
+  const name = "Modelo secundário de Planejador no fluxo Planejado";
+  expect(screen.getByRole("button", { name })).toHaveTextContent("Nenhum");
+  screen.getByRole("button", { name }).focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: "backup" })).focus(); await user.keyboard("{ArrowRight}");
+  (await screen.findByRole("menuitem", { name: /^GPT 5\.6 Sol/ })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Extra alto" }));
+  expect(save).toHaveBeenLastCalledWith("planned", "planner", { ...primary, fallback });
+  vi.mocked(useAgentModels).mockReturnValue({ data: { "planned/planner": { ...primary, fallback } }, error: null, saving: false, save, refresh: vi.fn() });
+  rerender(<AgentSettings accounts={providerAccounts} flowFilter="planned" />);
+  expect(screen.getByRole("button", { name })).toHaveTextContent("backup · GPT 5.6 Sol · Extra alto");
+  screen.getByRole("button", { name: "Modelo de Planejador no fluxo Planejado" }).focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: accounts[0].alias })).focus(); await user.keyboard("{ArrowRight}");
+  (await screen.findByRole("menuitem", { name: /^GPT 5\.6 Sol/ })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Extra alto" }));
+  expect(save).toHaveBeenLastCalledWith("planned", "planner", { ...primary, executor: "jarvis", reasoning: "xhigh", fallback });
+  screen.getByRole("button", { name }).focus(); await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Nenhum" }));
+  expect(save).toHaveBeenLastCalledWith("planned", "planner", { ...primary, fallback: null });
+});
+
 it("opens the chosen agent instructions on demand as read-only formatted Markdown", async () => {
   let resolve!: (value: unknown) => void;
   call.mockImplementationOnce(() => new Promise(done => { resolve = done; }));

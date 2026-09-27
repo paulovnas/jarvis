@@ -216,7 +216,7 @@ export function ChatComposer({
       : currentModelDef?.defaultReasoningLevel ?? currentModelDef?.reasoningLevels[0] ?? null;
   const chooseModel = (next: ModelSelection) => {
     if (selectedCustomAgent?.model) return;
-    if (agentModels && (selectedFlow.workflow !== "custom" || githubSelected)) { const targetFlow = githubSelected ? "publication" : selectedFlow.workflow ?? "standard"; void agentModels.save(targetFlow, rootRole(targetFlow), executionChoice(next)); }
+    if (agentModels && (selectedFlow.workflow !== "custom" || githubSelected)) { const targetFlow = githubSelected ? "publication" : selectedFlow.workflow ?? "standard"; void agentModels.save(targetFlow, rootRole(targetFlow), { ...agentModels.data?.[`${targetFlow}/${rootRole(targetFlow)}`], ...executionChoice(next) }); }
     else {
       const choice = executionChoice(next);
       const bound = resolveChatModel(modelBindings, draftKey, choice);

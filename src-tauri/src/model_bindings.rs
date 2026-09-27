@@ -21,23 +21,30 @@ pub(crate) fn resolve(
     key: &str,
     source: &ModelChoice,
 ) -> Result<ModelChoice, PersistenceError> {
-    if source.executor == crate::claude::Executor::Claude {
-        return Ok(source.clone());
-    }
-    let target: Option<String> = db
-        .query_row(
+    let target: Option<String> = if source.executor == crate::claude::Executor::Claude {
+        None
+    } else {
+        db.query_row(
             "SELECT target FROM provider_model_bindings WHERE item_key=?1 AND source=?2",
             params![key, encode(source)?],
             |row| row.get(0),
         )
-        .optional()?;
-    target.map_or_else(
+        .optional()?
+    };
+    let mut choice = target.map_or_else(
         || Ok(source.clone()),
         |target| {
             serde_json::from_str(&target)
                 .map_err(|_| PersistenceError::new("Invalid model replacement"))
         },
-    )
+    )?;
+    if let Some(fallback) = &source.fallback {
+        choice.fallback = Some(Box::new(resolve(db, &format!("{key}:fallback"), fallback)?));
+        choice
+            .validate_shape()
+            .map_err(|_| PersistenceError::new("Invalid secondary model replacement"))?;
+    }
+    Ok(choice)
 }
 
 pub(crate) fn replace(
@@ -67,8 +74,8 @@ pub(crate) fn revision(db: &Connection) -> Result<u64, PersistenceError> {
 
 pub(crate) fn forget_item(db: &Connection, key: &str) -> Result<(), PersistenceError> {
     db.execute(
-        "DELETE FROM provider_model_bindings WHERE item_key=?1",
-        [key],
+        "DELETE FROM provider_model_bindings WHERE item_key=?1 OR item_key=?2",
+        params![key, format!("{key}:fallback")],
     )?;
     Ok(())
 }
@@ -124,6 +131,7 @@ mod tests {
             account: String::new(),
             model: "sonnet".into(),
             reasoning: None,
+            fallback: None,
         };
         assert_eq!(encode(&source).unwrap(), legacy);
         db.execute(

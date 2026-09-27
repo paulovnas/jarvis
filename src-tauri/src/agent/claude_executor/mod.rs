@@ -33,6 +33,7 @@ fn session_reference(data: &SessionData) -> Option<String> {
         .rev()
         .take_while(|turn| turn.turn.options.executor == crate::claude::Executor::Claude)
         .flat_map(|turn| turn.wire.iter().rev())
+        .take_while(|item| item.get("_jarvis_model_fallback").is_none())
         .find_map(|item| item["_jarvis_claude_session"].as_str().map(str::to_owned))
 }
 
@@ -41,7 +42,13 @@ fn initial_input(data: &SessionData, resume: bool) -> Result<String, AgentError>
     let already_started = current
         .wire
         .iter()
+        .rev()
+        .take_while(|item| item.get("_jarvis_model_fallback").is_none())
         .any(|item| item["_jarvis_claude_session"].is_string());
+    let fallback = current
+        .wire
+        .iter()
+        .any(|item| item.get("_jarvis_model_fallback").is_some());
     let current_input = current
         .wire
         .iter()
@@ -52,7 +59,12 @@ fn initial_input(data: &SessionData, resume: bool) -> Result<String, AgentError>
     if resume && already_started {
         return Ok(format!("Continue this interrupted Jarvis turn from the persisted Claude context and confirmed tool results. Do not replay prior mutations. Inspect uncertain results before retrying. Current user objective and guidance:\n{current_input}"));
     }
-    if resume || (data.turns.len() == 1 && data.turn_base == 0 && data.extras.context.is_none()) {
+    if resume
+        || (!fallback
+            && data.turns.len() == 1
+            && data.turn_base == 0
+            && data.extras.context.is_none())
+    {
         return Ok(current_input);
     }
     // Bootstrap only when switching executors. Native Claude continuations use
@@ -247,7 +259,7 @@ async fn drive(
         } else {
             projection.apply(session, &event)?;
         }
-        if let Some(result) = projection::final_result(&event) {
+        if let Some(result) = projection.final_result(&event) {
             result?;
             queue::inject_pending_auxiliary(session, bridge.runtime.home).await?;
             if let Some(exec) = &bridge.execution {

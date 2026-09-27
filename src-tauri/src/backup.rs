@@ -273,9 +273,21 @@ fn clean_catalog(mut catalog: workflow::catalog::Catalog) -> workflow::catalog::
             .is_some_and(|choice| choice.executor == crate::claude::Executor::Jarvis)
         {
             agent.model = None;
+        } else if let Some(choice) = &mut agent.model {
+            clean_fallback(choice);
         }
     }
     catalog
+}
+
+fn clean_fallback(choice: &mut workflow::settings::ModelChoice) {
+    if choice
+        .fallback
+        .as_ref()
+        .is_some_and(|fallback| fallback.executor == crate::claude::Executor::Jarvis)
+    {
+        choice.fallback = None;
+    }
 }
 
 fn validate_payload(payload: &SettingsPayload) -> Result<(), BackupError> {
@@ -286,7 +298,12 @@ fn validate_payload(payload: &SettingsPayload) -> Result<(), BackupError> {
     if payload.catalog.revision != 0
         || payload.catalog.agents.iter().any(|agent| {
             agent.model.as_ref().is_some_and(|choice| {
-                choice.executor == crate::claude::Executor::Jarvis || !choice.account.is_empty()
+                std::iter::once(choice)
+                    .chain(choice.fallback.as_deref())
+                    .any(|selection| {
+                        selection.executor == crate::claude::Executor::Jarvis
+                            || !selection.account.is_empty()
+                    })
             })
         })
     {
@@ -297,6 +314,10 @@ fn validate_payload(payload: &SettingsPayload) -> Result<(), BackupError> {
     if payload.executor_models.iter().any(|(key, choice)| {
         builtin_target(key).is_none()
             || choice.executor != crate::claude::Executor::Claude
+            || choice
+                .fallback
+                .as_ref()
+                .is_some_and(|fallback| fallback.executor != crate::claude::Executor::Claude)
             || choice.validate_shape().is_err()
     }) {
         return Err(error(
@@ -1014,6 +1035,12 @@ fn prepare_import(
     ] {
         bindings.insert(format!("builtin:{key}"));
     }
+    bindings.extend(
+        bindings
+            .iter()
+            .map(|key| format!("{key}:fallback"))
+            .collect::<Vec<_>>(),
+    );
     Ok((catalog, native, bindings.into_iter().collect()))
 }
 
@@ -1176,6 +1203,10 @@ pub async fn export_settings_backup(
             executor_models: native
                 .into_iter()
                 .filter(|(_, choice)| choice.executor == crate::claude::Executor::Claude)
+                .map(|(key, mut choice)| {
+                    clean_fallback(&mut choice);
+                    (key, choice)
+                })
                 .collect(),
             catalog,
             skills: skills::backup_config(&home).map_err(|cause| error(cause.message))?,

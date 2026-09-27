@@ -19,6 +19,7 @@ pub(super) struct Projection {
     calls: Vec<ToolCall>,
     associated_calls: HashSet<String>,
     metrics: MessageMetrics,
+    recoverable_provider_failure: bool,
 }
 
 #[derive(Default)]
@@ -271,6 +272,18 @@ pub(super) fn mapped_call(name: &str, args: Value) -> (String, Value) {
 }
 
 impl Projection {
+    pub(super) fn final_result(&self, event: &Value) -> Option<Result<(), AgentError>> {
+        final_result(event).map(|result| {
+            result.map_err(|mut error| {
+                if self.recoverable_provider_failure && event["subtype"] == "error_during_execution"
+                {
+                    error.code = "provider_retry_exhausted".into();
+                }
+                error
+            })
+        })
+    }
+
     pub(super) fn take_tool(
         &mut self,
         name: &str,
@@ -311,6 +324,8 @@ impl Projection {
             if !self.envelopes.insert(envelope) {
                 return Ok(());
             }
+            self.recoverable_provider_failure =
+                matches!(event["error"].as_str(), Some("rate_limit" | "server_error"));
         }
         {
             let data = session.data.lock().map_err(|_| AgentError::internal())?;

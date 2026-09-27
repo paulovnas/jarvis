@@ -1,7 +1,17 @@
 import { expect, it } from "vitest";
-import { flowOptions, flowSelection, validateGraph, workflowCatalogSchema } from "./workflow-catalog";
+import { flowOptions, flowSelection, modelChoiceSchema, validateGraph, workflowCatalogSchema } from "./workflow-catalog";
 import { builtinAgent, customAgent, customFlow, customCatalog } from "@/test/workflow-fixtures";
 import { chatOptions } from "@/test/chat-fixtures";
+
+it("preserves an optional secondary target and rejects nested fallback chains", () => {
+  const primary = { account: "work", model: "primary", reasoning: null };
+  const fallback = { executor: "jarvis", account: "personal", model: "secondary", reasoning: "high" };
+  expect(modelChoiceSchema.parse(primary)).toEqual(primary);
+  expect(modelChoiceSchema.parse({ ...primary, fallback: null })).toEqual({ ...primary, fallback: null });
+  const agent = { ...customAgent, model: { ...primary, fallback } };
+  expect(workflowCatalogSchema.parse({ ...customCatalog, agents: [agent] }).agents[0]).toEqual(agent);
+  expect(modelChoiceSchema.safeParse({ ...primary, fallback: { ...fallback, fallback: primary } }).success).toBe(false);
+});
 
 it("retains custom selection through persisted turn options without changing built-ins", () => {
   const selection = `custom:${customFlow.id}` as const;

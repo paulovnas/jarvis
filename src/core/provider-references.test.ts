@@ -22,6 +22,14 @@ it("offers destinations compatible with the selected tool", () => {
   expect(compatibleModels({ ...referenceAccount(), providerKind: "antigravity" }, "image_generation")[0].id).toBe("gemini-3.1-flash-image");
 });
 
+it("reports unavailable and identical secondary targets while preserving their selection", () => {
+  const account = referenceAccount();
+  const choice = { account: account.alias, model: "gpt-test", reasoning: "high" };
+  expect(modelProblem({ ...choice, fallback: { ...choice, reasoning: null } }, [account])).toContain("diferente do principal");
+  expect(modelProblem({ ...choice, fallback: { ...choice, account: "removed" } }, [account])).toContain("Modelo secundário: O provedor removed");
+  expect(modelProblem({ ...choice, fallback: { ...choice, account: "secondary" } }, [account, { ...account, alias: "secondary" }])).toBeNull();
+});
+
 it("applies only the explicit replacement for that conversation and original choice", () => {
   const source = { account: "old", model: "old-model", reasoning: null };
   const target = { account: "new", model: "new-model", reasoning: "high" };

@@ -1,5 +1,98 @@
 use super::*;
 
+#[tokio::test]
+async fn secondary_model_is_optional_switches_once_and_updates_native_and_custom_workers() {
+    for custom in [false, true] {
+        let (_fixture, hub) = hub();
+        let mut task = job(&hub, Role::Builder, ".");
+        let secondary = settings::ModelChoice {
+            executor: crate::claude::Executor::Jarvis,
+            account: "secondary-account".into(),
+            model: "secondary-model".into(),
+            reasoning: None,
+            fallback: None,
+        };
+        let primary = settings::ModelChoice {
+            executor: task.options.executor,
+            account: task.options.account.clone(),
+            model: task.options.model.clone(),
+            reasoning: task.options.reasoning.clone(),
+            fallback: Some(Box::new(secondary.clone())),
+        };
+        if custom {
+            let mut agent = catalog::tests::example().agents.remove(0);
+            agent.model = Some(primary.clone());
+            task.custom_agent = Some(agent);
+        }
+        hub.manifest
+            .lock()
+            .unwrap()
+            .jobs
+            .insert(task.id.clone(), task.clone());
+        let execution = Execution {
+            hub: hub.clone(),
+            id: task.id.clone(),
+            role: task.role,
+            flow: if custom { Flow::Custom } else { Flow::Complete },
+            scope: vec![".".into()],
+        };
+        let (session, signal) = storage::worker(&hub, &task, None).unwrap();
+        let exhausted = AgentError::new("provider_retry_exhausted", "Provider unavailable");
+        if !custom {
+            assert!(!super::super::model_fallback::recover(
+                &session,
+                &signal,
+                Some(&execution),
+                &exhausted
+            )
+            .await
+            .unwrap());
+            hub.manifest
+                .lock()
+                .unwrap()
+                .profiles
+                .insert(settings::key(Flow::Complete, task.role), primary);
+        }
+        assert_eq!(execution.secondary_model().unwrap(), Some(secondary));
+        assert!(super::super::model_fallback::recover(
+            &session,
+            &signal,
+            Some(&execution),
+            &exhausted
+        )
+        .await
+        .unwrap());
+        assert_eq!(hub.job(&task.id).unwrap().options.model, "secondary-model");
+        assert_eq!(
+            session.data.lock().unwrap().turns[0].turn.options.model,
+            "secondary-model"
+        );
+        let manifest = storage::load(&hub.directory, &hub.root.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(manifest.jobs[&task.id].options.model, "secondary-model");
+        assert!(!super::super::model_fallback::recover(
+            &session,
+            &signal,
+            Some(&execution),
+            &exhausted
+        )
+        .await
+        .unwrap());
+        // Simulate a crash after the journal switched, before the manifest did.
+        let turn_id = session.data.lock().unwrap().turns[0].turn.id.clone();
+        super::super::finish(&session, Err(exhausted));
+        drop(session);
+        task.recovery = Some(RecoveryCheckpoint::new(vec![]));
+        assert_ne!(task.options.model, "secondary-model");
+        let (resumed, _) = storage::worker(&hub, &task, Some("Continue".into())).unwrap();
+        let data = resumed.data.lock().unwrap();
+        assert_eq!(data.turns.len(), 1);
+        assert_eq!(data.turns[0].turn.id, turn_id);
+        assert_eq!(data.turns[0].turn.options.model, "secondary-model");
+    }
+}
+
 #[test]
 fn github_recovery_tool_is_advertised_and_executable_in_direct_and_delegated_flows() {
     let mut recovered = 0;
@@ -270,6 +363,7 @@ pub(super) fn job(hub: &Hub, role: Role, scope: &str) -> Job {
         duration_ms: 0,
         attempts: 1,
         recovery_attempts: 0,
+        recovery_attempt_pending: false,
         handoff: None,
         error: None,
         recovery: None,
@@ -346,6 +440,7 @@ fn custom_direct_agent_uses_its_primary_contract_model_and_permissions() {
         account: "specialist-account".into(),
         model: "specialist-model".into(),
         reasoning: Some("high".into()),
+        fallback: None,
     });
     let mut options = hub.manifest.lock().unwrap().options.clone();
     custom::apply_model(&mut options, &agent);
@@ -1230,6 +1325,7 @@ fn model_preferences_are_per_flow_and_never_change_tool_authorization() {
             account: "review-account".into(),
             model: "gpt-5.6-sol".into(),
             reasoning: Some("xhigh".into()),
+            fallback: None,
         },
     );
     settings::apply(&mut options, &profiles, Flow::Planned, Role::Builder);

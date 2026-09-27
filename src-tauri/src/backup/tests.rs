@@ -81,6 +81,7 @@ fn sanitized_catalog_and_targets_never_serialize_provider_assignments() {
         account: "openai-codex-private".into(),
         model: "private-model".into(),
         reasoning: Some("high".into()),
+        fallback: None,
     };
     let catalog = clean_catalog(workflow::catalog::Catalog {
         revision: 42,
@@ -107,6 +108,13 @@ fn backup_preserves_external_executors_without_provider_mapping_or_credentials()
         account: String::new(),
         model: "sonnet".into(),
         reasoning: Some("high".into()),
+        fallback: Some(Box::new(workflow::settings::ModelChoice {
+            executor: crate::claude::Executor::Claude,
+            account: String::new(),
+            model: "opus".into(),
+            reasoning: Some("max".into()),
+            fallback: None,
+        })),
     };
     settings.catalog.agents[0].model = Some(choice.clone());
     settings.catalog = clean_catalog(settings.catalog);
@@ -152,6 +160,7 @@ fn validation_rejects_embedded_agent_models_and_invalid_paths() {
         account: "provider".into(),
         model: "model".into(),
         reasoning: None,
+        fallback: None,
     });
 
     assert!(validate_payload(&invalid).is_err());
@@ -164,6 +173,63 @@ fn validation_rejects_embedded_agent_models_and_invalid_paths() {
             "accepted {path}"
         );
     }
+}
+
+#[test]
+fn secondary_provider_assignments_are_sanitized_and_rejected_in_portable_payloads() {
+    let mut settings = payload();
+    let choice: workflow::settings::ModelChoice = serde_json::from_value(serde_json::json!({
+        "executor":"claude","account":"","model":"sonnet","reasoning":null,
+        "fallback":{"account":"private-account","model":"private-model","reasoning":null}
+    }))
+    .unwrap();
+    settings.catalog.agents[0].model = Some(choice.clone());
+    settings.model_targets.clear();
+    assert!(validate_payload(&settings).is_err());
+    settings.catalog = clean_catalog(settings.catalog);
+    validate_payload(&settings).unwrap();
+    settings
+        .executor_models
+        .insert("standard/builder".into(), choice);
+    assert!(validate_payload(&settings).is_err());
+    clean_fallback(
+        settings
+            .executor_models
+            .get_mut("standard/builder")
+            .unwrap(),
+    );
+    validate_payload(&settings).unwrap();
+    assert!(!serde_json::to_string(&settings)
+        .unwrap()
+        .contains("private-"));
+}
+
+#[test]
+fn import_mapping_preserves_secondary_and_clears_its_stale_binding() {
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir(crate::data_dir::root(home.path())).unwrap();
+    let path = home.path().join("settings.zip");
+    write_archive(&path, &payload(), &[]).unwrap();
+    let loaded = read_archive(&path).unwrap();
+    let choice: workflow::settings::ModelChoice = serde_json::from_value(serde_json::json!({
+        "executor":"claude","account":"","model":"sonnet","reasoning":null,
+        "fallback":{"executor":"claude","account":"","model":"opus","reasoning":"max"}
+    }))
+    .unwrap();
+    let (catalog, _, bindings) = prepare_import(
+        &loaded,
+        home.path(),
+        &AppState::default(),
+        &OpenAiCodexState::default(),
+        vec![ModelMapping {
+            target_id: format!("custom:{}", "0123456789abcdef0123456789abcdef"),
+            choice: choice.clone(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(catalog.agents[0].model.as_ref(), Some(&choice));
+    assert!(bindings.contains(&"custom:0123456789abcdef0123456789abcdef:fallback".into()));
+    assert!(bindings.contains(&"builtin:standard/builder:fallback".into()));
 }
 
 #[test]
