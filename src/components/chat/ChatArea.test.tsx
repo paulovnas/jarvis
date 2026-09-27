@@ -53,6 +53,42 @@ describe("Persistent live conversation", () => {
       return () => { set.delete(callback); };
     });
   });
+  it("keeps history visible after failed recovery and restores the pending publication on retry", async () => {
+    const user = userEvent.setup();
+    const cached: ChatSnapshot = { ...emptyChat(), revision: 10, turns: [{ ...savedTurn(), status: "running" }], activeTurnId: "turn1" };
+    call.mockResolvedValue(cached);
+    render(<TestChat />);
+    await screen.findByText("Leia o README");
+    await screen.findByRole("textbox");
+    call.mockResolvedValue({ protocolVersion: 3, reset: false, snapshot: null, batches: [{ invalid: true }] });
+    await act(async () => {
+      for (const handler of listeners.get("agent:event") ?? []) handler({ event: "agent:event", id: 1, payload: {
+        conversationId: "c1", baseRevision: 10, revision: 11, events: [{ type: "futureEvent" }],
+      } });
+    });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Atualizações da conversa indisponíveis");
+    expect(screen.getByText("Leia o README")).toBeVisible();
+    expect(screen.getByRole("textbox")).toBeVisible();
+    const waiting: ChatSnapshot = {
+      ...cached, revision: 14, turns: [{ ...cached.turns[0], durationMs: 438145, activeSince: null }],
+      pendingAuthoring: {
+        turnId: "turn1", toolId: "publish", action: "publish", summary: "Preparar branches para homologação", catalogRevision: null, agentReferences: [],
+        target: { kind: "publication", after: { summary: "Preservar as alterações", authorization: null, repositories: [{
+          path: "backend", branch: "fix/hml", reset: { mode: "soft", target: "hml" }, files: [], commitMessage: null, sync: "none", push: "none", pullRequest: null,
+        }] } },
+      },
+    };
+    call.mockResolvedValue({ protocolVersion: 3, reset: true, snapshot: waiting, batches: [] });
+    await user.click(within(alert).getByRole("button", { name: "Tentar novamente" }));
+
+    expect(await screen.findByRole("dialog", { name: "Revisar ações Git e GitHub" })).toBeVisible();
+    expect(screen.getByText("git reset --soft hml")).toBeVisible();
+    expect(screen.queryByText("Atualizações da conversa indisponíveis")).not.toBeInTheDocument();
+    expect(screen.getByTestId("active-execution-status")).toHaveTextContent("Aguardando sua resposta");
+    expect(call.mock.calls.some(([command]) => command === "answer_agent_authoring")).toBe(false);
+  });
   it("shows a submitted message while the native turn is still being accepted", async () => {
     const user = userEvent.setup();
     let finish!: (snapshot: ChatSnapshot) => void;

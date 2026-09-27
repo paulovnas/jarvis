@@ -87,6 +87,9 @@ impl SessionWriter {
         conversation_id: String,
         durable_turn: Option<StoredTurn>,
     ) -> Result<Self, AgentError> {
+        // A replay repair may only exist in memory. Persist its baseline once
+        // before emitting deltas relative to the corrected duration.
+        let durable_turn = durable_turn.filter(|turn| turn.excluded_queue_ms == 0);
         let (sender, receiver) = mpsc::channel();
         let worker = std::thread::Builder::new()
             .name(format!("jarvis-journal-{conversation_id}"))
@@ -519,6 +522,7 @@ mod tests {
         std::fs::write(&path, "{}\n").unwrap();
         let writer = SessionWriter::start(path.clone(), "conversation".into(), None).unwrap();
         let turn = StoredTurn {
+            excluded_queue_ms: 0,
             turn: super::super::Turn {
                 active_since: None,
                 id: "turn".into(),

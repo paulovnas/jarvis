@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FolderGit2, Globe, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { ConversationSkeleton } from "@/components/layout/LoadingSkeletons";
 import type { ChatDraft } from "@/core/chat";
@@ -47,7 +48,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     }
     previousQuestion.current = question ? questionKey(context.conversation.id, question) : undefined;
   }, [snapshot?.pendingQuestion, context.conversation.id, questionDrafts]);
-  if (chat.error) return <Empty><EmptyHeader><EmptyTitle>Não foi possível abrir a conversa</EmptyTitle><EmptyDescription role="alert">{chat.error}</EmptyDescription></EmptyHeader><Button className="cursor-pointer" variant="outline" onClick={chat.retry}>Tentar novamente</Button></Empty>;
+  if (chat.error && !snapshot) return <Empty><EmptyHeader><EmptyTitle>Não foi possível abrir a conversa</EmptyTitle><EmptyDescription role="alert">{chat.error}</EmptyDescription></EmptyHeader><Button className="cursor-pointer" variant="outline" onClick={chat.retry}>Tentar novamente</Button></Empty>;
   if (!snapshot) return <ConversationSkeleton />;
   const composerOptions = [...snapshot.turns]
     .reverse()
@@ -69,6 +70,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
       ? chat.pendingTurn
       : undefined;
   const composer = (terminalLauncher: ReactNode) => <footer ref={footer} aria-label="Área de composição" className="chat-footer mx-auto max-h-[65dvh] w-full max-w-4xl min-w-0 shrink-0 overflow-y-auto overscroll-none px-5 pb-4 pt-3">
+    {chat.error && <Alert className="mb-3"><AlertTitle>Atualizações da conversa indisponíveis</AlertTitle><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><p>{chat.error}</p><Button variant="outline" size="sm" className="cursor-pointer" onClick={chat.retry}>Tentar novamente</Button></AlertDescription></Alert>}
     {activeTurn && <ActiveExecutionStatus turn={activeTurn} waitingForUser={!!attention} />}
     {workflow?.data?.recovery && <WorkflowRecoveryAlert recovery={workflow.data.recovery} onResume={chat.resumeWorkflow} />}
     {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.tool.id} request={snapshot.pendingApproval} projectPath={context.project.path} onAnswer={chat.approve} />}

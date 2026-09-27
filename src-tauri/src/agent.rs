@@ -341,6 +341,9 @@ struct Turn {
 struct StoredTurn {
     turn: Turn,
     wire: Vec<Value>,
+    // Queue time already removed from legacy cumulative duration samples.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    excluded_queue_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mcp_intent: Option<crate::mcp::McpIntent>,
 }
@@ -837,6 +840,7 @@ impl Session {
         let id = id.map(Ok).unwrap_or_else(library::new_id)?;
         let turn = StoredTurn {
             wire: vec![json!({"role":"user", "content":content})],
+            excluded_queue_ms: 0,
             mcp_intent: None,
             turn: Turn {
                 id: id.clone(),

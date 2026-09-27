@@ -162,7 +162,73 @@ it("resyncs a matching conversation when an event batch is not understood", asyn
   await emit("agent:event", { conversationId: "c1", revision: 11, events: [{ type: "futureEvent" }] });
 
   await waitFor(() => expect(result.current.snapshot?.turns[0].steps[0].text).toBe("Vou conferir a configuração agora."));
-  expect(call).toHaveBeenLastCalledWith("subscribe_chat", { conversationId: "c1", cursor: 10 });
+  expect(call).toHaveBeenLastCalledWith("subscribe_chat", { conversationId: "c1" });
+});
+
+it("keeps streaming after a single authentication renewal attempt", async () => {
+  call.mockResolvedValueOnce(observed());
+  const { result } = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(result.current.snapshot?.revision).toBe(11));
+  const retry = { attempt: 1, maxAttempts: 1, retryAt: Date.now(), message: "Renovando a autenticação da conta para continuar." };
+
+  await emit("agent:event", {
+    conversationId: "c1", baseRevision: 11, revision: 12,
+    events: [{ type: "itemDelta", stepIndex: 0, textAppend: "", summaryAppend: "", durationMs: 50, retry, usage: null }],
+  });
+
+  expect(result.current.snapshot?.turns[0].steps[0].retry).toEqual(retry);
+  await emit("agent:event", update(12, { ...completed(), revision: 13 }));
+  expect(result.current.snapshot?.activeTurnId).toBeNull();
+  expect(call).toHaveBeenCalledOnce();
+});
+
+it.each(["invalid event", "revision gap"])("recovers the pending publication from a fresh snapshot when replay has an %s", async failure => {
+  updateChatSnapshot("c1", () => running());
+  const waiting: ChatSnapshot = {
+    ...observed(), revision: 14,
+    turns: [{ ...observed().turns[0], durationMs: 438145, activeSince: null }],
+    pendingAuthoring: {
+      turnId: "turn1", toolId: "publish", action: "publish", summary: "Preparar branches para homologação",
+      catalogRevision: null, agentReferences: [],
+      target: { kind: "publication", after: { summary: "Preservar as alterações", authorization: null, repositories: [{
+        path: "backend", branch: "fix/hml", reset: { mode: "soft", target: "hml" }, files: [], commitMessage: null,
+        sync: "none", push: "none", pullRequest: null,
+      }] } },
+    },
+  };
+  const broken = failure === "invalid event"
+    ? { ...update(10, observed()), events: [{ type: "futureEvent" }] }
+    : update(12, waiting);
+  call.mockImplementation(async (_command, args) => ({
+    protocolVersion: 3, reset: !args || !("cursor" in args),
+    snapshot: args && "cursor" in args ? null : waiting,
+    batches: args && "cursor" in args ? [broken] : [],
+  }));
+
+  const { result } = renderHook(() => useChat("c1"));
+
+  await waitFor(() => expect(result.current.snapshot?.pendingAuthoring).toEqual(waiting.pendingAuthoring));
+  expect(result.current.snapshot?.turns[0]).toMatchObject({ durationMs: 438145, activeSince: null });
+  expect(result.current.error).toBeNull();
+  expect(call.mock.calls).toEqual([
+    ["subscribe_chat", { conversationId: "c1", cursor: 10 }],
+    ["subscribe_chat", { conversationId: "c1" }],
+  ]);
+});
+
+it("reports failed snapshot recovery without looping or losing history and allows retry", async () => {
+  const cached = running();
+  updateChatSnapshot("c1", () => cached);
+  call.mockResolvedValue({ protocolVersion: 3, reset: false, snapshot: null, batches: [{ invalid: true }] });
+  const { result } = renderHook(() => useChat("c1"));
+
+  await waitFor(() => expect(result.current.error).not.toBeNull());
+  expect(result.current.snapshot).toEqual(cached);
+  expect(call).toHaveBeenCalledTimes(2);
+  call.mockResolvedValue(completed());
+  await act(async () => { result.current.retry(); });
+  await waitFor(() => expect(result.current.snapshot?.activeTurnId).toBeNull());
+  expect(result.current.error).toBeNull();
 });
 
 it("resyncs when an event revision reveals a missed batch", async () => {

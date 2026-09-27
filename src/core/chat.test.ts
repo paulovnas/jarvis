@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
-import { readChat } from "./chat";
+import { readChat, retryStatusSchema } from "./chat";
 import { IPC_PROTOCOL_VERSION } from "@/generated/ipc";
 
 describe("Chat IPC contract", () => {
@@ -18,13 +18,16 @@ describe("Chat IPC contract", () => {
     expect(readChat(JSON.parse(JSON.stringify(payload)), "c1").turns[0].steps[0].coreActivities).toEqual([receipt]);
     expect(readChat({ ...emptyChat(), turns: [turn] }, "c1").turns[0].steps[0].coreActivities).toBeUndefined();
   });
-  it("preserves live retry state and remains compatible with older history", () => {
+  it.each([[1, 1], [2, 5], [6, 8]])("preserves retry %i of %i and remains compatible with older history", (attempt, maxAttempts) => {
     const turn = savedTurn();
-    const retry = { attempt: 2, maxAttempts: 5, retryAt: 123, message: "HTTP 502" };
+    const retry = { attempt, maxAttempts, retryAt: 123, message: "Reconectando a conta" };
     const payload = { ...emptyChat(), turns: [{ ...turn, steps: [{ ...turn.steps[0], retry }] }] };
     expect(readChat(payload, "c1").turns[0].steps[0].retry).toEqual(retry);
     expect(readChat({ ...emptyChat(), turns: [turn] }, "c1").turns[0].steps[0].retry).toBeUndefined();
     expect(readChat({ ...emptyChat(), turns: [turn] }, "c1").history).toEqual({ start: 0, total: 1 });
+  });
+  it.each([[0, 1], [1, 0], [2, 1], [1.5, 5], [1, 2.5]])("rejects invalid retry %i of %i", (attempt, maxAttempts) => {
+    expect(retryStatusSchema.safeParse({ attempt, maxAttempts, retryAt: 123, message: "Reconectando" }).success).toBe(false);
   });
   it("accepts durable real turn data and rejects another conversation or malformed tools", () => {
     expect(readChat({ ...emptyChat(), turns: [savedTurn()] }, "c1").turns[0].steps[0].tools[0].output).toBe("# Jarvis");

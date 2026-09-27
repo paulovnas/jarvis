@@ -90,9 +90,9 @@ export const pendingApprovalSchema = z.object({
 export type PendingApproval = GeneratedPendingApproval;
 export type ApprovalDecision = GeneratedApprovalDecision;
 export const retryStatusSchema = z.object({
-  attempt: z.number().int().min(1).max(5), maxAttempts: z.literal(5),
+  attempt: z.number().int().positive(), maxAttempts: z.number().int().positive(),
   retryAt: z.number().nonnegative(), message: z.string(),
-});
+}).refine(retry => retry.attempt <= retry.maxAttempts, { path: ["attempt"], message: "Retry attempt exceeds its budget" });
 export type RetryStatus = GeneratedRetryStatus;
 export const directTaskSchema = z.object({
   id: z.string(),

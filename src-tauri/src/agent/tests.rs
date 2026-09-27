@@ -280,6 +280,7 @@ fn harness_evaluation_direct_recovery_preserves_durable_results_and_new_messages
     let mut direct = options(ApprovalMode::Yolo);
     direct.workflow = Some(workflow::Flow::Designer);
     let recovered = StoredTurn {
+        excluded_queue_ms: 0,
         mcp_intent: None,
         turn: Turn {
             id: "recovered-turn".into(),
@@ -438,6 +439,7 @@ fn explicit_retry_continues_failed_direct_turn_without_replaying_uncertain_tools
     let mut direct = options(ApprovalMode::Yolo);
     direct.workflow = Some(workflow::Flow::Designer);
     let mut failed = StoredTurn {
+        excluded_queue_ms: 0,
         mcp_intent: None,
         turn: Turn {
             id: "failed-turn".into(),
@@ -532,6 +534,7 @@ fn explicit_retry_restarts_workflow_preparation_when_no_manifest_was_created() {
     let mut planned = options(ApprovalMode::Yolo);
     planned.workflow = Some(workflow::Flow::Planned);
     let failed = StoredTurn {
+        excluded_queue_ms: 0,
         mcp_intent: None,
         turn: Turn {
             id: "planned-turn".into(),
@@ -572,6 +575,7 @@ fn explicit_retry_restarts_publication_with_current_repository_state() {
     let mut publication = options(ApprovalMode::Yolo);
     publication.workflow = Some(workflow::Flow::Publication);
     let failed = StoredTurn {
+        excluded_queue_ms: 0,
         mcp_intent: None,
         turn: Turn {
             id: "publication-turn".into(),
@@ -614,6 +618,7 @@ fn harness_evaluation_coordinated_recovery_pairs_uncertain_tools_without_replay(
     let mut coordinated = options(ApprovalMode::Yolo);
     coordinated.workflow = Some(workflow::Flow::Complete);
     let turn = StoredTurn {
+        excluded_queue_ms: 0,
         mcp_intent: None,
         turn: Turn {
             id: "workflow-turn".into(),
@@ -1287,6 +1292,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
             compacting: false,
             manual_compaction: false,
             turns: vec![StoredTurn {
+                excluded_queue_ms: 0,
                 wire: vec![json!({"encrypted_content":"private-replay"})],
                 mcp_intent: None,
                 turn: Turn {

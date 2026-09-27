@@ -431,6 +431,7 @@ mod tests {
     fn turn() -> StoredTurn {
         StoredTurn {
             wire: vec![],
+            excluded_queue_ms: 0,
             mcp_intent: None,
             turn: Turn {
                 active_since: None,

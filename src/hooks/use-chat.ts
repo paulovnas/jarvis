@@ -77,22 +77,26 @@ export function useChat(conversationId: string | null) {
     let hasSnapshot = getChatSnapshot(conversationId) !== null;
     let refreshing = false;
     let refreshAgain = false;
+    let needsSnapshot = false;
     let resyncTimer: ReturnType<typeof setTimeout> | undefined;
     const earlyBatches: AgentEventBatch[] = [];
     const applyBatch = (batch: AgentEventBatch) => {
+      let needsResync = false;
       updateChatSnapshot(conversationId, current => {
         const applied = applyAgentEventBatch(current, batch);
-        if (applied.needsResync) scheduleResync();
+        needsResync = applied.needsResync;
         if (applied.snapshot) {
           hasSnapshot = true;
           reportModelError(applied.snapshot);
         }
         return applied.snapshot;
       });
+      return !needsResync;
     };
     const acceptSubscription = (value: unknown) => {
       const subscription = chatSubscriptionSchema.safeParse(value);
       if (!subscription.success) {
+        if (eventConversationId(value) === null) throw new Error("Não foi possível interpretar as atualizações da conversa.");
         accept(value, conversationId);
         hasSnapshot = true;
         return;
@@ -101,8 +105,10 @@ export function useChat(conversationId: string | null) {
         throw new Error("A conversa usa uma versão de protocolo mais recente.");
       }
       if (subscription.data.snapshot !== null) accept(subscription.data.snapshot, conversationId);
-      subscription.data.batches.forEach(applyBatch);
-      earlyBatches.splice(0).sort((left, right) => left.revision - right.revision).forEach(applyBatch);
+      const batches = [...subscription.data.batches, ...earlyBatches.splice(0).sort((left, right) => left.revision - right.revision)];
+      for (const batch of batches) {
+        if (!applyBatch(batch)) throw new Error("Não foi possível recuperar a sequência de atualizações desta conversa.");
+      }
       hasSnapshot = getChatSnapshot(conversationId) !== null;
     };
     const refresh = async () => {
@@ -112,11 +118,23 @@ export function useChat(conversationId: string | null) {
       try {
         const cached = getChatSnapshot(conversationId);
         // Replaying an already-current cursor cannot repair an invalid page.
-        const cursor = cached && hasValidHistoryWindow(cached) ? cached.revision : undefined;
+        const cursor = !needsSnapshot && cached && hasValidHistoryWindow(cached) ? cached.revision : undefined;
         const value = await invoke<unknown>("subscribe_chat", { conversationId, ...(cursor === undefined ? {} : { cursor }) });
-        if (active) acceptSubscription(value);
+        if (!active) return;
+        try {
+          acceptSubscription(value);
+        } catch (cause) {
+          // Replaying an unreadable batch again cannot recover the stream.
+          needsSnapshot = true;
+          if (cursor === undefined) throw cause;
+          const fresh = await invoke<unknown>("subscribe_chat", { conversationId });
+          if (!active) return;
+          acceptSubscription(fresh);
+        }
+        needsSnapshot = false;
+        setError(current => current?.id === conversationId ? null : current);
       } catch (cause) {
-        if (active && !hasSnapshot) setError({ id: conversationId, message: libraryError(cause, "Não foi possível sincronizar esta conversa.") });
+        if (active && (!hasSnapshot || needsSnapshot)) setError({ id: conversationId, message: libraryError(cause, "Não foi possível sincronizar esta conversa.") });
       } finally {
         refreshing = false;
         if (refreshAgain && active) { refreshAgain = false; void refresh(); }
@@ -135,7 +153,7 @@ export function useChat(conversationId: string | null) {
       const eventConversation = eventConversationId(event.payload);
       if (eventConversation !== conversationId) return;
       const parsed = agentEventBatchSchema.safeParse(event.payload);
-      if (!parsed.success) { scheduleResync(); return; }
+      if (!parsed.success) { needsSnapshot = true; scheduleResync(); return; }
       const started = parsed.data.events.find(item => item.type === "turnStarted");
       if (started?.type === "turnStarted") {
         setPendingTurn(current => current?.conversationId === conversationId && matchesPendingTurn(started.turn, current.turn) ? null : current);
@@ -143,7 +161,7 @@ export function useChat(conversationId: string | null) {
       if (!getChatSnapshot(conversationId)) {
         earlyBatches.push(parsed.data);
         scheduleResync();
-      } else applyBatch(parsed.data);
+      } else if (!applyBatch(parsed.data)) scheduleResync();
     });
     const workflowEvents = listen<unknown>("workflow:changed", event => {
       if (active && eventConversationId(event.payload) === conversationId) scheduleResync();

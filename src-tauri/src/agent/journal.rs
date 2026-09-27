@@ -21,6 +21,42 @@ const MAX_RECORD: usize = 10 * 1024 * 1024;
 // Leave room for base64 and the envelope within the physical record limit.
 const CHUNK_BYTES: usize = MAX_RECORD / 2;
 const FINGERPRINT_WINDOW: u64 = 4 * 1024;
+
+/// Keep raw samples intact during replay: legacy deltas contain absolute durations.
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+pub(super) struct QueueTimeCorrection(u64);
+
+impl QueueTimeCorrection {
+    pub(super) fn observe(&mut self, stored: &StoredTurn) {
+        self.0 = self.0.max(stored.excluded_queue_ms);
+        let turn = &stored.turn;
+        if stored.excluded_queue_ms == 0
+            && turn.steps.is_empty()
+            && turn.active_since.is_none()
+            && turn.status == TurnStatus::Error
+            && turn.error.as_ref().is_some_and(|error| {
+                error.code == "workflow_error"
+                    && error.message == "Uma dependência não foi concluída com sucesso."
+            })
+        {
+            // Admission failed before execution. Later attempts inherited this wait.
+            self.0 = self.0.max(turn.duration_ms);
+        }
+    }
+
+    pub(super) fn duration_ms(self, stored: &StoredTurn) -> u64 {
+        stored
+            .turn
+            .duration_ms
+            .saturating_sub(self.0.saturating_sub(stored.excluded_queue_ms))
+    }
+
+    pub(super) fn apply(self, stored: &mut StoredTurn) {
+        stored.turn.duration_ms = self.duration_ms(stored);
+        stored.excluded_queue_ms = stored.excluded_queue_ms.max(self.0);
+    }
+}
+
 #[cfg(not(test))]
 const VACUUM_MIN_BYTES: u64 = 16 * 1024 * 1024;
 #[cfg(test)]
@@ -770,6 +806,7 @@ fn read_unlocked(
         .map_err(|_| AgentError::storage())?
         .len();
     let mut turns: Vec<StoredTurn> = vec![];
+    let mut queue_time = QueueTimeCorrection::default();
     let mut extras = Extras::default();
     let mut ids = std::collections::HashSet::new();
     let mut damaged_turn: Option<String> = None;
@@ -851,6 +888,7 @@ fn read_unlocked(
                     damaged_turn = Some(current_id);
                     return Ok(());
                 }
+                queue_time.observe(&candidate);
                 *turns.last_mut().ok_or_else(AgentError::storage)? = candidate;
                 return Ok(());
             }
@@ -859,6 +897,14 @@ fn read_unlocked(
         }
         let turn: StoredTurn =
             serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
+        if turns
+            .last()
+            .is_some_and(|last| last.turn.id != turn.turn.id)
+        {
+            queue_time.apply(turns.last_mut().ok_or_else(AgentError::storage)?);
+            queue_time = QueueTimeCorrection::default();
+        }
+        queue_time.observe(&turn);
         if let Some(damaged) = damaged_turn.take() {
             if turn.turn.id != damaged
                 || !turns
@@ -886,6 +932,9 @@ fn read_unlocked(
     })?;
     if damaged_turn.is_some() {
         return Err(AgentError::storage());
+    }
+    if let Some(turn) = turns.last_mut() {
+        queue_time.apply(turn);
     }
     if repair && valid_end < file_bytes {
         // Preserve crash debris before repairing only an incomplete final line.
@@ -1291,6 +1340,7 @@ mod tests {
     use std::fs;
     fn turn() -> StoredTurn {
         StoredTurn {
+            excluded_queue_ms: 0,
             mcp_intent: None,
             turn: Turn {
                 id: "turn-1".into(),
@@ -1318,6 +1368,109 @@ mod tests {
                 error: None,
             },
             wire: vec![json!({"role":"user", "content":"Read"})],
+        }
+    }
+
+    #[test]
+    fn legacy_queue_time_is_removed_once_across_retries_and_vacuum() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("legacy-queue-time.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        let mut current = turn();
+        append(&path, &current).unwrap();
+
+        // Movarte: the Designer failed admission without ever executing a step.
+        let queued_ms = 34_588_988;
+        current.turn.duration_ms = queued_ms;
+        current.turn.status = TurnStatus::Error;
+        current.turn.error = Some(AgentError::new(
+            "workflow_error",
+            "Uma dependência não foi concluída com sucesso.",
+        ));
+        append(&path, &current).unwrap();
+
+        // Old versions resumed the same turn with the poisoned cumulative time.
+        current.turn.status = TurnStatus::Running;
+        current.turn.error = None;
+        current.turn.steps.push(Step {
+            text: "Confirmed work".repeat(2048),
+            ..Step::default()
+        });
+        current.wire.extend([
+            json!({"type":"function_call","call_id":"read-1","name":"read","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"read-1","output":"confirmed content"}),
+        ]);
+        current.turn.duration_ms = 37_119_484;
+        append(&path, &current).unwrap();
+        let before = current.clone();
+        current.turn.duration_ms = 38_042_881;
+        append_update(&path, &before, &current).unwrap();
+        current.turn.status = TurnStatus::Error;
+        append(&path, &current).unwrap();
+        let before = current.clone();
+        current.turn.status = TurnStatus::Running;
+        current.turn.duration_ms = 41_825_470;
+        append_update(&path, &before, &current).unwrap();
+
+        let raw = fs::read(&path).unwrap();
+        let mut recovered = read_only(&path).unwrap().0.remove(0);
+        assert_eq!(recovered.turn.duration_ms, 7_236_482);
+        assert_eq!(recovered.wire, current.wire);
+        assert_eq!(recovered.turn.steps[0].text, current.turn.steps[0].text);
+        assert_eq!(fs::read(&path).unwrap(), raw);
+        assert_eq!(
+            load_for_recovery(&path).unwrap().0[0].turn.duration_ms,
+            recovered.turn.duration_ms
+        );
+
+        // The writer must establish the corrected baseline before its first delta.
+        let writer = crate::agent::session_writer::SessionWriter::start(
+            path.clone(),
+            "repaired-worker".into(),
+            Some(recovered.clone()),
+        )
+        .unwrap();
+        recovered.turn.duration_ms += 1_000;
+        writer.append_turn(recovered.clone()).unwrap();
+        writer.flush().unwrap();
+        assert_eq!(read_only(&path).unwrap().0[0].turn.duration_ms, 7_237_482);
+        recovered.turn.duration_ms += 1_000;
+        writer.append_turn(recovered.clone()).unwrap();
+        writer.flush().unwrap();
+        assert_eq!(read_only(&path).unwrap().0[0].turn.duration_ms, 7_238_482);
+        recovered.turn.status = TurnStatus::Completed;
+        writer.append_turn(recovered.clone()).unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+        assert!(compact(&path).unwrap() > 0);
+        assert_eq!(
+            serde_json::to_value(&read_only(&path).unwrap().0[0]).unwrap(),
+            serde_json::to_value(&recovered).unwrap()
+        );
+    }
+
+    #[test]
+    fn legacy_queue_time_requires_an_unexecuted_dependency_failure() {
+        let mut failed = turn();
+        failed.turn.status = TurnStatus::Error;
+        failed.turn.duration_ms = 12 * 3_600_000;
+        failed.turn.error = Some(AgentError::new(
+            "workflow_error",
+            "Uma dependência não foi concluída com sucesso.",
+        ));
+        for case in 0..4 {
+            let mut current = failed.clone();
+            match case {
+                0 => current.turn.steps.push(Step::default()),
+                1 => current.turn.error = Some(AgentError::new("provider_error", "Timeout")),
+                2 => current.turn.active_since = Some(1),
+                _ => current.turn.status = TurnStatus::Running,
+            }
+            let mut correction = QueueTimeCorrection::default();
+            correction.observe(&current);
+            correction.apply(&mut current);
+            assert_eq!(current.turn.duration_ms, failed.turn.duration_ms);
+            assert_eq!(current.excluded_queue_ms, 0);
         }
     }
 

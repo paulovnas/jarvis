@@ -94,6 +94,26 @@ fn live_telemetry(data: &SessionData) -> (u64, u64, Option<u64>, Option<String>)
     (turn.turn.created_at, duration, active_since, thought)
 }
 
+fn restore_stored_durations(
+    state: &mut Manifest,
+    directory: &Path,
+    histories: &super::super::history::HistoryState,
+) {
+    for job in state
+        .jobs
+        .values_mut()
+        .filter(|job| job.run_id == state.run_id && !job.status.active())
+    {
+        // The journal is authoritative; the manifest may predate a timing repair.
+        // A missing/damaged transcript must not hide the rest of the inspector.
+        if let Ok(Some(duration)) =
+            histories.worker_duration(&directory.join(format!("{}.jsonl", job.id)))
+        {
+            job.duration_ms = duration;
+        }
+    }
+}
+
 fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError> {
     let mut agents = vec![AgentCard {
         id: "main".into(),
@@ -355,16 +375,18 @@ pub async fn get_workflow(
     tauri::async_runtime::spawn_blocking(move || {
         let (journal, _) = library::agent_location(&state, &home, &conversation_id)?;
         if let Ok(hub) = active_hub(&agent, &conversation_id) {
-            let state = hub
+            let mut state = hub
                 .manifest
                 .lock()
                 .map_err(|_| AgentError::internal())?
                 .clone();
+            restore_stored_durations(&mut state, &hub.directory, &agent.histories);
             return snapshot(&state, Some(&hub)).map(Some);
         }
         let directory = storage::path(&home, &conversation_id)?;
         storage::load(&directory, &conversation_id)?
             .map(|mut state| {
+                restore_stored_durations(&mut state, &directory, &agent.histories);
                 if let Some(batch) = &mut state.validation {
                     batch.submitted |= agent.histories.has_turn(&journal, &batch.id)?;
                 }
@@ -588,6 +610,40 @@ mod tests {
         assert_eq!(cards.len(), 2);
         assert_eq!(cards[1].id, latest_id);
         assert!(state.jobs.contains_key(&first_id));
+    }
+
+    #[test]
+    fn inspector_restores_legacy_queue_time_from_the_worker_journal() {
+        let (_fixture, hub) = super::super::tests::hub();
+        let mut worker = super::super::tests::job(&hub, Role::Designer, ".");
+        worker.status = Status::Completed;
+        worker.duration_ms = 34_588_988 + 60_000;
+        let path = hub.directory.join(format!("{}.jsonl", worker.id));
+        std::fs::write(&path, "{}\n").unwrap();
+        let mut turn = hub.root.data.lock().unwrap().turns[0].clone();
+        turn.turn.active_since = None;
+        turn.turn.steps.clear();
+        turn.turn.status = TurnStatus::Error;
+        turn.turn.duration_ms = 34_588_988;
+        turn.turn.error = Some(AgentError::new(
+            "workflow_error",
+            "Uma dependência não foi concluída com sucesso.",
+        ));
+        journal::append(&path, &turn).unwrap();
+        turn.turn.steps.push(Step::default());
+        turn.turn.duration_ms = worker.duration_ms;
+        turn.turn.status = TurnStatus::Completed;
+        turn.turn.error = None;
+        journal::append(&path, &turn).unwrap();
+        let raw = std::fs::read(&path).unwrap();
+
+        let mut state = hub.manifest.lock().unwrap();
+        state.jobs.insert(worker.id.clone(), worker);
+        restore_stored_durations(&mut state, &hub.directory, &Default::default());
+        let cards = snapshot(&state, None).unwrap().agents;
+        assert_eq!(cards[1].duration_ms, 60_000);
+        assert_eq!(cards[1].active_since, None);
+        assert_eq!(std::fs::read(&path).unwrap(), raw);
     }
 
     #[test]

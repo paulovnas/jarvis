@@ -15,7 +15,7 @@ const INDEX_CACHE_ENTRIES: usize = 16;
 const INDEX_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SINGLE_INDEX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SIDECAR_BYTES: usize = 32 * 1024 * 1024;
-const SIDECAR_VERSION: u8 = 4;
+const SIDECAR_VERSION: u8 = 5;
 const MAX_CACHED_PREVIEW_BYTES: usize = 256 * 1024;
 const DEFERRED_DETAIL_KEY: &str = "_jarvisHistoryDetailsDeferred";
 
@@ -121,6 +121,8 @@ pub(super) fn excerpt(turn: &Turn, index: usize) -> Excerpt {
 struct Entry {
     offset: u64,
     length: usize,
+    queue_time: journal::QueueTimeCorrection,
+    duration_ms: u64,
     excerpt: Excerpt,
     preview: Option<Turn>,
     preview_size: usize,
@@ -137,6 +139,8 @@ struct Entry {
 struct PersistedEntry {
     offset: u64,
     length: usize,
+    queue_time: journal::QueueTimeCorrection,
+    duration_ms: u64,
     excerpt: Excerpt,
     status: TurnStatus,
     resumable: bool,
@@ -204,6 +208,8 @@ impl PersistedEntry {
         Self {
             offset: entry.offset,
             length: entry.length,
+            queue_time: entry.queue_time,
+            duration_ms: entry.duration_ms,
             excerpt: entry.excerpt.clone(),
             status: entry.status.clone(),
             resumable: entry.resumable,
@@ -218,6 +224,8 @@ impl PersistedEntry {
         Entry {
             offset: self.offset,
             length: self.length,
+            queue_time: self.queue_time,
+            duration_ms: self.duration_ms,
             excerpt: self.excerpt,
             preview: None,
             preview_size: 0,
@@ -413,6 +421,7 @@ fn indexed_entry(
     index: usize,
     offset: u64,
     length: usize,
+    queue_time: journal::QueueTimeCorrection,
 ) -> Result<Entry, AgentError> {
     let edited_paths = turn
         .turn
@@ -425,7 +434,9 @@ fn indexed_entry(
         })
         .filter_map(|tool| tool.args["path"].as_str().map(str::to_owned))
         .collect();
-    let preview = history_preview(turn.turn.clone());
+    let mut preview = history_preview(turn.turn.clone());
+    let duration_ms = queue_time.duration_ms(turn);
+    preview.duration_ms = duration_ms;
     let serialized_preview = serde_json::to_vec(&preview)
         .map_err(|_| AgentError::storage())?
         .len();
@@ -437,6 +448,8 @@ fn indexed_entry(
     Ok(Entry {
         offset,
         length,
+        queue_time,
+        duration_ms,
         excerpt: excerpt(&turn.turn, index),
         preview,
         preview_size,
@@ -475,6 +488,12 @@ impl Index {
     }
 
     fn stored_turn(&self, path: &Path, entry_index: usize) -> Result<StoredTurn, AgentError> {
+        let mut turn = self.raw_stored_turn(path, entry_index)?;
+        self.entries[entry_index].queue_time.apply(&mut turn);
+        Ok(turn)
+    }
+
+    fn raw_stored_turn(&self, path: &Path, entry_index: usize) -> Result<StoredTurn, AgentError> {
         let entry = self
             .entries
             .get(entry_index)
@@ -502,7 +521,7 @@ impl Index {
             .checked_sub(1)
             .ok_or_else(AgentError::storage)?;
         let size = self.entries[index].length;
-        let turn = self.stored_turn(path, index)?;
+        let turn = self.raw_stored_turn(path, index)?;
         if turn.turn.id != self.entries[index].excerpt.id {
             return Err(AgentError::storage());
         }
@@ -601,6 +620,7 @@ impl Index {
             self.entries.len().saturating_sub(1),
             entry.offset,
             entry.length,
+            entry.queue_time,
         )?;
         *self.entries.last_mut().ok_or_else(AgentError::storage)? = replacement;
         self.tail_dirty = false;
@@ -632,6 +652,13 @@ impl Index {
                     .entries
                     .last()
                     .is_some_and(|last| last.excerpt.id == turn.turn.id);
+                let mut queue_time = self
+                    .entries
+                    .last()
+                    .filter(|_| replacing)
+                    .map(|entry| entry.queue_time)
+                    .unwrap_or_default();
+                queue_time.observe(&turn);
                 if replacing {
                     self.entries.pop();
                 } else if !self.ids.insert(turn.turn.id.clone()) {
@@ -639,7 +666,7 @@ impl Index {
                 } else {
                     self.refresh_tail_entry()?;
                 }
-                let entry = indexed_entry(&turn, self.entries.len(), offset, length)?;
+                let entry = indexed_entry(&turn, self.entries.len(), offset, length, queue_time)?;
                 self.tail_size = length;
                 self.tail = Some(turn);
                 self.tail_dirty = false;
@@ -677,6 +704,11 @@ impl Index {
                     self.damaged_turn = Some(current_id);
                     return Ok(());
                 }
+                self.entries
+                    .last_mut()
+                    .ok_or_else(AgentError::storage)?
+                    .queue_time
+                    .observe(&candidate);
                 self.tail = Some(candidate);
                 self.tail_dirty = true;
             }
@@ -909,37 +941,12 @@ impl Index {
             .iter()
             .enumerate()
             .map(|(relative, entry)| {
-                if start + relative + 1 == self.entries.len() {
-                    if let Some(tail) = self
-                        .tail
-                        .as_ref()
-                        .filter(|turn| turn.turn.id == entry.excerpt.id)
-                    {
-                        let mut stored = tail.clone();
-                        if stored.turn.status == TurnStatus::Running {
-                            journal::interrupt_tools(&mut stored);
-                            stored.turn.status = TurnStatus::Interrupted;
-                            stored.turn.error = Some(AgentError::new(
-                                "interrupted",
-                                "Execução interrompida. Revise os arquivos antes de continuar.",
-                            ));
-                        }
-                        return Ok(if defer_details {
-                            history_preview(stored.turn)
-                        } else {
-                            stored.turn
-                        });
-                    }
-                }
                 if defer_details && entry.status != TurnStatus::Running {
                     if let Some(preview) = &entry.preview {
                         return Ok(preview.clone());
                     }
                 }
-                let mut stored: StoredTurn = serde_json::from_value(
-                    journal::record_at(path, entry.offset, entry.length)?.data,
-                )
-                .map_err(|_| AgentError::storage())?;
+                let mut stored = self.stored_turn(path, start + relative)?;
                 if stored.turn.status == TurnStatus::Running {
                     journal::interrupt_tools(&mut stored);
                     stored.turn.status = TurnStatus::Interrupted;
@@ -1094,6 +1101,12 @@ impl HistoryCache {
 #[derive(Clone, Default)]
 pub(super) struct HistoryState(Arc<Mutex<HistoryCache>>);
 impl HistoryState {
+    pub(super) fn worker_duration(&self, path: &Path) -> Result<Option<u64>, AgentError> {
+        self.with(path, |index| {
+            Ok(index.entries.last().map(|entry| entry.duration_ms))
+        })
+    }
+
     pub(super) fn load_replay(&self, path: &Path, root: &Path) -> Result<ReplayLoad, AgentError> {
         let (valid_end, file_length) = self.with(path, |index| Ok((index.end, index.length)))?;
         if valid_end < file_length {
@@ -1503,6 +1516,7 @@ mod tests {
     };
     fn stored(index: usize) -> StoredTurn {
         StoredTurn {
+            excluded_queue_ms: 0,
             mcp_intent: None,
             turn: Turn {
                 id: format!("t{index}"),
@@ -1536,6 +1550,79 @@ mod tests {
                 json!({"role":"user", "content":format!("Pedido {index}")}),
                 json!({"role":"assistant", "content":format!("Resposta {index}")}),
             ],
+        }
+    }
+
+    #[test]
+    fn legacy_queue_time_survives_cached_history_and_later_deltas() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("queued-history.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        let mut current = stored(0);
+        current.turn.steps.clear();
+        current.wire.truncate(1);
+        current.turn.duration_ms = 34_588_988;
+        current.turn.status = TurnStatus::Error;
+        current.turn.error = Some(AgentError::new(
+            "workflow_error",
+            "Uma dependência não foi concluída com sucesso.",
+        ));
+        journal::append(&path, &current).unwrap();
+        let mut index = Index::default();
+        index.refresh(&path).unwrap();
+        assert_eq!(
+            index.full_page(&path, "worker").unwrap().turns[0].duration_ms,
+            0
+        );
+
+        // Reopen a sidecar whose terminal tail was evicted, then replay an old delta.
+        let previous = current.clone();
+        current.turn.status = TurnStatus::Running;
+        current.turn.error = None;
+        current.turn.steps = stored(0).turn.steps;
+        current.turn.duration_ms += 60_000;
+        journal::append_update(&path, &previous, &current).unwrap();
+        let mut reopened = Index::default();
+        reopened.refresh(&path).unwrap();
+        assert_eq!(
+            reopened.load_replay(&path, &fixture.root).unwrap().turns[0]
+                .turn
+                .duration_ms,
+            60_000
+        );
+        assert_eq!(
+            reopened.full_page(&path, "worker").unwrap().turns[0].duration_ms,
+            60_000
+        );
+
+        let previous = current.clone();
+        current.turn.duration_ms += 30_000;
+        journal::append_update(&path, &previous, &current).unwrap();
+        reopened.refresh(&path).unwrap();
+        assert_eq!(
+            reopened.full_page(&path, "worker").unwrap().turns[0].duration_ms,
+            90_000
+        );
+        current.turn.status = TurnStatus::Completed;
+        journal::append(&path, &current).unwrap();
+        journal::append(&path, &stored(1)).unwrap();
+        reopened.refresh(&path).unwrap();
+
+        for mut reader in [reopened, Index::default()] {
+            reader.refresh(&path).unwrap();
+            for deferred in [false, true] {
+                let page = reader
+                    .page_internal(&path, "worker", None, None, None, deferred)
+                    .unwrap();
+                assert_eq!(page.turns[0].duration_ms, 90_000);
+                assert_eq!(page.turns[1].duration_ms, 0);
+            }
+            assert_eq!(
+                reader.load_replay(&path, &fixture.root).unwrap().turns[0]
+                    .turn
+                    .duration_ms,
+                90_000
+            );
         }
     }
 
