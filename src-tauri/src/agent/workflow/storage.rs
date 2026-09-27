@@ -128,6 +128,7 @@ pub(super) fn open(
         custom_agent: None,
         validation: None,
         root_recovery: None,
+        publication_baseline: None,
         version: 1,
         conversation_id: root.id.clone(),
         run_id: run_id.clone(),
@@ -143,6 +144,13 @@ pub(super) fn open(
         design_briefs: BTreeMap::new(),
         guidance: BTreeMap::new(),
     });
+    publishing::begin_run(
+        &mut manifest,
+        &root,
+        &run_id,
+        &options,
+        retry_checkpoint.is_some(),
+    )?;
     // Keep recent recovery context without allowing unbounded metadata growth.
     if let Some(batch) = &mut manifest.validation {
         if run_id == batch.id {

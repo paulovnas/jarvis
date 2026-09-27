@@ -202,6 +202,8 @@ struct Manifest {
     guidance: BTreeMap<String, guidance::Request>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     root_recovery: Option<RecoveryCheckpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    publication_baseline: Option<publishing::FileBaseline>,
     version: u8,
     conversation_id: String,
     run_id: String,

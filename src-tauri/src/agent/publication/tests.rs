@@ -108,6 +108,435 @@ fn linked_hml_repositories() -> (tempfile::TempDir, tempfile::TempDir, tempfile:
     (local, remote, peer)
 }
 
+fn published_feature_repositories() -> (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir) {
+    let (local, remote, peer) = linked_hml_repositories();
+    git_ok(local.path(), ["switch", "-c", "feature"]);
+    std::fs::write(local.path().join("app.txt"), "published feature\n").unwrap();
+    git_ok(local.path(), ["add", "app.txt"]);
+    git_ok(
+        local.path(),
+        ["commit", "--no-gpg-sign", "-m", "feat: published feature"],
+    );
+    git_ok(
+        local.path(),
+        ["push", "--set-upstream", "origin", "feature"],
+    );
+    (local, remote, peer)
+}
+
+#[test]
+fn normal_push_publishes_native_rebase_of_published_feature_and_completes_pr() {
+    let (local, remote, peer) = published_feature_repositories();
+    let before = git_ok(local.path(), ["rev-parse", "HEAD"]);
+    let hml = advance_remote(peer.path(), "remote.txt", "integration change\n");
+    std::fs::write(
+        local.path().join("app.txt"),
+        "published feature\nnew change\n",
+    )
+    .unwrap();
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &["app.txt"]);
+    proposal.sync = SyncMode::Rebase;
+    proposal.sync_base = Some("hml".into());
+    proposal.push = PushMode::Normal;
+    proposal.pull_request = Some(PullRequestProposal {
+        base: "hml".into(),
+        title: "Publish implemented changes".into(),
+        body: "Reuse the existing pull request after updating its branch.".into(),
+        draft: false,
+        merge: None,
+    });
+    let github = ExistingPullRequestGithub {
+        pull_request: PullRequestState {
+            url: "https://github.test/owner/project/pull/42".into(),
+            head_commit: before.clone(),
+        },
+        published_remote: Some(remote.path().to_path_buf()),
+        created: std::cell::Cell::new(0),
+        merges: std::cell::RefCell::new(vec![]),
+    };
+
+    let result = publish_repository_with(&root, &proposal, Some(&github)).unwrap();
+    let head = git_ok(&root, ["rev-parse", "HEAD"]);
+
+    assert_ne!(head, before);
+    assert_eq!(
+        git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]),
+        head
+    );
+    assert!(is_ancestor(&root, &hml, &head).unwrap());
+    assert_eq!(
+        git_ok(&root, ["rev-list", "--count", "origin/hml..HEAD"]),
+        "2"
+    );
+    assert_eq!(result.commit.as_deref(), Some(head.as_str()));
+    assert_eq!(result.push, PushMode::ForceWithLease);
+    assert!(result.pull_request_reused);
+    assert_eq!(
+        result.pull_request.as_deref(),
+        Some("https://github.test/owner/project/pull/42")
+    );
+    assert_eq!(github.created.get(), 0);
+    assert!(github.merges.borrow().is_empty());
+}
+
+#[test]
+fn normal_push_resumes_after_native_rebase_conflict_without_repeating_commits() {
+    let (local, remote, peer) = published_feature_repositories();
+    advance_remote(peer.path(), "app.txt", "integration change\n");
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &[]);
+    proposal.commit_message = None;
+    proposal.sync = SyncMode::Rebase;
+    proposal.sync_base = Some("hml".into());
+    let failure = publish_repository(&root, &proposal, false).err().unwrap();
+    assert_eq!(failure.code, "publication_sync_conflict");
+
+    std::fs::write(
+        root.join("app.txt"),
+        "integration change\npublished feature\n",
+    )
+    .unwrap();
+    proposal.sync = SyncMode::RebaseContinue;
+    proposal.files = vec!["app.txt".into()];
+    publish_repository(&root, &proposal, false).unwrap();
+    let head = git_ok(&root, ["rev-parse", "HEAD"]);
+    proposal.sync = SyncMode::None;
+    proposal.sync_base = None;
+    proposal.files.clear();
+    proposal.push = PushMode::Normal;
+
+    for expected_push in [PushMode::ForceWithLease, PushMode::Normal] {
+        let result = publish_repository(&root, &proposal, false).unwrap();
+        assert!(result.commit.is_none());
+        assert_eq!(result.push, expected_push);
+        assert_eq!(git_ok(&root, ["rev-parse", "HEAD"]), head);
+        assert_eq!(
+            git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]),
+            head
+        );
+        assert_eq!(
+            git_ok(&root, ["rev-list", "--count", "origin/hml..HEAD"]),
+            "1"
+        );
+    }
+}
+
+#[test]
+fn normal_push_after_rebase_preserves_concurrent_remote_commits_even_after_fetch() {
+    for refresh_tracking in [false, true] {
+        let (local, remote, peer) = published_feature_repositories();
+        advance_remote(peer.path(), "remote.txt", "integration change\n");
+        let root = std::fs::canonicalize(local.path()).unwrap();
+        let mut proposal = repo_proposal(".", &[]);
+        proposal.commit_message = None;
+        proposal.sync = SyncMode::Rebase;
+        proposal.sync_base = Some("hml".into());
+        publish_repository(&root, &proposal, false).unwrap();
+        let head = git_ok(&root, ["rev-parse", "HEAD"]);
+
+        git_ok(peer.path(), ["fetch", "origin", "feature"]);
+        git_ok(peer.path(), ["switch", "-c", "feature", "origin/feature"]);
+        std::fs::write(peer.path().join("concurrent.txt"), "keep remote work\n").unwrap();
+        git_ok(peer.path(), ["add", "concurrent.txt"]);
+        git_ok(
+            peer.path(),
+            ["commit", "--no-gpg-sign", "-m", "feat: concurrent work"],
+        );
+        git_ok(peer.path(), ["push", "origin", "feature"]);
+        let concurrent = git_ok(peer.path(), ["rev-parse", "HEAD"]);
+        if refresh_tracking {
+            git_ok(&root, ["fetch", "origin", "feature"]);
+            assert_eq!(git_ok(&root, ["rev-parse", "origin/feature"]), concurrent);
+        }
+        proposal.sync = SyncMode::None;
+        proposal.sync_base = None;
+        proposal.push = PushMode::Normal;
+
+        assert!(publish_repository(&root, &proposal, false).is_err());
+        assert_eq!(
+            git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]),
+            concurrent
+        );
+        assert_eq!(
+            git_ok(remote.path(), ["show", "refs/heads/feature:concurrent.txt"]),
+            "keep remote work"
+        );
+        assert_eq!(git_ok(&root, ["rev-parse", "HEAD"]), head);
+    }
+}
+
+#[test]
+fn normal_push_cannot_reuse_rebase_receipt_for_another_branch() {
+    let (local, remote, peer) = published_feature_repositories();
+    let before = git_ok(local.path(), ["rev-parse", "HEAD"]);
+    git_ok(local.path(), ["push", "origin", "HEAD:refs/heads/other"]);
+    advance_remote(peer.path(), "remote.txt", "integration change\n");
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &[]);
+    proposal.commit_message = None;
+    proposal.sync = SyncMode::Rebase;
+    proposal.sync_base = Some("hml".into());
+    publish_repository(&root, &proposal, false).unwrap();
+    git_ok(&root, ["switch", "-c", "other"]);
+    proposal.sync = SyncMode::None;
+    proposal.sync_base = None;
+    proposal.push = PushMode::Normal;
+
+    assert!(publish_repository(&root, &proposal, false).is_err());
+    assert_eq!(
+        git_ok(remote.path(), ["rev-parse", "refs/heads/other"]),
+        before
+    );
+    assert_eq!(
+        git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]),
+        before
+    );
+}
+
+#[test]
+fn normal_push_cannot_reuse_rebase_receipt_after_remote_destination_changes() {
+    let (local, remote, peer) = published_feature_repositories();
+    let before = git_ok(local.path(), ["rev-parse", "HEAD"]);
+    advance_remote(peer.path(), "remote.txt", "integration change\n");
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &[]);
+    proposal.commit_message = None;
+    proposal.sync = SyncMode::Rebase;
+    proposal.sync_base = Some("hml".into());
+    publish_repository(&root, &proposal, false).unwrap();
+    let other = tempfile::tempdir().unwrap();
+    git_ok(
+        other.path(),
+        ["clone", "--bare", remote.path().to_str().unwrap(), "."],
+    );
+    git_ok(
+        &root,
+        [
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            other.path().to_str().unwrap(),
+        ],
+    );
+    proposal.sync = SyncMode::None;
+    proposal.sync_base = None;
+    proposal.push = PushMode::Normal;
+
+    assert!(publish_repository(&root, &proposal, false).is_err());
+    assert_eq!(
+        git_ok(other.path(), ["rev-parse", "refs/heads/feature"]),
+        before
+    );
+    assert_eq!(
+        git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]),
+        before
+    );
+}
+
+#[test]
+fn normal_push_cannot_reuse_rebase_receipt_after_discarding_its_result() {
+    let (local, remote, peer) = published_feature_repositories();
+    let before = git_ok(local.path(), ["rev-parse", "HEAD"]);
+    advance_remote(peer.path(), "remote.txt", "integration change\n");
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &[]);
+    proposal.commit_message = None;
+    proposal.sync = SyncMode::Rebase;
+    proposal.sync_base = Some("hml".into());
+    publish_repository(&root, &proposal, false).unwrap();
+    git_ok(&root, ["reset", "--hard", "origin/hml"]);
+    proposal.sync = SyncMode::None;
+    proposal.sync_base = None;
+    proposal.push = PushMode::Normal;
+
+    assert!(publish_repository(&root, &proposal, false).is_err());
+    assert_eq!(
+        git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]),
+        before
+    );
+    assert_eq!(
+        git_ok(&root, ["rev-parse", "HEAD"]),
+        git_ok(&root, ["rev-parse", "origin/hml"])
+    );
+}
+
+#[test]
+fn aborting_native_rebase_does_not_authorize_a_later_external_rewrite() {
+    let (local, remote, peer) = published_feature_repositories();
+    let before = git_ok(local.path(), ["rev-parse", "HEAD"]);
+    advance_remote(peer.path(), "app.txt", "integration change\n");
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &[]);
+    proposal.commit_message = None;
+    proposal.sync = SyncMode::Rebase;
+    proposal.sync_base = Some("hml".into());
+    assert_eq!(
+        publish_repository(&root, &proposal, false)
+            .err()
+            .unwrap()
+            .code,
+        "publication_sync_conflict"
+    );
+    proposal.sync = SyncMode::RebaseAbort;
+    publish_repository(&root, &proposal, false).unwrap();
+    assert_eq!(git_ok(&root, ["rev-parse", "HEAD"]), before);
+    git_ok(
+        &root,
+        [
+            "-c",
+            "commit.gpgsign=false",
+            "rebase",
+            "-X",
+            "theirs",
+            "origin/hml",
+        ],
+    );
+    assert_ne!(git_ok(&root, ["rev-parse", "HEAD"]), before);
+    proposal.sync = SyncMode::None;
+    proposal.sync_base = None;
+    proposal.push = PushMode::Normal;
+
+    assert!(publish_repository(&root, &proposal, false).is_err());
+    assert_eq!(
+        git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]),
+        before
+    );
+}
+
+#[test]
+fn aborting_second_rebase_preserves_the_first_rebases_pending_push() {
+    let (local, remote, peer) = published_feature_repositories();
+    let original_remote = git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]);
+    advance_remote(peer.path(), "remote.txt", "first integration change\n");
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &[]);
+    proposal.commit_message = None;
+    proposal.sync = SyncMode::Rebase;
+    proposal.sync_base = Some("hml".into());
+    publish_repository(&root, &proposal, false).unwrap();
+    let first_rebase = git_ok(&root, ["rev-parse", "HEAD"]);
+    assert_ne!(first_rebase, original_remote);
+
+    advance_remote(peer.path(), "app.txt", "second integration change\n");
+    let failure = publish_repository(&root, &proposal, false).err().unwrap();
+    assert_eq!(failure.code, "publication_sync_conflict");
+    proposal.sync = SyncMode::RebaseAbort;
+    publish_repository(&root, &proposal, false).unwrap();
+    assert_eq!(git_ok(&root, ["rev-parse", "HEAD"]), first_rebase);
+    assert_eq!(
+        git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]),
+        original_remote
+    );
+    proposal.sync = SyncMode::None;
+    proposal.sync_base = None;
+    proposal.push = PushMode::Normal;
+
+    let result = publish_repository(&root, &proposal, false).unwrap();
+
+    assert_eq!(result.push, PushMode::ForceWithLease);
+    assert!(result.commit.is_none());
+    assert_eq!(
+        git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]),
+        first_rebase
+    );
+    assert_eq!(git_ok(&root, ["rev-parse", "HEAD"]), first_rebase);
+}
+
+#[test]
+fn confirmed_push_still_completes_pr_when_checkpoint_cleanup_cannot_read_receipt() {
+    let (local, remote, _peer) = published_feature_repositories();
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let before = git_ok(&root, ["rev-parse", "HEAD"]);
+    let checkpoint = git_ok(
+        &root,
+        ["rev-parse", "--git-path", "jarvis-publication-rebase.json"],
+    );
+    std::fs::write(root.join(checkpoint), "invalid checkpoint").unwrap();
+    std::fs::write(root.join("app.txt"), "published feature\nnew change\n").unwrap();
+    let mut proposal = repo_proposal(".", &["app.txt"]);
+    proposal.push = PushMode::Normal;
+    proposal.pull_request = Some(PullRequestProposal {
+        base: "hml".into(),
+        title: "Publish the completed implementation".into(),
+        body: "Continue the approved publication after its confirmed push.".into(),
+        draft: false,
+        merge: None,
+    });
+    let github = ExistingPullRequestGithub {
+        pull_request: PullRequestState {
+            url: "https://github.test/owner/project/pull/42".into(),
+            head_commit: before,
+        },
+        published_remote: Some(remote.path().to_path_buf()),
+        created: std::cell::Cell::new(0),
+        merges: std::cell::RefCell::new(vec![]),
+    };
+
+    let result = publish_repository_with(&root, &proposal, Some(&github)).unwrap();
+
+    assert_eq!(result.push, PushMode::Normal);
+    assert!(result.pull_request_reused);
+    assert_eq!(
+        result.pull_request.as_deref(),
+        Some("https://github.test/owner/project/pull/42")
+    );
+    assert_eq!(
+        result.commit.as_deref(),
+        Some(git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]).as_str())
+    );
+}
+
+#[test]
+fn local_rebase_does_not_require_push_connectivity_or_grant_an_unverified_lease() {
+    let (local, remote, peer) = published_feature_repositories();
+    let original_remote = git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]);
+    advance_remote(peer.path(), "remote.txt", "integration change\n");
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let missing_remote = root.join("unavailable-remote.git");
+    git_ok(
+        &root,
+        [
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            missing_remote.to_str().unwrap(),
+        ],
+    );
+    let mut proposal = repo_proposal(".", &[]);
+    proposal.commit_message = None;
+    proposal.sync = SyncMode::Rebase;
+    proposal.sync_base = Some("hml".into());
+
+    let result = publish_repository(&root, &proposal, false).unwrap();
+    let head = git_ok(&root, ["rev-parse", "HEAD"]);
+
+    assert!(matches!(result.sync.unwrap().outcome, SyncOutcome::Rebased));
+    assert_eq!(result.push, PushMode::None);
+    assert_ne!(head, original_remote);
+    git_ok(
+        &root,
+        [
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            remote.path().to_str().unwrap(),
+        ],
+    );
+    proposal.sync = SyncMode::None;
+    proposal.sync_base = None;
+    proposal.push = PushMode::Normal;
+    assert!(publish_repository(&root, &proposal, false).is_err());
+    assert_eq!(
+        git_ok(remote.path(), ["rev-parse", "refs/heads/feature"]),
+        original_remote
+    );
+    assert_eq!(git_ok(&root, ["rev-parse", "HEAD"]), head);
+}
+
 #[test]
 fn reference_branch_rebase_can_resolve_conflicts_and_continue_on_current_branch() {
     let (local, _remote, peer) = linked_hml_repositories();
@@ -244,6 +673,27 @@ fn automatic_settings_authorize_commit_and_use_the_configured_reference_without_
         .code,
         "publication_question_required"
     );
+    let push_actions = AutomaticPublication {
+        push: true,
+        ..actions
+    };
+    tool.args["repositories"][0]["push"] = json!("force_with_lease");
+    let PreparedPublication::Ready(proposal) = prepare_with_confirmation(
+        &state,
+        home.path(),
+        "p1",
+        &root,
+        "Implemente o ajuste",
+        false,
+        &tool,
+        None,
+        Some(&push_actions),
+    )
+    .unwrap() else {
+        panic!("expected selected automatic push without another review");
+    };
+    assert!(executes_without_review(&proposal));
+    assert_eq!(proposal.repositories[0].push, PushMode::Normal);
 }
 
 fn advance_remote(peer: &Path, file: &str, content: &str) -> String {
@@ -347,6 +797,9 @@ fn publication_tool_exposes_typed_multi_repository_review() {
     assert!(prompt.contains("Never send the user to a terminal"));
     assert!(prompt.contains("sync=ff_only"));
     assert!(prompt.contains("Sync does not imply push"));
+    assert!(prompt.contains("Use push=normal for automatic publication"));
+    assert!(prompt.contains("exact-SHA lease"));
+    assert!(prompt.contains("resume only pending Push/PR actions"));
     assert!(prompt.contains("reused automatically"));
     assert!(prompt.contains("revision_requested"));
     assert!(prompt.contains("submit a revised proposal"));
@@ -1365,6 +1818,7 @@ fn a_commit_followed_by_sync_conflict_is_reported_as_partial_work() {
 
 struct ExistingPullRequestGithub {
     pull_request: PullRequestState,
+    published_remote: Option<PathBuf>,
     created: std::cell::Cell<usize>,
     merges: std::cell::RefCell<Vec<(String, String)>>,
 }
@@ -1376,10 +1830,17 @@ impl GithubClient for ExistingPullRequestGithub {
 
     fn find_open(
         &self,
-        _directory: &Path,
+        directory: &Path,
         _base: &str,
-        _head: &str,
+        head: &str,
     ) -> Result<Option<PullRequestState>, AgentError> {
+        if let Some(remote) = &self.published_remote {
+            assert_eq!(
+                git_ok(remote, ["rev-parse", &format!("refs/heads/{head}")]),
+                git_ok(directory, ["rev-parse", "HEAD"]),
+                "Pull request lookup must follow the confirmed push"
+            );
+        }
         Ok(Some(self.pull_request.clone()))
     }
 
@@ -1425,6 +1886,7 @@ fn approved_merge_reuses_an_existing_pull_request_without_creating_a_duplicate()
             url: "https://github.test/owner/project/pull/42".into(),
             head_commit: head.clone(),
         },
+        published_remote: None,
         created: std::cell::Cell::new(0),
         merges: std::cell::RefCell::new(vec![]),
     };

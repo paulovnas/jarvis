@@ -300,6 +300,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
         custom_agent: None,
         validation: None,
         root_recovery: None,
+        publication_baseline: None,
         version: 1,
         conversation_id: root.id.clone(),
         run_id: "run".into(),

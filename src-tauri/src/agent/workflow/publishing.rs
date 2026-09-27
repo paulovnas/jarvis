@@ -1,4 +1,65 @@
 use super::*;
+use std::hash::{Hash, Hasher};
+
+pub(super) type FileBaseline = BTreeMap<String, (u64, u64)>;
+
+fn fingerprint(file: &super::super::diffs::FileRevision) -> (u64, u64) {
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    file.after.hash(&mut hash);
+    (file.revision, hash.finish())
+}
+
+pub(super) fn begin_run(
+    state: &mut Manifest,
+    root: &Session,
+    run_id: &str,
+    options: &TurnOptions,
+    retrying: bool,
+) -> Result<(), AgentError> {
+    if options.automatic_publication.is_none() {
+        state.publication_baseline = None;
+        return Ok(());
+    }
+    let continuing = retrying
+        || state.run_id == run_id
+        || state
+            .validation
+            .as_ref()
+            .is_some_and(|batch| !batch.stale && batch.id == run_id);
+    if !continuing || state.publication_baseline.is_none() {
+        let data = root.data.lock().map_err(|_| AgentError::internal())?;
+        state.publication_baseline = Some(
+            data.extras
+                .files
+                .iter()
+                .map(|(path, file)| (path.clone(), fingerprint(file)))
+                .collect(),
+        );
+    }
+    Ok(())
+}
+
+fn has_implementation_changes(hub: &Hub) -> Result<bool, AgentError> {
+    let baseline = hub
+        .manifest
+        .lock()
+        .map_err(|_| AgentError::internal())?
+        .publication_baseline
+        .clone();
+    let Some(baseline) = baseline else {
+        return Ok(false);
+    };
+    let data = hub.root.data.lock().map_err(|_| AgentError::internal())?;
+    // Native file checkpoints include delegated writes. Old chat edits and
+    // changes fully reverted during this run must not start a publishing agent.
+    Ok(data.extras.files.values().any(|file| {
+        file.base != "unknown"
+            && file.before != file.after
+            && baseline.get(&file.path).is_none_or(|previous| {
+                file.revision > previous.0 && fingerprint(file).1 != previous.1
+            })
+    }))
+}
 
 fn prepare(hub: &Hub) -> Result<Job, AgentError> {
     let (run_id, options) = {
@@ -241,6 +302,9 @@ pub(super) async fn automatic(
     {
         return Ok(());
     }
+    if existing.is_none() && !has_implementation_changes(&hub)? {
+        return Ok(());
+    }
     let job = if let Some(job) = existing {
         job
     } else {
@@ -286,6 +350,7 @@ pub(super) async fn automatic(
         job.phase = Phase::Publication;
         job.title = "Github · publicação automática".into();
         job.prompt = format!("The implementation has finished successfully. Complete only the per-chat publication actions selected by the user: commit={}, push={}, pullRequest={}. The native runtime authorizes exactly these actions without another publication review; use authorization=null and previewOnly=false. Do not merge, reset, switch branches or add unselected operations. Use each repository's configured reference branch for rebase and PR base; resolve conflicts with targeted file edits and continue the native rebase. Reuse confirmed checks and existing PRs. Work only on the implementation's relevant changes, preserving unrelated work. If there is nothing to publish, report that and finish. Do not restart implementation or request consent for the selected actions.\n\nCompleted request (context only):\n{}\n\nRead-only publication inspection:\n{}", actions.commit, actions.push, actions.pull_request, job.prompt, inspection);
+        job.prompt.push_str("\n\nUse push=normal. Jarvis can recover its own recorded rebase with an exact-SHA lease under the selected Push authorization. If the remote changed, inspect and integrate its commits before retrying; do not widen the lease. Preserve confirmed commits and continue only pending Push/PR actions without asking again for the selected actions or marking a recoverable rejection as blocked.");
         job.acceptance = vec!["Complete exactly the configured publication actions; no merge.".into(), "Verify resulting Git/PR state and report actual results, preserving implementation progress.".into()];
         let completed_summary = {
             let data = hub.root.data.lock().map_err(|_| AgentError::internal())?;
@@ -330,6 +395,135 @@ pub(super) async fn automatic(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn begin_automatic_run(hub: &Hub, run_id: &str, retrying: bool) {
+        let mut state = hub.manifest.lock().unwrap();
+        let options = state.options.clone();
+        begin_run(&mut state, &hub.root, run_id, &options, retrying).unwrap();
+        state.run_id = run_id.into();
+        storage::save(&hub.directory, &state).unwrap();
+    }
+
+    async fn write_file(hub: &Hub, path: &str, content: &str) {
+        let call = ToolCall {
+            id: "write".into(),
+            name: "write".into(),
+            args: json!({"path":path,"content":content}),
+            status: "running".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        let (_cancel, signal) = watch::channel(false);
+        let result = super::super::super::tools::execute_with_revision(
+            &hub.root.root,
+            &call,
+            Mode::Build,
+            signal,
+        )
+        .await
+        .unwrap();
+        super::super::super::diffs::record(&hub.root, result.revision.unwrap())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn automatic_publication_does_not_start_after_a_reply_without_file_changes() {
+        for flow in [Flow::Standard, Flow::Planned, Flow::Complete, Flow::Custom] {
+            for (commit, push, pull_request) in [
+                (true, false, false),
+                (false, true, false),
+                (true, true, true),
+            ] {
+                let (_fixture, hub) = super::super::tests::hub();
+                {
+                    let mut state = hub.manifest.lock().unwrap();
+                    state.flow = flow;
+                    state.options.automatic_publication =
+                        Some(super::super::super::publication::AutomaticPublication {
+                            commit,
+                            push,
+                            pull_request,
+                        });
+                }
+                begin_automatic_run(&hub, "reply", false);
+                let (_cancel, signal) = watch::channel(false);
+                automatic(hub.clone(), signal).await.unwrap();
+                assert!(hub.manifest.lock().unwrap().jobs.is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn automatic_publication_ignores_old_changes_and_noop_writes() {
+        let (fixture, hub) = super::super::tests::hub();
+        std::fs::write(fixture.root.join("file.txt"), "original\n").unwrap();
+        write_file(&hub, "file.txt", "previous implementation\n").await;
+        hub.manifest.lock().unwrap().options.automatic_publication =
+            Some(super::super::super::publication::AutomaticPublication {
+                commit: true,
+                push: true,
+                pull_request: true,
+            });
+        begin_automatic_run(&hub, "reply", false);
+        let (_cancel, signal) = watch::channel(false);
+        automatic(hub.clone(), signal.clone()).await.unwrap();
+
+        // Even an external edit followed by an identical tool write is not an
+        // implementation by this run and must not claim those changes.
+        std::fs::write(fixture.root.join("file.txt"), "user edit\n").unwrap();
+        write_file(&hub, "file.txt", "user edit\n").await;
+        automatic(hub.clone(), signal).await.unwrap();
+        assert!(hub.manifest.lock().unwrap().jobs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn automatic_publication_tracks_net_changes_and_preserves_them_on_continuation() {
+        let (fixture, hub) = super::super::tests::hub();
+        std::fs::write(fixture.root.join("file.txt"), "original\n").unwrap();
+        write_file(&hub, "file.txt", "previous implementation\n").await;
+        hub.manifest.lock().unwrap().options.automatic_publication =
+            Some(super::super::super::publication::AutomaticPublication {
+                commit: true,
+                push: true,
+                pull_request: false,
+            });
+        begin_automatic_run(&hub, "implementation", false);
+        write_file(&hub, "file.txt", "new implementation\n").await;
+        assert!(has_implementation_changes(&hub).unwrap());
+
+        let restored = storage::load(&hub.directory, &hub.root.id)
+            .unwrap()
+            .unwrap();
+        *hub.manifest.lock().unwrap() = restored;
+        begin_automatic_run(&hub, "implementation", false);
+        assert!(has_implementation_changes(&hub).unwrap());
+        begin_automatic_run(&hub, "retry", true);
+        assert!(has_implementation_changes(&hub).unwrap());
+
+        hub.manifest.lock().unwrap().validation = Some(validation::Batch {
+            id: "approval".into(),
+            flow: Flow::Complete,
+            run_id: "retry".into(),
+            epic_ids: vec![],
+            submitted: true,
+            stale: false,
+            created_at: 0,
+            items: vec![],
+        });
+        begin_automatic_run(&hub, "approval", false);
+        assert!(has_implementation_changes(&hub).unwrap());
+
+        write_file(&hub, "file.txt", "previous implementation\n").await;
+        assert!(!has_implementation_changes(&hub).unwrap());
+        write_file(&hub, "file.txt", "new implementation\n").await;
+        begin_automatic_run(&hub, "unrelated question", false);
+        assert!(!has_implementation_changes(&hub).unwrap());
+
+        // Empty-file creation is a real change despite having zero added lines.
+        write_file(&hub, "empty.txt", "").await;
+        assert!(has_implementation_changes(&hub).unwrap());
+    }
 
     #[test]
     fn automatic_publication_waits_for_validation_and_all_workers() {

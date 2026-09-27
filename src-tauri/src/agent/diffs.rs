@@ -151,6 +151,9 @@ pub(super) fn summaries(data: &SessionData) -> Vec<FileSummary> {
 }
 
 pub(super) async fn record(session: &Session, revision: FileRevision) -> Result<(), AgentError> {
+    if revision.before == revision.after {
+        return Ok(());
+    }
     let previous = session
         .data
         .lock()

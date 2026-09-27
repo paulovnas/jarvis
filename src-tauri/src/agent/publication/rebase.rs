@@ -8,6 +8,16 @@ struct Checkpoint {
     onto: String,
     reference: String,
     conflicts: Vec<String>,
+    #[serde(default)]
+    lease: Option<PushLease>,
+    #[serde(default)]
+    completed: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PushLease {
+    destination: String,
+    expected: String,
 }
 
 fn git_path(directory: &Path, name: &str) -> Result<PathBuf, AgentError> {
@@ -22,27 +32,94 @@ fn git_path(directory: &Path, name: &str) -> Result<PathBuf, AgentError> {
 
 fn save(directory: &Path, checkpoint: &Checkpoint) -> Result<(), AgentError> {
     let path = git_path(directory, "jarvis-publication-rebase.json")?;
-    std::fs::write(
-        path,
-        serde_json::to_vec(checkpoint).map_err(|_| AgentError::internal())?,
-    )
-    .map_err(|_| {
+    let failure = || {
         error(
             "publication_sync_recovery",
             "Não foi possível salvar o checkpoint do rebase.",
         )
-    })
+    };
+    let mut file = tempfile::NamedTempFile::new_in(path.parent().ok_or_else(failure)?)
+        .map_err(|_| failure())?;
+    serde_json::to_writer(file.as_file_mut(), checkpoint).map_err(|_| failure())?;
+    file.as_file_mut().sync_all().map_err(|_| failure())?;
+    file.persist(path).map_err(|_| failure())?;
+    Ok(())
 }
 
-fn load(directory: &Path) -> Result<Checkpoint, AgentError> {
-    let bytes = std::fs::read(git_path(directory, "jarvis-publication-rebase.json")?)
-        .map_err(|_| error("publication_sync_recovery", "Este rebase não possui um checkpoint de publicação do Jarvis. Inspecione a operação existente antes de alterá-la."))?;
-    serde_json::from_slice(&bytes).map_err(|_| {
+fn optional(directory: &Path) -> Result<Option<Checkpoint>, AgentError> {
+    let bytes = match std::fs::read(git_path(directory, "jarvis-publication-rebase.json")?) {
+        Ok(bytes) => bytes,
+        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(AgentError::storage()),
+    };
+    serde_json::from_slice(&bytes).map(Some).map_err(|_| {
         error(
             "publication_sync_recovery",
             "O checkpoint do rebase está inválido.",
         )
     })
+}
+
+fn load(directory: &Path) -> Result<Checkpoint, AgentError> {
+    optional(directory)?.ok_or_else(|| error("publication_sync_recovery", "Este rebase não possui um checkpoint de publicação do Jarvis. Inspecione a operação existente antes de alterá-la."))
+}
+
+fn push_destination(directory: &Path) -> Result<Option<String>, AgentError> {
+    let urls = git(
+        directory,
+        ["remote", "get-url", "--push", "--all", "origin"],
+    )?;
+    let mut urls = urls.lines();
+    Ok(urls
+        .next()
+        .filter(|_| urls.next().is_none())
+        .map(str::to_owned))
+}
+
+fn remote_head(
+    directory: &Path,
+    destination: &str,
+    branch: &str,
+) -> Result<Option<String>, AgentError> {
+    let reference = format!("refs/heads/{branch}");
+    let output = git(directory, ["ls-remote", "--refs", destination, &reference])?;
+    Ok(output.lines().find_map(|line| {
+        let (oid, name) = line.split_once('\t')?;
+        (name == reference).then(|| oid.to_owned())
+    }))
+}
+
+pub(super) fn push_lease(directory: &Path, branch: &str) -> Result<Option<String>, AgentError> {
+    let Some(checkpoint) = optional(directory)? else {
+        return Ok(None);
+    };
+    let (Some(lease), Some(completed)) = (checkpoint.lease, checkpoint.completed) else {
+        return Ok(None);
+    };
+    if checkpoint.branch != branch
+        || push_destination(directory)?.as_deref() != Some(lease.destination.as_str())
+        || rebase_in_progress(directory)?
+        || !is_ancestor(directory, &completed, "HEAD")?
+    {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "--force-with-lease=refs/heads/{branch}:{}",
+        lease.expected
+    )))
+}
+
+pub(super) fn complete(directory: &Path) -> Result<(), AgentError> {
+    let mut checkpoint = load(directory)?;
+    checkpoint.completed = Some(git(directory, ["rev-parse", "HEAD"])?);
+    save(directory, &checkpoint)
+}
+
+pub(super) fn pushed(directory: &Path, branch: &str) -> Result<(), AgentError> {
+    if optional(directory)?.is_some_and(|checkpoint| checkpoint.branch == branch) {
+        clear(directory)?;
+    }
+    Ok(())
 }
 
 pub(super) fn checkpoint(
@@ -57,14 +134,40 @@ pub(super) fn checkpoint(
             "Já existe um rebase em andamento. Resolva-o antes de iniciar outro.",
         ));
     }
+    let branch = current_branch(directory)?;
+    // A lease is valid only if the old remote history was included before our
+    // rebase. A tracking ref refreshed later must never renew this permission.
+    let lease = if let Some(destination) = push_destination(directory)? {
+        // Failure to inspect the push endpoint prevents lease recovery, but
+        // must not prevent a local rebase using the fetched integration branch.
+        match remote_head(directory, &destination, &branch).ok().flatten() {
+            Some(expected)
+                if is_ancestor(directory, &expected, before).unwrap_or(false)
+                    || push_lease(directory, &branch)?.as_deref()
+                        == Some(
+                            format!("--force-with-lease=refs/heads/{branch}:{expected}").as_str(),
+                        ) =>
+            {
+                Some(PushLease {
+                    destination,
+                    expected,
+                })
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
     save(
         directory,
         &Checkpoint {
-            branch: current_branch(directory)?,
+            branch,
             before: before.into(),
             onto: onto.into(),
             reference: reference.into(),
             conflicts: vec![],
+            lease,
+            completed: None,
         },
     )
 }
@@ -132,7 +235,9 @@ pub(super) fn finish(directory: &Path, proposal: &RepositoryProposal) -> Result<
     validate(directory, proposal)?;
     if proposal.sync == SyncMode::RebaseAbort {
         git(directory, ["rebase", "--abort"])?;
-        return clear(directory);
+        // The restored HEAD can still include an earlier, unpublished native
+        // rebase. Keep its lease bound to that restored history.
+        return complete(directory);
     }
     if !proposal.files.is_empty() {
         let mut check = vec![
@@ -168,5 +273,5 @@ pub(super) fn finish(directory: &Path, proposal: &RepositoryProposal) -> Result<
             &String::from_utf8_lossy(&output.stderr),
         )?);
     }
-    clear(directory)
+    complete(directory)
 }
