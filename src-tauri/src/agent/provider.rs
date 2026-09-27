@@ -717,6 +717,21 @@ pub(super) async fn stream(
 }
 
 fn provider_input(input: Vec<Value>) -> Vec<Value> {
+    repair_tool_outputs(input)
+        .into_iter()
+        .map(|(_, mut item)| {
+            if let Some(map) = item.as_object_mut() {
+                // Recovery and deduplication metadata is private to the journal.
+                map.retain(|key, _| !key.starts_with("_jarvis_"));
+            }
+            item
+        })
+        .collect()
+}
+
+/// Project history only after tools have settled. Each item retains its exclusive
+/// source offset so compaction checkpoints never count synthetic tool outcomes.
+pub(super) fn repair_tool_outputs(input: Vec<Value>) -> Vec<(usize, Value)> {
     let mut outputs: HashSet<String> = input
         .iter()
         .filter(|item| item["type"] == "function_call_output")
@@ -725,7 +740,8 @@ fn provider_input(input: Vec<Value>) -> Vec<Value> {
     let mut replay = Vec::with_capacity(input.len());
     let mut interrupted = Vec::new();
     let mut after_output = false;
-    for mut item in input {
+    let end = input.len();
+    for (index, item) in input.into_iter().enumerate() {
         // Interrupted streams can leave calls only in the wire journal. Repair
         // the provider projection, never the saved history or a confirmed result.
         // Finish each parallel group before the next message or group of calls.
@@ -734,7 +750,7 @@ fn provider_input(input: Vec<Value>) -> Vec<Value> {
             Some("function_call" | "function_call_output")
         ) || (after_output && item["type"] == "function_call")
         {
-            replay.append(&mut interrupted);
+            replay.extend(interrupted.drain(..).map(|item| (index, item)));
         }
         after_output = item["type"] == "function_call_output";
         if item["type"] == "function_call" {
@@ -748,13 +764,9 @@ fn provider_input(input: Vec<Value>) -> Vec<Value> {
                 }
             }
         }
-        if let Some(map) = item.as_object_mut() {
-            // Recovery and deduplication metadata is private to the journal.
-            map.retain(|key, _| !key.starts_with("_jarvis_"));
-        }
-        replay.push(item);
+        replay.push((index + 1, item));
     }
-    replay.append(&mut interrupted);
+    replay.extend(interrupted.into_iter().map(|item| (end, item)));
     replay
 }
 
@@ -1238,10 +1250,12 @@ mod tests {
         assert_eq!(provider_input(replay.clone()), replay);
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore = "Requires JARVIS_REPLAY_JOURNAL; validates a private journal copy offline"]
-    fn replay_saved_journal_preserves_results_and_completes_tool_pairs() {
-        use super::super::{compaction, journal, tests};
+    async fn replay_saved_journal_preserves_results_and_completes_tool_pairs() {
+        use super::super::{
+            compaction, context_manager::StepContext, history, journal, session_writer, tests,
+        };
         let path = std::env::var_os("JARVIS_REPLAY_JOURNAL")
             .expect("Set JARVIS_REPLAY_JOURNAL to the journal to inspect");
         let original = std::fs::read(&path).unwrap();
@@ -1249,11 +1263,24 @@ mod tests {
         let copy = fixture.root.join("replay.jsonl");
         std::fs::write(&copy, &original).unwrap();
         let (turns, extras) = journal::read_only(&copy).unwrap();
-        let session = tests::session(&fixture);
-        let mut data = session.data.lock().unwrap();
-        data.turns = turns;
-        data.extras = extras;
-        let input = compaction::input(&data);
+        let mut session = tests::session(&fixture);
+        // Persist the diagnostic checkpoint to the complete private copy, not
+        // to the empty fixture journal. The source stays strictly read-only.
+        let writable = std::sync::Arc::get_mut(&mut session).unwrap();
+        writable.journal = copy.clone();
+        writable.writer = session_writer::SessionWriter::start(
+            copy.clone(),
+            writable.id.clone(),
+            turns.last().cloned(),
+        )
+        .unwrap();
+        let original_turns = turns.clone();
+        let input = {
+            let mut data = session.data.lock().unwrap();
+            data.turns = turns;
+            data.extras = extras;
+            compaction::input(&data)
+        };
         let confirmed: Vec<_> = input
             .iter()
             .filter(|item| item["type"] == "function_call_output")
@@ -1299,18 +1326,90 @@ mod tests {
             provider_input(replay.clone()) == replay,
             "Projection must be idempotent"
         );
-        assert!(
-            std::fs::read(&path).unwrap() == original,
-            "Source journal changed during the diagnostic"
-        );
         println!(
             "Offline replay: {} turns, {} input items, {} unique calls, {} preserved results, {} completed pairs",
-            data.turns.len(),
+            original_turns.len(),
             input.len(),
             calls.len(),
             confirmed.len(),
             replay.len() - input.len()
         );
+        let (_cancel, signal) = watch::channel(false);
+        let mut saw_unknown_outcome = false;
+        assert!(compaction::ensure_with(&session, 40_000, true, signal, |prompt| {
+            saw_unknown_outcome |= prompt.contains(journal::UNKNOWN_TOOL_OUTPUT);
+            async { Ok("Offline diagnostic summary: preserve confirmed progress, verify uncertain effects and finish the remaining request.".into()) }
+        }).await.unwrap());
+        assert!(saw_unknown_outcome);
+        let (compacted, window) = {
+            let data = session.data.lock().unwrap();
+            let context = data.extras.context.as_ref().unwrap();
+            context.validate(&original_turns).unwrap();
+            let compacted = provider_input(compaction::input(&data));
+            let tokens: u64 = compacted.iter().map(compaction::estimate).sum();
+            let window = data
+                .turns
+                .last()
+                .unwrap()
+                .turn
+                .context_window
+                .unwrap_or(64_000);
+            assert!(tokens + 40_000 < window * 85 / 100);
+            let last_user = original_turns
+                .iter()
+                .flat_map(|turn| &turn.wire)
+                .rev()
+                .find(|item| item["role"] == "user" && item["_jarvis_runtime"] != true)
+                .unwrap();
+            assert!(compacted
+                .iter()
+                .any(|item| item["role"] == "user" && item["content"] == last_user["content"]));
+            assert!(
+                std::fs::read(&path).unwrap() == original,
+                "Source journal changed during the diagnostic"
+            );
+            println!("Offline compaction: {} retained items, {tokens} estimated tokens, source checkpoint {}", compacted.len(), context.through);
+            (compacted, window)
+        };
+        session.flush_async().await.unwrap();
+        let replay_root = std::env::var_os("JARVIS_REPLAY_ROOT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| fixture.root.clone());
+        let replay = history::HistoryState::default()
+            .load_replay(&copy, &replay_root)
+            .unwrap();
+        {
+            let mut data = session.data.lock().unwrap();
+            data.turns = replay.turns;
+            data.extras = replay.extras;
+            data.turn_base = replay.turn_base;
+            data.wire_base = replay.wire_base;
+            data.inherited_mcp_intent = replay.inherited_mcp_intent;
+        }
+        let options = original_turns.last().unwrap().turn.options.clone();
+        let credential = CodexCredential::new("fixture", "", 0, "fixture", None, None);
+        let model = ProviderModel {
+            id: options.model.clone(),
+            name: "Fixture".into(),
+            reasoning_levels: vec![],
+            default_reasoning_level: None,
+            context_window: Some(window),
+        };
+        let capabilities = std::sync::Arc::new(ModelCapabilities::resolve(&credential, &model));
+        let step = StepContext::capture(
+            &session,
+            &options,
+            "Continue from the saved work",
+            &[],
+            &capabilities,
+        )
+        .unwrap();
+        assert_eq!(provider_input(step.input().to_vec()), compacted);
+        assert!(
+            std::fs::read(&path).unwrap() == original,
+            "Source journal changed during reload"
+        );
+        println!("Offline cold replay: persisted compaction matches the next provider input");
     }
 
     #[test]

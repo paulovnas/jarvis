@@ -60,6 +60,176 @@ fn custom_config(protocol: Protocol) -> Config {
     }
 }
 
+#[tokio::test]
+async fn interrupted_turn_compacts_reloads_and_continues_through_the_transport() {
+    use crate::agent::{
+        compaction, context_manager::StepContext, history, session_writer, tests, Session,
+        TurnStatus,
+    };
+    use futures_util::{SinkExt, StreamExt};
+    use std::sync::{Arc, Mutex};
+    use tokio_tungstenite::{accept_async, tungstenite::Message};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        for index in 0..2 {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut socket = accept_async(socket).await.unwrap();
+            let message = socket.next().await.unwrap().unwrap().into_text().unwrap();
+            requests.push(serde_json::from_str::<Value>(&message).unwrap());
+            socket.send(Message::Text(json!({"type":"response.completed","response":{
+                "id":format!("response-{index}"),"status":"completed",
+                "output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Continued from saved progress"}]}]
+            }}).to_string().into())).await.unwrap();
+        }
+        requests
+    });
+    let mut config = custom_config(Protocol::OpenaiResponses);
+    config.base_url = format!("http://127.0.0.1:{port}");
+    let mut credential = CodexCredential::new("fixture", "", 0, "fixture", None, None);
+    credential.custom = Some(config);
+    let model = ProviderModel {
+        id: "fixture-model".into(),
+        name: "Fixture".into(),
+        reasoning_levels: vec![],
+        default_reasoning_level: None,
+        context_window: Some(128_000),
+    };
+    let provider = TurnSession::new(
+        credential,
+        &model,
+        "fixture".into(),
+        super::super::telemetry::TraceContext::new("fixture", "turn"),
+    )
+    .unwrap();
+    let fixture = tests::Fixture::new();
+    let session = tests::session(&fixture);
+    let options = options(&model.id);
+    session
+        .reserve(
+            "Finish the requested backend change.".into(),
+            options.clone(),
+        )
+        .unwrap();
+    session.update(true, |data| {
+        let turn = data.turns.last_mut().unwrap();
+        turn.turn.context_window = model.context_window;
+        turn.wire.extend([
+            json!({"type":"function_call","call_id":"uncertain","name":"bash","arguments":"{\"command\":\"apply-migration\"}"}),
+            json!({"role":"user","content":"Preserve the frontend; verify the migration before repeating it."}),
+            json!({"type":"function_call","call_id":"confirmed","name":"write","arguments":"{\"path\":\"backend.rs\"}"}),
+            json!({"type":"function_call_output","call_id":"confirmed","output":"Backend change saved"}),
+            json!({"type":"function_call","call_id":"inspection","name":"read","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"inspection","output":"Verified state. ".repeat(20_000)}),
+        ]);
+    }).unwrap();
+    super::super::finish(
+        &session,
+        Err(AgentError::new(
+            "provider_transport_interrupted",
+            "Interrupted",
+        )),
+    );
+    let (_cancel, signal) = watch::channel(false);
+    assert!(
+        compaction::ensure_with(&session, 0, true, signal, |_| async {
+            Ok("The backend change is saved; verify uncertain effects and finish.".into())
+        })
+        .await
+        .unwrap()
+    );
+    // Manual compaction of a failed turn must retain its recovery state in memory.
+    let before_reload =
+        StepContext::capture(&session, &options, "Continue", &[], provider.capabilities()).unwrap();
+    let path = session.journal.clone();
+    session.flush_async().await.unwrap();
+    drop(session);
+
+    let replay = history::HistoryState::default()
+        .load_replay(&path, &fixture.root)
+        .unwrap();
+    let latest = replay
+        .turns
+        .last()
+        .expect("Compaction must not discard a resumable turn");
+    assert_eq!(latest.turn.status, TurnStatus::Error);
+    let turn_id = latest.turn.id.clone();
+    let writer =
+        session_writer::SessionWriter::start(path.clone(), "fixture".into(), Some(latest.clone()))
+            .unwrap();
+    let session = Arc::new(Session {
+        id: "fixture".into(),
+        journal: path,
+        root: fixture.root.clone(),
+        journal_maintenance: Default::default(),
+        writer,
+        emit: Arc::new(|_| {}),
+        data: Mutex::new(super::super::SessionData {
+            turns: replay.turns,
+            turn_base: replay.turn_base,
+            wire_base: replay.wire_base,
+            inherited_mcp_intent: replay.inherited_mcp_intent,
+            extras: replay.extras,
+            active: None,
+            recovery: None,
+            revision: 1,
+            storage_failed: false,
+            last_emit: std::time::Instant::now(),
+            compacting: false,
+            manual_compaction: false,
+        }),
+    });
+    let after_reload =
+        StepContext::capture(&session, &options, "Continue", &[], provider.capabilities()).unwrap();
+    assert_eq!(after_reload.input(), before_reload.input());
+    let (signal, _) = session.retry_failed_turn(&turn_id).unwrap();
+    for index in 0..2 {
+        let step =
+            StepContext::capture(&session, &options, "Continue", &[], provider.capabilities())
+                .unwrap();
+        let response = tokio::time::timeout(
+            Duration::from_secs(10),
+            provider.stream(&step, signal.clone(), |_| Ok(())),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(response.text, "Continued from saved progress");
+        session
+            .update(true, |data| {
+                data.turns.last_mut().unwrap().wire.extend(response.output)
+            })
+            .unwrap();
+        if index == 0 {
+            assert!(
+                compaction::ensure_with(&session, 0, true, signal.clone(), |_| async {
+                    Ok("Backend saved. Verify migration, then finish.".into())
+                })
+                .await
+                .unwrap()
+            );
+        }
+    }
+    let requests = server.await.unwrap();
+    for request in &requests {
+        assert!(
+            request.get("previous_response_id").is_none(),
+            "Compaction invalidates the prior transport prefix"
+        );
+        let input = request["input"].to_string();
+        assert!(input.contains("Finish the requested backend change."));
+        assert!(input.contains("Preserve the frontend"));
+        assert!(input.contains("Backend change saved"));
+        assert!(input.contains(super::super::journal::UNKNOWN_TOOL_OUTPUT));
+    }
+    let (turns, extras) = super::super::journal::read_only(&session.journal).unwrap();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].turn.id, turn_id);
+    extras.context.unwrap().validate(&turns).unwrap();
+}
+
 fn response(provider: FixtureProvider) -> Result<Response, AgentError> {
     match provider {
         FixtureProvider::Codex | FixtureProvider::CustomResponses => {

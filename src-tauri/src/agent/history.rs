@@ -194,6 +194,7 @@ struct Index {
     files: BTreeMap<String, (u64, usize, diffs::FileSummary)>,
     tail: Option<StoredTurn>,
     tail_size: usize,
+    tail_dirty: bool,
     damaged_turn: Option<String>,
     replay: ReplayCursor,
 }
@@ -326,6 +327,7 @@ impl PersistedIndex {
             files: self.files,
             tail: self.tail,
             tail_size,
+            tail_dirty: false,
             damaged_turn: self.damaged_turn,
             replay: self.replay,
         };
@@ -455,7 +457,10 @@ impl Index {
         let mut wire_base = 0usize;
         while let Some(entry) = self.entries.get(start_entry) {
             let end = wire_base.saturating_add(entry.tokens.len());
-            if end > through {
+            // Keep the unfinished tail even when all of its model input was compacted.
+            if end > through
+                || (start_entry + 1 == self.entries.len() && entry.status != TurnStatus::Completed)
+            {
                 break;
             }
             wire_base = end;
@@ -585,6 +590,23 @@ impl Index {
         })
     }
 
+    fn refresh_tail_entry(&mut self) -> Result<(), AgentError> {
+        if !self.tail_dirty {
+            return Ok(());
+        }
+        let tail = self.tail.as_ref().ok_or_else(AgentError::storage)?;
+        let entry = self.entries.last().ok_or_else(AgentError::storage)?;
+        let replacement = indexed_entry(
+            tail,
+            self.entries.len().saturating_sub(1),
+            entry.offset,
+            entry.length,
+        )?;
+        *self.entries.last_mut().ok_or_else(AgentError::storage)? = replacement;
+        self.tail_dirty = false;
+        Ok(())
+    }
+
     fn apply_record(
         &mut self,
         offset: u64,
@@ -614,10 +636,13 @@ impl Index {
                     self.entries.pop();
                 } else if !self.ids.insert(turn.turn.id.clone()) {
                     return Err(AgentError::storage());
+                } else {
+                    self.refresh_tail_entry()?;
                 }
                 let entry = indexed_entry(&turn, self.entries.len(), offset, length)?;
                 self.tail_size = length;
                 self.tail = Some(turn);
+                self.tail_dirty = false;
                 self.entries.push(entry);
             }
             "turn_delta" => {
@@ -652,18 +677,8 @@ impl Index {
                     self.damaged_turn = Some(current_id);
                     return Ok(());
                 }
-                let entry = self.entries.last().ok_or_else(AgentError::storage)?;
-                let replacement = indexed_entry(
-                    &candidate,
-                    self.entries.len().saturating_sub(1),
-                    entry.offset,
-                    entry.length,
-                )?;
-                *self.entries.last_mut().ok_or_else(AgentError::storage)? = replacement;
-                self.tail_size = serde_json::to_vec(&candidate)
-                    .map_err(|_| AgentError::storage())?
-                    .len();
                 self.tail = Some(candidate);
+                self.tail_dirty = true;
             }
             "queue_checkpoint" => {
                 self.queue =
@@ -752,6 +767,9 @@ impl Index {
                     .ok_or_else(AgentError::storage)?
             }
         };
+        // Derive previews and token counts once per final turn, not once for
+        // every streaming delta in a cold journal replay.
+        self.refresh_tail_entry()?;
         let sidecar_is_current = verified_prefix
             .as_ref()
             .is_some_and(|fingerprint| fingerprint == &snapshot.fingerprint);
@@ -770,8 +788,16 @@ impl Index {
                 .is_some_and(|tail| tail.turn.status != TurnStatus::Running)
         {
             self.tail = None;
-            self.tail_size = 0;
         }
+        // Cache accounting is consumed after the scan. Serializing the entire
+        // growing turn for every delta makes cold recovery needlessly expensive.
+        self.tail_size = self
+            .tail
+            .as_ref()
+            .map(|tail| serde_json::to_vec(tail).map(|bytes| bytes.len()))
+            .transpose()
+            .map_err(|_| AgentError::storage())?
+            .unwrap_or(0);
         if !sidecar_is_current {
             let _ = persist_sidecar(path, self, snapshot.fingerprint);
         }
@@ -1639,6 +1665,36 @@ mod tests {
     }
 
     #[test]
+    fn fully_compacted_unfinished_turn_remains_available_for_recovery() {
+        for status in [
+            TurnStatus::Running,
+            TurnStatus::Error,
+            TurnStatus::Interrupted,
+        ] {
+            let fixture = Fixture::new();
+            let path = fixture.root.join("compacted-recovery.jsonl");
+            fs::write(&path, "{}\n").unwrap();
+            journal::append(&path, &stored(0)).unwrap();
+            let mut latest = stored(1);
+            latest.turn.status = status;
+            journal::append(&path, &latest).unwrap();
+            journal::append_event(&path, "context_checkpoint", &checkpoint(4)).unwrap();
+
+            // Repeat with a fresh loader to cover the persisted index as well.
+            for _ in 0..2 {
+                let replay = HistoryState::default()
+                    .load_replay(&path, &fixture.root)
+                    .unwrap();
+                assert_eq!(replay.turn_base, 1);
+                assert_eq!(replay.wire_base, 2);
+                assert_eq!(replay.turns.len(), 1);
+                assert_eq!(replay.turns[0].turn.id, latest.turn.id);
+                assert_eq!(replay.turns[0].wire, latest.wire);
+            }
+        }
+    }
+
+    #[test]
     fn replay_cursor_keeps_the_complete_turn_that_crosses_the_checkpoint() {
         let fixture = Fixture::new();
         let path = fixture.root.join("replay-boundaries.jsonl");
@@ -1905,6 +1961,24 @@ mod tests {
         assert_eq!(replay.turns[0].turn.id, updated.turn.id);
         assert_eq!(replay.turns[0].turn.duration_ms, 42);
         assert_eq!(replay.turns[0].wire, updated.wire);
+        let mut index = Index::default();
+        index.refresh(&path).unwrap();
+        assert_eq!(index.tail_size, serde_json::to_vec(&updated).unwrap().len());
+
+        let mut completed = updated.clone();
+        completed.turn.status = TurnStatus::Completed;
+        completed
+            .wire
+            .push(json!({"role":"assistant", "content":"Completed"}));
+        journal::append_update(&path, &updated, &completed).unwrap();
+        journal::append(&path, &stored(3)).unwrap();
+        journal::append_event(&path, "context_checkpoint", &checkpoint(7)).unwrap();
+        let replay = HistoryState::default()
+            .load_replay(&path, &fixture.root)
+            .unwrap();
+        assert_eq!(replay.wire_base, 7);
+        assert_eq!(replay.turn_base, 3);
+        assert_eq!(replay.turns[0].turn.id, "t3");
     }
 
     #[test]

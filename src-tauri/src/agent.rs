@@ -541,8 +541,11 @@ impl SessionData {
         let mut wire_base = self.wire_base;
         let mut remove = 0;
         let mut inherited = self.inherited_mcp_intent.clone();
-        for turn in &self.turns {
-            if active == Some(turn.turn.id.as_str()) {
+        for (index, turn) in self.turns.iter().enumerate() {
+            // Compaction replaces model input, not the latest turn's recovery state.
+            if active == Some(turn.turn.id.as_str())
+                || (index + 1 == self.turns.len() && turn.turn.status != TurnStatus::Completed)
+            {
                 break;
             }
             let end = wire_base.saturating_add(turn.wire.len());
