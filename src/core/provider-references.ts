@@ -40,6 +40,8 @@ function modelTargetProblem(choice: ModelChoice, accounts: ProviderAccount[], ki
   const account = accounts.find(account => account.alias === choice.account);
   if (!account) return `O provedor ${choice.account} não existe mais. Escolha outro provedor e modelo.`;
   if (!account.enabled) return `O provedor ${choice.account} está desativado. Ative-o ou escolha outro.`;
+  // A local/offline catalog cannot prove that a configured model was removed.
+  if (kind !== "image_generation" && account.modelsStale && !account.disabledModels?.includes(choice.model)) return null;
   if (kind !== "image_generation" && !account.modelsAvailable) return `Os modelos de ${choice.account} estão indisponíveis. Revise a conexão do provedor.`;
   const model = compatibleModels(account, kind).find(model => model.id === choice.model);
   if (!model) return `O modelo ${choice.model || "configurado"} não está disponível para este item. Escolha outro modelo.`;

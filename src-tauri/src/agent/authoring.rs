@@ -466,6 +466,26 @@ pub(super) async fn execute(
                 .turns,
             tool,
         );
+        let automatic = {
+            let owner_options = owner
+                .data
+                .lock()
+                .map_err(|_| AgentError::internal())?
+                .turns
+                .last()
+                .map(|turn| turn.turn.options.clone())
+                .ok_or_else(AgentError::internal)?;
+            let data = session.data.lock().map_err(|_| AgentError::internal())?;
+            data.turns
+                .last()
+                .filter(|turn| {
+                    session.id != owner.id
+                        && turn.turn.options.workflow == Some(workflow::Flow::Publication)
+                        && turn.turn.options.automatic_publication
+                            == owner_options.automatic_publication
+                })
+                .and_then(|turn| turn.turn.options.automatic_publication.clone())
+        };
         let proposal = match publication::prepare_with_confirmation(
             state,
             home,
@@ -475,13 +495,14 @@ pub(super) async fn execute(
             question_answered,
             tool,
             confirmation.as_ref(),
+            automatic.as_ref(),
         )? {
             publication::PreparedPublication::Ready(proposal) => proposal,
             publication::PreparedPublication::RevisionRequested => {
                 return Ok(publication_revision_output(&current_user_request));
             }
         };
-        if tool.args["previewOnly"] != true
+        if (automatic.is_some() || tool.args["previewOnly"] != true)
             && (publication::executes_without_review(&proposal)
                 || publication::prepares_locally_without_review(
                     &proposal,

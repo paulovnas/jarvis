@@ -136,6 +136,7 @@ fn options() -> TurnOptions {
         custom_agent_id: None,
         approval_mode: ApprovalMode::Yolo,
         manual_validation: false,
+        automatic_publication: None,
     }
 }
 #[test]

@@ -7,6 +7,7 @@ import type { AccountUsage } from "@/core/provider-usage";
 import type { BootstrapResources } from "@/core/bootstrap";
 import { BootstrapResourcesProvider } from "@/components/bootstrap/BootstrapResourcesProvider";
 import { emptyLibrary } from "@/test/library-fixtures";
+import { coreFixture } from "@/test/core-fixtures";
 import { StatusBar } from "./StatusBar";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -101,6 +102,7 @@ it("keeps polling alerts when an account is hidden from the statusbar", async ()
 
 it("reuses limits fetched during bootstrap instead of requesting them again", async () => {
   const cached = report(account.alias);
+  call.mockImplementation(command => Promise.resolve(command === "list_provider_accounts" ? [account] : coreFixture()));
   const resources: BootstrapResources = {
     core: null,
     skills: null,
@@ -115,5 +117,5 @@ it("reuses limits fetched during bootstrap instead of requesting them again", as
   render(<BootstrapResourcesProvider initial={resources}><StatusBar passive accounts={[account]} /></BootstrapResourcesProvider>);
 
   expect(await screen.findByRole("button", { name: `Limites de ${account.alias}` })).toHaveTextContent("36%");
-  expect(call).not.toHaveBeenCalled();
+  expect(call).not.toHaveBeenCalledWith("get_provider_usage", { alias: account.alias });
 });

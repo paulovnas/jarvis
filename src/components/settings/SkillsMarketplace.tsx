@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { readResource, watchResourceRecovery } from "@/core/resource-request";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowDownToLine,
@@ -103,16 +104,25 @@ export function SkillsMarketplace({
 
   useEffect(() => {
     if (!open) return;
-    let active = true;
-    void invoke("browse_skill_marketplace", { query: debounced, ranking, limit })
+    let active = true, fetching = false, failed = false;
+    const load = () => {
+      if (!active || fetching) return;
+      fetching = true;
+      void readResource("browse_skill_marketplace", { query: debounced, ranking, limit })
       .then((value) => {
+        failed = false;
         if (active) setResponse({ key, skills: marketplaceSchema.parse(value), error: null });
       })
       .catch((cause) => {
+        failed = true;
         if (active) setResponse({ key, skills: [], error: skillError(cause) });
-      });
+      }).finally(() => { fetching = false; });
+    };
+    load();
+    const stop = watchResourceRecovery(() => { if (failed) load(); });
     return () => {
       active = false;
+      stop();
     };
   }, [open, debounced, ranking, limit, reload, key]);
 

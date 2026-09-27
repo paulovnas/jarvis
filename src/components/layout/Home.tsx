@@ -3,7 +3,7 @@ import { useGroupRef } from "react-resizable-panels";
 import { visiblePanels, rememberPanelResize } from "@/core/desktop-layout";
 import { PanelToggle } from "./PanelToggle";
 import { StatusBar } from "./StatusBar";
-import { invoke } from "@tauri-apps/api/core";
+import { readResource } from "@/core/resource-request";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -125,7 +125,7 @@ export function Home() {
     refreshInFlight.current = true;
     setRefreshingModels(true);
     try {
-      const fetched = accountList(await invoke<unknown>("refresh_provider_models", { alias: null }));
+      const fetched = accountList(await readResource("refresh_provider_models", { alias: null }));
       const report = mergeModelCatalogRefresh(accountsRef.current, fetched);
       if (report.refreshed.length > 0) updateAccounts(report.accounts);
       return report;
@@ -140,7 +140,7 @@ export function Home() {
     loadAccountsInitially.current = false;
     let active = true;
     const version = accountsVersion.current;
-    void invoke<ProviderAccount[]>("list_provider_accounts").then(
+    void readResource<ProviderAccount[]>("list_provider_accounts").then(
       (result) => {
         if (active && version === accountsVersion.current) updateAccounts(accountList(result));
       },

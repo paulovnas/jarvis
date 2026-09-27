@@ -41,7 +41,7 @@ export function McpEditor({ initialValue, busy, error, onSave, onCancel }: {
   }
   const issue = validation ?? error;
   return <form className="flex min-h-0 min-w-0 flex-col gap-5" noValidate onSubmit={event => { event.preventDefault(); submit(); }}>
-    <Tabs value={mode} onValueChange={switchMode} className="min-h-0 overflow-y-auto">
+    <Tabs value={mode} onValueChange={switchMode} role="region" aria-label="Configuração do MCP" className="-mx-4 min-h-0 min-w-0 overflow-x-hidden overflow-y-auto px-4 py-1 wrap-anywhere [scrollbar-gutter:stable]">
       <TabsList className="w-full" aria-label="Forma de configurar MCP">
         <TabsTrigger value="visual" disabled={busy}><Settings2 aria-hidden="true" />Visual</TabsTrigger>
         <TabsTrigger value="json" disabled={busy}><Code aria-hidden="true" />JSON</TabsTrigger>
@@ -74,12 +74,12 @@ export function McpEditor({ initialValue, busy, error, onSave, onCancel }: {
       </TabsContent>
       <TabsContent value="json" className="pt-3">
         <FieldGroup className="gap-3"><Field data-invalid={!!issue}><FieldLabel htmlFor="mcp-json">Configuração JSON</FieldLabel><Textarea id="mcp-json" value={raw} onChange={e => { setRaw(e.target.value); setValidation(null); }} placeholder={MCP_TEMPLATE} disabled={busy} autoComplete="off" spellCheck={false} maxLength={65536} aria-invalid={!!issue} className="min-h-64 resize-y font-mono text-xs" /><FieldDescription>Um MCP nomeado no formato OpenCode, sem a chave externa mcp.</FieldDescription></Field>
-          <Button type="button" variant="link" className="h-auto justify-start p-0" onClick={() => { void openUrl("https://opencode.ai/docs/mcp-servers/").catch(() => toast.error("Não foi possível abrir a documentação")); }}><ExternalLink data-icon="inline-start" />Como configurar MCPs no OpenCode</Button>
+          <Button type="button" variant="link" className="h-auto max-w-full justify-start p-0 text-left whitespace-normal" onClick={() => { void openUrl("https://opencode.ai/docs/mcp-servers/").catch(() => toast.error("Não foi possível abrir a documentação")); }}><ExternalLink data-icon="inline-start" />Como configurar MCPs no OpenCode</Button>
         </FieldGroup>
       </TabsContent>
     </Tabs>
-    {issue && <p role="alert" className="text-sm text-destructive">{issue}</p>}
-    <DialogFooter><Button type="button" variant="ghost" disabled={busy} onClick={onCancel}>Cancelar</Button><Button type="submit" disabled={busy}>{busy && <Spinner data-icon="inline-start" />}Salvar MCP</Button></DialogFooter>
+    {issue && <p role="alert" className="text-sm wrap-anywhere text-destructive">{issue}</p>}
+    <DialogFooter className="shrink-0"><Button type="button" variant="ghost" disabled={busy} onClick={onCancel}>Cancelar</Button><Button type="submit" disabled={busy}>{busy && <Spinner data-icon="inline-start" />}Salvar MCP</Button></DialogFooter>
   </form>;
 }
 
@@ -87,7 +87,7 @@ function PairFields({ title, singular, description, values, onChange, disabled }
   title: string; singular: string; description: string; values: McpPair[]; onChange: (values: McpPair[]) => void; disabled: boolean;
 }) {
   return <FieldSet className="gap-2"><FieldLegend variant="label">{title}</FieldLegend><FieldDescription>{description}</FieldDescription>
-    {values.map((pair, index) => <div key={index} className="flex items-start gap-2"><FieldGroup className="grid flex-1 gap-2 sm:grid-cols-2">
+    {values.map((pair, index) => <div key={index} className="flex min-w-0 items-start gap-2"><FieldGroup className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2">
       <Field><FieldLabel className="sr-only" htmlFor={`mcp-${singular}-key-${index}`}>Nome {singular === "variável" ? "da" : "do"} {singular} {index + 1}</FieldLabel><Input id={`mcp-${singular}-key-${index}`} placeholder="Nome" value={pair.key} disabled={disabled} autoComplete="off" spellCheck={false} onChange={e => onChange(values.map((item, i) => i === index ? { ...item, key: e.target.value } : item))} /></Field>
       <Field><FieldLabel className="sr-only" htmlFor={`mcp-${singular}-value-${index}`}>Valor {singular === "variável" ? "da" : "do"} {singular} {index + 1}</FieldLabel><Input id={`mcp-${singular}-value-${index}`} type="password" placeholder="Valor" value={pair.value} disabled={disabled} autoComplete="off" spellCheck={false} onChange={e => onChange(values.map((item, i) => i === index ? { ...item, value: e.target.value } : item))} /></Field>
     </FieldGroup><Hint content={`Remover ${singular} ${index + 1}`}><Button type="button" variant="ghost" size="icon-sm" aria-label={`Remover ${singular} ${index + 1}`} disabled={disabled} onClick={() => onChange(values.filter((_, i) => i !== index))}><Trash2 /></Button></Hint></div>)}

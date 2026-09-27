@@ -105,6 +105,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 23,
         sql: include_str!("../../drizzle/0022_provider_transport.sql"),
     },
+    Migration {
+        version: 24,
+        sql: include_str!("../../drizzle/0023_repository_reference_branch.sql"),
+    },
 ];
 
 #[test]
@@ -636,14 +640,16 @@ pub async fn complete_onboarding(
         false
     };
     if !external_executor_ready {
-        let accounts =
-            crate::openai_codex::list_provider_accounts(app.clone(), app.state(), app.state())
-                .await
-                .map_err(|_| {
-                    PersistenceError::new(
-                        "Não foi possível verificar os provedores. Tente novamente.",
-                    )
-                })?;
+        let accounts = crate::openai_codex::list_provider_accounts(
+            app.clone(),
+            app.state(),
+            app.state(),
+            None,
+        )
+        .await
+        .map_err(|_| {
+            PersistenceError::new("Não foi possível verificar os provedores. Tente novamente.")
+        })?;
         if !accounts.iter().any(|account| {
             account.enabled && account.models_available && !account.models.is_empty()
         }) {
@@ -841,7 +847,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 23);
+        assert_eq!(version, 24);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -983,7 +989,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 23);
+        assert_eq!(version, 24);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {

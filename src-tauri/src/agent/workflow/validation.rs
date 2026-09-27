@@ -470,6 +470,7 @@ fn reserve(
     let (directory, mut state) = load(session, home)?;
     let exists = histories.has_turn(&session.journal, id)?;
     let flow = state.flow;
+    let mut options = state.options.clone();
     let batch = current(&mut state, id)?;
     // An active Hub may already have advanced state.json. Duplicate delivery must
     // never write an offline snapshot over that live manifest.
@@ -483,6 +484,7 @@ fn reserve(
         ));
     }
     if flow == Flow::Custom
+        && options.automatic_publication.is_none()
         && batch
             .items
             .iter()
@@ -494,9 +496,20 @@ fn reserve(
         return Ok(None);
     }
     let content = batch.feedback();
-    let mut options = state.options.clone();
-    options.workflow = Some(state.flow);
+    options.workflow = Some(flow);
     options.manual_validation = true;
+    if flow == Flow::Custom
+        && batch
+            .items
+            .iter()
+            .all(|item| item.decision == Decision::Approved)
+        && options.automatic_publication.is_some()
+    {
+        options.workflow = Some(Flow::Publication);
+        options.custom_workflow_id = None;
+        options.custom_agent_id = None;
+        options.manual_validation = false;
+    }
     let signal = session.reserve_locked(&mut data, content, options, Some(id.into()), vec![])?;
     state.validation.as_mut().unwrap().submitted = true;
     state.revision += 1;

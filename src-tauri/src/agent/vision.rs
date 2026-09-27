@@ -218,6 +218,7 @@ pub(super) async fn execute(
             custom_agent_id: None,
             approval_mode: ApprovalMode::Yolo,
             manual_validation: false,
+            automatic_publication: None,
         };
         let vision_session = format!("{conversation}-vision");
         let vision_trace = super::telemetry::trace(conversation, &vision_session);
@@ -300,6 +301,7 @@ mod tests {
             custom_agent_id: None,
             approval_mode: ApprovalMode::Yolo,
             manual_validation: false,
+            automatic_publication: None,
         };
         let (_send, signal) = watch::channel(false);
         assert_eq!(
@@ -376,6 +378,7 @@ mod tests {
             custom_agent_id: None,
             approval_mode: ApprovalMode::Yolo,
             manual_validation: false,
+            automatic_publication: None,
         };
         let result = execute(
             &state,

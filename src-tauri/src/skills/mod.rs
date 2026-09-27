@@ -377,7 +377,9 @@ async fn local<T: Send + 'static>(
         .map_err(|_| error("Pasta pessoal indisponível."))?;
     tauri::async_runtime::spawn_blocking(move || {
         let project = selected_project(&state, &home)?;
-        let _guard = CATALOG_LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
+        let _guard = CATALOG_LOCK.try_lock().map_err(|_| {
+            error("Outra operação de skills está em andamento. Aguarde e tente novamente.")
+        })?;
         operation(&home, project.as_deref())
     })
     .await
@@ -409,7 +411,7 @@ pub async fn list_skills(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Snapshot, SkillError> {
-    local(app, state.inner().clone(), snapshot).await
+    local_config(app, state.inner().clone(), snapshot).await
 }
 #[tauri::command]
 pub async fn set_skills_agents(
@@ -534,7 +536,7 @@ pub async fn get_skill_detail(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<Detail, SkillError> {
-    local(app, state.inner().clone(), move |home, project| {
+    local_config(app, state.inner().clone(), move |home, project| {
         catalog::detail(&find(home, project, &id)?)
     })
     .await

@@ -26,8 +26,7 @@ import type { WorkflowSnapshot } from "@/core/workflow";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
 import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+import { ChatBehaviorSettings } from "./ChatBehaviorSettings";
 import { Hint } from "@/components/ui/hint";
 import type { ModelCatalogRefresh } from "@/core/provider-accounts";
 
@@ -131,6 +130,7 @@ export function ChatComposer({
   const choosingModelLock = useRef(false);
   const [workflow, setWorkflow] = useState<FlowSelection>(flowSelection(initialOptions));
   const [manualValidation, setManualValidation] = useState(initialOptions?.manualValidation ?? false);
+  const [automaticPublication, setAutomaticPublication] = useState<NonNullable<TurnOptions["automaticPublication"]> | null>(initialOptions?.automaticPublication ?? null);
   const [pendingWorkflow, setPendingWorkflow] = useState<FlowSelection | null>(null);
   const selectedFlow = flowOptions(workflow);
   const manualValidationAvailable = selectedFlow.workflow === "planned"
@@ -168,6 +168,8 @@ export function ChatComposer({
       const options: TurnOptions = running && initialOptions ? { ...initialOptions, approvalMode: "yolo" } : { ...choice, mode: "build", ...selectedFlow, approvalMode: "yolo" };
       if (manualValidationAvailable && manualValidation) options.manualValidation = true;
       else delete options.manualValidation;
+      if (automaticPublication && !githubSelected) options.automaticPublication = automaticPublication;
+      else delete options.automaticPublication;
       const accepted = submitted.parts?.length ? await onSendMessage(trimmed, options, submitted.parts) : await onSendMessage(trimmed, options);
       if (!accepted) restoreSubmitted();
     } catch (cause) {
@@ -297,22 +299,8 @@ export function ChatComposer({
 
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}
           <div className="composer-options flex flex-1 items-center gap-0.5">
+            <ChatBehaviorSettings manualAvailable={manualValidationAvailable} manualValidation={manualValidation} onManualChange={setManualValidation} publication={githubSelected ? null : automaticPublication} onPublicationChange={setAutomaticPublication} disabled={running || sending || compacting} githubSelected={githubSelected} />
             <FlowPicker customFlows={catalog.data?.flows} customAgents={catalog.data?.agents} builtinAgents={catalog.data?.builtinAgents} value={workflow} onChange={chooseWorkflow} disabled={running || sending || compacting} />
-
-            {manualValidationAvailable && <Hint content="Solicita sua aprovação funcional ao final da implementação"><Label
-              htmlFor="manual-workflow-validation"
-              className={`flex h-7.5 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-[10px] font-normal transition-colors ${manualValidation ? "bg-onedark-green/5 text-onedark-green" : "text-muted-foreground hover:bg-secondary hover:text-foreground"}`}
-            >
-              <Switch
-                id="manual-workflow-validation"
-                size="sm"
-                checked={manualValidation}
-                onCheckedChange={setManualValidation}
-                disabled={running || sending || compacting}
-                className="cursor-pointer data-checked:bg-onedark-green"
-              />
-              <span className="whitespace-nowrap">Validação manual</span>
-            </Label></Hint>}
 
             <ExecutorModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} nativeDisabled={!modelsReady} disabled={running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} showProviderIdentity onRefresh={onRefreshModels ? () => setRefreshDialogOpen(true) : undefined} refreshing={refreshingModels} />
 

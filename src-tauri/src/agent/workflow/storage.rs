@@ -172,6 +172,16 @@ pub(super) fn open(
             manifest.jobs.remove(&id);
         }
     }
+    if retry_checkpoint.is_some() {
+        let previous_run = manifest.run_id.clone();
+        for job in manifest
+            .jobs
+            .values_mut()
+            .filter(|job| job.run_id == previous_run && job.phase == Phase::Publication)
+        {
+            job.run_id.clone_from(&run_id);
+        }
+    }
     manifest.run_id = run_id;
     manifest.flow = flow;
     manifest.mcp_intent = mcp_intent;
@@ -284,7 +294,10 @@ pub(super) fn prepare_recovery(
     }
     if flow == Flow::Custom
         && manifest.custom_cursor.is_none()
-        && manifest.jobs.values().any(|job| job.run_id == run_id)
+        && manifest
+            .jobs
+            .values()
+            .any(|job| job.run_id == run_id && job.phase != Phase::Publication)
     {
         return Err(invalid("Este fluxo antigo não possui checkpoint de etapas. Os resultados foram preservados; inicie uma nova solicitação com o escopo restante."));
     }

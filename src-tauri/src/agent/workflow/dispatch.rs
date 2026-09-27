@@ -21,7 +21,7 @@ pub(super) fn definitions(flow: Flow, role: Role) -> Vec<Value> {
         definition("hub_send", "Deliver focused evidence or instructions to your parent or an active child. Does not change permissions or wake a completed agent; use hub_retry for a follow-up round.", json!({"to":string,"message":string}), &["to","message"]),
         definition("hub_complete", "Deliver your final structured handoff to the parent and end this agent. Do not use until child work has settled. The runtime re-reads the assigned Beads task and comments before accepting completion; if they changed, incorporate the returned snapshot and call hub_complete again. Reviewer uses approved/rework/blocked; other roles use completed/blocked. Cite actual evidence and validation, and list limitations honestly. taskIds contains exact Beads IDs actually addressed or reviewed (including the epic when reviewed); only approved IDs can be closed in Complete. Use [] for research without a task.", json!({"verdict":{"type":"string","enum":["completed","approved","rework","blocked"]},"summary":string,"outcomes":strings,"evidence":strings,"validation":strings,"limitations":strings,"taskIds":strings}), &["verdict","summary","outcomes","evidence","validation","limitations","taskIds"]),
     ];
-    if role.coordinator() {
+    if role.coordinator() || (flow == Flow::Publication && role == Role::Github) {
         let spawn_roles: Vec<_> = [
             Role::Planner,
             Role::Investigator,
@@ -38,7 +38,7 @@ pub(super) fn definitions(flow: Flow, role: Role) -> Vec<Value> {
         tools.push(definition("hub_respond_guidance", "Answer a pending child's guidance request using its exact requestId. Resolve from known context or ask_user first; do not invent a user decision. Only its parent can respond.", json!({"requestId":string,"answer":string}), &["requestId","answer"]));
         tools.extend([
             definition("hub_cancel", "Cancel a direct child and its descendants. Wait for completion before replacing its work; cancellation is not successful completion.", json!({"id":string}), &["id"]),
-            definition("hub_spawn", "Start an isolated permitted agent and return its ID immediately. Supply focused context and acceptance criteria. Reuse an existing worker for the same task: hub_send adds instructions while active; hub_retry continues it after completion. If the same task and write scope are already active, this returns the existing ID without scheduling the new instruction. For a narrow operational follow-up, refresh only necessary task state and dispatch one worker directly; do not pre-read source files or runbooks that the worker owns. Dependencies are earlier agent IDs. Implementation roles require a real Beads ID. Designer implements assigned frontend/design work; use Investigator for read-only discovery. Scope limits writes, not project reads; choose disjoint write scopes for parallel work. Overlapping writers queue. Use '.' when whole-project shell/MCP access is necessary; narrow writers can inspect project context and run workflow_check. Up to four independent leaf agents run in parallel.", json!({"role":{"type":"string","enum":spawn_roles},"phase":{"type":"string","enum":["implementation"]},"title":{"type":"string","minLength":1,"maxLength":120},"prompt":string,"acceptance":strings,"scope":strings,"beadId":{"type":["string","null"]},"dependencies":strings}), &["role","title","prompt","acceptance","scope","dependencies"]),
+            definition("hub_spawn", "Start an isolated permitted agent and return its ID immediately. Supply focused context and acceptance criteria. Reuse an existing worker for the same task: hub_send adds instructions while active; hub_retry continues it after completion. If the same task and write scope are already active, this returns the existing ID without scheduling the new instruction. For a narrow operational follow-up, refresh only necessary task state and dispatch one worker directly; do not pre-read source files or runbooks that the worker owns. Dependencies are earlier agent IDs. Implementation roles require a real Beads ID, except Builder conflict repair delegated by Github in the publication flow (beadId=null). Designer implements assigned frontend/design work; use Investigator for read-only discovery. Scope limits writes, not project reads; choose disjoint write scopes for parallel work. Overlapping writers queue. Use '.' when whole-project shell/MCP access is necessary; narrow writers can inspect project context and run workflow_check. Up to four independent leaf agents run in parallel.", json!({"role":{"type":"string","enum":spawn_roles},"phase":{"type":"string","enum":["implementation"]},"title":{"type":"string","minLength":1,"maxLength":120},"prompt":string,"acceptance":strings,"scope":strings,"beadId":{"type":["string","null"]},"dependencies":strings}), &["role","title","prompt","acceptance","scope","dependencies"]),
             definition("hub_retry", "Continue an existing direct child from its durable context for focused rework or follow-up. Reuse the implementing worker and reviewer instead of restarting their investigation. Inspect uncertain side effects before failure recovery; at most two failed recovery rounds without verified progress are allowed. Successful follow-ups and actionable review findings do not consume that budget. Role, write scope and permissions stay fixed. Optional dependencies replaces prerequisite agent IDs for this round; include the reviewer for rework so the complete findings reach the implementer. Use current sibling jobs and avoid dependency cycles.", json!({"id":string,"prompt":string,"dependencies":strings}), &["id","prompt"]),
         ]);
     }
@@ -327,10 +327,11 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
     if matches!(
         input.role,
         Role::Builder | Role::Designer | Role::Reviewer | Role::Orchestrator
-    ) && input
-        .bead_id
-        .as_deref()
-        .is_none_or(|id| id.trim().is_empty())
+    ) && exec.flow != Flow::Publication
+        && input
+            .bead_id
+            .as_deref()
+            .is_none_or(|id| id.trim().is_empty())
     {
         return Err(invalid(
             "Vincule o trabalho a uma tarefa ou épico real do Beads.",
@@ -369,6 +370,23 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
         }
         validate_dependencies(state, &exec.id, &id, &input.dependencies)?;
         settings::apply(&mut options, &state.profiles, exec.flow, input.role);
+        if exec.flow == Flow::Publication {
+            options.workflow = Some(Flow::Publication);
+            options.custom_agent_id = None;
+            options.custom_workflow_id = None;
+            options.manual_validation = false;
+            options.automatic_publication = None;
+            settings::apply(&mut options, &state.profiles, Flow::Standard, input.role);
+            if let Some(choice) = state
+                .profiles
+                .get(&settings::key(Flow::Standard, input.role))
+                .cloned()
+            {
+                state
+                    .profiles
+                    .insert(settings::key(Flow::Publication, input.role), choice);
+            }
+        }
         let job = Job {
             custom_agent: None,
             custom_step_id: None,
@@ -836,6 +854,7 @@ fn admitted(state: &Manifest, job: &Job) -> Result<bool, AgentError> {
         .values()
         .filter(|other| {
             other.id != job.id
+                && !(other.id == job.parent_id && other.role == Role::Github)
                 && matches!(other.status, Status::Running | Status::Waiting)
                 && !other.role.coordinator()
         })
@@ -1105,11 +1124,15 @@ fn launch_inner(
                     &checkpoint,
                 )?;
             }
-            let flow = task_hub
-                .manifest
-                .lock()
-                .map_err(|_| AgentError::internal())?
-                .flow;
+            let flow = if task_job.options.workflow == Some(Flow::Publication) {
+                Flow::Publication
+            } else {
+                task_hub
+                    .manifest
+                    .lock()
+                    .map_err(|_| AgentError::internal())?
+                    .flow
+            };
             let exec = Execution {
                 hub: task_hub.clone(),
                 id: task_job.id.clone(),

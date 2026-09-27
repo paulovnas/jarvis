@@ -1,5 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
+import { readResource } from "./resource-request";
 import { version } from "../../package.json";
 
 export const APP_VERSION = version;
@@ -16,7 +17,7 @@ export function nativeUpdaterAvailable(): boolean { return "__TAURI_INTERNALS__"
 export function displayVersion(value: string): string {
   return value.replace(/-beta\.(\d+)$/, (_, revision: string) => ` Beta${revision === "1" ? "" : ` ${revision}`}`);
 }
-export async function checkAppUpdate(): Promise<UpdateInfo> { return updateInfoSchema.parse(await invoke("check_app_update")); }
+export async function checkAppUpdate(): Promise<UpdateInfo> { return updateInfoSchema.parse(await readResource("check_app_update")); }
 export async function installAppUpdate(onProgress: (progress: UpdateProgress) => void): Promise<void> {
   const channel = new Channel<UpdateProgress>();
   channel.onmessage = onProgress;

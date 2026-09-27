@@ -10,6 +10,7 @@ export const projectRepositorySchema = z.object({
   directory: z.string(),
   name: z.string(),
   description: z.string(),
+  referenceBranch: z.string().nullable().optional(),
   branch: z.string().nullable(),
   upstream: z.string().nullable(),
   ahead: z.number().int().nonnegative(),
@@ -25,7 +26,7 @@ export const projectRepositorySchema = z.object({
 });
 
 export type ProjectRepository = z.infer<typeof projectRepositorySchema>;
-export type ProjectRepositoryInput = Pick<ProjectRepository, "name" | "description" | "directory"> & { id?: string };
+export type ProjectRepositoryInput = Pick<ProjectRepository, "name" | "description" | "directory" | "referenceBranch"> & { id?: string };
 
 export async function getProjectRepositories(projectId: string, includeDefault = false) {
   return projectRepositorySchema.array().parse(await invoke("get_project_repositories", { projectId, includeDefault }));

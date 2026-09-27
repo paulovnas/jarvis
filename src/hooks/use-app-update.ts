@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ResourceTimeoutError, watchResourceRecovery } from "@/core/resource-request";
 import { APP_VERSION, checkAppUpdate, installAppUpdate, nativeUpdaterAvailable, type UpdateInfo, type UpdateProgress } from "@/core/app-update";
 
 const CHECK_INTERVAL = 6 * 60 * 60_000;
-const failureMessage = (cause: unknown) => typeof cause === "string" ? cause : "Não foi possível verificar a atualização. Tente novamente.";
+const failureMessage = (cause: unknown) => cause instanceof ResourceTimeoutError ? cause.message : typeof cause === "string" ? cause : "Não foi possível verificar a atualização. Tente novamente.";
 
 export function useAppUpdate() {
   const [info, setInfo] = useState<UpdateInfo>({ currentVersion: APP_VERSION, available: null, installable: false });
@@ -14,6 +15,7 @@ export function useAppUpdate() {
   const operation = useRef(false);
   const relaunchPending = useRef(false);
   const checkedAt = useRef(0);
+  const checkFailed = useRef(false);
   const mounted = useRef(true);
 
   const check = useCallback(async (manual = false) => {
@@ -21,8 +23,9 @@ export function useAppUpdate() {
     operation.current = true; setChecking(true); setError(null); setUpToDate(false);
     try {
       const next = await checkAppUpdate();
+      checkFailed.current = false;
       if (mounted.current) { setInfo(next); setProgress(null); setUpToDate(manual && next.available === null); }
-    } catch (cause) { if (mounted.current) setError(failureMessage(cause)); }
+    } catch (cause) { checkFailed.current = true; if (mounted.current) setError(failureMessage(cause)); }
     finally {
       checkedAt.current = Date.now(); operation.current = false;
       if (mounted.current) setChecking(false);
@@ -45,7 +48,8 @@ export function useAppUpdate() {
     const interval = window.setInterval(() => void check(), CHECK_INTERVAL);
     const focus = () => { if (Date.now() - checkedAt.current >= CHECK_INTERVAL) void check(); };
     window.addEventListener("focus", focus);
-    return () => { mounted.current = false; clearTimeout(timer); clearInterval(interval); window.removeEventListener("focus", focus); };
+    const stopRecovery = watchResourceRecovery(() => { if (checkFailed.current) void check(); });
+    return () => { mounted.current = false; clearTimeout(timer); clearInterval(interval); stopRecovery(); window.removeEventListener("focus", focus); };
   }, [check]);
   return { info, checking, busy, progress, error, upToDate, check, install };
 }

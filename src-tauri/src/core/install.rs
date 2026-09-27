@@ -38,7 +38,8 @@ impl Release {
 fn client() -> Result<reqwest::Client, CoreError> {
     reqwest::Client::builder()
         .user_agent("Jarvis-Core/0.1")
-        .connect_timeout(Duration::from_secs(15))
+        .connect_timeout(Duration::from_secs(8))
+        .read_timeout(Duration::from_secs(30))
         .timeout(Duration::from_secs(240))
         .build()
         .map_err(|_| error("Não foi possível iniciar o download."))
@@ -122,17 +123,33 @@ async fn download_response(
     Ok(bytes)
 }
 async fn json(url: &str) -> Result<Value, CoreError> {
-    if url.starts_with("https://api.github.com/") {
-        static CACHE: OnceLock<tokio::sync::Mutex<ReleaseMetadata>> = OnceLock::new();
-        return CACHE
-            .get_or_init(Default::default)
-            .lock()
-            .await
+    // Metadata must not inherit the multi-minute download budget, including
+    // time spent waiting for another release lookup to leave the shared cache.
+    tokio::time::timeout(Duration::from_secs(15), async {
+        if url.starts_with("https://api.github.com/") {
+            static CACHE: OnceLock<tokio::sync::Mutex<ReleaseMetadata>> = OnceLock::new();
+            return CACHE
+                .get_or_init(Default::default)
+                .lock()
+                .await
+                .get(url)
+                .await;
+        }
+        let response = client()?
             .get(url)
-            .await;
-    }
-    serde_json::from_slice(&download(url, 4 * 1024 * 1024).await?)
-        .map_err(|_| error("Resposta de versão inválida."))
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|_| error("Falha de conexão ao consultar versões. Tente novamente."))?;
+        serde_json::from_slice(&download_response(response, 4 * 1024 * 1024, &|_| {}).await?)
+            .map_err(|_| error("Resposta de versão inválida."))
+    })
+    .await
+    .map_err(|_| {
+        error(
+            "A consulta de versões excedeu o tempo limite. Verifique a conexão e tente novamente.",
+        )
+    })?
 }
 
 #[derive(Default)]
@@ -155,9 +172,14 @@ impl ReleaseMetadata {
         {
             return Err(github_rate_limit(remaining));
         }
-        let response = client()?.get(url).send().await.map_err(|_| {
-            error("Falha de conexão ao consultar versões do Core. Tente novamente.")
-        })?;
+        let response = client()?
+            .get(url)
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|_| {
+                error("Falha de conexão ao consultar versões do Core. Tente novamente.")
+            })?;
         if let Some(delay) = github_retry_delay(response.status(), response.headers()) {
             self.retry_at = Instant::now().checked_add(delay);
             return Err(github_rate_limit(delay));
@@ -991,6 +1013,59 @@ async fn release_for_dolt() -> Result<Release, CoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stalled_metadata_times_out_and_a_new_request_can_recover() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (accepted, connected) = tokio::sync::oneshot::channel();
+        let stalled = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket.read_u8().await.unwrap();
+            accepted.send(()).unwrap();
+            std::future::pending::<()>().await;
+            drop(socket);
+        });
+        let request = tokio::spawn(async move { json(&url).await });
+        connected.await.unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(16)).await;
+        assert!(request.await.unwrap().is_err());
+        tokio::time::resume();
+        stalled.abort();
+        let (url, server) =
+            metadata_server(vec![metadata_response(r#"{"tag_name":"v1.0.0"}"#)]).await;
+        assert_eq!(json(&url).await.unwrap()["tag_name"], "v1.0.0");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn download_without_new_bytes_expires_before_the_total_download_budget() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let stalled = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(socket.read_u8().await.unwrap());
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+                .await
+                .unwrap();
+            std::future::pending::<()>().await;
+            drop(socket);
+        });
+        let response = client().unwrap().get(url).send().await.unwrap();
+        tokio::time::pause();
+        let download =
+            tokio::spawn(async move { download_response(response, 1024, &|_| {}).await });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(31)).await;
+        assert!(download.await.unwrap().is_err());
+        tokio::time::resume();
+        stalled.abort();
+    }
 
     async fn metadata_server(
         responses: Vec<String>,

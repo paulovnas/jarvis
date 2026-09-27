@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { readResource } from "@/core/resource-request";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { coreDownloadEventSchema, coreError, coreSnapshotSchema, type CoreId, type CoreSnapshot } from "@/core/core-components";
@@ -35,7 +36,7 @@ export function useCore() {
   useEffect(() => { currentSnapshot.current = snapshot; }, [snapshot]);
   const refresh = useCallback(async () => {
     const version = ++revision.current;
-    try { const value = await invoke("get_core_status"); if (version === revision.current) accept(value); }
+    try { const value = await readResource("get_core_status"); if (version === revision.current) accept(value); }
     catch (cause) { if (mounted.current && version === revision.current) setError(coreError(cause)); }
   }, [accept]);
   useEffect(() => {
@@ -59,7 +60,7 @@ export function useCore() {
   const check = useCallback(async () => {
     const version = ++revision.current;
     try {
-      const value = await invoke("check_core_updates");
+      const value = await readResource("check_core_updates");
       if (version === revision.current) accept(value, true);
     }
     catch (cause) { if (mounted.current) toast.error(coreError(cause)); }

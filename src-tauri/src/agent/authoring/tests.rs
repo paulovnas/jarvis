@@ -47,6 +47,7 @@ fn reserve() -> (Fixture, Arc<Session>, watch::Receiver<bool>) {
                 custom_agent_id: None,
                 approval_mode: ApprovalMode::Yolo,
                 manual_validation: false,
+                automatic_publication: None,
             },
         )
         .unwrap();

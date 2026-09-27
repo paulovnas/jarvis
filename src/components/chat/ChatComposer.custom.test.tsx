@@ -16,6 +16,7 @@ it("sends the chosen custom graph identity and uses a composer model without mut
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_workflow_catalog"));
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
   await user.click(await screen.findByRole("menuitem", { name: "Meu fluxo" }));
+  await user.click(screen.getByRole("button", { name: "Configurações do chat" }));
   const validation = screen.getByRole("switch", { name: "Validação manual" });
   expect(validation).not.toBeChecked();
   await user.click(validation);

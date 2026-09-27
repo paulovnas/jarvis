@@ -80,6 +80,7 @@ enum Phase {
     #[default]
     Implementation,
     Discovery,
+    Publication,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -565,7 +566,7 @@ impl Execution {
         self.role == Role::Designer
     }
     pub(super) fn publication(&self) -> bool {
-        self.flow == Flow::Publication && self.role == Role::Github
+        self.flow == Flow::Publication
     }
     pub(super) fn design_resources(&self) -> bool {
         self.designer()
@@ -626,6 +627,9 @@ impl Execution {
             self.flow,
             self.manual_validation(),
         ));
+        if self.flow == Flow::Publication && self.role == Role::Builder {
+            text.push_str("\nYou are repairing publication conflicts for Github. Edit only the assigned conflicted files, preserving the intended changes from both sides, and run focused checks when needed. Do not create or claim new Beads tasks, start another implementation, stage/commit, continue a rebase, push, create a PR or merge. Return the exact resolved files and evidence with hub_complete so Github can finish the typed Git operations.\n");
+        }
         if self.id != "main" && self.hub.job(&self.id)?.phase == Phase::Discovery {
             text.push_str("\nThis dispatch is DESIGN DISCOVERY: read-only investigation and a design brief/handoff. No product edits, shell, MCP mutations, validation commands or Beads mutations. Return accepted decisions, options and unresolved dependencies to your parent.\n");
         }
@@ -740,6 +744,12 @@ impl Execution {
         }
     }
     pub(super) fn allowed(&self, name: &str) -> bool {
+        if self.flow == Flow::Publication
+            && self.role == Role::Builder
+            && name == "jarvis_propose_publication"
+        {
+            return false;
+        }
         if name == recovery::TOOL {
             return true;
         }
@@ -797,6 +807,15 @@ impl Execution {
     pub(super) fn preflight(&self, tool: &ToolCall) -> Option<String> {
         if !self.allowed(&tool.name) {
             return Some("Ferramenta indisponível para o papel deste agente.".into());
+        }
+        if self.role == Role::Github
+            && matches!(
+                tool.name.as_str(),
+                "write" | "edit" | "apply_patch" | "jarvis_propose_publication"
+            )
+            && self.hub.children_active(&self.id).unwrap_or(true)
+        {
+            return Some("Aguarde o Construtor concluir a resolução com hub_wait antes de editar ou continuar a publicação.".into());
         }
         let paths_allowed = if tool.name == "apply_patch" {
             let paths = match super::patch::target_paths(&tool.args) {
@@ -1138,6 +1157,29 @@ pub(super) fn validate_options(
     home: &Path,
     options: &TurnOptions,
 ) -> Result<(), AgentError> {
+    if let Some(actions) = &options.automatic_publication {
+        if !(actions.commit || actions.push || actions.pull_request)
+            || (actions.pull_request && !actions.push)
+        {
+            return Err(invalid(
+                "Selecione ao menos uma ação de publicação. PR também exige Push.",
+            ));
+        }
+        let profiles = settings::load(state, home)?;
+        let choice = profiles
+            .get(&settings::key(Flow::Publication, Role::Github))
+            .ok_or_else(|| {
+                invalid(
+                    "Configure o modelo do agente Github antes de ativar a publicação automática.",
+                )
+            })?;
+        settings::validate_choice(state, oauth, home, choice)?;
+        if actions.pull_request && !super::publication::gh_available() {
+            return Err(invalid(
+                "Instale o GitHub CLI (gh) para publicar PRs automaticamente.",
+            ));
+        }
+    }
     if options.manual_validation && !options.manual_validation() {
         return Err(invalid(
             "A validação manual final está disponível somente em fluxos com múltiplos agentes.",
@@ -1270,6 +1312,9 @@ pub(super) async fn run(
             .lock()
             .map_err(|_| AgentError::internal())?
             .insert(session.id.clone(), hub.clone());
+        if publishing::automatic_job(&hub)?.is_some() {
+            return finish_hub(app, session, hub, Ok(())).await;
+        }
         if flow == Flow::Custom {
             let definition = hub
                 .manifest
@@ -1423,7 +1468,9 @@ pub(super) async fn run(
     };
     // Unwinding must still reach hub shutdown and persist a terminal workflow state.
     let result = supervise_run(async {
-        if flow == Flow::Publication {
+        if publishing::automatic_job(&hub)?.is_some() {
+            Ok(())
+        } else if flow == Flow::Publication {
             publishing::run(hub.clone(), signal).await
         } else if let Some(definition) = custom_definition {
             custom::run(hub.clone(), definition, signal).await
@@ -1465,6 +1512,10 @@ async fn finish_hub(
     hub: Arc<Hub>,
     result: Result<(), AgentError>,
 ) -> Result<(), AgentError> {
+    let result = match result {
+        Ok(()) => supervise_run(publishing::automatic(hub.clone(), hub.root_signal.clone())).await,
+        error => error,
+    };
     let progress_pause = result
         .as_ref()
         .err()

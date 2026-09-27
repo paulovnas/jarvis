@@ -42,7 +42,24 @@ const skills = {
 };
 
 describe("application bootstrap", () => {
-  beforeEach(() => invokeMock.mockReset());
+  beforeEach(() => { invokeMock.mockReset(); });
+
+  it("opens from local resources even when remote services never respond", async () => {
+    invokeMock.mockImplementation((command, args) => {
+      if (command === "get_app_config") return Promise.resolve({ onboardingCompleted: true });
+      if (command === "get_core_status") return Promise.resolve(coreFixture());
+      if (command === "list_provider_accounts" && (args as { cached?: boolean })?.cached) return Promise.resolve([account]);
+      if (command === "list_skills") return Promise.resolve(skills);
+      if (command === "get_library_snapshot") return Promise.resolve(emptyLibrary());
+      return new Promise(() => {});
+    });
+    const loaded = vi.fn();
+    void loadAppBootstrap(() => {}).then(loaded);
+    await vi.waitFor(() => expect(loaded).toHaveBeenCalled(), { timeout: 200 });
+    expect(loaded.mock.calls[0][0].resources.accounts).toEqual([account]);
+    expect(invokeMock).not.toHaveBeenCalledWith("check_core_updates");
+    expect(invokeMock.mock.calls.some(([command]) => command === "get_provider_usage")).toBe(false);
+  });
 
   it("loads only the persisted configuration before onboarding", async () => {
     invokeMock.mockResolvedValue({ onboardingCompleted: false });
@@ -59,7 +76,7 @@ describe("application bootstrap", () => {
   it("preloads resources without waiting for Marketplace update discovery", async () => {
     invokeMock.mockImplementation((command, args) => {
       if (command === "get_app_config") return Promise.resolve({ onboardingCompleted: true });
-      if (command === "check_core_updates") return Promise.resolve(coreFixture());
+      if (command === "get_core_status") return Promise.resolve(coreFixture());
       if (command === "list_provider_accounts") return Promise.resolve([account]);
       if (command === "get_provider_usage") return Promise.resolve({
         alias: (args as { alias: string }).alias,
@@ -78,21 +95,21 @@ describe("application bootstrap", () => {
 
     const result = await loadAppBootstrap((event) => { state[event.id] = event; });
 
-    expect(result.resources?.loaded).toEqual({ core: true, skills: true, accounts: true, usage: true, library: true });
-    expect(result.resources?.checked).toEqual({ core: true, skills: false });
+    expect(result.resources?.loaded).toEqual({ core: true, skills: true, accounts: true, usage: false, library: true });
+    expect(result.resources?.checked).toEqual({ core: false, skills: false });
     expect(result.resources?.skills?.skills[0].updateAvailable).toBe(false);
-    expect(result.resources?.usageByAlias[account.alias]?.data?.plan).toBe("plus");
+    expect(result.resources?.usageByAlias).toEqual({});
     expect(result.resources?.warnings).toEqual([]);
     expect(bootstrapPercent(state)).toBe(100);
-    expect(invokeMock.mock.calls.filter(([command]) => command === "check_core_updates")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([command]) => command === "check_core_updates")).toHaveLength(0);
     expect(invokeMock.mock.calls.filter(([command]) => command === "check_skill_updates")).toHaveLength(0);
     expect(invokeMock.mock.calls.map(([command]) => command)).not.toContain(undefined);
   });
 
-  it("keeps local Core data available without scheduling another automatic check after a remote failure", async () => {
+  it("reports a local Core failure without blocking the other resources", async () => {
     invokeMock.mockImplementation((command) => {
       if (command === "check_core_updates") return Promise.reject(new Error("offline"));
-      if (command === "get_core_status") return Promise.resolve(coreFixture());
+      if (command === "get_core_status") return Promise.reject(new Error("local failure"));
       if (command === "list_provider_accounts") return Promise.resolve([]);
       if (command === "list_skills") return Promise.resolve({ ...skills, skills: [] });
       if (command === "get_library_snapshot") return Promise.resolve(emptyLibrary());
@@ -101,15 +118,15 @@ describe("application bootstrap", () => {
 
     const result = await loadAppBootstrap(() => {}, { onboardingCompleted: true });
 
-    expect(result.resources?.core).toEqual(coreFixture());
-    expect(result.resources?.checked.core).toBe(true);
-    expect(result.resources?.warnings).toContain("Não foi possível verificar as atualizações do Core.");
+    expect(result.resources?.core).toBeNull();
+    expect(result.resources?.checked.core).toBe(false);
+    expect(result.resources?.warnings).toContain("Não foi possível carregar o estado local do Core.");
     expect(invokeMock.mock.calls.map(([command]) => command)).not.toContain(undefined);
   });
 
   it("continues with Core when every non-Core preload fails", async () => {
     invokeMock.mockImplementation((command) => {
-      if (command === "check_core_updates") return Promise.resolve(coreFixture());
+      if (command === "get_core_status") return Promise.resolve(coreFixture());
       if (["list_provider_accounts", "list_skills", "get_library_snapshot"].includes(command)) {
         return Promise.reject(new Error(`${command} unavailable`));
       }
@@ -126,7 +143,7 @@ describe("application bootstrap", () => {
       "Não foi possível pré-carregar os workspaces.",
     ]);
     expect(invokeMock.mock.calls.map(([command]) => command).filter(Boolean).sort()).toEqual([
-      "check_core_updates",
+      "get_core_status",
       "get_library_snapshot",
       "list_provider_accounts",
       "list_skills",

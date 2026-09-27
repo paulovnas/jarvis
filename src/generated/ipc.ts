@@ -54,7 +54,9 @@ export type Attachment = { id: string, conversationId: string, name: string, mim
 
 export type MessagePart = { "type": "text", text: string, } | { "type": "skill", id: string, name: string, } | { "type": "attachment", attachment: Attachment, };
 
-export type TurnOptions = { executor?: Executor, account: string, model: string, reasoning: string | null, mode: Mode, workflow?: Flow | null, customWorkflowId?: string | null, customAgentId?: string | null, approvalMode: ApprovalMode, manualValidation?: boolean, };
+export type AutomaticPublication = { commit: boolean, push: boolean, pullRequest: boolean, };
+
+export type TurnOptions = { executor?: Executor, account: string, model: string, reasoning: string | null, mode: Mode, workflow?: Flow | null, customWorkflowId?: string | null, customAgentId?: string | null, approvalMode: ApprovalMode, manualValidation?: boolean, automaticPublication?: AutomaticPublication, };
 
 export type TaskStatus = "pending" | "in_progress" | "completed" | "blocked";
 

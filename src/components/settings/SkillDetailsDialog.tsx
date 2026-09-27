@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { readResource } from "@/core/resource-request";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ExternalLink, FileText } from "lucide-react";
 import { toast } from "sonner";
@@ -36,7 +36,7 @@ export function SkillDetailsDialog({ selection, onClose }: { selection: SkillSel
     }
     let active = true;
     setResult({ key, status: "loading" });
-    const request = "id" in selection ? invoke("get_skill_detail", { id: selection.id }) : invoke("get_marketplace_skill", { source: selection.source, skillId: selection.skillId });
+    const request = "id" in selection ? readResource("get_skill_detail", { id: selection.id }) : readResource("get_marketplace_skill", { source: selection.source, skillId: selection.skillId });
     void request.then(value => {
       const detail = skillDetailSchema.parse(value);
       cache.current.set(key, detail);

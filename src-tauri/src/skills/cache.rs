@@ -159,6 +159,7 @@ fn git_command() -> std::process::Command {
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_LFS_SKIP_SMUDGE", "1")
+        .args(["-c", "http.lowSpeedLimit=1", "-c", "http.lowSpeedTime=20"])
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_CONFIG_COUNT")
@@ -322,12 +323,12 @@ pub(super) fn with_repository<T>(
         .read()
         .map_err(|_| error("Cache de skills indisponível."))?;
     let cache_file = file_lock(home)?;
-    FileExt::lock_shared(&cache_file)
+    FileExt::try_lock_shared(&cache_file)
         .map_err(|_| error("O cache de skills está sendo limpo por outro Jarvis."))?;
     let repository_access = repository_lock(home, source)?;
-    let repository_guard = repository_access
-        .lock()
-        .map_err(|_| error("Repositório de skills indisponível."))?;
+    let repository_guard = repository_access.try_lock().map_err(|_| {
+        error("O repositório da skill já está sendo consultado. Aguarde e tente novamente.")
+    })?;
     let (repository, changed) = ensure_repository(home, source, force)?;
     let result = operation(&repository);
     drop(repository_guard);
@@ -548,6 +549,23 @@ mod tests {
         fs::write(entry.join("checkout/content.bin"), body).unwrap();
         write_metadata(&entry, source).unwrap();
         entry
+    }
+
+    #[test]
+    fn a_busy_repository_returns_control_and_can_be_read_after_the_operation_finishes() {
+        let home = tempfile::tempdir().unwrap();
+        cached_repository(home.path(), "owner/repository", b"cached");
+        let lock = repository_lock(home.path(), "owner/repository").unwrap();
+        let operation = lock.lock().unwrap();
+        let error =
+            with_repository(home.path(), "owner/repository", false, |_| Ok(())).unwrap_err();
+        assert!(error.message.contains("já está sendo consultado"));
+        drop(operation);
+        let bytes = with_repository(home.path(), "owner/repository", false, |path| {
+            Ok(fs::read(path.join("content.bin"))?)
+        })
+        .unwrap();
+        assert_eq!(bytes, b"cached");
     }
 
     #[test]

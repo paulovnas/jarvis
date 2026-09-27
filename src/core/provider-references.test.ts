@@ -22,6 +22,15 @@ it("offers destinations compatible with the selected tool", () => {
   expect(compatibleModels({ ...referenceAccount(), providerKind: "antigravity" }, "image_generation")[0].id).toBe("gemini-3.1-flash-image");
 });
 
+it("waits for a fresh catalog before declaring models invalid while keeping explicit restrictions", () => {
+  const account = { ...referenceAccount(), modelsAvailable: false, modelsStale: true, models: [] };
+  const choice = { account: account.alias, model: "gpt-test", reasoning: "high" };
+  expect(modelProblem(choice, [account])).toBeNull();
+  expect(modelProblem(choice, [{ ...account, enabled: false }])).toContain("desativado");
+  expect(modelProblem(choice, [{ ...account, disabledModels: [choice.model] }])).not.toBeNull();
+  expect(modelProblem(choice, [{ ...account, modelsStale: false }])).toContain("indisponíveis");
+});
+
 it("reports unavailable and identical secondary targets while preserving their selection", () => {
   const account = referenceAccount();
   const choice = { account: account.alias, model: "gpt-test", reasoning: "high" };

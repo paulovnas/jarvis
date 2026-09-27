@@ -27,11 +27,11 @@ function ClaudeProviderDetails() {
   };
   const error = runtime.error ?? runtime.data?.error;
   return <>
-    <DialogHeader>
+    <DialogHeader className="min-w-0 shrink-0 pr-6">
       <DialogTitle className="flex items-center gap-2"><TerminalSquare className="size-5" aria-hidden="true" />Claude Code</DialogTitle>
       <DialogDescription>Provedor local único. Requer o CLI oficial instalado e autenticado nesta máquina. A conta, os limites e a cobrança seguem a configuração do Claude Code.</DialogDescription>
     </DialogHeader>
-    <div className="flex min-h-0 flex-col gap-4 overflow-y-auto py-1">
+    <div role="region" aria-label="Configurações do Claude Code" className="-mx-4 flex min-h-0 min-w-0 flex-col gap-4 overflow-x-hidden overflow-y-auto px-4 py-1 wrap-anywhere [scrollbar-gutter:stable]">
       {runtime.loading && !runtime.data ? <Skeleton className="h-20" role="status" aria-label="Consultando Claude Code" /> : <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
         <dt className="text-muted-foreground">Instalação</dt><dd className="text-right font-mono">{runtime.data?.installed ? runtime.data.version ?? "Encontrada" : "Não encontrada"}</dd>
         <dt className="text-muted-foreground">Conta</dt><dd className="break-all text-right">{runtime.data?.authenticated ? runtime.data.email ?? "Autenticada no CLI" : "Login necessário"}</dd>

@@ -27,6 +27,7 @@
     "Flow",
     "Attachment",
     "MessagePart",
+    "AutomaticPublication",
     "TurnOptions",
     "TaskStatus",
     "DirectTask",

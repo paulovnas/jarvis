@@ -31,6 +31,7 @@ fn options(model: &str) -> TurnOptions {
         custom_agent_id: None,
         approval_mode: super::super::ApprovalMode::Manual,
         manual_validation: false,
+        automatic_publication: None,
     }
 }
 

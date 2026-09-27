@@ -55,6 +55,7 @@ export const turnOptionsSchema = z.object({
   customAgentId: z.string().nullable().optional(),
   approvalMode: z.enum(["manual", "yolo"]),
   manualValidation: z.boolean().optional(),
+  automaticPublication: z.object({ commit: z.boolean(), push: z.boolean(), pullRequest: z.boolean() }).optional(),
 });
 export const agentToolSchema = z.object({
   id: z.string(), name: z.string(), args: z.record(z.string(), z.unknown()),

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ResourceTimeoutError } from "./resource-request";
 
 export const skillSchema = z.object({
   id: z.string(), name: z.string(), description: z.string(), origin: z.enum(["jarvis", "agents", "project"]), path: z.string(),
@@ -19,6 +20,7 @@ export type SkillDetail = z.infer<typeof skillDetailSchema>;
 export type MarketplaceSkill = z.infer<typeof marketplaceSchema>[number];
 export type SkillCacheStatus = z.infer<typeof skillCacheStatusSchema>;
 export function skillError(cause: unknown): string {
+  if (cause instanceof ResourceTimeoutError) return cause.message;
   if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "skill_error" && "message" in cause && typeof cause.message === "string") return cause.message;
   return "Não foi possível concluir a operação da skill.";
 }

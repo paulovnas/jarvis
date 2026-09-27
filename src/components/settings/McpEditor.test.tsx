@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { McpEditor } from "./McpEditor";
@@ -7,6 +7,9 @@ describe("MCP visual editor", () => {
   it("creates a local MCP without JSON and keeps argument order and secrets", async () => {
     const user = userEvent.setup(); const save = vi.fn();
     render(<McpEditor initialValue="" busy={false} error={null} onSave={save} onCancel={vi.fn()} />);
+    const settings = within(screen.getByRole("region", { name: "Configuração do MCP" }));
+    expect(settings.getByRole("switch", { name: "MCP ativado" })).toBeVisible();
+    expect(settings.queryByRole("button", { name: "Salvar MCP" })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Visual" })).toHaveAttribute("aria-selected", "true");
     await user.type(screen.getByLabelText("Nome do MCP"), "docs");
     await user.type(screen.getByLabelText("Programa"), "npx");

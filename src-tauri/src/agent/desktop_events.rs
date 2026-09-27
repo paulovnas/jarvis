@@ -139,6 +139,7 @@ mod tests {
             custom_agent_id: None,
             approval_mode: ApprovalMode::Yolo,
             manual_validation: false,
+            automatic_publication: None,
         };
         a.submit_message("hello".into(), options, vec![]).unwrap();
         b.data.lock().unwrap().manual_compaction = true;
@@ -165,6 +166,7 @@ mod tests {
                 custom_agent_id: None,
                 approval_mode: ApprovalMode::Yolo,
                 manual_validation: false,
+                automatic_publication: None,
             };
             let _signal = session.reserve("Continue".into(), options).unwrap();
             session

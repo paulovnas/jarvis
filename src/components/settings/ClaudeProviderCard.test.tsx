@@ -29,12 +29,14 @@ it("configures one local provider and updates all model selectors after successf
   expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "get_claude_runtime")).toHaveLength(1);
   await user.click(screen.getByRole("button", { name: "Detalhes de Claude Code" }));
   const dialog = screen.getByRole("dialog", { name: "Claude Code" });
+  const settings = within(dialog).getByRole("region", { name: "Configurações do Claude Code" });
   expect(dialog).toHaveTextContent("Provedor local único");
   expect(dialog).toHaveTextContent("Requer o CLI oficial instalado e autenticado");
   expect(dialog).toHaveTextContent("person@example.test");
   expect(dialog).toHaveTextContent("claude auth login");
   expect(within(dialog).queryByRole("textbox", { name: /Alias|API/i })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("switch", { name: "Disponibilizar SONNET" }));
+  expect(within(settings).getByRole("switch", { name: "Mostrar limites do Claude Code" })).toBeVisible();
+  await user.click(within(settings).getByRole("switch", { name: "Disponibilizar SONNET" }));
   await waitFor(() => expect(screen.getByRole("switch", { name: "Disponibilizar SONNET" })).not.toBeChecked());
   expect(invoke).toHaveBeenCalledWith("save_claude_provider_preferences", { preferences: { enabled: true, disabledModels: ["sonnet"] } });
   metadata.models.push(model("haiku"));

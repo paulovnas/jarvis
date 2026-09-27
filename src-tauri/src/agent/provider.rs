@@ -1458,6 +1458,7 @@ mod tests {
             custom_agent_id: None,
             approval_mode: ApprovalMode::Manual,
             manual_validation: false,
+            automatic_publication: None,
         };
         let auth_options = options.clone();
         let credential = tokio::task::spawn_blocking(move || {
@@ -1526,6 +1527,7 @@ mod tests {
             custom_agent_id: None,
             approval_mode: ApprovalMode::Manual,
             manual_validation: false,
+            automatic_publication: None,
         };
         let credential = CodexCredential::new("", "", 0, "", None, None);
         let capabilities = ModelCapabilities::resolve_for_options(&credential, &options);
@@ -1560,6 +1562,7 @@ mod tests {
             custom_agent_id: None,
             approval_mode: ApprovalMode::Manual,
             manual_validation: false,
+            automatic_publication: None,
         };
         let credential = CodexCredential::new("", "", 0, "", None, None);
         let capabilities = ModelCapabilities::resolve_for_options(&credential, &options);

@@ -112,6 +112,7 @@ describe("ChatComposer model reasoning", () => {
     expect(screen.queryByRole("switch", { name: "Validação manual" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
     await user.click(await screen.findByRole("menuitem", { name: "Planejado" }));
+    await user.click(screen.getByRole("button", { name: "Configurações do chat" }));
     const validation = screen.getByRole("switch", { name: "Validação manual" });
     expect(validation).not.toBeChecked();
     expect(validation).toHaveAttribute("data-size", "sm");
@@ -121,6 +122,13 @@ describe("ChatComposer model reasoning", () => {
       workflow: "planned",
       manualValidation: true,
     }));
+  });
+  it("preserves the saved automatic publication selection in the next user turn", async () => {
+    const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
+    const automaticPublication = { commit: true, push: true, pullRequest: false };
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} initialOptions={{ ...chatOptions, account: "pessoal", model: "compact", automaticPublication }} />);
+    await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Implemente o ajuste{Enter}");
+    expect(send).toHaveBeenCalledWith("Implemente o ajuste", expect.objectContaining({ automaticPublication }));
   });
   it.each(["planned", "custom"] as const)("asks before replacing %s agents and pending validations", async workflow => {
     const user = userEvent.setup();

@@ -208,10 +208,25 @@ describe("App bootstrap and onboarding", () => {
       screen.queryByRole("heading", { name: /bem-vindo ao jarvis/i }),
     ).not.toBeInTheDocument();
     expect(invokeMock.mock.calls.filter(([command]) => command === "check_core_updates")).toHaveLength(1);
-    expect(invokeMock.mock.calls.filter(([command]) => command === "get_core_status")).toHaveLength(0);
-    expect(invokeMock.mock.calls.filter(([command]) => command === "list_provider_accounts")).toHaveLength(1);
-    expect(invokeMock.mock.calls.filter(([command]) => command === "get_provider_usage")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([command]) => command === "get_core_status")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([command]) => command === "list_provider_accounts")).toHaveLength(2);
+    await waitFor(() => expect(invokeMock.mock.calls.filter(([command]) => command === "get_provider_usage")).toHaveLength(1));
     expect(invokeMock.mock.calls.filter(([command]) => command === "get_library_snapshot")).toHaveLength(1);
+  });
+
+  it("abre o Home enquanto as consultas online continuam sem resposta", async () => {
+    const remote = deferred<unknown>();
+    const fallback = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command, args, options) => {
+      if (command === "get_app_config") return Promise.resolve({ onboardingCompleted: true });
+      if (command === "check_core_updates" || command === "get_provider_usage" || (command === "list_provider_accounts" && !(args as { cached?: boolean })?.cached)) return remote.promise;
+      return fallback(command, args, options);
+    });
+    const view = render(<App />);
+    expect(await screen.findByTestId("home-shell")).toBeVisible();
+    expect(invokeMock).toHaveBeenCalledWith("list_provider_accounts", { cached: true });
+    view.unmount();
+    remote.resolve([]);
   });
 
   it("bloqueia em erro de carga e permite tentar novamente", async () => {

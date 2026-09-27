@@ -8,9 +8,10 @@ import { LazyChatMarkdown } from "@/components/chat/LazyChatMarkdown";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
 import { displayVersion, nativeUpdaterAvailable, PROJECT_URL } from "@/core/app-update";
 import { writeClipboardText } from "@/core/clipboard";
 import { useAppUpdate } from "@/hooks/use-app-update";
@@ -53,50 +54,61 @@ export function AppUpdate() {
     <DialogTrigger render={<Button variant="ghost" size="sm" />} className={cn("h-6 shrink-0 cursor-pointer rounded-sm px-1.5 font-mono text-[10px]", release ? "text-onedark-green" : "text-muted-foreground")} aria-label={release ? "Atualização Disponível" : `Sobre o Jarvis ${displayVersion(info.currentVersion)}`}>
       {release ? "Atualização Disponível" : displayVersion(info.currentVersion)}
     </DialogTrigger>
-    <DialogContent className="dark flex max-h-[80vh] flex-col overflow-hidden sm:max-w-lg" showCloseButton={!busy} aria-describedby={undefined}>
-      <DialogHeader className="shrink-0 items-center gap-1 text-center">
-        <JarvisLogo variant="vertical" className="size-40 shrink-0" />
-        <DialogTitle className={release ? "text-base" : "sr-only"}>{release ? "Atualizar Jarvis" : "Sobre o Jarvis"}</DialogTitle>
-        <Badge variant="outline" className="font-mono text-[10px]">{displayVersion(release?.version ?? info.currentVersion)}</Badge>
+    <DialogContent className="dark flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl" showCloseButton={!busy}>
+      <DialogHeader className="shrink-0 p-5 pr-10 sm:p-6 sm:pr-10">
+        <div className="flex items-center gap-5">
+          <JarvisLogo variant="vertical" className="size-24 shrink-0" />
+          <div className="flex min-w-0 flex-col gap-2">
+            <DialogTitle>{release ? "Atualizar Jarvis" : "Sobre o Jarvis"}</DialogTitle>
+            <DialogDescription>{release ? "Uma nova versão está disponível para você." : "Ambiente de desenvolvimento com agentes de IA."}</DialogDescription>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="font-mono text-[10px]">{displayVersion(info.currentVersion)}</Badge>
+              {release && <><span aria-hidden="true" className="text-muted-foreground">→</span><Badge variant="secondary" className="font-mono text-[10px]">{displayVersion(release.version)}</Badge></>}
+            </div>
+          </div>
+        </div>
       </DialogHeader>
-      <div className="flex min-h-0 flex-col gap-4 overflow-y-auto">
+      <Separator />
+      <section aria-label={release ? "Notas da versão" : "Sobre o projeto"} tabIndex={0} className="flex min-h-0 flex-col gap-5 overflow-y-auto overscroll-contain p-5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:p-6">
         {release ? <>
-          <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-muted-foreground"><span>{info.currentVersion}</span><span aria-hidden="true">→</span><span>{release.version}</span></div>
           {release.notes ? <LazyChatMarkdown content={release.notes} /> : <p className="text-sm text-muted-foreground">Nova versão disponível.</p>}
           {!info.installable && <p className="text-xs text-muted-foreground">A atualização automática não está disponível nesta instalação. Baixe a nova versão; no Linux, instale o novo DEB ou use um AppImage em uma pasta com permissão de escrita.</p>}
-          {info.installable && !busy && !installed && <p className="text-xs text-muted-foreground">O Jarvis será reaberto automaticamente após a instalação.</p>}
         </> : <>
-          <p className="text-sm text-muted-foreground">Ambiente de desenvolvimento com agentes de IA.</p>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm"><dt className="text-muted-foreground">Criado por</dt><dd>Paulo Vitor Nascimento</dd><dt className="text-muted-foreground">Versão</dt><dd className="font-mono text-xs">{info.currentVersion}</dd></dl>
-          <section aria-labelledby="jarvis-support-title" className="rounded-lg border border-onedark-purple/25 bg-onedark-purple/5 p-4 shadow-[inset_0_1px_0_#ffffff0a]">
-            <h3 id="jarvis-support-title" className="text-sm font-semibold text-foreground">Compre-me um açaí 🫐</h3>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">O Jarvis é um projeto sem fins lucrativos, criado para ajudar quem quer iniciar nessa aventura de desenvolver com assistência de IA da melhor forma possível. Se ele tem ajudado você, uma contribuição é sempre bem-vinda e ajuda a manter o desenvolvimento ativo.</p>
-            <div className="mt-4 flex flex-col items-center gap-4 sm:flex-row sm:items-start">
-              <div className="shrink-0 rounded-lg bg-white p-2 shadow-sm"><img src="/acai.png" alt="QR Code para apoiar o Jarvis via PIX" className="size-36 rounded-md" /></div>
-              <div className="flex min-w-0 flex-1 flex-col items-center gap-3 sm:items-start">
-                <p className="text-center text-xs leading-5 text-muted-foreground sm:text-left">Leia o QR Code no aplicativo do seu banco e escolha o valor da contribuição.</p>
-                <Button type="button" variant="outline" className="w-full cursor-pointer gap-2 sm:w-auto" onClick={() => void copyPix()} onBlur={() => setPixCopied(false)}>
-                  {pixCopied ? <Check aria-hidden="true" className="text-onedark-green" /> : <Copy aria-hidden="true" />}
+          <div className="flex flex-col gap-3">
+            <p className="text-sm leading-relaxed text-muted-foreground">Um projeto sem fins lucrativos para tornar o desenvolvimento com IA mais acessível, com autonomia e controle.</p>
+            <p className="text-xs text-muted-foreground">Criado por <span className="font-medium text-foreground">Paulo Vitor Nascimento</span></p>
+          </div>
+          <Card size="sm" className="shrink-0 gap-4 sm:grid sm:grid-cols-[minmax(0,1fr)_160px] sm:items-center">
+            <CardHeader className="gap-2 sm:pr-0">
+              <CardTitle><h3>Compre-me um açaí 🫐</h3></CardTitle>
+              <CardDescription>Se o Jarvis ajuda no seu dia a dia, uma contribuição é sempre bem-vinda para manter o desenvolvimento ativo.</CardDescription>
+              <div className="pt-2">
+                <Button type="button" variant="outline" size="sm" className="cursor-pointer" onClick={() => void copyPix()} onBlur={() => setPixCopied(false)}>
+                  {pixCopied ? <Check aria-hidden="true" data-icon="inline-start" /> : <Copy aria-hidden="true" data-icon="inline-start" />}
                   {pixCopied ? "PIX copiado" : "Copiar PIX copia e cola"}
                 </Button>
               </div>
-            </div>
-          </section>
-          {checking && <div role="status" aria-label="Verificando atualizações" className="flex flex-col gap-2"><Skeleton className="h-3 w-40" /><Skeleton className="h-2 w-full" /></div>}
+            </CardHeader>
+            <CardContent className="flex flex-col items-center gap-2 sm:pl-0">
+              <div className="shrink-0 rounded-lg bg-white p-2"><img src="/acai.png" alt="QR Code para apoiar o Jarvis via PIX" className="size-32" /></div>
+              <p className="max-w-40 text-center text-[11px] leading-4 text-muted-foreground">Leia no app do banco e escolha o valor.</p>
+            </CardContent>
+          </Card>
         </>}
-        {busy && progress && <div role="status" aria-live="polite" className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3 text-xs"><span>{stage}</span>{progress.stage === "downloading" && <span className="font-mono tabular-nums">{percent === null ? megabytes(downloaded) : `${percent}%`}</span>}</div>
-          <Progress aria-label={stage} value={progress.stage === "downloading" ? percent : null} />
-          {progress.stage === "downloading" && total && <p className="font-mono text-[10px] text-muted-foreground">{megabytes(downloaded)} / {megabytes(total)}</p>}
+      </section>
+      <DialogFooter className="mx-0 mb-0 shrink-0 flex-col gap-3 p-5 sm:flex-col sm:p-6">
+        {(busy || checking) && <div role="status" aria-label={checking ? "Verificando atualizações" : stage} aria-live="polite" className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3 text-xs"><span>{checking ? "Verificando atualizações" : stage}</span>{progress?.stage === "downloading" && <span className="font-mono tabular-nums">{percent === null ? megabytes(downloaded) : `${percent}%`}</span>}</div>
+          <Progress aria-label={checking ? "Verificando atualizações" : stage} value={progress?.stage === "downloading" ? percent : null} />
+          {progress?.stage === "downloading" && total && <p className="font-mono text-[10px] text-muted-foreground">{megabytes(downloaded)} / {megabytes(total)}</p>}
         </div>}
-        {error && <Alert variant="destructive"><CircleAlert /><AlertDescription>{error}</AlertDescription></Alert>}
+        {error && <Alert variant="destructive"><CircleAlert /><AlertDescription className="max-h-24 overflow-y-auto">{error}</AlertDescription></Alert>}
         {upToDate && <Alert role="status" className="border-onedark-green/25 bg-onedark-green/5 text-onedark-green"><CircleCheck /><AlertDescription className="text-onedark-green">A versão mais recente já está instalada.</AlertDescription></Alert>}
-      </div>
-      <DialogFooter className="shrink-0">
-        {release ? info.installable ? <Button disabled={busy || checking} onClick={() => void install()}><ArrowUpToLine data-icon="inline-start" />{busy ? stage : installed ? "Reabrir Jarvis" : "Atualizar e reiniciar"}</Button> : <Button className="cursor-pointer" onClick={() => { void openUrl(`${PROJECT_URL}/releases`).catch(() => toast.error("Não foi possível abrir os downloads.")); }}><ExternalLink data-icon="inline-start" />Baixar nova versão</Button> : <>
-          <Button variant="ghost" onClick={() => { void openUrl(PROJECT_URL).catch(() => toast.error("Não foi possível abrir o projeto.")); }}><ExternalLink data-icon="inline-start" />GitHub</Button>
-          <Button variant="outline" disabled={checking} onClick={() => void check(true)}><RefreshCw data-icon="inline-start" />Verificar atualizações</Button>
-        </>}
+        {release && info.installable && !busy && !installed && <p className="text-xs text-muted-foreground">O Jarvis será reaberto automaticamente após a instalação.</p>}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Button variant="ghost" size="sm" className="cursor-pointer" onClick={() => { void openUrl(PROJECT_URL).catch(() => toast.error("Não foi possível abrir o projeto.")); }}><ExternalLink data-icon="inline-start" />GitHub</Button>
+          {release ? info.installable ? <Button className="cursor-pointer" disabled={busy || checking} onClick={() => void install()}><ArrowUpToLine data-icon="inline-start" />{busy ? stage : installed ? "Reabrir Jarvis" : "Atualizar e reiniciar"}</Button> : <Button className="cursor-pointer" onClick={() => { void openUrl(`${PROJECT_URL}/releases`).catch(() => toast.error("Não foi possível abrir os downloads.")); }}><ExternalLink data-icon="inline-start" />Baixar nova versão</Button> : <Button variant="outline" className="cursor-pointer" disabled={checking} onClick={() => void check(true)}><RefreshCw data-icon="inline-start" />Verificar atualizações</Button>}
+        </div>
       </DialogFooter>
     </DialogContent>
   </Dialog>;

@@ -111,6 +111,7 @@ pub(super) fn browse(query: &str, ranking: &str, limit: usize) -> Result<Vec<Ent
     let client = reqwest::blocking::Client::builder()
         .user_agent("Jarvis-Skills/0.1")
         .timeout(Duration::from_secs(20))
+        .connect_timeout(Duration::from_secs(8))
         .build()
         .map_err(|_| error("Não foi possível conectar ao Marketplace."))?;
     let response = client

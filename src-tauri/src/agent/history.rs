@@ -1537,6 +1537,7 @@ mod tests {
                     custom_agent_id: None,
                     approval_mode: ApprovalMode::Manual,
                     manual_validation: false,
+                    automatic_publication: None,
                 },
                 context_window: Some(128000),
                 status: TurnStatus::Completed,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { readResource } from "@/core/resource-request";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronRight, ExternalLink, SlidersHorizontal, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -37,7 +37,7 @@ export function CustomModelEditor({ model, index, baseUrl, protocol, saving, can
     const version = ++request.current;
     setLookup({ key, pending: true }); onPendingChange(true);
     try {
-      const result = discoveredModelSchema.parse(await invoke("lookup_custom_model", { baseUrl, protocol, modelId: model.id }));
+      const result = discoveredModelSchema.parse(await readResource("lookup_custom_model", { baseUrl, protocol, modelId: model.id }));
       if (version !== request.current) return;
       if (result.model.id !== model.id || new URL(result.sourceUrl).origin !== "https://openrouter.ai") throw new Error("Unexpected catalog result");
       const previous = model.defaultReasoningLevel;

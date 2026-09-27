@@ -57,6 +57,7 @@ fn repo_proposal(path: &str, files: &[&str]) -> RepositoryProposal {
         branch: None,
         commit_message: Some("feat: publish approved change".into()),
         sync: SyncMode::None,
+        sync_base: None,
         push: PushMode::None,
         pull_request: None,
     }
@@ -105,6 +106,144 @@ fn linked_hml_repositories() -> (tempfile::TempDir, tempfile::TempDir, tempfile:
     git_ok(peer.path(), ["config", "user.name", "Jarvis Peer"]);
     git_ok(peer.path(), ["config", "user.email", "peer@example.test"]);
     (local, remote, peer)
+}
+
+#[test]
+fn reference_branch_rebase_can_resolve_conflicts_and_continue_on_current_branch() {
+    let (local, _remote, peer) = linked_hml_repositories();
+    git_ok(local.path(), ["switch", "-c", "feature"]);
+    git_ok(local.path(), ["config", "rebase.backend", "apply"]);
+    let remote_commit = advance_remote(peer.path(), "app.txt", "remote change\n");
+    std::fs::write(local.path().join("app.txt"), "local change\n").unwrap();
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let mut proposal = repo_proposal(".", &["app.txt"]);
+    proposal.sync = SyncMode::Rebase;
+    proposal.sync_base = Some("hml".into());
+    let failure = publish_repository(&root, &proposal, false).err().unwrap();
+    assert_eq!(failure.code, "publication_sync_conflict");
+    assert!(rebase_in_progress(&root).unwrap());
+    assert!(failure.message.contains("rebase_continue"));
+    std::fs::write(root.join("app.txt"), "remote change\nlocal change\n").unwrap();
+    proposal.commit_message = None;
+    proposal.sync = SyncMode::RebaseContinue;
+    proposal.files = vec!["unrelated.txt".into()];
+    assert_eq!(
+        publish_repository(&root, &proposal, false)
+            .err()
+            .unwrap()
+            .code,
+        "publication_staged_scope"
+    );
+    proposal.files = vec!["app.txt".into()];
+    let result = publish_repository(&root, &proposal, false).unwrap();
+    assert_eq!(result.branch, "feature");
+    assert!(!rebase_in_progress(&root).unwrap());
+    assert!(is_ancestor(&root, &remote_commit, "HEAD").unwrap());
+    assert_eq!(
+        std::fs::read_to_string(root.join("app.txt")).unwrap(),
+        "remote change\nlocal change\n"
+    );
+    assert!(git_ok(&root, ["status", "--porcelain"]).is_empty());
+    assert!(publish_repository(&root, &proposal, false).is_err());
+}
+
+#[test]
+fn automatic_authority_never_expands_selected_actions_to_merge_or_reset() {
+    let actions = AutomaticPublication {
+        commit: true,
+        push: false,
+        pull_request: false,
+    };
+    let mut proposal = Proposal {
+        summary: "Publish".into(),
+        authorization: None,
+        repositories: vec![repo_proposal(".", &["app.txt"])],
+    };
+    assert!(validate_automatic_scope(&proposal, &actions).is_ok());
+    proposal.repositories[0].push = PushMode::Normal;
+    assert_eq!(
+        validate_automatic_scope(&proposal, &actions)
+            .unwrap_err()
+            .code,
+        "automatic_publication_scope"
+    );
+    let all = AutomaticPublication {
+        commit: true,
+        push: true,
+        pull_request: true,
+    };
+    proposal.repositories[0].pull_request = Some(PullRequestProposal {
+        base: "hml".into(),
+        title: "Publish".into(),
+        body: "Changes".into(),
+        draft: false,
+        merge: Some(MergeProposal {
+            method: MergeMethod::Squash,
+            delete_branch: false,
+        }),
+    });
+    assert!(validate_automatic_scope(&proposal, &all).is_err());
+    proposal.repositories[0].pull_request = None;
+    proposal.repositories[0].reset = Some(ResetProposal {
+        mode: ResetMode::Soft,
+        target: "HEAD^".into(),
+    });
+    assert!(validate_automatic_scope(&proposal, &all).is_err());
+}
+
+#[test]
+fn automatic_settings_authorize_commit_and_use_the_configured_reference_without_a_question() {
+    let (local, _remote, _peer) = linked_hml_repositories();
+    git_ok(local.path(), ["switch", "-c", "feature"]);
+    std::fs::write(local.path().join("app.txt"), "changed\n").unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    state.with_connection(home.path(), |db| {
+        db.execute_batch("INSERT INTO workspaces (id,name) VALUES ('w1','Workspace'); INSERT INTO projects (id,workspace_id,name,path) VALUES ('p1','w1','Project','/project'); INSERT INTO project_repositories (id,project_id,path,name,reference_branch) VALUES ('r1','p1','.','App','hml'); INSERT INTO project_publication_settings (project_id,publish_prompt,pr_mode,pr_prompt) VALUES ('p1','Publish','ask_pr_merge','Describe PR');")?;
+        Ok::<(), crate::library::LibraryError>(())
+    }).unwrap();
+    let actions = AutomaticPublication {
+        commit: true,
+        push: false,
+        pull_request: false,
+    };
+    let mut tool = call("jarvis_propose_publication", "");
+    tool.args = json!({"summary":"Commit change", "authorization":null, "repositories":[repo_proposal(".", &["app.txt"])]});
+    let root = std::fs::canonicalize(local.path()).unwrap();
+    let PreparedPublication::Ready(proposal) = prepare_with_confirmation(
+        &state,
+        home.path(),
+        "p1",
+        &root,
+        "Implemente o ajuste",
+        false,
+        &tool,
+        None,
+        Some(&actions),
+    )
+    .unwrap() else {
+        panic!("expected native automatic authority");
+    };
+    assert!(executes_without_review(&proposal));
+    assert_eq!(proposal.repositories[0].sync_base.as_deref(), Some("hml"));
+    assert_eq!(proposal.repositories[0].sync, SyncMode::Rebase);
+    assert!(proposal.repositories[0].pull_request.is_none());
+    assert_eq!(
+        prepare_with_confirmation(
+            &state,
+            home.path(),
+            "p1",
+            &root,
+            "Implemente o ajuste",
+            false,
+            &tool,
+            None,
+            None
+        )
+        .unwrap_err()
+        .code,
+        "publication_question_required"
+    );
 }
 
 fn advance_remote(peer: &Path, file: &str, content: &str) -> String {
@@ -394,7 +533,8 @@ fn legacy_confirmation_with_additional_instructions_returns_revision_without_an_
                 reply,
                 false,
                 &tool,
-                Some(&receipt)
+                Some(&receipt),
+                None,
             )
             .unwrap(),
             PreparedPublication::RevisionRequested
@@ -714,6 +854,7 @@ fn autonomous_soft_reset_uses_the_typed_action_when_the_user_named_it() {
             branch: None,
             commit_message: None,
             sync: SyncMode::None,
+            sync_base: None,
             push: PushMode::None,
             pull_request: None,
         },
@@ -927,6 +1068,7 @@ fn approved_action_only_soft_reset_keeps_the_changes_staged() {
         branch: None,
         commit_message: None,
         sync: SyncMode::None,
+        sync_base: None,
         push: PushMode::None,
         pull_request: None,
     };
@@ -1049,6 +1191,7 @@ fn approved_publication_can_select_an_existing_branch() {
         branch: Some("release".into()),
         commit_message: None,
         sync: SyncMode::None,
+        sync_base: None,
         push: PushMode::None,
         pull_request: None,
     };
@@ -1292,6 +1435,7 @@ fn approved_merge_reuses_an_existing_pull_request_without_creating_a_duplicate()
         branch: None,
         commit_message: None,
         sync: SyncMode::None,
+        sync_base: None,
         push: PushMode::None,
         pull_request: Some(PullRequestProposal {
             base: "hml".into(),

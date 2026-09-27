@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { readResource } from "@/core/resource-request";
 import { ArrowUpCircle, BookOpen, RefreshCw, Search, Store, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -55,7 +56,7 @@ export function SkillsSettings({ onCountChange }: { onCountChange?: (count: numb
     checkPending.current = true;
     if (mounted.current) setCheckingUpdates(true);
     try {
-      const checked = skillsSnapshotSchema.parse(await invoke("check_skill_updates"));
+      const checked = skillsSnapshotSchema.parse(await readResource("check_skill_updates"));
       const current = currentSnapshot.current;
       const enabled = new Map(current?.skills.map(skill => [skill.id, skill.enabled] as const) ?? []);
       update({
@@ -85,7 +86,7 @@ export function SkillsSettings({ onCountChange }: { onCountChange?: (count: numb
     }
     loadInitially.current = false;
     let active = true;
-    void invoke("list_skills").then(async value => {
+    void readResource("list_skills").then(async value => {
       if (!active) return;
       const parsed = update(value);
       if (checkInitially.current && parsed.skills.some(skill => skill.marketplaceId)) {

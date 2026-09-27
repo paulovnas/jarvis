@@ -1,9 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 import { coreSnapshotSchema, type CoreSnapshot } from "@/core/core-components";
 import { readLibrarySnapshot, type LibrarySnapshot } from "@/core/library";
 import { accountList, type ProviderAccount } from "@/core/provider-accounts";
-import { accountUsageSchema, type AccountUsage } from "@/core/provider-usage";
+import { type AccountUsage } from "@/core/provider-usage";
+import { readResource } from "@/core/resource-request";
 import { skillsSnapshotSchema, type SkillSnapshot } from "@/core/skills";
 import type { BootstrapProgressEvent, BootstrapStepId, BootstrapStepStatus } from "@/core/bootstrap-state";
 
@@ -56,19 +56,13 @@ async function loadCore(
 ): Promise<{ snapshot: CoreSnapshot | null; checked: boolean }> {
   report(onProgress, "core", 0.12, "running", "Validando instalações e versões");
   try {
-    const snapshot = coreSnapshotSchema.parse(await invoke("check_core_updates"));
+    const snapshot = coreSnapshotSchema.parse(await readResource("get_core_status"));
     report(onProgress, "core", 1, "complete", snapshot.ready ? "Core pronto" : "Core requer atenção");
-    return { snapshot, checked: true };
+    return { snapshot, checked: false };
   } catch {
-    warnings.push("Não foi possível verificar as atualizações do Core.");
-    try {
-      const snapshot = coreSnapshotSchema.parse(await invoke("get_core_status"));
-      report(onProgress, "core", 1, "warning", "Estado local carregado; atualização indisponível");
-      return { snapshot, checked: true };
-    } catch {
-      report(onProgress, "core", 1, "warning", "Core indisponível neste momento");
-      return { snapshot: null, checked: false };
-    }
+    warnings.push("Não foi possível carregar o estado local do Core.");
+    report(onProgress, "core", 1, "warning", "Core indisponível neste momento");
+    return { snapshot: null, checked: false };
   }
 }
 
@@ -84,54 +78,15 @@ async function loadProviders(
   report(onProgress, "providers", 0.08, "running", "Carregando contas conectadas");
   let accounts: ProviderAccount[];
   try {
-    accounts = accountList(await invoke("list_provider_accounts"));
+    accounts = accountList(await readResource("list_provider_accounts", { cached: true }));
   } catch {
     warnings.push("Não foi possível carregar os provedores conectados.");
     report(onProgress, "providers", 1, "warning", "Provedores indisponíveis neste momento");
     return { accounts: [], usageByAlias: {}, accountsLoaded: false, usageLoaded: false };
   }
 
-  const eligible = accounts.filter(
-    (account) => account.enabled && account.providerKind !== "custom",
-  );
-  if (eligible.length === 0) {
-    report(onProgress, "providers", 1, "complete", accounts.length ? "Provedores carregados" : "Nenhum provedor conectado");
-    return { accounts, usageByAlias: {}, accountsLoaded: true, usageLoaded: true };
-  }
-
-  report(onProgress, "providers", 0.34, "running", "Consultando limites de uso");
-  const usageByAlias: Record<string, ProviderUsageCacheEntry> = {};
-  let completed = 0;
-  await Promise.all(eligible.map(async (account) => {
-    try {
-      const parsed = accountUsageSchema.parse(await invoke("get_provider_usage", { alias: account.alias }));
-      usageByAlias[account.alias] = parsed.alias === account.alias
-        ? { data: parsed, error: false }
-        : { data: null, error: true };
-    } catch {
-      usageByAlias[account.alias] = { data: null, error: true };
-    } finally {
-      completed += 1;
-      report(
-        onProgress,
-        "providers",
-        0.34 + 0.66 * completed / eligible.length,
-        "running",
-        `Limites consultados · ${completed}/${eligible.length}`,
-      );
-    }
-  }));
-
-  const failures = Object.values(usageByAlias).filter((entry) => entry.error).length;
-  if (failures > 0) warnings.push(`Os limites de ${failures} ${failures === 1 ? "provedor" : "provedores"} não puderam ser atualizados.`);
-  report(
-    onProgress,
-    "providers",
-    1,
-    failures > 0 ? "warning" : "complete",
-    failures > 0 ? "Contas prontas; alguns limites estão indisponíveis" : "Provedores e limites prontos",
-  );
-  return { accounts, usageByAlias, accountsLoaded: true, usageLoaded: true };
+  report(onProgress, "providers", 1, "complete", "Contas carregadas; limites serão atualizados em segundo plano");
+  return { accounts, usageByAlias: {}, accountsLoaded: true, usageLoaded: false };
 }
 
 async function loadSkills(
@@ -141,7 +96,7 @@ async function loadSkills(
   report(onProgress, "skills", 0.1, "running", "Lendo catálogo instalado");
   let snapshot: SkillSnapshot;
   try {
-    snapshot = skillsSnapshotSchema.parse(await invoke("list_skills"));
+    snapshot = skillsSnapshotSchema.parse(await readResource("list_skills"));
   } catch {
     warnings.push("Não foi possível carregar as skills instaladas.");
     report(onProgress, "skills", 1, "warning", "Catálogo de skills indisponível");
@@ -160,7 +115,7 @@ async function loadWorkspace(
 ): Promise<LibrarySnapshot | null> {
   report(onProgress, "workspace", 0.18, "running", "Restaurando o último contexto");
   try {
-    const library = readLibrarySnapshot(await invoke("get_library_snapshot"));
+    const library = readLibrarySnapshot(await readResource("get_library_snapshot"));
     report(onProgress, "workspace", 1, "complete", "Workspaces e conversas prontos");
     return library;
   } catch {
@@ -175,7 +130,7 @@ export async function loadAppBootstrap(
   knownConfig?: AppConfig,
 ): Promise<AppBootstrapResult> {
   report(onProgress, "configuration", 0.15, "running", "Lendo preferências do Jarvis");
-  const config = knownConfig ?? appConfigSchema.parse(await invoke("get_app_config"));
+  const config = knownConfig ?? appConfigSchema.parse(await readResource("get_app_config"));
   report(onProgress, "configuration", 1, "complete", "Configuração carregada");
 
   if (!config.onboardingCompleted) return { config, resources: null };

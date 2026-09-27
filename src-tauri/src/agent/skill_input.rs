@@ -140,6 +140,7 @@ mod tests {
             custom_agent_id: None,
             approval_mode: ApprovalMode::Manual,
             manual_validation: false,
+            automatic_publication: None,
         };
         session
             .submit_message("first".into(), options.clone(), vec![])

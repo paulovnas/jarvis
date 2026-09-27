@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { readResource } from "@/core/resource-request";
 import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 import { accountUsageSchema, type AccountUsage } from "@/core/provider-usage";
 
@@ -23,10 +23,10 @@ export function useProviderUsage(alias: string, { pollWhileHidden = false, sourc
       else { setLocalData(next); setLocalError(failed); }
     };
     const refresh = async () => {
-      if (fetching || (!pollWhileHidden && document.visibilityState === "hidden")) return;
+      if (!active || fetching || navigator.onLine === false || (!pollWhileHidden && document.visibilityState === "hidden")) return;
       fetching = true;
       try {
-        const result = accountUsageSchema.parse(await (source === "claude" ? invoke("get_claude_usage") : invoke("get_provider_usage", { alias })));
+        const result = accountUsageSchema.parse(await (source === "claude" ? readResource("get_claude_usage") : readResource("get_provider_usage", { alias })));
         if (result.alias !== alias) throw new Error("Account mismatch");
         if (active) store(result, false);
       } catch { if (active) store(latestData.current, true); }
@@ -35,8 +35,9 @@ export function useProviderUsage(alias: string, { pollWhileHidden = false, sourc
     if (!cachedIsFresh) void refresh();
     const timer = setInterval(() => { void refresh(); }, 61_000);
     window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
     document.addEventListener("visibilitychange", refresh);
-    return () => { active = false; clearInterval(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
+    return () => { active = false; clearInterval(timer); window.removeEventListener("focus", refresh); window.removeEventListener("online", refresh); document.removeEventListener("visibilitychange", refresh); };
   }, [alias, pollWhileHidden, source, updateBootstrapUsage]);
   return { data, error };
 }

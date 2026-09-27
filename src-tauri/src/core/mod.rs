@@ -390,18 +390,22 @@ pub async fn check_core_updates(
         data.checking = true;
     }
     core.emit(&app, &home);
-    let mut result = Ok(());
-    for id in ComponentId::ALL {
-        let release = install::component_release(id).await;
-        result = core
-            .data
-            .lock()
-            .map_err(|_| error("Core indisponível."))?
-            .update_latest(id, release);
-        if result.is_err() {
-            break;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        for id in ComponentId::ALL {
+            let release = install::component_release(id).await;
+            core.data
+                .lock()
+                .map_err(|_| error("Core indisponível."))?
+                .update_latest(id, release)?;
         }
-    }
+        Ok(())
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(error(
+            "A consulta demorou demais. Verifique a conexão e tente novamente.",
+        ))
+    });
     if let Ok(mut data) = core.data.lock() {
         data.checking = false;
     }

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::persistence::{self, PersistenceError, ProviderAccountRecord};
 
 pub(crate) mod antigravity;
+mod catalog_cache;
 pub(crate) mod custom;
 mod inference_auth;
 mod reauthorization;
@@ -105,6 +106,8 @@ pub(crate) struct ProviderAccount {
     pub(crate) models: Vec<ProviderModel>,
     #[serde(rename = "modelsAvailable")]
     pub(crate) models_available: bool,
+    #[serde(default, rename = "modelsStale")]
+    pub(crate) models_stale: bool,
     #[serde(default, rename = "disabledModels")]
     pub(crate) disabled_models: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -133,6 +136,7 @@ impl ProviderAccount {
                 .map_or(ProviderAccountType::Unknown, classify_account_type),
             models,
             models_available,
+            models_stale: false,
             disabled_models: Vec::new(),
             custom: None,
         }
@@ -865,6 +869,7 @@ mod tests {
             account_type: ProviderAccountType::Personal,
             models: Vec::new(),
             models_available: false,
+            models_stale: false,
             disabled_models: Vec::new(),
             custom: None,
         };
@@ -1306,16 +1311,22 @@ impl OAuthManager {
         home_dir: &std::path::Path,
         client: Option<&reqwest::blocking::Client>,
     ) -> Result<Vec<ProviderAccount>, ProviderError> {
-        // Refresh can rotate credentials: serialize it with connection and disconnection.
-        let _guard = self
-            .credentials_guard
-            .lock()
-            .map_err(|_| ProviderError::internal())?;
+        // A background refresh must not queue behind a stalled credential
+        // operation. Rendering the saved catalog never rotates credentials.
+        let _guard = match self.credentials_guard.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::WouldBlock) => {
+                return catalog_cache::list(app_state, home_dir)
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err(ProviderError::internal()),
+        };
         let records = app_state
             .list_provider_accounts(home_dir)
             .map_err(|_| ProviderError::database())?;
-        records
-            .into_iter()
+        let cached = catalog_cache::list(app_state, home_dir).unwrap_or_default();
+        let accounts: Vec<_> = records
+            .iter()
+            .cloned()
             .map(|record| {
                 let account = if record.provider_kind == "custom" {
                     custom::account(app_state, home_dir, record)?
@@ -1324,7 +1335,23 @@ impl OAuthManager {
                 };
                 attach_model_exclusions(app_state, home_dir, account)
             })
-            .collect()
+            .collect::<Result<_, _>>()?;
+        catalog_cache::remember(home_dir, &records, &accounts);
+        Ok(accounts
+            .into_iter()
+            .map(|mut account| {
+                if account.enabled && !account.models_available {
+                    if let Some(previous) = cached.iter().find(|previous| {
+                        previous.alias == account.alias && previous.models_available
+                    }) {
+                        account.models = previous.models.clone();
+                        account.models_available = true;
+                        account.models_stale = true;
+                    }
+                }
+                account
+            })
+            .collect())
     }
 
     fn refresh_models(
@@ -1333,10 +1360,12 @@ impl OAuthManager {
         home_dir: &std::path::Path,
         alias: Option<&str>,
     ) -> Result<Vec<ProviderAccount>, ProviderError> {
-        let _guard = self
-            .credentials_guard
-            .lock()
-            .map_err(|_| ProviderError::internal())?;
+        let _guard = self.credentials_guard.try_lock().map_err(|_| {
+            ProviderError::new(
+                "provider_busy",
+                "Uma atualização de provedores já está em andamento. Aguarde e tente novamente.",
+            )
+        })?;
         let records = app_state
             .list_provider_accounts(home_dir)
             .map_err(|_| ProviderError::database())?;
@@ -1356,8 +1385,8 @@ impl OAuthManager {
             ));
         }
         let client = build_codex_client().ok();
-        records
-            .into_iter()
+        let accounts = records
+            .iter()
             .filter(|record| {
                 record.enabled
                     && matches!(
@@ -1366,6 +1395,7 @@ impl OAuthManager {
                     )
                     && alias.is_none_or(|selected| record.alias == selected)
             })
+            .cloned()
             .map(|record| {
                 let account = account_details(
                     record,
@@ -1375,7 +1405,9 @@ impl OAuthManager {
                 );
                 attach_model_exclusions(app_state, home_dir, account)
             })
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        catalog_cache::remember(home_dir, &records, &accounts);
+        Ok(accounts)
     }
 
     #[cfg(test)]
@@ -2348,6 +2380,7 @@ fn request_oauth_token(
     let client = reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(8))
         .build()
         .map_err(|_| {
             ProviderError::new(
@@ -2494,6 +2527,7 @@ fn build_codex_client() -> Result<reqwest::blocking::Client, reqwest::Error> {
     reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(8))
         .build()
 }
 
@@ -2781,11 +2815,15 @@ pub async fn list_provider_accounts(
     app: tauri::AppHandle,
     persistence_state: tauri::State<'_, persistence::AppState>,
     oauth_state: tauri::State<'_, OpenAiCodexState>,
+    cached: Option<bool>,
 ) -> Result<Vec<ProviderAccount>, ProviderError> {
     let home_dir = home_dir(&app)?;
     let persistence_state = persistence_state.inner().clone();
     let manager = oauth_state.manager.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        if cached == Some(true) {
+            return catalog_cache::list(&persistence_state, &home_dir);
+        }
         let client = build_codex_client().ok();
         manager.list_accounts(&persistence_state, &home_dir, client.as_ref())
     })

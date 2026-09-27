@@ -542,6 +542,7 @@ mod tests {
                     custom_agent_id: None,
                     approval_mode: super::super::ApprovalMode::Yolo,
                     manual_validation: false,
+                    automatic_publication: None,
                 },
                 context_window: None,
                 status: super::super::TurnStatus::Running,

@@ -286,6 +286,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
         custom_agent_id: None,
         approval_mode: ApprovalMode::Manual,
         manual_validation: false,
+        automatic_publication: None,
     };
     let signal = root
         .reserve("Implement the requested outcome".into(), options.clone())

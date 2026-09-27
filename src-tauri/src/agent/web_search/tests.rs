@@ -14,6 +14,7 @@ fn options(account: &str, model: &str) -> TurnOptions {
         custom_agent_id: None,
         approval_mode: super::super::ApprovalMode::Yolo,
         manual_validation: false,
+        automatic_publication: None,
     }
 }
 

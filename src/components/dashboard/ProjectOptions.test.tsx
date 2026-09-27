@@ -89,8 +89,9 @@ it("adds a named Git repository from a directory below the project root", async 
   await user.clear(screen.getByRole("textbox", { name: "Nome do repositório" }));
   await user.type(screen.getByRole("textbox", { name: "Nome do repositório" }), "Backend");
   await user.type(screen.getByRole("textbox", { name: "Descrição do repositório" }), "API");
+  await user.type(screen.getByRole("textbox", { name: "Branch de referência" }), "hml");
   await user.click(screen.getByRole("button", { name: "Salvar repositório" }));
-  await waitFor(() => expect(call).toHaveBeenCalledWith("save_project_repository", { projectId: "p1", repository: { directory: "/projects/jarvis/backend", name: "Backend", description: "API" } }));
+  await waitFor(() => expect(call).toHaveBeenCalledWith("save_project_repository", { projectId: "p1", repository: { directory: "/projects/jarvis/backend", name: "Backend", description: "API", referenceBranch: "hml" } }));
   expect(toast.success).toHaveBeenCalledWith("Repositório adicionado");
 });
 

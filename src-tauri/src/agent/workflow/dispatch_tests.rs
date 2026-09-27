@@ -2,6 +2,50 @@ use super::super::tests::{hub, job};
 use super::*;
 
 #[test]
+fn github_can_delegate_conflict_repair_without_overlapping_child_writes() {
+    let (_fixture, hub) = hub();
+    let mut github = job(&hub, Role::Github, ".");
+    github.status = Status::Running;
+    github.options.workflow = Some(Flow::Publication);
+    let mut builder = job(&hub, Role::Builder, ".");
+    builder.parent_id = github.id.clone();
+    let execution = Execution {
+        hub: hub.clone(),
+        id: github.id.clone(),
+        role: Role::Github,
+        flow: Flow::Publication,
+        scope: vec![".".into()],
+    };
+    hub.mutate(|state| {
+        state.jobs.insert(github.id.clone(), github.clone());
+        state.jobs.insert(builder.id.clone(), builder.clone());
+        assert!(admitted(state, &builder)?);
+        Ok(())
+    })
+    .unwrap();
+    assert!(execution.allowed("hub_spawn"));
+    assert!(definitions(Flow::Publication, Role::Github)
+        .iter()
+        .any(|tool| tool["name"] == "hub_spawn"));
+    let tool = ToolCall {
+        id: "publish".into(),
+        name: "jarvis_propose_publication".into(),
+        args: json!({}),
+        status: "running".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    assert!(execution.preflight(&tool).unwrap().contains("hub_wait"));
+    hub.mutate(|state| {
+        state.jobs.get_mut(&builder.id).unwrap().status = Status::Completed;
+        Ok(())
+    })
+    .unwrap();
+    assert!(execution.preflight(&tool).is_none());
+    assert!(!Role::Builder.spawns(Flow::Publication, Role::Github));
+}
+
+#[test]
 fn technical_parent_failure_preserves_children_for_durable_recovery_but_user_cancel_does_not() {
     for parent in ["main", "nested-coordinator"] {
         for technical in [false, true] {

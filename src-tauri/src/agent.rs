@@ -183,6 +183,9 @@ pub struct TurnOptions {
     approval_mode: ApprovalMode,
     #[serde(default, skip_serializing_if = "is_false")]
     manual_validation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    automatic_publication: Option<publication::AutomaticPublication>,
 }
 
 impl TurnOptions {

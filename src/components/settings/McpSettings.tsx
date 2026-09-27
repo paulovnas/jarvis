@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { readResource, ResourceTimeoutError } from "@/core/resource-request";
 import { Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import { McpEditor } from "./McpEditor";
 import { Hint } from "@/components/ui/hint";
 
 function message(error: unknown): string {
+  if (error instanceof ResourceTimeoutError) return error.message;
   if (typeof error === "object" && error !== null && "code" in error && error.code === "mcp_error" && "message" in error && typeof error.message === "string") return error.message;
   return "Não foi possível concluir a operação do MCP. Tente novamente.";
 }
@@ -38,7 +40,7 @@ export function McpSettings({ onCountChange }: { onCountChange?: (count: number)
     const request = Symbol(); checkRequests.current.set(server.id, request);
     if (mounted.current) setChecking(items => new Set(items).add(server.id));
     try {
-      const check = mcpCheckSchema.parse(await invoke("test_mcp_server", { id: server.id }));
+      const check = mcpCheckSchema.parse(await readResource("test_mcp_server", { id: server.id }));
       if (mounted.current && checkRequests.current.get(server.id) === request) {
         setServers(items => items.map(item => item.id === server.id && item.revision === server.revision ? { ...item, lastCheck: check } : item));
         if (check.error) toast.error(check.error);
@@ -88,8 +90,8 @@ export function McpSettings({ onCountChange }: { onCountChange?: (count: number)
     }, (err) => setEditorError(message(err)));
   }
 
-  return <div className="flex flex-col gap-4">
-    <div className="flex items-start justify-between gap-3">
+  return <div className="flex min-w-0 flex-col gap-4">
+    <div className="flex flex-wrap items-start justify-between gap-3">
       <h2 className="text-sm font-medium">MCPs</h2>
       <div className="flex gap-1">
         <Hint content="Atualizar MCPs"><Button variant="ghost" size="icon-sm" aria-label="Atualizar MCPs" className="cursor-pointer" disabled={loading || busy} onClick={() => { setLoading(true); setReload((value) => value + 1); }}><RefreshCw aria-hidden="true" /></Button></Hint>
@@ -105,7 +107,7 @@ export function McpSettings({ onCountChange }: { onCountChange?: (count: number)
     />)}</div>}
     <Dialog open={editor !== null} onOpenChange={(open) => { if (!open) closeEditor(); }}>
       <DialogContent className="dark flex max-h-[85vh] flex-col overflow-hidden sm:max-w-2xl">
-        <DialogHeader><DialogTitle>{editor?.id ? "Editar MCP" : "Adicionar MCP"}</DialogTitle><DialogDescription>Conecte ferramentas e fontes de informação aos agentes. Preencha os campos ou use uma configuração JSON.</DialogDescription></DialogHeader>
+        <DialogHeader className="min-w-0 shrink-0 pr-6"><DialogTitle>{editor?.id ? "Editar MCP" : "Adicionar MCP"}</DialogTitle><DialogDescription>Conecte ferramentas e fontes de informação aos agentes. Preencha os campos ou use uma configuração JSON.</DialogDescription></DialogHeader>
         {editor && <McpEditor initialValue={raw} busy={busy} error={editorError} onSave={config => void save(config)} onCancel={closeEditor} />}
       </DialogContent>
     </Dialog>

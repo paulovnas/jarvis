@@ -71,4 +71,14 @@ describe("model catalog refresh", () => {
     expect(failed.accounts).toEqual([account]);
     expect(failed.failed).toEqual([account.alias]);
   });
+
+  it("only reports a fresh catalog as refreshed and clears its offline marker", () => {
+    const stale = { ...account, modelsStale: true };
+    const failed = mergeModelCatalogRefresh([stale], [stale]);
+    expect(failed.failed).toEqual([account.alias]);
+    expect(failed.refreshed).toEqual([]);
+    const fresh = mergeModelCatalogRefresh([stale], [account]);
+    expect(fresh.refreshed).toEqual([account.alias]);
+    expect(fresh.accounts[0].modelsStale).toBe(false);
+  });
 });

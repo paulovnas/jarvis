@@ -136,6 +136,7 @@ export const projectRepositories = sqliteTable("project_repositories", {
   path: text("path").notNull(),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
+  referenceBranch: text("reference_branch"),
   createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
   updatedAt: integer("updated_at").notNull().default(sql`(unixepoch())`),
 }, (table) => [

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -74,6 +74,7 @@ it("abre a mesma modal pelo menu nativo e preserva os detalhes da atualização"
   expect(screen.getByText("Paulo Vitor Nascimento")).toBeVisible();
   expect(screen.getByRole("dialog").querySelector("img")).toHaveAttribute("src", "/logo_vertical.png");
   expect(screen.getByRole("heading", { name: "Sobre o Jarvis" })).toBeInTheDocument();
+  expect(within(screen.getByRole("dialog")).getAllByText(displayVersion(APP_VERSION))).toHaveLength(1);
   await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
   expect(await screen.findByText("Melhorias no Jarvis.")).toBeVisible();
   await user.keyboard("{Escape}");
@@ -121,14 +122,18 @@ it("distingue falha de consulta e apresenta os dados do projeto", async () => {
   expect(screen.queryByText("Atualização Disponível")).not.toBeInTheDocument();
 });
 
-it("apresenta notas, progresso real e mantém a modal aberta até terminar ou falhar", async () => {
+it("mantém preparação, progresso e erros fora das notas roláveis até terminar ou falhar", async () => {
   const user = userEvent.setup(); let report!: (event: UpdateProgress) => void; let reject!: (error: string) => void;
   vi.mocked(installAppUpdate).mockImplementation(callback => { report = callback; return new Promise((_, fail) => { reject = fail; }); });
   render(<AppUpdate />);
   await user.click(screen.getByRole("button", { name: /Sobre o Jarvis/ }));
   await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
   expect(await screen.findByText("Melhorias no Jarvis.")).toBeVisible();
+  const notes = screen.getByRole("region", { name: "Notas da versão" });
   await user.click(screen.getByRole("button", { name: "Atualizar e reiniciar" }));
+  expect(screen.getByRole("progressbar", { name: "Preparando atualização" })).toBeVisible();
+  expect(within(notes).queryByRole("progressbar")).not.toBeInTheDocument();
+  expect(within(notes).queryByRole("button")).not.toBeInTheDocument();
   act(() => report({ stage: "downloading", downloaded: 50, total: 100 }));
   expect(screen.getByRole("progressbar", { name: "Baixando atualização" })).toHaveAttribute("aria-valuenow", "50");
   await user.keyboard("{Escape}");
@@ -138,6 +143,7 @@ it("apresenta notas, progresso real e mantém a modal aberta até terminar ou fa
   expect(screen.getByRole("progressbar", { name: "Verificando assinatura" })).not.toHaveAttribute("aria-valuenow");
   await act(async () => reject("Assinatura inválida; nada foi instalado."));
   expect(screen.getByRole("alert")).toHaveTextContent("Assinatura inválida");
+  expect(within(notes).queryByRole("alert")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Atualizar e reiniciar" })).toBeEnabled();
 });
 

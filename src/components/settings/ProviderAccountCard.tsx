@@ -106,7 +106,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             <span className="min-w-0 break-words">{account.alias}</span>
           </DialogTitle>
         </DialogHeader>
-        <div role="region" aria-label={`Configurações de ${account.alias}`} className="flex min-h-0 min-w-0 flex-col gap-4 overflow-x-hidden overflow-y-auto py-1">
+        <div role="region" aria-label={`Configurações de ${account.alias}`} className="-mx-4 flex min-h-0 min-w-0 flex-col gap-4 overflow-x-hidden overflow-y-auto px-4 py-1 wrap-anywhere [scrollbar-gutter:stable]">
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-3 text-xs">
             {custom ? <><dt className="text-muted-foreground">Endpoint</dt><dd className="text-right">{account.custom ? protocolLabels[account.custom.protocol] : "Indisponível"}</dd><dt className="text-muted-foreground">URL base</dt><dd className="break-all text-right font-mono text-xs">{account.custom?.baseUrl}</dd></> : <><dt className="text-muted-foreground">E-mail</dt>
             <dd className="break-all text-right">{account.email ?? "Não informado"}</dd>
@@ -152,7 +152,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             <Switch aria-label={`Ativar ${account.alias}`} checked={account.enabled} onCheckedChange={(enabled) => onEnabledChange(account.alias, enabled)} disabled={saving} className="cursor-pointer" />
             <span aria-hidden="true">{account.enabled ? "Ativada" : "Desativada"}</span>
           </label>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {!custom && onReauthorize && <Button type="button" variant="outline" size="sm" disabled={saving} className="cursor-pointer" onClick={() => { setOpen(false); onReauthorize(account); }}><RefreshCw aria-hidden="true" data-icon="inline-start" />Re-autorizar</Button>}
           {custom && <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => { setOpen(false); onEdit?.(account); }}><Pencil data-icon="inline-start" />Editar</Button>}
           <Button type="button" variant="destructive" size="sm" disabled={saving} onClick={() => onDisconnect(account.alias)} className="cursor-pointer">

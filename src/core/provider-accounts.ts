@@ -25,6 +25,7 @@ export type ProviderAccount = {
   accountType: "personal" | "enterprise" | "unknown";
   models: ProviderModel[];
   modelsAvailable: boolean;
+  modelsStale?: boolean;
   disabledModels?: string[];
   custom?: CustomConfig;
 };
@@ -76,6 +77,7 @@ function isProviderAccount(value: unknown): value is ProviderAccount {
     account.models.every(isProviderModel) &&
     (account.disabledModels === undefined || (Array.isArray(account.disabledModels) && account.disabledModels.every((id: unknown) => typeof id === "string" && id.length > 0))) &&
     typeof account.modelsAvailable === "boolean"
+    && (account.modelsStale === undefined || typeof account.modelsStale === "boolean")
   );
 }
 
@@ -101,12 +103,12 @@ export function mergeModelCatalogRefresh(current: ProviderAccount[], fetched: Pr
   const accounts = current.map(account => {
     if (!account.enabled || !["openai-codex", "antigravity"].includes(account.providerKind)) return account;
     const next = byAlias.get(account.alias);
-    if (!next || next.providerKind !== account.providerKind || !next.modelsAvailable) {
+    if (!next || next.providerKind !== account.providerKind || !next.modelsAvailable || next.modelsStale) {
       failed.push(account.alias);
       return account;
     }
     refreshed.push(account.alias);
-    return { ...account, models: next.models, modelsAvailable: true, disabledModels: next.disabledModels ?? account.disabledModels ?? [] };
+    return { ...account, models: next.models, modelsAvailable: true, modelsStale: false, disabledModels: next.disabledModels ?? account.disabledModels ?? [] };
   });
   return { accounts, refreshed, failed };
 }

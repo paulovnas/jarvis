@@ -220,6 +220,11 @@ pub async fn check_app_update(
             .endpoints(vec![endpoint])
             .map_err(|_| "Endereço de atualização inválido.")?
             .timeout(Duration::from_secs(20))
+            .configure_client(|client| {
+                client
+                    .connect_timeout(Duration::from_secs(8))
+                    .read_timeout(Duration::from_secs(30))
+            })
             .build()
             .map_err(|_| "Atualizador indisponível.")?;
         candidate = updater

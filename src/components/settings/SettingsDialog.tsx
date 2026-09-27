@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import { ProviderRemovalDialog } from "./ProviderRemovalDialog";
 import type { ProviderRemovalResult } from "@/core/provider-references";
 import { invoke } from "@tauri-apps/api/core";
+import { readResource } from "@/core/resource-request";
 import { WebSearchSettings } from "./WebSearchSettings";
 import { McpSettings } from "./McpSettings";
 import { SkillsSettings } from "./SkillsSettings";
@@ -203,7 +204,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   const loadAccounts = useCallback(async () => {
     const requestId = ++listRequestRef.current;
     try {
-      const result = await invoke<ProviderAccount[]>("list_provider_accounts");
+      const result = await readResource<ProviderAccount[]>("list_provider_accounts");
       if (requestId !== listRequestRef.current) return;
       updateAccounts(result);
     } catch (error) {
@@ -220,7 +221,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
       return;
     }
     const requestId = ++listRequestRef.current;
-    void invoke<ProviderAccount[]>("list_provider_accounts").then(
+    void readResource<ProviderAccount[]>("list_provider_accounts").then(
       (result) => {
         if (requestId !== listRequestRef.current) return;
         updateAccounts(result);
@@ -487,7 +488,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
     if (refreshingAlias !== null || togglingRef.current) return;
     setRefreshingAlias(alias);
     try {
-      const fetched = accountList(await invoke("refresh_provider_models", { alias }));
+      const fetched = accountList(await readResource("refresh_provider_models", { alias }));
       const refreshed = fetched.find(account => account.alias === alias);
       if (!refreshed || !refreshed.modelsAvailable) {
         toast.error("Não foi possível atualizar os modelos", { description: "O catálogo anterior foi mantido. Confira a conexão e tente novamente." });
@@ -558,8 +559,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
     }
 
     return (
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center justify-between gap-3">
+      <div className="flex min-w-0 flex-col gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="micro-label text-muted-foreground">Provedores</h2>
           </div>
@@ -784,11 +785,11 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
             </div>
           </SettingsTabs.Root></>}
           <Dialog open={open && view !== "list"} onOpenChange={(nextOpen) => { if (!nextOpen && !savingCustom) handleDialogOpenChange(false, false); }}>
-            <DialogContent className={`dark max-h-[85vh] overflow-y-auto ${provider === "custom" ? "sm:max-w-2xl" : "sm:max-w-xl"}`}>
+            <DialogContent className={`dark max-h-[85vh] grid-cols-1 overflow-x-hidden overflow-y-auto wrap-anywhere [scrollbar-gutter:stable] ${provider === "custom" ? "sm:max-w-2xl" : "sm:max-w-xl"}`}>
               {view === "waiting" ? renderWaiting() : view === "reauthorize" ? renderReauthorize() : renderAdd()}
             </DialogContent>
           </Dialog>
-          <Dialog open={open && editingCustom !== null} onOpenChange={next => { if (!next && !savingCustom) setEditingCustom(null); }}><DialogContent className="dark max-h-[85vh] overflow-y-auto sm:max-w-2xl" aria-describedby={undefined}><DialogHeader><DialogTitle>Editar provedor Custom</DialogTitle></DialogHeader>{editingCustom && <CustomProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} />}</DialogContent></Dialog>
+          <Dialog open={open && editingCustom !== null} onOpenChange={next => { if (!next && !savingCustom) setEditingCustom(null); }}><DialogContent className="dark max-h-[85vh] grid-cols-1 overflow-x-hidden overflow-y-auto wrap-anywhere [scrollbar-gutter:stable] sm:max-w-2xl" aria-describedby={undefined}><DialogHeader className="pr-6"><DialogTitle>Editar provedor Custom</DialogTitle></DialogHeader>{editingCustom && <CustomProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} />}</DialogContent></Dialog>
       </SettingsSurface>
 
       {disconnectAlias && <ProviderRemovalDialog key={disconnectAlias} alias={disconnectAlias} accounts={accounts} onClose={() => setDisconnectAlias(null)} onBusyChange={busy => setDisconnecting(busy ? disconnectAlias : null)} onRemoved={handleProviderRemoved} />}

@@ -32,6 +32,7 @@ pub(super) fn options(approval_mode: ApprovalMode) -> TurnOptions {
         custom_agent_id: None,
         approval_mode,
         manual_validation: false,
+        automatic_publication: None,
     }
 }
 
@@ -1320,6 +1321,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                         custom_agent_id: None,
                         approval_mode: ApprovalMode::Manual,
                         manual_validation: false,
+                        automatic_publication: None,
                     },
                     status: TurnStatus::Running,
                     tasks: vec![],

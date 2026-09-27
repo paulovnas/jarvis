@@ -389,13 +389,20 @@ pub(super) fn check(home: &Path) -> Result<(), SkillError> {
             .or_default()
             .push((skill.path, meta));
     }
+    let started = std::time::Instant::now();
     for (source, mut skills) in repos {
-        let results = cache::with_repository(home, &source, true, |repo| {
-            Ok(skills
-                .iter()
-                .map(|(_, meta)| resolve(repo, &meta.skill_id).and_then(|dir| digest(&dir)))
-                .collect::<Vec<_>>())
-        });
+        let results = if started.elapsed() >= std::time::Duration::from_secs(30) {
+            Err(error(
+                "A consulta de atualizações demorou demais. Verifique a conexão e tente novamente.",
+            ))
+        } else {
+            cache::with_repository(home, &source, true, |repo| {
+                Ok(skills
+                    .iter()
+                    .map(|(_, meta)| resolve(repo, &meta.skill_id).and_then(|dir| digest(&dir)))
+                    .collect::<Vec<_>>())
+            })
+        };
         match results {
             Ok(results) => {
                 for ((path, mut meta), result) in skills.drain(..).zip(results) {

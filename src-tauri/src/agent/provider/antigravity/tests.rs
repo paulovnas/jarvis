@@ -11,6 +11,7 @@ fn options(model: &str) -> TurnOptions {
         custom_agent_id: None,
         approval_mode: crate::agent::ApprovalMode::Manual,
         manual_validation: false,
+        automatic_publication: None,
     }
 }
 
