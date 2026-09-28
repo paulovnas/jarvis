@@ -40,7 +40,7 @@ export function ProjectDashboard({ project, projectUpdater, onSelectSession, nav
         {board.error && <DashboardError message={board.error} retry={board.refresh} />}
         {!board.data ? !board.error && <DashboardSkeleton board /> : <BeadsBoard projectName={project.name} projectId={project.id} issues={board.data} onChanged={board.refresh} />}
       </TabsContent>
-      <TabsContent value="options" className="min-h-0 overflow-y-auto"><ProjectOptions project={project} projectUpdater={projectUpdater} /></TabsContent>
+      <TabsContent value="options" className="min-h-0 overflow-hidden"><ProjectOptions key={project.id} project={project} projectUpdater={projectUpdater} /></TabsContent>
     </Tabs>
   </main>;
 }

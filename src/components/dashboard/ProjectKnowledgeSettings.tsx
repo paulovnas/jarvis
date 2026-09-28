@@ -197,7 +197,7 @@ export function ProjectKnowledgeSettings({ projectId }: { projectId: string }) {
             <ExecutorModelPicker selection={selection} modelGroups={accountGroups(bootstrap?.resources.accounts ?? [])} onSelect={setSelection} disabled={busy} showProviderIdentity ariaLabel="Modelo para gerar conhecimento" />
             <Button size="sm" variant="outline" disabled={busy || !selection || !!document.error} onClick={() => { void generate(); }}><Sparkles className="size-3.5" />Analisar e gerar {KNOWLEDGE_KINDS[kind].label.toLowerCase()}</Button>
             {phase && <div role="status" className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><Spinner className="size-3.5" />{phases[phase] ?? phases.generating}<Button size="sm" variant="ghost" onClick={() => { void cancel(); }}>Cancelar geração</Button></div>}
-            <p className="basis-full text-[11px] text-muted-foreground">Analisa uma amostra dos arquivos locais e a envia ao modelo selecionado. Limite de 3 minutos. O resultado é um rascunho; nada é salvo automaticamente.</p>
+            <p className="basis-full text-[11px] text-muted-foreground">Analisa uma amostra dos arquivos locais e a envia ao modelo selecionado. O processo pode demorar; você pode cancelar a geração a qualquer momento. O resultado é um rascunho; nada é salvo automaticamente.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="outline" disabled={busy || !!document.error} onClick={() => { void importMarkdown(); }}><Upload className="size-3.5" />Importar MD</Button>

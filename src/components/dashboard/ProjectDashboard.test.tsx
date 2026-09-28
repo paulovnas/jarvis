@@ -64,6 +64,8 @@ describe("Project Dashboard", () => {
     expect(screen.getByRole("main", { name: "Detalhes de Jarvis" })).toBeVisible();
     expect(screen.getAllByRole("tab")).toHaveLength(3);
     await user.click(screen.getByRole("tab", { name: "Opções" }));
+    expect(screen.getByRole("textbox", { name: "Nome do projeto" })).toHaveValue("Jarvis");
+    await user.click(screen.getByRole("tab", { name: "Commit" }));
     expect(await screen.findByRole("textbox", { name: "Instrução de publicação" })).toHaveValue("Review changes");
     expect(call).toHaveBeenCalledWith("get_project_publication_settings", { projectId: "p1" });
   });

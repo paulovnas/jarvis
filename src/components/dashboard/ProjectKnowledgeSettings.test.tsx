@@ -63,6 +63,7 @@ it("generates a reviewable draft without overwriting edits or saving automatical
   const user = userEvent.setup();
   render(<ProjectKnowledgeSettings projectId="p1" />);
   const editor = await screen.findByRole("textbox", { name: "Produto · Markdown" });
+  expect(screen.getByText(/O processo pode demorar; você pode cancelar a geração a qualquer momento/)).toBeVisible();
   await user.type(editor, " manual");
   await user.click(screen.getByRole("button", { name: "Modelo de teste" }));
   await user.click(screen.getByRole("button", { name: "Analisar e gerar produto" }));

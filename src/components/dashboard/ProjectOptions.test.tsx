@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -26,59 +26,96 @@ const settings = {
   prPrompt: "Use Summary and Validation sections.",
   ghAvailable: true,
 };
+const knowledge = { scopes: ["."], documents: [{ scope: ".", kind: "product", path: "prd.md", content: "# Product", essential: "", revision: "v1", sources: [], staleSources: [], error: null }] };
 
 beforeEach(() => {
   projectUpdater.clearError.mockReset();
   projectUpdater.updateProject.mockReset().mockResolvedValue(true);
-  call.mockReset().mockImplementation(async command => {
+  call.mockReset().mockImplementation(async (command, args) => {
     if (command === "get_project_publication_settings") return settings;
+    if (command === "get_project_knowledge") return knowledge;
     if (command === "get_project_repositories") return [];
     if (command === "list_execution_grants") return [];
-    if (command === "save_project_publication_settings") return { ...settings, prMode: "ask_pr" };
+    if (command === "save_project_publication_settings") return { ...settings, ...(args as { settings: object }).settings };
     throw new Error(`Unexpected command ${command}`);
   });
 });
 
+it("opens one section at a time and retains drafts without reloading visited sections", async () => {
+  const user = userEvent.setup();
+  render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
+  const navigation = screen.getByRole("tablist", { name: "Opções do projeto" });
+  expect(navigation).toHaveAttribute("aria-orientation", "vertical");
+  expect(within(navigation).getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Geral", "Conhecimento", "Aprendizados", "Repositórios", "Commit", "Autorizações"]);
+  expect(call).not.toHaveBeenCalled();
+  await user.clear(screen.getByRole("textbox", { name: "Nome do projeto" }));
+  await user.type(screen.getByRole("textbox", { name: "Nome do projeto" }), "Rascunho do nome");
+  await user.click(within(navigation).getByRole("tab", { name: "Conhecimento" }));
+  const editor = await screen.findByRole("textbox", { name: "Produto · Markdown" });
+  await user.type(editor, "\nProduct draft");
+  expect(screen.queryByRole("textbox", { name: "Nome do projeto" })).not.toBeInTheDocument();
+  await user.click(within(navigation).getByRole("tab", { name: "Geral" }));
+  expect(screen.getByRole("textbox", { name: "Nome do projeto" })).toHaveValue("Rascunho do nome");
+  await waitFor(() => expect(editor).not.toBeVisible());
+  await user.keyboard("{ArrowDown}{Enter}");
+  expect(screen.getByRole("textbox", { name: "Produto · Markdown" })).toHaveValue("# Product\nProduct draft");
+  expect(call.mock.calls.filter(([command]) => command === "get_project_knowledge")).toHaveLength(1);
+});
+
 it("keeps project knowledge usable when publication settings cannot load", async () => {
   call.mockImplementation(async command => {
-    if (command === "get_project_knowledge") return { scopes: ["."], documents: [{ scope: ".", kind: "product", path: "prd.md", content: "# Product", essential: "", revision: "v1", sources: [], staleSources: [], error: null }] };
+    if (command === "get_project_knowledge") return knowledge;
     if (command === "get_project_repositories" || command === "list_execution_grants") return [];
     throw new Error("Publication unavailable");
   });
+  const user = userEvent.setup();
   render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
+  await user.click(screen.getByRole("tab", { name: "Commit" }));
   expect(await screen.findByText("Opções de publicação indisponíveis")).toBeVisible();
+  await user.click(screen.getByRole("tab", { name: "Conhecimento" }));
   expect(await screen.findByRole("textbox", { name: "Produto · Markdown" })).toHaveValue("# Product");
 });
 
-it("loads project-scoped publication rules and only reveals the PR editor when enabled", async () => {
+it("edits commit instructions without showing or overwriting legacy PR options", async () => {
+  call.mockImplementation(async (command, args) => {
+    if (command === "get_project_publication_settings") return { ...settings, prMode: "ask_pr" };
+    if (command === "save_project_publication_settings") return { ...settings, ...(args as { settings: object }).settings };
+    throw new Error(`Unexpected command ${command}`);
+  });
   const user = userEvent.setup();
   render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
-  expect(screen.getByRole("status", { name: "Carregando opções do projeto" })).toBeVisible();
+  await user.click(screen.getByRole("tab", { name: "Commit" }));
   expect(await screen.findByRole("textbox", { name: "Instrução de publicação" })).toHaveValue(settings.publishPrompt);
-  expect(call).toHaveBeenCalledWith("get_project_repositories", { projectId: "p1", includeDefault: false });
   expect(screen.queryByRole("textbox", { name: "Instrução e template da PR" })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("combobox", { name: "Comportamento de pull request" }));
-  await user.click(await screen.findByRole("option", { name: "Perguntar sobre PR" }));
-  expect(screen.getByRole("textbox", { name: "Instrução e template da PR" })).toHaveValue(settings.prPrompt);
+  expect(screen.queryByRole("combobox", { name: "Comportamento de pull request" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Publicação assistida")).not.toBeInTheDocument();
   await user.clear(screen.getByRole("textbox", { name: "Instrução de publicação" }));
   await user.type(screen.getByRole("textbox", { name: "Instrução de publicação" }), "Create one focused commit.");
+  await user.click(screen.getByRole("tab", { name: "Geral" }));
+  await user.click(screen.getByRole("tab", { name: "Commit" }));
+  expect(screen.getByRole("textbox", { name: "Instrução de publicação" })).toHaveValue("Create one focused commit.");
   await user.click(screen.getByRole("button", { name: "Salvar opções" }));
   await waitFor(() => expect(call).toHaveBeenCalledWith("save_project_publication_settings", { projectId: "p1", settings: { publishPrompt: "Create one focused commit.", prMode: "ask_pr", prPrompt: settings.prPrompt } }));
   expect(toast.success).toHaveBeenCalledWith("Opções de publicação salvas");
 });
 
-it("keeps PR automation unavailable when GitHub CLI is missing", async () => {
-  call.mockImplementation(async command => {
-    if (command === "get_project_publication_settings") return { ...settings, ghAvailable: false };
-    if (command === "get_project_repositories" || command === "list_execution_grants") return [];
+it("does not reuse a knowledge draft for a different project", async () => {
+  call.mockImplementation(async (command, args) => {
+    if (command === "get_project_knowledge") return {
+      ...knowledge,
+      documents: knowledge.documents.map(document => ({ ...document, content: (args as { projectId: string }).projectId === "p2" ? "# Outro produto" : document.content })),
+    };
     throw new Error(`Unexpected command ${command}`);
   });
   const user = userEvent.setup();
-  render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
-  expect(await screen.findByText("GitHub CLI necessário")).toBeVisible();
-  await user.click(screen.getByRole("combobox", { name: "Comportamento de pull request" }));
-  expect(await screen.findByRole("option", { name: "Perguntar sobre PR" })).toHaveAttribute("aria-disabled", "true");
-  expect(screen.getByRole("option", { name: "Perguntar sobre PR e merge" })).toHaveAttribute("aria-disabled", "true");
+  const view = render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
+  await user.type(screen.getByRole("textbox", { name: "Nome do projeto" }), " draft");
+  await user.click(screen.getByRole("tab", { name: "Conhecimento" }));
+  await user.type(await screen.findByRole("textbox", { name: "Produto · Markdown" }), "\nDraft from the previous project");
+  view.rerender(<ProjectOptions project={{ ...project, id: "p2", name: "Outro projeto" }} projectUpdater={projectUpdater} />);
+  expect(await screen.findByRole("textbox", { name: "Produto · Markdown" })).toHaveValue("# Outro produto");
+  await user.click(screen.getByRole("tab", { name: "Geral" }));
+  expect(screen.getByRole("textbox", { name: "Nome do projeto" })).toHaveValue("Outro projeto");
 });
 
 it("adds a named Git repository from a directory below the project root", async () => {
@@ -93,7 +130,9 @@ it("adds a named Git repository from a directory below the project root", async 
   });
   const user = userEvent.setup();
   render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
+  await user.click(screen.getByRole("tab", { name: "Repositórios" }));
   await screen.findByText("Nenhum repositório configurado");
+  expect(call).toHaveBeenCalledWith("get_project_repositories", { projectId: "p1", includeDefault: false });
   await user.click(screen.getByRole("button", { name: "Adicionar" }));
   expect(open).toHaveBeenCalledWith(expect.objectContaining({ directory: true, defaultPath: "/projects/jarvis" }));
   expect(await screen.findByRole("dialog", { name: "Adicionar repositório" })).toBeVisible();
