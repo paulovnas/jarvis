@@ -21,6 +21,7 @@ pub(crate) mod image_generation;
 mod instructions;
 mod journal;
 pub(crate) mod journal_maintenance;
+pub(crate) mod knowledge;
 mod lsp;
 pub(crate) mod maintenance;
 mod model_fallback;

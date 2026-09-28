@@ -70,6 +70,7 @@ pub fn run() {
         .manage(openai_codex::OpenAiCodexState::default())
         .manage(claude::ClaudeState::default())
         .manage(agent::AgentState::default())
+        .manage(agent::knowledge::generation::KnowledgeJobs::default())
         .manage(agent::browser::BrowserState::default())
         .manage(agent::dashboard::DashboardState::default())
         .manage(mcp::McpState::default())
@@ -116,6 +117,12 @@ pub fn run() {
                 agent::browser::browser_command,
                 agent::browser::set_browser_viewport,
                 greet,
+                agent::knowledge::get_project_knowledge,
+                agent::knowledge::save_project_knowledge,
+                agent::knowledge::link_project_knowledge,
+                agent::knowledge::import_project_knowledge,
+                agent::knowledge::generation::generate_project_knowledge,
+                agent::knowledge::generation::cancel_project_knowledge_generation,
                 claude::get_claude_runtime,
                 claude::refresh_claude_runtime,
                 claude::get_claude_usage,

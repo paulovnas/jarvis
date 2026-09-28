@@ -214,7 +214,7 @@ export function BackupSettings({ accounts, onRestored, restoreOnly = false }: { 
           <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-onedark-cyan/10 text-onedark-cyan"><Upload aria-hidden="true" className="size-3.5" /></span>
           <div className="min-w-0 space-y-1"><h3 className="text-sm font-medium">Restaurar backup</h3><p className="text-[11px] leading-relaxed text-muted-foreground">Inspecione o conteúdo e associe os agentes aos modelos disponíveis antes de aplicar.</p></div>
         </div>
-        <p className="flex items-start gap-2 text-[10px] leading-relaxed text-onedark-yellow"><ShieldCheck aria-hidden="true" className="mt-0.5 size-3 shrink-0" />Contas de IA, projetos, conversas e layout da janela permanecem nesta instalação.</p>
+        <p className="flex items-start gap-2 text-[10px] leading-relaxed text-onedark-yellow"><ShieldCheck aria-hidden="true" className="mt-0.5 size-3 shrink-0" />Contas de IA, projetos, conversas e layout da janela permanecem nesta instalação. Documentos de conhecimento ficam nas pastas dos projetos e devem ser copiados com elas.</p>
         <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void chooseBackup()} className="mt-auto w-fit cursor-pointer gap-2">{inspecting ? <><Spinner aria-hidden="true" />Inspecionando…</> : <><Upload aria-hidden="true" />Escolher arquivo</>}</Button>
       </div>
     </Card>}

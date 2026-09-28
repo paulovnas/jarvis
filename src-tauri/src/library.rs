@@ -497,6 +497,17 @@ struct SessionHeader {
     created_at: i64,
 }
 
+pub(crate) fn project_directory(
+    state: &AppState,
+    home: &Path,
+    project_id: &str,
+) -> Result<PathBuf, LibraryError> {
+    state.with_connection(home, |connection| {
+        let project = project(connection, project_id)?;
+        fs::canonicalize(&project.path).map_err(|_| LibraryError::missing())
+    })
+}
+
 pub(crate) fn session_path(
     home: &Path,
     project_id: &str,

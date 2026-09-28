@@ -1,5 +1,22 @@
 use super::*;
 
+#[test]
+fn all_roles_can_retrieve_project_knowledge() {
+    for role in [
+        Role::Planner,
+        Role::Investigator,
+        Role::Writer,
+        Role::Orchestrator,
+        Role::Builder,
+        Role::Designer,
+        Role::Reviewer,
+        Role::Github,
+        Role::Custom,
+    ] {
+        assert!(role.allows(Flow::Custom, crate::agent::knowledge::TOOL, false));
+    }
+}
+
 #[tokio::test]
 async fn secondary_model_is_optional_switches_once_and_updates_native_and_custom_workers() {
     for custom in [false, true] {

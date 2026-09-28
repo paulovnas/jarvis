@@ -39,6 +39,17 @@ beforeEach(() => {
   });
 });
 
+it("keeps project knowledge usable when publication settings cannot load", async () => {
+  call.mockImplementation(async command => {
+    if (command === "get_project_knowledge") return { scopes: ["."], documents: [{ scope: ".", kind: "product", path: "prd.md", content: "# Product", essential: "", revision: "v1", sources: [], staleSources: [], error: null }] };
+    if (command === "get_project_repositories" || command === "list_execution_grants") return [];
+    throw new Error("Publication unavailable");
+  });
+  render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
+  expect(await screen.findByText("Opções de publicação indisponíveis")).toBeVisible();
+  expect(await screen.findByRole("textbox", { name: "Produto · Markdown" })).toHaveValue("# Product");
+});
+
 it("loads project-scoped publication rules and only reveals the PR editor when enabled", async () => {
   const user = userEvent.setup();
   render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);

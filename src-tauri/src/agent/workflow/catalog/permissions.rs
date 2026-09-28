@@ -14,6 +14,7 @@ pub(crate) fn required(name: &str) -> bool {
             | "hub_complete"
             | "update_tasks"
             | "progress_checkpoint"
+            | "project_knowledge"
     )
 }
 
@@ -51,6 +52,9 @@ pub struct Permission {
 fn description(name: &str) -> &'static str {
     match name {
         "read" => "Ler arquivos do projeto.",
+        "project_knowledge" => {
+            "Consultar trechos do conhecimento de produto, arquitetura, regras e design do projeto."
+        }
         "list" => "Listar pastas e arquivos.",
         "search" => "Pesquisar texto no projeto.",
         "write" => "Criar ou substituir arquivos.",

@@ -75,6 +75,7 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
     let string = json!({"type":"string"});
     let mut tools = vec![
         super::questions::definition(),
+        super::knowledge::definition(),
         definition("read", "Read an explicitly selected UTF-8 project file with line numbers. At most 1 MiB; use offset and limit for paging. Prefer project source and documentation; inspect installed dependency source only for a concrete unresolved issue.", json!({"path":string,"offset":{"type":"integer","minimum":1},"limit":{"type":"integer","minimum":1,"maximum":500}}), &["path"]),
         definition("list", "List one directory inside the project. Use path '.' for the project root. Common dependency and generated directories are hidden from ordinary discovery; an explicit path can still inspect one when justified.", json!({"path":string}), &["path"]),
         definition("search", "Find literal text in project files recursively, excluding symlinks and common dependency/generated directories. Search an explicit dependency path only when exact installed source is needed. Output is bounded.", json!({"path":string,"query":string}), &["path","query"]),
@@ -129,6 +130,7 @@ pub(super) fn instructions(root: &Path, mode: Mode, approval_mode: ApprovalMode)
             instructions.extend(text.chars().take(24_000));
         }
     }
+    instructions.push_str(&super::knowledge::overview(root));
     instructions.push_str(match approval_mode {
         ApprovalMode::Yolo => "\nExecution approval mode: YOLO. The user has preauthorized tool execution needed for their request, including commands, network access, native execution outside isolation and terminal cleanup. Call the tools directly without asking permission or waiting for reconfirmation. Preserve the user's scope, explicit constraints and configured review/validation steps. Use ask_user only for unresolved decisions that materially affect the requested outcome.\n",
         ApprovalMode::Manual => "\nExecution approval mode: manual. Call the necessary tools; Jarvis presents execution approval when required. Do not duplicate that approval in chat or ask_user.\n",
@@ -267,7 +269,7 @@ pub(super) fn ignored_discovery_directory(name: &std::ffi::OsStr) -> bool {
         )
     )
 }
-fn write_atomic(path: &Path, content: &str) -> Result<String, AgentError> {
+pub(super) fn write_atomic(path: &Path, content: &str) -> Result<String, AgentError> {
     if content.len() as u64 > MAX_FILE {
         return Err(error("A escrita aceita até 1 MiB por arquivo."));
     }
@@ -467,6 +469,9 @@ fn file_tool(
         return Err(AgentError::cancelled());
     }
     let args = &tool.args;
+    if tool.name == super::knowledge::TOOL {
+        return super::knowledge::retrieve(root, args).map(FileToolResult::plain);
+    }
     let path = scoped(root, argument(args, "path")?, tool.name == "write")?;
     let mut read = None;
     let result = match tool.name.as_str() {

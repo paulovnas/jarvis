@@ -16,6 +16,7 @@ import { PULL_REQUEST_MODE_LABELS, publicationSettingsSchema, type PublicationSe
 import { ProjectRepositoriesSettings } from "./ProjectRepositoriesSettings";
 import { ExecutionGrantsSettings } from "./ExecutionGrantsSettings";
 import { ProjectIdentitySettings } from "./ProjectIdentitySettings";
+import { ProjectKnowledgeSettings } from "./ProjectKnowledgeSettings";
 
 type Draft = Pick<PublicationSettings, "publishPrompt" | "prMode" | "prPrompt">;
 
@@ -51,8 +52,9 @@ export function ProjectOptions({ project, projectUpdater }: { project: Project; 
 
   const changed = useMemo(() => settings && draft ? JSON.stringify(draft) !== JSON.stringify(draftOf(settings)) : false, [draft, settings]);
   const identity = <ProjectIdentitySettings key={`${project.id}:${project.name}:${project.path}:${project.icon ?? ""}:${project.color ?? ""}`} project={project} updater={projectUpdater} />;
-  if (error) return <div className="mx-auto w-full max-w-5xl space-y-5 p-6 pb-10">{identity}<Alert variant="destructive"><AlertTriangle /><AlertTitle>Opções de publicação indisponíveis</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>;
-  if (!settings || !draft) return <div className="mx-auto w-full max-w-5xl space-y-5 p-6 pb-10">{identity}<OptionsSkeleton /></div>;
+  const projectSettings = <>{identity}<ProjectKnowledgeSettings key={`${project.id}:${project.path}`} projectId={projectId} /><ProjectRepositoriesSettings projectId={projectId} projectPath={projectPath} /><ExecutionGrantsSettings projectId={projectId} /></>;
+  if (error) return <div className="mx-auto w-full max-w-5xl space-y-5 p-6 pb-10">{projectSettings}<Alert variant="destructive"><AlertTriangle /><AlertTitle>Opções de publicação indisponíveis</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>;
+  if (!settings || !draft) return <div className="mx-auto w-full max-w-5xl space-y-5 p-6 pb-10">{projectSettings}<OptionsSkeleton /></div>;
 
   const save = async () => {
     if (saving || !changed) return;
@@ -68,7 +70,7 @@ export function ProjectOptions({ project, projectUpdater }: { project: Project; 
 
   const modes = Object.entries(PULL_REQUEST_MODE_LABELS).map(([value, label]) => ({ value: value as PullRequestMode, label }));
   return <div className="mx-auto w-full max-w-5xl space-y-5 p-6 pb-10">
-    {identity}
+    {projectSettings}
 
     <Card className="border-primary/20 bg-primary/5">
       <CardHeader className="flex flex-row items-start gap-3">
@@ -76,10 +78,6 @@ export function ProjectOptions({ project, projectUpdater }: { project: Project; 
         <div><CardTitle>Publicação assistida</CardTitle><CardDescription className="mt-1 max-w-3xl leading-5">Estas regras pertencem somente a este projeto. O agente prepara commits e, quando configurado, pergunta sobre pull request e merge. Nada é publicado antes de você revisar a proposta.</CardDescription></div>
       </CardHeader>
     </Card>
-
-    <ProjectRepositoriesSettings projectId={projectId} projectPath={projectPath} />
-
-    <ExecutionGrantsSettings projectId={projectId} />
 
     <Card>
       <CardHeader className="border-b border-border">

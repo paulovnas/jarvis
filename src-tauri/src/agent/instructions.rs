@@ -48,7 +48,7 @@ impl Resolver {
                 let target = self.safe_path(tool.args["workdir"].as_str().unwrap_or("."))?;
                 directories.push(target);
             }
-            "list" | "search" => {
+            "list" | "search" | "project_knowledge" => {
                 if let Some(path) = tool.args["path"].as_str() {
                     let target = self.safe_path(path)?;
                     let directory = match fs::symlink_metadata(&target) {
@@ -76,6 +76,28 @@ impl Resolver {
             _ => return Ok(false),
         }
         let mut added = false;
+        // Knowledge rules are optional infrastructure; unavailable metadata must
+        // not turn an otherwise valid action into a blocked task.
+        for (scope, content) in
+            super::knowledge::scoped_rules(&self.root, &directories).unwrap_or_default()
+        {
+            let relative = format!("knowledge:{scope}");
+            let key = self.root.join(&relative);
+            let hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
+            if content.is_empty() && !self.loaded.contains_key(&key) {
+                continue;
+            }
+            if self.loaded.get(&key) == Some(&hash) {
+                continue;
+            }
+            self.loaded.insert(key, hash);
+            self.instructions.retain(|entry| entry.relative != relative);
+            if !content.is_empty() {
+                self.instructions
+                    .push(LoadedInstruction { relative, content });
+            }
+            added = true;
+        }
         for directory in directories {
             for path in self.candidates(&directory)? {
                 if self.loaded.contains_key(&path) {
@@ -105,6 +127,10 @@ impl Resolver {
 
     pub(super) fn append_prompt(&self, target: &mut String) {
         for instruction in &self.instructions {
+            if let Some(scope) = instruction.relative.strip_prefix("knowledge:") {
+                target.push_str(&format!("\nUser-maintained essential knowledge rules for {scope}. Apply only to that scope; current user instructions and AGENTS.md take precedence:\n{}\n", instruction.content));
+                continue;
+            }
             target.push_str(&format!(
                 "\nScoped project instructions from {}. Apply them to every file under that directory; deeper AGENTS.md instructions take precedence for their subtree:\n{}\n",
                 instruction.relative, instruction.content

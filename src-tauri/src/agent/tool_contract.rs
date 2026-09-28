@@ -113,6 +113,7 @@ impl Capabilities {
         let read_only = matches!(
             name,
             "read"
+                | "project_knowledge"
                 | "search"
                 | "list"
                 | "read_attachment"

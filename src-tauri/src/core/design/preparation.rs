@@ -32,16 +32,22 @@ impl Pack {
         let mut sections = Vec::new();
         let mut seen = BTreeSet::new();
         let mut has_identity = false;
-        for relative in identity_paths(root, scopes) {
+        let maintained = crate::agent::knowledge::design_paths(root, scopes);
+        for relative in maintained
+            .iter()
+            .cloned()
+            .chain(identity_paths(root, scopes))
+        {
             let Some((path, text)) = bounded_read(root, &relative, 1_200) else {
                 continue;
             };
             if !seen.insert(path) {
                 continue;
             }
-            has_identity |= relative
-                .file_name()
-                .is_some_and(|name| name == "DESIGN.md" || name == "design.md");
+            has_identity |= maintained.contains(&relative)
+                || relative
+                    .file_name()
+                    .is_some_and(|name| name == "DESIGN.md" || name == "design.md");
             let name = relative.to_string_lossy().replace('\\', "/");
             sources.push(format!("project:{name}"));
             sections.push(format!("Project reference {name} (excerpt):\n{text}"));
@@ -248,6 +254,30 @@ mod tests {
             .sources
             .iter()
             .any(|source| source.starts_with("open-design:")));
+        assert!(!prepared
+            .activity
+            .sources
+            .iter()
+            .any(|source| source.contains("design-systems/test")));
+    }
+
+    #[test]
+    fn linked_project_knowledge_is_a_local_identity_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join(".jarvis/knowledge")).unwrap();
+        fs::write(root.path().join("brand.md"), "Canonical teal identity").unwrap();
+        fs::write(
+            root.path().join(".jarvis/knowledge/index.json"),
+            r#"{"entries":[{"kind":"design","scope":".","path":"brand.md"}]}"#,
+        )
+        .unwrap();
+        let prepared = pack(dir.path()).prepare_context(root.path(), "Adjust buttons", &[], "");
+        assert!(prepared.prompt.contains("Canonical teal identity"));
+        assert!(prepared
+            .activity
+            .sources
+            .contains(&"project:brand.md".into()));
         assert!(!prepared
             .activity
             .sources
