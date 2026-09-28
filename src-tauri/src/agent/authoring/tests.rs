@@ -130,7 +130,7 @@ fn catalog_tools_expose_overview_and_typed_proposals() {
     assert!(native["agent"]["instructions"]
         .as_str()
         .unwrap()
-        .contains("Implement only assigned visual scope"));
+        .contains("Deliver the requested frontend/design outcome within the authorized scope"));
 }
 
 #[test]

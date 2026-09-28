@@ -140,7 +140,7 @@ export function ChatComposer({
   const selectedCustomAgent = catalog.data?.agents.find(agent => agent.id === selectedFlow.customAgentId);
   const selectedBuiltinAgent = catalog.data?.builtinAgents.find(agent => agent.id === selectedFlow.customAgentId);
   const selectedAgent = selectedCustomAgent ?? selectedBuiltinAgent;
-  const githubSelected = selectedBuiltinAgent?.role === "github";
+  const githubSelected = selectedFlow.customAgentId === "builtin:github";
   const customUnavailable = selectedFlow.workflow === "custom" && (selectedFlow.customAgentId
     ? !selectedAgent || selectedAgent.usage === "flow_only"
     : !customFlow);
@@ -166,7 +166,7 @@ export function ChatComposer({
     };
     try {
       const options: TurnOptions = running && initialOptions ? { ...initialOptions, approvalMode: "yolo" } : { ...choice, mode: "build", ...selectedFlow, approvalMode: "yolo" };
-      if (manualValidationAvailable && manualValidation) options.manualValidation = true;
+      if (manualValidationAvailable && manualValidation && !githubSelected) options.manualValidation = true;
       else delete options.manualValidation;
       if (automaticPublication && !githubSelected) options.automaticPublication = automaticPublication;
       else delete options.automaticPublication;

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -54,12 +54,33 @@ it("runs a Solo agent as the main chat agent with its fixed model", async () => 
 
 it("runs the mixed GitHub agent directly with its dedicated configurable model", async () => {
   const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true), save = vi.fn().mockResolvedValue(true);
-  render(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "publication/github": { account: "local", model: "model", reasoning: null } }, error: null, saving: false, save, refresh: vi.fn() }} />);
+  render(<ChatComposer modelGroups={models} onSendMessage={send}
+    initialOptions={{ account: "local", model: "model", reasoning: null, mode: "build", workflow: "planned", approvalMode: "yolo", manualValidation: true, automaticPublication: { commit: true, push: true, pullRequest: true } }}
+    agentModels={{ data: { "publication/github": { account: "local", model: "model", reasoning: null } }, error: null, saving: false, save, refresh: vi.fn() }} />);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_workflow_catalog"));
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
   await user.click(await screen.findByRole("menuitem", { name: builtinGithubAgent.name }));
+  expect(screen.queryByRole("button", { name: "Configurações do chat" })).not.toBeInTheDocument();
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Liste os pull requests abertos{Enter}");
   expect(send).toHaveBeenCalledWith("Liste os pull requests abertos", { executor: "jarvis", account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customAgentId: "builtin:github", approvalMode: "yolo" });
+});
+
+it.each([false, true])("disables saved behavior options in a reopened Github chat (running: %s)", async running => {
+  const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true);
+  let loadCatalog!: (catalog: typeof customCatalog) => void;
+  const catalog = new Promise<typeof customCatalog>(resolve => { loadCatalog = resolve; });
+  vi.mocked(invoke).mockImplementation(async command => command === "get_workflow_catalog" ? catalog : []);
+  render(<ChatComposer modelGroups={models} onSendMessage={send} running={running}
+    initialOptions={{ account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customAgentId: "builtin:github", approvalMode: "yolo", manualValidation: true, automaticPublication: { commit: true, push: true, pullRequest: true } }} />);
+  await screen.findByRole("textbox", { name: "Mensagem" });
+  expect(screen.queryByRole("button", { name: "Configurações do chat" })).not.toBeInTheDocument();
+  await act(async () => loadCatalog(customCatalog));
+  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: "Configurações do chat" })).not.toBeInTheDocument();
+  await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Verifique a branch{Enter}");
+  expect(send).toHaveBeenCalledWith("Verifique a branch", expect.objectContaining({ customAgentId: "builtin:github" }));
+  expect(send.mock.calls[0][1]).not.toHaveProperty("manualValidation");
+  expect(send.mock.calls[0][1]).not.toHaveProperty("automaticPublication");
 });
 
 it("reopens an old GitHub chat with its current configured model", async () => {

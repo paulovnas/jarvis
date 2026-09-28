@@ -2508,6 +2508,12 @@ struct TurnRuntime<'a> {
     home: &'a std::path::Path,
 }
 
+fn append_direct_task_instructions(instructions: &mut String) {
+    if !instructions.contains(tasks::INSTRUCTIONS) {
+        instructions.push_str(tasks::INSTRUCTIONS);
+    }
+}
+
 fn run_turn<'a>(
     session: &'a Arc<Session>,
     runtime: TurnRuntime<'a>,
@@ -2831,7 +2837,7 @@ fn run_turn_once<'a>(
             }
             instructions.push_str(context.instructions());
             if direct_tasks {
-                instructions.push_str(tasks::INSTRUCTIONS);
+                append_direct_task_instructions(&mut instructions);
                 if project_beads.is_some() {
                     instructions.push_str(crate::core::beads::PROJECT_INSTRUCTIONS);
                 }
@@ -3226,7 +3232,7 @@ fn run_turn_once<'a>(
                 if direct_tasks && session.has_unfinished_tasks()? && !tasks_reminded {
                     tasks_reminded = true;
                     session.update_async(|data| {
-                        data.turns.last_mut().unwrap().wire.push(json!({"role":"user", "_jarvis_runtime":true, "content":"Before the final response, update the native task list. Mark finished outcomes completed and real unresolved dependencies blocked; do not leave pending or in_progress items."}));
+                        data.turns.last_mut().unwrap().wire.push(json!({"role":"user", "_jarvis_runtime":true, "content":tasks::FINISH_REMINDER}));
                     }).await?;
                     continue;
                 }

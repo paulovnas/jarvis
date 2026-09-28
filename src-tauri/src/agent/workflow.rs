@@ -625,10 +625,12 @@ impl Execution {
         } else {
             contracts::prompt(self.flow, self.role, &self.id)
         };
-        text.push_str(manual_validation_instructions(
-            self.flow,
-            self.manual_validation(),
-        ));
+        if !self.direct() {
+            text.push_str(manual_validation_instructions(
+                self.flow,
+                self.manual_validation(),
+            ));
+        }
         if self.flow == Flow::Publication && self.role == Role::Builder {
             text.push_str("\nYou are repairing publication conflicts for Github. Edit only the assigned conflicted files, preserving the intended changes from both sides, and run focused checks when needed. Do not create or claim new Beads tasks, start another implementation, stage/commit, continue a rebase, push, create a PR or merge. Return the exact resolved files and evidence with hub_complete so Github can finish the typed Git operations.\n");
         }
@@ -687,10 +689,14 @@ impl Execution {
             .map(|job| {
                 let mut checkpoint = json!({"id":job.id,"parent":job.parent_id,"role":job.role,"status":job.status,"beadId":job.bead_id,"summary":job.handoff.as_ref().map(|h|h.summary.chars().take(300).collect::<String>()),"error":job.error});
                 if assigned.is_some_and(|assigned| assigned.dependencies.contains(&job.id)) {
-                    if let Some(handoff) = job.handoff.as_ref().filter(|h| h.verdict == Verdict::Rework) {
-                        // The implementing worker needs the entire repair contract,
-                        // not the coordinator's paraphrase or a 300-character summary.
-                        checkpoint["reviewFindings"] = json!(handoff);
+                    if let Some(handoff) = &job.handoff {
+                        // Declared consumers need the evidence and limitations, not just a headline.
+                        let key = if handoff.verdict == Verdict::Rework {
+                            "reviewFindings"
+                        } else {
+                            "dependencyResult"
+                        };
+                        checkpoint[key] = json!(handoff);
                     }
                 }
                 checkpoint

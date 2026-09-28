@@ -28,10 +28,21 @@ it("keeps automation optional and authorizes only selected actions, with Push re
   expect(screen.queryByRole("switch", { name: "PR" })).not.toBeInTheDocument();
 });
 
-it("hides manual validation in direct chats and prevents recursively invoking Github", async () => {
+it("hides manual validation in direct chats", async () => {
   const user = userEvent.setup();
-  render(<ChatBehaviorSettings manualAvailable={false} manualValidation={false} onManualChange={vi.fn()} publication={null} onPublicationChange={vi.fn()} disabled={false} githubSelected />);
+  render(<ChatBehaviorSettings manualAvailable={false} manualValidation={false} onManualChange={vi.fn()} publication={null} onPublicationChange={vi.fn()} disabled={false} githubSelected={false} />);
   await user.click(screen.getByRole("button", { name: "Configurações do chat" }));
   expect(screen.queryByRole("switch", { name: "Validação manual" })).not.toBeInTheDocument();
-  expect(screen.getByRole("switch", { name: "Github automático" })).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("switch", { name: "Github automático" })).not.toHaveAttribute("aria-disabled", "true");
+});
+
+it("removes the behavior menu and any open settings when Github is selected", async () => {
+  const user = userEvent.setup();
+  const props = { manualAvailable: true, manualValidation: true, onManualChange: vi.fn(), publication: { commit: true, push: true, pullRequest: true }, onPublicationChange: vi.fn(), disabled: false };
+  const { rerender } = render(<ChatBehaviorSettings {...props} githubSelected={false} />);
+  await user.click(screen.getByRole("button", { name: "Configurações do chat" }));
+  expect(screen.getByRole("switch", { name: "Github automático" })).toBeChecked();
+  rerender(<ChatBehaviorSettings {...props} githubSelected />);
+  expect(screen.queryByRole("button", { name: "Configurações do chat" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument();
 });

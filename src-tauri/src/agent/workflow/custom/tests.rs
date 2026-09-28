@@ -1,6 +1,96 @@
 use super::*;
 
 #[test]
+fn native_canvas_instructions_match_the_available_tools_and_routing() {
+    let (_fixture, hub) = super::super::tests::hub();
+    for role in [
+        Role::Planner,
+        Role::Investigator,
+        Role::Writer,
+        Role::Orchestrator,
+        Role::Designer,
+        Role::Builder,
+        Role::Reviewer,
+        Role::Github,
+    ] {
+        let mut catalog = catalog::tests::example();
+        for step in &mut catalog.flows[0].steps {
+            step.agent_id = role.builtin_id().unwrap();
+        }
+        let definition = catalog.resolve(&catalog.flows[0].id).unwrap();
+        let agent = definition.agents[0].clone();
+        let mut job = super::super::tests::job(&hub, role, ".");
+        job.custom_agent = Some(agent.clone());
+        let id = job.id.clone();
+        hub.manifest.lock().unwrap().jobs.insert(id.clone(), job);
+        let exec = Execution {
+            hub: hub.clone(),
+            id,
+            role,
+            flow: Flow::Custom,
+            scope: vec![".".into()],
+        };
+        let mut definitions = crate::agent::tools::definitions(exec.role_mode());
+        exec.filter(&mut definitions);
+        let exposed: Vec<_> = definitions
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        let prompt = exec.instructions().unwrap();
+        for available in ["ask_user", "hub_complete"] {
+            assert!(exposed.contains(&available), "{role:?}: {available}");
+            assert!(prompt.contains(available), "{role:?}: {available}");
+        }
+        for unavailable in [
+            "hub_spawn",
+            "hub_wait",
+            "hub_retry",
+            "hub_request_guidance",
+            "hub_respond_guidance",
+            "design_brief",
+            "validation_publish",
+        ] {
+            assert!(!exposed.contains(&unavailable), "{role:?}: {unavailable}");
+            assert!(!prompt.contains(unavailable), "{role:?}: {unavailable}");
+        }
+        assert!(prompt.contains("graph runtime owns routing"));
+        assert!(
+            prompt.contains("A Beads task is required only when the step explicitly assigns one")
+        );
+    }
+}
+
+#[test]
+fn standalone_github_contract_uses_direct_questions_and_completion() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let agent = catalog::Catalog::default()
+        .resolve_agent("builtin:github")
+        .unwrap();
+    hub.manifest.lock().unwrap().custom_agent = Some(agent);
+    let exec = Execution {
+        hub,
+        id: "main".into(),
+        role: Role::Github,
+        flow: Flow::Custom,
+        scope: vec![".".into()],
+    };
+    let prompt = exec.instructions().unwrap();
+    assert!(prompt.contains("Use ask_user only for a material unanswered user question"));
+    assert!(prompt.contains("Respond directly to the user with actual outcomes"));
+    for unavailable in [
+        "hub_spawn",
+        "hub_wait",
+        "hub_complete",
+        "hub_request_guidance",
+        "validation_publish",
+    ] {
+        assert!(!prompt.contains(unavailable), "{unavailable}");
+    }
+    assert!(prompt.contains("never ask again for those actions"));
+    assert!(!prompt.contains("Finish the assigned step normally"));
+}
+
+#[test]
 fn standalone_github_keeps_the_configured_secondary_and_resumed_effective_model() {
     let fixture = crate::agent::tests::Fixture::new();
     let state = AppState::default();
@@ -366,7 +456,8 @@ fn native_designer_steps_execute_with_the_fixed_design_contract_and_mutation_too
     let prompt = instructions(agent);
     assert!(prompt.contains("immutable role is Designer"));
     assert!(prompt.contains("embedded in a user-defined workflow"));
-    assert!(prompt.contains("Implement only assigned visual scope"));
+    assert!(prompt
+        .contains("Deliver the requested frontend/design outcome within the authorized scope"));
 }
 
 #[test]

@@ -96,19 +96,32 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn guidance_is_durable_correlated_parent_only_and_resumes_the_designer() {
+    async fn guidance_is_durable_correlated_parent_only_and_resumes_the_builder() {
         let (_fixture, hub) = hub();
-        let mut child = job(&hub, Role::Designer, ".");
+        let mut child = job(&hub, Role::Builder, "src");
         child.status = Status::Running;
         hub.mutate(|s| {
             s.jobs.insert(child.id.clone(), child.clone());
             Ok(())
         })
         .unwrap();
-        let exec = execution(&hub, &child.id, Role::Designer);
+        let mut exec = execution(&hub, &child.id, Role::Builder);
+        exec.scope = child.scope.clone();
         let signal = hub.root_signal.clone();
         let waiting = tokio::spawn(async move {
-            request(&exec, "Which brand? Recommended: existing tokens.", signal).await
+            dispatch::execute(
+                &exec,
+                &ToolCall {
+                    id: "request-guidance".into(),
+                    name: "hub_request_guidance".into(),
+                    args: json!({"question":"Which environment? Recommended: configured HML."}),
+                    status: "running".into(),
+                    output: String::new(),
+                    duration_ms: 0,
+                },
+                signal,
+            )
+            .await
         });
         let messages = tokio::time::timeout(
             Duration::from_secs(2),
@@ -117,7 +130,7 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        assert!(messages[0].text.contains("Which brand?"));
+        assert!(messages[0].text.contains("Which environment?"));
         assert!(!waiting.is_finished());
         let state = storage::load(&hub.directory, &hub.root.id)
             .unwrap()
@@ -147,18 +160,26 @@ mod tests {
         })
         .unwrap();
         assert!(!waiting.is_finished());
-        respond(
+        dispatch::execute(
             &execution(&hub, "main", Role::Planner),
-            id,
-            "Use the existing blue tokens",
+            &ToolCall {
+                id: "respond-guidance".into(),
+                name: "hub_respond_guidance".into(),
+                args: json!({"requestId":id,"answer":"Use the configured HML"}),
+                status: "running".into(),
+                output: String::new(),
+                duration_ms: 0,
+            },
+            hub.root_signal.clone(),
         )
+        .await
         .unwrap();
         let answer = tokio::time::timeout(Duration::from_secs(2), waiting)
             .await
             .unwrap()
             .unwrap()
             .unwrap();
-        assert!(answer.contains("existing blue"));
+        assert!(answer.contains("configured HML"));
         assert_eq!(hub.job(&child.id).unwrap().status, Status::Running);
         assert!(respond(
             &execution(&hub, "main", Role::Planner),

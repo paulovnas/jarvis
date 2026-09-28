@@ -23,6 +23,7 @@ export function ChatBehaviorSettings({ manualAvailable, manualValidation, onManu
   disabled: boolean;
   githubSelected: boolean;
 }) {
+  if (githubSelected) return null;
   const active = (manualAvailable && manualValidation) || Boolean(publication);
   const actions = publication ? Object.values(publication).filter(Boolean).length : 0;
   return <Popover>
@@ -31,7 +32,7 @@ export function ChatBehaviorSettings({ manualAvailable, manualValidation, onManu
       <PopoverHeader><PopoverTitle>Comportamento do chat</PopoverTitle></PopoverHeader>
       {manualAvailable && <Setting label="Validação manual" hint="Aguarda sua validação da implementação antes de concluir e iniciar a publicação automática." checked={manualValidation} onChange={onManualChange} disabled={disabled} />}
       <div className="space-y-3">
-        <Setting label="Github automático" hint={githubSelected ? "O agente Github já é o responsável por este chat." : "Ao concluir com sucesso, chama o agente Github com seu modelo configurado para executar as ações selecionadas sem nova aprovação de publicação."} checked={Boolean(publication)} disabled={disabled || githubSelected} onChange={checked => onPublicationChange(checked ? { commit: true, push: false, pullRequest: false } : null)} />
+        <Setting label="Github automático" hint="Ao concluir com sucesso, chama o agente Github com seu modelo configurado para executar as ações selecionadas sem nova aprovação de publicação." checked={Boolean(publication)} disabled={disabled} onChange={checked => onPublicationChange(checked ? { commit: true, push: false, pullRequest: false } : null)} />
         {publication && <div className="space-y-3 rounded-md border border-border bg-secondary/40 p-3">
           {([
             ["commit", "Commit", "Cria um commit das alterações da implementação, seguindo as instruções do projeto."],

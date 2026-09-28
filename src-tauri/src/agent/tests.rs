@@ -713,6 +713,37 @@ fn harness_evaluation_coordinated_recovery_pairs_uncertain_tools_without_replay(
 }
 
 #[test]
+fn direct_task_contract_is_present_once_for_native_custom_and_legacy_prompts() {
+    let native = [
+        (workflow::Flow::Standard, workflow::Role::Builder),
+        (workflow::Flow::Designer, workflow::Role::Designer),
+    ]
+    .map(|(flow, role)| {
+        workflow::settings::get_agent_instructions(flow, role)
+            .unwrap()
+            .into_iter()
+            .map(|section| section.content)
+            .collect::<String>()
+    });
+    let mut prompts = native.to_vec();
+    prompts.push("Custom direct agent instructions.\n".into());
+    prompts.push(tools::instructions(
+        Path::new("/project"),
+        Mode::Plan,
+        ApprovalMode::Yolo,
+    ));
+    for mut prompt in prompts {
+        let original = prompt.clone();
+        append_direct_task_instructions(&mut prompt);
+        assert!(prompt.starts_with(&original));
+        assert_eq!(prompt.matches(tasks::INSTRUCTIONS).count(), 1);
+        let rebuilt = prompt.clone();
+        append_direct_task_instructions(&mut prompt);
+        assert_eq!(prompt, rebuilt);
+    }
+}
+
+#[test]
 fn direct_tasks_are_durable_and_reset_for_each_new_turn() {
     let fixture = Fixture::new();
     let session = session(&fixture);

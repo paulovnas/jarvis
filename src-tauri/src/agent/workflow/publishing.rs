@@ -94,8 +94,8 @@ fn prepare(hub: &Hub) -> Result<Job, AgentError> {
         title: "Publicar alterações".into(),
         prompt,
         acceptance: vec![
-            "Inspect every changed Git repository inside the project root.".into(),
-            "Run the relevant checks and present one supervised publication proposal.".into(),
+            "Inspect the requested repositories and eligible changes within the user's scope.".into(),
+            "Reuse valid check results; run only missing required checks. Submit compatible operations through native publication tools using the current authorization and review policy.".into(),
             "Apply only actions authorized by the current user request or approved in review, then verify the resulting state.".into(),
         ],
         scope: vec![".".into()],
@@ -395,6 +395,22 @@ pub(super) async fn automatic(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publication_assignment_preserves_requested_scope_and_authorization() {
+        let (_fixture, hub) = super::super::tests::hub();
+        let request = "Commit and push backend only; use the checks already completed and proceed without another confirmation.";
+        hub.root.data.lock().unwrap().turns[0].turn.user = request.into();
+        let job = prepare(&hub).unwrap();
+        assert_eq!(job.prompt, request);
+        let criteria = job.acceptance.join("\n");
+        assert!(criteria.contains("requested repositories"));
+        assert!(criteria.contains("Reuse valid check results"));
+        assert!(criteria.contains("compatible operations"));
+        assert!(criteria.contains("current authorization and review policy"));
+        assert!(!criteria.contains("every changed Git repository"));
+        assert!(!criteria.contains("one supervised publication proposal"));
+    }
 
     fn begin_automatic_run(hub: &Hub, run_id: &str, retrying: bool) {
         let mut state = hub.manifest.lock().unwrap();

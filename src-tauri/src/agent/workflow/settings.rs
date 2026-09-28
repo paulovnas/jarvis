@@ -401,25 +401,106 @@ mod instruction_tests {
     }
 
     #[test]
-    fn built_in_roles_enforce_objective_execution_for_narrow_follow_ups() {
+    fn built_in_roles_preserve_objectives_and_proportionate_follow_ups() {
+        for (flow, role) in [
+            (Flow::Standard, Role::Builder),
+            (Flow::Planned, Role::Planner),
+            (Flow::Planned, Role::Builder),
+            (Flow::Complete, Role::Planner),
+            (Flow::Complete, Role::Builder),
+        ] {
+            let prompt = contracts::prompt(flow, role, "agent");
+            assert!(prompt.contains("Preserve the unresolved user objective across turns"));
+            assert!(prompt.contains("Corrections, clarifications and status questions steer"));
+            assert!(prompt.contains("proving or rejecting one hypothesis is progress"));
+            assert!(prompt.contains("read-only backend, HTTP and database diagnostics"));
+            if !flow.direct() {
+                assert!(prompt.contains("Workers do not inherit the full conversation"));
+            }
+            if role != Role::Planner && !flow.direct() {
+                assert!(prompt.contains("request guidance from its coordinator"));
+            }
+            assert!(!prompt.contains("latest user request as the active objective"));
+        }
+
         let planner = contracts::prompt(Flow::Planned, Role::Planner, "planner");
-        assert!(planner.contains("latest user request as the active objective"));
-        assert!(planner.contains("smallest safe sequence"));
         assert!(planner.contains("narrow operational follow-up"));
         assert!(planner.contains("dispatch exactly one appropriate worker"));
-        assert!(planner.contains("Do not inspect source files or runbooks"));
+        assert!(planner.contains("Do not duplicate that worker's source/runbook investigation"));
+        assert!(planner.contains("partial diagnosis or unsearched configuration"));
 
         let builder = contracts::prompt(Flow::Planned, Role::Builder, "builder");
-        assert!(builder.contains("direct link to an unresolved acceptance criterion"));
-        assert!(builder.contains("do not load a generic skill"));
+        assert!(builder.contains("actual failing request through active configuration"));
+        assert!(
+            builder.contains("Locate existing authorized credentials/integration configuration")
+        );
+        assert!(builder.contains("failed probe or plausible diagnosis does not finish"));
         assert!(builder.contains("bounded preflight/action/postcondition sequence"));
         assert!(builder.contains("skip code-quality gates"));
 
         let designer = contracts::prompt(Flow::Planned, Role::Designer, "designer");
-        assert!(designer.contains("reuse valid evidence"));
+        assert!(designer.contains("Reuse valid evidence"));
         assert!(designer.contains("Run checks proportional to the changed surface"));
 
         assert!(!planner.contains("maximum number of steps"));
         assert!(!builder.contains("maximum number of steps"));
+    }
+
+    #[test]
+    fn specialist_contracts_define_proportionate_work_and_evidence_based_outcomes() {
+        let investigator = contracts::prompt(Flow::Complete, Role::Investigator, "research");
+        assert!(investigator.contains("specific unresolved questions"));
+        assert!(investigator.contains("accessible evidence is exhausted"));
+        let writer = contracts::prompt(Flow::Complete, Role::Writer, "plan");
+        assert!(writer.contains("smallest executable specification"));
+        assert!(writer.contains("dependency edges only when a task needs another's result"));
+        assert!(writer.contains("A saved plan is not implementation or approval"));
+        let reviewer = contracts::prompt(Flow::Complete, Role::Reviewer, "review");
+        assert!(
+            reviewer.contains("Speculative risks or stylistic preferences do not justify rework")
+        );
+        assert!(reviewer.contains("reuse recorded results only while their inputs are unchanged"));
+        assert!(reviewer.contains("rework for concrete repairable failures"));
+        assert!(reviewer.contains(
+            "blocked only when missing evidence or a prerequisite actually prevents assessment"
+        ));
+        let orchestrator = contracts::prompt(Flow::Complete, Role::Orchestrator, "coordination");
+        assert!(orchestrator.contains("Read only the epic and dependency-ready tasks"));
+        assert!(orchestrator.contains("independent technical assessment"));
+        assert!(orchestrator.contains("do not repeat workers' discovery or verification"));
+        let designer = contracts::prompt(Flow::Designer, Role::Designer, "design");
+        assert!(designer.contains("When a task is assigned"));
+        assert!(designer.contains("without restarting discovery or redesigning unrelated areas"));
+        assert!(designer.contains("only when those decisions materially change"));
+        assert!(!designer.contains("native beads_"));
+        let github = contracts::prompt(Flow::Publication, Role::Github, "publish");
+        assert!(github.contains("Group compatible authorized operations"));
+        assert!(github.contains("required preparation separately"));
+        assert!(github.contains("without repeating confirmed results"));
+        assert!(github.contains("hub_spawn"));
+        assert!(github.contains("hub_respond_guidance"));
+        assert!(!github.contains("through hub_request_guidance"));
+    }
+
+    #[test]
+    fn direct_contracts_omit_native_coordination_but_keep_scope_and_acceptance() {
+        for flow in [Flow::Standard, Flow::Designer] {
+            let sections = get_agent_instructions(flow, flow.root()).unwrap();
+            let prompt = contracts::prompt(flow, flow.root(), "main");
+            assert!(!sections
+                .iter()
+                .any(|section| section.title == "Execução coordenada"));
+            for unavailable in [
+                "hub_spawn",
+                "hub_retry",
+                "hub_complete",
+                "validation_publish",
+            ] {
+                assert!(!prompt.contains(unavailable), "{flow:?}: {unavailable}");
+            }
+            assert!(prompt.contains("Preserve the unresolved user objective"));
+            assert!(prompt.contains("fixed role capabilities"));
+            assert!(prompt.contains("USER performs final functional and visual acceptance"));
+        }
     }
 }

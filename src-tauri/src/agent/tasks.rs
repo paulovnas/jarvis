@@ -8,8 +8,10 @@ const MAX_ID_CHARS: usize = 64;
 const MAX_TITLE_CHARS: usize = 160;
 
 pub(super) const INSTRUCTIONS: &str = r#"
-Direct task tracking: Standard and direct Designer flows use update_tasks instead of the private Jarvis workflow Beads. Do not call internal beads_* tools in these flows. Read-only project_beads_* tools, when available, refer only to the checkout's independent project history. For implementation work or any request with more than one material action, inspect enough to understand the scope and then call update_tasks before the first mutating tool, even when the list has only two items. Keep the ordered list concise and outcome-oriented; replace the complete list whenever scope or status changes. Keep exactly one item in_progress while working, mark items completed only after their outcome is verified, and use blocked only when progress actually depends on missing input or an external condition. Before the final response, leave no pending or in_progress items. Purely informational or trivial responses may finish without creating a task list.
+Direct task tracking: Standard and direct Designer flows use update_tasks instead of the private Jarvis workflow Beads. Do not call internal beads_* tools in these flows. Read-only project_beads_* tools, when available, refer only to the checkout's independent project history. For implementation work or any request with more than one material action, inspect enough to understand the scope and then call update_tasks before the first mutating tool. Track the user's requested outcomes, not merely investigation steps. Keep exactly one item in_progress while working and mark completed only after the original outcome is verified. Update the full list as progress changes, preserving unmet outcomes unless the user changes scope; never rename or remove an unresolved task merely to mark the list complete. A diagnosis or passing check does not complete a requested repair. Continue actionable pending work; use blocked only for an evidenced external dependency, not an untested hypothesis. Purely informational or trivial responses may finish without creating a task list.
 "#;
+
+pub(super) const FINISH_REMINDER: &str = "The native task list still has unfinished outcomes. Compare them with the user's request and continue the next actionable step. Mark only verified outcomes completed; do not rename, remove or weaken unfinished tasks to finish the turn. Use blocked only for a demonstrated external dependency after checking the available context and tools. If the user stopped or changed the scope, report that accurately instead of claiming completion.";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -389,5 +391,15 @@ mod tests {
         let checkpoint = context(&tasks);
         assert!(checkpoint.find("inspect").unwrap() < checkpoint.find("build").unwrap());
         assert!(checkpoint.contains("in_progress"));
+    }
+
+    #[test]
+    fn unfinished_outcome_reminder_requires_progress_instead_of_a_clean_task_list() {
+        assert!(FINISH_REMINDER.contains("continue the next actionable step"));
+        assert!(FINISH_REMINDER.contains("do not rename, remove or weaken unfinished tasks"));
+        assert!(FINISH_REMINDER.contains("demonstrated external dependency"));
+        assert!(INSTRUCTIONS
+            .contains("A diagnosis or passing check does not complete a requested repair"));
+        assert!(!INSTRUCTIONS.contains("leave no pending or in_progress items"));
     }
 }

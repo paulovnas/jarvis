@@ -162,7 +162,7 @@ fn role_description(role: Role) -> &'static str {
         Role::Designer => "Implementa interfaces e interações dentro do sistema visual e valida o escopo de frontend.",
         Role::Builder => "Implementa o comportamento solicitado, executa verificações e corrige o próprio trabalho.",
         Role::Reviewer => "Revisa a implementação de forma independente e decide se há correções pendentes.",
-        Role::Github => "Prepara e executa publicações Git e GitHub somente após a aprovação explícita do usuário.",
+        Role::Github => "Resolve operações Git e GitHub conforme a autorização do usuário e as opções de publicação do chat.",
         Role::Custom => "Agente definido pelo usuário.",
     }
 }

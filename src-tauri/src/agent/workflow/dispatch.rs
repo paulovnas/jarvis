@@ -42,8 +42,11 @@ pub(super) fn definitions(flow: Flow, role: Role) -> Vec<Value> {
             definition("hub_retry", "Continue an existing direct child from its durable context for focused rework or follow-up. Reuse the implementing worker and reviewer instead of restarting their investigation. Inspect uncertain side effects before failure recovery; at most two failed recovery rounds without verified progress are allowed. Successful follow-ups and actionable review findings do not consume that budget. Role, write scope and permissions stay fixed. Optional dependencies replaces prerequisite agent IDs for this round; include the reviewer for rework so the complete findings reach the implementer. Use current sibling jobs and avoid dependency cycles.", json!({"id":string,"prompt":string,"dependencies":strings}), &["id","prompt"]),
         ]);
     }
-    if role == Role::Designer || role.coordinator() {
-        tools.push(definition("hub_request_guidance", "Ask your parent for a material missing decision and wait for its correlated response. Include context, impact and recommendation. Delegated Designer must use this instead of questioning the user. Coordinators may escalate to their parent. Cancellation interrupts the wait; the main agent uses ask_user.", json!({"question":string}), &["question"]));
+    if role == Role::Designer
+        || role.coordinator()
+        || flow.delegations().iter().any(|(_, child)| *child == role)
+    {
+        tools.push(definition("hub_request_guidance", "Ask your parent for a material missing decision and wait for its correlated response. Include context, impact and recommendation. Delegated agents use this instead of questioning the user or waiting for nonexistent children. Resolve available facts first. Cancellation interrupts the wait; the main agent uses ask_user.", json!({"question":string}), &["question"]));
     }
     if role == Role::Designer {
         tools.push(definition("design_brief", "Read or replace your durable design brief. Record accepted answers, direction, assumptions, constraints, selected resource IDs and pending decisions. This survives compaction/restart and is isolated per agent. Omit text to read.", json!({"text":{"type":"string","maxLength":4000}}), &[]));
@@ -944,12 +947,10 @@ async fn check_bead(
         ));
     }
     let state = hub.manifest.lock().map_err(|_| AgentError::internal())?;
-    let review_ready = review_dependencies(&state, job);
     if let Some(handoff) = completion {
         validate_completion_bead(&state, job, task, handoff)?;
-        validate_bead_dependencies(task, &review_ready)?;
     } else {
-        validate_bead(&value, &review_ready)?;
+        validate_bead(&value, &review_dependencies(&state, job))?;
     }
     Ok(Some(bead_checkpoint(&value)?))
 }
@@ -960,10 +961,22 @@ fn validate_completion_bead(
     task: &Value,
     handoff: &Handoff,
 ) -> Result<(), AgentError> {
+    let id = job.bead_id.as_deref().unwrap_or_default();
+    // Reporting a blocker must not require reopening its task or dependencies.
+    if handoff.verdict == Verdict::Blocked
+        && task["status"] == "blocked"
+        && task["assignee"] == format!("jarvis-{}", state.conversation_id)
+        && job.run_id == state.run_id
+        && handoff.task_ids.iter().any(|task_id| task_id == id)
+    {
+        return Ok(());
+    }
+    if handoff.verdict != Verdict::Blocked {
+        validate_bead_dependencies(task, &review_dependencies(state, job))?;
+    }
     if matches!(task["status"].as_str(), Some("open" | "in_progress")) {
         return Ok(());
     }
-    let id = job.bead_id.as_deref().unwrap_or_default();
     // Closure prevents new implementation, not delivery of its verified result.
     let manual_approved = !state.options.manual_validation()
         || task["issue_type"] != "epic"

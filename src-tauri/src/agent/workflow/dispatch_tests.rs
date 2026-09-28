@@ -2,6 +2,30 @@ use super::super::tests::{hub, job};
 use super::*;
 
 #[test]
+fn every_native_delegate_can_request_guidance_without_broader_permissions() {
+    let (_fixture, hub) = hub();
+    for flow in [Flow::Planned, Flow::Complete, Flow::Publication] {
+        for (_, role) in flow.delegations() {
+            let exec = Execution {
+                hub: hub.clone(),
+                id: "delegated".into(),
+                role: *role,
+                flow,
+                scope: vec!["src".into()],
+            };
+            let mut tools = vec![];
+            exec.filter(&mut tools);
+            assert!(tools
+                .iter()
+                .any(|tool| tool["name"] == "hub_request_guidance"));
+            assert!(exec.allowed("hub_request_guidance"));
+            assert!(!exec.allowed("bash"));
+            assert!(!exec.allowed("browser_click"));
+        }
+    }
+}
+
+#[test]
 fn github_can_delegate_conflict_repair_without_overlapping_child_writes() {
     let (_fixture, hub) = hub();
     let mut github = job(&hub, Role::Github, ".");
@@ -573,6 +597,55 @@ fn completed_handoff(id: &str) -> Handoff {
         limitations: vec![],
         task_ids: vec![id.into()],
     }
+}
+
+#[test]
+fn blocked_handoff_reports_the_blocker_without_reopening_its_bead() {
+    let (_fixture, hub) = hub();
+    let mut worker = job(&hub, Role::Builder, ".");
+    worker.bead_id = Some("task".into());
+    let state = hub.manifest.lock().unwrap();
+    let task = json!({"id":"task","status":"blocked",
+        "assignee":format!("jarvis-{}", state.conversation_id),
+        "dependencies":[{"id":"access","dependency_type":"blocks","status":"blocked"}]});
+    let handoff = Handoff {
+        verdict: Verdict::Blocked,
+        summary: "Configured access is unavailable".into(),
+        limitations: vec!["A current parent decision is required".into()],
+        ..completed_handoff("task")
+    };
+    assert!(validate_completion_bead(&state, &worker, &task, &handoff).is_ok());
+    assert_eq!(task["status"], "blocked");
+    assert!(validate_bead(&task, &[]).is_err());
+    for verdict in [Verdict::Completed, Verdict::Approved, Verdict::Rework] {
+        let success = Handoff {
+            verdict,
+            ..handoff.clone()
+        };
+        assert!(validate_completion_bead(&state, &worker, &task, &success).is_err());
+    }
+    let mut wrong_task = handoff.clone();
+    wrong_task.task_ids = vec!["another-task".into()];
+    assert!(validate_completion_bead(&state, &worker, &task, &wrong_task).is_err());
+    let mut foreign = task.clone();
+    foreign["assignee"] = json!("another-conversation");
+    assert!(validate_completion_bead(&state, &worker, &foreign, &handoff).is_err());
+    worker.run_id = "previous-run".into();
+    assert!(validate_completion_bead(&state, &worker, &task, &handoff).is_err());
+}
+
+#[test]
+fn unresolved_dependencies_allow_a_blocked_report_but_not_completion() {
+    let (_fixture, hub) = hub();
+    let worker = job(&hub, Role::Builder, ".");
+    let state = hub.manifest.lock().unwrap();
+    let task = json!({"status":"in_progress",
+        "dependencies":[{"id":"access","dependency_type":"blocks","status":"open"}]});
+    let mut handoff = completed_handoff("task");
+    assert!(validate_completion_bead(&state, &worker, &task, &handoff).is_err());
+    handoff.verdict = Verdict::Blocked;
+    assert!(validate_completion_bead(&state, &worker, &task, &handoff).is_ok());
+    assert!(validate_bead(&task, &[]).is_err());
 }
 
 #[test]

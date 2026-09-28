@@ -109,7 +109,7 @@ fn custom_flows_accept_immutable_native_agents_and_freeze_their_runtime_contract
     assert_eq!(run.agents[0].capability, Capability::Commands);
     assert!(run.agents[0]
         .instructions
-        .contains("Implement only assigned visual scope"));
+        .contains("Deliver the requested frontend/design outcome within the authorized scope"));
 
     catalog.flows[0].steps[0].agent_id = "builtin:unknown".into();
     assert!(catalog.validate().is_err());
