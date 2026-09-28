@@ -22,6 +22,8 @@ pub(super) enum ApprovalPolicy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Handler {
+    Knowledge,
+    Learning,
     Progress,
     PublicationInspection,
     Workflow,
@@ -47,7 +49,11 @@ pub(super) enum Handler {
 
 impl Handler {
     fn native(name: &str) -> Self {
-        if name == super::progress::TOOL_NAME {
+        if name == "project_knowledge" {
+            Self::Knowledge
+        } else if name == super::learning::TOOL {
+            Self::Learning
+        } else if name == super::progress::TOOL_NAME {
             Self::Progress
         } else if name == "jarvis_inspect_publication" {
             Self::PublicationInspection

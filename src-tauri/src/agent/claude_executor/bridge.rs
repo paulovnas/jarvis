@@ -468,7 +468,14 @@ impl<'a> Bridge<'a> {
         let home = self.runtime.home;
         let state = self.runtime.state;
         let signal = self.signal.clone();
+        let owner = self
+            .execution
+            .as_ref()
+            .map_or(self.session, |exec| exec.root());
+        learning::prepare(self.session, owner, state, home).await;
         match handler {
+            Handler::Knowledge => learning::retrieve(state, home, owner, &tool.args),
+            Handler::Learning => learning::remember(state, home, owner, &tool.args),
             Handler::PublicationInspection => {
                 publication::inspection::inspect(&self.session.root, &tool.args, signal).await
             }

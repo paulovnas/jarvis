@@ -144,7 +144,10 @@ impl Role {
         flow.delegations().contains(&(self, role))
     }
     pub(super) fn allows(self, flow: Flow, tool: &str, broad: bool) -> bool {
-        if tool == crate::agent::progress::TOOL_NAME || tool == crate::agent::knowledge::TOOL {
+        if tool == crate::agent::progress::TOOL_NAME
+            || tool == crate::agent::knowledge::TOOL
+            || tool == crate::agent::learning::TOOL
+        {
             return true;
         }
         if self == Self::Github {

@@ -76,6 +76,7 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
     let mut tools = vec![
         super::questions::definition(),
         super::knowledge::definition(),
+        super::learning::definition(),
         definition("read", "Read an explicitly selected UTF-8 project file with line numbers. At most 1 MiB; use offset and limit for paging. Prefer project source and documentation; inspect installed dependency source only for a concrete unresolved issue.", json!({"path":string,"offset":{"type":"integer","minimum":1},"limit":{"type":"integer","minimum":1,"maximum":500}}), &["path"]),
         definition("list", "List one directory inside the project. Use path '.' for the project root. Common dependency and generated directories are hidden from ordinary discovery; an explicit path can still inspect one when justified.", json!({"path":string}), &["path"]),
         definition("search", "Find literal text in project files recursively, excluding symlinks and common dependency/generated directories. Search an explicit dependency path only when exact installed source is needed. Output is bounded.", json!({"path":string,"query":string}), &["path","query"]),

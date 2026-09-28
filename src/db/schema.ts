@@ -130,6 +130,11 @@ export const projectPublicationSettings = sqliteTable("project_publication_setti
   updatedAt: integer("updated_at").notNull().default(sql`(unixepoch())`),
 }, (table) => [check("project_publication_pr_mode", sql`${table.prMode} IN ('disabled', 'ask_pr', 'ask_pr_merge')`)]);
 
+export const projectLearning = sqliteTable("project_learning", {
+  projectId: text("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
+  data: text("data").notNull(),
+}, (table) => [check("project_learning_json", sql`json_valid(${table.data})`)]);
+
 export const projectRepositories = sqliteTable("project_repositories", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),

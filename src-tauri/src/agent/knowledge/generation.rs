@@ -478,6 +478,72 @@ fn native_text(response: provider::Response) -> Result<String, AgentError> {
     Ok(response.text)
 }
 
+/// Short tool-free synthesis, also used by project feedback extraction.
+pub(in crate::agent) async fn synthesize(
+    runtime: (&AppState, &OpenAiCodexState, &Path),
+    root: &Path,
+    options: &TurnOptions,
+    prompt: &str,
+    input: String,
+    signal: watch::Receiver<bool>,
+) -> Result<String, AgentError> {
+    let (state, oauth, home) = runtime;
+    if options.executor == crate::claude::Executor::Claude {
+        return claude_text(
+            root,
+            &Choice {
+                executor: options.executor,
+                account: options.account.clone(),
+                model: options.model.clone(),
+                reasoning: Some("low".into()),
+            },
+            prompt.into(),
+            input,
+        )
+        .await;
+    }
+    let state = state.clone();
+    let oauth = oauth.clone();
+    let home = home.to_path_buf();
+    let mut short_options = options.clone();
+    short_options.reasoning = None;
+    let auth_options = short_options.clone();
+    let (credential, model) = tauri::async_runtime::spawn_blocking(move || {
+        oauth.inference_model(
+            &state,
+            &home,
+            &auth_options.account,
+            &auth_options.model,
+            None,
+        )
+    })
+    .await
+    .map_err(|_| AgentError::internal())??;
+    short_options.reasoning = ["minimal", "low", "medium"]
+        .iter()
+        .find(|level| {
+            model
+                .reasoning_levels
+                .iter()
+                .any(|available| available == **level)
+        })
+        .map(|level| (*level).to_owned());
+    let session = format!("learning-{}", library::new_id()?);
+    let response = provider::stream(
+        &credential,
+        &session,
+        &short_options,
+        prompt,
+        vec![json!({"role":"user","content":input})],
+        vec![],
+        &telemetry::trace(&session, &session),
+        signal,
+        |_| Ok(()),
+    )
+    .await?;
+    native_text(response)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

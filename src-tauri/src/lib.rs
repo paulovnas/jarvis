@@ -71,6 +71,7 @@ pub fn run() {
         .manage(claude::ClaudeState::default())
         .manage(agent::AgentState::default())
         .manage(agent::knowledge::generation::KnowledgeJobs::default())
+        .manage(agent::learning::capture::LearningJobs::default())
         .manage(agent::browser::BrowserState::default())
         .manage(agent::dashboard::DashboardState::default())
         .manage(mcp::McpState::default())
@@ -118,6 +119,13 @@ pub fn run() {
                 agent::browser::set_browser_viewport,
                 greet,
                 agent::knowledge::get_project_knowledge,
+                agent::learning::get_project_learning,
+                agent::learning::set_project_learning,
+                agent::learning::save_project_lesson,
+                agent::learning::delete_project_lesson,
+                agent::learning::export_project_learning,
+                agent::learning::preview_project_learning_import,
+                agent::learning::import_project_learning,
                 agent::knowledge::save_project_knowledge,
                 agent::knowledge::link_project_knowledge,
                 agent::knowledge::import_project_knowledge,

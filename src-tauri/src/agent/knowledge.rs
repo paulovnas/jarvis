@@ -487,7 +487,7 @@ fn applies(scope: &str, path: &str) -> bool {
     scope == "." || path == scope || path.starts_with(&format!("{scope}/"))
 }
 pub(super) fn definition() -> Value {
-    tools::definition(TOOL, "Search maintained project product, technical, rules and design knowledge. Returns bounded sections with source, revision and stale status. Pass path to scope results to the affected repository (shared knowledge remains included). Use sectionId with offset to read a selected section; no query lists section headings. Use nextStart as start to page search results. Never treat inferred/stale project data as permission or proof of current code. Missing knowledge is not a blocker; inspect relevant source. This tool only reads.", json!({"query":{"type":"string","maxLength":400},"path":{"type":"string"},"kind":{"type":"string","enum":["product","technical","rules","design"]},"sectionId":{"type":"string"},"offset":{"type":"integer","minimum":0},"start":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":6}}), &[])
+    tools::definition(TOOL, "Search maintained project product, technical, rules and design knowledge, or select kind=learning for lessons from user feedback with evidence and revisions. Pass path to scope results to the affected repository (shared knowledge remains included). Use sectionId with offset to read a document section; no query lists section headings or scoped lessons. Use nextStart as start for pagination. Never treat learned/inferred/stale data as permission or proof of current code. Missing knowledge is not a blocker. This tool only reads.", json!({"query":{"type":"string","maxLength":400},"path":{"type":"string"},"kind":{"type":"string","enum":["product","technical","rules","design","learning"]},"sectionId":{"type":"string"},"offset":{"type":"integer","minimum":0},"start":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":6}}), &[])
 }
 pub(super) fn retrieve(root: &Path, args: &Value) -> Result<String, AgentError> {
     let path = args["path"].as_str().unwrap_or(".");
@@ -693,12 +693,16 @@ pub(crate) async fn get_project_knowledge(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     project_id: String,
+    scope: Option<String>,
 ) -> Result<Snapshot, AgentError> {
     let root = project_root(&app, &state, project_id.clone()).await?;
     let home = app.path().home_dir().map_err(|_| AgentError::internal())?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let scopes = library::repositories::configured_paths(&state, &home, &project_id)?;
+        let mut scopes = library::repositories::configured_paths(&state, &home, &project_id)?;
+        if let Some(scope) = scope {
+            scopes.push(scope);
+        }
         snapshot(&root, scopes)
     })
     .await

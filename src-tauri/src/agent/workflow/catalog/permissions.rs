@@ -55,6 +55,7 @@ fn description(name: &str) -> &'static str {
         "project_knowledge" => {
             "Consultar trechos do conhecimento de produto, arquitetura, regras e design do projeto."
         }
+        "learn_project" => "Registrar aprendizados curtos com origem em correções do usuário.",
         "list" => "Listar pastas e arquivos.",
         "search" => "Pesquisar texto no projeto.",
         "write" => "Criar ou substituir arquivos.",

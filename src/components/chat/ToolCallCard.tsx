@@ -51,6 +51,7 @@ const tools = {
   ctx_stats: { label: "Context Mode · Economia", icon: Layers3 },
   read: { label: "Leitura de arquivo", icon: FileText },
   project_knowledge: { label: "Conhecimento do projeto", icon: BookOpen },
+  learn_project: { label: "Aprendizado do projeto", icon: BookOpen },
   read_attachment: { label: "Leitura de anexo", icon: FileText },
   vision: { label: "Análise de imagem", icon: Eye },
   generate_image: { label: "Geração de imagem", icon: ImagePlus },

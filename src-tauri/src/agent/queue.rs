@@ -459,6 +459,15 @@ pub async fn send_queued_message_now(
         .runtime_session(&app, &persistence, &conversation_id)
         .await?;
     let delivered = session.promote_queued(&message_id)?;
+    if let Ok(home) = app.path().home_dir() {
+        learning::capture::schedule(
+            &app,
+            &session,
+            &persistence,
+            &app.state::<OpenAiCodexState>(),
+            &home,
+        );
+    }
     let snapshot = session.snapshot()?;
     (session.emit)(snapshot.clone());
     agent.release_idle(&session);

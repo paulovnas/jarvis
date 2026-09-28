@@ -22,6 +22,7 @@ mod instructions;
 mod journal;
 pub(crate) mod journal_maintenance;
 pub(crate) mod knowledge;
+pub(crate) mod learning;
 mod lsp;
 pub(crate) mod maintenance;
 mod model_fallback;
@@ -1941,6 +1942,7 @@ fn spawn_run(
         let _activity = activity;
         let _admission = admission;
         loop {
+            learning::capture::schedule(&app, &session, &state, &oauth, &home);
             let _ = library::dashboard::touch_activity(&state, &home, &session.id);
             let _ = app.emit("library:changed", ());
             let completed = finish_run(&session, async {
@@ -2616,6 +2618,8 @@ fn run_turn_once<'a>(
             result = skill_input::load(session, home) => result?,
         }
         if options.executor == crate::claude::Executor::Claude {
+            let learning_owner = execution.as_ref().map_or(session, |exec| exec.root());
+            learning::prepare(session, learning_owner, state, home).await;
             return claude_executor::run(
                 session,
                 TurnRuntime {
@@ -2829,6 +2833,7 @@ fn run_turn_once<'a>(
                     core_activities.push(activity);
                 }
             }
+            learning::prepare(session, owner, state, home).await;
             let mut instructions =
                 tools::instructions(&session.root, options.mode, options.approval_mode);
             project_instructions.append_prompt(&mut instructions);
@@ -3297,6 +3302,7 @@ fn run_turn_once<'a>(
                             tool_contract::Handler::Mcp => mcp_clients.parallel_ready(&call.name),
                             tool_contract::Handler::Lsp => lsp.parallel_ready(call),
                             tool_contract::Handler::Attachment
+                            | tool_contract::Handler::Knowledge
                             | tool_contract::Handler::SkillRead => true,
                             _ => false,
                         };
@@ -3371,6 +3377,9 @@ fn run_turn_once<'a>(
                             );
                             let _handler = telemetry::phase(trace, telemetry::Phase::ToolHandler);
                             let output = match runtime.preflight(&call)?.handler {
+                                tool_contract::Handler::Knowledge => {
+                                    learning::retrieve(state, home, owner, &call.args)?
+                                }
                                 tool_contract::Handler::Native => {
                                     return tools::execute_with_revision(
                                         &session.root,
@@ -3658,6 +3667,8 @@ fn run_turn_once<'a>(
                         None => None,
                     };
                     match prepared.map(|prepared| prepared.handler) {
+                        Some(tool_contract::Handler::Knowledge) => learning::retrieve(state, home, owner, &tool.args),
+                        Some(tool_contract::Handler::Learning) => learning::remember(state, home, owner, &tool.args),
                         Some(tool_contract::Handler::Progress) => {
                             progress_watchdog.checkpoint(&tool.args)
                         }

@@ -2,6 +2,33 @@ use super::*;
 use crate::agent::tests::{options, session, Fixture};
 
 #[test]
+fn learned_context_reaches_claude_initial_input_and_live_tool_responses_once() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    session
+        .reserve("Ajustar Select".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    session.update(true, |data| {
+        data.turns[0].wire.push(json!({"role":"user","_jarvis_runtime":true,"_jarvis_learning":"lesson:1","content":"Learned: display the Select label."}));
+    }).unwrap();
+    let mut cursor = {
+        let data = session.data.lock().unwrap();
+        assert!(initial_input(&data, false)
+            .unwrap()
+            .contains("display the Select label"));
+        data.turns[0].wire.len()
+    };
+    session.update(true, |data| {
+        data.turns[0].wire.push(json!({"role":"user","_jarvis_runtime":true,"_jarvis_learning":"lesson:2","content":"Learned: preserve existing labels after loading."}));
+    }).unwrap();
+    assert_eq!(
+        pending_input(&session, &mut cursor).unwrap(),
+        vec!["Learned: preserve existing labels after loading."]
+    );
+    assert!(pending_input(&session, &mut cursor).unwrap().is_empty());
+}
+
+#[test]
 fn secondary_claude_starts_fresh_with_active_turn_receipts_on_first_turn() {
     let fixture = Fixture::new();
     let session = session(&fixture);

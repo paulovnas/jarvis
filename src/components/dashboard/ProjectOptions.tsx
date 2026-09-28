@@ -17,6 +17,7 @@ import { ProjectRepositoriesSettings } from "./ProjectRepositoriesSettings";
 import { ExecutionGrantsSettings } from "./ExecutionGrantsSettings";
 import { ProjectIdentitySettings } from "./ProjectIdentitySettings";
 import { ProjectKnowledgeSettings } from "./ProjectKnowledgeSettings";
+import { ProjectLearningSettings } from "./ProjectLearningSettings";
 
 type Draft = Pick<PublicationSettings, "publishPrompt" | "prMode" | "prPrompt">;
 
@@ -52,7 +53,7 @@ export function ProjectOptions({ project, projectUpdater }: { project: Project; 
 
   const changed = useMemo(() => settings && draft ? JSON.stringify(draft) !== JSON.stringify(draftOf(settings)) : false, [draft, settings]);
   const identity = <ProjectIdentitySettings key={`${project.id}:${project.name}:${project.path}:${project.icon ?? ""}:${project.color ?? ""}`} project={project} updater={projectUpdater} />;
-  const projectSettings = <>{identity}<ProjectKnowledgeSettings key={`${project.id}:${project.path}`} projectId={projectId} /><ProjectRepositoriesSettings projectId={projectId} projectPath={projectPath} /><ExecutionGrantsSettings projectId={projectId} /></>;
+  const projectSettings = <>{identity}<ProjectKnowledgeSettings key={`${project.id}:${project.path}`} projectId={projectId} /><ProjectLearningSettings key={`learning:${project.id}:${project.path}`} projectId={projectId} /><ProjectRepositoriesSettings projectId={projectId} projectPath={projectPath} /><ExecutionGrantsSettings projectId={projectId} /></>;
   if (error) return <div className="mx-auto w-full max-w-5xl space-y-5 p-6 pb-10">{projectSettings}<Alert variant="destructive"><AlertTriangle /><AlertTitle>Opções de publicação indisponíveis</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>;
   if (!settings || !draft) return <div className="mx-auto w-full max-w-5xl space-y-5 p-6 pb-10">{projectSettings}<OptionsSkeleton /></div>;
 
