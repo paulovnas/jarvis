@@ -40,8 +40,7 @@ describe("Home shell", () => {
     expect(accountsMock).toHaveBeenCalledTimes(2);
     expect(invokeMock).not.toHaveBeenCalledWith("reauthorize_provider_account", expect.anything());
   }, 15_000); // Full-shell startup and menu interaction need the same CI budget as navigation.
-  it("starts a supervised publication turn with the dedicated GitHub agent model", async () => {
-    const user = userEvent.setup();
+  it("keeps the composer and changed files without a publish shortcut when GitHub is configured", async () => {
     const chat = { ...emptyChat(), turns: [savedTurn()] };
     const original = invokeMock.getMockImplementation()!;
     invokeMock.mockImplementation(async (command, args, options) => {
@@ -51,19 +50,10 @@ describe("Home shell", () => {
       return original(command, args, options);
     });
     render(<Home />);
-    await user.click(await screen.findByRole("button", { name: "Publicar" }));
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("start_agent_turn", {
-      conversationId: "c1",
-      content: expect.stringContaining("todos os repositórios afetados em uma única proposta"),
-      options: { account: "openai-codex-economico", model: "gpt-5.6-luna", reasoning: "medium", mode: "build", workflow: "publication", approvalMode: "yolo" },
-    }));
-    const publicationCall = invokeMock.mock.calls.find(([command]) => command === "start_agent_turn");
-    const content = (publicationCall?.[1] as { content?: string } | undefined)?.content;
-    expect(content).toContain("um ou mais repositórios Git independentes");
-    expect(content).toContain("cada raiz Git que contenha alterações");
-    expect(content).toContain("todos os repositórios afetados em uma única proposta");
-    expect(content).toContain("envie authorization como null");
-    expect(content).toContain("Use jarvis_propose_publication");
+    expect(await screen.findByRole("button", { name: "Alterações em src/main.ts" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Mensagem" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Publicar" })).not.toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith("start_agent_turn", expect.anything());
   });
   it("keeps independent drafts through dashboard and empty-workspace navigation", async () => {
     const user = userEvent.setup();

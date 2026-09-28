@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { ChevronRight, ListChecks, Files, Users, ClipboardCheck, ListTodo, Sparkles } from "lucide-react";
+import { ChevronRight, ListChecks, Files, Users, ClipboardCheck, ListTodo } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -22,7 +22,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProjectExplorer } from "@/components/files/ProjectExplorer";
 import type { ProjectFilesController } from "@/hooks/use-project-files";
 import { DirectTasks } from "./DirectTasks";
-import { Hint } from "@/components/ui/hint";
 import { GithubRepositoriesPanel } from "./GithubRepositoriesPanel";
 import { executorOf } from "@/core/executors";
 
@@ -36,15 +35,13 @@ function ActivitySection({ title, icon, count, children }: { title: string; icon
   </Collapsible>;
 }
 
-export function Inspector({ library, chat, workflow, accounts = [], onCompact, onOpenKanban, onPublish, canPublish, compacting = false, pending = false, files: fileWorkspace }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; workflow?: WorkflowController; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; onOpenKanban?: (projectId: string) => void; onPublish?: () => Promise<boolean>; canPublish?: boolean; compacting?: boolean; pending?: boolean; files?: ProjectFilesController }) {
+export function Inspector({ library, chat, workflow, accounts = [], onCompact, onOpenKanban, compacting = false, pending = false, files: fileWorkspace }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; workflow?: WorkflowController; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; onOpenKanban?: (projectId: string) => void; compacting?: boolean; pending?: boolean; files?: ProjectFilesController }) {
   const { layout, updateLayout } = useDesktopLayout();
   const selectedChat = chat?.conversationId === library?.selection.conversationId ? chat : null;
   const [explorerVisited, setExplorerVisited] = useState(layout.inspectorTab === "explorer");
   const [githubVisited, setGithubVisited] = useState(layout.inspectorTab === "github");
-  const [publishing, setPublishing] = useState(false);
   const turns = selectedChat?.turns ?? [];
   const latestTurn = turns[turns.length - 1];
-  const hasPublishModel = canPublish ?? turns.some(turn => turn.options.workflow !== "publication");
   const liveFlow = selectedChat && workflow?.data?.conversationId === selectedChat.conversationId ? workflow.data.flow : undefined;
   const latestFlow = latestTurn?.options.workflow ?? (latestTurn?.options.mode === "plan" ? "planned" : "standard");
   const publishingFlow = latestFlow === "publication";
@@ -75,7 +72,6 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
             {changes.loading ? <div role="status" aria-label="Conferindo alterações" className="space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-4/5" /></div> : changes.error ? <p role="alert" className="text-xs text-destructive">{changes.error}</p> : files.length && selectedChat ? <ChangedFiles key={selectedChat.conversationId} files={files} conversationId={selectedChat.conversationId} projectPath={projectPath} /> : <p className="text-xs text-muted-foreground">Nenhuma alteração pendente.</p>}
             {tools.some(tool => tool.name === "bash" || tool.name.startsWith("mcp_")) && <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">Alterações feitas pelo terminal ou por MCPs ainda não entram nesta lista.</p>}
           </ActivitySection>
-          {selectedChat && files.length > 0 && <div className="border-b border-border px-2 py-3"><Hint content={!hasPublishModel ? "Configure o modelo do agente GitHub em Configurações → Agentes" : selectedChat.activeTurnId ? "Aguarde a execução atual terminar" : "Preparar uma publicação com o agente GitHub"}><Button variant="outline" className="w-full cursor-pointer gap-2 border-primary/25 bg-primary/5 text-primary hover:bg-primary/10" disabled={!onPublish || !hasPublishModel || !!selectedChat.activeTurnId || compacting || pending || publishing} onClick={() => { if (!onPublish || publishing) return; setPublishing(true); void onPublish().finally(() => setPublishing(false)); }}><Sparkles aria-hidden="true" className="size-4" />{publishing ? "Preparando…" : "Publicar"}</Button></Hint></div>}
           {selectedChat && workflow?.data?.conversationId === selectedChat.conversationId && (publishingFlow || !individualAgent && ["planned", "complete", "custom"].includes(workflow.data.flow)) && <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-onedark-yellow" />}>
             <WorkflowAgents workflow={workflow} conversationId={selectedChat?.conversationId} />
           </ActivitySection>}

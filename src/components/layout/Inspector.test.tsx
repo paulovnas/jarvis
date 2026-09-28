@@ -10,20 +10,14 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => { vi.mocked(invoke).mockResolvedValue([]); });
 
 describe("Inspector", () => {
-  it("offers AI-assisted publication only for an idle conversation with changes", async () => {
-    const publish = vi.fn().mockResolvedValue(true);
+  it("keeps changed files visible without a publication shortcut in idle and active chats", async () => {
     vi.mocked(invoke).mockImplementation(async command => command === "get_agent_file_changes" ? [{ path: "src/main.ts", additions: 1, deletions: 0, base: "conversation" }] : []);
     const chat = { ...emptyChat(), turns: [savedTurn()] };
-    const view = render(<Inspector library={populatedLibrary()} chat={chat} onPublish={publish} />);
-    const button = await screen.findByRole("button", { name: "Publicar" });
-    await userEvent.click(button);
-    expect(publish).toHaveBeenCalledTimes(1);
-    view.rerender(<Inspector library={populatedLibrary()} chat={{ ...chat, activeTurnId: chat.turns[0].id }} onPublish={publish} />);
-    expect(screen.getByRole("button", { name: "Publicar" })).toBeDisabled();
-  });
-  it("hides publication when the changed-files section has no items", () => {
-    const publish = vi.fn().mockResolvedValue(true);
-    render(<Inspector library={populatedLibrary()} chat={{ ...emptyChat(), turns: [savedTurn()] }} onPublish={publish} />);
+    const view = render(<Inspector library={populatedLibrary()} chat={chat} />);
+    expect(await screen.findByRole("button", { name: "Alterações em src/main.ts" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Publicar" })).not.toBeInTheDocument();
+    view.rerender(<Inspector library={populatedLibrary()} chat={{ ...chat, activeTurnId: chat.turns[0].id }} />);
+    expect(screen.getByRole("button", { name: "Alterações em src/main.ts" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Publicar" })).not.toBeInTheDocument();
   });
   it("shows the GitHub subagent only while publication is the latest conversation turn", () => {
