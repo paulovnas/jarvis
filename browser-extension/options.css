@@ -1,0 +1,12 @@
+@import "../src/index.css";
+
+/* Vite's extension root excludes the shared registry components from scanning. */
+@source "../src/components/ui";
+@source "./options.tsx";
+
+/* This is a browser page, not the fixed desktop viewport. */
+html, body, #root {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}

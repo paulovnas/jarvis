@@ -11,6 +11,9 @@ export default defineConfig({
     name: "extension-manifest",
     generateBundle() {
       this.emitFile({ type: "asset", fileName: "manifest.json", source: readFileSync(path.resolve(__dirname, "browser-extension/manifest.json"), "utf8") });
+      for (const size of [32, 64, 128]) {
+        this.emitFile({ type: "asset", fileName: `icons/${size}.png`, source: readFileSync(path.resolve(__dirname, `src-tauri/icons/${size}x${size}.png`)) });
+      }
     },
   }],
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
