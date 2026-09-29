@@ -128,13 +128,13 @@ describe("SettingsDialog provider accounts", () => {
     expect(skills).toHaveAttribute("aria-selected", "true");
     expect(providers).not.toHaveAttribute("data-active");
     expect(navigation).toBeVisible();
-    expect(screen.getAllByRole("tab")).toHaveLength(8);
+    expect(screen.getAllByRole("tab")).toHaveLength(9);
     await user.click(screen.getByRole("tab", { name: "Geral" }));
     expect(screen.queryByRole("region", { name: "Core" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Ferramentas" }));
     expect(await screen.findByRole("region", { name: "Core" })).toBeVisible();
     expect(screen.getByRole("tab", { name: "Ferramentas" })).toHaveAttribute("aria-selected", "true");
-    await user.keyboard("{ArrowUp}{ArrowUp}{ArrowUp}{Enter}");
+    await user.keyboard("{ArrowUp}{ArrowUp}{ArrowUp}{ArrowUp}{Enter}");
     expect(screen.getByRole("tab", { name: "Geral" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("heading", { name: "Geral", level: 2 })).toBeVisible();
   });
@@ -220,7 +220,7 @@ describe("SettingsDialog provider accounts", () => {
     const user = userEvent.setup();
     render(<SettingsDialog open onOpenChange={vi.fn()} />);
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Terminal", "Workspaces", "Ferramentas", "Workflow", "Provedores", "Skills", "MCPs"]);
+    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Terminal", "Navegador", "Workspaces", "Ferramentas", "Workflow", "Provedores", "Skills", "MCPs"]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
     expect(within(screen.getByRole("tabpanel", { name: "Geral" })).queryByRole("heading", { name: "Core" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Ferramentas" }));

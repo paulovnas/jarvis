@@ -14,6 +14,6 @@ export default defineConfig({
     maxWorkers: process.env.CI ? 2 : undefined,
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.ts"],
+    include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.ts", "browser-extension/**/*.test.{ts,tsx}"],
   },
 });

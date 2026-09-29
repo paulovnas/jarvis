@@ -87,6 +87,7 @@ Em **Configurações → Provedores → Ferramentas**, Web Search e Vision podem
 Outras extensões ficam disponíveis sob demanda:
 
 - **MCPs:** servidores locais ou remotos, teste de conexão, descoberta de ferramentas e ativação individual.
+- **Chromium extension:** optional browser integration with conversation-owned tabs, screenshots, console, network and scoped DevTools. Configure it in **Configurações → Navegador**; install externally through **Load unpacked**, with no store dependency. See [installation and capabilities](docs/CHROMIUM-EXTENSION.md).
 - **Skills:** instruções locais, pastas `.agents/skills` e atalhos simbólicos, Marketplace, detalhes em Markdown, atualização, ativação e remoção.
 - **Ferramentas dos agentes:** busca de arquivos, terminal, processos, navegador, LSP, Context-mode, patch, perguntas, tarefas, leitura de skills e MCPs. Cada agente personalizado pode receber somente as permissões necessárias.
 

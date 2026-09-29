@@ -26,6 +26,7 @@ beforeEach(() => {
   mocked.mockReset().mockImplementation(async (command, args) => {
     if (command === "get_browser_tabs") return structuredClone(stored);
     if (command === "set_browser_viewport") return;
+    if (command === "get_browser_extension_status") return { state: "connected", endpoint: "ws://127.0.0.1:17373/extension", profileLabel: "Chrome", extensionVersion: "1", error: null };
     if (command === "get_chat_attachment_image") return "data:image/png;base64,dGVzdA==";
     if (command === "browser_command") {
       const { request } = args as { request: { action: string; id?: string | null; url?: string } };
@@ -34,10 +35,45 @@ beforeEach(() => {
       if (request.action === "close") { stored.tabs = stored.tabs.filter(t => t.id !== request.id); if (stored.activeId === request.id) stored.activeId = null; }
       if (request.action === "console") return { logs: [{ level: "error", text: "Erro de teste", time: 1 }] };
       if (request.action === "screenshot") return { attachment: { id: "capture-1" } };
+      if (request.action === "discover") return { tabs: [{ id: "ext:epoch:2", title: "Página pessoal", url: "https://example.com", owned: false }, { id: "ext:epoch:3", title: "Outro chat", url: "https://example.org", owned: true }] };
+      if (request.action === "attach") { if (!stored.tabs.some(tab => tab.id === request.id)) stored.tabs.push({ id: request.id!, conversationId: "chat-1", title: "Página pessoal", url: "https://example.com", loading: false }); stored.activeId = request.id!; }
+      if (request.action === "network") return { requests: [{ id: "request-1", method: "GET", url: "https://example.com/api", status: 200 }], total: 1, offset: 0, limit: 25 };
       return {};
     }
     throw new Error(`Unexpected command: ${command}`);
   });
+});
+
+it("keeps external tabs external after changing the default and inspects network without creating a webview", async () => {
+  const tab = { id: "ext:epoch:1", conversationId: "chat-1", title: "Projeto externo", url: "https://example.com", loading: false };
+  stored = { tabs: [tab], activeId: tab.id, backend: "embedded" };
+  const user = userEvent.setup();
+  render(<Workspace />);
+  expect(await screen.findByRole("region", { name: "Página no navegador externo" })).toBeVisible();
+  const focus = screen.getByRole("button", { name: "Ver no navegador" });
+  await waitFor(() => expect(focus).toBeEnabled());
+  await user.click(focus);
+  expect(mocked).toHaveBeenCalledWith("browser_command", { conversationId: "chat-1", request: { action: "select", id: tab.id } });
+  await user.click(screen.getByRole("button", { name: "Reconectar controle da aba" }));
+  expect(mocked).toHaveBeenCalledWith("browser_command", { conversationId: "chat-1", request: { action: "attach", id: tab.id } });
+  await user.click(screen.getByRole("button", { name: "Mostrar rede" }));
+  expect(await screen.findByText("https://example.com/api")).toBeVisible();
+  await user.type(screen.getByRole("textbox", { name: "Filtrar requisições" }), "api");
+  await user.click(screen.getByRole("button", { name: "Atualizar rede" }));
+  await waitFor(() => expect(mocked).toHaveBeenCalledWith("browser_command", { conversationId: "chat-1", request: { action: "network", id: tab.id, filter: "api", offset: 0, limit: 25 } }));
+  expect(mocked.mock.calls.filter(([command]) => command === "set_browser_viewport")).toHaveLength(0);
+});
+
+it("discovers existing tabs without adoption until the user selects one, including with no open chat tabs", async () => {
+  stored = { tabs: [], activeId: null, backend: "extension" };
+  const user = userEvent.setup(); render(<Workspace />);
+  await user.click(await screen.findByRole("button", { name: "Vincular aba externa" }));
+  const personal = await screen.findByRole("button", { name: /Página pessoal/ });
+  expect(screen.getByRole("button", { name: /Outro chat/ })).toBeDisabled();
+  expect(mocked.mock.calls.filter(([command, args]) => command === "browser_command" && (args as { request: { action: string } }).request.action === "attach")).toHaveLength(0);
+  await user.click(personal);
+  await waitFor(() => expect(mocked).toHaveBeenCalledWith("browser_command", { conversationId: "chat-1", request: { action: "attach", id: "ext:epoch:2" } }));
+  expect(await screen.findByRole("tab", { name: "Página pessoal" })).toHaveAttribute("aria-selected", "true");
 });
 
 it("opens browser tabs beside permanent Chat, preserves drafts and closes an inactive tab", async () => {

@@ -28,8 +28,10 @@ export function useBrowser(conversationId: string, onActivate?: () => void, enab
     const token = generation.current;
     const update = () => { if (alive) void refresh().catch(cause => { if (alive) toast.error(libraryError(cause), { id: `browser-load:${conversationId}` }); }); };
     const subscription = listen<{ conversationId: string }>("browser:changed", event => { if (event.payload.conversationId === conversationId) update(); });
+    const settingsSubscription = listen("system:changed", update);
+    const connectionSubscription = listen("browser-extension:changed", update);
     update();
-    return () => { alive = false; token.version++; void subscription.then(unlisten => unlisten()); void invoke("set_browser_viewport", { conversationId, id: null, viewport: null }).catch(() => {}); };
+    return () => { alive = false; token.version++; for (const listener of [subscription, settingsSubscription, connectionSubscription]) void listener.then(unlisten => unlisten()).catch(() => {}); void invoke("set_browser_viewport", { conversationId, id: null, viewport: null }).catch(() => {}); };
   }, [conversationId, refresh, enabled]);
   const command = useCallback(async (request: BrowserRequest) => {
     try {

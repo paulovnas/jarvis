@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn browser_preferences_default_to_embedded_and_persist_without_pairing_credentials() {
+    use crate::agent::browser::{BrowserApplication, BrowserMode};
+    let legacy: Preferences = serde_json::from_str(r#"{"notifications":false}"#).unwrap();
+    assert_eq!(legacy.browser.mode, BrowserMode::Embedded);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("system.json");
+    let mut store = Store::open(path.clone()).unwrap();
+    let mut preferences = legacy;
+    preferences.browser.mode = BrowserMode::Extension;
+    preferences.browser.application = BrowserApplication::Brave;
+    store.save(preferences.clone()).unwrap();
+    assert_eq!(
+        Store::open(path).unwrap().preferences.browser,
+        preferences.browser
+    );
+    assert_eq!(
+        serde_json::to_value(preferences).unwrap()["browser"],
+        serde_json::json!({"mode":"extension","application":"brave"})
+    );
+    assert!(serde_json::from_str::<Preferences>(
+        r#"{"browser":{"mode":"extension","token":"secret"}}"#
+    )
+    .is_err());
+}
+
+#[test]
 fn claude_provider_preferences_survive_restart_and_preserve_legacy_choices() {
     let home = tempfile::tempdir().unwrap();
     let path = crate::data_dir::root(home.path()).join("system.json");
@@ -127,6 +153,7 @@ fn preferences_restore_all_modes_without_touching_layout() {
             },
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
+            browser: crate::agent::browser::BrowserPreferences::default(),
         };
         store.save(preferences.clone()).unwrap();
         assert_eq!(Store::open(path.clone()).unwrap().preferences, preferences);
@@ -158,6 +185,7 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
             response_language: ResponseLanguage::Spanish,
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
+            browser: crate::agent::browser::BrowserPreferences::default(),
         })
         .is_err());
     assert_eq!(store.preferences, Preferences::default());

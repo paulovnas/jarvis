@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "types": ["chrome", "vitest/globals"] },
+  "include": ["browser-extension/**/*.ts", "browser-extension/**/*.tsx"]
+}

@@ -32,7 +32,10 @@ fn read_only_agents_cannot_navigate_or_interact() {
             "browser_list",
             "browser_snapshot",
             "browser_console",
-            "browser_screenshot"
+            "browser_screenshot",
+            "browser_discover",
+            "browser_network",
+            "browser_response_body"
         ]
     );
     for tool in definitions(crate::agent::Mode::Build) {

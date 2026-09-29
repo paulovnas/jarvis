@@ -259,6 +259,7 @@ fn exempt(name: &str) -> bool {
             | "terminal_output"
             | "browser_snapshot"
             | "browser_console"
+            | "browser_network"
             | "hub_wait"
             | "hub_list"
     )

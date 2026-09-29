@@ -152,6 +152,7 @@ async fn check(
             Snapshot {
                 tabs: vec![tab.clone()],
                 active_id: Some(tab.id.clone()),
+                ..Snapshot::default()
             },
         );
         Ok(())

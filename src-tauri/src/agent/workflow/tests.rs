@@ -666,6 +666,9 @@ fn delegated_design_discovery_enforces_read_only_and_parent_questions_even_with_
         "browser_open",
         "browser_click",
         "browser_fill",
+        "browser_attach",
+        "browser_evaluate",
+        "browser_devtools",
     ] {
         assert!(!definitions.iter().any(|d| d["name"] == name));
         assert!(exec
@@ -691,6 +694,9 @@ fn delegated_design_discovery_enforces_read_only_and_parent_questions_even_with_
         "browser_snapshot",
         "browser_console",
         "browser_screenshot",
+        "browser_discover",
+        "browser_network",
+        "browser_response_body",
     ] {
         assert!(
             definitions.iter().any(|d| d["name"] == name),

@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Jarvis — navegador",
+  "description": "Conecte este navegador ao Jarvis para navegar e inspecionar páginas durante suas conversas.",
+  "version": "1.0.0",
+  "minimum_chrome_version": "125",
+  "permissions": ["debugger", "tabs", "storage", "alarms"],
+  "background": { "service_worker": "worker.js", "type": "module" },
+  "action": { "default_title": "Conectar ao Jarvis" },
+  "options_page": "options.html",
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; connect-src ws://127.0.0.1:*" }
+}

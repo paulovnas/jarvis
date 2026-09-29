@@ -9,6 +9,7 @@ import type { ProjectFilesController } from "@/hooks/use-project-files";
 import { FileIcon } from "./FileIcon";
 import type { BrowserController } from "@/hooks/use-browser";
 import { BrowserPanel } from "@/components/browser/BrowserPanel";
+import { BrowserDiscovery } from "@/components/browser/BrowserDiscovery";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { orderedItems } from "@/core/item-order";
 import { SortableItem, SortableList } from "@/components/layout/SortableList";
@@ -76,6 +77,7 @@ export function FileWorkspace({ files, browser, terminalLauncher, children }: { 
         {browser && browser.snapshot.tabs.length > 0 && <Hint content="Nova aba do navegador"><Button type="button" variant="ghost" size="icon" aria-label="Nova aba do navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-6 shrink-0 cursor-pointer"><Plus className="size-3.5" /></Button></Hint>}
       </TabsList></div>
       {terminalLauncher}
+      {browser?.snapshot.backend === "extension" && <BrowserDiscovery browser={browser} />}
     </div>
     <TabsContent value="chat" keepMounted inert={backgroundChat} className={`min-h-0 min-w-0 flex-1 flex-col ${backgroundChat ? "hidden" : "flex"}`}>{children}</TabsContent>
     {activeBrowser && browser && <TabsContent value={`browser:${activeBrowser.id}`} className="m-0 min-h-0 flex-1 overflow-hidden"><BrowserPanel key={activeBrowser.id} browser={browser} tab={activeBrowser} /></TabsContent>}

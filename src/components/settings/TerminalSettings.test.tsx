@@ -19,6 +19,7 @@ const initial: SystemSnapshot = {
     askUserTimeoutSeconds: 45,
     responseLanguage: "pt-BR",
     terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 },
+    browser: { mode: "embedded", application: "chrome" },
   },
   sleepInhibited: true,
   sleepError: null,

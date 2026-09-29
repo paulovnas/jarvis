@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowLeft, ArrowRight, Camera, Globe, RefreshCw, SquareTerminal } from "lucide-react";
+import { ArrowLeft, ArrowRight, Camera, ExternalLink, Globe, Network, RefreshCw, SquareTerminal } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,21 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { browserAddress, browserConsoleSchema, browserOccluded, type BrowserLog, type BrowserTab } from "@/core/browser";
 import { browserError as libraryError } from "@/core/browser";
 import type { BrowserController } from "@/hooks/use-browser";
+import { useBrowserExtensionStatus } from "@/hooks/use-browser-extension-status";
+import { BrowserNetwork } from "./BrowserNetwork";
+
+function ExternalViewport({ browser, tab }: { browser: BrowserController; tab: BrowserTab }) {
+  const { status, error } = useBrowserExtensionStatus();
+  const connected = status?.state === "connected";
+  return <section aria-label="Página no navegador externo" className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto bg-background p-6 text-center">
+    <Globe aria-hidden="true" className="size-8 text-onedark-cyan" />
+    <div className="max-w-sm min-w-0"><h3 className="text-sm font-medium">{tab.title || "Navegador externo"}</h3><p className="mt-2 text-xs leading-5 text-muted-foreground">A página permanece no seu navegador. Os agentes deste chat podem interagir com ela e consultar console e rede.</p></div>
+    <Badge variant="outline" className={connected ? "text-onedark-green" : "text-muted-foreground"}>{connected ? "Extensão conectada" : "Aguardando conexão"}</Badge>
+    {(browser.snapshot.extensionError || error || status?.error) && <p role="alert" className="max-w-md text-xs text-destructive">{browser.snapshot.extensionError ?? error ?? status?.error}</p>}
+    <div className="flex items-center gap-2"><Button variant="secondary" disabled={!connected} className="cursor-pointer" onClick={() => void browser.command({ action: "select", id: tab.id })}><ExternalLink className="size-3.5" />Ver no navegador</Button><Hint content="Reconectar o controle desta aba após fechar o DevTools"><Button variant="outline" size="icon" disabled={!connected} aria-label="Reconectar controle da aba" className="cursor-pointer" onClick={() => void browser.command({ action: "attach", id: tab.id })}><RefreshCw className="size-3.5" /></Button></Hint></div>
+    {!connected && <p className="max-w-sm text-xs leading-5 text-muted-foreground">Abra o navegador conectado ao Jarvis. Para configurar a extensão, acesse Configurações → Navegador.</p>}
+  </section>;
+}
 
 function NativeViewport({ browser, tab }: { browser: BrowserController; tab: BrowserTab }) {
   const element = useRef<HTMLDivElement>(null);
@@ -63,6 +78,8 @@ export function BrowserPanel({ browser, tab }: { browser: BrowserController; tab
   const [draft, setDraft] = useState({ url: tab.url, value: tab.url === "about:blank" ? "" : tab.url });
   const address = draft.url === tab.url ? draft.value : tab.url === "about:blank" ? "" : tab.url;
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const [networkOpen, setNetworkOpen] = useState(false);
+  const external = tab.id.startsWith("ext:");
   const [logs, setLogs] = useState<BrowserLog[]>([]);
   const [capture, setCapture] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -93,14 +110,16 @@ export function BrowserPanel({ browser, tab }: { browser: BrowserController; tab
       <Input ref={input} aria-label="Endereço do navegador" placeholder="URL ou localhost:3000" autoFocus={tab.url === "about:blank"} value={address} onChange={event => setDraft({ url: tab.url, value: event.target.value })} onFocus={event => event.target.select()} className="mx-1 h-7 min-w-0 flex-1 font-mono text-xs" />
       <Button type="submit" size="sm" variant="secondary" className="h-7 cursor-pointer px-2 text-xs">Ir</Button>
       <Hint content="Console"><Button type="button" variant={consoleOpen ? "secondary" : "ghost"} size="icon" aria-label="Mostrar console" aria-pressed={consoleOpen} className="size-7 cursor-pointer" onClick={() => { setConsoleOpen(!consoleOpen); if (!consoleOpen) void readConsole(); }}><SquareTerminal className="size-3.5" /></Button></Hint>
+      {external && <Hint content="Requisições de rede"><Button type="button" variant={networkOpen ? "secondary" : "ghost"} size="icon" aria-label="Mostrar rede" aria-pressed={networkOpen} className="size-7 cursor-pointer" onClick={() => setNetworkOpen(!networkOpen)}><Network className="size-3.5" /></Button></Hint>}
       <Hint content="Capturar página"><Button type="button" variant="ghost" size="icon" aria-label="Capturar página" disabled={capturing} className="size-7 cursor-pointer" onClick={() => void screenshot()}><Camera className="size-3.5" /></Button></Hint>
     </form>
-    <NativeViewport browser={browser} tab={tab} />
+    {external ? <ExternalViewport browser={browser} tab={tab} /> : <NativeViewport browser={browser} tab={tab} />}
     {consoleOpen && <section aria-label="Console da página" className="flex h-44 min-h-0 shrink-0 flex-col border-t border-border bg-sidebar">
       <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border px-3"><span className="text-xs font-medium">Console</span><Badge variant="secondary" className="font-mono text-[10px]">{logs.length}</Badge><span className="flex-1" /><Button type="button" variant="ghost" size="sm" className="h-6 cursor-pointer text-xs" onClick={() => void readConsole()}>Atualizar logs</Button></div>
       <div className="min-h-0 flex-1 overflow-auto px-3 py-2 font-mono text-[11px]">{logs.length ? logs.map((log, index) => <p key={`${log.time}:${index}`} className={`whitespace-pre-wrap break-all border-b border-border/50 py-1 ${log.level === "error" ? "text-destructive" : log.level === "warn" ? "text-onedark-yellow" : "text-muted-foreground"}`}><span className="mr-2 uppercase opacity-70">{log.level}</span>{log.text}</p>) : <p className="text-muted-foreground">Nenhum log registrado nesta página.</p>}</div>
     </section>}
-    <div className="flex h-6 shrink-0 items-center justify-between gap-3 border-t border-border px-3 text-[10px] text-muted-foreground"><span className="truncate font-mono">{tab.url === "about:blank" ? "Nova aba" : tab.url}</span><span className="shrink-0">{tab.loading ? "Carregando…" : "Navegador"}</span></div>
+    {external && networkOpen && <BrowserNetwork browser={browser} id={tab.id} />}
+    <div className="flex h-6 shrink-0 items-center justify-between gap-3 border-t border-border px-3 text-[10px] text-muted-foreground"><span className="truncate font-mono">{tab.url === "about:blank" ? "Nova aba" : tab.url}</span><span className="shrink-0">{tab.loading ? "Carregando…" : external ? "Extensão Chromium" : "Navegador"}</span></div>
     <Dialog open={capture !== null} onOpenChange={open => { if (!open) setCapture(null); }}><DialogContent className="flex max-h-[90vh] flex-col sm:max-w-5xl"><DialogHeader><DialogTitle>Captura do navegador</DialogTitle><DialogDescription>Imagem da área visível, salva nos anexos da conversa.</DialogDescription></DialogHeader>{capture && <img src={capture} alt="Captura da página aberta no navegador" className="min-h-0 w-full flex-1 object-contain" />}</DialogContent></Dialog>
   </div>;
 }

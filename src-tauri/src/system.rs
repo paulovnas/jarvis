@@ -200,6 +200,7 @@ pub struct Preferences {
     pub(crate) response_language: ResponseLanguage,
     pub(crate) terminal: TerminalPreferences,
     pub(crate) claude: crate::claude::ProviderPreferences,
+    pub(crate) browser: crate::agent::browser::BrowserPreferences,
 }
 
 impl Default for Preferences {
@@ -211,6 +212,7 @@ impl Default for Preferences {
             response_language: ResponseLanguage::default(),
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
+            browser: crate::agent::browser::BrowserPreferences::default(),
         }
     }
 }
@@ -358,6 +360,12 @@ pub struct SystemState {
     edit: tokio::sync::Mutex<()>,
 }
 impl SystemState {
+    pub(crate) fn browser_preferences(
+        &self,
+    ) -> Result<crate::agent::browser::BrowserPreferences, String> {
+        Ok(self.preferences()?.browser)
+    }
+
     pub(crate) fn claude_preferences(&self) -> Result<crate::claude::ProviderPreferences, String> {
         Ok(self.preferences()?.claude)
     }

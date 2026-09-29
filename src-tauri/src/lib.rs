@@ -73,6 +73,7 @@ pub fn run() {
         .manage(agent::knowledge::generation::KnowledgeJobs::default())
         .manage(agent::learning::capture::LearningJobs::default())
         .manage(agent::browser::BrowserState::default())
+        .manage(agent::browser::extension::ExtensionState::default())
         .manage(agent::dashboard::DashboardState::default())
         .manage(mcp::McpState::default())
         .manage(updater::UpdateState::default())
@@ -107,7 +108,9 @@ pub fn run() {
             desktop::setup(app)?;
             skills::setup(&home).map_err(|error| std::io::Error::other(error.message))?;
             core::health::start_monitor(app.handle());
-            system::setup(app.handle())
+            system::setup(app.handle())?;
+            agent::browser::extension::start_if_configured(app.handle());
+            Ok(())
         })
         .on_window_event(desktop::on_window_event)
         .invoke_handler(|invoke| {
@@ -117,6 +120,11 @@ pub fn run() {
                 agent::browser::get_browser_tabs,
                 agent::browser::browser_command,
                 agent::browser::set_browser_viewport,
+                agent::browser::extension::get_browser_extension_status,
+                agent::browser::extension::prepare_browser_extension,
+                agent::browser::extension::open_browser_extension_directory,
+                agent::browser::extension::revoke_browser_extension,
+                agent::browser::extension::open_browser_application,
                 greet,
                 agent::knowledge::get_project_knowledge,
                 agent::learning::get_project_learning,

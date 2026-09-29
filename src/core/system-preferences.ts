@@ -33,6 +33,11 @@ export const terminalPreferencesSchema = z.object({
   fontSize: z.number().int().min(9).max(32),
 });
 
+export const browserApplications = { chrome: "Google Chrome", edge: "Microsoft Edge", brave: "Brave", chromium: "Chromium" } as const;
+export const browserPreferencesSchema = z.object({ mode: z.enum(["embedded", "extension"]).default("embedded"), application: z.enum(["chrome", "edge", "brave", "chromium"]).default("chrome") });
+export const DEFAULT_BROWSER_PREFERENCES = browserPreferencesSchema.parse({});
+export type BrowserPreferences = z.infer<typeof browserPreferencesSchema>;
+
 export const systemSnapshotSchema = z.object({
   preferences: z.object({
     preventSleep: z.enum(["off", "active", "open"]),
@@ -40,6 +45,7 @@ export const systemSnapshotSchema = z.object({
     askUserTimeoutSeconds: z.number().int().min(1).max(3600),
     responseLanguage: z.enum(responseLanguageValues).default("pt-BR"),
     terminal: terminalPreferencesSchema.default(DEFAULT_TERMINAL_PREFERENCES),
+    browser: browserPreferencesSchema.default(DEFAULT_BROWSER_PREFERENCES),
     claude: claudeProviderPreferencesSchema.optional(),
   }),
   sleepInhibited: z.boolean(),

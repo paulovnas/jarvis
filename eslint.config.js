@@ -9,6 +9,7 @@ export default tseslint.config(
     // shadcn-generated code is lint-exempt (Registry code, not authored here)
     ignores: [
       "dist",
+      "browser-extension/dist",
       "src-tauri",
       "docs",
       "src/components/ui",

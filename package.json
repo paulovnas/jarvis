@@ -4,9 +4,10 @@
   "version": "1.7.5",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "bun run build:extension && vite",
     "db:generate": "drizzle-kit generate",
-    "build": "bun run typecheck && vite build",
+    "build": "bun run typecheck && bun run build:extension && vite build",
+    "build:extension": "vite build --config vite.extension.config.ts",
     "preview": "vite preview",
     "tauri": "bun scripts/tauri.ts",
     "release": "bun scripts/release.ts",
@@ -18,7 +19,7 @@
     "ipc:check": "cargo test --manifest-path src-tauri/Cargo.toml agent::protocol::tests::generated_contracts_are_current",
     "test:macos-keychain": "bun scripts/check-macos-keychain.ts",
     "lint": "eslint . --max-warnings 0",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && tsc -p tsconfig.extension.json",
     "check": "bun run lint && bun run typecheck && bun run test && bun run build && bun run ipc:check"
   },
   "dependencies": {
@@ -78,6 +79,7 @@
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.7",
+    "@types/chrome": "^0.3.4",
     "@types/node": "^26.4.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

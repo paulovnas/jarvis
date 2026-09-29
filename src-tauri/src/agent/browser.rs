@@ -1,9 +1,11 @@
 //! Conversation-owned native browser children. Page content has no application IPC authority.
 mod capture;
+pub(crate) mod extension;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(feature = "browser-probe")]
 pub(crate) mod probe;
+mod routing;
 #[cfg(test)]
 mod tests;
 mod tools;
@@ -17,6 +19,31 @@ use tauri::{Emitter, Manager, Webview, WebviewBuilder, WebviewUrl};
 pub(super) use tools::{definitions, execute, mutating};
 
 const MAX_TABS: usize = 12;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum BrowserMode {
+    #[default]
+    Embedded,
+    Extension,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum BrowserApplication {
+    #[default]
+    Chrome,
+    Edge,
+    Brave,
+    Chromium,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub(crate) struct BrowserPreferences {
+    pub mode: BrowserMode,
+    pub application: BrowserApplication,
+}
 fn error(message: &str) -> AgentError {
     AgentError::new("browser", message)
 }
@@ -36,6 +63,10 @@ pub struct BrowserTab {
 pub struct Snapshot {
     tabs: Vec<BrowserTab>,
     active_id: Option<String>,
+    #[serde(default)]
+    backend: BrowserMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    extension_error: Option<String>,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Catalog {
@@ -45,6 +76,8 @@ struct Catalog {
 pub struct BrowserState {
     catalog: Mutex<Option<Catalog>>,
     operations: tokio::sync::Mutex<()>,
+    external: Mutex<BTreeMap<String, Snapshot>>,
+    selected: Mutex<BTreeMap<String, Option<String>>>,
 }
 
 fn address(value: &str) -> Result<url::Url, AgentError> {
@@ -306,20 +339,43 @@ pub async fn get_browser_tabs(
     conversation_id: String,
 ) -> Result<Snapshot, AgentError> {
     require_conversation(&app, &conversation_id).await?;
-    app.state::<BrowserState>().snapshot(&app, &conversation_id)
+    routing::snapshot(&app, &conversation_id).await
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BrowserRequest {
     action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     element: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     x: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     y: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    new_window: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    filter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offset: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expression: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<Value>,
 }
 
 #[tauri::command]
@@ -329,7 +385,7 @@ pub async fn browser_command(
     request: BrowserRequest,
 ) -> Result<Value, AgentError> {
     require_conversation(&app, &conversation_id).await?;
-    command(&app, &conversation_id, request).await
+    routing::command(&app, &conversation_id, request).await
 }
 async fn command(
     app: &tauri::AppHandle,
@@ -538,6 +594,22 @@ pub(crate) async fn prune(app: &tauri::AppHandle) -> Result<(), AgentError> {
         if let Some(view) = app.get_webview(&label(&tab.id)) {
             let _ = view.close();
         }
+    }
+    state
+        .external
+        .lock()
+        .map_err(|_| AgentError::internal())?
+        .retain(|id, _| retained.contains(id));
+    state
+        .selected
+        .lock()
+        .map_err(|_| AgentError::internal())?
+        .retain(|id, _| retained.contains(id));
+    drop(_operation);
+    if extension::is_connected(app) {
+        // Cleanup only detaches external tabs; it must never close a user's browser tab.
+        // If offline, reconnect repeats this read-only catalog reconciliation.
+        let _ = extension::request(app, "", json!({"action":"prune","retained":retained})).await;
     }
     Ok(())
 }

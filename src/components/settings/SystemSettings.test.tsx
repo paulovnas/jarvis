@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 const call = vi.mocked(invoke);
 const initial: SystemSnapshot = {
-  preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30, responseLanguage: "pt-BR", terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 } },
+  preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30, responseLanguage: "pt-BR", terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 }, browser: { mode: "embedded", application: "chrome" } },
   sleepInhibited: false,
   sleepError: null,
   notificationError: null,
