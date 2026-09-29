@@ -84,7 +84,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     <section aria-label={isNewConversation ? "Nova conversa" : undefined} data-empty={isNewConversation} className="new-conversation-stage relative isolate grid min-h-0 flex-1 overflow-hidden">
       <div aria-hidden="true" className="new-conversation-glow pointer-events-none absolute left-1/2 top-1/2 h-64 w-[min(90%,56rem)] -translate-x-1/2 -translate-y-1/2" />
       <div className="conversation-transcript-slot relative z-10 flex min-h-0 overflow-hidden">
-        {!isNewConversation && <Transcript snapshot={snapshot} chat={chat} onLatestVisibility={onLatestVisibility} />}
+        {!isNewConversation && <Transcript snapshot={snapshot} chat={chat} projectId={context.project.id} onLatestVisibility={onLatestVisibility} />}
       </div>
       <div className="new-conversation-brand-slot relative z-10 min-h-0 overflow-hidden" aria-hidden={!isNewConversation}>
         <div className="new-conversation-brand flex flex-col items-center gap-1 pb-5 text-center">

@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { markdownSource } from "@/test/markdown-editor";
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -51,14 +52,14 @@ it("opens one section at a time and retains drafts without reloading visited sec
   await user.clear(screen.getByRole("textbox", { name: "Nome do projeto" }));
   await user.type(screen.getByRole("textbox", { name: "Nome do projeto" }), "Rascunho do nome");
   await user.click(within(navigation).getByRole("tab", { name: "Conhecimento" }));
-  const editor = await screen.findByRole("textbox", { name: "Produto · Markdown" });
+  const editor = await markdownSource(user, "Produto · Markdown");
   await user.type(editor, "\nProduct draft");
   expect(screen.queryByRole("textbox", { name: "Nome do projeto" })).not.toBeInTheDocument();
   await user.click(within(navigation).getByRole("tab", { name: "Geral" }));
   expect(screen.getByRole("textbox", { name: "Nome do projeto" })).toHaveValue("Rascunho do nome");
   await waitFor(() => expect(editor).not.toBeVisible());
   await user.keyboard("{ArrowDown}{Enter}");
-  expect(screen.getByRole("textbox", { name: "Produto · Markdown" })).toHaveValue("# Product\nProduct draft");
+  expect(await markdownSource(user, "Produto · Markdown")).toHaveValue("# Product\nProduct draft");
   expect(call.mock.calls.filter(([command]) => command === "get_project_knowledge")).toHaveLength(1);
 });
 
@@ -73,7 +74,7 @@ it("keeps project knowledge usable when publication settings cannot load", async
   await user.click(screen.getByRole("tab", { name: "Commit" }));
   expect(await screen.findByText("Opções de publicação indisponíveis")).toBeVisible();
   await user.click(screen.getByRole("tab", { name: "Conhecimento" }));
-  expect(await screen.findByRole("textbox", { name: "Produto · Markdown" })).toHaveValue("# Product");
+  expect(await markdownSource(user, "Produto · Markdown")).toHaveValue("# Product");
 });
 
 it("edits commit instructions without showing or overwriting legacy PR options", async () => {
@@ -85,15 +86,15 @@ it("edits commit instructions without showing or overwriting legacy PR options",
   const user = userEvent.setup();
   render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
   await user.click(screen.getByRole("tab", { name: "Commit" }));
-  expect(await screen.findByRole("textbox", { name: "Instrução de publicação" })).toHaveValue(settings.publishPrompt);
+  expect(await markdownSource(user, "Instrução de publicação")).toHaveValue(settings.publishPrompt);
   expect(screen.queryByRole("textbox", { name: "Instrução e template da PR" })).not.toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: "Comportamento de pull request" })).not.toBeInTheDocument();
   expect(screen.queryByText("Publicação assistida")).not.toBeInTheDocument();
-  await user.clear(screen.getByRole("textbox", { name: "Instrução de publicação" }));
-  await user.type(screen.getByRole("textbox", { name: "Instrução de publicação" }), "Create one focused commit.");
+  await user.clear(await markdownSource(user, "Instrução de publicação"));
+  await user.type(await markdownSource(user, "Instrução de publicação"), "Create one focused commit.");
   await user.click(screen.getByRole("tab", { name: "Geral" }));
   await user.click(screen.getByRole("tab", { name: "Commit" }));
-  expect(screen.getByRole("textbox", { name: "Instrução de publicação" })).toHaveValue("Create one focused commit.");
+  expect(await markdownSource(user, "Instrução de publicação")).toHaveValue("Create one focused commit.");
   await user.click(screen.getByRole("button", { name: "Salvar opções" }));
   await waitFor(() => expect(call).toHaveBeenCalledWith("save_project_publication_settings", { projectId: "p1", settings: { publishPrompt: "Create one focused commit.", prMode: "ask_pr", prPrompt: settings.prPrompt } }));
   expect(toast.success).toHaveBeenCalledWith("Opções de publicação salvas");
@@ -111,9 +112,9 @@ it("does not reuse a knowledge draft for a different project", async () => {
   const view = render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
   await user.type(screen.getByRole("textbox", { name: "Nome do projeto" }), " draft");
   await user.click(screen.getByRole("tab", { name: "Conhecimento" }));
-  await user.type(await screen.findByRole("textbox", { name: "Produto · Markdown" }), "\nDraft from the previous project");
+  await user.type(await markdownSource(user, "Produto · Markdown"), "\nDraft from the previous project");
   view.rerender(<ProjectOptions project={{ ...project, id: "p2", name: "Outro projeto" }} projectUpdater={projectUpdater} />);
-  expect(await screen.findByRole("textbox", { name: "Produto · Markdown" })).toHaveValue("# Outro produto");
+  expect(await markdownSource(user, "Produto · Markdown")).toHaveValue("# Outro produto");
   await user.click(screen.getByRole("tab", { name: "Geral" }));
   expect(screen.getByRole("textbox", { name: "Nome do projeto" })).toHaveValue("Outro projeto");
 });

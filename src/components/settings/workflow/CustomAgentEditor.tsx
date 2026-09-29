@@ -3,6 +3,7 @@ import { Route, Shuffle, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ExecutorModelPicker } from "@/components/chat/ExecutorModelPicker";
@@ -58,7 +59,7 @@ export function CustomAgentEditor({ initial, accounts, saving, onSave, onClose, 
             </fieldset>
             <fieldset disabled={saving} className="flex min-w-0 flex-col gap-4">
               <legend className="sr-only">Comportamento</legend>
-              <div className="flex min-h-60 flex-1 flex-col gap-2"><Label htmlFor="custom-agent-instructions">Instruções do agente</Label><Textarea id="custom-agent-instructions" className="min-h-60 flex-1 resize-y font-mono text-xs leading-5" value={agent.instructions} maxLength={16000} required placeholder="Descreva a especialidade, o objetivo e como o agente deve trabalhar." onChange={e => patch({ instructions: e.target.value })} /><p className="text-xs text-muted-foreground">Explique o objetivo, os limites e o resultado esperado.</p></div>
+              <div className="flex min-h-60 flex-1 flex-col gap-2"><Label htmlFor="custom-agent-instructions">Instruções do agente</Label><MarkdownEditor id="custom-agent-instructions" label="Instruções do agente" className="flex-1" contentClassName="min-h-60" value={agent.instructions} maxLength={16000} disabled={saving} placeholder="Descreva a especialidade, o objetivo e como o agente deve trabalhar." onChange={instructions => patch({ instructions })} /><p className="text-xs text-muted-foreground">Explique o objetivo, os limites e o resultado esperado.</p></div>
             </fieldset>
           </div>
           </TabsContent>

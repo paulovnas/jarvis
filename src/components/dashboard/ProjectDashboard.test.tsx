@@ -66,7 +66,7 @@ describe("Project Dashboard", () => {
     await user.click(screen.getByRole("tab", { name: "Opções" }));
     expect(screen.getByRole("textbox", { name: "Nome do projeto" })).toHaveValue("Jarvis");
     await user.click(screen.getByRole("tab", { name: "Commit" }));
-    expect(await screen.findByRole("textbox", { name: "Instrução de publicação" })).toHaveValue("Review changes");
+    expect(await screen.findByRole("textbox", { name: "Instrução de publicação" })).toHaveTextContent("Review changes");
     expect(call).toHaveBeenCalledWith("get_project_publication_settings", { projectId: "p1" });
   });
   it("reports an unavailable project directory without losing the dashboard", async () => {
@@ -131,14 +131,14 @@ describe("Project Dashboard", () => {
     call.mockRejectedValueOnce({ message: "Banco ocupado" });
     await user.click(screen.getByRole("button", { name: "Comentar" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Banco ocupado");
-    expect(input).toHaveValue("Validado no projeto");
+    expect(input).toHaveTextContent("Validado no projeto");
     let resolve!: (value: unknown) => void;
     call.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     await user.dblClick(screen.getByRole("button", { name: "Comentar" }));
     expect(call.mock.calls.filter(([command]) => command === "add_bead_comment")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Fechar detalhes" })).toBeDisabled();
     await act(async () => resolve({ id: "1", text: "Validado no projeto", author: "Você", created_at: "2026-09-05T15:00:00Z" }));
-    await waitFor(() => expect(input).toHaveValue(""));
+    await waitFor(() => expect(input).not.toHaveTextContent("Validado no projeto"));
     expect(screen.getByText("Validado no projeto")).toBeInTheDocument();
     expect(changed).toHaveBeenCalled();
   });

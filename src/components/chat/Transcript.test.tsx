@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +8,8 @@ import { populatedLibrary } from "@/test/library-fixtures";
 import { useChat } from "@/hooks/use-chat";
 import { ChatArea } from "./ChatArea";
 import type { HistoryPage } from "@/core/chat";
-import { clearChatStore } from "@/core/chat-store";
+import type { LearningSnapshot } from "@/core/project-learning";
+import { clearChatStore, updateChatSnapshot } from "@/core/chat-store";
 import { TurnBody, type LatestVisibility } from "./Transcript";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -31,6 +32,26 @@ describe("lazy transcript navigation", () => {
     await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
     expect(screen.getByText("Ponytail")).toBeVisible();
     expect(screen.getByText(/Orientações aplicadas/)).toBeVisible();
+  });
+  it("shows a background learning result below the correct answer without reopening the chat", async () => {
+    let changed: EventCallback<string> | undefined;
+    vi.mocked(listen).mockImplementation(async (event, callback) => {
+      if (event === "project:learning-changed") changed = callback as EventCallback<string>;
+      return () => {};
+    });
+    const learned: LearningSnapshot = { enabled: true, revision: 0, pending: 0, notice: null, lessons: [] };
+    call.mockImplementation(async command => command === "get_project_learning" ? structuredClone(learned) : { ...emptyChat(), turns: [savedTurn()] });
+    const user = userEvent.setup();
+    render(<Harness />);
+    await screen.findByRole("button", { name: "Copiar resposta" });
+    await waitFor(() => expect(call).toHaveBeenCalledWith("get_project_learning", { projectId: populatedLibrary().selection.projectId }));
+    expect(screen.queryByRole("button", { name: /Aprendizados registrados/ })).not.toBeInTheDocument();
+    learned.lessons.push({ id: "spacing", scope: ".", content: "Revise o espaçamento entre botões e badges.", check: "", topics: ["layout"], status: "active", origin: "feedback", revision: 1, updatedAt: 1, evidence: [{ conversationId: "c1", messageId: "turn1", excerpt: "Sempre revise o espaçamento", createdAt: 1 }] });
+    await act(async () => changed?.({ event: "project:learning-changed", id: 1, payload: populatedLibrary().selection.projectId! }));
+    const trigger = await screen.findByRole("button", { name: /Aprendizados registrados/ });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await user.click(trigger);
+    expect(screen.getByText(learned.lessons[0].content)).toBeVisible();
   });
   it("reports reading only at the latest messages and clears visibility when leaving", async () => {
     call.mockResolvedValue({ ...emptyChat(), ...page(80) });
@@ -63,6 +84,37 @@ describe("lazy transcript navigation", () => {
     render(<Harness />);
     await screen.findByText("Resposta 99");
     expect(screen.queryByRole("navigation", { name: "Navegar pela conversa" })).not.toBeInTheDocument();
+  });
+  it("starts the topic rail at the latest entry and preserves browsing until interaction ends", async ({ onTestFinished }) => {
+    onTestFinished(() => { vi.restoreAllMocks(); });
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(1200);
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(240);
+    call.mockResolvedValue({ ...emptyChat(), ...page(80) });
+    const user = userEvent.setup();
+    render(<Harness />);
+    const rail = await screen.findByRole("navigation", { name: "Navegar pela conversa" });
+    expect(rail.scrollTop).toBe(960);
+    const addTopic = () => act(() => {
+      updateChatSnapshot("c1", current => {
+        if (!current) return current;
+        const entries = current.navigation ?? [];
+        const index = (entries[entries.length - 1]?.index ?? -1) + 1;
+        return { ...current, navigation: [...entries, { id: `t${index}`, index, createdAt: 1, user: `Pedido ${index}`, assistant: "" }] };
+      });
+    });
+    await user.hover(rail);
+    rail.scrollTop = 200;
+    fireEvent.scroll(rail);
+    addTopic();
+    expect(rail.scrollTop).toBe(200);
+    const topic = screen.getByRole("button", { name: "Ir para interação 1: Pedido 0" });
+    act(() => topic.focus());
+    await user.unhover(rail);
+    addTopic();
+    expect(rail.scrollTop).toBe(200);
+    act(() => topic.blur());
+    addTopic();
+    expect(rail.scrollTop).toBe(960);
   });
   it("ignores elastic overscroll but loads older messages on a real upward scroll", async () => {
     call.mockImplementation(async command => command === "get_chat_history" ? page(60) : { ...emptyChat(), ...page(80) });

@@ -12,6 +12,8 @@ import { UserMessageBubble } from "./UserMessageBubble";
 import { CompactionMarker } from "./CompactionMarker";
 import { executionDuration, useRunningClock } from "@/hooks/use-running-clock";
 import { executionLabel } from "@/core/executors";
+import type { ProjectLesson } from "@/core/project-learning";
+import { useChatLearning } from "@/hooks/use-chat-learning";
 
 function retryableTurn(turn: AgentTurn): boolean {
   if (!turn.error || (turn.status !== "error" && turn.status !== "interrupted")) return false;
@@ -21,7 +23,7 @@ function retryableTurn(turn: AgentTurn): boolean {
     || flow === "custom";
 }
 
-export const TurnBody = memo(function TurnBody({ turn, conversationId, onRetry, retrying = false }: { turn: AgentTurn; conversationId?: string; onRetry?: (turnId: string) => void; retrying?: boolean }) {
+export const TurnBody = memo(function TurnBody({ turn, conversationId, lessons, onRetry, retrying = false }: { turn: AgentTurn; conversationId?: string; lessons?: ProjectLesson[]; onRetry?: (turnId: string) => void; retrying?: boolean }) {
   const running = turn.status === "running";
   const now = useRunningClock(running && turn.activeSince !== null);
   const durationMs = executionDuration(turn.createdAt, turn.durationMs, running, now, turn.activeSince);
@@ -34,8 +36,10 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId, onRetry, 
   const latestText = turn.steps[turn.steps.length - 1]?.text ?? "";
   const repeatedError = turn.error?.message.trim() === latestText.trim();
   const exportFileName = `Resposta-Jarvis-${new Date(turn.createdAt).toISOString().slice(0, 16).replace("T", "-").replace(":", "-")}.md`;
+  const sources = new Set([turn.id, ...(turn.auxiliaryMessages?.map(message => message.id) ?? [])]);
   return <AssistantMessageTurn onRetry={onRetry && retryableTurn(turn) ? () => onRetry(turn.id) : undefined} retrying={retrying} message={{
     id: turn.id, role: "assistant", content: running || repeatedError ? "" : latestText, timestamp,
+    lessons: lessons?.filter(lesson => lesson.evidence.some(source => source.conversationId === conversationId && sources.has(source.messageId))),
     model: executionLabel(turn.options), streaming: running,
     work: running || turn.auxiliaryMessages?.length || turn.steps.some((step, index) => step.summary || step.tools.length || step.coreActivities?.length || (step.text && index < turn.steps.length - 1)) ? {
       auxiliaryMessages: turn.auxiliaryMessages,
@@ -50,9 +54,17 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId, onRetry, 
 });
 
 function HistoryRail({ entries, total, active, disabled, jump }: { entries: HistoryExcerpt[]; total: number; active: number; disabled: boolean; jump: (index: number) => void }) {
+  const rail = useRef<HTMLElement>(null);
+  const latest = entries[entries.length - 1]?.id;
+  useLayoutEffect(() => {
+    const element = rail.current;
+    if (element && !element.matches(":hover, :focus-within")) {
+      element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    }
+  }, [entries.length, latest]);
   if (entries.length < 10) return null;
   const selected = [...entries].reverse().find(entry => entry.index <= active)?.id;
-  return <nav aria-label="Navegar pela conversa" style={{ maxHeight: `min(calc(100% - 32px), ${entries.length * Math.max(8, 18 - entries.length / 4)}px)` }} className="group/rail absolute top-1/2 left-0 z-10 flex w-3.5 -translate-y-1/2 flex-col items-center overflow-y-auto transition-[width] hover:w-7 focus-within:w-7 motion-reduce:transition-none">
+  return <nav ref={rail} aria-label="Navegar pela conversa" style={{ maxHeight: `min(calc(100% - 32px), ${entries.length * Math.max(8, 18 - entries.length / 4)}px)` }} className="no-scrollbar group/rail absolute top-1/2 left-0 z-10 flex w-3.5 -translate-y-1/2 flex-col items-center overflow-y-auto overscroll-y-contain transition-[width] hover:w-7 focus-within:w-7 motion-reduce:transition-none">
     <TooltipProvider delay={150}>{entries.map(entry => <Tooltip key={entry.id}>
       <TooltipTrigger render={<Button variant="ghost" size="icon" />} disabled={disabled} aria-label={`Ir para interação ${entry.index + 1}: ${entry.user}`} aria-current={selected === entry.id ? "location" : undefined} onClick={() => jump(entry.index)} className="group h-4 min-h-2 w-full shrink cursor-pointer rounded-sm px-0 py-1 hover:bg-primary/10 focus-visible:bg-primary/10">
         <span aria-hidden="true" className={`block h-px rounded-full transition-[width,background-color] group-hover/rail:w-3 group-focus-within/rail:w-3 group-hover:w-5! group-focus-visible:w-5! motion-reduce:transition-none ${selected === entry.id ? "w-2 bg-primary shadow-[0_0_6px_#61afef66]" : "w-1 bg-muted-foreground/45 group-hover:bg-foreground"}`} />
@@ -68,7 +80,8 @@ function HistoryRail({ entries, total, active, disabled, jump }: { entries: Hist
 
 export type LatestVisibility = (conversationId: string, visible: boolean) => void;
 
-export function Transcript({ snapshot, chat, onLatestVisibility }: { snapshot: ChatSnapshot; chat: ChatController; onLatestVisibility?: LatestVisibility }) {
+export function Transcript({ snapshot, chat, projectId, onLatestVisibility }: { snapshot: ChatSnapshot; chat: ChatController; projectId?: string; onLatestVisibility?: LatestVisibility }) {
+  const lessons = useChatLearning(projectId, snapshot);
   const root = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const inFlight = useRef(false);
@@ -158,7 +171,7 @@ export function Transcript({ snapshot, chat, onLatestVisibility }: { snapshot: C
         {snapshot.turns.map((turn, index) => <div key={turn.id} data-turn-id={turn.id} data-turn-index={window.start + index} className="[overflow-anchor:none]">
           <UserMessageBubble message={{ id: turn.id, role: "user", content: turn.user, parts: turn.parts, timestamp: new Date(turn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && !event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
-          <TurnBody turn={turn} conversationId={snapshot.conversationId} retrying={chat.retryingTurnIds.has(turn.id)} onRetry={!hasNewer && !snapshot.activeTurnId && !chat.pending && !chat.pendingTurn && window.start + index === window.total - 1 ? id => { void chat.retryTurn(id); } : undefined} />
+          <TurnBody turn={turn} conversationId={snapshot.conversationId} lessons={lessons} retrying={chat.retryingTurnIds.has(turn.id)} onRetry={!hasNewer && !snapshot.activeTurnId && !chat.pending && !chat.pendingTurn && window.start + index === window.total - 1 ? id => { void chat.retryTurn(id); } : undefined} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
         </div>)}
         {chat.pendingTurn && <div data-turn-id={chat.pendingTurn.id} data-turn-index={window.total} className="[overflow-anchor:none]">

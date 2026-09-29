@@ -4,6 +4,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -54,7 +55,7 @@ export function CustomFlowEditor({ initial, agents, saving, creating, onSave, on
         <div className="space-y-3 rounded-md border border-border bg-card p-3">
           <ChoiceField label="Editar bloco" value={selected ?? "none"} options={[{ value: "none", label: "Selecione um bloco no canvas" }, ...stepOptions]} onChange={value => setSelected(value === "none" ? null : value)} />
           {selectedStep && <><div className="grid gap-3 sm:grid-cols-3"><ChoiceField label="Agente vinculado" value={selectedStep.agentId} disabled={saving} options={agentOptions} onChange={agentId => patchStep({ agentId })} /><ChoiceField label="Ao concluir" value={selectedStep.next ?? "end"} disabled={saving} options={[{ value: "end", label: "Finalizar fluxo" }, ...stepOptions.filter(s => s.value !== selected)]} onChange={value => patchStep({ next: value === "end" ? null : value })} /><ChoiceField label="Ao solicitar correção" value={selectedStep.onRework ?? "stop"} disabled={saving} options={[{ value: "stop", label: "Parar e informar" }, ...stepOptions]} onChange={value => patchStep({ onRework: value === "stop" ? null : value })} /></div>
-            <div className="space-y-1.5"><Label htmlFor="custom-step-instructions">Instruções desta etapa (opcional)</Label><Textarea id="custom-step-instructions" className="min-h-16 font-mono text-xs" value={selectedStep.instructions} maxLength={8000} disabled={saving} onChange={e => patchStep({ instructions: e.target.value })} /></div>
+            <div className="space-y-1.5"><Label htmlFor="custom-step-instructions">Instruções desta etapa (opcional)</Label><MarkdownEditor key={selectedStep.id} id="custom-step-instructions" label="Instruções desta etapa (opcional)" contentClassName="min-h-24 max-h-64" value={selectedStep.instructions} maxLength={8000} disabled={saving} onChange={instructions => patchStep({ instructions })} /></div>
             <div className="flex justify-between gap-2"><Button variant="outline" size="sm" className="cursor-pointer text-xs" disabled={saving || selected === flow.entry} onClick={() => patch({ entry: selectedStep.id })}><Flag />Marcar como início</Button><Button variant="ghost" size="sm" className="cursor-pointer text-xs text-destructive" disabled={saving} onClick={remove}><Trash2 />Remover bloco</Button></div>
           </>}
         </div>

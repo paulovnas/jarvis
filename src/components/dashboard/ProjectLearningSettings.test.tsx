@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { markdownSource } from "@/test/markdown-editor";
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import type { LearningSnapshot } from "@/core/project-learning";
@@ -83,8 +84,8 @@ it("previews imports and promotion without silently rewriting maintained rules",
   await waitFor(() => expect(call).toHaveBeenCalledWith("import_project_learning", { projectId: "p1", content: expect.stringContaining('"scope": "frontend"') }));
   await user.click(screen.getByRole("button", { name: /Exiba o label/ }));
   await user.click(screen.getByRole("button", { name: "Incorporar às regras" }));
-  expect(await screen.findByRole("textbox", { name: "Atual" })).toHaveValue("# Regras existentes");
-  expect(screen.getByRole("textbox", { name: "Após incorporar" })).toHaveValue("# Regras existentes\n\n- Exiba o label no Select do projeto. Verificação: Verificar o texto visível.\n");
+  expect(await markdownSource(user, "Atual")).toHaveValue("# Regras existentes");
+  expect(await markdownSource(user, "Após incorporar")).toHaveValue("# Regras existentes\n\n- Exiba o label no Select do projeto. Verificação: Verificar o texto visível.\n");
   expect(call).not.toHaveBeenCalledWith("save_project_knowledge", expect.anything());
   await user.click(screen.getByRole("button", { name: "Salvar regras" }));
   await waitFor(() => expect(call).toHaveBeenCalledWith("save_project_knowledge", { projectId: "p1", document: expect.objectContaining({ revision: "original", essential: "Respeite o escopo" }) }));

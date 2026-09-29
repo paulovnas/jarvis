@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { ExecutorModelPicker } from "@/components/chat/ExecutorModelPicker";
 import { accountGroups } from "@/components/settings/workflow/workflow-models";
 import { BootstrapResourcesContext } from "@/core/bootstrap-context";
@@ -177,7 +178,7 @@ export function ProjectKnowledgeSettings({ projectId }: { projectId: string }) {
             <p className="break-all font-mono text-[10px] text-muted-foreground">{document.path}</p>
           </div>
           {document.error && <Alert variant="destructive"><AlertDescription>{document.error} Corrija o arquivo e recarregue os documentos.</AlertDescription></Alert>}
-          <Textarea id="knowledge-content" value={document.content} disabled={saving || !!document.error} onChange={event => edit({ content: event.target.value })} spellCheck={false} className="min-h-64 resize-y font-mono text-xs leading-5" placeholder="Escreva o conhecimento, vincule um documento existente ou gere um rascunho com IA." />
+          <MarkdownEditor key={`${projectId}:${key}`} id="knowledge-content" label={`${KNOWLEDGE_KINDS[kind].label} · Markdown`} value={document.content} disabled={saving || !!document.error} onChange={content => edit({ content })} contentClassName="min-h-64" placeholder="Escreva o conhecimento, vincule um documento existente ou gere um rascunho com IA." />
           {tooLarge && <p role="alert" className="text-xs text-destructive">O documento excede 64 KiB. Reduza o conteúdo antes de salvar.</p>}
           {kind === "rules" && <div className="space-y-2">
             <Label htmlFor="knowledge-essential">Regras essenciais</Label>
@@ -189,7 +190,7 @@ export function ProjectKnowledgeSettings({ projectId }: { projectId: string }) {
           {(changed || !!document.sources.length) && <Collapsible>
             <CollapsibleTrigger className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground"><ChevronDown className="size-3.5" />Documento salvo e fontes</CollapsibleTrigger>
             <CollapsibleContent className="space-y-3 pt-3">
-              {changed && <Textarea aria-label="Documento salvo" value={saved?.content ?? ""} readOnly className="min-h-32 font-mono text-xs" />}
+              {changed && <MarkdownEditor label="Documento salvo" value={saved?.content ?? ""} readOnly contentClassName="min-h-32" />}
               {!!document.sources.length && <ul className="space-y-1 break-all font-mono text-[10px] text-muted-foreground">{document.sources.map(source => <li key={source.path}>{source.path}</li>)}</ul>}
             </CollapsibleContent>
           </Collapsible>}
@@ -217,8 +218,8 @@ export function ProjectKnowledgeSettings({ projectId }: { projectId: string }) {
     <Dialog open={!!preview} onOpenChange={open => { if (!open) setPreview(null); }}>
       <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader><DialogTitle>{preview?.title}</DialogTitle><DialogDescription>Confira fatos, inferências e fontes. Este conteúdo ainda não está salvo.{changed ? " Usar este rascunho substituirá o texto atual do editor." : ""}</DialogDescription></DialogHeader>
-        <Textarea aria-label="Prévia do rascunho" value={preview?.content ?? ""} onChange={event => setPreview(current => current ? { ...current, content: event.target.value } : current)} className="min-h-72 font-mono text-xs leading-5" />
-        <Collapsible><CollapsibleTrigger className="flex cursor-pointer items-center gap-2 text-xs"><ChevronDown className="size-3.5" />Comparar com o editor atual</CollapsibleTrigger><CollapsibleContent className="pt-3"><Textarea aria-label="Texto atual do editor" readOnly value={document?.content ?? ""} className="min-h-32 font-mono text-xs" /></CollapsibleContent></Collapsible>
+        <MarkdownEditor label="Prévia do rascunho" value={preview?.content ?? ""} onChange={content => setPreview(current => current ? { ...current, content } : current)} contentClassName="min-h-72" />
+        <Collapsible><CollapsibleTrigger className="flex cursor-pointer items-center gap-2 text-xs"><ChevronDown className="size-3.5" />Comparar com o editor atual</CollapsibleTrigger><CollapsibleContent className="pt-3"><MarkdownEditor label="Texto atual do editor" readOnly value={document?.content ?? ""} contentClassName="min-h-32" /></CollapsibleContent></Collapsible>
         <DialogFooter><Button variant="outline" onClick={() => setPreview(null)}>Descartar prévia</Button><Button onClick={() => { if (preview) { edit({ content: preview.content, revision: preview.revision, sources: preview.sources, staleSources: [] }); setPreview(null); } }}>Usar no editor</Button></DialogFooter>
       </DialogContent>
     </Dialog>

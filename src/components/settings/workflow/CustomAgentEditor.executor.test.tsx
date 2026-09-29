@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { markdownSource } from "@/test/markdown-editor";
 import { expect, it, vi } from "vitest";
 import { CustomAgentEditor } from "./CustomAgentEditor";
 import { customAgent } from "@/test/workflow-fixtures";
@@ -20,7 +21,7 @@ it.each(["solo", "mixed", "flow_only"] as const)("saves, restores and removes th
   expect(settings.getByRole("textbox", { name: "Nome" })).toHaveValue(initial.name);
   expect(settings.getByRole("button", { name: "Modelo do agente customizado" })).toBeVisible();
   expect(settings.getByRole("button", { name })).toBeVisible();
-  expect(within(screen.getByRole("group", { name: "Comportamento" })).getByRole("textbox", { name: "Instruções do agente" })).toHaveValue(initial.instructions);
+  expect(await markdownSource(user, "Instruções do agente")).toHaveValue(initial.instructions);
   expect(screen.getByRole("button", { name })).toHaveTextContent("Nenhum");
   await user.click(screen.getByRole("button", { name }));
   (await screen.findByRole("menuitem", { name: "backup" })).focus(); await user.keyboard("{ArrowRight}");

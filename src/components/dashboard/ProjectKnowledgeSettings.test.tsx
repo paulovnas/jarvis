@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { markdownSource } from "@/test/markdown-editor";
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import type { ExecutionSelection } from "@/core/executors";
@@ -42,9 +43,11 @@ beforeEach(() => {
 it("preserves drafts across category and repository changes and saves only the selected scope", async () => {
   const user = userEvent.setup();
   render(<ProjectKnowledgeSettings projectId="p1" />);
-  const editor = await screen.findByRole("textbox", { name: "Produto · Markdown" });
+  const editor = await markdownSource(user, "Produto · Markdown");
   await user.clear(editor); await user.type(editor, "# Produto editado");
   await user.click(screen.getByRole("tab", { name: "Regras" }));
+  expect(screen.getByRole("button", { name: "Desfazer" })).toBeDisabled();
+  expect(screen.getByRole("heading", { name: ". rules" })).toBeVisible();
   await user.type(screen.getByRole("textbox", { name: "Regras essenciais" }), "Preserve os dados.");
   await user.click(screen.getByRole("combobox", { name: "Escopo do conhecimento" }));
   await user.click(await screen.findByRole("option", { name: "frontend" }));
@@ -56,13 +59,13 @@ it("preserves drafts across category and repository changes and saves only the s
   await user.click(await screen.findByRole("option", { name: "Projeto inteiro · compartilhado" }));
   expect(screen.getByRole("textbox", { name: "Regras essenciais" })).toHaveValue("Preserve os dados.");
   await user.click(screen.getByRole("tab", { name: "Produto" }));
-  expect(screen.getByRole("textbox", { name: "Produto · Markdown" })).toHaveValue("# Produto editado");
+  expect(await markdownSource(user, "Produto · Markdown")).toHaveValue("# Produto editado");
 });
 
 it("generates a reviewable draft without overwriting edits or saving automatically", async () => {
   const user = userEvent.setup();
   render(<ProjectKnowledgeSettings projectId="p1" />);
-  const editor = await screen.findByRole("textbox", { name: "Produto · Markdown" });
+  const editor = await markdownSource(user, "Produto · Markdown");
   expect(screen.getByText(/O processo pode demorar; você pode cancelar a geração a qualquer momento/)).toBeVisible();
   await user.type(editor, " manual");
   await user.click(screen.getByRole("button", { name: "Modelo de teste" }));
@@ -70,7 +73,7 @@ it("generates a reviewable draft without overwriting edits or saving automatical
   expect(await screen.findByRole("dialog", { name: "Rascunho gerado" })).toBeVisible();
   expect(editor).toHaveValue("# . product manual");
   expect(call).not.toHaveBeenCalledWith("save_project_knowledge", expect.anything());
-  await user.type(screen.getByRole("textbox", { name: "Prévia do rascunho" }), " revisado");
+  await user.type(await markdownSource(user, "Prévia do rascunho"), " revisado");
   await user.click(screen.getByRole("button", { name: "Usar no editor" }));
   expect(editor).toHaveValue("# Produto gerado revisado");
   await user.click(screen.getByRole("button", { name: "Salvar conhecimento" }));
@@ -82,7 +85,7 @@ it("cancels generation and ignores its late result, including for Claude", async
   generate = () => new Promise(done => { resolve = done; });
   const user = userEvent.setup();
   render(<ProjectKnowledgeSettings projectId="p1" />);
-  const editor = await screen.findByRole("textbox", { name: "Produto · Markdown" });
+  const editor = await markdownSource(user, "Produto · Markdown");
   await user.click(screen.getByRole("button", { name: "Claude de teste" }));
   await user.click(screen.getByRole("button", { name: "Analisar e gerar produto" }));
   expect(call).toHaveBeenCalledWith("generate_project_knowledge", expect.objectContaining({ request: expect.objectContaining({ choice: { executor: "claude", account: "", model: "sonnet", reasoning: null } }) }));
@@ -97,7 +100,7 @@ it("cancels generation and ignores its late result, including for Claude", async
 it("preserves edits after a revision conflict and requires an explicit choice to overwrite the new version", async () => {
   const user = userEvent.setup();
   render(<ProjectKnowledgeSettings projectId="p1" />);
-  const editor = await screen.findByRole("textbox", { name: "Produto · Markdown" });
+  const editor = await markdownSource(user, "Produto · Markdown");
   await user.type(editor, " edição local");
   failSave = true;
   await user.click(screen.getByRole("button", { name: "Salvar conhecimento" }));
@@ -108,7 +111,7 @@ it("preserves edits after a revision conflict and requires an explicit choice to
   expect(editor).toHaveValue("# . product edição local");
   expect(screen.getByRole("button", { name: "Salvar conhecimento" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Documento salvo e fontes" }));
-  expect(screen.getByRole("textbox", { name: "Documento salvo" })).toHaveValue("# Alteração externa");
+  expect(await markdownSource(user, "Documento salvo")).toHaveValue("# Alteração externa");
   await user.click(screen.getByRole("button", { name: "Manter minhas edições sobre a versão atual" }));
   failSave = false;
   await user.click(screen.getByRole("button", { name: "Salvar conhecimento" }));
@@ -118,7 +121,7 @@ it("preserves edits after a revision conflict and requires an explicit choice to
 it("links existing Markdown and imports/exports drafts without implicitly saving", async () => {
   const user = userEvent.setup();
   render(<ProjectKnowledgeSettings projectId="p1" />);
-  const editor = await screen.findByRole("textbox", { name: "Produto · Markdown" });
+  const editor = await markdownSource(user, "Produto · Markdown");
   await user.click(screen.getByRole("button", { name: "Vincular existente" }));
   await user.type(screen.getByRole("textbox", { name: "Caminho relativo ao projeto" }), "docs/produto.md");
   await user.click(screen.getByRole("button", { name: "Vincular documento" }));
@@ -135,7 +138,7 @@ it("links existing Markdown and imports/exports drafts without implicitly saving
 it("keeps the editor usable after provider failure and cancels an unfinished job on unmount", async () => {
   const user = userEvent.setup();
   const view = render(<ProjectKnowledgeSettings projectId="p1" />);
-  const editor = await screen.findByRole("textbox", { name: "Produto · Markdown" });
+  const editor = await markdownSource(user, "Produto · Markdown");
   generate = async () => { throw { message: "Provedor indisponível" }; };
   await user.click(screen.getByRole("button", { name: "Modelo de teste" }));
   await user.click(screen.getByRole("button", { name: "Analisar e gerar produto" }));

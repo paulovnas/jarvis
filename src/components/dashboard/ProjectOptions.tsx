@@ -11,7 +11,7 @@ import { Hint } from "@/components/ui/hint";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
+import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { libraryError, type Project } from "@/core/library";
 import type { LibraryController } from "@/hooks/use-library";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -124,7 +124,7 @@ function ProjectCommitSettings({ projectId }: { projectId: string }) {
       </CardHeader>
       <CardContent className="space-y-2 pt-5">
         <Label htmlFor="project-publish-prompt">Instrução de publicação</Label>
-        <Textarea id="project-publish-prompt" aria-label="Instrução de publicação" value={draft.publishPrompt} maxLength={16_000} disabled={saving} onChange={event => setDraft(current => current ? { ...current, publishPrompt: event.target.value } : current)} spellCheck={false} autoCorrect="off" autoCapitalize="none" className="min-h-40 resize-y font-mono text-xs leading-5" />
+        <MarkdownEditor id="project-publish-prompt" label="Instrução de publicação" value={draft.publishPrompt} maxLength={16_000} disabled={saving} onChange={publishPrompt => setDraft(current => current ? { ...current, publishPrompt } : current)} />
         <p className="text-[11px] text-muted-foreground">O agente Github combina esta instrução com o estado real do Git e as ações autorizadas na conversa.</p>
       </CardContent>
     </Card>

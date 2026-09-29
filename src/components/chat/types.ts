@@ -47,6 +47,7 @@ export interface ChatMessage {
   timestamp: string;
   attachments?: MessageAttachment[];
   work?: AssistantWorkData;
+  lessons?: import("@/core/project-learning").ProjectLesson[];
   error?: ChatErrorData;
   streaming?: boolean;
   model?: string;

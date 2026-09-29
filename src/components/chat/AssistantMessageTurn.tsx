@@ -10,6 +10,7 @@ import { writeClipboardText } from "@/core/clipboard";
 import { AssistantWorkCollapse } from "./AssistantWorkCollapse";
 import { GeneratedImageCard } from "./GeneratedImageCard";
 import { BrowserCaptureCard } from "./BrowserCaptureCard";
+import { LearningSummary } from "./LearningSummary";
 import type { ChatMessage } from "./types";
 
 const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
@@ -75,6 +76,7 @@ export function AssistantMessageTurn({ message, onRetry, retrying = false, retry
         <Suspense fallback={<p className="whitespace-pre-wrap">{message.content}</p>}><ChatMarkdown content={message.content} /></Suspense>
       </div>}
       {message.content && !message.streaming && <ResponseActions content={message.content} fileName={message.exportFileName ?? "Resposta-Jarvis.md"} />}
+      {message.lessons && <LearningSummary lessons={message.lessons} />}
       {message.streaming && !message.content && !message.work && <p role="status" className="text-sm text-muted-foreground">Aguardando o provedor…</p>}
     </article>
   );
