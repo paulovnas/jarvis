@@ -150,6 +150,12 @@ impl Role {
         {
             return true;
         }
+        if matches!(tool, "http_requests" | "http_result") {
+            return true;
+        }
+        if crate::agent::http::mutating(tool) {
+            return broad && matches!(self, Self::Builder | Self::Designer | Self::Github);
+        }
         if self == Self::Github {
             return matches!(flow, Flow::Publication | Flow::Custom)
                 && matches!(

@@ -69,6 +69,7 @@ pub(super) fn needs_approval(name: &str) -> bool {
         name,
         "write" | "edit" | "apply_patch" | "bash" | "terminal_start"
     ) || super::browser::mutating(name)
+        || super::http::mutating(name)
 }
 
 pub(super) fn definitions(mode: Mode) -> Vec<Value> {

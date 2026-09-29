@@ -17,6 +17,7 @@ mod execution_grants;
 mod execution_policy;
 mod execution_sandbox;
 pub(crate) mod history;
+mod http;
 pub(crate) mod image_generation;
 mod instructions;
 mod journal;

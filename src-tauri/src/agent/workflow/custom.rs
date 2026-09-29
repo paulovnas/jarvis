@@ -117,6 +117,9 @@ pub(super) fn allowed(agent: &catalog::AgentDefinition, name: &str) -> bool {
 }
 
 pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
+    if crate::agent::http::mutating(name) {
+        return capability == Capability::Commands;
+    }
     if crate::agent::browser::mutating(name) {
         return capability == Capability::Commands;
     }

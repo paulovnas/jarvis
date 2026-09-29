@@ -190,6 +190,7 @@ pub(super) fn inspect_tool(
             parse_or_dynamic(tool.args["command"].as_str().unwrap_or("interactive-shell")),
         ),
         "terminal_close" => ExecutionOperation::ProcessControl,
+        "http_send" => ExecutionOperation::Network,
         "jarvis_propose_publication" => publication_operation(&tool.args, project_root),
         _ => return Ok(None),
     };
@@ -992,6 +993,34 @@ mod tests {
         assert_eq!(plan.invocations[0].argv, ["rg", "two words", "src"]);
         assert_eq!(plan.invocations[1].argv, ["git", "status", "--short"]);
         assert!(!plan.dynamic);
+    }
+
+    #[test]
+    fn native_http_send_declares_network_and_preserves_explicit_denials() {
+        let root = Path::new("/workspace/project");
+        let policy = inspect_tool(
+            root,
+            &tool(
+                "http_send",
+                serde_json::json!({"draftId":"draft", "revision":1}),
+            ),
+            capabilities(Effect::Mutating),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(policy.outcome.effects.uses_network);
+        assert_eq!(policy.outcome.decision, ExecutionDecision::Ask);
+        assert!(policy.outcome.command.is_none());
+        let mut scope = ExecutionScope::project(root, root);
+        scope.network = NetworkPolicy::Deny;
+        let outcome = evaluate(PolicyRequest {
+            tool_name: "http_send",
+            capabilities: capabilities(Effect::Mutating),
+            scope: &scope,
+            operation: ExecutionOperation::Network,
+        });
+        assert_eq!(outcome.decision, ExecutionDecision::Deny);
+        assert_eq!(outcome.code, "network_scope_denied");
     }
 
     #[test]

@@ -7,10 +7,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { ProjectOptions } from "./ProjectOptions";
 import { populatedLibrary } from "@/test/library-fixtures";
+import { DEFAULT_HTTP_SETTINGS } from "@/core/http-client";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const call = vi.mocked(invoke);
 const project = populatedLibrary().projects[0];
@@ -35,6 +36,7 @@ beforeEach(() => {
   call.mockReset().mockImplementation(async (command, args) => {
     if (command === "get_project_publication_settings") return settings;
     if (command === "get_project_knowledge") return knowledge;
+    if (command === "get_project_http_settings") return { ...DEFAULT_HTTP_SETTINGS, projectId: "p1", revision: 0 };
     if (command === "get_project_repositories") return [];
     if (command === "list_execution_grants") return [];
     if (command === "save_project_publication_settings") return { ...settings, ...(args as { settings: object }).settings };
@@ -42,12 +44,26 @@ beforeEach(() => {
   });
 });
 
+it("loads HTTP options on demand and keeps its draft when switching sections", async () => {
+  const user = userEvent.setup();
+  render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
+  expect(call).not.toHaveBeenCalledWith("get_project_http_settings", expect.anything());
+  await user.click(screen.getByRole("tab", { name: "Cliente HTTP" }));
+  await user.click(await screen.findByRole("button", { name: "Adicionar ambiente" }));
+  await user.clear(screen.getByLabelText("Nome do ambiente 1"));
+  await user.type(screen.getByLabelText("Nome do ambiente 1"), "Homologação");
+  await user.click(screen.getByRole("tab", { name: "Geral" }));
+  await user.click(screen.getByRole("tab", { name: "Cliente HTTP" }));
+  expect(screen.getByLabelText("Nome do ambiente 1")).toHaveValue("Homologação");
+  expect(call.mock.calls.filter(([command]) => command === "get_project_http_settings")).toHaveLength(1);
+});
+
 it("opens one section at a time and retains drafts without reloading visited sections", async () => {
   const user = userEvent.setup();
   render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
   const navigation = screen.getByRole("tablist", { name: "Opções do projeto" });
   expect(navigation).toHaveAttribute("aria-orientation", "vertical");
-  expect(within(navigation).getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Geral", "Conhecimento", "Aprendizados", "Repositórios", "Commit", "Autorizações"]);
+  expect(within(navigation).getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Geral", "Conhecimento", "Aprendizados", "Repositórios", "Cliente HTTP", "Commit", "Autorizações"]);
   expect(call).not.toHaveBeenCalled();
   await user.clear(screen.getByRole("textbox", { name: "Nome do projeto" }));
   await user.type(screen.getByRole("textbox", { name: "Nome do projeto" }), "Rascunho do nome");

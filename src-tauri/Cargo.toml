@@ -37,7 +37,7 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 base64 = "0.22"
 getrandom = "0.3"
-reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls", "json"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls", "json", "multipart"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 sha2 = "0.10"
 url = "2.5"

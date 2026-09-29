@@ -854,15 +854,39 @@ fn code_mutations_cannot_escape_read_only_roles_or_narrow_scopes() {
         Role::Orchestrator,
         Role::Reviewer,
     ] {
-        for tool in ["write", "edit", "apply_patch", "bash"] {
+        for tool in [
+            "write",
+            "edit",
+            "apply_patch",
+            "bash",
+            "http_send",
+            "http_save_request",
+        ] {
             assert!(!role.allows(Flow::Complete, tool, true));
         }
+        assert!(role.allows(Flow::Complete, "http_requests", true));
+        assert!(role.allows(Flow::Complete, "http_result", true));
     }
     assert!(Role::Builder.allows(Flow::Planned, "write", false));
     assert!(Role::Builder.allows(Flow::Planned, "apply_patch", false));
     assert!(!Role::Builder.allows(Flow::Planned, "bash", false));
     assert!(!Role::Builder.allows(Flow::Planned, "mcp_mutation", false));
     assert!(Role::Reviewer.allows(Flow::Complete, "workflow_check", true));
+    assert!(Role::Builder.allows(Flow::Planned, "http_send", true));
+    assert!(!Role::Builder.allows(Flow::Planned, "http_send", false));
+    assert!(Role::Github.allows(Flow::Publication, "http_send", true));
+    assert!(!custom::capability_allows(
+        catalog::Capability::ReadOnly,
+        "http_send"
+    ));
+    assert!(!custom::capability_allows(
+        catalog::Capability::WriteFiles,
+        "http_send"
+    ));
+    assert!(custom::capability_allows(
+        catalog::Capability::Commands,
+        "http_send"
+    ));
 }
 
 #[test]

@@ -61,6 +61,7 @@ impl Handler {
             || name.starts_with("process_")
             || name.starts_with("terminal_")
             || name.starts_with("browser_")
+            || name.starts_with("http_")
             || matches!(
                 name,
                 "workflow_check" | "design_brief" | "validation_publish" | "recovery_resolve"
@@ -131,6 +132,8 @@ impl Capabilities {
                 | "design_read"
                 | "jarvis_inspect_publication"
                 | "jarvis_catalog"
+                | "http_requests"
+                | "http_result"
         ) || (name.starts_with("ctx_")
             && !crate::core::context::needs_approval(name))
             || name.starts_with("context7_")

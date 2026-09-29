@@ -48,6 +48,11 @@ describe("ToolCallCard Web Search", () => {
     ["lsp_references", "Código · Referências"],
     ["lsp_symbols", "Código · Símbolos"],
     ["lsp_diagnostics", "Código · Diagnósticos"],
+    ["http_requests", "HTTP · Requisições e ambientes"],
+    ["http_save_request", "HTTP · Preparar requisição"],
+    ["http_send", "HTTP · Executar requisição"],
+    ["http_result", "HTTP · Analisar resultado"],
+    ["http_cancel", "HTTP · Cancelar requisição"],
   ])("identifica a ferramenta nativa %s", (name, label) => {
     render(<ToolCallCard tool={{ id: name, name, status: "completed", args: { path: "src/app.ts" }, output: "{}" }} />);
     expect(screen.getByRole("button", { name: new RegExp(label) })).toBeVisible();

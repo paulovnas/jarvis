@@ -738,6 +738,7 @@ impl Execution {
         definitions.extend(processes::definitions(self.role_mode()));
         definitions.extend(terminals::definitions(self.role_mode()));
         definitions.extend(super::browser::definitions(self.role_mode()));
+        definitions.extend(super::http::definitions(self.role_mode()));
         if self.flow == Flow::Custom && !direct {
             definitions.extend(dispatch::definitions(self.flow, Role::Builder));
         } else if !direct || self.designer() {
@@ -791,6 +792,7 @@ impl Execution {
                     | "workflow_check"
             ) || crate::core::beads::needs_approval(name)
                 || super::browser::mutating(name)
+                || super::http::mutating(name)
                 || crate::core::context::needs_approval(name))
         {
             return false;
@@ -999,6 +1001,21 @@ impl Execution {
         if tool.name == recovery::TOOL {
             return self.resolve_recovery(&tool.args);
         }
+        if tool.name.starts_with("http_") {
+            if !self.allowed(&tool.name)
+                || (super::http::mutating(&tool.name) && self.role_mode() != Mode::Build)
+            {
+                return Err(invalid("Cliente HTTP indisponível para este agente."));
+            }
+            let app = self
+                .hub
+                .env
+                .browser_app
+                .as_ref()
+                .ok_or_else(|| invalid("Cliente HTTP nativo indisponível."))?;
+            return super::http::execute(app, &self.hub.root.id, &self.hub.root.root, tool, signal)
+                .await;
+        }
         if tool.name.starts_with("browser_") {
             if !self.allowed(&tool.name)
                 || (super::browser::mutating(&tool.name) && self.role_mode() != Mode::Build)
@@ -1073,6 +1090,8 @@ fn recovery_inspection_tool(name: &str, mcp_mutating: bool) -> bool {
             | "find_skills"
             | "web_search"
             | "vision"
+            | "http_requests"
+            | "http_result"
             | "hub_list"
             | "process_list"
             | "process_output"

@@ -36,6 +36,25 @@ async function openModel(user: ReturnType<typeof userEvent.setup>, name: RegExp)
 }
 
 describe("ChatComposer model reasoning", () => {
+  it("appends an HTTP analysis reference once, preserves attachments, and uses the existing running-chat send path", async () => {
+    const attachment = { id: "doc", conversationId: "c1", name: "contrato.md", mime: "text/markdown", size: 10, kind: "document" as const };
+    const drafts = new Map<string, ChatDraft>([["c1", { content: "Meu contexto", parts: [{ type: "text", text: "Meu contexto" }, { type: "attachment", attachment }] }]]);
+    const send = vi.fn().mockResolvedValue(true);
+    const props = { modelGroups: models, onSendMessage: send, draftKey: "c1", drafts, running: true, initialOptions: { ...chatOptions, account: "pessoal", model: "compact" } };
+    const { rerender } = await renderComposer(<ChatComposer {...props} />);
+    const insertion = { id: "analysis-1", text: "Analise a execução HTTP historical-run usando http_result. Não reenvie a requisição." };
+    rerender(<ChatComposer {...props} draftInsertion={insertion} />);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Mensagem" })).toHaveTextContent("historical-run"));
+    rerender(<ChatComposer {...props} draftInsertion={{ ...insertion }} />);
+    expect(drafts.get("c1")?.content.match(/historical-run/g)).toHaveLength(1);
+    expect(drafts.get("c1")?.content).toContain("Meu contexto");
+    expect(screen.getByText("contrato.md")).toBeVisible();
+    expect(send).not.toHaveBeenCalled();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Agendar mensagem" }));
+    expect(send).toHaveBeenCalledWith(expect.stringContaining("historical-run"), expect.objectContaining({ account: "pessoal", model: "compact" }), expect.arrayContaining([{ type: "attachment", attachment }]));
+    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "send_http_request")).toBe(false);
+  });
   it("confirms an online catalog refresh without reauthenticating and keeps the composer usable", async () => {
     const user = userEvent.setup();
     const refresh = vi.fn().mockResolvedValue({ accounts: [], refreshed: ["openai-codex-pessoal"], failed: [] });

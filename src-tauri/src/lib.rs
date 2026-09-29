@@ -9,6 +9,7 @@ mod core;
 mod data_dir;
 mod desktop;
 mod diagnostics;
+mod http_client;
 mod library;
 mod mcp;
 mod model_bindings;
@@ -74,6 +75,7 @@ pub fn run() {
         .manage(agent::learning::capture::LearningJobs::default())
         .manage(agent::browser::BrowserState::default())
         .manage(agent::browser::extension::ExtensionState::default())
+        .manage(http_client::HttpState::default())
         .manage(agent::dashboard::DashboardState::default())
         .manage(mcp::McpState::default())
         .manage(updater::UpdateState::default())
@@ -117,6 +119,20 @@ pub fn run() {
             // Remote child views must never call privileged application commands,
             // even if a site navigates to a local URL matching the development origin.
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                http_client::get_project_http_settings,
+                http_client::save_project_http_settings,
+                http_client::get_http_snapshot,
+                http_client::save_http_draft,
+                http_client::close_http_draft,
+                http_client::save_http_request,
+                http_client::delete_http_request,
+                http_client::send_http_request,
+                http_client::cancel_http_request,
+                http_client::get_http_result,
+                http_client::save_http_response,
+                http_client::import_http_file,
+                http_client::export_project_http,
+                http_client::import_project_http,
                 agent::browser::get_browser_tabs,
                 agent::browser::browser_command,
                 agent::browser::set_browser_viewport,

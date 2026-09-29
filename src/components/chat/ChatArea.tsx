@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { FolderGit2, Globe, MessageSquare } from "lucide-react";
+import { FolderGit2, Globe, MessageSquare, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -20,6 +20,7 @@ import type { AgentModelsController } from "@/hooks/use-agent-models";
 import type { WorkflowController } from "@/hooks/use-workflow";
 import type { ProjectFilesController } from "@/hooks/use-project-files";
 import { FileWorkspace } from "@/components/files/FileWorkspace";
+import { httpAnalysisPrompt, useHttpClient, type HttpTab } from "@/hooks/use-http-client";
 import { useBrowser } from "@/hooks/use-browser";
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { AuthoringApprovalDrawer } from "./AuthoringApprovalDrawer";
@@ -27,19 +28,21 @@ import { WorkflowRecoveryAlert } from "./WorkflowRecoveryAlert";
 import { Hint } from "@/components/ui/hint";
 import { ActiveExecutionStatus } from "./ActiveExecutionStatus";
 
-function ConversationView({ context, modelGroups, modelBindings, modelsReady, onRefreshModels, refreshingModels, chat, workflow, agentModels, drafts, questionDrafts, onLatestVisibility, files }: { context: ConversationDetails; modelGroups: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; onRefreshModels?: () => Promise<ModelCatalogRefresh | null>; refreshingModels?: boolean; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; drafts: Map<string, ChatDraft>; questionDrafts: Map<string, QuestionDraft>; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController }) {
+function ConversationView({ context, modelGroups, modelBindings, modelsReady, onRefreshModels, refreshingModels, chat, workflow, agentModels, drafts, questionDrafts, httpDrafts, onLatestVisibility, files }: { context: ConversationDetails; modelGroups: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; onRefreshModels?: () => Promise<ModelCatalogRefresh | null>; refreshingModels?: boolean; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; drafts: Map<string, ChatDraft>; questionDrafts: Map<string, QuestionDraft>; httpDrafts: Map<string, HttpTab[]>; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController }) {
   const footer = useRef<HTMLElement>(null);
   const previousQuestion = useRef<string | undefined>(undefined);
   const snapshot = chat.snapshot;
-  const browser = useBrowser(context.conversation.id, () => files?.select(null), !!snapshot);
+  const http = useHttpClient(context.conversation.id, context.project.id, !!snapshot, httpDrafts);
+  const [draftInsertion, setDraftInsertion] = useState<{ id: string; text: string }>();
+  const browser = useBrowser(context.conversation.id, () => { files?.select(null); http.select(null); }, !!snapshot);
   const attention = [snapshot?.pendingApproval?.tool.id, snapshot?.pendingQuestion?.toolId, snapshot?.pendingAuthoring?.toolId, ...(workflow?.data?.agents ?? []).flatMap(agent => [agent.pendingApproval?.tool.id, agent.pendingQuestion?.toolId, agent.pendingAuthoring?.toolId])].filter(Boolean).join("|");
   const previousAttention = useRef("");
   useEffect(() => {
     if (attention !== previousAttention.current) {
       previousAttention.current = attention;
-      if (attention && browser.snapshot.activeId) { browser.select(null); files?.select(null); }
+      if (attention && (browser.snapshot.activeId || http.activeId)) { browser.select(null); files?.select(null); http.select(null); }
     }
-  }, [attention, browser, files]);
+  }, [attention, browser, files, http]);
   useEffect(() => {
     const question = snapshot?.pendingQuestion;
     if (previousQuestion.current && !question) {
@@ -53,7 +56,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
   const composerOptions = [...snapshot.turns]
     .reverse()
     .find(turn => turn.options.workflow !== "publication")?.options;
-  const outsideChat = !!files?.tabs.activePath || !!browser.snapshot.activeId;
+  const outsideChat = !!files?.tabs.activePath || !!browser.snapshot.activeId || !!http.activeId;
   const isNewConversation = (snapshot.history?.total ?? snapshot.turns.length) === 0
     && snapshot.activeTurnId === null
     && !chat.pendingTurn
@@ -62,6 +65,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     && !snapshot.pendingAuthoring
     && !snapshot.queuedMessages?.length;
   const browserLauncher = <Hint content="Abrir navegador"><Button type="button" variant="ghost" size="icon" aria-label="Abrir navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-7 cursor-pointer text-muted-foreground hover:text-onedark-cyan"><Globe className="size-3.5" /></Button></Hint>;
+  const httpLauncher = <Hint content="Nova requisição HTTP"><Button type="button" variant="ghost" size="icon" aria-label="Nova requisição HTTP" disabled={!!http.busy} onClick={() => { files?.select(null); browser.select(null); void http.open(); }} className="size-7 cursor-pointer text-muted-foreground hover:text-onedark-green"><Send className="size-3.5" /></Button></Hint>;
   const activeTurn = snapshot.activeTurnId
     ? chat.pendingTurn?.id === snapshot.activeTurnId
       ? chat.pendingTurn
@@ -77,10 +81,10 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} onInteract={chat.pauseQuestion} />}
     {snapshot.pendingAuthoring && <AuthoringApprovalDrawer key={snapshot.pendingAuthoring.toolId} request={snapshot.pendingAuthoring} onAnswer={(approved, note) => chat.answerAuthoring(snapshot.pendingAuthoring!, approved, note)} />}
     <WorkerRequests conversationId={context.conversation.id} projectPath={context.project.path} agents={workflow?.data?.agents ?? []} drafts={questionDrafts} />
-    <ChatComposer terminalLauncher={outsideChat ? undefined : <>{terminalLauncher}{browserLauncher}</>} agentModels={agentModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
+    <ChatComposer draftInsertion={draftInsertion} terminalLauncher={outsideChat ? undefined : <>{terminalLauncher}{browserLauncher}{httpLauncher}</>} agentModels={agentModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
     {modelGroups.length === 0 && <p className="mt-2 text-center text-xs text-muted-foreground">Conecte uma conta em Configurações para enviar mensagens.</p>}
   </footer>;
-  return <TerminalWorkspace conversationId={context.conversation.id}>{terminalLauncher => <FileWorkspace files={files} browser={browser} terminalLauncher={outsideChat ? <>{terminalLauncher}{browserLauncher}</> : undefined}>
+  return <TerminalWorkspace conversationId={context.conversation.id}>{terminalLauncher => <FileWorkspace files={files} browser={browser} http={http} onAnalyzeHttp={run => { http.select(null); browser.select(null); files?.select(null); setDraftInsertion({ id: crypto.randomUUID(), text: httpAnalysisPrompt(run) }); }} terminalLauncher={outsideChat ? <>{terminalLauncher}{browserLauncher}{httpLauncher}</> : undefined}>
     <section aria-label={isNewConversation ? "Nova conversa" : undefined} data-empty={isNewConversation} className="new-conversation-stage relative isolate grid min-h-0 flex-1 overflow-hidden">
       <div aria-hidden="true" className="new-conversation-glow pointer-events-none absolute left-1/2 top-1/2 h-64 w-[min(90%,56rem)] -translate-x-1/2 -translate-y-1/2" />
       <div className="conversation-transcript-slot relative z-10 flex min-h-0 overflow-hidden">
@@ -101,6 +105,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
 }
 
 export function ChatArea({ modelGroups = [], modelBindings, modelsReady, onRefreshModels, refreshingModels, library, chat, workflow, agentModels, leftToggle, rightToggle, onLatestVisibility, files, drafts: sharedDrafts, questionDrafts: sharedQuestionDrafts }: { modelGroups?: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; onRefreshModels?: () => Promise<ModelCatalogRefresh | null>; refreshingModels?: boolean; library: LibrarySnapshot | null; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; leftToggle?: ReactNode; rightToggle?: ReactNode; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController; drafts?: Map<string, ChatDraft>; questionDrafts?: Map<string, QuestionDraft> }) {
+  const [httpDrafts] = useState(() => new Map<string, HttpTab[]>());
   const [localDrafts] = useState(() => new Map<string, ChatDraft>());
   const [localQuestionDrafts] = useState(() => new Map<string, QuestionDraft>());
   const drafts = sharedDrafts ?? localDrafts;
@@ -119,6 +124,6 @@ export function ChatArea({ modelGroups = [], modelBindings, modelsReady, onRefre
       </div>
       {rightToggle}
     </header>
-    {!library ? <ConversationSkeleton /> : id && project && workspace && conversation ? <ConversationView key={id} drafts={drafts} questionDrafts={questionDrafts} context={{ workspace, project, conversation }} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} chat={chat} workflow={workflow} agentModels={agentModels} onLatestVisibility={onLatestVisibility} files={files} /> : <Empty className="flex-1"><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>{project ? "Inicie uma conversa" : "Seu próximo projeto começa aqui"}</EmptyTitle><EmptyDescription>{project ? `Crie ou selecione uma conversa em ${project.name} pela barra lateral.` : "Selecione um projeto na barra lateral ou crie um workspace para organizar seu trabalho."}</EmptyDescription></EmptyHeader></Empty>}
+    {!library ? <ConversationSkeleton /> : id && project && workspace && conversation ? <ConversationView key={id} httpDrafts={httpDrafts} drafts={drafts} questionDrafts={questionDrafts} context={{ workspace, project, conversation }} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} chat={chat} workflow={workflow} agentModels={agentModels} onLatestVisibility={onLatestVisibility} files={files} /> : <Empty className="flex-1"><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>{project ? "Inicie uma conversa" : "Seu próximo projeto começa aqui"}</EmptyTitle><EmptyDescription>{project ? `Crie ou selecione uma conversa em ${project.name} pela barra lateral.` : "Selecione um projeto na barra lateral ou crie um workspace para organizar seu trabalho."}</EmptyDescription></EmptyHeader></Empty>}
   </main>;
 }

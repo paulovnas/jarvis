@@ -1,4 +1,4 @@
-import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, Plus, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/TextInput";
@@ -33,6 +33,7 @@ import type { ModelCatalogRefresh } from "@/core/provider-accounts";
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
 interface ChatComposerProps {
+  draftInsertion?: { id: string; text: string };
   terminalLauncher?: ReactNode;
   agentModels?: AgentModelsController;
   onSendMessage: (content: string, options: TurnOptions, parts?: MessagePart[]) => Promise<boolean>;
@@ -58,6 +59,7 @@ interface ChatComposerProps {
 }
 
 export function ChatComposer({
+  draftInsertion,
   terminalLauncher,
   agentModels,
   onSendMessage,
@@ -91,6 +93,17 @@ export function ChatComposer({
   const [refreshDialogOpen, setRefreshDialogOpen] = useState(false);
   const attachments = draft.parts?.filter(part => part.type === "attachment") ?? [];
   const removeLocks = useRef(new Set<string>());
+  const lastInsertion = useRef<string | null>(null);
+  useEffect(() => {
+    if (!draftInsertion || draftInsertion.id === lastInsertion.current) return;
+    lastInsertion.current = draftInsertion.id;
+    const next = mergeDrafts(draftRef.current, { content: draftInsertion.text });
+    draftRef.current = next;
+    if (draftKey) drafts?.set(draftKey, next);
+    updateDraft(next);
+    const frame = requestAnimationFrame(() => input.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [draftInsertion, draftKey, drafts]);
   const setDraft = (value: ChatDraft) => {
     draftRef.current = value;
     if (draftKey) { if (value.content || value.parts?.length) drafts?.set(draftKey, value); else drafts?.delete(draftKey); }

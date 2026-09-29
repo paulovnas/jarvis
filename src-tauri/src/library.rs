@@ -1078,6 +1078,9 @@ pub async fn delete_library_item(
     if let Err(cause) = crate::agent::browser::prune(&app).await {
         eprintln!("Browser cleanup: {cause:?}");
     }
+    if let Err(cause) = crate::http_client::prune(&app).await {
+        eprintln!("HTTP cleanup: {cause:?}");
+    }
     let _ = app.emit("library:changed", ());
     result
 }

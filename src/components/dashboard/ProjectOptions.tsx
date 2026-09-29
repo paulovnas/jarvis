@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Tabs as OptionsTabs } from "@base-ui/react/tabs";
-import { AlertTriangle, BookOpen, Brain, FolderCog, FolderGit2, GitCommitHorizontal, Save, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertTriangle, BookOpen, Brain, FolderCog, FolderGit2, GitCommitHorizontal, Globe2, Save, ShieldCheck, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -21,12 +21,16 @@ import { ExecutionGrantsSettings } from "./ExecutionGrantsSettings";
 import { ProjectIdentitySettings } from "./ProjectIdentitySettings";
 import { ProjectKnowledgeSettings } from "./ProjectKnowledgeSettings";
 import { ProjectLearningSettings } from "./ProjectLearningSettings";
+import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
+
+const ProjectHttpSettings = lazy(() => import("@/components/http/ProjectHttpSettings").then(module => ({ default: module.ProjectHttpSettings })));
 
 const SECTIONS = [
   { value: "general", label: "Geral", Icon: FolderCog, description: "Nome, pasta e aparência do projeto na barra lateral." },
   { value: "knowledge", label: "Conhecimento", Icon: BookOpen, description: "Produto, arquitetura, regras e design que orientam os agentes." },
   { value: "learning", label: "Aprendizados", Icon: Brain, description: "Lembretes e preferências aprendidos com o seu feedback." },
   { value: "repositories", label: "Repositórios", Icon: FolderGit2, description: "Pastas Git e branches de referência usadas pelos agentes." },
+  { value: "http", label: "Cliente HTTP", Icon: Globe2, description: "Ambientes, variáveis e configurações dos testes de API deste projeto." },
   { value: "commit", label: "Commit", Icon: GitCommitHorizontal, description: "Instruções do projeto para revisar mudanças e preparar commits." },
   { value: "execution", label: "Autorizações", Icon: ShieldCheck, description: "Autorizações de execução reutilizáveis neste projeto." },
 ] as const;
@@ -41,6 +45,7 @@ export function ProjectOptions({ project, projectUpdater }: { project: Project; 
     knowledge: <ProjectKnowledgeSettings key={`${project.id}:${project.path}`} projectId={project.id} />,
     learning: <ProjectLearningSettings key={`${project.id}:${project.path}`} projectId={project.id} />,
     repositories: <ProjectRepositoriesSettings key={`${project.id}:${project.path}`} projectId={project.id} projectPath={project.path} />,
+    http: <Suspense fallback={<CardsSkeleton label="Carregando configurações HTTP" />}><ProjectHttpSettings key={project.id} projectId={project.id} /></Suspense>,
     commit: <ProjectCommitSettings key={project.id} projectId={project.id} />,
     execution: <ExecutionGrantsSettings key={project.id} projectId={project.id} />,
   };

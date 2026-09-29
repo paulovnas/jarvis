@@ -177,3 +177,24 @@ export const navigationSelection = sqliteTable("navigation_selection", {
   check("navigation_selection_singleton", sql`${table.id} = 1`),
   check("navigation_selection_hierarchy", sql`(${table.workspaceId} IS NOT NULL OR (${table.projectId} IS NULL AND ${table.conversationId} IS NULL)) AND (${table.projectId} IS NOT NULL OR ${table.conversationId} IS NULL)`),
 ]);
+
+export const httpSettings = sqliteTable("http_settings", {
+  projectId: text("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
+  payload: text("payload").notNull(),
+});
+export const httpRequests = sqliteTable("http_requests", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  payload: text("payload").notNull(),
+}, table => [index("http_requests_project").on(table.projectId)]);
+export const httpDrafts = sqliteTable("http_drafts", {
+  id: text("id").primaryKey(),
+  conversationId: text("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+  payload: text("payload").notNull(),
+}, table => [index("http_drafts_conversation").on(table.conversationId)]);
+export const httpRuns = sqliteTable("http_runs", {
+  id: text("id").primaryKey(),
+  conversationId: text("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+  createdAt: integer("created_at").notNull(),
+  payload: text("payload").notNull(),
+}, table => [index("http_runs_conversation").on(table.conversationId, table.createdAt)]);
