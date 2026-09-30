@@ -117,7 +117,7 @@ describe("ChatComposer model reasoning", () => {
     const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true); const save = vi.fn();
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "designer/designer": { account: "pessoal", model: "flexible", reasoning: "high" }, "planned/planner": { account: "pessoal", model: "compact", reasoning: "medium" } }, error: null, saving: false, save, refresh: vi.fn() }} />);
     await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Designer" }));
+    await user.click(await screen.findByRole("option", { name: "Designer" }));
     expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Flexible · Alto");
     await user.type(screen.getByRole("textbox"), "Desenhe o painel{Enter}");
     expect(send).toHaveBeenCalledWith("Desenhe o painel", { executor: "jarvis", account: "pessoal", model: "flexible", reasoning: "high", mode: "build", workflow: "designer", approvalMode: "yolo" });
@@ -130,7 +130,7 @@ describe("ChatComposer model reasoning", () => {
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} />);
     expect(screen.queryByRole("switch", { name: "Validação manual" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Planejado" }));
+    await user.click(await screen.findByRole("option", { name: "Planejado" }));
     await user.click(screen.getByRole("button", { name: "Configurações do chat" }));
     const validation = screen.getByRole("switch", { name: "Validação manual" });
     expect(validation).not.toBeChecked();
@@ -172,7 +172,7 @@ describe("ChatComposer model reasoning", () => {
     const flow = screen.getByRole("button", { name: "Selecionar fluxo" });
     const originalLabel = flow.textContent ?? "";
     await user.click(flow);
-    await user.click(await screen.findByRole("menuitem", { name: "Padrão" }));
+    await user.click(await screen.findByRole("option", { name: "Padrão" }));
     expect(await screen.findByRole("alertdialog")).toHaveTextContent("Trocar para um agente direto?");
     expect(flow).toHaveTextContent(originalLabel);
     await user.click(screen.getByRole("button", { name: "Manter fluxo atual" }));
@@ -180,7 +180,7 @@ describe("ChatComposer model reasoning", () => {
     expect(flow).toHaveTextContent(originalLabel);
 
     await user.click(flow);
-    await user.click(await screen.findByRole("menuitem", { name: "Padrão" }));
+    await user.click(await screen.findByRole("option", { name: "Padrão" }));
     await user.click(await screen.findByRole("button", { name: "Trocar fluxo" }));
     expect(flow).toHaveTextContent("Padrão");
   });
@@ -196,7 +196,7 @@ describe("ChatComposer model reasoning", () => {
       }], validation: null }}
     />);
     await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Padrão" }));
+    await user.click(await screen.findByRole("option", { name: "Padrão" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Selecionar fluxo" })).toHaveTextContent("Padrão");
   });
@@ -296,7 +296,7 @@ describe("ChatComposer model reasoning", () => {
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} initialOptions={{ ...chatOptions, account: "pessoal", model: "compact", reasoning: "medium", approvalMode: "manual" }} />);
     screen.getByRole("button", { name: "Selecionar fluxo" }).focus();
     await user.keyboard("{Enter}");
-    await user.click(await screen.findByRole("menuitem", { name: /Plan/ }));
+    await user.click(await screen.findByRole("option", { name: /Plan/ }));
     await user.type(screen.getByRole("textbox"), "Analise o projeto{Enter}");
     expect(send).toHaveBeenCalledWith("Analise o projeto", { executor: "jarvis", account: "pessoal", model: "compact", reasoning: "medium", mode: "build", workflow: "planned", approvalMode: "yolo" });
     await waitFor(() => expect(screen.getByRole("textbox")).toHaveTextContent("Analise o projeto"));

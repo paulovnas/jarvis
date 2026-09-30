@@ -15,7 +15,7 @@ it("sends the chosen custom graph identity and uses a composer model without mut
   await screen.findByRole("textbox", { name: "Mensagem" });
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_workflow_catalog"));
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
-  await user.click(await screen.findByRole("menuitem", { name: "Meu fluxo" }));
+  await user.click(await screen.findByRole("option", { name: "Meu fluxo" }));
   await user.click(screen.getByRole("button", { name: "Configurações do chat" }));
   const validation = screen.getByRole("switch", { name: "Validação manual" });
   expect(validation).not.toBeChecked();
@@ -45,7 +45,7 @@ it("runs a Solo agent as the main chat agent with its fixed model", async () => 
   render(<ChatComposer modelGroups={modelGroups} onSendMessage={send} />);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_workflow_catalog"));
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
-  await user.click(await screen.findByRole("menuitem", { name: solo.name }));
+  await user.click(await screen.findByRole("option", { name: solo.name }));
   expect(screen.queryByRole("switch", { name: "Validação manual" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toBeDisabled();
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Analise este chamado{Enter}");
@@ -59,7 +59,7 @@ it("runs the mixed GitHub agent directly with its dedicated configurable model",
     agentModels={{ data: { "publication/github": { account: "local", model: "model", reasoning: null } }, error: null, saving: false, save, refresh: vi.fn() }} />);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_workflow_catalog"));
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
-  await user.click(await screen.findByRole("menuitem", { name: builtinGithubAgent.name }));
+  await user.click(await screen.findByRole("option", { name: builtinGithubAgent.name }));
   expect(screen.queryByRole("button", { name: "Configurações do chat" })).not.toBeInTheDocument();
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Liste os pull requests abertos{Enter}");
   expect(send).toHaveBeenCalledWith("Liste os pull requests abertos", { executor: "jarvis", account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customAgentId: "builtin:github", approvalMode: "yolo" });
