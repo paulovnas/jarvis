@@ -258,6 +258,7 @@ fn exempt(name: &str) -> bool {
             | "process_check_port"
             | "terminal_output"
             | "browser_snapshot"
+            | "browser_wait"
             | "browser_console"
             | "browser_network"
             | "hub_wait"

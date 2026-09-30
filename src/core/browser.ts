@@ -13,7 +13,8 @@ export const browserNetworkSchema = z.object({ requests: z.array(z.object({ id: 
 export type BrowserTab = z.infer<typeof browserTabSchema>;
 export type BrowserSnapshot = z.infer<typeof browserSnapshotSchema>;
 export type BrowserLog = z.infer<typeof browserConsoleSchema>["logs"][number];
-export type BrowserRequest = { action: "open" | "select" | "close" | "navigate" | "back" | "forward" | "reload" | "console" | "screenshot" | "discover" | "attach" | "network"; id?: string | null; url?: string; filter?: string; offset?: number; limit?: number };
+export type BrowserLocator = { role?: string; name?: string; label?: string; text?: string; testId?: string; exact?: boolean };
+export type BrowserRequest = { action: "open" | "select" | "close" | "navigate" | "back" | "forward" | "reload" | "snapshot" | "wait" | "click" | "fill" | "press" | "console" | "screenshot" | "discover" | "attach" | "network"; id?: string | null; url?: string; filter?: string; offset?: number; limit?: number; element?: string; locator?: BrowserLocator; frameId?: string; timeoutMs?: number; state?: "visible" | "hidden" | "attached" | "detached" | "ready"; text?: string; key?: "Enter" | "Tab" | "Escape" | "ArrowDown" | "ArrowUp" | "ArrowLeft" | "ArrowRight" };
 export type BrowserExtensionStatus = z.infer<typeof browserExtensionStatusSchema>;
 export const EMPTY_BROWSER: BrowserSnapshot = { tabs: [], activeId: null };
 

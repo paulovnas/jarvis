@@ -105,6 +105,7 @@ fn description(name: &str) -> &'static str {
         "browser_open" => "Abrir uma aba no navegador.",
         "browser_navigate" => "Navegar para uma URL.",
         "browser_snapshot" => "Consultar os elementos da página.",
+        "browser_wait" => "Aguardar um estado da página.",
         "browser_screenshot" => "Capturar uma imagem da página.",
         "browser_click" => "Clicar em um elemento da página.",
         "browser_fill" => "Preencher um campo da página.",

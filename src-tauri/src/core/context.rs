@@ -528,11 +528,37 @@ fn compact_result(name: &str, output: &str, source: &str, indexed: &str) -> Stri
             // Keep current actionable IDs verbatim. Retrieving the indexed snapshot
             // does not invalidate IDs; taking a new browser snapshot does.
             let elements: Vec<_> = page["elements"].as_array().into_iter().flatten().take(20)
-                .map(|element| json!({"id":element["id"],"tag":element["tag"],"name":element["name"].as_str().unwrap_or_default().chars().take(100).collect::<String>(),"disabled":element["disabled"]})).collect();
-            json!({"url":page["url"],"title":page["title"],"viewport":page["viewport"],
+                .map(|element| json!({"id":element["id"],"tag":element["tag"],"role":element["role"],"name":element["name"].as_str().unwrap_or_default().chars().take(100).collect::<String>(),"disabled":element["disabled"]})).collect();
+            let frame_count = page["frames"].as_array().map_or(0, Vec::len);
+            let total_frames = page["totalFrames"].as_u64().unwrap_or(frame_count as u64);
+            let frames: Vec<_> = page["frames"].as_array().into_iter().flatten().take(100)
+                .map(|frame| json!({
+                    "id":frame["id"].as_str().unwrap_or_default().chars().take(160).collect::<String>(),
+                    "parentId":frame["parentId"].as_str().map(|id| id.chars().take(160).collect::<String>()),
+                    "name":frame["name"].as_str().unwrap_or_default().chars().take(80).collect::<String>(),
+                    "url":frame["url"].as_str().unwrap_or_default().chars().take(180).collect::<String>(),
+                    "available":frame["available"].as_bool()
+                })).collect();
+            let total = page["total"].as_u64().or_else(|| page["totalElements"].as_u64())
+                .unwrap_or_else(|| page["elements"].as_array().map_or(0, Vec::len) as u64);
+            let mut preview = json!({
+                "url":page["url"].as_str().unwrap_or_default().chars().take(240).collect::<String>(),
+                "title":page["title"].as_str().unwrap_or_default().chars().take(200).collect::<String>(),"viewport":page["viewport"],
                 "text":page["text"].as_str().unwrap_or_default().chars().take(800).collect::<String>(),
-                "elements":elements,"totalElements":page["elements"].as_array().map_or(0, Vec::len),
-                "note":"Partial snapshot. Use ctx_search with the source below to find omitted elements/text. IDs stay valid until navigation or another snapshot; do not request a new snapshot just to retrieve omitted details."}).to_string()
+                "elements":elements,"totalElements":total,"total":total,
+                "offset":page["offset"].as_u64(),"limit":page["limit"].as_u64(),
+                "truncated":page["truncated"].as_bool(),
+                "frameId":page["frameId"].as_str().map(|id| id.chars().take(160).collect::<String>()),
+                "frames":frames,"totalFrames":total_frames,"framesTruncated":total_frames > 100 || page["framesTruncated"].as_bool() == Some(true),
+                "note":"Partial snapshot. Use ctx_search with the source below to find omitted elements/text/frames. IDs stay valid until navigation or another snapshot; do not request a new snapshot just to retrieve omitted details."});
+            // ponytail: at most 100 frames; incremental sizing if the snapshot cap grows.
+            while preview.to_string().len() > 6_000 {
+                if !preview["frames"].as_array_mut().is_some_and(|frames| frames.pop().is_some()) {
+                    break;
+                }
+                preview["framesTruncated"] = json!(true);
+            }
+            preview.to_string()
         })
     } else { None }.unwrap_or_else(|| {
         let start = output.chars().take(700).collect::<String>();
@@ -816,6 +842,52 @@ mod tests {
         assert!(compact.contains("tool-snapshot-1"));
         assert!(compact.contains("ctx_search"));
         assert!(compact.len() < raw.len() / 3);
+    }
+    #[test]
+    fn indexed_browser_preview_preserves_frame_scope_and_pagination() {
+        let page = json!({
+            "url":"https://example.test","title":"Checkout","text":"Page content ".repeat(2000),
+            "frameId":"payment-frame","offset":100,"limit":50,"total":350,"truncated":true,
+            "frames":[{"id":"main","url":"https://example.test","available":true},{"id":"payment-frame","parentId":"main","name":"Payment","url":"https://payment.test","available":true}],
+            "elements":[{"id":"document:payment:7","role":"button","name":"Pay"}]
+        });
+        let compact = compact_result(
+            "browser_snapshot",
+            &page.to_string(),
+            "frames-source",
+            "Indexed",
+        );
+        let preview: Value = serde_json::from_str(compact.lines().next().unwrap()).unwrap();
+        assert_eq!(preview["frameId"], "payment-frame");
+        assert_eq!(preview["offset"], 100);
+        assert_eq!(preview["limit"], 50);
+        assert_eq!(preview["total"], 350);
+        assert_eq!(preview["totalElements"], 350);
+        assert_eq!(preview["frames"][1]["parentId"], "main");
+        assert_eq!(preview["frames"][1]["available"], true);
+        assert_eq!(preview["elements"][0]["role"], "button");
+        assert_eq!(preview["totalFrames"], 2);
+        assert_eq!(preview["framesTruncated"], false);
+    }
+    #[test]
+    fn indexed_browser_preview_reports_omitted_frames_within_the_output_budget() {
+        let page = json!({"text":"Evidence ".repeat(2000),"frameId":"main","offset":0,"limit":100,"total":200,
+            "frames":(0..200).map(|n| json!({"id":format!("frame-{n}"),"url":"https://example.test/".repeat(1000),"name":"Name ".repeat(1000),"available":n % 2 == 0})).collect::<Vec<_>>(),"elements":[]});
+        let compact = compact_result(
+            "browser_snapshot",
+            &page.to_string(),
+            "frames-source",
+            "Indexed",
+        );
+        let preview: Value = serde_json::from_str(compact.lines().next().unwrap()).unwrap();
+        assert_eq!(preview["frameId"], "main");
+        assert_eq!(preview["totalFrames"], 200);
+        assert_eq!(preview["framesTruncated"], true);
+        let frames = preview["frames"].as_array().unwrap();
+        assert!(!frames.is_empty() && frames.len() <= 100);
+        assert!(frames[0]["url"].as_str().unwrap().len() <= 180);
+        assert!(compact.len() < OUTPUT_BUDGET);
+        assert!(compact.contains("frames-source"));
     }
     #[test]
     fn plan_excludes_execution_and_internal_maintenance_is_never_exposed() {

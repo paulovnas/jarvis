@@ -344,6 +344,33 @@ pub async fn get_browser_tabs(
 
 #[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BrowserLocator {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    test_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exact: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum BrowserWaitState {
+    Visible,
+    Hidden,
+    Attached,
+    Detached,
+    Ready,
+}
+
+#[derive(Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BrowserRequest {
     action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -352,6 +379,14 @@ pub struct BrowserRequest {
     url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     element: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    locator: Option<BrowserLocator>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frame_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timeout_ms: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state: Option<BrowserWaitState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -685,4 +720,4 @@ pub async fn set_browser_viewport(
     }
     Ok(())
 }
-pub(super) const EFFICIENCY: &str = "\nBrowser evidence policy: use the browser only for a concrete task-related uncertainty. Prefer a DOM snapshot for text, element discovery and behavior, and console output for errors. Use screenshots plus vision only for visual layout/appearance questions that those tools cannot answer. Reuse the existing screenshot/analysis until the page or the question changes; do not capture after every click/scroll or repeatedly inspect an unchanged page. Batch related visual questions in one vision call (up to four images). A snapshot indexed by Context-mode remains retrievable without another snapshot; use ctx_search to find omitted elements. After relevant implementation and focused validation succeed, finish or hand off to the user; do not keep polishing or collecting screenshots without an unresolved acceptance criterion. Never replace an unavailable browser with shell automation.\n";
+pub(super) const EFFICIENCY: &str = "\nBrowser evidence policy: use the browser only for a concrete task-related uncertainty. Prefer a DOM snapshot for text, element discovery and behavior, and console output for errors. On Chromium extension tabs prefer a unique semantic locator (role/name, label, text or testId; exact by default) when interacting. Snapshot IDs expire on navigation or the next snapshot; inspect again instead of reusing a stale ID. Inspect snapshot frames and target their frameId when content is in an iframe, including cross-origin frames. Paginate large snapshots with offset/limit. Use browser_wait for an explicit element state or document readiness, rather than repeated snapshots or arbitrary sleeps. Locator/frame/wait capabilities require an extension tab. Actionability waits run before dispatch; once an action was dispatched, inspect the outcome instead of replaying it after an error or disconnection. Use screenshots plus vision only for visual layout/appearance questions that those tools cannot answer. Reuse the existing screenshot/analysis until the page or the question changes; do not capture after every click/scroll or repeatedly inspect an unchanged page. Batch related visual questions in one vision call (up to four images). A snapshot indexed by Context-mode remains retrievable without another snapshot; use ctx_search to find omitted elements. After relevant implementation and focused validation succeed, finish or hand off to the user; do not keep polishing or collecting screenshots without an unresolved acceptance criterion. Never replace an unavailable browser with shell automation.\n";

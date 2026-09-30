@@ -540,24 +540,7 @@ fn receive(app: &tauri::AppHandle, inner: &Arc<Mutex<Inner>>, connection_id: &st
                     .cloned()
                     .ok_or_else(|| interrupted(pending.mutation))
             } else if let Some(error) = message.get("error") {
-                let code = error
-                    .get("code")
-                    .and_then(Value::as_str)
-                    .filter(|code| {
-                        code.len() <= 80
-                            && code
-                                .bytes()
-                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-                    })
-                    .unwrap_or("browser_extension");
-                let message = error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("O navegador não concluiu a ação.");
-                Err(failure(
-                    code,
-                    &message.chars().take(2000).collect::<String>(),
-                ))
+                Err(response_error(error))
             } else {
                 Err(interrupted(pending.mutation))
             };
@@ -566,10 +549,57 @@ fn receive(app: &tauri::AppHandle, inner: &Arc<Mutex<Inner>>, connection_id: &st
         _ => {}
     }
 }
+fn response_error(payload: &Value) -> AgentError {
+    let code = payload
+        .get("code")
+        .and_then(Value::as_str)
+        .filter(|code| {
+            code.len() <= 80
+                && code
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        })
+        .unwrap_or("browser_extension");
+    let mut message: String = payload
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("O navegador não concluiu a ação.")
+        .chars()
+        .take(2000)
+        .collect();
+    if let Some(details) = payload.get("details").and_then(Value::as_object) {
+        let mut bounded = serde_json::Map::new();
+        for (key, limit) in [("action", 32), ("phase", 40), ("reason", 300)] {
+            if let Some(value) = details.get(key).and_then(Value::as_str) {
+                bounded.insert(
+                    key.into(),
+                    json!(value.chars().take(limit).collect::<String>()),
+                );
+            }
+        }
+        if let Some(value) = details.get("elapsedMs").and_then(Value::as_u64) {
+            bounded.insert("elapsedMs".into(), json!(value.min(300_000)));
+        }
+        if let Some(value) = details.get("dispatched").and_then(Value::as_bool) {
+            bounded.insert("dispatched".into(), json!(value));
+        }
+        if !bounded.is_empty() {
+            message.push_str(&format!("\nDiagnóstico: {}", Value::Object(bounded)));
+        }
+    }
+    failure(code, &message)
+}
 fn mutation(action: &str) -> bool {
     !matches!(
         action,
-        "list" | "discover" | "snapshot" | "console" | "network" | "response_body" | "screenshot"
+        "list"
+            | "discover"
+            | "snapshot"
+            | "wait"
+            | "console"
+            | "network"
+            | "response_body"
+            | "screenshot"
     )
 }
 fn interrupted(mutation: bool) -> AgentError {
@@ -1071,7 +1101,30 @@ mod tests {
         });
         assert!(inner.lock().unwrap().pending.is_empty());
         assert!(!mutation("network"));
+        assert!(!mutation("wait"));
         assert!(mutation("evaluate"));
+    }
+
+    #[test]
+    fn response_errors_preserve_bounded_dispatch_diagnostics() {
+        let result = response_error(&json!({
+            "code":"browser_actionability_timeout",
+            "message":"O elemento está coberto.",
+            "details":{"action":"click","phase":"actionability","elapsedMs":5000,"dispatched":false,"reason":"covered","unexpected":"secret"}
+        }));
+        assert_eq!(result.code, "browser_actionability_timeout");
+        assert!(result.message.contains("\"dispatched\":false"));
+        assert!(result.message.contains("\"phase\":\"actionability\""));
+        assert!(!result.message.contains("unexpected"));
+        let result = response_error(&json!({
+            "code":"invalid-code",
+            "message":"x".repeat(3000),
+            "details":{"reason":"r".repeat(1000),"elapsedMs":u64::MAX,"dispatched":"false"}
+        }));
+        assert_eq!(result.code, "browser_extension");
+        assert!(result.message.len() < 2400);
+        assert!(result.message.contains("\"elapsedMs\":300000"));
+        assert!(!result.message.contains("dispatched"));
     }
     #[test]
     fn unfinished_requests_send_cancel_but_completed_requests_do_not() {

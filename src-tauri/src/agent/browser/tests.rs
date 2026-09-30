@@ -31,6 +31,7 @@ fn read_only_agents_cannot_navigate_or_interact() {
         vec![
             "browser_list",
             "browser_snapshot",
+            "browser_wait",
             "browser_console",
             "browser_screenshot",
             "browser_discover",
@@ -84,4 +85,81 @@ fn requests_reject_unknown_fields_instead_of_accepting_arbitrary_javascript() {
         json!({"action":"snapshot", "id":"tab", "script":"evil()"})
     )
     .is_err());
+}
+
+#[test]
+fn provider_compatible_schemas_accept_current_or_semantic_targets_and_reject_invalid_fields() {
+    let tools = definitions(crate::agent::Mode::Build);
+    for tool in &tools {
+        assert_eq!(tool["strict"], false);
+        let schema = tool["parameters"].to_string();
+        for keyword in ["oneOf", "anyOf", "allOf", "not", "const"] {
+            assert!(!schema.contains(&format!("\"{keyword}\":")));
+        }
+    }
+    for (name, args, valid) in [
+        (
+            "browser_click",
+            json!({"id":"tab","element":"element-1"}),
+            true,
+        ),
+        (
+            "browser_click",
+            json!({"id":"tab","locator":{"role":"button","name":"Save"}}),
+            true,
+        ),
+        (
+            "browser_click",
+            json!({"id":"tab","locator":{"css":"button"}}),
+            false,
+        ),
+        (
+            "browser_click",
+            json!({"id":"tab","locator":{"text":1}}),
+            false,
+        ),
+        (
+            "browser_click",
+            json!({"id":"tab","locator":{"text":"x".repeat(201)}}),
+            false,
+        ),
+        ("browser_click", json!({"locator":{"text":"Save"}}), false),
+        (
+            "browser_fill",
+            json!({"id":"tab","locator":{"label":"Email"},"text":""}),
+            true,
+        ),
+        (
+            "browser_press",
+            json!({"id":"tab","locator":{"testId":"submit"},"key":"Enter"}),
+            true,
+        ),
+        ("browser_wait", json!({"id":"tab","state":"ready"}), true),
+        (
+            "browser_wait",
+            json!({"id":"tab","state":"detached","element":"element-1"}),
+            true,
+        ),
+        (
+            "browser_wait",
+            json!({"id":"tab","state":"visible","locator":{"text":"Saved"},"timeoutMs":0}),
+            true,
+        ),
+        ("browser_wait", json!({"id":"tab","state":"stable"}), false),
+        ("browser_wait", json!({"id":"tab"}), false),
+        (
+            "browser_wait",
+            json!({"id":"tab","state":"ready","timeoutMs":15001}),
+            false,
+        ),
+        (
+            "browser_wait",
+            json!({"id":"tab","state":"ready","timeoutMs":1.5}),
+            false,
+        ),
+    ] {
+        let tool = tools.iter().find(|tool| tool["name"] == name).unwrap();
+        let validator = jsonschema::validator_for(&tool["parameters"]).unwrap();
+        assert_eq!(validator.is_valid(&args), valid, "{name}: {args}");
+    }
 }

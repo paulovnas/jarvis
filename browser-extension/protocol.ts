@@ -17,14 +17,23 @@ export type Pairing = z.infer<typeof pairingSchema>;
 const actionSchema = z.enum([
   "list", "discover", "attach", "open", "select", "close", "navigate", "back", "forward",
   "reload", "snapshot", "console", "screenshot", "click", "fill", "press", "scroll",
-  "network", "response_body", "evaluate", "devtools", "prune",
+  "network", "response_body", "evaluate", "devtools", "wait", "prune",
 ]);
+const locatorSchema = z.object({
+  role: z.string().trim().min(1).max(200).optional(), name: z.string().trim().min(1).max(200).optional(),
+  label: z.string().trim().min(1).max(200).optional(), text: z.string().trim().min(1).max(200).optional(),
+  testId: z.string().trim().min(1).max(200).optional(), exact: z.boolean().optional(),
+}).strict().refine(value => [value.role, value.label, value.text, value.testId].filter(value => value !== undefined).length === 1
+  && (value.name === undefined || value.role !== undefined), "Informe um único localizador semântico.");
 export const requestSchema = z.object({
   type: z.literal("request"), id: z.string().min(1).max(100),
   conversationId: z.string().max(200),
   request: z.object({
     action: actionSchema, id: z.string().max(100).nullish(), url: z.string().max(4096).nullish(),
     newWindow: z.boolean().optional(), element: z.string().max(80).nullish(),
+    locator: locatorSchema.nullish(), frameId: z.string().min(1).max(160).nullish(),
+    timeoutMs: z.number().int().min(0).max(15000).nullish(),
+    state: z.enum(["visible", "hidden", "attached", "detached", "ready"]).nullish(),
     text: z.string().max(8000).nullish(), key: z.string().max(40).nullish(),
     x: z.number().finite().min(-100000).max(100000).nullish(),
     y: z.number().finite().min(-100000).max(100000).nullish(),
@@ -32,12 +41,25 @@ export const requestSchema = z.object({
     limit: z.number().int().min(1).max(100).nullish(), requestId: z.string().max(300).nullish(),
     expression: z.string().max(32000).nullish(), method: z.string().max(100).nullish(),
     params: z.record(z.string(), z.unknown()).nullish(), retained: z.array(z.string().max(200)).max(10000).optional(),
-  }).strict(),
+  }).strict().superRefine((request, ctx) => {
+    const targets = Number(Boolean(request.element)) + Number(Boolean(request.locator));
+    const interaction = ["click", "fill", "press"].includes(request.action);
+    if (interaction && targets !== 1
+      || request.action === "wait" && (!request.state || (request.state === "ready" ? targets !== 0 : targets !== 1))) {
+      ctx.addIssue({ code: "custom", message: "Informe um alvo único ou uma condição de espera válida." });
+    }
+    if (request.locator && !interaction && request.action !== "wait"
+      || request.frameId && !interaction && !["wait", "snapshot"].includes(request.action)
+      || request.timeoutMs != null && !interaction && request.action !== "wait"
+      || request.state && request.action !== "wait") {
+      ctx.addIssue({ code: "custom", message: "Os argumentos não se aplicam a esta ação." });
+    }
+  }),
 }).strict();
 export type Request = z.infer<typeof requestSchema>;
 
 export class BrowserError extends Error {
-  constructor(public code: string, message: string) { super(message); }
+  constructor(public code: string, message: string, public details?: Record<string, unknown>) { super(message); }
 }
 
 export function address(value: string): string {
@@ -84,7 +106,7 @@ export function bounded(value: unknown, limit = 48000): unknown {
 }
 
 export function errorResult(error: unknown) {
-  return error instanceof BrowserError ? { code: error.code, message: error.message }
+  return error instanceof BrowserError ? { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) }
     : { code: "browser_command_failed", message: error instanceof Error ? error.message.slice(0, 1000) : "Falha na operação do navegador." };
 }
 

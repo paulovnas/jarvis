@@ -692,6 +692,7 @@ fn delegated_design_discovery_enforces_read_only_and_parent_questions_even_with_
         "terminal_list",
         "terminal_output",
         "browser_snapshot",
+        "browser_wait",
         "browser_console",
         "browser_screenshot",
         "browser_discover",

@@ -503,4 +503,71 @@ mod instruction_tests {
             assert!(prompt.contains("USER performs final functional and visual acceptance"));
         }
     }
+
+    #[test]
+    fn native_tool_guidance_reaches_all_runtime_agents_without_rewriting_custom_prompts() {
+        let mut prompts = Vec::new();
+        for flow in [
+            Flow::Standard,
+            Flow::Designer,
+            Flow::Planned,
+            Flow::Complete,
+            Flow::Publication,
+        ] {
+            for role in roster(flow) {
+                let sections = get_agent_instructions(flow, *role).unwrap();
+                let runtime = contracts::prompt(flow, *role, "runtime");
+                assert!(sections.iter().any(|section| {
+                    section.title == "Diretrizes comuns" && runtime.contains(section.content)
+                }));
+                prompts.push(runtime);
+            }
+        }
+        let mut agent = catalog::AgentDefinition {
+            id: "custom-agent".into(),
+            name: "Custom agent".into(),
+            description: String::new(),
+            instructions: "Keep my project's API conventions.".into(),
+            native_role: None,
+            usage: catalog::AgentUsage::Mixed,
+            capability: catalog::Capability::Commands,
+            denied_tools: vec![],
+            model: None,
+            appearance: None,
+        };
+        for role in [None, Some(Role::Builder), Some(Role::Designer)] {
+            agent.native_role = role;
+            for prompt in [
+                custom::instructions(&agent),
+                custom::direct_instructions(&agent),
+            ] {
+                if role.is_none() {
+                    assert!(prompt.contains(&agent.instructions));
+                }
+                prompts.push(prompt);
+            }
+        }
+        for prompt in prompts {
+            for guidance in [
+                "current turn's advertised catalog",
+                "Prefer native HTTP tools over ad-hoc curl/Python",
+                "HTTP requests do not inherit browser cookies",
+                "exact revision",
+                "read that runId without preparing or sending another request",
+                "configured embedded or Chromium-extension backend",
+                "unique semantic locator",
+                "browser_wait for uncertain readiness",
+                "browser_outcome_unknown",
+                "never automatically replay the mutation",
+                "USER performs final functional and visual acceptance",
+            ] {
+                assert!(prompt.contains(guidance), "Missing guidance: {guidance}");
+            }
+            assert_eq!(
+                prompt.matches("current turn's advertised catalog").count(),
+                1
+            );
+        }
+        assert_eq!(agent.instructions, "Keep my project's API conventions.");
+    }
 }

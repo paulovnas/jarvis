@@ -133,7 +133,7 @@ chrome.alarms.onAlarm.addListener(alarm => {
 chrome.tabs.onRemoved.addListener(id => { void initialized.then(() => controller?.removed(id)); });
 chrome.tabs.onUpdated.addListener((id, info) => { void initialized.then(() => controller?.updated(id, info)); });
 chrome.debugger.onDetach.addListener(source => { if (source.tabId !== undefined) void initialized.then(() => controller?.onDetach(source.tabId!)); });
-chrome.debugger.onEvent.addListener((source, method, params) => { if (source.tabId !== undefined) void initialized.then(() => controller?.event(source.tabId!, method, params)); });
+chrome.debugger.onEvent.addListener((source, method, params) => { if (source.tabId !== undefined) void initialized.then(() => controller?.event(source.tabId!, method, params, source.sessionId)); });
 chrome.runtime.onMessage.addListener((raw: unknown, sender, respond: (value: unknown) => void) => {
   if (sender.id !== chrome.runtime.id) return false;
   const message = object(raw);

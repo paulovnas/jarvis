@@ -194,12 +194,12 @@ describe("owned browser tabs", () => {
     const browser = new BrowserController(epoch, vi.fn());
     await browser.restore();
     await browser.execute(request("attach", { id: tabHandle(epoch, 10) }));
-    chromeMock.debugger.sendCommand.mockImplementation((_source, method: string) => Promise.resolve(method === "Page.getFrameTree" ? { frameTree: { frame: { id: "main" } } } : method === "Page.createIsolatedWorld" ? { executionContextId: 7 } : { result: { value: { x: 10, y: 10, tag: "input", elements: [{ id: "field-1" }] } } }));
+    chromeMock.debugger.sendCommand.mockImplementation((_source, method: string) => Promise.resolve(method === "Page.getFrameTree" ? { frameTree: { frame: { id: "main" } } } : method === "Page.createIsolatedWorld" ? { executionContextId: 7 } : { result: { value: { ready: true, token: "prepared-field", x: 10, y: 10, tag: "input", elements: [{ id: "field-1" }] } } }));
     await browser.execute(request("snapshot", { id: tabHandle(epoch, 10) }));
     chromeMock.debugger.sendCommand.mockClear();
     await browser.execute(request("press", { id: tabHandle(epoch, 10), element: "field-1", key: "Enter" }));
     const evaluation = chromeMock.debugger.sendCommand.mock.calls.find(call => call[1] === "Runtime.evaluate");
-    expect(evaluation?.[2]).toMatchObject({ contextId: 7, expression: expect.stringContaining('"field-1","press"') });
+    expect(evaluation?.[2]).toMatchObject({ contextId: 7, expression: expect.stringContaining('"mode":"press","element":"field-1"') });
     chromeMock.debugger.sendCommand.mockClear();
     await browser.execute(request("fill", { id: tabHandle(epoch, 10), element: "field-1", text: "" }));
     expect(chromeMock.debugger.sendCommand).toHaveBeenCalledWith({ tabId: 10 }, "Input.dispatchKeyEvent", expect.objectContaining({ key: "Backspace", type: "keyDown" }));
@@ -230,4 +230,138 @@ it("serializes operations on a tab while allowing other tabs to proceed", async 
   finish();
   await Promise.all([first, second]);
   expect(calls).toEqual(["first", "other", "second"]);
+});
+
+type PageArgs = { action: string; mode?: string; element?: string; locator?: { role?: string; name?: string }; offset?: number; limit?: number };
+function pageArgs(raw: unknown): PageArgs {
+  const expression = String((raw as { expression?: string }).expression ?? "");
+  return JSON.parse(expression.slice(expression.lastIndexOf("})(") + 3, -1)) as PageArgs;
+}
+async function interactiveBrowser(handler: (args: PageArgs) => Record<string, unknown> = () => ({ ready: true, x: 10, y: 20, tag: "button", token: "prepared-target" })) {
+  const browser = new BrowserController(epoch, vi.fn());
+  await browser.restore();
+  await browser.execute(request("attach", { id: tabHandle(epoch, 10) }));
+  chromeMock.debugger.sendCommand.mockImplementation((_source, method: string, params: Record<string, unknown>) => {
+    if (method === "Page.getFrameTree") return Promise.resolve({ frameTree: { frame: { id: "main", url: tab.url }, childFrames: [{ frame: { id: "child", parentId: "main", url: "https://embedded.example" } }] } });
+    if (method === "Page.createIsolatedWorld") return Promise.resolve({ executionContextId: params.frameId === "main" ? 7 : 8 });
+    if (method === "Runtime.evaluate") {
+      const args = pageArgs(params);
+      return Promise.resolve({ result: { value: args.action === "snapshot" ? { elements: [{ id: "target-1", name: "Save", role: "button" }], total: 1, offset: args.offset ?? 0, limit: args.limit ?? 100 }
+        : args.action === "finish" ? { blocked: false } : handler(args) } });
+    }
+    if (method === "DOM.getFrameOwner") return Promise.resolve({ backendNodeId: 1 });
+    if (method === "DOM.resolveNode") return Promise.resolve({ object: { objectId: "frame-owner" } });
+    if (method === "Runtime.callFunctionOn") {
+      const args = (params.arguments as { value: { action: string; x?: number; y?: number } }[])[0].value;
+      return Promise.resolve({ result: { value: args.action === "point" ? { ready: true, x: (args.x ?? 0) + 100, y: (args.y ?? 0) + 200 } : { ready: true, blocked: false } } });
+    }
+    return Promise.resolve({});
+  });
+  return browser;
+}
+
+describe("reliable browser interactions", () => {
+  it("validates unique semantic targets and bounded wait contracts before dispatch", () => {
+    expect(requestSchema.safeParse(request("click", { locator: { role: "button", name: "Save" } })).success).toBe(true);
+    for (const locator of [{}, { name: "Save" }, { label: "Save", text: "Save" }]) expect(requestSchema.safeParse(request("click", { locator })).success).toBe(false);
+    expect(requestSchema.safeParse(request("click", { element: "one", locator: { text: "Save" } })).success).toBe(false);
+    expect(requestSchema.safeParse(request("wait", { state: "ready", timeoutMs: 15001 })).success).toBe(false);
+    expect(requestSchema.safeParse(request("wait", { state: "hidden" })).success).toBe(false);
+    expect(requestSchema.safeParse(request("wait", { state: "ready" })).success).toBe(true);
+  });
+
+  it("waits for actionability and dispatches a semantic click exactly once", async () => {
+    let attempts = 0;
+    const browser = await interactiveBrowser(args => args.action === "prepare" && attempts++ === 0
+      ? { ready: false, code: "browser_element_disabled", reason: "Button is disabled" }
+      : { ready: true, x: 10, y: 20, token: "prepared-target" });
+    await expect(browser.execute(request("click", { id: tabHandle(epoch, 10), locator: { role: "button", name: "Save" } }))).resolves.toMatchObject({ dispatched: true, frameId: "main" });
+    expect(attempts).toBe(2);
+    expect(chromeMock.debugger.sendCommand.mock.calls.filter(call => call[1] === "Input.dispatchMouseEvent")).toHaveLength(2);
+  });
+
+  it("returns preflight diagnostics and sends no input for a covered or ambiguous target", async () => {
+    for (const code of ["browser_element_obscured", "browser_ambiguous_element"]) {
+      const browser = await interactiveBrowser(() => ({ ready: false, code, reason: "Target is unavailable" }));
+      await expect(browser.execute(request("click", { id: tabHandle(epoch, 10), locator: { text: "Save" }, timeoutMs: 0 }))).rejects.toMatchObject({ details: { dispatched: false, phase: "prepare" } });
+      expect(chromeMock.debugger.sendCommand.mock.calls.some(call => String(call[1]).startsWith("Input."))).toBe(false);
+      chromeMock.debugger.sendCommand.mockClear();
+    }
+  });
+
+  it("cancels an in-flight preflight without input while preserving the tab", async () => {
+    let connected = true;
+    const browser = await interactiveBrowser(args => {
+      if (args.action === "prepare") connected = false;
+      return { ready: true, x: 10, y: 20, token: "prepared-target" };
+    });
+    await expect(browser.execute(request("click", { id: tabHandle(epoch, 10), locator: { text: "Save" } }), () => connected)).rejects.toMatchObject({ code: "browser_outcome_unknown" });
+    expect(chromeMock.debugger.sendCommand.mock.calls.some(call => String(call[1]).startsWith("Input."))).toBe(false);
+    await expect(browser.execute(request("list"))).resolves.toMatchObject({ tabs: [{ id: tabHandle(epoch, 10) }] });
+  });
+
+  it("never retries after a partial click loses its confirmation", async () => {
+    const browser = await interactiveBrowser();
+    const implementation = chromeMock.debugger.sendCommand.getMockImplementation()!;
+    chromeMock.debugger.sendCommand.mockImplementation((source, method: string, params: Record<string, unknown>) => {
+      if (method === "Input.dispatchMouseEvent" && params.type === "mouseReleased") return Promise.reject(new Error("Connection lost after mousedown"));
+      return implementation(source, method, params);
+    });
+    await expect(browser.execute(request("click", { id: tabHandle(epoch, 10), locator: { text: "Save" } }))).rejects.toMatchObject({ code: "browser_outcome_unknown", details: { phase: "dispatch", dispatched: true } });
+    expect(chromeMock.debugger.sendCommand.mock.calls.filter(call => call[1] === "Input.dispatchMouseEvent")).toHaveLength(2);
+  });
+
+  it("keeps snapshots scoped and paginated while exposing frames for selection", async () => {
+    const browser = await interactiveBrowser();
+    await expect(browser.execute(request("snapshot", { id: tabHandle(epoch, 10), frameId: "child", offset: 10, limit: 20 }))).resolves.toMatchObject({ frameId: "child", offset: 10, limit: 20, frames: [{ id: "main" }, { id: "child", parentId: "main" }] });
+    expect(chromeMock.debugger.sendCommand).toHaveBeenCalledWith({ tabId: 10 }, "Page.createIsolatedWorld", expect.objectContaining({ frameId: "child" }));
+    await browser.execute(request("click", { id: tabHandle(epoch, 10), element: "target-1" }));
+    expect(chromeMock.debugger.sendCommand).toHaveBeenCalledWith({ tabId: 10 }, "Input.dispatchMouseEvent", expect.objectContaining({ x: 110, y: 220, type: "mousePressed" }));
+    await expect(browser.execute(request("click", { id: tabHandle(epoch, 10), element: "target-1", frameId: "main" }))).rejects.toMatchObject({ code: "browser_invalid_request" });
+  });
+
+  it("routes cross-origin iframe worlds and response bodies through their debugger session", async () => {
+    const browser = await interactiveBrowser();
+    browser.event(10, "Target.attachedToTarget", { sessionId: "remote-session", targetInfo: { targetId: "remote", type: "iframe", url: "https://remote.example" } });
+    const implementation = chromeMock.debugger.sendCommand.getMockImplementation()!;
+    chromeMock.debugger.sendCommand.mockImplementation((source: { sessionId?: string }, method: string, params: Record<string, unknown>) => {
+      if (source.sessionId === "remote-session" && method === "Page.getFrameTree") return Promise.resolve({ frameTree: { frame: { id: "remote", parentId: "main", url: "https://remote.example" } } });
+      return implementation(source, method, params);
+    });
+    await expect(browser.execute(request("snapshot", { id: tabHandle(epoch, 10), frameId: "remote" }))).resolves.toMatchObject({ frameId: "remote" });
+    expect(chromeMock.debugger.sendCommand).toHaveBeenCalledWith({ tabId: 10, sessionId: "remote-session" }, "Page.createIsolatedWorld", expect.objectContaining({ frameId: "remote" }));
+    browser.event(10, "Network.requestWillBeSent", { requestId: "5", request: { method: "GET", url: "https://remote.example" } }, "remote-session");
+    await browser.execute(request("response_body", { id: tabHandle(epoch, 10), requestId: "remote-session:5" }));
+    expect(chromeMock.debugger.sendCommand).toHaveBeenCalledWith({ tabId: 10, sessionId: "remote-session" }, "Network.getResponseBody", { requestId: "5" });
+  });
+
+  it("waits for document readiness without dispatching an interaction", async () => {
+    const browser = await interactiveBrowser(() => ({ ready: true }));
+    await expect(browser.execute(request("wait", { id: tabHandle(epoch, 10), state: "ready" }))).resolves.toMatchObject({ ready: true, state: "ready" });
+    expect(chromeMock.debugger.sendCommand.mock.calls.some(call => String(call[1]).startsWith("Input."))).toBe(false);
+  });
+
+  it("sends no input when frame guard setup has already consumed its protection window", async () => {
+    const browser = await interactiveBrowser();
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const implementation = chromeMock.debugger.sendCommand.getMockImplementation()!;
+    chromeMock.debugger.sendCommand.mockImplementation((source, method: string, params: Record<string, unknown>) => {
+      if (method === "Runtime.callFunctionOn" && (params.arguments as { value: { action: string } }[])[0].value.action === "guard") now += 3100;
+      return implementation(source, method, params);
+    });
+    try {
+      await expect(browser.execute(request("click", { id: tabHandle(epoch, 10), frameId: "child", locator: { text: "Save" } }))).rejects.toMatchObject({ code: "browser_guard_unavailable", details: { dispatched: false } });
+      expect(chromeMock.debugger.sendCommand.mock.calls.some(call => String(call[1]).startsWith("Input."))).toBe(false);
+    } finally { clock.mockRestore(); }
+  });
+
+  it("does not insert text after a key handler changes focus during select-all", async () => {
+    let verified = 0;
+    const browser = await interactiveBrowser(args => args.action === "verify" && ++verified > 1
+      ? { ready: false, code: "browser_focus_changed" }
+      : { ready: true, x: 10, y: 20, tag: "input", token: "prepared-target" });
+    await expect(browser.execute(request("fill", { id: tabHandle(epoch, 10), locator: { label: "Email" }, text: "new@example.org" }))).rejects.toMatchObject({ code: "browser_outcome_unknown", details: { dispatched: true } });
+    expect(chromeMock.debugger.sendCommand.mock.calls.some(call => call[1] === "Input.insertText")).toBe(false);
+  });
 });

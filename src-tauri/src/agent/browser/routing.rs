@@ -29,6 +29,7 @@ fn validate(request: &mut BrowserRequest) -> Result<(), AgentError> {
             | "forward"
             | "reload"
             | "snapshot"
+            | "wait"
             | "console"
             | "screenshot"
             | "click"
@@ -53,7 +54,12 @@ fn validate(request: &mut BrowserRequest) -> Result<(), AgentError> {
         || request
             .element
             .as_ref()
-            .is_some_and(|value| value.len() > 120)
+            .is_some_and(|value| value.trim().is_empty() || value.len() > 120)
+        || request
+            .frame_id
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty() || value.len() > 160)
+        || request.timeout_ms.is_some_and(|value| value > 15000)
         || request
             .expression
             .as_ref()
@@ -85,8 +91,66 @@ fn validate(request: &mut BrowserRequest) -> Result<(), AgentError> {
             "Argumentos de navegador excedem os limites permitidos.",
         ));
     }
+    if let Some(locator) = &request.locator {
+        let selectors = [
+            &locator.role,
+            &locator.label,
+            &locator.text,
+            &locator.test_id,
+        ];
+        if selectors.iter().filter(|value| value.is_some()).count() != 1
+            || (locator.name.is_some() && locator.role.is_none())
+            || selectors
+                .into_iter()
+                .chain([&locator.name])
+                .flatten()
+                .any(|value| value.trim().is_empty() || value.chars().count() > 200)
+        {
+            return Err(error("Use um único locator: role (com name opcional), label, text ou testId, com até 200 caracteres."));
+        }
+    }
+    let interaction = matches!(request.action.as_str(), "click" | "fill" | "press");
+    let wait = request.action == "wait";
+    if (request.locator.is_some() && !interaction && !wait)
+        || (request.frame_id.is_some() && !interaction && !wait && request.action != "snapshot")
+        || (request.timeout_ms.is_some() && !interaction && !wait)
+        || (request.state.is_some() && !wait)
+    {
+        return Err(error(
+            "Locator, frameId, timeoutMs ou state não se aplicam a esta ação de navegador.",
+        ));
+    }
+    let targets = usize::from(request.element.is_some()) + usize::from(request.locator.is_some());
+    if interaction && targets != 1 {
+        return Err(error("Informe exatamente um element atual ou um locator."));
+    }
+    if wait {
+        match request.state {
+            Some(BrowserWaitState::Ready) if targets == 0 => {}
+            Some(state) if state != BrowserWaitState::Ready && targets == 1 => {}
+            _ => return Err(error("Informe state: ready sem alvo, ou visible/hidden/attached/detached com exatamente um element ou locator.")),
+        }
+    }
     if let Some(url) = &request.url {
         request.url = Some(address(url)?.to_string());
+    }
+    Ok(())
+}
+
+fn validate_backend(request: &BrowserRequest, external: bool) -> Result<(), AgentError> {
+    if !external
+        && (matches!(
+            request.action.as_str(),
+            "discover" | "attach" | "network" | "response_body" | "evaluate" | "devtools" | "wait"
+        ) || request.new_window == Some(true)
+            || request.locator.is_some()
+            || request.frame_id.is_some()
+            || request.timeout_ms.is_some()
+            || request.state.is_some()
+            || (request.action == "snapshot"
+                && (request.offset.is_some() || request.limit.is_some())))
+    {
+        return Err(error("Este recurso usa a extensão Chromium. Selecione uma aba externa ou configure a extensão em Configurações > Navegador."));
     }
     Ok(())
 }
@@ -184,6 +248,7 @@ pub(super) async fn command(
     }
     // Resolve once: changing preferences cannot redirect an operation already in progress.
     let external = external_request(&request, preference(app)?);
+    validate_backend(&request, external)?;
     if request.action == "list" {
         return Ok(json!(snapshot(app, conversation).await?));
     }
@@ -209,13 +274,6 @@ pub(super) async fn command(
             result
         }
     } else {
-        if matches!(
-            action.as_str(),
-            "discover" | "attach" | "network" | "response_body" | "evaluate" | "devtools"
-        ) || request.new_window == Some(true)
-        {
-            return Err(error("Este recurso usa a extensão Chromium. Selecione uma aba externa ou configure a extensão em Configurações > Navegador."));
-        }
         super::command(app, conversation, request).await?
     };
     let state = app.state::<BrowserState>();
@@ -293,6 +351,135 @@ mod tests {
         request.params = None;
         request.x = Some(f64::NAN);
         assert!(validate(&mut request).is_err());
+    }
+
+    #[test]
+    fn current_id_requests_keep_the_existing_wire_shape() {
+        let payload = json!({"action":"click","id":"native-tab","element":"element-1"});
+        let mut request: BrowserRequest = serde_json::from_value(payload.clone()).unwrap();
+        validate(&mut request).unwrap();
+        validate_backend(&request, false).unwrap();
+        assert_eq!(serde_json::to_value(request).unwrap(), payload);
+    }
+
+    #[test]
+    fn semantic_locators_require_one_bounded_selector_and_role_for_name() {
+        for locator in [
+            json!({}),
+            json!({"exact":true}),
+            json!({"name":"Save"}),
+            json!({"role":"button","label":"Save"}),
+            json!({"role":"button","label":"Save","name":"Save"}),
+            json!({"label":"Save","name":"Save"}),
+            json!({"text":"   "}),
+            json!({"testId":"x".repeat(201)}),
+        ] {
+            let mut request: BrowserRequest = serde_json::from_value(
+                json!({"action":"click","id":"ext:epoch:7","locator":locator}),
+            )
+            .unwrap();
+            assert!(validate(&mut request).is_err(), "accepted {locator}");
+        }
+        for locator in [
+            json!({"role":"button","name":"Save"}),
+            json!({"label":"Email","exact":false}),
+            json!({"text":"Continue"}),
+            json!({"testId":"checkout"}),
+        ] {
+            let payload = json!({"action":"click","id":"ext:epoch:7","locator":locator,"frameId":"frame-1","timeoutMs":0});
+            let mut request: BrowserRequest = serde_json::from_value(payload.clone()).unwrap();
+            validate(&mut request).unwrap();
+            assert_eq!(serde_json::to_value(request).unwrap(), payload);
+        }
+    }
+
+    #[test]
+    fn interactions_reject_missing_or_ambiguous_targets_before_dispatch() {
+        for action in ["click", "fill", "press"] {
+            for target in [
+                json!({}),
+                json!({"element":"element-1","locator":{"text":"Save"}}),
+            ] {
+                let mut payload = json!({"action":action,"id":"ext:epoch:7"});
+                payload
+                    .as_object_mut()
+                    .unwrap()
+                    .extend(target.as_object().unwrap().clone());
+                let mut request: BrowserRequest = serde_json::from_value(payload).unwrap();
+                assert!(
+                    validate(&mut request).is_err(),
+                    "accepted ambiguous {action}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wait_requires_an_explicit_state_and_a_target_only_for_element_states() {
+        for payload in [
+            json!({"action":"wait","id":"ext:epoch:7","state":"ready"}),
+            json!({"action":"wait","id":"ext:epoch:7","state":"visible","locator":{"role":"button","name":"Save"},"timeoutMs":15000}),
+            json!({"action":"wait","id":"ext:epoch:7","state":"detached","element":"element-1"}),
+        ] {
+            let mut request: BrowserRequest = serde_json::from_value(payload).unwrap();
+            validate(&mut request).unwrap();
+            validate_backend(&request, true).unwrap();
+        }
+        for payload in [
+            json!({"action":"wait","id":"ext:epoch:7"}),
+            json!({"action":"wait","id":"ext:epoch:7","state":"ready","locator":{"text":"Save"}}),
+            json!({"action":"wait","id":"ext:epoch:7","state":"hidden"}),
+            json!({"action":"wait","id":"ext:epoch:7","state":"attached","element":"element-1","locator":{"text":"Save"}}),
+            json!({"action":"wait","id":"ext:epoch:7","state":"ready","timeoutMs":15001}),
+        ] {
+            let mut request: BrowserRequest = serde_json::from_value(payload.clone()).unwrap();
+            assert!(validate(&mut request).is_err(), "accepted {payload}");
+        }
+    }
+
+    #[test]
+    fn extension_fields_cannot_be_ignored_by_native_tabs_or_other_actions() {
+        for payload in [
+            json!({"action":"click","id":"native-tab","locator":{"text":"Save"}}),
+            json!({"action":"click","id":"native-tab","element":"element-1","timeoutMs":0}),
+            json!({"action":"snapshot","id":"native-tab","frameId":"frame-1"}),
+            json!({"action":"snapshot","id":"native-tab","offset":0}),
+            json!({"action":"snapshot","id":"native-tab","limit":100}),
+            json!({"action":"wait","id":"native-tab","state":"ready"}),
+        ] {
+            let mut request: BrowserRequest = serde_json::from_value(payload).unwrap();
+            validate(&mut request).unwrap();
+            assert!(validate_backend(&request, false).is_err());
+            request.id = Some("ext:epoch:7".into());
+            validate_backend(&request, external_request(&request, BrowserMode::Embedded)).unwrap();
+        }
+        for payload in [
+            json!({"action":"console","id":"ext:epoch:7","frameId":"frame-1"}),
+            json!({"action":"snapshot","id":"ext:epoch:7","timeoutMs":100}),
+            json!({"action":"click","id":"ext:epoch:7","element":"element-1","state":"visible"}),
+            json!({"action":"snapshot","id":"ext:epoch:7","locator":{"text":"Save"}}),
+            json!({"action":"snapshot","id":"ext:epoch:7","frameId":" "}),
+            json!({"action":"snapshot","id":"ext:epoch:7","frameId":"x".repeat(161)}),
+        ] {
+            let mut request: BrowserRequest = serde_json::from_value(payload.clone()).unwrap();
+            assert!(validate(&mut request).is_err(), "accepted {payload}");
+        }
+    }
+
+    #[test]
+    fn locator_and_wait_wire_types_reject_unknown_or_invalid_values() {
+        for payload in [
+            json!({"action":"click","locator":{"css":"button"}}),
+            json!({"action":"click","locator":{"text":"Save","exact":"true"}}),
+            json!({"action":"wait","state":"stable"}),
+            json!({"action":"wait","state":"ready","timeoutMs":-1}),
+            json!({"action":"wait","state":"ready","timeoutMs":1.5}),
+        ] {
+            assert!(
+                serde_json::from_value::<BrowserRequest>(payload.clone()).is_err(),
+                "accepted {payload}"
+            );
+        }
     }
 
     #[test]
