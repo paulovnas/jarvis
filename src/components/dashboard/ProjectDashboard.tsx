@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { lazy, Suspense, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { LayoutDashboard, Kanban, RefreshCw, FolderGit2, FolderOpen, SlidersHorizontal } from "lucide-react";
+import { LayoutDashboard, Kanban, RefreshCw, FolderGit2, FolderOpen, SlidersHorizontal, Terminal } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,11 +13,14 @@ import { DashboardOverview } from "./DashboardOverview";
 import { BeadsBoard } from "./BeadsBoard";
 import { DashboardSkeleton } from "./DashboardSkeleton";
 import { ProjectOptions } from "./ProjectOptions";
+import { DocumentSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Hint } from "@/components/ui/hint";
 import type { LibraryController } from "@/hooks/use-library";
 import "./dashboard.css";
 
-export function ProjectDashboard({ project, projectUpdater, onSelectSession, navigation, initialTab = "general" }: { project: Project; projectUpdater: Pick<LibraryController, "pending" | "error" | "clearError" | "updateProject">; onSelectSession: (id: string) => void; navigation?: ReactNode; initialTab?: "general" | "beads" | "options" }) {
+const TerminalWorkspace = lazy(() => import("@/components/chat/TerminalWorkspace").then(module => ({ default: module.TerminalWorkspace })));
+
+export function ProjectDashboard({ project, projectUpdater, onSelectSession, navigation, initialTab = "general" }: { project: Project; projectUpdater: Pick<LibraryController, "pending" | "error" | "clearError" | "updateProject">; onSelectSession: (id: string) => void; navigation?: ReactNode; initialTab?: "general" | "beads" | "terminals" | "options" }) {
   const [tab, setTab] = useState<string>(initialTab);
   const core = useCore();
   const metrics = useDashboardQuery("get_project_metrics", project.id, projectMetricsSchema);
@@ -31,7 +34,7 @@ export function ProjectDashboard({ project, projectUpdater, onSelectSession, nav
       <Hint content="Atualizar"><Button variant="ghost" size="icon" className="cursor-pointer" aria-label="Atualizar detalhes" disabled={loading} onClick={() => { void metrics.refresh(); void board.refresh(); }}><RefreshCw className="size-4" /></Button></Hint>
     </header>
     <Tabs value={tab} onValueChange={value => setTab(String(value))} className="min-h-0 flex-1 gap-0">
-      <div className="flex shrink-0 items-center border-b border-border px-6 py-3"><TabsList className="h-9 gap-1 rounded-md border border-border/70 bg-sidebar p-1"><TabsTrigger value="general" className="h-7 cursor-pointer gap-2 rounded-sm px-3 text-xs data-active:bg-secondary data-active:shadow-sm"><LayoutDashboard />Geral</TabsTrigger><TabsTrigger value="beads" className="h-7 cursor-pointer gap-2 rounded-sm px-3 text-xs data-active:bg-secondary data-active:shadow-sm"><Kanban />Kanban{board.data && <Badge variant="secondary" className="font-mono text-[10px]">{board.data.length}</Badge>}</TabsTrigger><TabsTrigger value="options" className="h-7 cursor-pointer gap-2 rounded-sm px-3 text-xs data-active:bg-secondary data-active:shadow-sm"><SlidersHorizontal />Opções</TabsTrigger></TabsList></div>
+      <div className="flex shrink-0 items-center border-b border-border px-6 py-3"><TabsList className="h-9 gap-1 rounded-md border border-border/70 bg-sidebar p-1"><TabsTrigger value="general" className="h-7 cursor-pointer gap-2 rounded-sm px-3 text-xs data-active:bg-secondary data-active:shadow-sm"><LayoutDashboard />Geral</TabsTrigger><TabsTrigger value="beads" className="h-7 cursor-pointer gap-2 rounded-sm px-3 text-xs data-active:bg-secondary data-active:shadow-sm"><Kanban />Kanban{board.data && <Badge variant="secondary" className="font-mono text-[10px]">{board.data.length}</Badge>}</TabsTrigger><TabsTrigger value="terminals" className="h-7 cursor-pointer gap-2 rounded-sm px-3 text-xs data-active:bg-secondary data-active:shadow-sm"><Terminal />Terminais</TabsTrigger><TabsTrigger value="options" className="h-7 cursor-pointer gap-2 rounded-sm px-3 text-xs data-active:bg-secondary data-active:shadow-sm"><SlidersHorizontal />Opções</TabsTrigger></TabsList></div>
       <TabsContent value="general" className="min-h-0 overflow-y-auto">
         {metrics.error && <DashboardError message={metrics.error} retry={metrics.refresh} />}
         {!metrics.data ? !metrics.error && <DashboardSkeleton /> : <DashboardOverview data={metrics.data} issues={board.data} beadsError={board.error} components={core.snapshot?.items ?? []} onSelectSession={onSelectSession} onOpenBoard={() => setTab("beads")} />}
@@ -40,6 +43,7 @@ export function ProjectDashboard({ project, projectUpdater, onSelectSession, nav
         {board.error && <DashboardError message={board.error} retry={board.refresh} />}
         {!board.data ? !board.error && <DashboardSkeleton board /> : <BeadsBoard projectName={project.name} projectId={project.id} issues={board.data} onChanged={board.refresh} />}
       </TabsContent>
+      <TabsContent value="terminals" className="min-h-0 overflow-hidden"><Suspense fallback={<DocumentSkeleton label="Carregando terminais do projeto" />}><TerminalWorkspace projectId={project.id} /></Suspense></TabsContent>
       <TabsContent value="options" className="min-h-0 overflow-hidden"><ProjectOptions key={project.id} project={project} projectUpdater={projectUpdater} /></TabsContent>
     </Tabs>
   </main>;

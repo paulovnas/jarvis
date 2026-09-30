@@ -51,7 +51,8 @@ pub(super) struct SandboxReport {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 enum Launcher {
     Seatbelt {
         executable: PathBuf,
@@ -64,7 +65,8 @@ enum Launcher {
     Native,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct SandboxPlan {
     report: SandboxReport,
     launcher: Launcher,

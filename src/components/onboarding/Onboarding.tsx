@@ -20,6 +20,7 @@ import { agyModels } from "@/core/agy";
 import { useAgyRuntime } from "@/hooks/use-agy-runtime";
 import { ExecutorModelPicker } from "@/components/chat/ExecutorModelPicker";
 import { accountGroups } from "@/components/settings/workflow/workflow-models";
+import { defaultReasoning } from "@/core/reasoning";
 
 const Providers = lazy(() => import("@/components/settings/SettingsDialog").then(module => ({ default: module.SettingsDialog })));
 const STEPS = ["Boas-vindas", "Core", "Opcionais", "Provedores", "Seu espaço"];
@@ -42,7 +43,7 @@ export function Onboarding({ saving, onComplete }: { saving: boolean; onComplete
   const cliModels = claudeModels(claude.data);
   const agyRuntimeModels = agyModels(agy.data);
   const first = nativeModels[0] ?? cliModels[0] ?? agyRuntimeModels[0];
-  const choice = selection ?? (first ? { executor: nativeModels.length ? "jarvis" as const : cliModels.length ? "claude" as const : "agy" as const, model: first.value, reasoning: first.defaultReasoningLevel ?? first.reasoningLevels[0] ?? null } : null);
+  const choice = selection ?? (first ? { executor: nativeModels.length ? "jarvis" as const : cliModels.length ? "claude" as const : "agy" as const, model: first.value, reasoning: defaultReasoning(first) } : null);
   const selectedModel = (executorOf(choice) === "claude" ? cliModels : executorOf(choice) === "agy" ? agyRuntimeModels : nativeModels).find(model => model.value === choice?.model);
   const runtime = executorOf(choice) === "claude" ? claude : executorOf(choice) === "agy" ? agy : null;
   const providerReady = Boolean(selectedModel && (!choice?.reasoning || selectedModel.reasoningLevels.includes(choice.reasoning)) && (!runtime || !runtime.loading && !runtime.error && runtime.data?.installed && runtime.data.authenticated));

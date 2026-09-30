@@ -1,13 +1,12 @@
-//! Compatibility tools backed by conversation-owned interactive terminals.
+//! Compatibility tools backed by project-owned interactive terminals.
 use super::{
-    terminals::{ChatTerminal, ServiceSpawn, TerminalEvents, TerminalState},
-    AgentError, AgentState, Mode, ToolCall,
+    terminals::{ProjectTerminal, ServiceSpawn, TerminalEvents, TerminalScope, TerminalState},
+    AgentError, Mode, ToolCall,
 };
-use crate::{library, persistence::AppState};
+use crate::library;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
-use tauri::{Emitter, Manager};
 
 mod ports;
 const LOG_LIMIT: usize = 32 * 1024;
@@ -18,7 +17,8 @@ fn invalid(message: &str) -> AgentError {
 #[serde(rename_all = "camelCase")]
 pub struct ProcessInfo {
     id: String,
-    conversation_id: String,
+    project_id: String,
+    conversation_id: Option<String>,
     title: String,
     command: String,
     #[serde(serialize_with = "library::serialize_display_path")]
@@ -30,10 +30,11 @@ pub struct ProcessInfo {
     status: String,
 }
 impl ProcessInfo {
+    #[cfg(test)]
     fn running(&self) -> bool {
         matches!(self.status.as_str(), "running" | "stopping")
     }
-    fn from_terminal(terminal: ChatTerminal, stopped: bool) -> Self {
+    fn from_terminal(terminal: ProjectTerminal, stopped: bool) -> Self {
         let status = if stopped {
             if terminal.status == "running" {
                 "stopping".into()
@@ -45,6 +46,7 @@ impl ProcessInfo {
         };
         Self {
             id: terminal.id,
+            project_id: terminal.project_id,
             conversation_id: terminal.conversation_id,
             title: terminal.title,
             command: terminal.command.unwrap_or_default(),
@@ -60,7 +62,7 @@ impl ProcessInfo {
 #[derive(Default, Clone)]
 pub(crate) struct ProcessState(TerminalState);
 struct StartRequest<'a> {
-    conversation: &'a str,
+    scope: TerminalScope<'a>,
     root: &'a Path,
     call_id: &'a str,
     owner_id: &'a str,
@@ -121,48 +123,52 @@ pub(super) fn ensure_available(port: u16) -> Result<(), AgentError> {
     Ok(())
 }
 impl ProcessState {
-    pub(crate) fn new(terminals: TerminalState) -> Self {
-        Self(terminals)
-    }
+    #[cfg(test)]
     pub(crate) fn has_running(&self) -> bool {
         self.0.has_running()
+    }
+    pub(crate) fn new(terminals: TerminalState) -> Self {
+        Self(terminals)
     }
     pub(crate) fn stop_all(&self) {
         self.0.stop_all();
     }
-    pub(crate) fn stop_conversation(&self, conversation: &str) {
-        self.0.stop_services(conversation);
+    #[cfg(test)]
+    pub(crate) fn stop_project(&self, project: &str) {
+        self.0.stop_services(project);
     }
-    fn list(&self, conversation: &str) -> Result<Vec<ProcessInfo>, AgentError> {
+    fn list(&self, project: &str) -> Result<Vec<ProcessInfo>, AgentError> {
         let mut items: Vec<_> = self
             .0
-            .services(conversation)?
+            .services(project)?
             .into_iter()
             .map(|(item, stopped)| ProcessInfo::from_terminal(item, stopped))
             .collect();
         items.sort_by_key(|item| std::cmp::Reverse(item.started_at));
         Ok(items)
     }
-    fn info(&self, conversation: &str, id: &str) -> Result<ProcessInfo, AgentError> {
-        self.list(conversation)?
+    fn info(&self, project: &str, id: &str) -> Result<ProcessInfo, AgentError> {
+        self.list(project)?
             .into_iter()
             .find(|item| item.id == id)
-            .ok_or_else(|| invalid("Terminal de serviço não encontrado nesta conversa."))
+            .ok_or_else(|| invalid("Terminal de serviço não encontrado neste projeto."))
     }
-    fn output(&self, conversation: &str, id: &str) -> Result<Value, AgentError> {
-        let info = self.info(conversation, id)?;
-        let snapshot = self.0.agent_snapshot(conversation, id, LOG_LIMIT)?;
+    fn output(&self, project: &str, id: &str) -> Result<Value, AgentError> {
+        let info = self.info(project, id)?;
+        let snapshot = self.0.agent_snapshot(project, id, LOG_LIMIT)?;
         Ok(json!({"process": info, "output": snapshot["output"]}))
     }
-    fn stop(&self, conversation: &str, id: &str) -> Result<(), AgentError> {
-        self.info(conversation, id)?;
-        self.0.stop_service(conversation, id)
+    #[cfg(test)]
+    fn stop(&self, project: &str, id: &str) -> Result<(), AgentError> {
+        self.info(project, id)?;
+        self.0.stop_service(project, id)
     }
-    fn remove(&self, conversation: &str, id: &str) -> Result<(), AgentError> {
-        if self.info(conversation, id)?.running() {
+    #[cfg(test)]
+    fn remove(&self, project: &str, id: &str) -> Result<(), AgentError> {
+        if self.info(project, id)?.running() {
             return Err(invalid("Pare o terminal antes de removê-lo."));
         }
-        self.0.remove_service(conversation, id)
+        self.0.remove_service(project, id)
     }
     async fn start_owned(
         &self,
@@ -170,13 +176,17 @@ impl ProcessState {
         events: TerminalEvents,
     ) -> Result<ProcessInfo, AgentError> {
         let StartRequest {
-            conversation,
+            scope,
             root,
             call_id,
             owner_id,
             args,
             sandbox,
         } = request;
+        let TerminalScope {
+            project,
+            conversation,
+        } = scope;
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Args {
@@ -201,6 +211,7 @@ impl ProcessState {
 
         let terminal = self.0.start_service(
             ServiceSpawn {
+                project,
                 conversation,
                 root,
                 call_id,
@@ -212,13 +223,13 @@ impl ProcessState {
             sandbox,
             events,
         )?;
-        self.info(conversation, &terminal.id)
+        self.info(project, &terminal.id)
     }
 
     #[cfg(test)]
     async fn start(
         &self,
-        conversation: &str,
+        project: &str,
         root: &Path,
         call_id: &str,
         args: &Value,
@@ -226,7 +237,10 @@ impl ProcessState {
     ) -> Result<ProcessInfo, AgentError> {
         self.start_owned(
             StartRequest {
-                conversation,
+                scope: TerminalScope {
+                    project,
+                    conversation: None,
+                },
                 root,
                 call_id,
                 owner_id: call_id,
@@ -240,7 +254,7 @@ impl ProcessState {
 
     pub(super) async fn execute(
         &self,
-        conversation: &str,
+        scope: TerminalScope<'_>,
         root: &Path,
         owner_id: &str,
         call: &ToolCall,
@@ -251,7 +265,7 @@ impl ProcessState {
             "process_start" => serde_json::to_value(
                 self.start_owned(
                     StartRequest {
-                        conversation,
+                        scope,
                         root,
                         call_id: &call.id,
                         owner_id,
@@ -263,9 +277,9 @@ impl ProcessState {
                 .await?,
             )
             .map_err(|_| AgentError::internal())?,
-            "process_list" => json!(self.list(conversation)?),
+            "process_list" => json!(self.list(scope.project)?),
             "process_output" => self.output(
-                conversation,
+                scope.project,
                 call.args["id"]
                     .as_str()
                     .ok_or_else(|| invalid("Informe o processo."))?,
@@ -278,8 +292,8 @@ impl ProcessState {
 }
 pub(super) fn definitions(mode: Mode) -> Vec<Value> {
     let mut values = vec![
-        json!({"type":"function","name":"process_list","description":"List development processes owned by this conversation. Status and metadata only.","parameters":{"type":"object","properties":{},"additionalProperties":false}}),
-        json!({"type":"function","name":"process_output","description":"Read the bounded recent output and actual status of a conversation process. Starting a process is not proof it is ready; inspect its output. Do not poll in a loop.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}}),
+        json!({"type":"function","name":"process_list","description":"List development processes owned by this project. Status and metadata only.","parameters":{"type":"object","properties":{},"additionalProperties":false}}),
+        json!({"type":"function","name":"process_output","description":"Read the bounded recent output and actual status of a project process. Starting a process is not proof it is ready; inspect its output. Do not poll in a loop.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}}),
     ];
     values.push(ports::definition());
     if mode == Mode::Build {
@@ -290,66 +304,9 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
         .for_each(super::execution_sandbox::add_permission_parameters);
     values
 }
-#[tauri::command]
-pub async fn list_chat_processes(
-    app: tauri::AppHandle,
-    persistence: tauri::State<'_, AppState>,
-    agent: tauri::State<'_, AgentState>,
-    conversation_id: String,
-) -> Result<Vec<ProcessInfo>, AgentError> {
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
-    let state = persistence.inner().clone();
-    let processes = agent.processes.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        library::agent_location(&state, &home, &conversation_id)?;
-        processes.list(&conversation_id)
-    })
-    .await
-    .map_err(|_| AgentError::internal())?
-}
-#[tauri::command]
-pub fn read_chat_process(
-    agent: tauri::State<'_, AgentState>,
-    conversation_id: String,
-    id: String,
-) -> Result<Value, AgentError> {
-    agent.processes.output(&conversation_id, &id)
-}
-#[tauri::command]
-pub fn stop_chat_process(
-    app: tauri::AppHandle,
-    agent: tauri::State<'_, AgentState>,
-    conversation_id: String,
-    id: String,
-    confirmed: bool,
-) -> Result<(), AgentError> {
-    if !confirmed {
-        return Err(invalid("Confirme que deseja parar o processo."));
-    }
-    agent.processes.stop(&conversation_id, &id)?;
-    let _ = app.emit(
-        "terminals:changed",
-        json!({"conversationId":conversation_id}),
-    );
-    Ok(())
-}
-#[tauri::command]
-pub fn remove_chat_process(
-    app: tauri::AppHandle,
-    agent: tauri::State<'_, AgentState>,
-    conversation_id: String,
-    id: String,
-) -> Result<(), AgentError> {
-    agent.processes.remove(&conversation_id, &id)?;
-    let _ = app.emit(
-        "terminals:changed",
-        json!({"conversationId":conversation_id}),
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::AgentState;
     use super::*;
     use std::time::Duration;
     fn cmd(unix: &str, windows: &str) -> String {
@@ -359,14 +316,10 @@ mod tests {
             unix.to_string()
         }
     }
-    async fn wait(
-        state: &ProcessState,
-        conversation: &str,
-        predicate: impl Fn(&[ProcessInfo]) -> bool,
-    ) {
+    async fn wait(state: &ProcessState, project: &str, predicate: impl Fn(&[ProcessInfo]) -> bool) {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                if predicate(&state.list(conversation).unwrap()) {
+                if predicate(&state.list(project).unwrap()) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -384,7 +337,10 @@ mod tests {
             .processes
             .start_owned(
                 StartRequest {
-                    conversation: "chat",
+                    scope: TerminalScope {
+                        project: "chat",
+                        conversation: Some("creator-chat"),
+                    },
                     root: root.path(),
                     call_id: "input",
                     owner_id: "run:builder",
@@ -439,11 +395,18 @@ mod tests {
         assert_eq!(agent.terminals.list("chat").unwrap()[0].status, "exited");
         let repeated = agent
             .processes
-            .start(
-                "chat",
-                root.path(),
-                "input",
-                &json!({"title":"Interactive service", "command":command}),
+            .start_owned(
+                StartRequest {
+                    scope: TerminalScope {
+                        project: "chat",
+                        conversation: Some("creator-chat"),
+                    },
+                    root: root.path(),
+                    call_id: "input",
+                    owner_id: "run:builder",
+                    args: &json!({"title":"Interactive service", "command":command}),
+                    sandbox: None,
+                },
                 super::super::terminals::silent_events(),
             )
             .await
@@ -689,7 +652,7 @@ mod tests {
             .contains("parece iniciar um servidor TCP"));
     }
     #[tokio::test]
-    async fn deleting_one_conversation_does_not_stop_another_and_shutdown_stops_all() {
+    async fn stopping_one_project_does_not_stop_another_and_shutdown_stops_all() {
         let root = tempfile::tempdir().unwrap();
         let state = ProcessState::default();
         for id in ["a", "b"] {
@@ -704,15 +667,17 @@ mod tests {
                 .await
                 .unwrap();
         }
-        state.stop_conversation("a");
+        state.stop_project("a");
         wait(&state, "a", |items| !items[0].running()).await;
         assert!(state.list("b").unwrap()[0].running());
-        let agent = super::AgentState {
+        let agent = AgentState {
             processes: state.clone(),
             terminals: state.0.clone(),
             ..Default::default()
         };
-        crate::shutdown_services(&crate::system::SystemState::default(), &agent);
+        // Terminals need consent before replacement, not a blanket update block.
+        assert!(!agent.busy_for_update());
+        crate::shutdown_services(&crate::system::SystemState::default(), &agent).unwrap();
         wait(&state, "b", |items| !items[0].running()).await;
     }
     #[tokio::test]

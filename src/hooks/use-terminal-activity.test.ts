@@ -18,22 +18,22 @@ beforeEach(() => {
   });
 });
 
-it("restores and refreshes terminal counts for every conversation", async () => {
+it("restores and refreshes shared terminal counts for every project", async () => {
   call.mockResolvedValueOnce([
-    { conversationId: "c1", count: 2 },
-    { conversationId: "c2", count: 1 },
-  ]).mockResolvedValueOnce([{ conversationId: "c2", count: 1 }]);
+    { projectId: "p1", count: 2 },
+    { projectId: "p2", count: 1 },
+  ]).mockResolvedValueOnce([{ projectId: "p2", count: 1 }]);
   const { result, unmount } = renderHook(useTerminalActivity);
-  await waitFor(() => expect(result.current.get("c1")).toBe(2));
-  expect(result.current.get("c2")).toBe(1);
+  await waitFor(() => expect(result.current.get("p1")).toBe(2));
+  expect(result.current.get("p2")).toBe(1);
 
   await act(async () => {
     for (const handler of listeners) {
-      handler({ event: "terminals:changed", id: 1, payload: { conversationId: "c1" } });
+      handler({ event: "terminals:changed", id: 1, payload: { projectId: "p1" } });
     }
   });
-  await waitFor(() => expect(result.current.has("c1")).toBe(false));
-  expect(result.current.get("c2")).toBe(1);
+  await waitFor(() => expect(result.current.has("p1")).toBe(false));
+  expect(result.current.get("p2")).toBe(1);
   expect(call).toHaveBeenNthCalledWith(1, "get_terminal_activity");
   expect(call).toHaveBeenNthCalledWith(2, "get_terminal_activity");
 

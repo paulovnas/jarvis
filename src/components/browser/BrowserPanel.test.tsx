@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
+import * as events from "@tauri-apps/api/event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useBrowser } from "@/hooks/use-browser";
 import type { BrowserSnapshot } from "@/core/browser";
@@ -38,6 +39,7 @@ beforeEach(() => {
       if (request.action === "discover") return { tabs: [{ id: "ext:epoch:2", title: "Página pessoal", url: "https://example.com", owned: false }, { id: "ext:epoch:3", title: "Outro chat", url: "https://example.org", owned: true }] };
       if (request.action === "attach") { if (!stored.tabs.some(tab => tab.id === request.id)) stored.tabs.push({ id: request.id!, conversationId: "chat-1", title: "Página pessoal", url: "https://example.com", loading: false }); stored.activeId = request.id!; }
       if (request.action === "network") return { requests: [{ id: "request-1", method: "GET", url: "https://example.com/api", status: 200 }], total: 1, offset: 0, limit: 25 };
+      if (request.action === "open" || request.action === "attach") return stored.backend === "extension" ? structuredClone(stored) : stored.tabs.find(tab => tab.id === stored.activeId);
       return {};
     }
     throw new Error(`Unexpected command: ${command}`);
@@ -49,6 +51,7 @@ it("keeps external tabs external after changing the default and inspects network
   stored = { tabs: [tab], activeId: tab.id, backend: "embedded" };
   const user = userEvent.setup();
   render(<Workspace />);
+  await user.click(await screen.findByRole("tab", { name: "Projeto externo" }));
   expect(await screen.findByRole("region", { name: "Página no navegador externo" })).toBeVisible();
   const focus = screen.getByRole("button", { name: "Ver no navegador" });
   await waitFor(() => expect(focus).toBeEnabled());
@@ -62,6 +65,32 @@ it("keeps external tabs external after changing the default and inspects network
   await user.click(screen.getByRole("button", { name: "Atualizar rede" }));
   await waitFor(() => expect(mocked).toHaveBeenCalledWith("browser_command", { conversationId: "chat-1", request: { action: "network", id: tab.id, filter: "api", offset: 0, limit: 25 } }));
   expect(mocked.mock.calls.filter(([command]) => command === "set_browser_viewport")).toHaveLength(0);
+});
+
+it("keeps Chat and its draft visible when an agent adopts an external page, until the user selects it", async () => {
+  let changed: events.EventCallback<unknown> | undefined;
+  vi.spyOn(events, "listen").mockImplementation(async (event, handler) => {
+    if (event === "browser:changed") changed = handler;
+    return () => {};
+  });
+  stored = { tabs: [], activeId: null, backend: "extension" };
+  const user = userEvent.setup();
+  render(<Workspace />);
+  const draft = screen.getByRole("textbox", { name: "Rascunho" });
+  await user.type(draft, "Continuar sem sair do chat");
+  stored = { ...stored, tabs: [{ id: "ext:epoch:1", conversationId: "chat-1", title: "Página adotada", url: "https://example.com", loading: false }], activeId: "ext:epoch:1" };
+  await act(async () => { changed?.({ event: "browser:changed", id: 1, payload: { conversationId: "chat-1" } }); });
+  const page = await screen.findByRole("tab", { name: "Página adotada" });
+  expect(page).toHaveAttribute("aria-selected", "false");
+  expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+  expect(draft).toBeVisible();
+  expect(draft).toHaveValue("Continuar sem sair do chat");
+  expect(screen.queryByRole("region", { name: "Página no navegador externo" })).not.toBeInTheDocument();
+  await user.click(page);
+  expect(await screen.findByRole("region", { name: "Página no navegador externo" })).toBeVisible();
+  await user.click(screen.getByRole("tab", { name: "Chat" }));
+  expect(draft).toBeVisible();
+  expect(draft).toHaveValue("Continuar sem sair do chat");
 });
 
 it("discovers existing tabs without adoption until the user selects one, including with no open chat tabs", async () => {

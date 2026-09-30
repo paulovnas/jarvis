@@ -2,11 +2,15 @@ import path from "path";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { readInstalledRelease } from "./scripts/installed-release";
 
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(async ({ command }) => ({
+  define: {
+    __JARVIS_INSTALLED_RELEASE__: JSON.stringify(command === "build" ? readInstalledRelease(path.join(__dirname, "release-artifacts/installed-release.json")) : null),
+  },
   plugins: [react(), tailwindcss(), {
     name: "jarvis-chunk-budgets",
     generateBundle(_options, bundle) {

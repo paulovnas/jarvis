@@ -125,7 +125,6 @@ export function AppSidebar({
             >
               {runningConversationIds?.has(item.id) ? <Spinner aria-label="Conversa em execução" className="motion-reduce:animate-none" style={{ color: accent }} /> : <MessageSquare className={item.id === selected?.conversationId ? "" : "text-muted-foreground/55"} style={item.id === selected?.conversationId ? { color: accent } : undefined} />}
               <Hint content={item.title} whenTruncated><span className="min-w-0 flex-1 truncate">{item.title}</span></Hint>
-              {(terminalCounts?.get(item.id) ?? 0) > 0 && <Hint content={`${terminalCounts?.get(item.id)} ${terminalCounts?.get(item.id) === 1 ? "terminal aberto" : "terminais abertos"}`}><span role="img" aria-label={`${terminalCounts?.get(item.id)} ${terminalCounts?.get(item.id) === 1 ? "terminal aberto" : "terminais abertos"}`} className="flex shrink-0 items-center gap-0.5 font-mono text-[9px] text-onedark-green"><SquareTerminal aria-hidden="true" className="size-3.5" />{(terminalCounts?.get(item.id) ?? 0) > 1 && terminalCounts?.get(item.id)}</span></Hint>}
               {unreadConversationIds?.has(item.id) && <Hint content="Mensagem não lida"><Badge role="img" aria-label="Mensagem não lida" className="size-2 shrink-0 rounded-full border-0 p-0" style={{ backgroundColor: accent, boxShadow: `0 0 6px ${accent}` }} /></Hint>}
             </SidebarMenuButton>
           </LibraryItemMenu>
@@ -276,6 +275,7 @@ export function AppSidebar({
                                     {item.name}
                                   </span>
                                 </span></Hint>
+                                {(terminalCounts?.get(item.id) ?? 0) > 0 && <Hint content={`${terminalCounts?.get(item.id)} ${terminalCounts?.get(item.id) === 1 ? "terminal aberto" : "terminais abertos"}`}><span role="img" aria-label={`${terminalCounts?.get(item.id)} ${terminalCounts?.get(item.id) === 1 ? "terminal aberto" : "terminais abertos"}`} className="flex shrink-0 items-center gap-0.5 font-mono text-[9px] text-onedark-green"><SquareTerminal aria-hidden="true" className="size-3.5" />{(terminalCounts?.get(item.id) ?? 0) > 1 && terminalCounts?.get(item.id)}</span></Hint>}
                                 {conversations.some(entry => unreadConversationIds?.has(entry.id)) && <Hint content="Mensagens não lidas"><Badge role="img" aria-label="Projeto com mensagens não lidas" className="mr-1 size-2 shrink-0 rounded-full border-0 p-0" style={{ backgroundColor: accent }} /></Hint>}
                               </CollapsibleTrigger>
                             </LibraryItemMenu>

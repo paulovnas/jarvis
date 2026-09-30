@@ -16,18 +16,19 @@ export type DesktopLayout = {
   inspectorCollapsed: boolean;
   terminalPanels: Record<string, TerminalPanelLayout>;
   fileTabs: Record<string, FileTabsLayout>;
+  lastSeenReleaseVersion: string | null;
 };
 
 export const DEFAULT_DESKTOP_LAYOUT: DesktopLayout = {
   panels: {}, inspectorTab: "activities", settingsTab: "general", expandedProjects: {}, activitySections: {},
-  sidebarCollapsed: false, inspectorCollapsed: false, terminalPanels: {}, fileTabs: {}, itemOrder: {},
+  sidebarCollapsed: false, inspectorCollapsed: false, terminalPanels: {}, fileTabs: {}, itemOrder: {}, lastSeenReleaseVersion: null,
 };
 
 export type LayoutUpdate = Partial<DesktopLayout> | ((current: DesktopLayout) => Partial<DesktopLayout>);
 export const DesktopLayoutContext = createContext<{ layout: DesktopLayout; updateLayout: (update: LayoutUpdate) => void } | null>(null);
 
-export function rememberTerminalPanel(layout: DesktopLayout, conversationId: string, update: Partial<TerminalPanelLayout>): Partial<DesktopLayout> {
-  return { terminalPanels: { ...layout.terminalPanels, [conversationId]: { ...DEFAULT_TERMINAL_PANEL, ...layout.terminalPanels[conversationId], ...update } } };
+export function rememberTerminalPanel(layout: DesktopLayout, key: string, update: Partial<TerminalPanelLayout>): Partial<DesktopLayout> {
+  return { terminalPanels: { ...layout.terminalPanels, [key]: { ...DEFAULT_TERMINAL_PANEL, ...layout.terminalPanels[key], ...update } } };
 }
 
 export function visiblePanels(layout: DesktopLayout, dashboard: boolean) {

@@ -36,7 +36,7 @@ function main() {
   const missing = requiredSecrets.filter(name => !secrets.some(secret => secret.name === name));
   if (missing.length) throw new Error(`Configure os secrets do ambiente ${releaseEnvironment}: ${missing.join(", ")}.`);
   if (options.notesFile && !existsSync(path.resolve(options.notesFile))) throw new Error("Arquivo de notas não encontrado.");
-  const notes = options.notesFile ? readFileSync(path.resolve(options.notesFile), "utf8").trim() : "";
+  let notes = options.notesFile ? readFileSync(path.resolve(options.notesFile), "utf8").trim() : "";
   if (optionalRelease(tag)?.isDraft === false) throw new Error("Esta versão já foi publicada. Escolha uma versão maior.");
   command("git", ["fetch", "origin", "main", "--tags"]);
   const sourceCommit = command("git", ["rev-parse", "HEAD"], true);
@@ -49,6 +49,10 @@ function main() {
     && command("git", ["rev-parse", "HEAD^"], true) === remoteCommit;
   if (sourceCommit !== remoteCommit && !retryPush) throw new Error("Sincronize main com origin/main antes de publicar.");
   if (taggedCommit && notes) throw new Error("A tag já existe; reenvie sem --notes-file para preservar as notas originais.");
+  if (!taggedCommit && !options.notesFile) {
+    notes = command("gh", ["api", `repos/${RELEASE_REPOSITORY}/releases/generate-notes`, "--method", "POST", "-f", `tag_name=${tag}`, "-f", `target_commitish=${remoteCommit}`, "--jq", ".body"], true);
+  }
+  if (!taggedCommit && !notes.trim()) throw new Error("As notas da nova versão estão vazias. Informe um arquivo com --notes-file.");
   if (pkg.version !== version) {
     pkg.version = version; config.version = version;
     writeFileSync(path.join(root, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
@@ -76,7 +80,7 @@ function main() {
     try {
       const file = path.join(temp, "notes.md");
       writeFileSync(file, `Jarvis ${version}\n\n${notes}\n\n${localValidationTrailer}${releaseCommit}\n`);
-      command("git", ["tag", "--no-sign", "-a", tag, releaseCommit, "--file", file]);
+      command("git", ["tag", "--no-sign", "-a", tag, releaseCommit, "--cleanup=verbatim", "--file", file]);
     } finally { rmSync(temp, { recursive: true, force: true }); }
   }
   verifySource(releaseCommit);

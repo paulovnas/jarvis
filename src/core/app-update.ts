@@ -10,6 +10,12 @@ export const updateInfoSchema = z.object({
   available: z.object({ version: z.string(), notes: z.string(), publishedAt: z.string().nullable() }).nullable(),
 });
 export type UpdateInfo = z.infer<typeof updateInfoSchema>;
+export const appShutdownStatusSchema = z.object({
+  activeChats: z.number().int().nonnegative(),
+  activeProcesses: z.number().int().nonnegative(),
+  restartableProcesses: z.number().int().nonnegative(),
+});
+export type AppShutdownStatus = z.infer<typeof appShutdownStatusSchema>;
 export type UpdateProgress = { stage: "downloading"; downloaded: number; total: number | null }
   | { stage: "verifying" | "installing" | "restarting" };
 
@@ -18,8 +24,9 @@ export function displayVersion(value: string): string {
   return value.replace(/-beta\.(\d+)$/, (_, revision: string) => ` Beta${revision === "1" ? "" : ` ${revision}`}`);
 }
 export async function checkAppUpdate(): Promise<UpdateInfo> { return updateInfoSchema.parse(await readResource("check_app_update")); }
-export async function installAppUpdate(onProgress: (progress: UpdateProgress) => void): Promise<void> {
+export async function getAppShutdownStatus(): Promise<AppShutdownStatus> { return appShutdownStatusSchema.parse(await invoke("get_app_shutdown_status")); }
+export async function installAppUpdate(onProgress: (progress: UpdateProgress) => void, stopProcesses = false): Promise<void> {
   const channel = new Channel<UpdateProgress>();
   channel.onmessage = onProgress;
-  await invoke("install_app_update", { onProgress: channel });
+  await invoke("install_app_update", { onProgress: channel, ...(stopProcesses ? { stopProcesses: true } : {}) });
 }

@@ -99,16 +99,14 @@ describe("Home shell", () => {
     await workspace("Trabalho");
     expect(await screen.findByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho trabalho");
   }, 15000);
-  it("opens Explorer files beside Chat while preserving the composer and bottom terminal, then restores the Explorer section", async () => {
+  it("opens Explorer files beside Chat while preserving the composer without a chat terminal dock, then restores Explorer", async () => {
     const user = userEvent.setup();
     accountsMock.mockResolvedValue([{ alias: "preview", providerKind: "openai-codex", enabled: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, showUsage: false, models: [{ id: "model", name: "Modelo", reasoningLevels: [], defaultReasoningLevel: null }] }]);
     const original = invokeMock.getMockImplementation()!;
-    let layout = { ...DEFAULT_DESKTOP_LAYOUT, terminalPanels: { c1: { open: true, size: 40, activeTerminalId: "term-1" } } };
+    let layout = { ...DEFAULT_DESKTOP_LAYOUT };
     invokeMock.mockImplementation(async (command, args, options) => {
       if (command === "get_desktop_layout") return layout;
       if (command === "save_desktop_layout") { layout = (args as { layout: typeof layout }).layout; return; }
-      if (command === "list_chat_terminals") return [{ id: "term-1", conversationId: "c1", title: "Terminal 1", cwd: "/project", pid: 1, startedAt: 1, endedAt: null, exitCode: null, status: "running", origin: "user" }];
-      if (command === "list_chat_processes") return [];
       if (command === "list_project_directory") return { path: "", entries: [{ name: "README.md", path: "README.md", kind: "file" }], truncated: false };
       if (command === "read_project_file") return { path: "README.md", content: "# Meu projeto", size: 13, encoding: "UTF-8" };
       return original(command, args, options);
@@ -123,13 +121,13 @@ describe("Home shell", () => {
     expect(composer).toHaveFocus();
     await user.keyboard("Rascunho preservado");
     expect(composer).toHaveTextContent("Rascunho preservado");
-    const terminal = await screen.findByRole("application", { name: "Terminal em execução" });
+    expect(screen.queryByRole("application", { name: "Terminal em execução" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Abrir terminal/ })).not.toBeInTheDocument();
     expect(invokeMock).not.toHaveBeenCalledWith("list_project_directory", expect.anything());
     await user.click(screen.getByRole("tab", { name: "Explorer" }));
     await user.click(await screen.findByRole("treeitem", { name: "README.md" }));
     expect(await screen.findByLabelText("Arquivo README.md")).toHaveTextContent("# Meu projeto");
-    expect(terminal).toBeVisible();
-    expect(screen.getByRole("application", { name: "Terminal em execução" })).toBe(terminal);
+    expect(screen.queryByRole("application", { name: "Terminal em execução" })).not.toBeInTheDocument();
     expect(composer).not.toBeVisible();
     await user.click(screen.getByRole("tab", { name: "Chat" }));
     expect(screen.getByRole("textbox", { name: "Mensagem" })).toBe(composer);
@@ -140,6 +138,46 @@ describe("Home shell", () => {
     expect(await screen.findByRole("treeitem", { name: "README.md" })).toBeVisible();
     expect(screen.getByRole("tab", { name: "Explorer" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "README.md" })).toBeVisible();
+  }, 15_000);
+  it("reopens the same project terminals after switching chats without creating or closing processes", async () => {
+    const user = userEvent.setup();
+    let library = populatedLibrary();
+    library.conversations.push({ id: "c3", projectId: "p1", title: "Outro chat", createdAt: 3 });
+    const original = invokeMock.getMockImplementation()!;
+    const terminals = [
+      { id: "shell", projectId: "p1", conversationId: null, title: "Shell compartilhado", command: null, cwd: "/project", pid: 1, startedAt: 1, endedAt: null, exitCode: null, status: "running", origin: "user" },
+      { id: "service", projectId: "p1", conversationId: "c1", title: "Vite", command: "bun run dev", cwd: "/project", pid: 2, startedAt: 2, endedAt: null, exitCode: null, status: "running", origin: "agent" },
+    ];
+    invokeMock.mockImplementation(async (command, args, options) => {
+      if (command === "get_library_snapshot") return library;
+      if (command === "get_project_metrics") return projectMetrics();
+      if (command === "get_core_status") return coreFixture();
+      if (command === "list_project_terminals") return terminals;
+      if (command === "read_project_terminal") return { terminal: terminals.find(item => item.id === (args as { id: string }).id), output: "Servidor pronto", revision: 1, truncated: false };
+      if (command === "subscribe_chat") return emptyChat((args as { conversationId: string }).conversationId);
+      if (command === "select_library_item") {
+        const { target } = args as { target: { kind: string; id: string } };
+        library = { ...library, selection: { workspaceId: "w1", projectId: "p1", conversationId: target.kind === "project" ? null : target.id } };
+        return library;
+      }
+      return original(command, args, options);
+    });
+    render(<Home />);
+    await screen.findByRole("textbox", { name: "Mensagem" });
+    await user.click(screen.getByRole("button", { name: "Detalhes" }));
+    await user.click(await screen.findByRole("tab", { name: "Terminais" }));
+    expect(await screen.findByRole("tab", { name: /Shell compartilhado/ })).toBeVisible();
+    expect(screen.getByRole("tab", { name: /Vite/ })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Outro chat" }));
+    await screen.findByRole("textbox", { name: "Mensagem" });
+    expect(screen.queryByRole("application", { name: "Terminal em execução" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Detalhes" }));
+    await user.click(await screen.findByRole("tab", { name: "Terminais" }));
+    expect(await screen.findByRole("tab", { name: /Shell compartilhado/ })).toBeVisible();
+    expect(screen.getByRole("tab", { name: /Vite/ })).toBeVisible();
+    expect(invokeMock).toHaveBeenCalledWith("list_project_terminals", { projectId: "p1" });
+    expect(invokeMock).not.toHaveBeenCalledWith("create_project_terminal", expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith("close_project_terminal", expect.anything());
   }, 15_000);
   it("keeps workspace navigation and settings available while an empty workspace has no chat", async () => {
     const user = userEvent.setup();

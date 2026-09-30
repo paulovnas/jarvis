@@ -995,6 +995,329 @@ fn deletion_blocks_active_turns_evicts_idle_sessions_and_rejects_late_writes() {
     assert!(!library::save_generated_title(&state, &fixture.root, &id, "Late title").unwrap());
 }
 
+pub(super) struct TerminalTestGuard(pub(super) AgentState);
+impl Drop for TerminalTestGuard {
+    fn drop(&mut self) {
+        self.0.terminals.stop_all();
+    }
+}
+
+pub(super) async fn open_project_terminal(
+    agent: &AgentState,
+    project: &str,
+    conversation: Option<&str>,
+    root: &std::path::Path,
+    service: bool,
+) -> String {
+    let call = ToolCall {
+        id: library::new_id().unwrap(),
+        name: if service {
+            "process_start"
+        } else {
+            "terminal_start"
+        }
+        .into(),
+        args: if service {
+            let command = if cfg!(windows) {
+                "Start-Sleep 60"
+            } else {
+                "sleep 60"
+            };
+            json!({"title":"Project watcher", "kind":"watcher", "command":command})
+        } else {
+            json!({"title":"Project shell"})
+        },
+        status: "running".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    let scope = terminals::TerminalScope {
+        project,
+        conversation,
+    };
+    let output = if service {
+        agent
+            .processes
+            .execute(
+                scope,
+                root,
+                "test-run:builder",
+                &call,
+                None,
+                terminals::silent_events(),
+            )
+            .await
+    } else {
+        agent
+            .terminals
+            .execute(
+                scope,
+                root,
+                "test-run:builder",
+                &call,
+                None,
+                terminals::silent_events(),
+            )
+            .await
+    }
+    .unwrap();
+    serde_json::from_str::<Value>(&output).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .into()
+}
+
+fn terminal_project_library(
+    fixture: &Fixture,
+    conversations: usize,
+) -> (AppState, String, String, Vec<String>) {
+    let state = AppState::default();
+    let workspace = library::new_id().unwrap();
+    let project = library::new_id().unwrap();
+    let ids: Vec<_> = (0..conversations)
+        .map(|_| library::new_id().unwrap())
+        .collect();
+    state.with_connection(&fixture.root, |connection| {
+        connection.execute("INSERT INTO workspaces (id, name) VALUES (?1, 'Test')", [&workspace])?;
+        connection.execute("INSERT INTO projects (id, workspace_id, name, path) VALUES (?1, ?2, 'Project', ?3)", rusqlite::params![project, workspace, fixture.root.to_string_lossy()])?;
+        for id in &ids {
+            connection.execute("INSERT INTO conversations (id, project_id, title) VALUES (?1, ?2, 'Test')", rusqlite::params![id, project])?;
+        }
+        Ok::<_, library::LibraryError>(())
+    }).unwrap();
+    (state, workspace, project, ids)
+}
+
+#[tokio::test]
+async fn deleting_a_creator_chat_preserves_project_shells_and_services_for_other_chats() {
+    let fixture = Fixture::new();
+    let (state, _, project, chats) = terminal_project_library(&fixture, 2);
+    let guarded = TerminalTestGuard(AgentState::default());
+    let agent = &guarded.0;
+    let terminal =
+        open_project_terminal(agent, &project, Some(&chats[0]), &fixture.root, false).await;
+    let service =
+        open_project_terminal(agent, &project, Some(&chats[0]), &fixture.root, true).await;
+    agent
+        .delete_library_item(
+            &state,
+            &fixture.root,
+            &library::deletion::DeleteTarget::Conversation(chats[0].clone()),
+        )
+        .unwrap();
+    assert!(agent.terminals.has_running());
+    assert!(agent.terminals.context(&project).contains(&terminal));
+    assert!(agent.terminals.context(&project).contains(&service));
+    let scope = terminals::TerminalScope {
+        project: &project,
+        conversation: Some(&chats[1]),
+    };
+    for (name, id) in [("terminal_output", &terminal), ("process_output", &service)] {
+        let call = ToolCall {
+            id: "read-after-delete".into(),
+            name: name.into(),
+            args: json!({"id":id}),
+            status: "running".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        let result = if name == "terminal_output" {
+            agent
+                .terminals
+                .execute(
+                    scope,
+                    &fixture.root,
+                    "another-run:builder",
+                    &call,
+                    None,
+                    terminals::silent_events(),
+                )
+                .await
+        } else {
+            agent
+                .processes
+                .execute(
+                    scope,
+                    &fixture.root,
+                    "another-run:builder",
+                    &call,
+                    None,
+                    terminals::silent_events(),
+                )
+                .await
+        };
+        assert!(
+            result.is_ok(),
+            "another chat can inspect the surviving {name}: {result:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn successful_project_deletion_stops_terminals_even_without_chats() {
+    let fixture = Fixture::new();
+    let (state, _, project, _) = terminal_project_library(&fixture, 0);
+    let guarded = TerminalTestGuard(AgentState::default());
+    let agent = &guarded.0;
+    open_project_terminal(agent, &project, None, &fixture.root, false).await;
+    open_project_terminal(agent, &project, None, &fixture.root, true).await;
+    assert!(agent.terminals.has_running());
+    agent
+        .delete_library_item(
+            &state,
+            &fixture.root,
+            &library::deletion::DeleteTarget::Project(project.clone()),
+        )
+        .unwrap();
+    assert!(!agent.terminals.has_running());
+    assert!(agent.terminals.context(&project).is_empty());
+}
+
+#[tokio::test]
+async fn committed_project_deletion_stops_terminals_when_beads_cleanup_is_busy() {
+    use fs2::FileExt;
+    let fixture = Fixture::new();
+    let (state, _, project, _) = terminal_project_library(&fixture, 0);
+    let private = crate::core::beads::storage(&fixture.root, &project);
+    fs::create_dir_all(&private).unwrap();
+    fs::write(private.join("tasks.db"), "private tasks").unwrap();
+    let locks = crate::data_dir::root(&fixture.root).join("beads/locks");
+    fs::create_dir_all(&locks).unwrap();
+    let lock = fs::File::create(locks.join(format!("{project}.lock"))).unwrap();
+    FileExt::lock_exclusive(&lock).unwrap();
+    let guarded = TerminalTestGuard(AgentState::default());
+    let agent = &guarded.0;
+    open_project_terminal(agent, &project, None, &fixture.root, false).await;
+    open_project_terminal(agent, &project, None, &fixture.root, true).await;
+    let result = agent.delete_library_item(
+        &state,
+        &fixture.root,
+        &library::deletion::DeleteTarget::Project(project.clone()),
+    );
+    assert!(result.is_err());
+    let exists = state
+        .with_connection(&fixture.root, |connection| {
+            Ok::<_, library::LibraryError>(connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM projects WHERE id = ?1)",
+                [&project],
+                |row| row.get::<_, bool>(0),
+            )?)
+        })
+        .unwrap();
+    assert!(
+        !exists,
+        "metadata committed before optional Beads cleanup failed"
+    );
+    assert!(private.exists());
+    assert!(agent.terminals.context(&project).is_empty());
+    assert!(!agent.terminals.has_running());
+}
+
+#[tokio::test]
+async fn failed_workspace_deletion_preserves_terminals_and_success_stops_all_its_projects() {
+    let fixture = Fixture::new();
+    let (state, workspace, project, _) = terminal_project_library(&fixture, 0);
+    let second = library::new_id().unwrap();
+    let other_workspace = library::new_id().unwrap();
+    let unrelated = library::new_id().unwrap();
+    state.with_connection(&fixture.root, |connection| {
+        connection.execute("INSERT INTO workspaces (id, name) VALUES (?1, 'Other')", [&other_workspace])?;
+        for (id, workspace) in [(&second, &workspace), (&unrelated, &other_workspace)] {
+            let path = fixture.root.join(id);
+            fs::create_dir(&path).unwrap();
+            connection.execute("INSERT INTO projects (id, workspace_id, name, path) VALUES (?1, ?2, 'Project', ?3)", rusqlite::params![id, workspace, path.to_string_lossy()])?;
+        }
+        connection.execute_batch("CREATE TRIGGER prevent_workspace_delete BEFORE DELETE ON workspaces BEGIN SELECT RAISE(FAIL, 'synthetic failure'); END;")?;
+        Ok::<_, library::LibraryError>(())
+    }).unwrap();
+    let guarded = TerminalTestGuard(AgentState::default());
+    let agent = &guarded.0;
+    for project in [&project, &second, &unrelated] {
+        open_project_terminal(agent, project, None, &fixture.root, false).await;
+    }
+    let target = library::deletion::DeleteTarget::Workspace(workspace);
+    assert!(agent
+        .delete_library_item(&state, &fixture.root, &target)
+        .is_err());
+    for project in [&project, &second, &unrelated] {
+        assert!(!agent.terminals.context(project).is_empty());
+    }
+    state
+        .with_connection(&fixture.root, |connection| {
+            connection.execute_batch("DROP TRIGGER prevent_workspace_delete")?;
+            Ok::<_, library::LibraryError>(())
+        })
+        .unwrap();
+    agent
+        .delete_library_item(&state, &fixture.root, &target)
+        .unwrap();
+    assert!(agent.terminals.context(&project).is_empty());
+    assert!(agent.terminals.context(&second).is_empty());
+    assert!(!agent.terminals.context(&unrelated).is_empty());
+}
+
+#[test]
+fn workspace_deletion_stops_a_project_created_while_waiting_for_session_gates() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let fixture = Fixture::new();
+    let (state, workspace, project, chats) = terminal_project_library(&fixture, 1);
+    let guarded = TerminalTestGuard(AgentState::default());
+    let agent = &guarded.0;
+    runtime.block_on(open_project_terminal(
+        agent,
+        &project,
+        Some(&chats[0]),
+        &fixture.root,
+        false,
+    ));
+    let gate = agent.session_gate(&chats[0]).unwrap();
+    let held = gate.lock().unwrap();
+    let deleting_agent = AgentState::clone(agent);
+    let deleting_state = state.clone();
+    let deleting_home = fixture.root.clone();
+    let deleting_workspace = workspace.clone();
+    let deletion = std::thread::spawn(move || {
+        deleting_agent.delete_library_item(
+            &deleting_state,
+            &deleting_home,
+            &library::deletion::DeleteTarget::Workspace(deleting_workspace),
+        )
+    });
+    // Acquiring a reference to this existing gate happens after the preliminary
+    // database lookup. The held guard pauses the real deletion without a test hook.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while Arc::strong_count(&gate) < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "deletion reached its session gate"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let late_project = library::new_id().unwrap();
+    let late_root = fixture.root.join(&late_project);
+    fs::create_dir(&late_root).unwrap();
+    state.with_connection(&fixture.root, |connection| {
+        connection.execute(
+            "INSERT INTO projects (id, workspace_id, name, path) VALUES (?1, ?2, 'Late project', ?3)",
+            rusqlite::params![late_project, workspace, late_root.to_string_lossy()],
+        )?;
+        Ok::<_, library::LibraryError>(())
+    }).unwrap();
+    runtime.block_on(open_project_terminal(
+        agent,
+        &late_project,
+        None,
+        &late_root,
+        false,
+    ));
+    assert!(!agent.terminals.context(&late_project).is_empty());
+    drop(held);
+    deletion.join().unwrap().unwrap();
+    assert!(agent.terminals.context(&project).is_empty());
+    assert!(agent.terminals.context(&late_project).is_empty());
+    assert!(!agent.terminals.has_running());
+}
+
 #[test]
 fn concurrent_reservation_accepts_one_turn_and_failed_storage_blocks_retries() {
     let fixture = Fixture::new();

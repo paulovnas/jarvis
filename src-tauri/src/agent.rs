@@ -1349,14 +1349,17 @@ impl AgentState {
         self.terminals.stop_all();
     }
     pub(crate) fn busy_for_update(&self) -> bool {
-        self.admission.active() != 0
-            || self.activity().map_or(true, |items| {
-                items
-                    .iter()
-                    .any(|item| item.active_turn_id.is_some() || item.compacting)
-            })
-            || self.processes.has_running()
-            || self.terminals.has_running()
+        self.shutdown_active_chats()
+            .map_or(true, |count| count != 0)
+    }
+
+    pub(crate) fn shutdown_active_chats(&self) -> Result<usize, AgentError> {
+        Ok(self
+            .activity()?
+            .iter()
+            .filter(|item| item.active_turn_id.is_some() || item.compacting)
+            .count()
+            .max(self.admission.active()))
     }
     pub(crate) fn delete_library_item(
         &self,
@@ -1388,7 +1391,7 @@ impl AgentState {
                 .iter()
                 .filter_map(|id| sessions.get(id).cloned())
                 .collect();
-            let locked = targets
+            let mut locked = targets
                 .iter()
                 .map(|session| session.data.lock().map_err(|_| internal()))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -1401,6 +1404,19 @@ impl AgentState {
                     "Interrompa as conversas em execução antes de excluir este item.",
                 ));
             }
+            // Use the same database lock as deletion so projects created while
+            // waiting for session gates are included, including zero-chat projects.
+            let project_ids = match target {
+                library::deletion::DeleteTarget::Conversation(_) => Vec::new(),
+                library::deletion::DeleteTarget::Project(id) => connection
+                    .prepare("SELECT id FROM projects WHERE id = ?1")?
+                    .query_map([id], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?,
+                library::deletion::DeleteTarget::Workspace(id) => connection
+                    .prepare("SELECT id FROM projects WHERE workspace_id = ?1")?
+                    .query_map([id], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?,
+            };
             let result = library::deletion::delete(connection, home, target);
             // Evict even when committed metadata is waiting for filesystem cleanup.
             for id in ids {
@@ -1410,9 +1426,22 @@ impl AgentState {
                     |row| row.get::<_, bool>(0),
                 )?;
                 if !exists {
-                    self.processes.stop_conversation(&id);
-                    self.terminals.stop_conversation(&id);
+                    if let Some(index) = targets.iter().position(|session| session.id == id) {
+                        locked[index].storage_failed = true;
+                    }
                     sessions.remove(&id);
+                }
+            }
+            // Filesystem cleanup can fail after the database commit. Runtime
+            // ownership follows authoritative metadata, not the cleanup result.
+            for project in project_ids {
+                let exists = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM projects WHERE id = ?1)",
+                    [&project],
+                    |row| row.get::<_, bool>(0),
+                )?;
+                if !exists {
+                    self.terminals.stop_project(&project);
                 }
             }
             result

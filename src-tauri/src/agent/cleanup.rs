@@ -170,7 +170,6 @@ impl AgentState {
                     |row| row.get(0),
                 )?;
                 if !exists {
-                    self.processes.stop_conversation(&item.id);
                     if let Some(index) = cached {
                         locked[index].storage_failed = true;
                     }
@@ -360,5 +359,39 @@ mod tests {
         assert_eq!(next.protected, 2);
         assert_eq!(next.conversations.len(), 1);
         assert_eq!(next.conversations[0].id, ids[3]);
+    }
+
+    #[tokio::test]
+    async fn automatic_chat_cleanup_preserves_the_project_terminal_and_service() {
+        let fixture = Fixture::new();
+        let (state, project, ids) = setup(&fixture);
+        let guarded = crate::agent::tests::TerminalTestGuard(AgentState::default());
+        let agent = &guarded.0;
+        let shell = crate::agent::tests::open_project_terminal(
+            agent,
+            &project,
+            Some(&ids[0]),
+            &fixture.root,
+            false,
+        )
+        .await;
+        let service = crate::agent::tests::open_project_terminal(
+            agent,
+            &project,
+            Some(&ids[0]),
+            &fixture.root,
+            true,
+        )
+        .await;
+        let preview = agent.cleanup_preview(&state, &fixture.root, 7).unwrap();
+        assert!(preview.conversations.iter().any(|item| item.id == ids[0]));
+        let result = agent
+            .cleanup_confirmed(&state, &fixture.root, 7, selection(&preview), true)
+            .unwrap();
+        assert_eq!(result.deleted, 3);
+        assert!(agent.terminals.has_running());
+        let context = agent.terminals.context(&project);
+        assert!(context.contains(&shell));
+        assert!(context.contains(&service));
     }
 }

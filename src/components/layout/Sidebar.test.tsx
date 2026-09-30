@@ -85,11 +85,12 @@ describe("Persistent sidebar", () => {
     expect(within(screen.getByRole("group", { name: "Projeto Website" })).getByRole("img", { name:"Projeto com mensagens não lidas" })).toBeVisible();
   });
 
-  it("shows which conversations own open terminal tabs", async () => {
+  it("shows shared terminal counts on the project instead of individual chats", async () => {
     call.mockResolvedValue(populatedLibrary());
-    render(<Harness terminalCounts={new Map([["c1", 2]])} />);
+    render(<Harness terminalCounts={new Map([["p1", 2]])} />);
     const conversation = await screen.findByRole("button", { name: /^(?!Excluir).*Primeira conversa/ });
-    expect(within(conversation).getByRole("img", { name: "2 terminais abertos" })).toBeVisible();
+    expect(within(await screen.findByRole("button", { name: /^Jarvis/ })).getByRole("img", { name: "2 terminais abertos" })).toBeVisible();
+    expect(within(conversation).queryByRole("img", { name: "2 terminais abertos" })).not.toBeInTheDocument();
     expect(screen.queryByRole("img", { name: /terminal aberto$/ })).not.toBeInTheDocument();
   });
   it("reveals the full conversation title when the sidebar clips it", async () => {

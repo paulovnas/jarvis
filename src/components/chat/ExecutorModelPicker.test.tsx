@@ -60,6 +60,39 @@ it("selects Claude and native providers through the same menu and preserves thei
   expect(selected).toHaveBeenLastCalledWith({ executor: "jarvis", model: "account/native", reasoning: null });
 });
 
+it("keeps saved AGY variants configurable through the grouped model and its advertised efforts", async () => {
+  agy.data = { installed: true, authenticated: true, version: "1.2.13", error: null, preferences: { enabled: true, disabledModels: [] }, models: [{ id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", description: "", reasoningLevels: ["low", "high"], defaultReasoning: "high" }] };
+  const user = userEvent.setup(); const selected = vi.fn();
+  render(<ExecutorModelPicker selection={{ executor: "agy", model: "gemini-3.8-flash-high", reasoning: null }} onSelect={selected} modelGroups={[]} />);
+  const trigger = screen.getByRole("button", { name: "Selecionar modelo de IA" });
+  expect(trigger).toHaveTextContent("Gemini 3.8 Flash · Alto");
+  expect(trigger).not.toHaveTextContent("Indisponível");
+  trigger.focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: "Antigravity CLI" })).focus(); await user.keyboard("{ArrowRight}");
+  const models = await screen.findAllByRole("menuitem", { name: /Gemini 3.8 Flash/ });
+  expect(models).toHaveLength(1);
+  models[0].focus(); await user.keyboard("{ArrowRight}");
+  const efforts = within(await screen.findByRole("group", { name: "Raciocínio" }));
+  expect(efforts.getAllByRole("menuitem").map(item => item.textContent)).toEqual(["Baixo", "Alto"]);
+  await user.click(efforts.getByRole("menuitem", { name: "Baixo" }));
+  expect(selected).toHaveBeenCalledWith({ executor: "agy", model: "gemini-3.8-flash", reasoning: "low" });
+});
+
+it("offers plain AGY thinking models without inventing an effort submenu", async () => {
+  agy.data = { installed: true, authenticated: true, version: "1.2.13", error: null, preferences: { enabled: true, disabledModels: [] }, models: [{ id: "gemini-3.8-flash-thinking", name: "Gemini 3.8 Flash Thinking", description: "", reasoningLevels: [], defaultReasoning: null }] };
+  const user = userEvent.setup(); const selected = vi.fn();
+  render(<ExecutorModelPicker selection={{ executor: "agy", model: "gemini-3.8-flash-thinking", reasoning: null }} onSelect={selected} modelGroups={[]} />);
+  const trigger = screen.getByRole("button", { name: "Selecionar modelo de IA" });
+  expect(trigger).toHaveTextContent("Gemini 3.8 Flash Thinking");
+  trigger.focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: "Antigravity CLI" })).focus(); await user.keyboard("{ArrowRight}");
+  const model = await screen.findByRole("menuitem", { name: "Gemini 3.8 Flash Thinking" });
+  expect(model).not.toHaveAttribute("aria-haspopup", "menu");
+  expect(screen.queryByRole("group", { name: "Raciocínio" })).not.toBeInTheDocument();
+  await user.click(model);
+  expect(selected).toHaveBeenCalledWith({ executor: "agy", model: "gemini-3.8-flash-thinking", reasoning: null });
+});
+
 it("filters hidden Claude models and removes the disabled local provider", async () => {
   runtime.data!.preferences = { enabled: true, disabledModels: ["sonnet"] };
   const user = userEvent.setup();

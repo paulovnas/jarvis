@@ -18,6 +18,14 @@ use std::{ffi::CStr, os::unix::fs::PermissionsExt};
 
 use crate::system::TerminalPreferences;
 
+#[path = "shell_integration.rs"]
+mod integration;
+
+pub(super) struct TerminalIntegration {
+    pub directory: PathBuf,
+    pub token: String,
+}
+
 pub(crate) struct Shell {
     program: PathBuf,
     powershell: bool,
@@ -339,25 +347,29 @@ pub(super) fn terminal_service_command(
 }
 
 /// Builds the interactive shell launched inside a PTY.
+#[cfg(test)]
 pub(crate) fn terminal_command(
     root: &Path,
     preferences: &TerminalPreferences,
 ) -> Result<CommandBuilder, String> {
-    terminal_command_with_sandbox(root, preferences, None)
+    terminal_command_with_sandbox(root, preferences, None, None)
 }
 
-pub(super) fn terminal_agent_command(
+/// Adds shell-owned command boundaries without changing user startup files.
+pub(super) fn terminal_tracked_command(
     root: &Path,
     preferences: &TerminalPreferences,
     sandbox: Option<&super::execution_sandbox::SandboxPlan>,
+    integration: &TerminalIntegration,
 ) -> Result<CommandBuilder, String> {
-    terminal_command_with_sandbox(root, preferences, sandbox)
+    terminal_command_with_sandbox(root, preferences, sandbox, Some(integration))
 }
 
 fn terminal_command_with_sandbox(
     root: &Path,
     preferences: &TerminalPreferences,
     sandbox: Option<&super::execution_sandbox::SandboxPlan>,
+    integration: Option<&TerminalIntegration>,
 ) -> Result<CommandBuilder, String> {
     let program = interactive_shell(preferences)?;
     let arguments = if preferences.arguments.is_empty() {
@@ -365,16 +377,23 @@ fn terminal_command_with_sandbox(
     } else {
         preferences.arguments.clone()
     };
-    let arguments = arguments
+    let mut arguments = arguments
         .into_iter()
         .map(OsString::from)
         .collect::<Vec<_>>();
+    let dot_directory = integration
+        .map(|integration| integration::prepare(&program, &mut arguments, integration))
+        .transpose()?
+        .flatten();
     let (launch_program, arguments) = match sandbox {
         Some(sandbox) => sandbox.wrap(&program, arguments),
         None => (program.clone(), arguments),
     };
     let mut command = CommandBuilder::new(launch_program);
     command.args(arguments);
+    if let Some(directory) = dot_directory {
+        command.env("ZDOTDIR", directory);
+    }
     #[cfg(unix)]
     command.env("SHELL", &program);
     configure_terminal(&mut command, root);

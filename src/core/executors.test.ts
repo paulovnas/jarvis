@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { turnOptionsSchema } from "./chat";
 import { modelChoiceSchema } from "./workflow-catalog";
 import { modelProblem, resolveChatModel } from "./provider-references";
-import { claudeModels, claudeRuntimeSchema, executionChoice, executionSelection, executorOf, selectModelChoice } from "./executors";
+import { claudeModels, claudeRuntimeSchema, executionChoice, executionSelection, executorOf, normalizeExecutionSelection, sameExecutionTarget, selectModelChoice } from "./executors";
 
 describe("execution choices", () => {
   it.each(["primary", "secondary"] as const)("swaps complete assignments when %s selects the opposite model", slot => {
@@ -33,6 +33,36 @@ describe("execution choices", () => {
     expect(executionChoice(executionSelection(modelChoiceSchema.parse(choice))!)).toEqual(choice);
     expect(modelProblem(choice, [])).toBeNull();
     expect(resolveChatModel([{ itemKey: "chat:c1", source: { ...choice, executor: "jarvis" }, target: { account: "other", model: "other", reasoning: null } }], "c1", choice)).toEqual(choice);
+  });
+  it.each(["low", "medium", "high", "max"])("normalizes a saved AGY %s variant and infers its missing effort", reasoning => {
+    const legacy = { executor: "agy" as const, account: "", model: `gemini-3.8-flash-${reasoning}`, reasoning: null };
+    const selection = { executor: "agy" as const, model: "gemini-3.8-flash", reasoning };
+    expect(executionSelection(legacy)).toEqual(selection);
+    expect(executionChoice({ ...legacy })).toEqual({ ...selection, account: "" });
+    expect(executionChoice(executionSelection(legacy)!)).toEqual({ ...selection, account: "" });
+  });
+  it("preserves an explicit AGY effort when normalizing a legacy variant", () => {
+    expect(normalizeExecutionSelection({ executor: "agy", model: "gemini-3.8-flash-high", reasoning: "max" })).toEqual({ executor: "agy", model: "gemini-3.8-flash", reasoning: "max" });
+  });
+  it.each([
+    { executor: "claude" as const, model: "sonnet-high", reasoning: null },
+    { executor: "jarvis" as const, model: "work/model-high", reasoning: null },
+    { executor: "agy" as const, model: "gemini-3.8-flash", reasoning: "high" },
+    { executor: "agy" as const, model: "gemini-3.8-flash-thinking", reasoning: null },
+    { executor: "agy" as const, model: "gemini-3.8-flash-xhigh", reasoning: null },
+  ])("keeps other model identities intact: $model", selection => {
+    expect(normalizeExecutionSelection(selection)).toEqual(selection);
+  });
+  it("recognizes legacy AGY variants as the same primary and secondary target", () => {
+    const primary = { executor: "agy" as const, account: "", model: "gemini-3.8-flash-high", reasoning: "high" };
+    const canonical = { ...primary, model: "gemini-3.8-flash", reasoning: "low" };
+    const fallback = { executor: "claude" as const, account: "", model: "sonnet", reasoning: null };
+    expect(sameExecutionTarget(primary, canonical)).toBe(true);
+    expect(sameExecutionTarget(primary, { ...canonical, model: "gemini-3.8-flash-low" })).toBe(true);
+    expect(sameExecutionTarget(primary, { ...canonical, account: "other" })).toBe(false);
+    expect(sameExecutionTarget(primary, { ...canonical, executor: "claude" })).toBe(false);
+    expect(selectModelChoice({ ...primary, fallback }, canonical, "secondary")).toEqual({ ...fallback, fallback: primary });
+    expect(modelProblem({ ...primary, fallback: canonical }, [])).toBe("Escolha um modelo secundário diferente do principal.");
   });
   it("uses the runtime catalog and only its advertised effort levels", () => {
     const runtime = claudeRuntimeSchema.parse({ installed: true, authenticated: true, version: "1", error: null, models: [{ id: "runtime-model", name: "Modelo do CLI", description: "", reasoningLevels: ["low", "high"], defaultReasoning: "high" }] });

@@ -58,9 +58,12 @@ it("loads HTTP options on demand and keeps its draft when switching sections", a
   expect(call.mock.calls.filter(([command]) => command === "get_project_http_settings")).toHaveLength(1);
 });
 
-it("opens one section at a time and retains drafts without reloading visited sections", async () => {
+it("places navigation after the content and retains drafts without reloading visited sections", async () => {
   const user = userEvent.setup();
   render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
+  const sidebar = screen.getByRole("navigation", { name: "Seções das opções do projeto" });
+  const panel = screen.getByRole("tabpanel", { name: "Geral" });
+  expect(panel.compareDocumentPosition(sidebar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   const navigation = screen.getByRole("tablist", { name: "Opções do projeto" });
   expect(navigation).toHaveAttribute("aria-orientation", "vertical");
   expect(within(navigation).getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Geral", "Conhecimento", "Aprendizados", "Repositórios", "Cliente HTTP", "Commit", "Autorizações"]);

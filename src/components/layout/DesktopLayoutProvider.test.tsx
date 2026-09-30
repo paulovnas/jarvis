@@ -14,6 +14,8 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 function Controls() {
   const { layout, updateLayout } = useDesktopLayout();
   return <><p>{layout.inspectorTab} / {layout.settingsTab} / {layout.panels["home-sidebar-panel"]}</p>
+    <output aria-label="Última versão vista">{layout.lastSeenReleaseVersion ?? "Nenhuma"}</output>
+    <Button onClick={() => updateLayout({ lastSeenReleaseVersion: "1.8.4" })}>Li as novidades</Button>
     <Button onClick={() => updateLayout({ inspectorTab: "details" })}>Detalhes</Button>
     <Button onClick={() => updateLayout({ settingsTab: "skills" })}>Skills</Button>
     <Button aria-pressed={layout.sidebarCollapsed && layout.inspectorCollapsed} onClick={() => updateLayout({ sidebarCollapsed: true, inspectorCollapsed: true })}>Foco</Button>
@@ -31,16 +33,25 @@ it("restores layout before showing controls and keeps sequential changes across 
   const first = render(<DesktopLayoutProvider><Controls /></DesktopLayoutProvider>);
   expect(screen.getByRole("status", { name: "Carregando Jarvis" })).toBeVisible();
   await screen.findByText("activities / general / 23");
+  await user.click(screen.getByRole("button", { name: "Li as novidades" }));
   await user.click(screen.getByRole("button", { name: "Detalhes" }));
   await user.click(screen.getByRole("button", { name: "Skills" }));
   await waitFor(() => expect(saved.settingsTab).toBe("skills"));
   expect(saved.inspectorTab).toBe("details");
   await user.click(screen.getByRole("button", { name: "Foco" }));
   await waitFor(() => expect(saved.sidebarCollapsed && saved.inspectorCollapsed).toBe(true));
+  expect(saved.lastSeenReleaseVersion).toBe("1.8.4");
   first.unmount();
   render(<DesktopLayoutProvider><Controls /></DesktopLayoutProvider>);
   expect(await screen.findByText("details / skills / 23")).toBeVisible();
   expect(screen.getByRole("button", { name: "Foco" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByLabelText("Última versão vista")).toHaveTextContent("1.8.4");
+});
+
+it("restores legacy layouts with no release acknowledgement", async () => {
+  vi.mocked(invoke).mockResolvedValue({ inspectorTab: "activities" });
+  render(<DesktopLayoutProvider><Controls /></DesktopLayoutProvider>);
+  expect(await screen.findByLabelText("Última versão vista")).toHaveTextContent("Nenhuma");
 });
 
 it("does not overwrite unavailable preferences and still permits using the interface", async () => {

@@ -1,8 +1,7 @@
-import { lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { useGroupRef } from "react-resizable-panels";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Folder, PanelBottomClose, PanelBottomOpen, Pencil, Plus, Terminal as TerminalIcon, X } from "lucide-react";
+import { Folder, Pencil, Plus, Terminal as TerminalIcon, X } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmationDialogContent } from "@/components/ConfirmationDialogContent";
 import { Input } from "@/components/TextInput";
@@ -15,7 +14,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
 import {
@@ -24,17 +22,17 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { libraryError } from "@/core/library";
-import { DEFAULT_TERMINAL_PANEL, rememberTerminalPanel, type TerminalPanelLayout } from "@/core/desktop-layout";
+import { rememberTerminalPanel } from "@/core/desktop-layout";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import {
   TERMINAL_STATUS_LABELS,
   terminalSchema,
-  type ChatTerminal,
+  type ProjectTerminal,
 } from "@/core/terminals";
 
 const TerminalSurface = lazy(() => import("./TerminalSurface").then(module => ({ default: module.TerminalSurface })));
@@ -47,7 +45,7 @@ function RenameTerminalPopover({
   onRename,
 }: {
   open: boolean;
-  terminal: ChatTerminal;
+  terminal: ProjectTerminal;
   pending: boolean;
   onOpenChange: (open: boolean) => void;
   onRename: (title: string) => Promise<void>;
@@ -68,49 +66,43 @@ function RenameTerminalPopover({
   </Popover>;
 }
 
-export function TerminalWorkspace({ conversationId, children }: { conversationId?: string; children: (launcher: ReactNode) => ReactNode }) {
-  const panelId = useId();
-  const launcherRef = useRef<HTMLButtonElement>(null);
+export function TerminalWorkspace({ projectId }: { projectId: string }) {
+  return <ProjectTerminalWorkspace key={projectId} projectId={projectId} />;
+}
+
+function ProjectTerminalWorkspace({ projectId }: { projectId: string }) {
+  const mounted = useRef(false);
   const { layout, updateLayout } = useDesktopLayout();
-  const { open, size: panelSize, activeTerminalId: activeId } = layout.terminalPanels[conversationId ?? ""] ?? DEFAULT_TERMINAL_PANEL;
-  const groupRef = useGroupRef();
-  const [animating, setAnimating] = useState(false);
-  useLayoutEffect(() => { groupRef.current?.setLayout({ conversation: open ? 100 - panelSize : 100, terminals: open ? panelSize : 0 }); }, [groupRef, open, panelSize]);
-  useEffect(() => {
-    if (!animating) return;
-    const timer = setTimeout(() => setAnimating(false), 240);
-    return () => clearTimeout(timer);
-  }, [animating, open]);
-  const remember = (update: Partial<TerminalPanelLayout>) => {
-    if (conversationId) updateLayout(current => rememberTerminalPanel(current, conversationId, update));
-  };
-  const setActiveId = (activeTerminalId: string | null) => remember({ activeTerminalId });
-  const togglePanel = () => { setAnimating(true); remember({ open: !open }); };
-  const [terminals, setTerminals] = useState<ChatTerminal[]>([]);
-  const [loadedConversationId, setLoadedConversationId] = useState<string>();
+  const layoutKey = `project:${projectId}`;
+  const activeId = layout.terminalPanels[layoutKey]?.activeTerminalId;
+  const setActiveId = (activeTerminalId: string | null) => updateLayout(current => rememberTerminalPanel(current, layoutKey, { activeTerminalId }));
+  const [terminals, setTerminals] = useState<ProjectTerminal[]>([]);
+  const [loadedProjectId, setLoadedProjectId] = useState<string>();
   const [creating, setCreating] = useState(false);
-  const [closing, setClosing] = useState<ChatTerminal | null>(null);
+  const [closing, setClosing] = useState<ProjectTerminal | null>(null);
   const [closingPending, setClosingPending] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renamingPending, setRenamingPending] = useState(false);
 
   useEffect(() => {
-    if (!conversationId) return;
     let current = true;
+    let revision = 0;
+    mounted.current = true;
     let unlisten: (() => void) | undefined;
     const refresh = async () => {
+      const request = ++revision;
       try {
-        const next = terminalSchema.array().parse(await invoke("list_chat_terminals", { conversationId }));
-        if (!current) return;
+        const next = terminalSchema.array().parse(await invoke("list_project_terminals", { projectId }));
+        if (!current || request !== revision) return;
         setTerminals(next);
       } catch (error) {
-        if (current) toast.error(libraryError(error, "Não foi possível carregar os terminais."));
+        if (current && request === revision) toast.error(libraryError(error, "Não foi possível carregar os terminais."));
       } finally {
-        if (current) setLoadedConversationId(conversationId);
+        if (current && request === revision) setLoadedProjectId(projectId);
       }
     };
-    void listen<{ conversationId: string }>("terminals:changed", event => {
-      if (current && event.payload.conversationId === conversationId) void refresh();
+    void listen<{ projectId: string }>("terminals:changed", event => {
+      if (current && event.payload.projectId === projectId) void refresh();
     }).then(stop => {
       if (!current) {
         stop();
@@ -126,100 +118,68 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
     });
     return () => {
       current = false;
+      mounted.current = false;
       unlisten?.();
     };
-  }, [conversationId]);
+  }, [projectId]);
 
   const create = async () => {
-    if (!conversationId) return;
     setCreating(true);
     try {
-      const terminal = terminalSchema.parse(await invoke("create_chat_terminal", { conversationId }));
+      const terminal = terminalSchema.parse(await invoke("create_project_terminal", { projectId }));
+      if (!mounted.current) return;
       setTerminals(items => [...items.filter(item => item.id !== terminal.id), terminal]);
       setActiveId(terminal.id);
       toast.success("Terminal aberto.");
     } catch (error) {
-      toast.error(libraryError(error, "Não foi possível abrir o terminal."));
+      if (mounted.current) toast.error(libraryError(error, "Não foi possível abrir o terminal."));
     } finally {
-      setCreating(false);
+      if (mounted.current) setCreating(false);
     }
   };
 
-  const rename = async (terminal: ChatTerminal, title: string) => {
-    if (!conversationId) return;
+  const rename = async (terminal: ProjectTerminal, title: string) => {
     setRenamingPending(true);
     try {
-      await invoke("rename_chat_terminal", { conversationId, id: terminal.id, title });
+      await invoke("rename_project_terminal", { projectId, id: terminal.id, title });
+      if (!mounted.current) return;
       setTerminals(items => items.map(item => item.id === terminal.id ? { ...item, title: title.trim() } : item));
       setRenamingId(null);
     } catch (error) {
-      toast.error(libraryError(error, "Não foi possível renomear o terminal."));
+      if (mounted.current) toast.error(libraryError(error, "Não foi possível renomear o terminal."));
     } finally {
-      setRenamingPending(false);
+      if (mounted.current) setRenamingPending(false);
     }
   };
 
   const close = async () => {
-    if (!conversationId || !closing) return;
+    if (!closing) return;
     setClosingPending(true);
     try {
-      await invoke("close_chat_terminal", { conversationId, id: closing.id, confirmed: true });
+      await invoke("close_project_terminal", { projectId, id: closing.id, confirmed: true });
+      if (!mounted.current) return;
       setTerminals(items => items.filter(item => item.id !== closing.id));
-      if (activeId === closing.id) setActiveId(terminals.find(item => item.id !== closing.id && item.conversationId === conversationId)?.id ?? null);
+      if (active?.id === closing.id) setActiveId(terminals.find(item => item.id !== closing.id && item.projectId === projectId)?.id ?? null);
       setClosing(null);
       toast.success("Terminal fechado.");
     } catch (error) {
-      toast.error(libraryError(error, "Não foi possível fechar o terminal."));
+      if (mounted.current) toast.error(libraryError(error, "Não foi possível fechar o terminal."));
     } finally {
-      setClosingPending(false);
+      if (mounted.current) setClosingPending(false);
     }
   };
 
-  const visibleTerminals = terminals.filter(terminal => terminal.conversationId === conversationId);
+  const visibleTerminals = terminals.filter(terminal => terminal.projectId === projectId);
   const active = visibleTerminals.find(terminal => terminal.id === activeId) ?? visibleTerminals[0] ?? null;
-  const loading = Boolean(conversationId && loadedConversationId !== conversationId);
-  const terminalCount = visibleTerminals.length;
-  const count = terminalCount;
-  const triggerLabel = count === 0 ? "Abrir terminais" : count === 1 ? "1 terminal aberto" : `${count} terminais abertos`;
-
-  const launcher = <Hint content={conversationId ? open ? "Recolher painel de terminais" : triggerLabel : "Abra uma conversa para usar o terminal"}><Button
-        ref={launcherRef}
-        type="button"
-        variant="ghost"
-        size="icon"
-        disabled={!conversationId}
-        aria-label={triggerLabel}
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={togglePanel}
-        className={`relative size-7.5 shrink-0 cursor-pointer rounded-full transition-colors hover:bg-accent hover:text-foreground ${open ? "bg-primary/15 text-primary" : "bg-secondary text-foreground"}`}
-      >
-        {open ? <PanelBottomClose className="size-3.5 stroke-[2.2]" /> : <PanelBottomOpen className="size-3.5 stroke-[2.2]" />}
-        {count > 0 && <Badge className="absolute -right-1.5 -top-1.5 min-w-4 justify-center border-border bg-primary px-1 py-0 text-[9px] text-primary-foreground">{count}</Badge>}
-      </Button></Hint>;
+  const loading = loadedProjectId !== projectId;
 
   return <>
-    <ResizablePanelGroup groupRef={groupRef} orientation="vertical" className={`min-h-0 min-w-0 flex-1 ${animating ? "panels-animating" : ""}`} onLayoutChanged={(panels, meta) => {
-      if (!meta.isUserInteraction) return;
-      if (panels.terminals === 0) remember({ open: false });
-      else if (panels.terminals !== panelSize) remember({ size: panels.terminals });
-    }}>
-      <ResizablePanel id="conversation" defaultSize={`${100 - panelSize}%`} minSize="35%" className="flex min-h-0 min-w-0 flex-col">
-        {children(launcher)}
-      </ResizablePanel>
-      <ResizableHandle aria-label="Redimensionar painel de terminais" disabled={!open} aria-hidden={!open} inert={!open} className={`cursor-row-resize bg-border hover:bg-primary/50 ${!open ? "invisible h-0 pointer-events-none" : ""}`} />
-      <ResizablePanel id="terminals" collapsible defaultSize={open ? `${panelSize}%` : "0%"} minSize="20%" maxSize="65%" className="min-h-0 min-w-0">
-      <section id={panelId} aria-label="Painel de terminais" inert={!open} aria-hidden={!open} className={`dark flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-sidebar text-foreground transition-transform duration-200 motion-reduce:transition-none ${open ? "" : "translate-y-full"}`}>
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-3 py-1">
-          <span className="flex items-center gap-2 text-xs font-medium"><TerminalIcon className="size-3.5 text-onedark-green" />Terminais{count > 0 && <Badge variant="secondary" className="px-1 py-0 font-mono text-[9px]">{count}</Badge>}</span>
-          <Hint content="Recolher painel de terminais"><Button type="button" variant="ghost" size="icon" aria-label="Recolher painel de terminais" className="size-6 shrink-0 cursor-pointer text-muted-foreground" onClick={() => { togglePanel(); launcherRef.current?.focus(); }}><PanelBottomClose className="size-3.5" /></Button></Hint>
-        </div>
+    <section aria-label="Terminais do projeto" className="dark flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-sidebar text-foreground">
         <div className="min-h-0 min-w-0 flex-1">
-            {loading ? <div className="flex h-full flex-col gap-3"><Skeleton className="h-8 w-56" /><Skeleton className="min-h-0 flex-1" /></div> : visibleTerminals.length === 0 ? <div className="flex h-full flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-border bg-sidebar/50 text-center">
-              <span className="flex size-11 items-center justify-center rounded-md border border-border bg-card text-primary"><TerminalIcon className="size-5" /></span>
-              <div><p className="text-sm font-medium">Nenhum terminal aberto</p><p className="mt-1 text-xs text-muted-foreground">Abra um shell na raiz do projeto para trabalhar aqui.</p></div>
-              <Button type="button" size="sm" className="cursor-pointer" disabled={creating} onClick={() => { void create(); }}><Plus className="size-4" />Novo Terminal</Button>
-            </div> : <Tabs value={active?.id} onValueChange={setActiveId} className="h-full min-h-0 min-w-0 gap-0">
+            {loading ? <div role="status" aria-label="Carregando terminais do projeto" className="flex h-full flex-col gap-3"><Skeleton className="h-8 w-56" /><Skeleton className="min-h-0 flex-1" /></div> : visibleTerminals.length === 0 ? <Empty className="h-full rounded-lg border border-border">
+              <EmptyHeader><EmptyMedia variant="icon"><TerminalIcon /></EmptyMedia><EmptyTitle>Nenhum terminal aberto</EmptyTitle><EmptyDescription>Abra um shell na raiz do projeto para trabalhar aqui.</EmptyDescription></EmptyHeader>
+              <Button type="button" size="sm" className="cursor-pointer" disabled={creating} onClick={() => { void create(); }}><Plus data-icon="inline-start" />Novo Terminal</Button>
+            </Empty> : <Tabs value={active?.id} onValueChange={setActiveId} className="h-full min-h-0 min-w-0 gap-0">
               <div role="group" aria-label="Abas dos terminais" className="min-w-0 shrink-0 overflow-x-auto overflow-y-hidden border-b border-border px-2 py-1">
                 <div className="flex w-max min-w-full items-center gap-1">
                   <TabsList aria-label="Terminais abertos" variant="line" className="h-8 shrink-0 justify-start gap-1 p-0">
@@ -243,14 +203,12 @@ export function TerminalWorkspace({ conversationId, children }: { conversationId
               </div>
               {active && <TabsContent value={active.id} className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-sidebar" aria-label={active.title}>
                 {active.status !== "running" && <div role="status" className="flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-2 text-xs text-muted-foreground"><span>Processo encerrado{active.exitCode !== null ? ` · código ${active.exitCode}` : ""}</span><Button type="button" variant="outline" size="sm" disabled={creating} onClick={() => void create()} className="h-7 cursor-pointer text-xs"><Plus className="size-3.5" />Abrir novo terminal</Button></div>}
-                <div className="min-h-0 flex-1"><Suspense fallback={<Skeleton role="status" aria-label="Carregando terminal" className="h-full w-full" />}><TerminalSurface conversationId={conversationId ?? ""} terminal={active} /></Suspense></div>
+                <div className="min-h-0 flex-1"><Suspense fallback={<Skeleton role="status" aria-label="Carregando terminal" className="h-full w-full" />}><TerminalSurface projectId={projectId} terminal={active} /></Suspense></div>
               </TabsContent>}
             </Tabs>}
         </div>
         {active && <div className="flex shrink-0 items-center gap-2 border-t border-border bg-secondary/40 px-5 py-2 font-mono text-[11px] text-muted-foreground"><Folder className="size-3 shrink-0 text-onedark-cyan" /><Hint content={active.command ? `${active.cwd}\n${active.command}` : active.cwd}><span className="min-w-0 flex-1 truncate">{active.cwd}</span></Hint><span className={`shrink-0 ${active.status === "failed" ? "text-destructive" : active.status === "running" ? "text-onedark-green" : ""}`}>{TERMINAL_STATUS_LABELS[active.status]}</span></div>}
-      </section>
-      </ResizablePanel>
-    </ResizablePanelGroup>
+    </section>
     <AlertDialog open={closing !== null} onOpenChange={next => { if (!next && !closingPending) setClosing(null); }}>
       <ConfirmationDialogContent aria-describedby={undefined}>
         <AlertDialogHeader><AlertDialogTitle>Fechar {closing?.title}?</AlertDialogTitle><AlertDialogDescription>O shell e os processos iniciados por este terminal serão encerrados.</AlertDialogDescription></AlertDialogHeader>

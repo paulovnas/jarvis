@@ -2,7 +2,8 @@ import { z } from "zod";
 
 export const terminalSchema = z.object({
   id: z.string(),
-  conversationId: z.string(),
+  projectId: z.string(),
+  conversationId: z.string().nullable(),
   title: z.string(),
   cwd: z.string(),
   pid: z.number(),
@@ -22,21 +23,21 @@ export const terminalSnapshotSchema = z.object({
 });
 
 export const terminalOutputEventSchema = z.object({
-  conversationId: z.string(),
+  projectId: z.string(),
   id: z.string(),
   data: z.string(),
   revision: z.number(),
 });
 
-export const terminalConversationActivitySchema = z.object({
-  conversationId: z.string(),
+export const terminalProjectActivitySchema = z.object({
+  projectId: z.string(),
   count: z.number().int().positive(),
 });
 
-export type ChatTerminal = z.infer<typeof terminalSchema>;
+export type ProjectTerminal = z.infer<typeof terminalSchema>;
 export type TerminalSnapshot = z.infer<typeof terminalSnapshotSchema>;
 export type TerminalOutputEvent = z.infer<typeof terminalOutputEventSchema>;
-export type TerminalConversationActivity = z.infer<typeof terminalConversationActivitySchema>;
+export type TerminalProjectActivity = z.infer<typeof terminalProjectActivitySchema>;
 
 export const TERMINAL_STATUS_LABELS = {
   running: "Em execução",

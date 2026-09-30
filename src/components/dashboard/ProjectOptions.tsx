@@ -55,14 +55,6 @@ export function ProjectOptions({ project, projectUpdater }: { project: Project; 
     setActive(value);
     setVisited(current => current.includes(value) ? current : [...current, value]);
   }} className="flex h-full min-h-0 min-w-0 gap-0 overflow-hidden">
-    <nav aria-label="Seções das opções do projeto" className="settings-navigation w-14 shrink-0 overflow-y-auto border-r border-border bg-sidebar p-2 md:w-48 md:p-3">
-      <TabsList aria-label="Opções do projeto" className="h-auto w-full flex-col items-stretch justify-start gap-1 rounded-none bg-transparent p-0 group-data-horizontal/tabs:h-auto">
-        {SECTIONS.map(section => <Hint key={section.value} content={section.label} disabled={!compact} side="right"><TabsTrigger value={section.value} className="h-10 flex-none cursor-pointer justify-center gap-2.5 px-2 text-xs md:justify-start">
-          <section.Icon aria-hidden="true" className="size-4" />
-          <span className="sr-only min-w-0 flex-1 text-left md:not-sr-only">{section.label}</span>
-        </TabsTrigger></Hint>)}
-      </TabsList>
-    </nav>
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="shrink-0 border-b border-border px-4 py-4 md:px-6">
         <h2 className="text-sm font-medium">{selected.label}</h2>
@@ -72,6 +64,14 @@ export function ProjectOptions({ project, projectUpdater }: { project: Project; 
         <div className="mx-auto w-full max-w-4xl">{panels[section.value]}</div>
       </TabsContent>)}
     </div>
+    <nav aria-label="Seções das opções do projeto" className="settings-navigation w-14 shrink-0 overflow-y-auto border-l border-border bg-sidebar p-2 md:w-48 md:p-3">
+      <TabsList aria-label="Opções do projeto" className="h-auto w-full flex-col items-stretch justify-start gap-1 rounded-none bg-transparent p-0 group-data-horizontal/tabs:h-auto">
+        {SECTIONS.map(section => <Hint key={section.value} content={section.label} disabled={!compact} side="left"><TabsTrigger value={section.value} className="h-10 flex-none cursor-pointer justify-center gap-2.5 px-2 text-xs md:justify-start">
+          <section.Icon aria-hidden="true" className="size-4" />
+          <span className="sr-only min-w-0 flex-1 text-left md:not-sr-only">{section.label}</span>
+        </TabsTrigger></Hint>)}
+      </TabsList>
+    </nav>
   </OptionsTabs.Root>;
 }
 

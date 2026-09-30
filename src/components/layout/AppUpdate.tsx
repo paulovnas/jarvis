@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { LazyChatMarkdown } from "@/components/chat/LazyChatMarkdown";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { ConfirmationDialogContent } from "@/components/ConfirmationDialogContent";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,7 +26,7 @@ const PIX_COPY_AND_PASTE = "00020101021126540014br.gov.bcb.pix0132nascimento.pau
 export function AppUpdate() {
   const [open, setOpen] = useState(false);
   const [pixCopied, setPixCopied] = useState(false);
-  const { info, checking, busy, progress, error, upToDate, check, install } = useAppUpdate();
+  const { info, checking, busy, progress, error, upToDate, pendingShutdown, check, install, confirmInstall, cancelInstall } = useAppUpdate();
   useEffect(() => {
     if (!nativeUpdaterAvailable()) return;
     let active = true;
@@ -50,7 +52,7 @@ export function AppUpdate() {
       toast.error("Não foi possível copiar o PIX.");
     }
   };
-  return <Dialog open={open} onOpenChange={next => { if (!busy) setOpen(next); }}>
+  return <><Dialog open={open} onOpenChange={next => { if (!busy) setOpen(next); }}>
     <DialogTrigger render={<Button variant="ghost" size="sm" />} className={cn("h-6 shrink-0 cursor-pointer rounded-sm px-1.5 font-mono text-[10px]", release ? "text-onedark-green" : "text-muted-foreground")} aria-label={release ? "Atualização Disponível" : `Sobre o Jarvis ${displayVersion(info.currentVersion)}`}>
       {release ? "Atualização Disponível" : displayVersion(info.currentVersion)}
     </DialogTrigger>
@@ -111,5 +113,22 @@ export function AppUpdate() {
         </div>
       </DialogFooter>
     </DialogContent>
-  </Dialog>;
+  </Dialog>
+    <AlertDialog open={pendingShutdown !== null} onOpenChange={next => { if (!next) cancelInstall(); }}>
+      <ConfirmationDialogContent className="dark">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Atualizar e encerrar processos?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {pendingShutdown?.activeProcesses === 1 ? "Um processo ativo será encerrado" : `${pendingShutdown?.activeProcesses ?? 0} processos ativos serão encerrados`} para atualizar o Jarvis. Os terminais serão restaurados na próxima abertura.
+            {pendingShutdown?.restartableProcesses ? ` ${pendingShutdown.restartableProcesses === 1 ? "Um serviço de desenvolvimento será reiniciado" : `${pendingShutdown.restartableProcesses} serviços de desenvolvimento serão reiniciados`} automaticamente.` : " Serviços de desenvolvimento elegíveis que ainda estiverem ativos serão reiniciados automaticamente."}
+            {" Comandos concluídos ou de execução única não serão repetidos."}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel className="cursor-pointer">Cancelar</AlertDialogCancel>
+          <AlertDialogAction data-confirm-action className="cursor-pointer" onClick={() => { void confirmInstall(); }}>Encerrar e atualizar</AlertDialogAction>
+        </AlertDialogFooter>
+      </ConfirmationDialogContent>
+    </AlertDialog>
+  </>;
 }

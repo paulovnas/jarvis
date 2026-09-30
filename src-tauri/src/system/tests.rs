@@ -188,11 +188,11 @@ fn application_exit_waits_for_the_power_worker_and_is_repeatable() {
         released.send(()).unwrap();
     });
     *system.worker.lock().unwrap() = Some((stop, worker));
-    crate::shutdown_services(&system, &agent);
+    crate::shutdown_services(&system, &agent).unwrap();
     confirmation
         .try_recv()
         .expect("The OS power worker must finish before the updater exits");
-    crate::shutdown_services(&system, &agent);
+    crate::shutdown_services(&system, &agent).unwrap();
     assert!(system.worker.lock().unwrap().is_none());
 }
 

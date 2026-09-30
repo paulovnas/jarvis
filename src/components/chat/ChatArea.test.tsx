@@ -238,6 +238,16 @@ describe("Persistent live conversation", () => {
     expect(await screen.findByRole("textbox")).toHaveAttribute("contenteditable", "true");
   });
 
+  it("keeps browser and HTTP actions in the composer without chat terminal controls", async () => {
+    render(<TestChat />);
+    expect(await screen.findByRole("textbox", { name: "Mensagem" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Abrir navegador" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Nova requisição HTTP" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Abrir terminais" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Terminais do projeto" })).not.toBeInTheDocument();
+    expect(call).not.toHaveBeenCalledWith("list_project_terminals", expect.anything());
+  });
+
   it("starts without demo messages and opens a real selected conversation", async () => {
     const { rerender } = render(<TestChat library={emptyLibrary()} />);
     expect(screen.getByText("Seu próximo projeto começa aqui")).toBeInTheDocument();

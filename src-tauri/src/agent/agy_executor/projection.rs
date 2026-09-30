@@ -208,8 +208,35 @@ impl Projection {
                 .or_insert_with(std::time::Instant::now);
             let duration_ms = started.elapsed().as_millis() as u64;
             let tool = native_tool(native, &key);
+            let dispatched =
+                if let Some(tool) = &tool {
+                    self.associated_calls.contains(&tool.id) || {
+                        let data = session.data.lock().map_err(|_| AgentError::internal())?;
+                        data.turns.iter().any(|turn| {
+                            turn.wire.iter().any(|item| {
+                                item["type"] == "function_call" && item["call_id"] == tool.id
+                            }) || turn.turn.steps.iter().flat_map(|step| &step.tools).any(
+                                |existing| existing.id == tool.id && existing.status != "pending",
+                            )
+                        })
+                    }
+                } else {
+                    false
+                };
             if let Some(tool) = &tool {
-                if !self.calls.iter().any(|existing| existing.id == tool.id) {
+                if let Some(existing) = self
+                    .calls
+                    .iter_mut()
+                    .find(|existing| existing.id == tool.id)
+                {
+                    // AGY can publish a parameter preview before the complete
+                    // request. Only unassociated previews may change identity
+                    // data; an executed callback keeps its original receipt.
+                    if !dispatched {
+                        existing.name.clone_from(&tool.name);
+                        existing.args.clone_from(&tool.args);
+                    }
+                } else {
                     self.calls.push(tool.clone());
                 }
             }
@@ -228,12 +255,18 @@ impl Projection {
                 // The MCP bridge owns tool effects and confirmed outputs. Native
                 // notifications only locate the durable receipt in the journal.
                 if let Some(tool) = &tool {
-                    if !turn
+                    if let Some(existing) = turn
                         .turn
                         .steps
-                        .iter()
-                        .any(|step| step.tools.iter().any(|existing| existing.id == tool.id))
+                        .iter_mut()
+                        .flat_map(|step| &mut step.tools)
+                        .find(|existing| existing.id == tool.id)
                     {
+                        if !dispatched && existing.status == "pending" {
+                            existing.name.clone_from(&tool.name);
+                            existing.args.clone_from(&tool.args);
+                        }
+                    } else {
                         step_for(turn, &key).tools.push(tool.clone());
                     }
                 }
@@ -469,6 +502,54 @@ mod tests {
             .apply(&session, &tool("native", 4, json!("malformed")))
             .unwrap();
         assert!(projection.take_tool("read", Value::Null, None).is_none());
+    }
+
+    #[test]
+    fn tool_parameter_previews_update_before_callback_without_rewriting_its_receipt() {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve("Inspect files".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        let mut projection = Projection::default();
+        projection
+            .apply(&session, &tool("native", 2, json!({})))
+            .unwrap();
+        let args = json!({"path":"README.md"});
+        projection
+            .apply(&session, &tool("native", 2, json!(args.to_string())))
+            .unwrap();
+        let snapshot = session.snapshot().unwrap();
+        assert_eq!(snapshot.turns[0].steps[0].tools.len(), 1);
+        assert_eq!(snapshot.turns[0].steps[0].tools[0].args, args);
+        assert_eq!(
+            projection.take_tool("read", args.clone(), None).unwrap().id,
+            "agy:native:2"
+        );
+        session.update(true, |data| {
+            let turn = &mut data.turns[0];
+            let tool = &mut turn.turn.steps[0].tools[0];
+            tool.status = "completed".into();
+            tool.output = "Confirmed output".into();
+            tool.duration_ms = 42;
+            turn.wire.push(json!({"type":"function_call","call_id":"agy:native:2","name":"read","arguments":args.to_string()}));
+        }).unwrap();
+        let different = json!({"path":"other.md"});
+        projection
+            .apply(&session, &tool("native", 2, different.clone()))
+            .unwrap();
+        assert!(projection.take_tool("read", different, None).is_none());
+        let receipt = &session.snapshot().unwrap().turns[0].steps[0].tools[0];
+        assert_eq!(receipt.args, args);
+        assert_eq!(receipt.output, "Confirmed output");
+        assert_eq!(receipt.duration_ms, 42);
+        assert_eq!(
+            projection
+                .take_tool("read", args, Some("agy:native:2"))
+                .unwrap()
+                .id,
+            "agy:native:2"
+        );
     }
 
     #[test]

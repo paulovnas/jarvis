@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod agent;
 mod agy;
+mod app_exit;
 #[cfg(target_os = "macos")]
 mod app_menu;
 mod background;
@@ -81,6 +82,7 @@ pub fn run() {
         .manage(agent::dashboard::DashboardState::default())
         .manage(mcp::McpState::default())
         .manage(updater::UpdateState::default())
+        .manage(app_exit::ExitState::default())
         .manage(system::SystemState::default())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
@@ -113,6 +115,21 @@ pub fn run() {
             skills::setup(&home).map_err(|error| std::io::Error::other(error.message))?;
             core::health::start_monitor(app.handle());
             system::setup(app.handle())?;
+            let agent = app.state::<agent::AgentState>();
+            agent
+                .terminals
+                .configure(&home, app.state::<persistence::AppState>().inner().clone())
+                .map_err(|error| std::io::Error::other(error.message().to_owned()))?;
+            if let Err(error) = agent
+                .terminals
+                .restore(agent::terminals::events(app.handle().clone()))
+            {
+                // A damaged snapshot must not prevent access to projects or settings.
+                eprintln!(
+                    "Não foi possível restaurar os terminais: {}",
+                    error.message()
+                );
+            }
             agent::browser::extension::start_if_configured(app.handle());
             Ok(())
         })
@@ -176,6 +193,10 @@ pub fn run() {
                 system::unread::get_unread_conversations,
                 system::unread::mark_conversation_read,
                 updater::check_app_update,
+                app_exit::get_app_shutdown_status,
+                app_exit::get_pending_app_exit,
+                app_exit::confirm_app_exit,
+                app_exit::cancel_app_exit,
                 updater::install_app_update,
                 core::get_core_status,
                 core::check_core_updates,
@@ -248,18 +269,14 @@ pub fn run() {
                 core::beads::dashboard::close_conversation_plan,
                 agent::get_chat,
                 agent::subscribe_chat,
-                agent::processes::list_chat_processes,
-                agent::processes::read_chat_process,
-                agent::processes::stop_chat_process,
-                agent::processes::remove_chat_process,
                 agent::terminals::get_terminal_activity,
-                agent::terminals::list_chat_terminals,
-                agent::terminals::create_chat_terminal,
-                agent::terminals::read_chat_terminal,
-                agent::terminals::write_chat_terminal,
-                agent::terminals::resize_chat_terminal,
-                agent::terminals::rename_chat_terminal,
-                agent::terminals::close_chat_terminal,
+                agent::terminals::list_project_terminals,
+                agent::terminals::create_project_terminal,
+                agent::terminals::read_project_terminal,
+                agent::terminals::write_project_terminal,
+                agent::terminals::resize_project_terminal,
+                agent::terminals::rename_project_terminal,
+                agent::terminals::close_project_terminal,
                 agent::workflow::get_workflow,
                 agent::workflow::catalog::get_workflow_catalog,
                 agent::workflow::catalog::mutate_workflow_catalog,
@@ -321,36 +338,58 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
-                prepare_exit(app);
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if app_exit::request(app) {
+                    api.prevent_exit();
+                }
             }
         });
 }
 
-// Windows updater installation exits directly, bypassing Tauri's ExitRequested event.
-// Keep the same cleanup available to that hook and to normal application shutdown.
-pub(crate) fn prepare_exit(app: &tauri::AppHandle) {
-    prepare_exit_with_reason(app, diagnostics::ShutdownReason::UserExit);
+// The Windows installer can fail after its exit hook, so keep background
+// services and the normal exit confirmation available until it actually exits.
+pub(crate) fn prepare_exit_for_installer(app: &tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    desktop::flush(app);
+    app.state::<agent::AgentState>()
+        .terminals
+        .shutdown()
+        .map_err(|error| error.message().to_owned())
 }
 
-pub(crate) fn prepare_exit_for_update(app: &tauri::AppHandle) {
-    prepare_exit_with_reason(app, diagnostics::ShutdownReason::Update);
+pub(crate) fn prepare_exit(app: &tauri::AppHandle) -> Result<(), String> {
+    prepare_exit_with_reason(app, diagnostics::ShutdownReason::UserExit)
 }
 
-fn prepare_exit_with_reason(app: &tauri::AppHandle, reason: diagnostics::ShutdownReason) {
+pub(crate) fn prepare_exit_for_update(app: &tauri::AppHandle) -> Result<(), String> {
+    prepare_exit_with_reason(app, diagnostics::ShutdownReason::Update)
+}
+
+fn prepare_exit_with_reason(
+    app: &tauri::AppHandle,
+    reason: diagnostics::ShutdownReason,
+) -> Result<(), String> {
     use tauri::Manager;
     desktop::flush(app);
     shutdown_services(
         &app.state::<system::SystemState>(),
         &app.state::<agent::AgentState>(),
-    );
+    )?;
+    app_exit::allow(app);
     diagnostics::finish(reason);
+    Ok(())
 }
 
-fn shutdown_services(system: &system::SystemState, agent: &agent::AgentState) {
+fn shutdown_services(
+    system: &system::SystemState,
+    agent: &agent::AgentState,
+) -> Result<(), String> {
+    agent
+        .terminals
+        .shutdown()
+        .map_err(|error| error.message().to_owned())?;
     system.shutdown();
-    agent.processes.stop_all();
-    agent.terminals.stop_all();
+    Ok(())
 }
 
 #[tauri::command]

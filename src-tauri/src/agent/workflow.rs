@@ -729,7 +729,7 @@ impl Execution {
             ));
         }
         drop(state);
-        text.push_str(&self.hub.env.terminals.context(&self.hub.root.id));
+        text.push_str(&self.hub.env.terminals.context(self.hub.root.project_id()?));
         Ok(text)
     }
 
@@ -977,10 +977,33 @@ impl Execution {
             return Ok(false);
         }
         self.hub.env.terminals.close_requires_approval(
-            &self.hub.root.id,
+            self.hub.root.project_id()?,
             &self.terminal_owner_id()?,
             &tool.args,
         )
+    }
+
+    fn terminal_scope(
+        &self,
+        signal: &watch::Receiver<bool>,
+    ) -> Result<terminals::TerminalScope<'_>, AgentError> {
+        if *signal.borrow() || *self.hub.root_signal.borrow() {
+            return Err(AgentError::cancelled());
+        }
+        if self
+            .hub
+            .root
+            .data
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .storage_failed
+        {
+            return Err(AgentError::storage());
+        }
+        Ok(terminals::TerminalScope {
+            project: self.hub.root.project_id()?,
+            conversation: Some(&self.hub.root.id),
+        })
     }
 
     #[cfg(test)]
@@ -1038,6 +1061,7 @@ impl Execution {
                 return Err(invalid("Processo indisponível para este agente."));
             }
             let owner_id = self.terminal_owner_id()?;
+            let scope = self.terminal_scope(&signal)?;
             let mut call = tool.clone();
             call.id = format!("{owner_id}:{}", tool.id);
             return self
@@ -1045,7 +1069,7 @@ impl Execution {
                 .env
                 .processes
                 .execute(
-                    &self.hub.root.id,
+                    scope,
                     &self.hub.root.root,
                     &owner_id,
                     &call,
@@ -1059,6 +1083,7 @@ impl Execution {
                 return Err(invalid("Terminal indisponível para este agente."));
             }
             let owner_id = self.terminal_owner_id()?;
+            let scope = self.terminal_scope(&signal)?;
             let mut call = tool.clone();
             call.id = format!("{owner_id}:{}", tool.id);
             return self
@@ -1066,7 +1091,7 @@ impl Execution {
                 .env
                 .terminals
                 .execute(
-                    &self.hub.root.id,
+                    scope,
                     &self.hub.root.root,
                     &owner_id,
                     &call,

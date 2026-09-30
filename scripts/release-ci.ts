@@ -4,6 +4,7 @@ import { prerelease } from "semver";
 import { command, configuration, optionalRelease, root } from "./release-common";
 import { artifactNames, desktopManifest, notesFromTag, RELEASE_REPOSITORY, releaseTargets, requireLocalValidation, supportedTarget, targetPlatforms, validateCIRequest } from "./release-plan";
 import { verifyReleaseArtifacts } from "./release-artifacts";
+import { readInstalledRelease } from "./installed-release";
 
 const tag = process.env.RELEASE_TAG ?? "";
 const publish = process.env.RELEASE_PUBLISH === "true";
@@ -29,6 +30,9 @@ function prepare() {
   }
   const { config, sha } = verifyTag();
   if (publish && optionalRelease(tag)?.isDraft === false) throw new Error("Esta versão já foi publicada e não será substituída.");
+  const installedRelease = tag ? { version: config.version, notes: tagNotes(config.version) } : null;
+  mkdirSync(artifactDirectory, { recursive: true });
+  writeFileSync(path.join(artifactDirectory, "installed-release.json"), JSON.stringify(installedRelease) + "\n");
   output("sha", sha);
   output("version", config.version);
   console.info(`Compilar Jarvis ${config.version} (${sha.slice(0, 7)}) · ${publish ? "publicação" : "validação sem publicação"}`);
@@ -83,22 +87,28 @@ function verifyAssets() {
   const { config, sha } = verifyTag();
   return { version: config.version, platforms: releaseTargets.map(target => verifyReleaseArtifacts(artifactDirectory, config.version, sha, target, config.plugins.updater.pubkey)) };
 }
+function tagNotes(version: string): string {
+  return notesFromTag(command("git", ["for-each-ref", "--format=%(contents)", `refs/tags/${tag}`], true) + "\n", version);
+}
 function publishArtifacts() {
   validateCIRequest(process.env.GITHUB_REPOSITORY, process.env.GITHUB_REF, tag, publish);
   if (!publish) throw new Error("Publicação desativada; use o modo de validação.");
   const assets = verifyAssets();
   const existing = optionalRelease(tag);
   if (existing?.isDraft === false) throw new Error("A release já está pública. Nenhum arquivo será substituído.");
+  const notes = tagNotes(assets.version);
+  const installedRelease = readInstalledRelease(path.join(artifactDirectory, "installed-release.json"));
+  if (!installedRelease || installedRelease.version !== assets.version || installedRelease.notes !== notes) throw new Error("As notas não correspondem à versão empacotada; compile novamente os instaladores.");
   const beta = prerelease(assets.version) !== null;
   if (!existing) {
-    const notes = notesFromTag(command("git", ["for-each-ref", "--format=%(contents)", `refs/tags/${tag}`], true) + "\n", assets.version);
     const notesFile = path.join(artifactDirectory, "notes.md");
     writeFileSync(notesFile, notes);
-    command("gh", ["release", "create", tag, "--repo", RELEASE_REPOSITORY, "--verify-tag", "--draft", "--title", `Jarvis ${assets.version}`, ...(beta ? ["--prerelease"] : []), ...(notes ? ["--notes-file", notesFile] : ["--generate-notes"])]);
+    command("gh", ["release", "create", tag, "--repo", RELEASE_REPOSITORY, "--verify-tag", "--draft", "--title", `Jarvis ${assets.version}`, ...(beta ? ["--prerelease"] : []), "--notes-file", notesFile]);
   }
   const release = optionalRelease(tag);
   if (!release?.isDraft) throw new Error("A release deixou de ser um rascunho antes do upload.");
-  const manifest = desktopManifest(assets.version, assets.platforms, release.body);
+  if (release.body.trim() !== notes) throw new Error("As notas do rascunho diferem das notas empacotadas; o rascunho foi preservado.");
+  const manifest = desktopManifest(assets.version, assets.platforms, notes);
   const manifests = ["latest.json"];
   writeFileSync(path.join(artifactDirectory, "latest.json"), JSON.stringify(manifest, null, 2) + "\n");
   for (const platform of releaseTargets.flatMap(targetPlatforms)) {

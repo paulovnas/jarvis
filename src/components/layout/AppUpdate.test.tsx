@@ -4,15 +4,16 @@ import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AppUpdate } from "./AppUpdate";
-import { APP_VERSION, checkAppUpdate, displayVersion, installAppUpdate, PROJECT_URL, type UpdateInfo, type UpdateProgress } from "@/core/app-update";
+import { APP_VERSION, checkAppUpdate, displayVersion, getAppShutdownStatus, installAppUpdate, PROJECT_URL, type UpdateInfo, type UpdateProgress } from "@/core/app-update";
 
-vi.mock("@/core/app-update", async original => ({ ...await original<typeof import("@/core/app-update")>(), nativeUpdaterAvailable: () => true, checkAppUpdate: vi.fn(), installAppUpdate: vi.fn() }));
+vi.mock("@/core/app-update", async original => ({ ...await original<typeof import("@/core/app-update")>(), nativeUpdaterAvailable: () => true, checkAppUpdate: vi.fn(), getAppShutdownStatus: vi.fn(), installAppUpdate: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 const update: UpdateInfo = { currentVersion: APP_VERSION, installable: true, available: { version: "0.8.0-beta.2", notes: "Melhorias no Jarvis.", publishedAt: null } };
 let aboutListener: EventCallback<unknown> | undefined;
 const stopListening = vi.fn();
 beforeEach(() => {
   vi.mocked(checkAppUpdate).mockReset().mockResolvedValue(update);
+  vi.mocked(getAppShutdownStatus).mockReset().mockResolvedValue({ activeChats: 0, activeProcesses: 0, restartableProcesses: 0 });
   vi.mocked(installAppUpdate).mockReset();
   aboutListener = undefined;
   stopListening.mockReset();
@@ -161,4 +162,73 @@ it("permite tentar reabrir após falha do reinício sem pedir outro download", a
   clock.mockRestore();
   expect(checkAppUpdate).toHaveBeenCalledTimes(checks);
   expect(screen.getByRole("button", { name: "Reabrir Jarvis" })).toBeEnabled();
+});
+
+it("atualiza com terminais ociosos sem pedir para fechá-los", async () => {
+  const user = userEvent.setup(); render(<AppUpdate />);
+  await user.click(screen.getByRole("button", { name: /Sobre o Jarvis/ }));
+  await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
+  await user.click(await screen.findByRole("button", { name: "Atualizar e reiniciar" }));
+  await waitFor(() => expect(installAppUpdate).toHaveBeenCalledWith(expect.any(Function)));
+  expect(getAppShutdownStatus).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+});
+
+it("confirma o encerramento e a restauração dos processos diretamente na atualização", async () => {
+  vi.mocked(getAppShutdownStatus).mockResolvedValue({ activeChats: 0, activeProcesses: 2, restartableProcesses: 1 });
+  const user = userEvent.setup(); render(<AppUpdate />);
+  await user.click(screen.getByRole("button", { name: /Sobre o Jarvis/ }));
+  await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
+  await user.click(await screen.findByRole("button", { name: "Atualizar e reiniciar" }));
+  const confirmation = await screen.findByRole("alertdialog");
+  expect(confirmation).toHaveTextContent("2 processos ativos serão encerrados");
+  expect(confirmation).toHaveTextContent("Os terminais serão restaurados na próxima abertura");
+  expect(confirmation).toHaveTextContent("Um serviço de desenvolvimento será reiniciado automaticamente");
+  expect(confirmation).toHaveTextContent("Comandos concluídos ou de execução única não serão repetidos");
+  expect(installAppUpdate).not.toHaveBeenCalled();
+  await user.click(within(confirmation).getByRole("button", { name: "Cancelar" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  expect(installAppUpdate).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Atualizar e reiniciar" }));
+  await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Encerrar e atualizar" }));
+  await waitFor(() => expect(installAppUpdate).toHaveBeenCalledWith(expect.any(Function), true));
+  expect(installAppUpdate).toHaveBeenCalledOnce();
+  expect(getAppShutdownStatus).toHaveBeenCalledTimes(2);
+});
+
+it("mantém o bloqueio de atualização enquanto um chat está executando", async () => {
+  vi.mocked(getAppShutdownStatus).mockResolvedValue({ activeChats: 1, activeProcesses: 2, restartableProcesses: 1 });
+  const user = userEvent.setup(); render(<AppUpdate />);
+  await user.click(screen.getByRole("button", { name: /Sobre o Jarvis/ }));
+  await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
+  await user.click(await screen.findByRole("button", { name: "Atualizar e reiniciar" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Aguarde as execuções dos chats terminarem antes de atualizar");
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(installAppUpdate).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Atualizar e reiniciar" })).toBeEnabled();
+});
+
+it("preserva a atualização disponível quando a verificação dos processos falha", async () => {
+  vi.mocked(getAppShutdownStatus).mockRejectedValue("Não foi possível verificar os processos ativos.");
+  const user = userEvent.setup(); render(<AppUpdate />);
+  await user.click(screen.getByRole("button", { name: /Sobre o Jarvis/ }));
+  await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
+  await user.click(await screen.findByRole("button", { name: "Atualizar e reiniciar" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível verificar os processos ativos");
+  expect(installAppUpdate).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Atualizar e reiniciar" })).toBeEnabled();
+});
+
+it("apresenta uma mudança de atividade detectada pelo instalador sem encerrar processos novamente", async () => {
+  vi.mocked(getAppShutdownStatus).mockResolvedValue({ activeChats: 0, activeProcesses: 1, restartableProcesses: 1 });
+  vi.mocked(installAppUpdate).mockRejectedValue("Um chat começou a executar. Aguarde antes de atualizar.");
+  const user = userEvent.setup(); render(<AppUpdate />);
+  await user.click(screen.getByRole("button", { name: /Sobre o Jarvis/ }));
+  await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
+  await user.click(await screen.findByRole("button", { name: "Atualizar e reiniciar" }));
+  await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Encerrar e atualizar" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Um chat começou a executar");
+  expect(installAppUpdate).toHaveBeenCalledOnce();
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "Atualizar e reiniciar" })).toBeEnabled();
 });

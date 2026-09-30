@@ -19,7 +19,7 @@ import {
   type BackupModelTarget,
   type BackupPreview,
 } from "@/core/settings-backup";
-import { reasoningLabel } from "@/core/reasoning";
+import { defaultReasoning, reasoningLabel, selectableReasoningLevels } from "@/core/reasoning";
 import { ChoiceField } from "./workflow/WorkflowFields";
 
 const UNASSIGNED = "__unassigned__";
@@ -42,6 +42,7 @@ function ModelMappingRow({ target, accounts, choice, busy, onChange }: { target:
   const account = available.find(item => item.alias === choice?.account);
   const models = account ? compatibleModels(account, target.kind) : [];
   const model = models.find(item => item.id === choice?.model);
+  const levels = selectableReasoningLevels(model?.reasoningLevels ?? []);
   return <Card aria-label={`Mapeamento: ${target.label}`} className="gap-3 rounded-lg p-4">
     <div className="flex flex-wrap items-center gap-2">
       <Bot aria-hidden="true" className="size-3.5 text-onedark-purple" />
@@ -79,11 +80,11 @@ function ModelMappingRow({ target, accounts, choice, busy, onChange }: { target:
             if (account && next) onChange(defaultChoice(account, next));
           }}
         />}
-        {choice && model?.reasoningLevels.length ? <ChoiceField
+        {choice && model && levels.length ? <ChoiceField
           label={`Raciocínio para ${target.label}`}
-          value={choice.reasoning ?? model.defaultReasoningLevel ?? model.reasoningLevels[0]}
+          value={choice.reasoning ?? defaultReasoning(model) ?? ""}
           disabled={busy}
-          options={model.reasoningLevels.map(level => ({ value: level, label: reasoningLabel(level) }))}
+          options={levels.map(level => ({ value: level, label: reasoningLabel(level) }))}
           onChange={reasoning => onChange({ ...choice, reasoning })}
         /> : null}
         {available.length === 0 && <p className="text-xs leading-relaxed text-onedark-yellow">Nenhum modelo conectado está disponível. O agente será restaurado sem modelo.</p>}

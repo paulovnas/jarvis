@@ -68,3 +68,29 @@ it("uses an explicit label for an automatic model selection and its reset action
   await user.click(await screen.findByRole("menuitem", { name: "Automático" }));
   expect(clear).toHaveBeenCalledOnce();
 });
+
+it("removes Ultra from available efforts and allows replacing a saved legacy choice", async () => {
+  const user = userEvent.setup();
+  const select = vi.fn();
+  render(<ModelPicker modelGroups={[{ provider: "Codex", models: [{ value: "account/model", label: "Modelo", reasoningLevels: ["low", "xhigh", "max", "ultra"], defaultReasoningLevel: "ultra" }] }]} selection={{ model: "account/model", reasoning: "ultra" }} onSelect={select} />);
+  expect(select).not.toHaveBeenCalled();
+  const trigger = screen.getByRole("button", { name: "Selecionar modelo de IA" });
+  trigger.focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: "Codex" })).focus(); await user.keyboard("{ArrowRight}");
+  (await screen.findByRole("menuitem", { name: /Modelo/ })).focus(); await user.keyboard("{ArrowRight}");
+  const efforts = within(await screen.findByRole("group", { name: "Raciocínio" }));
+  expect(efforts.queryByRole("menuitem", { name: "Ultra" })).not.toBeInTheDocument();
+  expect(efforts.getAllByRole("menuitem").map(item => item.textContent)).toEqual(["Baixo", "Extra alto", "Máximo"]);
+  await user.click(efforts.getByRole("menuitem", { name: "Máximo" }));
+  expect(select).toHaveBeenCalledWith({ model: "account/model", reasoning: "max" });
+});
+
+it("keeps a model selectable with provider defaults when Ultra was its only listed mode", async () => {
+  const user = userEvent.setup();
+  const select = vi.fn();
+  render(<ModelPicker modelGroups={[{ provider: "Codex", models: [{ value: "account/model", label: "Modelo", reasoningLevels: ["ultra"], defaultReasoningLevel: "ultra" }] }]} onSelect={select} />);
+  screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: "Codex" })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Modelo" }));
+  expect(select).toHaveBeenCalledWith({ model: "account/model", reasoning: null });
+});

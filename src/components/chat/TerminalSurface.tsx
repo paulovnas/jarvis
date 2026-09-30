@@ -8,7 +8,7 @@ import "@xterm/xterm/css/xterm.css";
 import { toast } from "sonner";
 import { libraryError } from "@/core/library";
 import { DEFAULT_TERMINAL_PREFERENCES, resolveTerminalFont, systemSnapshotSchema, terminalFontFamily, type TerminalPreferences } from "@/core/system-preferences";
-import { terminalOutputEventSchema, terminalSnapshotSchema, type ChatTerminal, type TerminalOutputEvent } from "@/core/terminals";
+import { terminalOutputEventSchema, terminalSnapshotSchema, type ProjectTerminal, type TerminalOutputEvent } from "@/core/terminals";
 import { openTerminalLink } from "./terminal-links";
 
 function terminalTheme(host: HTMLElement) {
@@ -21,7 +21,7 @@ function terminalTheme(host: HTMLElement) {
   };
 }
 
-export function TerminalSurface({ conversationId, terminal }: { conversationId: string; terminal: ChatTerminal }) {
+export function TerminalSurface({ projectId, terminal }: { projectId: string; terminal: ProjectTerminal }) {
   const host = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -68,8 +68,8 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
       const size = `${xterm.rows}:${xterm.cols}`;
       if (size === lastSize || xterm.rows < 2 || xterm.cols < 2) return;
       lastSize = size;
-      void invoke("resize_chat_terminal", {
-        conversationId,
+      void invoke("resize_project_terminal", {
+        projectId,
         id: terminal.id,
         rows: xterm.rows,
         cols: xterm.cols,
@@ -100,7 +100,7 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
             const value = pendingInput;
             pendingInput = "";
             inputTimer = undefined;
-            void invoke("write_chat_terminal", { conversationId, id: terminal.id, input: value }).catch(error => {
+            void invoke("write_project_terminal", { projectId, id: terminal.id, input: value }).catch(error => {
               toast.error(libraryError(error, "Não foi possível enviar dados ao terminal."));
             });
           }, 16);
@@ -141,7 +141,7 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
       resize();
       const stop = await listen("terminals:output", event => {
         const result = terminalOutputEventSchema.safeParse(event.payload);
-        if (!result.success || result.data.conversationId !== conversationId || result.data.id !== terminal.id) return;
+        if (disposed || !result.success || result.data.projectId !== projectId || result.data.id !== terminal.id) return;
         if (!hydrated) {
           pendingOutput.push(result.data);
           return;
@@ -155,7 +155,7 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
         return;
       }
       unlistenOutput = stop;
-      const result = terminalSnapshotSchema.parse(await invoke("read_chat_terminal", { conversationId, id: terminal.id }));
+      const result = terminalSnapshotSchema.parse(await invoke("read_project_terminal", { projectId, id: terminal.id }));
       if (disposed) return;
       xterm.reset();
       if (result.truncated) xterm.write("\r\n[Histórico local truncado]\r\n");
@@ -183,7 +183,7 @@ export function TerminalSurface({ conversationId, terminal }: { conversationId: 
       unlistenPreferences?.();
       xterm.dispose();
     };
-  }, [conversationId, terminal.id, terminal.status]);
+  }, [projectId, terminal.id, terminal.status]);
 
   return <div ref={host} className="h-full min-h-0 min-w-0 w-full cursor-pointer bg-sidebar p-2 font-mono text-[13px]" aria-label={`Terminal ${terminal.title}`} role="application" />;
 }

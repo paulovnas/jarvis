@@ -3,7 +3,7 @@ import { executorOf, type ExecutionSelection } from "@/core/executors";
 import type { ProviderAccount, ProviderModel } from "@/core/provider-accounts";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { aliasSuffix } from "@/core/provider-usage";
-import { reasoningLabel } from "@/core/reasoning";
+import { reasoningLabel, selectableReasoningLevels } from "@/core/reasoning";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Hint } from "@/components/ui/hint";
 
@@ -64,8 +64,9 @@ export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLa
                         {!group.models.length && <DropdownMenuGroup><DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal text-muted-foreground">{group.emptyMessage ?? "Nenhum modelo disponível."}</DropdownMenuLabel></DropdownMenuGroup>}
                         {group.models.map((option) => {
                           const isSelected = group === currentGroup && option.value === currentModelDef?.value;
+                          const levels = selectableReasoningLevels(option.reasoningLevels);
 
-                          if (option.reasoningLevels.length > 0) {
+                          if (levels.length > 0) {
                             return (
                               <DropdownMenuSub key={option.value}>
                                 <DropdownMenuSubTrigger
@@ -87,7 +88,7 @@ export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLa
                                     <DropdownMenuLabel className="px-2 py-1 text-[10px] font-medium text-muted-foreground">
                                       Raciocínio
                                     </DropdownMenuLabel>
-                                    {option.reasoningLevels.map((level) => (
+                                    {levels.map((level) => (
                                       <DropdownMenuItem
                                         key={level}
                                         onClick={() => {

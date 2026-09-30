@@ -21,7 +21,7 @@ pub(crate) async fn get_agy_runtime(
     } else {
         metadata::local_status()
     };
-    status.preferences = preferences;
+    status.preferences = preferences.for_models(&status.models);
     Ok(status)
 }
 
@@ -32,7 +32,7 @@ pub(crate) async fn refresh_agy_runtime(
 ) -> Result<RuntimeStatus, String> {
     *state.usage.lock().await = usage::Cache::default();
     let mut status = metadata::cached(&state, true).await;
-    status.preferences = system.agy_preferences()?;
+    status.preferences = system.agy_preferences()?.for_models(&status.models);
     Ok(status)
 }
 
@@ -78,7 +78,45 @@ impl ProviderPreferences {
     }
 
     pub(crate) fn allows(&self, model: &str) -> bool {
-        self.enabled && !self.disabled_models.iter().any(|id| id == model)
+        let (base, _) = model_selection(model, None);
+        self.enabled
+            && !self
+                .disabled_models
+                .iter()
+                .any(|id| id == model || id == base)
+    }
+
+    fn for_models(mut self, models: &[metadata::Model]) -> Self {
+        let original = self.disabled_models.clone();
+        self.disabled_models.retain(|id| {
+            let (base, effort) = model_selection(id, None);
+            effort.is_none() || !models.iter().any(|model| model.id == base)
+        });
+        for model in models {
+            if !model.reasoning_levels.is_empty()
+                && !self.disabled_models.contains(&model.id)
+                && model
+                    .reasoning_levels
+                    .iter()
+                    .all(|effort| original.contains(&format!("{}-{effort}", model.id)))
+            {
+                self.disabled_models.push(model.id.clone());
+            }
+        }
+        self
+    }
+}
+
+/// The CLI resolves a base model plus effort; a variant slug plus another effort conflicts.
+pub(crate) fn model_selection<'a>(
+    model: &'a str,
+    effort: Option<&'a str>,
+) -> (&'a str, Option<&'a str>) {
+    match model.rsplit_once('-') {
+        Some((base, variant)) if matches!(variant, "low" | "medium" | "high" | "max") => {
+            (base, effort.or(Some(variant)))
+        }
+        _ => (model, effort),
     }
 }
 

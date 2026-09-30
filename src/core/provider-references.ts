@@ -2,6 +2,7 @@ import { z } from "zod";
 import { modelChoiceSchema } from "./workflow-catalog";
 import { enabledModels, type ProviderAccount, type ProviderModel } from "./provider-accounts";
 import { executorOf, sameExecutionTarget } from "./executors";
+import { defaultReasoning } from "./reasoning";
 
 export type ModelChoice = z.infer<typeof modelChoiceSchema>;
 export const providerReferenceSchema = z.object({
@@ -54,5 +55,5 @@ export function resolveChatModel(bindings: ModelBinding[], conversationId: strin
 }
 
 export function defaultChoice(account: ProviderAccount, model: ProviderModel): ModelChoice {
-  return { account: account.alias, model: model.id, reasoning: model.defaultReasoningLevel ?? model.reasoningLevels[0] ?? null };
+  return { account: account.alias, model: model.id, reasoning: defaultReasoning(model) };
 }

@@ -1,6 +1,6 @@
 import { useState, type ComponentProps } from "react";
 import { CircleHelp } from "lucide-react";
-import { executorOf, claudeModels } from "@/core/executors";
+import { executorOf, claudeModels, normalizeExecutionSelection } from "@/core/executors";
 import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
 import { agyModels } from "@/core/agy";
 import { useAgyRuntime } from "@/hooks/use-agy-runtime";
@@ -28,7 +28,7 @@ export function ExecutorModelPicker({ nativeDisabled = false, ...props }: Compon
   const claudeSelected = executorOf(props.selection) === "claude";
   const agySelected = executorOf(props.selection) === "agy";
   return <>
-    <ModelPicker {...props} modelGroups={groups} onSelect={next => props.onSelect({ ...next, executor: executorOf(next) })} onRefresh={claudeSelected ? () => { void runtime.refresh(); } : agySelected ? () => { void agy.refresh(); } : props.onRefresh} refreshing={claudeSelected ? runtime.loading : agySelected ? agy.loading : props.refreshing} />
+    <ModelPicker {...props} selection={props.selection ? normalizeExecutionSelection(props.selection) : props.selection} modelGroups={groups} onSelect={next => props.onSelect({ ...next, executor: executorOf(next) })} onRefresh={claudeSelected ? () => { void runtime.refresh(); } : agySelected ? () => { void agy.refresh(); } : props.onRefresh} refreshing={claudeSelected ? runtime.loading : agySelected ? agy.loading : props.refreshing} />
     {claudeSelected && <Hint content="Configurar instalação, conta e modelos do Claude Code"><Button type="button" size="icon-sm" variant="ghost" aria-label="Status e configuração do Claude Code" className="shrink-0 cursor-pointer" onClick={() => setDetails(true)}><CircleHelp /></Button></Hint>}
     {agySelected && <Hint content="Configurar instalação, conta e modelos do Antigravity CLI"><Button type="button" size="icon-sm" variant="ghost" aria-label="Status e configuração do Antigravity CLI" className="shrink-0 cursor-pointer" onClick={() => setAgyDetails(true)}><CircleHelp /></Button></Hint>}
     <ClaudeProviderDialog open={details} onOpenChange={setDetails} />

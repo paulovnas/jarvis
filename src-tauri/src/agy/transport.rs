@@ -191,6 +191,7 @@ pub(super) fn command_for(
         .map_err(|_| "Não foi possível confirmar a configuração AGY.".to_owned())?;
     file.persist(&agent_file)
         .map_err(|_| "Não foi possível atualizar o agente AGY.".to_owned())?;
+    let (model, effort) = super::model_selection(&options.model, options.effort.as_deref());
     let mut command = crate::background::tokio_command(executable);
     command
         .current_dir(&options.workspace_dir)
@@ -204,13 +205,13 @@ pub(super) fn command_for(
             "--disable-slash-commands",
             "--dangerously-skip-permissions",
         ])
-        .arg(format!("--model={}", options.model))
+        .arg(format!("--model={model}"))
         .arg("--add-dir")
         .arg(&options.cwd);
     if let Some(id) = &options.session_id {
         command.arg(format!("--conversation={id}"));
     }
-    if let Some(effort) = &options.effort {
+    if let Some(effort) = effort {
         command.arg(format!("--effort={effort}"));
     }
     // Keep HOME and the vendor keyring untouched. Only the project/tool configuration is isolated.
@@ -364,6 +365,7 @@ async fn read_events<R: AsyncBufRead + Unpin>(
     events: &mpsc::Sender<Result<Value, String>>,
 ) -> Result<(), String> {
     let mut approved_steps = std::collections::HashSet::new();
+    let mut bookkeeping_steps = std::collections::HashSet::new();
     while let Some(line) = read_frame(reader).await? {
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
@@ -389,22 +391,39 @@ async fn read_events<R: AsyncBufRead + Unpin>(
             let server = server_field.and_then(Value::as_str);
             let index = step["step_index"].as_u64();
             let approved = index.is_some_and(|index| approved_steps.contains(&index));
+            let bookkeeping_observed =
+                index.is_some_and(|index| bookkeeping_steps.contains(&index));
+            let action_field = step["tool_info"]["parameters"].get("Action");
+            // AGY injects its task-list helper even when default components are
+            // excluded. Listing native tasks has no project/tool effect. Other
+            // manage_task actions can kill processes or steer subagents and
+            // still belong to the Jarvis boundary.
+            let bookkeeping = server_field.is_none()
+                && (name == Some("manage_task") || (name_field.is_none() && bookkeeping_observed))
+                && (action_field.is_some_and(|action| action == "list")
+                    || (action_field.is_none() && bookkeeping_observed));
             // ACTIVE may identify the MCP dispatcher before its parameters arrive.
             // This is a preview, never a confirmed dispatch or approved sparse step.
-            let provisional = name == Some("call_mcp_tool")
+            let provisional = (name == Some("call_mcp_tool")
+                || (name == Some("manage_task") && action_field.is_none()))
                 && server_field.is_none()
                 && step["state"] == "ACTIVE";
-            if name_field.is_some_and(|name| name != "call_mcp_tool")
-                || server_field.is_some_and(|server| server != "jarvis")
-                || (!approved
-                    && !provisional
-                    && (name != Some("call_mcp_tool") || server != Some("jarvis")))
+            if !bookkeeping
+                && !provisional
+                && (name_field.is_some_and(|name| name != "call_mcp_tool")
+                    || server_field.is_some_and(|server| server != "jarvis")
+                    || (!approved && (name != Some("call_mcp_tool") || server != Some("jarvis"))))
             {
                 return Err(format!("AGY tentou usar uma ferramenta fora do Jarvis (tipo: {}; servidor: {}; ferramenta MCP: {}; etapa: {}; estado: {}). A sessão foi interrompida com o histórico preservado.", diagnostic_label(name), diagnostic_label(server), diagnostic_label(step["tool_info"]["parameters"]["ToolName"].as_str()), index.map_or_else(|| "ausente".into(), |index| index.to_string()), diagnostic_label(step["state"].as_str())));
             }
             if name == Some("call_mcp_tool") && server == Some("jarvis") {
                 if let Some(index) = index {
                     approved_steps.insert(index);
+                }
+            }
+            if bookkeeping {
+                if let Some(index) = index {
+                    bookkeeping_steps.insert(index);
                 }
             }
         }
@@ -520,6 +539,54 @@ mod tests {
         );
         assert_eq!(received.try_recv().unwrap().unwrap(), preview);
         assert!(received.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn native_task_listing_keeps_the_jarvis_mcp_session_running() {
+        let preview = json!({"event":"step_update","step_update":{"step_index":15,"step_type":"tool","tool_name":"manage_task","state":"ACTIVE"}});
+        let listing = json!({"event":"step_update","step_update":{"step_index":15,"step_type":"tool","tool_name":"manage_task","state":"ACTIVE","tool_info":{"parameters":{"Action":"list","toolAction":"Listing background tasks","toolSummary":"Task listing"}}}});
+        let done = json!({"event":"step_update","step_update":{"step_index":15,"step_type":"tool","state":"DONE"}});
+        let mcp = json!({"event":"step_update","step_update":{"step_index":17,"step_type":"tool","tool_name":"call_mcp_tool","tool_info":{"parameters":{"ServerName":"jarvis","ToolName":"bash_wait"}}}});
+        let input = format!("{preview}\n{listing}\n{done}\n{mcp}\n");
+        let (events, mut received) = mpsc::channel(4);
+        read_events(&mut std::io::Cursor::new(input.as_bytes()), &events)
+            .await
+            .unwrap();
+        for expected in [preview, listing, done, mcp] {
+            assert_eq!(received.try_recv().unwrap().unwrap(), expected);
+        }
+        assert!(received.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn native_task_listing_never_authorizes_process_or_subagent_mutations() {
+        let listing = json!({"event":"step_update","step_update":{"step_index":15,"step_type":"tool","tool_name":"manage_task","state":"ACTIVE","tool_info":{"parameters":{"Action":"list"}}}});
+        for params in [
+            json!({"Action":"kill"}),
+            json!({"Action":"send_input"}),
+            json!({"Action":"create"}),
+            json!({"Action":7}),
+            json!({"Action":"list","ServerName":"foreign"}),
+        ] {
+            let mutation = json!({"event":"step_update","step_update":{"step_index":15,"step_type":"tool","tool_name":"manage_task","state":"ACTIVE","tool_info":{"parameters":params}}});
+            let input = format!("{listing}\n{mutation}\n");
+            let (events, mut received) = mpsc::channel(3);
+            assert!(
+                read_events(&mut std::io::Cursor::new(input.as_bytes()), &events)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(received.try_recv().unwrap().unwrap(), listing);
+            assert!(received.try_recv().is_err());
+        }
+        let unverified = json!({"event":"step_update","step_update":{"step_index":15,"step_type":"tool","tool_name":"manage_task","state":"DONE"}});
+        let (events, _) = mpsc::channel(1);
+        assert!(read_events(
+            &mut std::io::Cursor::new(format!("{unverified}\n").as_bytes()),
+            &events
+        )
+        .await
+        .is_err());
     }
 
     #[tokio::test]

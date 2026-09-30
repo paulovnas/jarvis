@@ -45,7 +45,12 @@ impl ModelChoice {
             if fallback.fallback.is_some()
                 || (self.executor == fallback.executor
                     && self.account == fallback.account
-                    && self.model == fallback.model)
+                    && if self.executor == crate::claude::Executor::Agy {
+                        crate::agy::model_selection(&self.model, None).0
+                            == crate::agy::model_selection(&fallback.model, None).0
+                    } else {
+                        self.model == fallback.model
+                    })
             {
                 return Err(invalid(
                     "Escolha um único modelo secundário diferente do principal.",
@@ -330,6 +335,17 @@ mod instruction_tests {
             .unwrap(),
         ));
         assert!(choice.validate_shape().is_err());
+    }
+
+    #[test]
+    fn agy_variants_cannot_be_a_secondary_for_the_same_base_model() {
+        let mut choice: ModelChoice = serde_json::from_value(json!({
+            "executor":"agy","account":"","model":"gemini-3.8-flash","reasoning":"high",
+            "fallback":{"executor":"agy","account":"","model":"gemini-3.8-flash-low","reasoning":null}
+        })).unwrap();
+        assert!(choice.validate_shape().is_err());
+        choice.fallback.as_mut().unwrap().model = "gemini-3.7-flash".into();
+        assert!(choice.validate_shape().is_ok());
     }
 
     #[test]

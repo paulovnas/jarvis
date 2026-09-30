@@ -95,6 +95,10 @@ pub struct LibraryError {
 }
 
 impl LibraryError {
+    pub(crate) fn code(&self) -> &str {
+        self.code
+    }
+
     pub(crate) fn new(code: &'static str, message: &'static str) -> Self {
         Self { code, message }
     }
@@ -737,6 +741,40 @@ fn read_conversation(
     })
 }
 
+pub(crate) fn project_location(
+    connection: &Connection,
+    project_id: &str,
+) -> Result<PathBuf, LibraryError> {
+    let root = PathBuf::from(project(connection, project_id)?.path);
+    if !root.is_dir() || fs::canonicalize(&root).ok().as_ref() != Some(&root) {
+        return Err(LibraryError::new(
+            "project_unavailable",
+            "A pasta do projeto não está disponível no caminho original.",
+        ));
+    }
+    Ok(root)
+}
+
+#[cfg(test)]
+#[test]
+fn terminal_project_location_requires_an_original_project_but_no_conversation() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    crate::persistence::initialize_database(&mut connection).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let workspace = insert_workspace(&mut connection, "Workspace").unwrap();
+    let snapshot =
+        insert_project(&mut connection, &workspace.workspaces[0].id, root.path()).unwrap();
+    let project = &snapshot.projects[0];
+    assert!(snapshot.conversations.is_empty());
+    assert_eq!(
+        project_location(&connection, &project.id).unwrap(),
+        fs::canonicalize(root.path()).unwrap()
+    );
+    assert!(project_location(&connection, "missing-project").is_err());
+    drop(root);
+    assert!(project_location(&connection, &project.id).is_err());
+}
+
 pub(crate) fn agent_location(
     state: &AppState,
     home: &Path,
@@ -745,13 +783,7 @@ pub(crate) fn agent_location(
     state.with_connection(home, |connection| {
         let details = read_conversation(connection, home, id)?;
         let journal = session_path(home, &details.project.id, id, false)?;
-        let root = PathBuf::from(details.project.path);
-        if !root.is_dir() || fs::canonicalize(&root).ok().as_ref() != Some(&root) {
-            return Err(LibraryError::new(
-                "project_unavailable",
-                "A pasta do projeto não está disponível no caminho original.",
-            ));
-        }
+        let root = project_location(connection, &details.project.id)?;
         Ok((journal, root))
     })
 }

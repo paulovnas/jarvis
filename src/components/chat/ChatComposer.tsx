@@ -31,6 +31,7 @@ import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
 import { ChatBehaviorSettings } from "./ChatBehaviorSettings";
 import { Hint } from "@/components/ui/hint";
 import type { ModelCatalogRefresh } from "@/core/provider-accounts";
+import { defaultReasoning } from "@/core/reasoning";
 
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
@@ -236,7 +237,7 @@ export function ChatComposer({
     effectiveSelection?.reasoning &&
     currentModelDef?.reasoningLevels.includes(effectiveSelection.reasoning)
       ? effectiveSelection.reasoning
-      : currentModelDef?.defaultReasoningLevel ?? currentModelDef?.reasoningLevels[0] ?? null;
+      : currentModelDef ? defaultReasoning(currentModelDef) : null;
   const chooseModel = (next: ModelSelection) => {
     if (selectedCustomAgent?.model) return;
     if (agentModels && (selectedFlow.workflow !== "custom" || githubSelected)) { const targetFlow = githubSelected ? "publication" : selectedFlow.workflow ?? "standard"; void agentModels.save(targetFlow, rootRole(targetFlow), selectModelChoice(agentModels.data?.[`${targetFlow}/${rootRole(targetFlow)}`], executionChoice(next), "primary")); }

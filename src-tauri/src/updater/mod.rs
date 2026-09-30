@@ -166,11 +166,27 @@ fn require_idle(app: &tauri::AppHandle) -> Result<(), String> {
     if app.state::<crate::agent::AgentState>().busy_for_update()
         || app.state::<crate::core::CoreState>().busy_for_update()
     {
-        return Err(
-            "Aguarde as execuções e encerre os processos ativos antes de atualizar.".into(),
-        );
+        return Err("Aguarde as conversas e instalações ativas antes de atualizar.".into());
     }
     Ok(())
+}
+
+fn require_process_consent(active_processes: usize, stop_processes: bool) -> Result<(), String> {
+    if active_processes != 0 && !stop_processes {
+        return Err("Há comandos em execução. Confirme a parada e restauração dos terminais antes de atualizar.".into());
+    }
+    Ok(())
+}
+
+fn checkpoint_terminals(app: &tauri::AppHandle, stop_processes: bool) -> Result<(), String> {
+    require_process_consent(
+        crate::app_exit::status(app)?.active_processes,
+        stop_processes,
+    )?;
+    app.state::<crate::agent::AgentState>()
+        .terminals
+        .checkpoint()
+        .map_err(|error| error.message().to_owned())
 }
 
 #[tauri::command]
@@ -216,7 +232,11 @@ pub async fn check_app_update(
         let exit_app = app.clone();
         let updater = app
             .updater_builder()
-            .on_before_exit(move || crate::prepare_exit_for_update(&exit_app))
+            .on_before_exit(move || {
+                if let Err(error) = crate::prepare_exit_for_installer(&exit_app) {
+                    eprintln!("{error}");
+                }
+            })
             .endpoints(vec![endpoint])
             .map_err(|_| "Endereço de atualização inválido.")?
             .timeout(Duration::from_secs(20))
@@ -262,6 +282,7 @@ pub async fn install_app_update(
     app: tauri::AppHandle,
     state: tauri::State<'_, UpdateState>,
     on_progress: Channel<Progress>,
+    stop_processes: Option<bool>,
 ) -> Result<(), String> {
     let _operation = state
         .operation
@@ -276,6 +297,11 @@ pub async fn install_app_update(
         return Err("Abra o Jarvis instalado no computador para atualizar.".into());
     }
     require_idle(&app)?;
+    let stop_processes = stop_processes.unwrap_or(false);
+    require_process_consent(
+        crate::app_exit::status(&app)?.active_processes,
+        stop_processes,
+    )?;
     let drain = app
         .state::<crate::agent::AgentState>()
         .begin_update_drain()?;
@@ -307,8 +333,21 @@ pub async fn install_app_update(
         }, || { let _ = on_progress.send(Progress::Verifying); }).await
             .map_err(|_| "O download ou a assinatura não pôde ser verificado. Nada foi instalado; tente novamente.")?;
         require_idle(&app)?;
+        checkpoint_terminals(&app, stop_processes)?;
         let _ = on_progress.send(Progress::Installing);
         crate::desktop::flush(&app);
+        // The Windows updater's exit hook cannot return an error. Seal the
+        // snapshot while installation is still fallible; errors unseal it.
+        let _terminal_snapshot = if cfg!(windows) {
+            Some(
+                app.state::<crate::agent::AgentState>()
+                    .terminals
+                    .prepare_update_shutdown()
+                    .map_err(|error| error.message().to_owned())?,
+            )
+        } else {
+            None
+        };
         let version = update.version.clone();
         tauri::async_runtime::spawn_blocking(move || update.install(bytes)).await
             .map_err(|_| "Não foi possível instalar a atualização.")?
@@ -326,16 +365,25 @@ pub async fn install_app_update(
             .lock()
             .map_err(|_| "Atualizador indisponível.")? = Some(version.clone());
     }
+    require_idle(&app)?;
+    checkpoint_terminals(&app, stop_processes)?;
     let _ = on_progress.send(Progress::Restarting);
     crate::desktop::flush(&app);
+    relaunch::launch_updated(&app)?;
     drain.keep_closed();
-    relaunch::launch_updated(&app);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn updating_with_idle_shells_needs_no_process_confirmation() {
+        assert!(require_process_consent(0, false).is_ok());
+        assert!(require_process_consent(2, false).is_err());
+        assert!(require_process_consent(2, true).is_ok());
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

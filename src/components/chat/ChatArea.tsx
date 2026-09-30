@@ -11,7 +11,6 @@ import { questionKey, type QuestionDraft } from "@/core/questions";
 import type { ConversationDetails, LibrarySnapshot } from "@/core/library";
 import type { ChatController } from "@/hooks/use-chat";
 import { ChatComposer, type ProviderModelGroup } from "./ChatComposer";
-import { TerminalWorkspace } from "./TerminalWorkspace";
 import { Transcript, type LatestVisibility } from "./Transcript";
 import { ToolApproval } from "./ToolApproval";
 import { QuestionCard } from "./QuestionCard";
@@ -73,7 +72,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     : chat.pendingTurn?.status === "running" && !snapshot.turns.some(turn => turn.id === chat.pendingTurn?.id)
       ? chat.pendingTurn
       : undefined;
-  const composer = (terminalLauncher: ReactNode) => <footer ref={footer} aria-label="Área de composição" className="chat-footer mx-auto max-h-[65dvh] w-full max-w-4xl min-w-0 shrink-0 overflow-y-auto overscroll-none px-5 pb-4 pt-3">
+  const composer = <footer ref={footer} aria-label="Área de composição" className="chat-footer mx-auto max-h-[65dvh] w-full max-w-4xl min-w-0 shrink-0 overflow-y-auto overscroll-none px-5 pb-4 pt-3">
     {chat.error && <Alert className="mb-3"><AlertTitle>Atualizações da conversa indisponíveis</AlertTitle><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><p>{chat.error}</p><Button variant="outline" size="sm" className="cursor-pointer" onClick={chat.retry}>Tentar novamente</Button></AlertDescription></Alert>}
     {activeTurn && <ActiveExecutionStatus turn={activeTurn} waitingForUser={!!attention} />}
     {workflow?.data?.recovery && <WorkflowRecoveryAlert recovery={workflow.data.recovery} onResume={chat.resumeWorkflow} />}
@@ -81,10 +80,10 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} onInteract={chat.pauseQuestion} />}
     {snapshot.pendingAuthoring && <AuthoringApprovalDrawer key={snapshot.pendingAuthoring.toolId} request={snapshot.pendingAuthoring} onAnswer={(approved, note) => chat.answerAuthoring(snapshot.pendingAuthoring!, approved, note)} />}
     <WorkerRequests conversationId={context.conversation.id} projectPath={context.project.path} agents={workflow?.data?.agents ?? []} drafts={questionDrafts} />
-    <ChatComposer draftInsertion={draftInsertion} terminalLauncher={outsideChat ? undefined : <>{terminalLauncher}{browserLauncher}{httpLauncher}</>} agentModels={agentModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
+    <ChatComposer draftInsertion={draftInsertion} terminalLauncher={outsideChat ? undefined : <>{browserLauncher}{httpLauncher}</>} agentModels={agentModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
     {modelGroups.length === 0 && <p className="mt-2 text-center text-xs text-muted-foreground">Conecte uma conta em Configurações para enviar mensagens.</p>}
   </footer>;
-  return <TerminalWorkspace conversationId={context.conversation.id}>{terminalLauncher => <FileWorkspace files={files} browser={browser} http={http} onAnalyzeHttp={run => { http.select(null); browser.select(null); files?.select(null); setDraftInsertion({ id: crypto.randomUUID(), text: httpAnalysisPrompt(run) }); }} terminalLauncher={outsideChat ? <>{terminalLauncher}{browserLauncher}{httpLauncher}</> : undefined}>
+  return <FileWorkspace files={files} browser={browser} http={http} onAnalyzeHttp={run => { http.select(null); browser.select(null); files?.select(null); setDraftInsertion({ id: crypto.randomUUID(), text: httpAnalysisPrompt(run) }); }} terminalLauncher={outsideChat ? <>{browserLauncher}{httpLauncher}</> : undefined}>
     <section aria-label={isNewConversation ? "Nova conversa" : undefined} data-empty={isNewConversation} className="new-conversation-stage relative isolate grid min-h-0 flex-1 overflow-hidden">
       <div aria-hidden="true" className="new-conversation-glow pointer-events-none absolute left-1/2 top-1/2 h-64 w-[min(90%,56rem)] -translate-x-1/2 -translate-y-1/2" />
       <div className="conversation-transcript-slot relative z-10 flex min-h-0 overflow-hidden">
@@ -97,11 +96,11 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
         </div>
       </div>
       <div className="conversation-composer-slot relative z-20 mx-auto w-full min-w-0">
-        {composer(terminalLauncher)}
+        {composer}
       </div>
       <div aria-hidden="true" className="new-conversation-spacer min-h-0" />
     </section>
-  </FileWorkspace>}</TerminalWorkspace>;
+  </FileWorkspace>;
 }
 
 export function ChatArea({ modelGroups = [], modelBindings, modelsReady, onRefreshModels, refreshingModels, library, chat, workflow, agentModels, leftToggle, rightToggle, onLatestVisibility, files, drafts: sharedDrafts, questionDrafts: sharedQuestionDrafts }: { modelGroups?: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; onRefreshModels?: () => Promise<ModelCatalogRefresh | null>; refreshingModels?: boolean; library: LibrarySnapshot | null; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; leftToggle?: ReactNode; rightToggle?: ReactNode; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController; drafts?: Map<string, ChatDraft>; questionDrafts?: Map<string, QuestionDraft> }) {

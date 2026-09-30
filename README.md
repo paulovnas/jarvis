@@ -135,7 +135,7 @@ O macOS pode pedir autorização adicional porque as versões atuais ainda não 
 - Mensagens escritas ficam salvas por conversa. Se o agente estiver trabalhando, novas mensagens podem entrar na fila ou ser enviadas imediatamente como orientação adicional.
 - Notificações avisam sobre conclusão, perguntas, validações e falhas. Em fluxos coordenados, a conclusão pertence ao fluxo inteiro.
 - Alertas de uso podem ser configurados por conta e janela de limite. A statusbar mostra consumo, reserva ou déficit, tempo até a renovação e a posição esperada pelo tempo decorrido.
-- O terminal integrado respeita shell, argumentos, fonte e tamanho definidos pelo usuário. Terminais e processos pertencem à conversa que os criou.
+- O terminal integrado respeita shell, argumentos, fonte e tamanho definidos pelo usuário. Terminais e processos ficam na aba **Terminais** dos detalhes do projeto, compartilhados entre suas conversas. Trocar ou excluir um chat preserva os processos; encerrá-los explicitamente ou excluir o projeto termina sua execução.
 - A opção de repouso pode ficar desligada, acompanhar execuções ativas ou permanecer ligada enquanto o Jarvis estiver aberto.
 
 ## Backup, dados e privacidade
@@ -203,6 +203,8 @@ bun run release 0.9.10-beta
 ```
 
 The release command runs the full quality gates locally for the exact release commit, then schedules DMG, NSIS, DEB and AppImage builds, signature verification and joint publication in Actions. It requires Bun, Git, authenticated GitHub CLI, Rust with Clippy and the native build prerequisites of the development OS; signing keys stay in CI secrets. A separate workflow validates native integrations on macOS, Windows and Linux when their sources or dependencies change, skipping version-only commits. See [docs/RELEASING.md](docs/RELEASING.md) for setup, recovery and artifact details.
+
+Release notes are generated before tagging and bundled into every installer. After installation, Jarvis shows the installed version's changelog once the application is ready, including when offline, and remembers dismissal locally. Use `bun run release <version> --notes-file <file.md>` to provide curated Markdown; otherwise GitHub generates the notes. The installer, GitHub release and updater manifest use the same version-specific content. Development launches do not show the changelog dialog.
 
 ## Autoria
 

@@ -11,6 +11,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { HomeSkeleton } from "@/components/layout/LoadingSkeletons";
 import { DesktopLayoutProvider } from "@/components/layout/DesktopLayoutProvider";
 import { CoreGate } from "@/components/core/CoreGate";
+import { InstalledReleaseDialog } from "@/components/layout/InstalledReleaseDialog";
+import { AppExitDialog } from "@/components/layout/AppExitDialog";
 import {
   type AppConfig,
   type BootstrapResources,
@@ -159,7 +161,7 @@ export function App() {
           <main className="flex min-h-0 flex-1">
             <Suspense fallback={<HomeSkeleton />}>
               <BootstrapResourcesProvider initial={bootstrap.resources}>
-                <CoreGate><DesktopLayoutProvider><LazyHome /></DesktopLayoutProvider></CoreGate>
+                <CoreGate><DesktopLayoutProvider><LazyHome /><InstalledReleaseDialog /></DesktopLayoutProvider></CoreGate>
               </BootstrapResourcesProvider>
             </Suspense>
           </main>
@@ -175,6 +177,7 @@ export function App() {
       <TitleBar />
       {content}
       {bootstrap.status !== "home" && <StatusBar passive />}
+      <AppExitDialog />
       {/* Global Toast Notification Provider */}
       <Toaster position="top-center" richColors />
     </div></TextContextMenu>

@@ -32,6 +32,7 @@ describe("Project Dashboard", () => {
       if (command === "get_project_repositories") return [];
       if (command === "get_bead_detail") return { issue: bead(), comments: [] };
       if (command === "open_project_directory") return;
+      if (command === "list_project_terminals") return [];
       throw new Error(`Unexpected command ${command}`);
     });
   });
@@ -58,11 +59,14 @@ describe("Project Dashboard", () => {
     await user.click(screen.getByRole("button", { name: "Abrir pasta do projeto Jarvis" }));
     expect(call).toHaveBeenCalledWith("open_project_directory", { projectId: "p1" });
   });
-  it("presents General, Kanban and project-scoped Options inside Details", async () => {
+  it("presents General, Kanban, Terminals and project-scoped Options inside Details", async () => {
     const user = userEvent.setup();
     render(<ProjectDashboard project={project} projectUpdater={projectUpdater} onSelectSession={vi.fn()} />);
     expect(screen.getByRole("main", { name: "Detalhes de Jarvis" })).toBeVisible();
-    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Geral", "Kanban", "Terminais", "Opções"]);
+    await user.click(screen.getByRole("tab", { name: "Terminais" }));
+    expect(await screen.findByText("Nenhum terminal aberto")).toBeVisible();
+    expect(call).toHaveBeenCalledWith("list_project_terminals", { projectId: "p1" });
     await user.click(screen.getByRole("tab", { name: "Opções" }));
     expect(screen.getByRole("textbox", { name: "Nome do projeto" })).toHaveValue("Jarvis");
     await user.click(screen.getByRole("tab", { name: "Commit" }));

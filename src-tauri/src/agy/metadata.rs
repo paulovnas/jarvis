@@ -146,16 +146,71 @@ async fn discover(state: &AgyState) -> RuntimeStatus {
 
 pub(super) fn parse_models(value: &str) -> Vec<Model> {
     let mut seen = std::collections::HashSet::new();
-    value.lines().filter_map(|line| {
-        let (id, name) = line.split_once('\t')?;
+    let mut models: Vec<Model> = Vec::new();
+    for line in value.lines() {
+        let Some((id, name)) = line.split_once('\t') else {
+            continue;
+        };
         let id = id.trim();
         let name = name.trim();
-        if super::validate_selection(id, None).is_err() || name.is_empty() || !seen.insert(id.to_owned()) { return None; }
-        Some(Model {
-            id: id.into(), name: name.chars().take(256).collect(), description: "Modelo informado pelo Antigravity CLI; disponibilidade e cotas dependem da sua conta.".into(),
-            reasoning_levels: ["low", "medium", "high", "max"].into_iter().map(str::to_owned).collect(), default_reasoning: None,
-        })
-    }).take(256).collect()
+        if super::validate_selection(id, None).is_err()
+            || name.is_empty()
+            || !seen.insert(id.to_owned())
+        {
+            continue;
+        }
+        let (base, effort) = super::model_selection(id, None);
+        let index = if let Some(index) = models.iter().position(|model| model.id == base) {
+            index
+        } else {
+            if models.len() == 256 {
+                continue;
+            }
+            let name = if let Some(effort) = effort {
+                let suffix = format!(
+                    " ({})",
+                    match effort {
+                        "low" => "Low",
+                        "medium" => "Medium",
+                        "high" => "High",
+                        _ => "Max",
+                    }
+                );
+                name.strip_suffix(&suffix).unwrap_or(name)
+            } else {
+                name
+            };
+            models.push(Model {
+                id: base.into(), name: name.chars().take(256).collect(),
+                description: "Modelo informado pelo Antigravity CLI; disponibilidade e cotas dependem da sua conta.".into(),
+                reasoning_levels: Vec::new(), default_reasoning: effort.map(str::to_owned),
+            });
+            models.len() - 1
+        };
+        if let Some(effort) = effort {
+            models[index]
+                .default_reasoning
+                .get_or_insert_with(|| effort.into());
+            if !models[index]
+                .reasoning_levels
+                .iter()
+                .any(|level| level == effort)
+            {
+                models[index].reasoning_levels.push(effort.into());
+            }
+        }
+    }
+    for model in &mut models {
+        model
+            .reasoning_levels
+            .sort_by_key(|effort| match effort.as_str() {
+                "low" => 0,
+                "medium" => 1,
+                "high" => 2,
+                _ => 3,
+            });
+    }
+    models
 }
 
 pub(super) async fn probe(executable: &Path, cwd: &Path, args: &[&str]) -> Result<String, String> {

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { compatibleModels, modelProblem, resolveChatModel } from "./provider-references";
+import { compatibleModels, defaultChoice, modelProblem, resolveChatModel } from "./provider-references";
 import { referenceAccount } from "@/test/provider-reference-fixtures";
 import { customAccountFixture } from "@/test/custom-provider-fixtures";
 
@@ -46,4 +46,11 @@ it("applies only the explicit replacement for that conversation and original cho
   expect(resolveChatModel(bindings, "c1", source)).toEqual(target);
   expect(resolveChatModel(bindings, "c2", source)).toEqual(source);
   expect(resolveChatModel(bindings, "c1", { ...source, model: "manual" }).model).toBe("manual");
+});
+
+it("uses a real effort for new choices while accepting saved Ultra configurations", () => {
+  const account = referenceAccount();
+  account.models[0] = { ...account.models[0], reasoningLevels: ["low", "max", "ultra"], defaultReasoningLevel: "ultra" };
+  expect(defaultChoice(account, account.models[0]).reasoning).toBe("max");
+  expect(modelProblem({ account: account.alias, model: account.models[0].id, reasoning: "ultra" }, [account])).toBeNull();
 });

@@ -96,12 +96,20 @@ structured native `/quota` command: five-hour and weekly buckets retain their
 actual remaining fractions and reset timestamps. These metadata commands do not
 run inference. No subscription tier or account email is inferred.
 
+Effort variants are grouped under their base model. Only levels actually listed
+by the CLI are offered; `--effort=max` in generic help is not a model capability.
+Legacy variant selections resolve to the base plus their selected effort, avoiding
+the CLI's conflicting `--model ...-high --effort ...` combinations. Models without
+advertised effort variants do not expose an adjustable reasoning selector.
+
 A private durable workspace contains the generated custom agent. The real project
 is an additional directory; HOME, global MCP configuration and login credentials
 are unchanged. The custom agent excludes default components and inherited MCPs.
 Its only MCP server is the authenticated loopback Jarvis bridge, which reuses
 the existing role, project, autonomy, tool, Core and workflow contracts.
-Native tool events outside this bridge stop the process.
+Native execution outside this bridge stops the process. The CLI's internal
+`manage_task(Action="list")` query is bookkeeping and can continue without a
+Jarvis tool effect. Mutating task actions still require the Jarvis execution path.
 
 CLI 1.2.13 has two important discovery details: `agy agents` lists global agents,
 while `agy -p=/agents --output-format json --agent jarvis-runtime` also discovers

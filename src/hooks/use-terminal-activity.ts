@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { terminalConversationActivitySchema } from "@/core/terminals";
+import { terminalProjectActivitySchema } from "@/core/terminals";
 import { onDesktopResume } from "@/core/desktop-resume";
 
-/** Observe terminal tabs across every conversation without loading each transcript. */
+/** Observe shared terminal tabs without loading project workspaces. */
 export function useTerminalActivity() {
   const [counts, setCounts] = useState<ReadonlyMap<string, number>>(() => new Map());
 
@@ -24,10 +24,10 @@ export function useTerminalActivity() {
       }
       refreshing = true;
       try {
-        const snapshot = terminalConversationActivitySchema.array().parse(
+        const snapshot = terminalProjectActivitySchema.array().parse(
           await invoke<unknown>("get_terminal_activity"),
         );
-        if (active) setCounts(new Map(snapshot.map(item => [item.conversationId, item.count])));
+        if (active) setCounts(new Map(snapshot.map(item => [item.projectId, item.count])));
       } catch {
         if (active) toast.error("Não foi possível sincronizar os indicadores de terminais.", { id: "terminal-activity-sync" });
       } finally {

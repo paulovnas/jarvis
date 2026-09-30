@@ -32,6 +32,7 @@ pub struct LayoutPreferences {
     pub terminal_panels: BTreeMap<String, TerminalPanelPreferences>,
     pub file_tabs: BTreeMap<String, FileTabsPreferences>,
     pub item_order: BTreeMap<String, Vec<String>>,
+    pub last_seen_release_version: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -86,6 +87,13 @@ pub enum SettingsTab {
 
 impl LayoutPreferences {
     fn validate(&self) -> Result<(), String> {
+        if self
+            .last_seen_release_version
+            .as_ref()
+            .is_some_and(|version| version.len() > 128 || semver::Version::parse(version).is_err())
+        {
+            return Err("Invalid last seen release version".into());
+        }
         if !self.panels.is_empty()
             && (self.panels.len() != 3
                 || PANEL_IDS.iter().any(|id| {
@@ -375,7 +383,11 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     }
     let state = window.state::<DesktopState>().inner().clone();
     match event {
-        tauri::WindowEvent::CloseRequested { .. } => {
+        tauri::WindowEvent::CloseRequested { api, .. } => {
+            if crate::app_exit::request(window.app_handle()) {
+                api.prevent_close();
+                return;
+            }
             state.revision.fetch_add(1, Ordering::SeqCst);
             if let Err(e) = capture(window, &state) {
                 eprintln!("{e}");
@@ -462,6 +474,7 @@ mod tests {
         };
         store.preferences.layout.inspector_tab = InspectorTab::Explorer;
         store.preferences.layout.settings_tab = SettingsTab::Tools;
+        store.preferences.layout.last_seen_release_version = Some("1.9.0-beta.1+build.4".into());
         store.preferences.layout.sidebar_collapsed = true;
         store.preferences.layout.inspector_collapsed = true;
         store.preferences.layout.terminal_panels.insert(
@@ -493,9 +506,25 @@ mod tests {
             },
         );
         store.save().unwrap();
-        let restored = Store::open(path).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            saved["layout"]["lastSeenReleaseVersion"],
+            "1.9.0-beta.1+build.4"
+        );
+        let mut restored = Store::open(path.clone()).unwrap();
         assert_eq!(restored.preferences.window, store.preferences.window);
         assert_eq!(restored.preferences.layout, store.preferences.layout);
+        restored.preferences.window.maximized = false;
+        restored.preferences.layout.settings_tab = SettingsTab::General;
+        restored.save().unwrap();
+        assert_eq!(
+            Store::open(path)
+                .unwrap()
+                .preferences
+                .layout
+                .last_seen_release_version,
+            store.preferences.layout.last_seen_release_version
+        );
     }
 
     #[test]
@@ -506,11 +535,38 @@ mod tests {
             Store::open(path.clone()).unwrap().preferences.layout,
             LayoutPreferences::default()
         );
+        fs::write(
+            &path,
+            r#"{"version":1,"layout":{"sidebarCollapsed":true},"window":{"maximized":true}}"#,
+        )
+        .unwrap();
+        let legacy = Store::open(path.clone()).unwrap();
+        assert!(legacy.preferences.layout.sidebar_collapsed);
+        assert!(legacy.preferences.window.maximized);
+        assert_eq!(legacy.preferences.layout.last_seen_release_version, None);
         for contents in ["invalid", "{\"version\":2}"] {
             fs::write(&path, contents).unwrap();
             assert!(Store::open(path.clone()).is_err());
             assert_eq!(fs::read_to_string(&path).unwrap(), contents);
         }
+    }
+
+    #[test]
+    fn release_version_markers_require_bounded_semver() {
+        let mut layout = LayoutPreferences::default();
+        assert!(layout.validate().is_ok());
+        for version in ["1.8.4", "1.9.0-beta.1", "1.9.0-beta.1+build.4"] {
+            layout.last_seen_release_version = Some(version.into());
+            assert!(layout.validate().is_ok());
+        }
+        for version in ["", "1.8", "v1.8.4", " 1.8.4 ", "1.8.4-01"] {
+            layout.last_seen_release_version = Some(version.into());
+            assert!(layout.validate().is_err());
+        }
+        layout.last_seen_release_version = Some(format!("1.8.4-{}", "a".repeat(122)));
+        assert!(layout.validate().is_ok());
+        layout.last_seen_release_version.as_mut().unwrap().push('a');
+        assert!(layout.validate().is_err());
     }
 
     #[test]
