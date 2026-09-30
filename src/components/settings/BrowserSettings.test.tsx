@@ -27,10 +27,12 @@ beforeEach(() => {
 it("defaults old preferences to embedded and changes browser mode without losing other preferences", async () => {
   const user = userEvent.setup();
   render(<BrowserSettings />);
-  expect(await screen.findByRole("combobox", { name: "Modo de navegação" })).toHaveTextContent("Embutido no Jarvis");
+  const mode = await screen.findByRole("combobox", { name: "Modo de navegação" });
+  expect(mode).toHaveTextContent("Embutido no Jarvis");
   expect(call).not.toHaveBeenCalledWith("get_browser_extension_status");
-  await user.click(screen.getByRole("combobox", { name: "Modo de navegação" }));
-  await user.click(screen.getByRole("option", { name: "Extensão Chromium" }));
+  mode.focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Extensão Chromium" }));
   await waitFor(() => expect(call).toHaveBeenCalledWith("save_system_preferences", { preferences: { ...initial.preferences, browser: { mode: "extension", application: "chrome" } } }));
   expect(await screen.findByText("Aguardando extensão")).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Navegador instalado" })).toHaveTextContent("Google Chrome");
