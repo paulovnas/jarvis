@@ -287,6 +287,7 @@ impl Transport {
                             telemetry::ProviderKind::Custom => "custom",
                             telemetry::ProviderKind::Antigravity => "antigravity",
                             telemetry::ProviderKind::ClaudeCode => "claude_code",
+                            telemetry::ProviderKind::AntigravityCli => "antigravity_cli",
                         };
                         crate::diagnostics::record_provider_failure(
                             label,

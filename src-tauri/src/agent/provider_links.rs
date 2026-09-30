@@ -429,7 +429,7 @@ fn apply(
                 "Escolha um provedor diferente daquele que será removido.",
             ));
         }
-        let active: bool = replacement.choice.executor == crate::claude::Executor::Claude
+        let active: bool = replacement.choice.executor != crate::claude::Executor::Jarvis
             || db
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias=?1 AND enabled=1)",
@@ -442,7 +442,7 @@ fn apply(
                 "Um provedor de destino não está mais disponível. Revise as substituições.",
             ));
         }
-        if replacement.choice.executor == crate::claude::Executor::Claude
+        if replacement.choice.executor != crate::claude::Executor::Jarvis
             && matches!(
                 item.kind,
                 Kind::WebSearch | Kind::Vision | Kind::ImageGeneration | Kind::ChatTitle
@@ -637,7 +637,7 @@ pub async fn remove(
                 .iter()
                 .find(|item| item.id == replacement.id)
                 .ok_or_else(stale)?;
-            if replacement.choice.executor == crate::claude::Executor::Claude {
+            if replacement.choice.executor != crate::claude::Executor::Jarvis {
                 if matches!(
                     item.kind,
                     Kind::WebSearch | Kind::Vision | Kind::ImageGeneration | Kind::ChatTitle

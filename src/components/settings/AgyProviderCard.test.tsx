@@ -1,0 +1,66 @@
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { invoke } from "@tauri-apps/api/core";
+import { expect, it, vi } from "vitest";
+import { toast } from "sonner";
+import type { AgyProviderPreferences } from "@/core/agy";
+import { ExecutorModelPicker } from "@/components/chat/ExecutorModelPicker";
+import { AgyProviderCard } from "./AgyProviderCard";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+vi.mock("@/hooks/use-claude-runtime", () => ({ useClaudeRuntime: () => ({ data: null, loading: false, error: null }) }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+it("offers one optional local AGY provider with explicit CLI setup and shared catalog controls", async () => {
+  const user = userEvent.setup();
+  let preferences: AgyProviderPreferences = { enabled: false, showUsage: true, disabledModels: [] };
+  const model = (id: string) => ({ id, name: id.toUpperCase(), description: "CLI", reasoningLevels: [], defaultReasoning: null });
+  const metadata = { installed: true, authenticated: true, version: "1.2.13", email: null, authMethod: "google", subscriptionType: null, error: null, models: [model("gemini"), model("fast")] };
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "get_agy_runtime") return { ...metadata, authenticated: false, models: [], preferences };
+    if (command === "refresh_agy_runtime") return { ...metadata, preferences };
+    if (command === "save_agy_provider_preferences") { preferences = (args as { preferences: AgyProviderPreferences }).preferences; return preferences; }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(<><AgyProviderCard /><ExecutorModelPicker modelGroups={[]} onSelect={vi.fn()} /></>);
+  await waitFor(() => expect(screen.getByTestId("provider-account-antigravity-cli")).toHaveTextContent("Desativado"));
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "get_agy_runtime")).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  expect(screen.queryByRole("menuitem", { name: "Antigravity CLI" })).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Detalhes de Antigravity CLI" }));
+  const dialog = screen.getByRole("dialog", { name: "Antigravity CLI" });
+  expect(dialog).toHaveTextContent("Requer o CLI oficial instalado e autenticado");
+  expect(dialog).toHaveTextContent("conclua o login com Google");
+  expect(dialog).not.toHaveTextContent("agy auth login");
+  expect(within(dialog).queryByRole("textbox", { name: /Alias|API/i })).not.toBeInTheDocument();
+  expect(within(dialog).getByRole("heading", { name: "Antigravity CLI" }).querySelector("[style]")?.getAttribute("style")).toContain("provider-antigravity.svg");
+  await user.click(screen.getByRole("switch", { name: "Ativar Antigravity CLI" }));
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Ativar Antigravity CLI" })).toBeChecked());
+  expect(invoke).toHaveBeenCalledWith("refresh_agy_runtime");
+  expect(await screen.findByRole("switch", { name: "Disponibilizar GEMINI" })).toBeChecked();
+  await user.click(screen.getByRole("switch", { name: "Disponibilizar GEMINI" }));
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Disponibilizar GEMINI" })).not.toBeChecked());
+  metadata.models.push(model("new"));
+  await user.click(screen.getByRole("button", { name: "Atualizar status e modelos" }));
+  expect(await screen.findByRole("switch", { name: "Disponibilizar NEW" })).toBeChecked();
+  expect(screen.getByRole("switch", { name: "Disponibilizar GEMINI" })).not.toBeChecked();
+  await user.click(screen.getByRole("switch", { name: "Mostrar limites do Antigravity CLI" }));
+  await waitFor(() => expect(preferences.showUsage).toBe(false));
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  (await screen.findByRole("menuitem", { name: "Antigravity CLI" })).focus(); await user.keyboard("{ArrowRight}");
+  expect(await screen.findByRole("menuitem", { name: "FAST" })).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "GEMINI" })).not.toBeInTheDocument();
+  await user.keyboard("{Escape}{Escape}");
+  await user.click(screen.getByRole("button", { name: "Detalhes de Antigravity CLI" }));
+  vi.mocked(invoke).mockRejectedValueOnce(new Error("disk unavailable"));
+  await user.click(screen.getByRole("switch", { name: "Ativar Antigravity CLI" }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  expect(screen.getByRole("switch", { name: "Ativar Antigravity CLI" })).toBeChecked();
+  await user.click(screen.getByRole("switch", { name: "Ativar Antigravity CLI" }));
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Ativar Antigravity CLI" })).not.toBeChecked());
+  await user.keyboard("{Escape}");
+  expect(screen.getByTestId("provider-account-antigravity-cli")).toHaveTextContent("Desativado");
+});

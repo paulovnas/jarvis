@@ -128,6 +128,35 @@ fn claude_provider_preferences_survive_restart_and_preserve_legacy_choices() {
 }
 
 #[test]
+fn agy_is_opt_in_and_model_preferences_survive_restart_without_credentials() {
+    let home = tempfile::tempdir().unwrap();
+    let path = crate::data_dir::root(home.path()).join("system.json");
+    let legacy: Preferences = serde_json::from_str(r#"{"notifications":true}"#).unwrap();
+    assert!(!legacy.agy.enabled);
+    assert!(legacy.agy.show_usage);
+    let mut store = Store::open(path.clone()).unwrap();
+    let mut preferences = legacy;
+    preferences.agy.enabled = true;
+    preferences.agy.disabled_models = vec!["gemini-3-flash".into()];
+    store.save(preferences.clone()).unwrap();
+    assert_eq!(
+        Store::open(path.clone()).unwrap().preferences.agy,
+        preferences.agy
+    );
+    assert!(crate::agy::validate_available_model(home.path(), "gemini-3-pro").is_ok());
+    assert!(crate::agy::validate_available_model(home.path(), "gemini-3-flash").is_err());
+    preferences.agy.disabled_models = vec!["--unsafe".into()];
+    assert!(store.save(preferences).is_err());
+    assert_eq!(
+        Store::open(path).unwrap().preferences.agy.disabled_models,
+        ["gemini-3-flash"]
+    );
+    assert!(
+        serde_json::from_str::<crate::agy::ProviderPreferences>(r#"{"token":"secret"}"#).is_err()
+    );
+}
+
+#[test]
 fn terminal_fonts_prioritize_nerd_fonts_and_report_missing_configurations() {
     let fonts = order_terminal_fonts([
         "Menlo".to_string(),
@@ -211,6 +240,7 @@ fn preferences_restore_all_modes_without_touching_layout() {
             },
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
+            agy: crate::agy::ProviderPreferences::default(),
             browser: crate::agent::browser::BrowserPreferences::default(),
             chat_title_model: None,
         };
@@ -244,6 +274,7 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
             response_language: ResponseLanguage::Spanish,
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
+            agy: crate::agy::ProviderPreferences::default(),
             browser: crate::agent::browser::BrowserPreferences::default(),
             chat_title_model: None,
         })

@@ -45,6 +45,19 @@ fn round_trip_preserves_portable_settings_and_skill_payload() {
         show_usage: false,
         disabled_models: vec!["opus".into()],
     };
+    settings.system.agy = crate::agy::ProviderPreferences {
+        enabled: true,
+        show_usage: false,
+        disabled_models: vec!["gemini-3-flash".into()],
+    };
+    settings.executor_models.insert(
+        "standard/builder".into(),
+        serde_json::from_value(serde_json::json!({
+            "executor":"agy","account":"","model":"gemini-3-pro","reasoning":"high",
+            "fallback":{"executor":"claude","account":"","model":"sonnet","reasoning":"low"}
+        }))
+        .unwrap(),
+    );
     settings.system.browser = crate::agent::browser::BrowserPreferences {
         mode: crate::agent::browser::BrowserMode::Extension,
         application: crate::agent::browser::BrowserApplication::Edge,
@@ -68,6 +81,8 @@ fn round_trip_preserves_portable_settings_and_skill_payload() {
     assert_eq!(loaded.payload.catalog.agents[0].name, "Especialista");
     assert_eq!(loaded.payload.catalog.agents[0].model, None);
     assert_eq!(loaded.payload.system.claude, settings.system.claude);
+    assert_eq!(loaded.payload.system.agy, settings.system.agy);
+    assert_eq!(loaded.payload.executor_models, settings.executor_models);
     assert_eq!(loaded.payload.system.browser, settings.system.browser);
     assert_eq!(loaded.skill_files[0].path, Path::new("review/SKILL.md"));
     assert_eq!(loaded.skill_files[0].bytes, files[0].bytes);

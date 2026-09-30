@@ -1,12 +1,12 @@
 import { z } from "zod";
 import type { ModelChoice } from "./provider-references";
 
-export const executorSchema = z.enum(["jarvis", "claude"]);
+export const executorSchema = z.enum(["jarvis", "claude", "agy"]);
 export type Executor = z.infer<typeof executorSchema>;
 export type ExecutionChoice = { executor?: Executor; account: string; model: string; reasoning: string | null };
 export type ExecutionSelection = { executor?: Executor; model: string; reasoning: string | null };
 export const executorOf = (choice?: { executor?: Executor } | null): Executor => choice?.executor ?? "jarvis";
-export const executionLabel = (choice: ExecutionChoice) => `${executorOf(choice) === "claude" ? "Claude Code" : choice.account} / ${choice.model}`;
+export const executionLabel = (choice: ExecutionChoice) => `${executorOf(choice) === "claude" ? "Claude Code" : executorOf(choice) === "agy" ? "Antigravity CLI" : choice.account} / ${choice.model}`;
 export const sameExecutionTarget = (first: ExecutionChoice, second: ExecutionChoice) => executorOf(first) === executorOf(second) && first.account === second.account && first.model === second.model;
 
 export function selectModelChoice(current: ModelChoice | null | undefined, next: ExecutionChoice, slot: "primary" | "secondary"): ModelChoice {
@@ -21,11 +21,11 @@ export function selectModelChoice(current: ModelChoice | null | undefined, next:
 }
 
 export function executionSelection(choice?: ExecutionChoice | null): ExecutionSelection | null {
-  return choice ? { executor: executorOf(choice), model: executorOf(choice) === "claude" ? choice.model : `${choice.account}/${choice.model}`, reasoning: choice.reasoning } : null;
+  return choice ? { executor: executorOf(choice), model: executorOf(choice) !== "jarvis" ? choice.model : `${choice.account}/${choice.model}`, reasoning: choice.reasoning } : null;
 }
 
 export function executionChoice(selection: ExecutionSelection): ExecutionChoice {
-  if (executorOf(selection) === "claude") return { executor: "claude", account: "", model: selection.model, reasoning: selection.reasoning };
+  if (executorOf(selection) !== "jarvis") return { executor: executorOf(selection), account: "", model: selection.model, reasoning: selection.reasoning };
   const split = selection.model.indexOf("/");
   return { executor: "jarvis", account: split < 0 ? "" : selection.model.slice(0, split), model: split < 0 ? selection.model : selection.model.slice(split + 1), reasoning: selection.reasoning };
 }

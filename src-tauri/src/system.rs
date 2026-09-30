@@ -200,6 +200,7 @@ pub struct Preferences {
     pub(crate) response_language: ResponseLanguage,
     pub(crate) terminal: TerminalPreferences,
     pub(crate) claude: crate::claude::ProviderPreferences,
+    pub(crate) agy: crate::agy::ProviderPreferences,
     pub(crate) browser: crate::agent::browser::BrowserPreferences,
     pub(crate) chat_title_model: Option<crate::agent::workflow::settings::ModelChoice>,
 }
@@ -213,6 +214,7 @@ impl Default for Preferences {
             response_language: ResponseLanguage::default(),
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
+            agy: crate::agy::ProviderPreferences::default(),
             browser: crate::agent::browser::BrowserPreferences::default(),
             chat_title_model: None,
         }
@@ -226,6 +228,7 @@ impl Preferences {
         }
         self.terminal.validate()?;
         self.claude.validate()?;
+        self.agy.validate()?;
         if let Some(choice) = &self.chat_title_model {
             validate_chat_title_model(choice)?;
         }
@@ -401,6 +404,10 @@ impl SystemState {
 
     pub(crate) fn claude_preferences(&self) -> Result<crate::claude::ProviderPreferences, String> {
         Ok(self.preferences()?.claude)
+    }
+
+    pub(crate) fn agy_preferences(&self) -> Result<crate::agy::ProviderPreferences, String> {
+        Ok(self.preferences()?.agy)
     }
 
     fn preferences(&self) -> Result<Preferences, String> {
@@ -729,6 +736,34 @@ pub(crate) async fn save_claude_provider_preferences(
             .map_err(|error| error.clone())?;
         let mut next = store.preferences.clone();
         next.claude = preferences.clone();
+        store.save(next)?;
+    }
+    state.changed(&app);
+    Ok(preferences)
+}
+
+#[tauri::command]
+pub(crate) async fn save_agy_provider_preferences(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SystemState>,
+    mut preferences: crate::agy::ProviderPreferences,
+) -> Result<crate::agy::ProviderPreferences, String> {
+    preferences.validate()?;
+    preferences.disabled_models.sort();
+    preferences.disabled_models.dedup();
+    let _edit = state.edit.lock().await;
+    {
+        let mut store = state
+            .store
+            .lock()
+            .map_err(|_| "Preferências indisponíveis.")?;
+        let store = store
+            .as_mut()
+            .ok_or("Preferências ainda não carregadas.")?
+            .as_mut()
+            .map_err(|error| error.clone())?;
+        let mut next = store.preferences.clone();
+        next.agy = preferences.clone();
         store.save(next)?;
     }
     state.changed(&app);

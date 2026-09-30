@@ -124,3 +124,31 @@ it("onboards with the authenticated Claude CLI without creating a provider accou
   await waitFor(() => expect(complete).toHaveBeenCalledWith(""));
   expect(invokeMock).toHaveBeenCalledWith("set_agent_model", { flow: "standard", role: "builder", choice: { executor: "claude", account: "", model: "default", reasoning: null } });
 });
+
+it("allows the optional authenticated AGY CLI as the initial model without a provider account", async () => {
+  invokeMock.mockImplementation(async command => {
+    if (command === "get_core_status" || command === "check_core_updates") return coreFixture();
+    if (command === "get_optional_tools_status") return optionalTools;
+    if (command === "get_agy_runtime" || command === "refresh_agy_runtime") return { installed: true, authenticated: true, version: "1.2.13", error: null, preferences: { enabled: true, disabledModels: [] }, models: [{ id: "gemini", name: "Gemini", description: "", reasoningLevels: [], defaultReasoning: null }] };
+    return [];
+  });
+  const user = userEvent.setup(); const complete = vi.fn().mockResolvedValue(undefined);
+  render(<Onboarding saving={false} onComplete={complete} />);
+  await user.click(screen.getByRole("button", { name: "Avançar" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Avançar" }));
+  await screen.findByRole("heading", { name: "Complete seu ambiente" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Avançar" }));
+  await user.click(await screen.findByRole("button", { name: "Detalhes de Antigravity CLI" }));
+  await user.click(await screen.findByRole("button", { name: "Atualizar status e modelos" }));
+  await user.keyboard("{Escape}");
+  screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: "Antigravity CLI" })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Gemini" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Avançar" }));
+  await user.click(screen.getByRole("button", { name: "Começar" }));
+  await waitFor(() => expect(complete).toHaveBeenCalledWith(""));
+  expect(invokeMock).toHaveBeenCalledWith("set_agent_model", { flow: "standard", role: "builder", choice: { executor: "agy", account: "", model: "gemini", reasoning: null } });
+});

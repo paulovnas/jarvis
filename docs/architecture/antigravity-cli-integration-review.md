@@ -84,6 +84,64 @@ Validation completed: `bun run check` (949 tests passed, one existing skip),
 the actual conversation preserved all four orphan receipts and passed compaction
 and cold reload checks. No live provider request or installed-app smoke test was run.
 
+## Optional executor integration
+
+The optional `agy` executor is a separate singleton provider, disabled by default.
+It uses the installed official CLI and its existing Google login; execute `agy`
+in a terminal to complete login. The CLI does not expose `agy auth login` in 1.2.13.
+The direct Antigravity provider remains an independent selection.
+
+Jarvis discovers the model catalog through `agy models`. Usage comes from the
+structured native `/quota` command: five-hour and weekly buckets retain their
+actual remaining fractions and reset timestamps. These metadata commands do not
+run inference. No subscription tier or account email is inferred.
+
+A private durable workspace contains the generated custom agent. The real project
+is an additional directory; HOME, global MCP configuration and login credentials
+are unchanged. The custom agent excludes default components and inherited MCPs.
+Its only MCP server is the authenticated loopback Jarvis bridge, which reuses
+the existing role, project, autonomy, tool, Core and workflow contracts.
+Native tool events outside this bridge stop the process.
+
+CLI 1.2.13 has two important discovery details: `agy agents` lists global agents,
+while `agy -p=/agents --output-format json --agent jarvis-runtime` also discovers
+workspace agents without inference. The stream `init.tools` field advertises the
+global catalog before filtering. The MCP dispatcher is installed by `mcpServers`;
+putting `call_mcp_tool` in the custom agent's `tools` list is invalid because it is
+not a component registry entry. Tests therefore verify actual MCP dispatch and
+native agent identity rather than treating the advertised catalog as availability.
+
+Native conversation IDs are persisted for resume; executor changes and secondary
+model fallback begin a new native conversation with a bounded historical handoff.
+AGY also snapshots custom-agent instructions and MCP endpoints in a conversation.
+Jarvis therefore persists a private loopback port, bearer token and static execution
+profile in the executor workspace, outside journals and exported backups. Restart
+rebinds that port and retains the token. If the port is occupied or the execution
+profile changes, a new native conversation receives the bounded handoff, including
+confirmed receipts from an interrupted current turn. Live workflow, task and memory
+context is sent with the current request, rather than frozen in the custom agent.
+Tool identity uses the native conversation and step index. Confirmed receipts are
+reused; a started operation without a durable result is never blindly repeated.
+Streamed messages, reasoning, tasks and tools use the existing public chat journal.
+Tool-free knowledge generation and feedback extraction use the same optional CLI.
+
+The installed-CLI smoke tests are opt-in because the bridge test performs two small
+inference rounds, with a process restart and actual tool dispatch in the same native
+conversation. Other discovery commands do not consume inference.
+They operate in temporary projects and do not read or modify the user's projects:
+
+```sh
+JARVIS_AGY_SMOKE_MODEL=<available-cli-model> cargo test --manifest-path src-tauri/Cargo.toml native_cli_ -- --ignored --nocapture
+```
+
+Final implementation validation on macOS: `bun run check` passed (980 tests,
+one existing skip), Clippy passed with warnings denied, and `cargo test` passed
+(1,181 tests, 26 ignored). Both opt-in tests passed with installed AGY 1.2.13:
+custom-agent discovery and two real MCP dispatches across a native conversation
+restart. The smoke project remained empty and both processes were cleaned up.
+The installed Jarvis application and native Windows/Linux executors were not
+exercised by this validation.
+
 ## References
 
 - [Official CLI introduction](https://antigravity.google/blog/introducing-google-antigravity-cli)

@@ -3,12 +3,12 @@ use super::*;
 use crate::claude::{ClaudeProcess, RunOptions};
 use crate::core::hooks::Event;
 use std::collections::VecDeque;
-mod bridge;
-mod handoff;
+pub(super) mod bridge;
+pub(super) mod handoff;
 #[cfg(test)]
 mod handoff_tests;
-mod native_vision;
-mod projection;
+pub(super) mod native_vision;
+pub(super) mod projection;
 #[cfg(test)]
 mod tests;
 
@@ -352,7 +352,10 @@ async fn record_native_session(
         .await
 }
 
-fn pending_input(session: &Session, cursor: &mut usize) -> Result<Vec<String>, AgentError> {
+pub(super) fn pending_input(
+    session: &Session,
+    cursor: &mut usize,
+) -> Result<Vec<String>, AgentError> {
     let data = session.data.lock().map_err(|_| AgentError::internal())?;
     let wire = &data.turns.last().ok_or_else(AgentError::internal)?.wire;
     let messages = wire
@@ -421,7 +424,7 @@ async fn handle_control(
         .map_err(runtime_error)
 }
 
-async fn control_request(
+pub(super) async fn control_request(
     bridge: &mut bridge::Bridge<'_>,
     id: &str,
     request: &Value,
@@ -490,7 +493,7 @@ async fn execute_tool(
     }
     let Some(tool) = native_tool else {
         return Ok(
-            json!({"isError":true,"content":[{"type":"text","text":"Jarvis could not correlate this callback with a native Claude tool-use ID. No action was executed. Issue a fresh tool call so its result can be tracked safely."}]}),
+            json!({"isError":true,"content":[{"type":"text","text":"Jarvis could not correlate this callback with a native tool-use ID. No action was executed. Issue a fresh tool call so its result can be tracked safely."}]}),
         );
     };
     if let Some(previous) = replay_tool(bridge.session, &tool.id)? {
@@ -637,7 +640,10 @@ fn replay_output(session: &Session, tool_id: &str, previous: &Value) -> Result<V
     Ok(json!({"isError":is_error,"content":content}))
 }
 
-fn replay_request(session: &Session, request_id: &str) -> Result<Option<Value>, AgentError> {
+pub(super) fn replay_request(
+    session: &Session,
+    request_id: &str,
+) -> Result<Option<Value>, AgentError> {
     let call_id = {
         let data = session.data.lock().map_err(|_| AgentError::internal())?;
         let Some(call_id) = data

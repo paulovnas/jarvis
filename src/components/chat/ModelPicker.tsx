@@ -14,7 +14,7 @@ export interface ModelOptionDef extends Pick<ProviderModel, "reasoningLevels" | 
 
 export interface ProviderModelGroup {
   provider: string;
-  executor?: "claude";
+  executor?: "claude" | "agy";
   providerKind?: ProviderAccount["providerKind"];
   models: ModelOptionDef[];
   emptyMessage?: string;
@@ -35,7 +35,7 @@ export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLa
                 disabled={disabled}
                 className="composer-model flex h-7.5 max-w-full cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 font-mono text-[10px] font-medium text-foreground shadow-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
               >
-                {providerLabel && <ProviderIcon kind={currentGroup?.executor === "claude" ? "claude-code" : currentGroup?.providerKind ?? "custom"} className="size-3.5 text-onedark-cyan" />}
+                {providerLabel && <ProviderIcon kind={currentGroup?.executor === "claude" ? "claude-code" : currentGroup?.executor === "agy" ? "antigravity-cli" : currentGroup?.providerKind ?? "custom"} className="size-3.5 text-onedark-cyan" />}
                 <Hint content={showProviderIdentity ? displayLabel : selection?.model} whenTruncated><span className="min-w-0 truncate">{displayLabel}</span></Hint>
                 <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
               </DropdownMenuTrigger>
@@ -57,7 +57,7 @@ export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLa
                   modelGroups.map((group) => (
                     <DropdownMenuSub key={group.provider}>
                         <DropdownMenuSubTrigger className="cursor-pointer gap-2 py-2 font-mono text-xs text-onedark-cyan">
-                          <ProviderIcon kind={group.executor === "claude" ? "claude-code" : group.providerKind ?? "custom"} className="size-4" />
+                          <ProviderIcon kind={group.executor === "claude" ? "claude-code" : group.executor === "agy" ? "antigravity-cli" : group.providerKind ?? "custom"} className="size-4" />
                           {group.provider}
                         </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="max-h-[min(480px,70vh)] min-w-[220px] overflow-y-auto border-border bg-card p-1.5 text-foreground">

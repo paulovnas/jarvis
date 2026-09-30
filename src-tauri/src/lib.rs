@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod agent;
+mod agy;
 #[cfg(target_os = "macos")]
 mod app_menu;
 mod background;
@@ -70,6 +71,7 @@ pub fn run() {
         .manage(persistence::AppState::default())
         .manage(openai_codex::OpenAiCodexState::default())
         .manage(claude::ClaudeState::default())
+        .manage(agy::AgyState::default())
         .manage(agent::AgentState::default())
         .manage(agent::knowledge::generation::KnowledgeJobs::default())
         .manage(agent::learning::capture::LearningJobs::default())
@@ -159,6 +161,10 @@ pub fn run() {
                 claude::refresh_claude_runtime,
                 claude::get_claude_usage,
                 system::save_claude_provider_preferences,
+                agy::get_agy_runtime,
+                agy::refresh_agy_runtime,
+                agy::get_agy_usage,
+                system::save_agy_provider_preferences,
                 system::get_system_preferences,
                 system::save_system_preferences,
                 system::test_system_notification,

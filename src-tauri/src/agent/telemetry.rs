@@ -169,6 +169,7 @@ pub(crate) enum ProviderKind {
     Antigravity,
     Custom,
     ClaudeCode,
+    AntigravityCli,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -1078,6 +1079,7 @@ fn provider_label(provider: ProviderKind) -> &'static str {
         ProviderKind::Antigravity => "antigravity",
         ProviderKind::Custom => "custom",
         ProviderKind::ClaudeCode => "claude_code",
+        ProviderKind::AntigravityCli => "antigravity_cli",
     }
 }
 

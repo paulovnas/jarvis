@@ -630,12 +630,22 @@ pub async fn complete_onboarding(
     if state.get_app_config(&home_dir)?.onboarding_completed {
         return state.get_app_config(&home_dir);
     }
-    let claude_selected = crate::agent::workflow::settings::read(&home_dir)
+    let selected_executor = crate::agent::workflow::settings::read(&home_dir)
         .map_err(|cause| PersistenceError::new(cause.message()))?
         .get("standard/builder")
-        .is_some_and(|choice| choice.executor == crate::claude::Executor::Claude);
-    let external_executor_ready = if claude_selected {
+        .map(|choice| choice.executor);
+    let external_executor_ready = if selected_executor == Some(crate::claude::Executor::Claude) {
         let status = crate::claude::get_claude_runtime(app.state(), app.state())
+            .await
+            .map_err(PersistenceError::new)?;
+        status.installed
+            && status.authenticated
+            && status
+                .models
+                .iter()
+                .any(|model| status.preferences.allows(&model.id))
+    } else if selected_executor == Some(crate::claude::Executor::Agy) {
+        let status = crate::agy::get_agy_runtime(app.state(), app.state())
             .await
             .map_err(PersistenceError::new)?;
         status.installed

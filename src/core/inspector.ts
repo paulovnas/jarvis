@@ -4,7 +4,7 @@ import { executorOf } from "./executors";
 
 export function conversationContext(turns: AgentTurn[], accounts: ProviderAccount[] = []) {
   const current = turns[turns.length - 1];
-  const model = executorOf(current?.options) === "claude" ? undefined : accounts.find(account => account.alias === current?.options.account)?.models.find(item => item.id === current?.options.model);
+  const model = executorOf(current?.options) !== "jarvis" ? undefined : accounts.find(account => account.alias === current?.options.account)?.models.find(item => item.id === current?.options.model);
   const limit = current?.contextWindow ?? model?.contextWindow ?? null;
   let estimatedTokens = 0;
   const estimate = (text: string) => text.length ? Math.ceil(text.length / 4) : 0;

@@ -1,3 +1,4 @@
+mod agy_executor;
 pub(crate) mod attachments;
 pub(crate) mod authoring;
 pub(crate) mod browser;
@@ -2638,22 +2639,25 @@ fn run_turn_once<'a>(
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
             result = skill_input::load(session, home) => result?,
         }
-        if options.executor == crate::claude::Executor::Claude {
+        if options.executor != crate::claude::Executor::Jarvis {
             let learning_owner = execution.as_ref().map_or(session, |exec| exec.root());
             learning::prepare(session, learning_owner, state, home).await;
-            return claude_executor::run(
-                session,
-                TurnRuntime {
-                    grants,
-                    state,
-                    oauth,
-                    mcp,
-                    home,
-                },
-                signal,
-                execution,
-            )
-            .await;
+            let runtime = TurnRuntime {
+                grants,
+                state,
+                oauth,
+                mcp,
+                home,
+            };
+            return match options.executor {
+                crate::claude::Executor::Claude => {
+                    claude_executor::run(session, runtime, signal, execution).await
+                }
+                crate::claude::Executor::Agy => {
+                    agy_executor::run(session, runtime, signal, execution).await
+                }
+                crate::claude::Executor::Jarvis => unreachable!(),
+            };
         }
         let auth_state = state.clone();
         let auth_oauth = oauth.clone();
@@ -4333,8 +4337,8 @@ async fn title_text(
     .ok()?
     .ok()?;
     let options = title::options(request.options.clone(), configured.as_ref());
-    if options.executor == crate::claude::Executor::Claude {
-        // Claude owns the foreground session; title generation never starts a
+    if options.executor != crate::claude::Executor::Jarvis {
+        // The native executor owns the foreground session; title generation never starts a
         // second CLI session or silently bills a different API account.
         return None;
     }

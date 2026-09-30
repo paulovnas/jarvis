@@ -9,6 +9,7 @@ import { StatusBar } from "./StatusBar";
 const local = vi.hoisted(() => ({ runtime: null as ClaudeRuntime | null }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@/hooks/use-claude-runtime", () => ({ useClaudeRuntime: () => ({ data: local.runtime }) }));
+vi.mock("@/hooks/use-agy-runtime", () => ({ useAgyRuntime: () => ({ data: null }) }));
 vi.mock("./AppUpdate", () => ({ AppUpdate: () => null }));
 vi.mock("./ResourceUpdates", () => ({ ResourceUpdates: () => null }));
 

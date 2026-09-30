@@ -45,6 +45,7 @@ tauri-plugin-dialog = "2"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs", "net"] }
 libc = "0.2.189"
 rmcp = { version = "3.2.0", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client-reqwest", "reqwest"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 jsonschema = { version = "0.53.0", default-features = false }
 process-wrap = { version = "10.0.0", default-features = false, features = ["tokio1", "process-group", "job-object", "kill-on-drop", "creation-flags"] }
 similar = "2.7"

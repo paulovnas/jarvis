@@ -96,6 +96,7 @@ pub(crate) enum Executor {
     #[default]
     Jarvis,
     Claude,
+    Agy,
 }
 
 impl Executor {

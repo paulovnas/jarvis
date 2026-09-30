@@ -18,9 +18,9 @@ function contextColor(percent: number | null) {
   return `rgb(${from.map((channel, index) => Math.round(channel + (to[index] - channel) * ratio)).join(", ")})`;
 }
 
-export function ContextUsage({ context, live, onCompact, compacting = false, disabled = false, external = false }: {
+export function ContextUsage({ context, live, onCompact, compacting = false, disabled = false, external = false, externalProvider = "Claude Code" }: {
   context: ReturnType<typeof conversationContext>; live?: ContextInfo;
-  onCompact?: () => Promise<boolean>; compacting?: boolean; disabled?: boolean; external?: boolean;
+  onCompact?: () => Promise<boolean>; compacting?: boolean; disabled?: boolean; external?: boolean; externalProvider?: "Claude Code" | "Antigravity CLI";
 }) {
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
@@ -40,7 +40,7 @@ export function ContextUsage({ context, live, onCompact, compacting = false, dis
       {percent !== null ? <Progress aria-label="Ocupação da janela de contexto" value={Math.min(100, percent)} className="min-w-0 flex-1 [&_[data-slot=progress-indicator]]:bg-[var(--context-color)] [&_[data-slot=progress-indicator]]:motion-reduce:transition-none" /> : <div className="h-1 flex-1 rounded-full bg-muted" />}
     </div>
     {tokens !== null && <p className="mt-1 text-right font-mono text-[10px] text-muted-foreground tabular-nums">{estimated ? "≈ " : ""}{format(tokens)}{limit ? ` / ${format(limit)}` : ""} tokens</p>}
-    {external && <p className="mt-1 text-right text-[10px] text-muted-foreground">Contexto gerenciado pelo Claude Code</p>}
+    {external && <p className="mt-1 text-right text-[10px] text-muted-foreground">Contexto gerenciado pelo {externalProvider}</p>}
     <AlertDialog open={confirming} onOpenChange={setConfirming}>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Compactar contexto?</AlertDialogTitle><AlertDialogDescription>O histórico completo será preservado.</AlertDialogDescription></AlertDialogHeader>
         <AlertDialogFooter><AlertDialogCancel className="cursor-pointer">Cancelar</AlertDialogCancel><AlertDialogAction className="cursor-pointer" disabled={disabled || busy || !onCompact} onClick={() => { setConfirming(false); setPending(true); void onCompact?.().finally(() => setPending(false)); }}>Compactar</AlertDialogAction></AlertDialogFooter>

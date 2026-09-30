@@ -124,7 +124,7 @@ export function SystemSettings({ accounts = [] }: { accounts?: ProviderAccount[]
           <div className="min-w-0">
             <p className="flex items-center gap-2 text-xs font-medium"><MessageSquareText className="size-3.5 text-primary" />Títulos das conversas</p>
             <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Escolha um modelo de um provedor conectado só para gerar títulos, sem alterar o modelo dos agentes.</p>
-            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Automático segue o modelo da conversa; com Claude Code, usa um título local sem abrir outra sessão.</p>
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Automático segue o modelo da conversa; com Claude Code ou Antigravity CLI, usa um título local sem abrir outra sessão.</p>
           </div>
           <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2">
             <ModelPicker modelGroups={accountGroups(accounts)} selection={executionSelection(snapshot.preferences.chatTitleModel)} disabled={busy} ariaLabel="Modelo para títulos das conversas" showProviderIdentity clearLabel="Automático" onClear={() => void save({ chatTitleModel: null })} onSelect={selection => void save({ chatTitleModel: executionChoice(selection) })} />

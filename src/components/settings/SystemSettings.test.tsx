@@ -93,7 +93,7 @@ describe("system preferences", () => {
     render(<SystemSettings accounts={[account]} />);
     const picker = await screen.findByRole("button", { name: "Modelo para títulos das conversas" });
     expect(picker).toHaveTextContent("Automático");
-    expect(screen.getByText(/com Claude Code, usa um título local/)).toBeVisible();
+    expect(screen.getByText(/com Claude Code ou Antigravity CLI, usa um título local/)).toBeVisible();
     const choice = { executor: "jarvis", account: account.alias, model: "gpt-6-luna", reasoning: null };
     call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, chatTitleModel: choice } });
     await user.click(picker);

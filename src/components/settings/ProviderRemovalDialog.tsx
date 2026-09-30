@@ -13,6 +13,8 @@ import { libraryError } from "@/core/library";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { compatibleModels, defaultChoice, modelProblem, providerRemovalPlanSchema, providerRemovalResultSchema, type ModelChoice, type ProviderReference, type ProviderRemovalPlan, type ProviderRemovalResult } from "@/core/provider-references";
 import { reasoningLabel } from "@/core/reasoning";
+import { executionChoice, executionSelection, executorOf } from "@/core/executors";
+import { ExecutorModelPicker } from "@/components/chat/ExecutorModelPicker";
 
 const UNASSIGNED = "__unassigned__";
 function ReferenceRow({ item, accounts, choice, busy, onChange }: { item: ProviderReference; accounts: ProviderAccount[]; choice?: ModelChoice; busy: boolean; onChange: (choice?: ModelChoice) => void }) {
@@ -21,6 +23,7 @@ function ReferenceRow({ item, accounts, choice, busy, onChange }: { item: Provid
   const models = account ? compatibleModels(account, item.kind) : [];
   const model = models.find(model => model.id === choice?.model);
   const hasReasoning = !["web_search", "vision", "image_generation"].includes(item.kind);
+  const supportsCli = ["builtin_agent", "custom_agent", "conversation"].includes(item.kind);
   const selectModel = (next: ModelChoice) => onChange(hasReasoning ? next : { ...next, reasoning: null });
   return <Card className="gap-3 rounded-lg p-4" aria-label={`Vínculo: ${item.label}`}>
     <div className="flex flex-wrap items-center gap-2"><Link2 className="size-3.5 shrink-0 text-onedark-cyan" aria-hidden="true" /><span className="text-sm font-medium">{item.label}</span><Badge variant="outline" className={`rounded-md ${choice ? "border-onedark-green/30 text-onedark-green" : "border-onedark-yellow/30 text-onedark-yellow"}`}>{choice ? "Substituição definida" : "Sem substituição"}</Badge></div>
@@ -29,10 +32,11 @@ function ReferenceRow({ item, accounts, choice, busy, onChange }: { item: Provid
       <div className="min-w-0 rounded-md border border-border bg-sidebar p-3"><p className="micro-label mb-2 text-muted-foreground">De · Atual</p><p className="break-all font-mono text-xs">{item.choice.account}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.choice.model || "Modelo não configurado"}{item.choice.reasoning ? ` · ${item.choice.reasoning}` : ""}</p></div>
       <ArrowRight className="hidden size-4 text-muted-foreground sm:block" aria-hidden="true" />
       <div className="min-w-0 space-y-3"><p className="micro-label text-muted-foreground">Para · Opcional</p>
-        <ChoiceField label={`Novo provedor para ${item.label}`} value={choice?.account ?? UNASSIGNED} disabled={busy} options={[{ value: UNASSIGNED, label: "Não substituir agora" }, ...available.map(account => ({ value: account.alias, label: account.alias }))]} onChange={alias => { const next = available.find(account => account.alias === alias); if (next) selectModel(defaultChoice(next, compatibleModels(next, item.kind)[0])); else onChange(undefined); }} />
-        {choice && <ChoiceField label={`Novo modelo para ${item.label}`} value={choice.model} disabled={busy || !models.length} options={models.map(model => ({ value: model.id, label: model.name }))} onChange={id => { const next = models.find(model => model.id === id); if (account && next) selectModel(defaultChoice(account, next)); }} />}
+        <ChoiceField label={`Novo provedor para ${item.label}`} value={executorOf(choice) === "jarvis" ? choice?.account ?? UNASSIGNED : UNASSIGNED} disabled={busy} options={[{ value: UNASSIGNED, label: "Não substituir agora" }, ...available.map(account => ({ value: account.alias, label: account.alias }))]} onChange={alias => { const next = available.find(account => account.alias === alias); if (next) selectModel(defaultChoice(next, compatibleModels(next, item.kind)[0])); else onChange(undefined); }} />
+        {choice && executorOf(choice) === "jarvis" && <ChoiceField label={`Novo modelo para ${item.label}`} value={choice.model} disabled={busy || !models.length} options={models.map(model => ({ value: model.id, label: model.name }))} onChange={id => { const next = models.find(model => model.id === id); if (account && next) selectModel(defaultChoice(account, next)); }} />}
         {choice && hasReasoning && !!model?.reasoningLevels.length && <ChoiceField label={`Raciocínio para ${item.label}`} value={choice.reasoning ?? ""} disabled={busy} options={model.reasoningLevels.map(value => ({ value, label: reasoningLabel(value) }))} onChange={reasoning => onChange({ ...choice, reasoning })} />}
-        {!available.length && <p className="text-xs leading-relaxed text-onedark-yellow">Nenhum outro provedor compatível. Você pode remover e configurar este item depois.</p>}
+        {supportsCli && <div className="space-y-2"><p className="micro-label text-muted-foreground">Ou usar CLI local</p><ExecutorModelPicker modelGroups={[]} selection={executorOf(choice) === "jarvis" ? null : executionSelection(choice)} disabled={busy} ariaLabel={`Modelo CLI para ${item.label}`} showProviderIdentity onSelect={selection => selectModel(executionChoice(selection))} onClear={() => onChange(undefined)} clearLabel="Não substituir agora" /></div>}
+        {!available.length && <p className="text-xs leading-relaxed text-onedark-yellow">Nenhuma outra conta compatível. {supportsCli ? "Escolha um CLI local ou configure este item depois." : "Você pode remover e configurar este item depois."}</p>}
         {choice && modelProblem(choice, accounts, item.kind) && <p role="alert" className="text-xs text-destructive">{modelProblem(choice, accounts, item.kind)}</p>}
       </div>
     </div>

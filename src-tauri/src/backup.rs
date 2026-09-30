@@ -236,7 +236,7 @@ fn model_targets(
 ) -> Result<Vec<ModelTarget>, BackupError> {
     let mut targets = Vec::with_capacity(native.len() + catalog.agents.len());
     for (key, choice) in native {
-        if choice.executor == crate::claude::Executor::Claude {
+        if choice.executor != crate::claude::Executor::Jarvis {
             continue;
         }
         targets.push(
@@ -339,11 +339,11 @@ fn validate_payload(payload: &SettingsPayload) -> Result<(), BackupError> {
     }
     if payload.executor_models.iter().any(|(key, choice)| {
         builtin_target(key).is_none()
-            || choice.executor != crate::claude::Executor::Claude
+            || choice.executor == crate::claude::Executor::Jarvis
             || choice
                 .fallback
                 .as_ref()
-                .is_some_and(|fallback| fallback.executor != crate::claude::Executor::Claude)
+                .is_some_and(|fallback| fallback.executor == crate::claude::Executor::Jarvis)
             || choice.validate_shape().is_err()
     }) {
         return Err(error(
@@ -823,7 +823,7 @@ fn read_archive(path: &Path) -> Result<LoadedBackup, BackupError> {
 
 fn preview(loaded: &LoadedBackup) -> BackupPreview {
     let mut warnings = vec![
-        "Provedores, contas, credenciais de IA e modelos vinculados a provedores não fazem parte do backup. Seleções do executor Claude são preservadas; sua instalação e autenticação permanecem locais.".into(),
+        "Provedores, contas, credenciais de IA e modelos vinculados a contas não fazem parte do backup. Seleções dos executores CLI são preservadas; sua instalação e autenticação permanecem locais.".into(),
         "A restauração substitui as preferências, os agentes, os fluxos, as skills e os MCPs atuais.".into(),
         "Workspaces, projetos, conversas e pacotes instalados do Core permanecem nesta instalação.".into(),
         "Layout da janela, abas abertas e dimensões dos painéis permanecem nesta instalação.".into(),
@@ -1251,7 +1251,7 @@ pub async fn export_settings_backup(
             model_targets,
             executor_models: native
                 .into_iter()
-                .filter(|(_, choice)| choice.executor == crate::claude::Executor::Claude)
+                .filter(|(_, choice)| choice.executor != crate::claude::Executor::Jarvis)
                 .map(|(key, mut choice)| {
                     clean_fallback(&mut choice);
                     (key, choice)

@@ -26,13 +26,19 @@ impl ModelChoice {
                 .is_some_and(|value| !valid(value, 40))
             || match self.executor {
                 crate::claude::Executor::Jarvis => !valid(&self.account, 200),
-                crate::claude::Executor::Claude => !self.account.is_empty(),
+                crate::claude::Executor::Claude | crate::claude::Executor::Agy => {
+                    !self.account.is_empty()
+                }
             }
         {
-            return Err(invalid("Escolha um executor e modelo válidos. Claude usa sua própria autenticação, sem provedor Jarvis."));
+            return Err(invalid("Escolha um executor e modelo válidos. Executores CLI usam sua própria autenticação, sem conta de API Jarvis."));
         }
         if self.executor == crate::claude::Executor::Claude {
             crate::claude::validate_selection(&self.model, self.reasoning.as_deref())
+                .map_err(|message| invalid(&message))?;
+        }
+        if self.executor == crate::claude::Executor::Agy {
+            crate::agy::validate_selection(&self.model, self.reasoning.as_deref())
                 .map_err(|message| invalid(&message))?;
         }
         if let Some(fallback) = &self.fallback {
@@ -69,6 +75,9 @@ pub(crate) fn validate_choice(
         if selection.executor == crate::claude::Executor::Claude {
             crate::claude::validate_available_model(home, &selection.model)
                 .map_err(|message| AgentError::new("claude_provider", &message))?;
+        } else if selection.executor == crate::claude::Executor::Agy {
+            crate::agy::validate_available_model(home, &selection.model)
+                .map_err(|message| AgentError::new("agy_provider", &message))?;
         } else {
             oauth.inference_model(
                 state,

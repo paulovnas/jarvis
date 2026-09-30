@@ -13,6 +13,8 @@ import { type ProviderModelGroup, type ModelSelection } from "./ModelPicker";
 import { ExecutorModelPicker } from "./ExecutorModelPicker";
 import { claudeModels, executionChoice, executionSelection, executorOf, selectModelChoice } from "@/core/executors";
 import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
+import { agyModels, DEFAULT_AGY_PREFERENCES } from "@/core/agy";
+import { useAgyRuntime } from "@/hooks/use-agy-runtime";
 export type { ProviderModelGroup } from "./ModelPicker";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
 import { useWorkflowCatalog } from "@/hooks/use-workflow-catalog";
@@ -196,7 +198,7 @@ export function ChatComposer({
     ? agentModels?.data?.["publication/github"]
     : selectedFlow.workflow === "custom" ? undefined : agentModels?.data?.[`${workflow}/${rootRole(selectedFlow.workflow ?? "standard")}`];
   const defaultProfile = agentModels?.data?.["standard/builder"];
-  const profile = selectedProfile ?? (!nativeModels.length && executorOf(defaultProfile) === "claude" ? defaultProfile : undefined);
+  const profile = selectedProfile ?? (!nativeModels.length && executorOf(defaultProfile) !== "jarvis" ? defaultProfile : undefined);
   const boundChoice = selection && manualBindings !== modelBindings ? resolveChatModel(modelBindings, draftKey, executionChoice(selection)) : null;
   const effectiveSelection = running && initialOptions ? executionSelection(initialOptions) : executionSelection(selectedCustomAgent?.model) ?? executionSelection(profile) ?? executionSelection(boundChoice) ?? selection;
   const configuredAgents = selectedFlow.customAgentId
@@ -205,21 +207,27 @@ export function ChatComposer({
       ? catalog.data?.agents.flatMap(agent => agent.model && customFlow?.steps.some(step => step.agentId === agent.id) ? [{ name: agent.name, choice: agent.model }] : []) ?? []
       : Object.entries(agentModels?.data ?? {}).flatMap(([key, choice]) => key.startsWith(`${workflow}/`) ? [{ name: key, choice }] : []);
   const claudeRequired = executorOf(effectiveSelection) === "claude" || configuredAgents.some(agent => executorOf(agent.choice) === "claude");
+  const agyRequired = executorOf(effectiveSelection) === "agy" || configuredAgents.some(agent => executorOf(agent.choice) === "agy");
   const claude = useClaudeRuntime(claudeRequired);
+  const agy = useAgyRuntime(agyRequired);
   const runtimeModels = claudeModels(claude.data);
-  const availableModels = executorOf(effectiveSelection) === "claude" ? runtimeModels : nativeModels;
-  const selectionReady = (executorOf(effectiveSelection) === "claude" || modelsReady) && (!claudeRequired || Boolean(claude.data) && !claude.loading);
+  const agyRuntimeModels = agyModels(agy.data);
+  const modelsFor = (choice: ModelSelection | null) => executorOf(choice) === "claude" ? runtimeModels : executorOf(choice) === "agy" ? agyRuntimeModels : nativeModels;
+  const availableModels = modelsFor(effectiveSelection);
+  const selectionReady = (executorOf(effectiveSelection) !== "jarvis" || modelsReady) && (!claudeRequired || Boolean(claude.data) && !claude.loading) && (!agyRequired || Boolean(agy.data) && !agy.loading);
   const currentModelDef =
     availableModels.find((availableModel) => availableModel.value === effectiveSelection?.model) ??
     (effectiveSelection ? undefined : availableModels[0]);
   const invalidSelection = (choice: ModelSelection) => {
     if (executorOf(choice) === "claude" && !claude.data) return false;
-    const model = (executorOf(choice) === "claude" ? runtimeModels : nativeModels).find(item => item.value === choice.model);
+    if (executorOf(choice) === "agy" && !agy.data) return false;
+    const model = modelsFor(choice).find(item => item.value === choice.model);
     return !model || Boolean(choice.reasoning && !model.reasoningLevels.includes(choice.reasoning));
   };
   const invalidAgent = configuredAgents.find(agent => invalidSelection(executionSelection(agent.choice)!))?.name;
   const claudeProblem = !claudeRequired || claude.loading ? null : claude.error ?? (claude.data?.preferences?.enabled === false ? "Ative o Claude Code em Configurações → Provedores." : claude.data && !claude.data.installed ? "Instale o Claude Code em Configurações → Provedores e atualize o status." : claude.data && !claude.data.authenticated ? "Entre na sua conta com claude auth login e atualize o status do Claude Code." : null);
-  const modelError = claudeProblem ?? (!selectionReady ? null : invalidAgent
+  const agyProblem = !agyRequired || agy.loading ? null : agy.error ?? (agy.data && !(agy.data.preferences ?? DEFAULT_AGY_PREFERENCES).enabled ? "Ative o Antigravity CLI em Configurações → Provedores." : agy.data && !agy.data.installed ? "Instale o Antigravity CLI em Configurações → Provedores e atualize o status." : agy.data && !agy.data.authenticated ? "Execute agy no terminal, conclua o login com Google e atualize o status do Antigravity CLI." : null);
+  const modelError = claudeProblem ?? agyProblem ?? (!selectionReady ? null : invalidAgent
     ? `O agente ${invalidAgent} usa um modelo indisponível. Revise o modelo em Configurações → Workflow.`
     : effectiveSelection && invalidSelection(effectiveSelection) ? `O modelo ${effectiveSelection.model} está indisponível. Revise o provedor e o modelo deste chat.` : null);
   useModelProblemNotice("Chat", modelError, `chat:${draftKey ?? "new"}`);

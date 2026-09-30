@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { claudeProviderPreferencesSchema } from "./executors";
+import { agyProviderPreferencesSchema } from "./agy";
 import { modelChoiceSchema } from "./workflow-catalog";
 
 export const sleepModes = {
@@ -49,6 +50,7 @@ export const systemSnapshotSchema = z.object({
     terminal: terminalPreferencesSchema.default(DEFAULT_TERMINAL_PREFERENCES),
     browser: browserPreferencesSchema.default(DEFAULT_BROWSER_PREFERENCES),
     claude: claudeProviderPreferencesSchema.optional(),
+    agy: agyProviderPreferencesSchema.optional(),
   }),
   sleepInhibited: z.boolean(),
   sleepError: z.string().nullable(),

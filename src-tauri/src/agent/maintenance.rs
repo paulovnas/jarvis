@@ -35,10 +35,10 @@ fn begin(session: Arc<Session>) -> Result<(CompactionLease, TurnOptions), AgentE
                 "Ainda não há histórico para compactar.",
             )
         })?;
-    if options.executor == crate::claude::Executor::Claude {
+    if options.executor != crate::claude::Executor::Jarvis {
         return Err(AgentError::new(
             "external_context",
-            "O Claude gerencia e compacta seu próprio contexto automaticamente.",
+            "O executor CLI gerencia e compacta seu próprio contexto automaticamente.",
         ));
     }
     if !compaction::can_compact(&data) {

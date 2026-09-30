@@ -21,7 +21,7 @@ pub(crate) fn resolve(
     key: &str,
     source: &ModelChoice,
 ) -> Result<ModelChoice, PersistenceError> {
-    let target: Option<String> = if source.executor == crate::claude::Executor::Claude {
+    let target: Option<String> = if source.executor != crate::claude::Executor::Jarvis {
         None
     } else {
         db.query_row(

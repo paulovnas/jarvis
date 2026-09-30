@@ -1,8 +1,8 @@
-//! Claude owns inference; every effect still crosses the existing Jarvis tool contracts.
+//! Native executors own inference; effects cross the existing Jarvis tool contracts.
 use super::super::*;
 use tool_contract::{Handler, Orchestrator};
 
-pub(super) struct Bridge<'a> {
+pub(in crate::agent) struct Bridge<'a> {
     pub session: &'a Arc<Session>,
     pub runtime: TurnRuntime<'a>,
     pub execution: Option<workflow::Execution>,
@@ -22,6 +22,9 @@ pub(super) struct Bridge<'a> {
     restricted: bool,
     publication: bool,
     pub prompt: String,
+    /// AGY snapshots system instructions; mutable state travels in the current user frame.
+    /// Claude retains its existing appended-system-prompt contract and leaves this empty.
+    pub dynamic_prompt: String,
     pub delivered_wire: usize,
     pub request_scope: String,
 }
@@ -88,8 +91,18 @@ impl<'a> Bridge<'a> {
             None
         };
         let mut activities = Vec::new();
+        let is_agy = options.executor == crate::claude::Executor::Agy;
+        let mut dynamic_prompt = String::new();
         let mut prompt = tools::instructions(&session.root, options.mode, options.approval_mode);
-        prompt.push_str("\nExecution backend: Claude Code. Keep your native reasoning and conversation management. All project operations, commands, tasks, questions, workflow coordination, approvals and external integrations are exposed by the Jarvis MCP server. Use these tools rather than describing actions for the user to execute. Jarvis owns their permissions and durable results. Do not create a second task/agent system. MCP discovery results include availableTools with exact schemas. Execute newly available tools and discovery controls through call_mcp_tool using their exact name and arguments; no new user message or tools/list refresh is required. Search results marked loaded:true already include their schema; do not load them again. The native Claude built-in tools are intentionally disabled to preserve the selected Jarvis role, project scope and approval contract.\n");
+        let backend = if is_agy {
+            "Antigravity CLI"
+        } else {
+            "Claude Code"
+        };
+        prompt.push_str(&format!("\nExecution backend: {backend}. Keep your native reasoning and conversation management. All project operations, commands, tasks, questions, workflow coordination, approvals and external integrations are exposed by the Jarvis MCP server. Use these tools rather than describing actions for the user to execute. Jarvis owns their permissions and durable results. Do not create a second task/agent system. MCP discovery results include availableTools with exact schemas. Execute newly available tools and discovery controls through call_mcp_tool using their exact name and arguments; no new user message or tools/list refresh is required. Search results marked loaded:true already include their schema; do not load them again. Native built-in tools are intentionally disabled to preserve the selected Jarvis role, project scope and approval contract.\n"));
+        if is_agy {
+            prompt.push_str("\nAntigravity tool routing: Jarvis owns every tool effect. Use only the native call_mcp_tool dispatcher for actions: ServerName must be exactly jarvis; ToolName must match a tool exposed by the Jarvis server; Arguments must be a JSON object matching that tool schema. Route filesystem, shell, browser, HTTP, skills, Core, memory, external MCP and delegation through these Jarvis tools. Never use native built-in tools, list_resources, read_resource or another MCP server. Continue using actual MCP results within this process; do not stop after a tool call. A prior response or remembered result does not prove that a newly requested action ran: wait for its current confirmed tool receipt before claiming completion.\n");
+        }
         prompt.push_str(&crate::library::repositories::prompt(
             runtime.state,
             home,
@@ -105,12 +118,20 @@ impl<'a> Bridge<'a> {
                 },
             )?;
             prompt.push_str(&exec.instructions()?);
-            prompt.push_str(&exec.context()?);
+            if is_agy {
+                dynamic_prompt.push_str(&exec.context()?);
+            } else {
+                prompt.push_str(&exec.context()?);
+            }
         }
         prompt.push_str(context.instructions());
         if direct_tasks {
             prompt.push_str(tasks::INSTRUCTIONS);
-            prompt.push_str(&session.task_context()?);
+            if is_agy {
+                dynamic_prompt.push_str(&session.task_context()?);
+            } else {
+                prompt.push_str(&session.task_context()?);
+            }
         }
         if project_beads.is_some() {
             prompt.push_str(crate::core::beads::PROJECT_INSTRUCTIONS);
@@ -125,7 +146,12 @@ impl<'a> Bridge<'a> {
                         .map_err(|_| crate::core::error("Projeto indisponível."))
                 })
                 .await?;
-            prompt.push_str(&format!("\nBeads state (reference data):\n{snapshot}"));
+            let snapshot = format!("\nBeads state (reference data):\n{snapshot}");
+            if is_agy {
+                dynamic_prompt.push_str(&snapshot);
+            } else {
+                prompt.push_str(&snapshot);
+            }
         }
         if options.mode == Mode::Build {
             prompt.push_str(&publication::instructions(&publication::load(
@@ -229,6 +255,7 @@ impl<'a> Bridge<'a> {
             restricted,
             publication,
             prompt,
+            dynamic_prompt,
             delivered_wire: 0,
             request_scope: crate::claude::new_session_id().map_err(super::runtime_error)?,
         })
