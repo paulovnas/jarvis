@@ -2,7 +2,7 @@ import { appendFileSync, copyFileSync, mkdirSync, readdirSync, statSync, writeFi
 import path from "node:path";
 import { prerelease } from "semver";
 import { command, configuration, optionalRelease, root } from "./release-common";
-import { artifactNames, desktopManifest, notesFromTag, RELEASE_REPOSITORY, releaseTargets, supportedTarget, targetPlatforms, validateCIRequest } from "./release-plan";
+import { artifactNames, desktopManifest, notesFromTag, RELEASE_REPOSITORY, releaseTargets, requireLocalValidation, supportedTarget, targetPlatforms, validateCIRequest } from "./release-plan";
 import { verifyReleaseArtifacts } from "./release-artifacts";
 
 const tag = process.env.RELEASE_TAG ?? "";
@@ -17,6 +17,7 @@ function verifyTag() {
   const sha = command("git", ["rev-parse", "HEAD"], true);
   if (tag && command("git", ["rev-parse", `refs/tags/${tag}^{commit}`], true) !== sha) throw new Error("A tag não aponta para o commit compilado.");
   if (process.env.RELEASE_SHA && process.env.RELEASE_SHA !== sha) throw new Error("O commit mudou entre a compilação e a publicação.");
+  if (publish && tag) requireLocalValidation(command("git", ["cat-file", "tag", `refs/tags/${tag}`], true), sha);
   return { config, sha };
 }
 function prepare() {

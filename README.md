@@ -82,6 +82,8 @@ O Jarvis aceita várias contas, que podem ser ativadas ou desativadas sem perder
 
 Modelos Custom podem receber contexto, capacidades e níveis de raciocínio do catálogo quando o ID é reconhecido, ou ser configurados manualmente. O seletor do chat organiza provedor, modelo e raciocínio e preserva a escolha por conversa.
 
+No provedor OpenAI Codex, **Ultra** é uma opção do cliente. O Jarvis envia o esforço compatível indicado pelo catálogo do modelo, com preferência por Máximo quando não há uma indicação específica. A seleção de Ultra é preservada na conversa; a coordenação dos subagentes continua seguindo o fluxo configurado no Jarvis.
+
 Em **Configurações → Provedores → Ferramentas**, Web Search e Vision podem herdar o modelo do chat ou usar outra seleção. A geração de imagens usa um provedor Antigravity compatível e apresenta progresso e resultado diretamente na conversa.
 
 Outras extensões ficam disponíveis sob demanda:
@@ -196,11 +198,11 @@ Com todas as alterações commitadas e `main` sincronizada com o GitHub:
 # Validar o fluxo sem alterar arquivos.
 bun run release 0.9.10-beta --dry-run
 
-# Atualizar a versão, criar commit e tag e iniciar o GitHub Actions.
+# Preparar a versão, validar localmente e enviar a tag ao GitHub Actions.
 bun run release 0.9.10-beta
 ```
 
-The pipeline validates frontend and Rust on macOS, Windows and Linux, builds DMG, NSIS, DEB and AppImage, verifies updater signatures, and publishes all platform manifests together. The release command works from any of these systems with Bun, Git and authenticated GitHub CLI; signing keys stay in CI secrets. See [docs/RELEASING.md](docs/RELEASING.md) for setup, recovery and artifact details.
+The release command runs the full quality gates locally for the exact release commit, then schedules DMG, NSIS, DEB and AppImage builds, signature verification and joint publication in Actions. It requires Bun, Git, authenticated GitHub CLI, Rust with Clippy and the native build prerequisites of the development OS; signing keys stay in CI secrets. A separate workflow validates native integrations on macOS, Windows and Linux when their sources or dependencies change, skipping version-only commits. See [docs/RELEASING.md](docs/RELEASING.md) for setup, recovery and artifact details.
 
 ## Autoria
 

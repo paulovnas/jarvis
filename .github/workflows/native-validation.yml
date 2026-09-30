@@ -1,0 +1,88 @@
+name: Native integrations
+
+on:
+  push:
+    branches: [main]
+    paths: &native-paths
+      - 'src-tauri/**'
+      - 'scripts/**'
+      - 'bun.lock'
+      - 'package.json'
+      - '.github/workflows/**'
+  pull_request:
+    paths: *native-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A version-only push must not cancel validation of the preceding source commit.
+  group: native-integrations-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      required: ${{ steps.changes.outputs.required }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Identificar alterações além da versão
+        id: changes
+        env:
+          NATIVE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+        run: bun scripts/native-validation.ts
+
+  native:
+    needs: changes
+    if: needs.changes.outputs.required == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, windows-2022, ubuntu-22.04]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Preparar recursos usados pelo backend nativo
+        run: bun run build:extension
+      - name: Instalar dependências Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev gnome-keyring dbus-x11
+      - name: Preparar Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      - name: Testar integrações nativas
+        # libtest accepts several OR filters after --; generic agent/provider suites stay local.
+        run: >-
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib -- system:: secrets:: secrets_linux:: updater::
+          agent::execution_sandbox:: agent::shell:: agent::command_sessions:: agent::processes:: agent::terminals::
+          mcp::executable:: mcp::stdio:: claude:: --test-threads=1
+      - name: Validar cofre Linux isolado
+        if: runner.os == 'Linux'
+        run: bash scripts/check-linux-keyring.sh

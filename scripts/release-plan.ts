@@ -1,6 +1,7 @@
 import { compare, parse, valid } from "semver";
 
 export const RELEASE_REPOSITORY = "paulovnas/jarvis";
+export const localValidationTrailer = "Jarvis-Local-Checks-v1: ";
 export const releaseTargets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"] as const;
 export type ReleaseTarget = typeof releaseTargets[number];
 
@@ -40,7 +41,12 @@ export function validateCIRequest(repository: string | undefined, ref: string | 
 export function notesFromTag(contents: string, version: string): string {
   const prefix = `Jarvis ${version}\n`;
   if (!contents.startsWith(prefix)) throw new Error("A anotação da tag não corresponde à versão do Jarvis.");
-  return contents.slice(prefix.length).trim();
+  return contents.slice(prefix.length).replace(/\n\nJarvis-Local-Checks-v1: [a-f0-9]{40}\s*$/, "").trim();
+}
+export function requireLocalValidation(contents: string, sha: string): void {
+  if (!/^[a-f0-9]{40}$/.test(sha) || !contents.trimEnd().endsWith(`\n\n${localValidationTrailer}${sha}`)) {
+    throw new Error("A tag não registra os checks locais deste commit. Gere uma nova versão com bun run release.");
+  }
 }
 export function releaseVersion(input: string, current: string): string {
   const version = valid(input);

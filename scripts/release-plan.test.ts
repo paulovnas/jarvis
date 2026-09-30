@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { artifactNames, desktopManifest, notesFromTag, parseReleaseArguments, releaseManifest, releaseTargets, releaseVersion, replaceCargoVersion, supportedTarget, targetPlatforms, validateCIRequest } from "./release-plan";
+import { artifactNames, desktopManifest, localValidationTrailer, notesFromTag, parseReleaseArguments, releaseManifest, releaseTargets, releaseVersion, replaceCargoVersion, requireLocalValidation, supportedTarget, targetPlatforms, validateCIRequest } from "./release-plan";
 
 it("publishes all desktop packages together with distinct updater URLs and signatures", () => {
   const assets = releaseTargets.map(target => ({ target, archive: artifactNames("0.9.0-beta", target).archive, signature: `signature-${target}` }));
@@ -38,6 +38,17 @@ it("parses launcher options without allowing ambiguous or unsupported release ta
   expect(notesFromTag("Jarvis 0.8.3\n\nNotas em português.\n", "0.8.3")).toBe("Notas em português.");
   expect(notesFromTag("Jarvis 0.8.3\n", "0.8.3")).toBe("");
   expect(() => notesFromTag("Jarvis 0.8.2\nNotas", "0.8.3")).toThrow();
+});
+
+it("binds local validation to the exact SHA and excludes its trailer from public notes", () => {
+  const sha = "a".repeat(40);
+  const contents = `Jarvis 1.8.3\n\nNotas em português.\n\n${localValidationTrailer}${sha}\n`;
+  expect(() => requireLocalValidation(contents, sha)).not.toThrow();
+  expect(notesFromTag(contents, "1.8.3")).toBe("Notas em português.");
+  expect(notesFromTag(`Jarvis 1.8.3\n\n\n\n${localValidationTrailer}${sha}\n`, "1.8.3")).toBe("");
+  expect(() => requireLocalValidation(contents, "b".repeat(40))).toThrow("checks locais");
+  expect(() => requireLocalValidation(`Jarvis 1.8.3\n\nNotas.\n`, sha)).toThrow("checks locais");
+  expect(() => requireLocalValidation(contents, "invalid")).toThrow("checks locais");
 });
 
 it("aceita a primeira publicação e versões posteriores sem permitir downgrade ou tags ambíguas", () => {

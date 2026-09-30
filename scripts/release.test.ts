@@ -6,18 +6,24 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   root: "", command: vi.fn<(...args: unknown[]) => string>(),
   optionalRelease: vi.fn<() => { isDraft: boolean } | null>(),
+  head: "", remote: "", tagCommit: null as string | null, tagContents: "", dirty: "", branch: "main",
 }));
 vi.mock("./release-common", () => ({
   get root() { return state.root; },
   versionFiles: ["package.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"],
   releaseWorkflow: "release-macos.yml", releaseEnvironment: "macos-release",
   requiredSecrets: ["KEY"], command: state.command, optionalRelease: state.optionalRelease,
-  configuration: () => ({ pkg: JSON.parse(readFileSync(path.join(state.root, "package.json"), "utf8")) as { version: string }, config: { version: "0.8.3-beta.1" } }),
+  configuration: () => {
+    const pkg = JSON.parse(readFileSync(path.join(state.root, "package.json"), "utf8")) as { version: string };
+    return { pkg, config: { version: pkg.version } };
+  },
   read: (name: string) => readFileSync(path.join(state.root, name), "utf8"),
 }));
 
 const originalArgv = process.argv;
 const originalExit = process.exitCode;
+const originalSha = "a".repeat(40);
+const releaseSha = "b".repeat(40);
 beforeEach(() => {
   vi.resetModules();
   state.root = mkdtempSync(path.join(tmpdir(), "jarvis-launcher-test-"));
@@ -25,12 +31,26 @@ beforeEach(() => {
   writeFileSync(path.join(state.root, "package.json"), JSON.stringify({ version: "0.8.3-beta.1", scripts: { untouched: "value" } }));
   writeFileSync(path.join(state.root, "src-tauri/Cargo.toml"), '[package]\nname = "jarvis"\nversion = "0.8.3-beta.1"\n');
   writeFileSync(path.join(state.root, "src-tauri/Cargo.lock"), '[[package]]\nname = "jarvis"\nversion = "0.8.3-beta.1"\n');
+  state.head = originalSha; state.remote = originalSha; state.tagCommit = null; state.tagContents = ""; state.dirty = ""; state.branch = "main";
   state.optionalRelease.mockReset().mockReturnValue(null);
   state.command.mockReset().mockImplementation((program, input) => {
     const args = input as string[];
     const text = args.join(" ");
-    if (program === "git" && text === "branch --show-current") return "main";
-    if (program === "git" && text.startsWith("rev-parse")) return "abc123";
+    if (program === "git") {
+      if (text === "branch --show-current") return state.branch;
+      if (text === "status --porcelain") return state.dirty;
+      if (text === "rev-parse HEAD") return state.head;
+      if (text === "rev-parse origin/main" || text === "rev-parse HEAD^") return state.remote;
+      if (text.startsWith("tag --list")) return state.tagCommit ? "v0.8.4-beta" : "";
+      if (text.startsWith("rev-list")) return state.tagCommit ?? "";
+      if (text.startsWith("cat-file tag")) return state.tagContents;
+      if (text === "log -1 --format=%s") return "chore(release): v0.8.4-beta";
+      if (args[0] === "commit") state.head = releaseSha;
+      if (args[0] === "tag" && args.includes("--file")) {
+        state.tagCommit = state.head;
+        state.tagContents = readFileSync(args[args.indexOf("--file") + 1], "utf8");
+      }
+    }
     if (program === "gh" && text.startsWith("repo view")) return JSON.stringify({ nameWithOwner: "paulovnas/jarvis", isPrivate: false });
     if (program === "gh" && text.startsWith("secret list")) return JSON.stringify([{ name: "KEY" }]);
     return "";
@@ -45,17 +65,32 @@ afterEach(() => {
   rmSync(state.root, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
-it("prepares a version and dispatches signed remote builds without local Rust or signing secrets", async () => {
+it("validates the final version commit locally before tagging and dispatching signed remote builds", async () => {
   await import("./release");
   expect(process.exitCode).toBe(0);
   expect(JSON.parse(readFileSync(path.join(state.root, "package.json"), "utf8"))).toEqual({ version: "0.8.4-beta", scripts: { untouched: "value" } });
-  expect(state.command).toHaveBeenCalledWith("git", ["push", "--atomic", "origin", "main", "refs/tags/v0.8.4-beta"]);
+  expect(state.command).toHaveBeenCalledWith("git", ["push", "--atomic", "origin", `${releaseSha}:refs/heads/main`, "refs/tags/v0.8.4-beta"]);
   expect(state.command).toHaveBeenCalledWith("gh", ["workflow", "run", "release-macos.yml", "--repo", "paulovnas/jarvis", "--ref", "main", "-f", "tag=v0.8.4-beta", "-f", "publish=true"]);
-  expect(state.command.mock.calls.some(([program]) => ["cargo", "security", "codesign", "bun"].includes(String(program)))).toBe(false);
+  const calls = state.command.mock.calls.map(([program, args]) => `${program} ${(args as string[]).join(" ")}`);
+  const ordered = ["git commit", "bun install --frozen-lockfile", "bun run check", "cargo clippy", "cargo test", "git tag --no-sign -a", "git push", "gh workflow run"].map(prefix => calls.findIndex(call => call.startsWith(prefix)));
+  expect(ordered.every((index, i) => index >= 0 && (i === 0 || index > ordered[i - 1]))).toBe(true);
+  expect(state.tagContents).toContain(`Jarvis-Local-Checks-v1: ${releaseSha}`);
+  expect(state.command.mock.calls.some(([program]) => ["security", "codesign"].includes(String(program)))).toBe(false);
 });
-it("checks out the requested release tag instead of a stale workflow dispatch SHA", () => {
+it("uses the current launcher to select a validated release source without repeating full gates in packaging", () => {
   const workflow = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");
-  expect(workflow).toContain("ref: ${{ inputs.tag || github.sha }}");
+  expect(workflow).toContain("ref: ${{ github.sha }}");
+  expect(workflow).toContain("bun scripts/release-ci.ts prepare");
+  for (const check of ["bun run check", "cargo clippy", "cargo test", "check-linux-keyring.sh"]) expect(workflow).not.toContain(check);
+  expect(workflow).toContain("bun scripts/release-ci.ts stage");
+  const native = readFileSync(path.join(process.cwd(), ".github/workflows/native-validation.yml"), "utf8");
+  for (const required of ["src-tauri/**", "bun.lock", "package.json", "macos-15", "windows-2022", "ubuntu-22.04", "bun scripts/native-validation.ts", "needs.changes.outputs.required == 'true'", "check-linux-keyring.sh"]) expect(native).toContain(required);
+  expect(native).toContain("--lib -- system:: secrets::");
+  expect(native).toContain("bun run build:extension");
+  expect(native).toContain("github.event_name == 'pull_request' && github.ref || github.sha");
+  expect(native).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
+  expect(native).not.toContain("bun run check");
+  expect(native).not.toContain("secrets.");
 });
 it("allows enough time to upload every signed release artifact", () => {
   const workflow = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");
@@ -84,4 +119,56 @@ it("stops before version changes when signing secrets are not configured", async
   expect(process.exitCode).toBe(1);
   expect(state.command.mock.calls.some(([, args]) => (args as string[]).includes("push"))).toBe(false);
   expect(readFileSync(path.join(state.root, "package.json"), "utf8")).toContain("0.8.3-beta.1");
+});
+
+it.each(["bun install", "bun run check", "cargo clippy", "cargo test"])("sends no tag or release when the local gate fails: %s", async gate => {
+  const original = state.command.getMockImplementation()!;
+  state.command.mockImplementation((program, args, ...rest) => {
+    if (`${program} ${(args as string[]).join(" ")}`.startsWith(gate)) throw new Error("local gate failed");
+    return original(program, args, ...rest);
+  });
+  await import("./release");
+  expect(process.exitCode).toBe(1);
+  expect(state.tagCommit).toBeNull();
+  expect(state.command.mock.calls.some(([program, input]) => {
+    const args = input as string[];
+    return args[0] === "push" || (program === "gh" && args[0] === "workflow" && args[1] === "run");
+  })).toBe(false);
+});
+
+it.each(["commit", "working tree", "branch"])("rejects source changes during local checks: %s", async changed => {
+  const original = state.command.getMockImplementation()!;
+  state.command.mockImplementation((program, args, ...rest) => {
+    const output = original(program, args, ...rest);
+    if (program === "cargo" && (args as string[])[0] === "test") {
+      if (changed === "commit") state.head = originalSha;
+      if (changed === "working tree") state.dirty = " M src/App.tsx";
+      if (changed === "branch") state.branch = "other";
+    }
+    return output;
+  });
+  await import("./release");
+  expect(process.exitCode).toBe(1);
+  expect(state.tagCommit).toBeNull();
+  expect(state.command.mock.calls.some(([, args]) => (args as string[])[0] === "push")).toBe(false);
+});
+
+it("retries the unchanged local version commit after checks failed before tag creation", async () => {
+  writeFileSync(path.join(state.root, "package.json"), JSON.stringify({ version: "0.8.4-beta" }));
+  state.head = releaseSha;
+  await import("./release");
+  expect(process.exitCode).toBe(0);
+  expect(state.command.mock.calls.some(([, args]) => (args as string[])[0] === "commit")).toBe(false);
+  expect(state.command.mock.calls.some(([program, args]) => program === "cargo" && (args as string[])[0] === "test")).toBe(true);
+  expect(state.tagCommit).toBe(releaseSha);
+});
+
+it.each([true, false])("reuses only a tag whose validation belongs to the same release commit: %s", async valid => {
+  writeFileSync(path.join(state.root, "package.json"), JSON.stringify({ version: "0.8.4-beta" }));
+  state.head = releaseSha; state.remote = releaseSha; state.tagCommit = releaseSha;
+  state.tagContents = `Jarvis 0.8.4-beta\n\nNotas preservadas.\n\nJarvis-Local-Checks-v1: ${valid ? releaseSha : originalSha}\n`;
+  await import("./release");
+  expect(process.exitCode).toBe(valid ? 0 : 1);
+  expect(state.command.mock.calls.some(([program]) => ["bun", "cargo"].includes(String(program)))).toBe(false);
+  expect(state.command.mock.calls.some(([, args]) => (args as string[])[0] === "push")).toBe(valid);
 });

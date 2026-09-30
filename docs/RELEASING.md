@@ -4,13 +4,15 @@ The release pipeline publishes macOS Apple Silicon, Windows x64 and Linux x64 to
 
 ## Publish from any development platform
 
-Start from a clean, committed `main` synchronized with `origin/main`, with Bun, Git and an authenticated GitHub CLI:
+Start from a clean, committed `main` synchronized with `origin/main`, with Bun, Git, an authenticated GitHub CLI, Rust with Clippy and the native build prerequisites for the local platform (Xcode Command Line Tools on macOS, Visual Studio C++ Build Tools on Windows, GTK/WebKitGTK development packages on Linux):
 
 ```sh
 bun run release 0.9.0-beta --notes-file docs/releases/0.9.0-beta.md
 ```
 
-The launcher works on Windows, macOS and Linux without local signing keys, Rust or Xcode. It synchronizes the version in package.json, Tauri and Cargo, creates an annotated tag, atomically pushes the commit/tag and dispatches **Release Desktop**. The workflow filename remains `release-macos.yml` for compatibility with existing launchers.
+The launcher works on Windows, macOS and Linux without local signing keys. It synchronizes the version in package.json, Tauri and Cargo, creates the version commit and runs locked dependency installation, `bun run check`, `cargo clippy --locked --all-targets -- -D warnings` and the complete Rust test suite locally. Rust tests use two threads. Only after these pass and HEAD, branch and working tree remain unchanged does it create an annotated tag recording the validated commit, atomically push that exact commit/tag and dispatch **Release Desktop**. The workflow filename remains `release-macos.yml` for compatibility with existing launchers.
+
+The `Jarvis-Local-Checks-v1` tag trailer is the maintainer's declaration that all local gates passed for its SHA; it is not a remote test run or a signed attestation. It is excluded from public release notes. There is no skip-checks flag. A retry can reuse the declaration only while the tag points to the same validated commit.
 
 ```sh
 bun run release 0.9.0-beta --dry-run
@@ -25,13 +27,15 @@ Without a notes file, GitHub generates release notes. Use canonical SemVer witho
 The build matrix runs macOS Apple Silicon (`aarch64-apple-darwin`, `macos-15`), Windows x64 (`x86_64-pc-windows-msvc`, `windows-2022`) and Linux x64 (`x86_64-unknown-linux-gnu`, `ubuntu-22.04`). The older Ubuntu builder limits the glibc baseline; it does not qualify every distribution or desktop. macOS Intel, Windows ARM64, Linux ARM64 and RPM are outside this matrix.
 
 1. Validate the official repository, `main`, tag ancestry, commit and matching versions.
-2. Install locked dependencies and run lint, typecheck, tests, production build, Clippy and Rust tests on every platform. Rust tests use one test thread to avoid races around process fixtures. Linux also runs the isolated Secret Service test with a disposable D-Bus session and GNOME Keyring wallet.
+2. Require the tag's local validation declaration to match the source SHA before publication. The workflow first loads the launcher from its main revision, then selects the requested source tag, so old source scripts cannot bypass this gate. Install locked dependencies and prepare the native toolchain. The release matrix does not repeat lint, the complete frontend/Rust test suites or Clippy; Tauri still compiles the frontend and native application required for each installer.
 3. Build the macOS app/DMG using the existing identity imported into a temporary Keychain. Build the Windows NSIS installer with the per-user installer configuration, start-menu shortcut and notification registration hooks. Build Linux DEB and AppImage with GTK/WebKitGTK and D-Bus prerequisites; DEB declares its D-Bus dependency and recommends a credential service and Bubblewrap.
 4. Sign all updater packages with the existing Tauri updater key. Verify the signatures against the public key embedded in Jarvis; also verify the macOS signer fingerprint and app/DMG signatures. Linux uses the signed AppImage for updates; the DEB is a separate installer.
 5. Upload separate artifacts with platform-specific metadata and retain them for seven days. Remove temporary macOS keys even after failures.
 6. A single publication job requires all three builds. It validates each package's version, commit, target and updater signature again, creates all manifests, uploads the complete set to a draft and promotes it only after confirming every asset and its size.
 
 Only the publication job has repository contents write permission. The existing environment `macos-release` is shared by the three build jobs to preserve its protected `main` policy and updater key. Apple secrets are provided only to macOS signing/verification steps; Windows and Linux receive the updater key only in their build step. No pull-request code runs in this workflow. Actions are pinned by commit SHA.
+
+**Native integrations** (`native-validation.yml`) is a separate, read-only CI workflow for changes to native sources, scripts, manifests, lockfiles or workflows on pushes to main and pull requests. It runs focused suites for processes, terminals, shell/sandbox, credentials, notifications, MCP subprocesses, Claude CLI and updates on the same three operating systems. Linux also runs the isolated Secret Service test with a disposable D-Bus session and GNOME Keyring wallet. Generic agent/provider and frontend suites remain local. A comparison of the changed manifests skips commits that only update Jarvis's version; dependency or configuration changes still run the matrix. Manual dispatch always runs the native suites. This workflow has no signing secrets, does not publish and does not block packaging.
 
 The Windows updater signature is **not** an Authenticode certificate. This release pipeline has no Windows publisher certificate configured, so Windows can show an unknown-publisher/SmartScreen notice. macOS signatures are preserved, but Apple notarization is not configured. Neither limitation prevents cryptographic verification by the Jarvis updater.
 
@@ -43,7 +47,7 @@ In **Actions → Release Desktop → Run workflow**, use `main`, leave the tag e
 gh workflow run release-macos.yml --ref main -f publish=false
 ```
 
-The same checks and installers are produced as workflow artifacts. No tag or public release is created, and clients are not offered an update.
+Installers and their signature checks are produced as workflow artifacts; full quality gates remain local. No tag or public release is created, and clients are not offered an update. Use **Native integrations → Run workflow** to rerun platform integration tests separately.
 
 ## Signing setup and recovery
 
@@ -69,7 +73,9 @@ GitHub cannot return secret values after upload. Keep secure backups outside Git
 
 ## Failure and retry
 
-A failed gate or missing platform prevents publication. Inspect Actions logs, then rerun all jobs for transient failures. If dispatch failed after push, the same launcher command can be repeated while the tag points to HEAD; omit the notes file on a retry. If `main` advanced, manually dispatch on `main` with the original tag and `publish=true`.
+A failed local gate leaves the version commit locally but creates no tag and sends nothing to GitHub. Fix and commit any code changes, synchronize main and rerun the release command. If the failure was transient, the unchanged local version commit can be retried directly; the gates run again.
+
+A missing platform or failed installer/signature check prevents publication. Inspect Actions logs, then rerun **all jobs** for transient failures so the publish job receives the complete artifact set for that attempt. If dispatch failed after push, the same launcher command can be repeated while the validated tag points to HEAD; omit the notes file on a retry. If `main` advanced, manually dispatch on `main` with the original validated tag and `publish=true`. Older tags without the local validation declaration can still be compiled with `publish=false`; publish a new version through the launcher instead of rewriting them.
 
 An incomplete draft can be resumed. Code corrections require a new version after publication. To remove a problematic release from update discovery without changing installed apps:
 
@@ -100,6 +106,6 @@ On Linux, install the DEB with the distribution package manager, or make the App
 
 Automatic Linux updates require a release AppImage whose file and parent directory are writable. DEB, standalone binaries and development builds offer the downloads page instead. Upgrade DEB using the package manager; Jarvis never overwrites its owned binary with an AppImage. An extracted AppImage is useful for diagnostics but does not qualify normal launch or in-place updating. See [Linux validation](PLAN-VALIDACAO-LINUX.md) for prerequisites and qualification evidence.
 
-## Reference studied
+## References studied
 
-`docs/metis/docs/update-check.md` and `docs/metis/src/utils/version-check.ts` separate backend version discovery from presentation and require the manifest to match the released package. Jarvis retains those boundaries and adds Tauri's platform-specific cryptographic verification. The Metis sources remain unchanged.
+Codex's `rust-ci.yml` and `rust-release.yml` separate validation from release construction. OpenCode's `test.yml` and `publish.yml` use the same boundary; OMP's `ci.yml` separates generic checks and native work. Jarvis applies that separation with local full gates and scoped native CI while retaining its exact-source checks, signing and atomic desktop publication. All reference trees remain unchanged.
