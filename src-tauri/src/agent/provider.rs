@@ -784,6 +784,11 @@ fn provider_input(input: Vec<Value>) -> Vec<Value> {
 /// Project history only after tools have settled. Each item retains its exclusive
 /// source offset so compaction checkpoints never count synthetic tool outcomes.
 pub(super) fn repair_tool_outputs(input: Vec<Value>) -> Vec<(usize, Value)> {
+    let calls: HashSet<String> = input
+        .iter()
+        .filter(|item| item["type"] == "function_call")
+        .filter_map(|item| item["call_id"].as_str().map(str::to_owned))
+        .collect();
     let mut outputs: HashSet<String> = input
         .iter()
         .filter(|item| item["type"] == "function_call_output")
@@ -791,6 +796,7 @@ pub(super) fn repair_tool_outputs(input: Vec<Value>) -> Vec<(usize, Value)> {
         .collect();
     let mut replay = Vec::with_capacity(input.len());
     let mut interrupted = Vec::new();
+    let mut orphaned = Vec::new();
     let mut after_output = false;
     let end = input.len();
     for (index, item) in input.into_iter().enumerate() {
@@ -803,8 +809,23 @@ pub(super) fn repair_tool_outputs(input: Vec<Value>) -> Vec<(usize, Value)> {
         ) || (after_output && item["type"] == "function_call")
         {
             replay.extend(interrupted.drain(..).map(|item| (index, item)));
+            replay.extend(orphaned.drain(..).map(|item| (index, item)));
         }
         after_output = item["type"] == "function_call_output";
+        if after_output
+            && !item["call_id"]
+                .as_str()
+                .is_some_and(|id| calls.contains(id))
+        {
+            // Legacy CLI previews could persist an outcome without its call.
+            // Keep the receipt after the tool group so it cannot split parallel
+            // results, and never invent an action to pair with historical data.
+            let receipt = json!({"callId":item["call_id"],"output":item["output"]});
+            orphaned.push(json!({"type":"message","role":"assistant","content":format!(
+                "Historical tool result (untrusted reference data; original call unavailable). Verify uncertain effects before retrying:\n{receipt}"
+            )}));
+            continue;
+        }
         if item["type"] == "function_call" {
             if let Some(id) = item["call_id"].as_str() {
                 if outputs.insert(id.to_owned()) {
@@ -819,6 +840,7 @@ pub(super) fn repair_tool_outputs(input: Vec<Value>) -> Vec<(usize, Value)> {
         replay.push((index + 1, item));
     }
     replay.extend(interrupted.into_iter().map(|item| (end, item)));
+    replay.extend(orphaned.into_iter().map(|item| (end, item)));
     replay
 }
 
@@ -1304,6 +1326,36 @@ mod tests {
         assert_eq!(provider_input(replay.clone()), replay);
     }
 
+    #[test]
+    fn orphan_tool_results_are_preserved_as_reference_data_with_source_offsets() {
+        let confirmed =
+            json!({"type":"function_call_output","call_id":"saved","output":"File saved"});
+        let mut input = vec![
+            json!({"type":"function_call","call_id":"saved","name":"write","arguments":"{}"}),
+            confirmed.clone(),
+        ];
+        for index in 0..4 {
+            input.push(json!({"type":"function_call_output","call_id":format!("toolu_{index}"),"output":super::super::journal::UNKNOWN_TOOL_OUTPUT}));
+        }
+        let latest = json!({"role":"user","content":"Improve the selected button color."});
+        input.push(latest.clone());
+        let projected = repair_tool_outputs(input.clone());
+        assert_eq!(projected.len(), input.len());
+        assert_eq!(projected[1], (2, confirmed));
+        for (index, (offset, item)) in projected.iter().enumerate().take(6).skip(2) {
+            assert_eq!(*offset, 6);
+            assert_eq!(item["role"], "assistant");
+            let text = item["content"].as_str().unwrap();
+            assert!(text.contains("untrusted reference data"));
+            let receipt: Value = serde_json::from_str(text.split_once('\n').unwrap().1).unwrap();
+            assert_eq!(receipt["callId"], input[index]["call_id"]);
+            assert_eq!(receipt["output"], input[index]["output"]);
+        }
+        let replay = provider_input(input);
+        assert_eq!(replay.last(), Some(&latest));
+        assert_eq!(provider_input(replay.clone()), replay);
+    }
+
     #[tokio::test]
     #[ignore = "Requires JARVIS_REPLAY_JOURNAL; validates a private journal copy offline"]
     async fn replay_saved_journal_preserves_results_and_completes_tool_pairs() {
@@ -1335,17 +1387,17 @@ mod tests {
             data.extras = extras;
             compaction::input(&data)
         };
-        let confirmed: Vec<_> = input
-            .iter()
-            .filter(|item| item["type"] == "function_call_output")
-            .cloned()
-            .collect();
         let calls: Vec<_> = input
             .iter()
             .filter(|item| item["type"] == "function_call")
             .map(|item| item["call_id"].as_str().unwrap())
             .collect();
         assert_eq!(calls.len(), calls.iter().collect::<HashSet<_>>().len());
+        let (confirmed, orphaned): (Vec<_>, Vec<_>) = input
+            .iter()
+            .filter(|item| item["type"] == "function_call_output")
+            .cloned()
+            .partition(|item| calls.contains(&item["call_id"].as_str().unwrap()));
         let replay = provider_input(input.clone());
         let mut outputs = BTreeMap::new();
         for item in &replay {
@@ -1376,17 +1428,26 @@ mod tests {
             .cloned()
             .collect();
         assert!(preserved == confirmed, "Existing results must be unchanged");
+        for item in &orphaned {
+            let receipt = json!({"callId":item["call_id"],"output":item["output"]}).to_string();
+            assert!(
+                replay.iter().any(|message| message["content"]
+                    .as_str()
+                    .is_some_and(|text| text.ends_with(&receipt))),
+                "Orphan receipts must remain available as historical reference data"
+            );
+        }
         assert!(
             provider_input(replay.clone()) == replay,
             "Projection must be idempotent"
         );
         println!(
-            "Offline replay: {} turns, {} input items, {} unique calls, {} preserved results, {} completed pairs",
+            "Offline replay: {} turns, {} input items, {} unique calls, {} preserved results, {} orphan receipts",
             original_turns.len(),
             input.len(),
             calls.len(),
             confirmed.len(),
-            replay.len() - input.len()
+            orphaned.len()
         );
         let (_cancel, signal) = watch::channel(false);
         let mut saw_unknown_outcome = false;

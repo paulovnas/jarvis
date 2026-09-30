@@ -308,6 +308,77 @@ fn equivalent_text_parallel_tools_and_usage_share_one_internal_semantics() {
 }
 
 #[test]
+fn legacy_cli_orphan_results_cannot_break_primary_or_secondary_provider_requests() {
+    let input = provider_input(vec![
+        json!({"role":"user","content":"Improve the button color."}),
+        json!({"type":"function_call","call_id":"read-a","name":"read","arguments":"{}"}),
+        json!({"type":"function_call","call_id":"read-b","name":"read","arguments":"{}"}),
+        json!({"type":"function_call_output","call_id":"read-a","output":"Confirmed A"}),
+        json!({"type":"function_call_output","call_id":"toolu_legacy","output":"Confirmed legacy receipt"}),
+        json!({"type":"function_call_output","call_id":"read-b","output":"Confirmed B"}),
+        json!({"role":"user","content":"Preserve the implementation."}),
+    ]);
+    assert_eq!(input[4]["call_id"], "read-b");
+    assert_eq!(input[5]["role"], "assistant");
+    assert_eq!(provider_input(input.clone()), input);
+    let credential = CodexCredential::new("fixture", "", 0, "fixture", None, None);
+    for provider in PROVIDERS {
+        let body = match provider {
+            FixtureProvider::Antigravity => {
+                antigravity::fixture_request(&credential, &options("gemini-fixture"), &input, &[])
+                    .unwrap()
+            }
+            FixtureProvider::Codex => {
+                let options = options("gpt-fixture");
+                request_body(
+                    &options,
+                    &ModelCapabilities::resolve_for_options(&credential, &options),
+                    "Fixture instructions",
+                    input.clone(),
+                    vec![],
+                    "fixture",
+                )
+            }
+            _ => {
+                let protocol = match provider {
+                    FixtureProvider::CustomResponses => Protocol::OpenaiResponses,
+                    FixtureProvider::CustomCompletions => Protocol::OpenaiCompletions,
+                    FixtureProvider::CustomMessages => Protocol::AnthropicMessages,
+                    _ => unreachable!(),
+                };
+                custom::fixture_request(
+                    &custom_config(protocol),
+                    &options("fixture-model"),
+                    input.clone(),
+                    vec![],
+                )
+                .unwrap()
+            }
+        };
+        let serialized = body.to_string();
+        for receipt in [
+            "Confirmed A",
+            "Confirmed B",
+            "Confirmed legacy receipt",
+            "Preserve the implementation.",
+        ] {
+            assert!(
+                serialized.contains(receipt),
+                "{provider:?}: missing {receipt}"
+            );
+        }
+        if matches!(provider, FixtureProvider::CustomMessages) {
+            let messages = body["messages"].as_array().unwrap();
+            let results = messages
+                .iter()
+                .find(|message| message["content"][0]["type"] == "tool_result")
+                .unwrap();
+            assert_eq!(results["content"].as_array().unwrap().len(), 2);
+        }
+    }
+}
+
+#[test]
 fn malformed_or_incomplete_streams_converge_to_structured_protocol_errors() {
     let failures = [
         completed(&json!({"status":"incomplete","output":[]})),

@@ -29,7 +29,7 @@ it("saves, reloads and removes the native agent secondary model", async () => {
   await waitFor(() => expect(third.result.current.data?.["standard/builder"].fallback).toBeNull());
 });
 
-it("rejects selecting the secondary target as primary even with different reasoning", async () => {
+it("rejects invalid duplicate assignments passed directly to persistence", async () => {
   const primary = { account: "work", model: "primary", reasoning: null };
   vi.mocked(invoke).mockResolvedValue({ "standard/builder": primary });
   const { result } = renderHook(() => useAgentModels());

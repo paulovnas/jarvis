@@ -11,7 +11,7 @@ import { FlowPicker } from "./FlowPicker";
 import { ComposerSkeleton } from "@/components/layout/LoadingSkeletons";
 import { type ProviderModelGroup, type ModelSelection } from "./ModelPicker";
 import { ExecutorModelPicker } from "./ExecutorModelPicker";
-import { claudeModels, executionChoice, executionSelection, executorOf } from "@/core/executors";
+import { claudeModels, executionChoice, executionSelection, executorOf, selectModelChoice } from "@/core/executors";
 import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
 export type { ProviderModelGroup } from "./ModelPicker";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
@@ -231,7 +231,7 @@ export function ChatComposer({
       : currentModelDef?.defaultReasoningLevel ?? currentModelDef?.reasoningLevels[0] ?? null;
   const chooseModel = (next: ModelSelection) => {
     if (selectedCustomAgent?.model) return;
-    if (agentModels && (selectedFlow.workflow !== "custom" || githubSelected)) { const targetFlow = githubSelected ? "publication" : selectedFlow.workflow ?? "standard"; void agentModels.save(targetFlow, rootRole(targetFlow), { ...agentModels.data?.[`${targetFlow}/${rootRole(targetFlow)}`], ...executionChoice(next) }); }
+    if (agentModels && (selectedFlow.workflow !== "custom" || githubSelected)) { const targetFlow = githubSelected ? "publication" : selectedFlow.workflow ?? "standard"; void agentModels.save(targetFlow, rootRole(targetFlow), selectModelChoice(agentModels.data?.[`${targetFlow}/${rootRole(targetFlow)}`], executionChoice(next), "primary")); }
     else {
       const choice = executionChoice(next);
       const bound = resolveChatModel(modelBindings, draftKey, choice);

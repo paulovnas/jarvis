@@ -4,6 +4,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { chatOptions } from "@/test/chat-fixtures";
 import type { ClaudeRuntime } from "@/core/executors";
+import type { ProviderModelGroup } from "./ModelPicker";
 
 const runtime = vi.hoisted(() => ({ data: null as ClaudeRuntime | null, loading: false, error: null as string | null, refresh: vi.fn() }));
 vi.mock("@/hooks/use-claude-runtime", () => ({ useClaudeRuntime: () => runtime }));
@@ -64,4 +65,23 @@ it("preserves the configured secondary when the composer changes the native prim
   (await screen.findByRole("menuitem", { name: /^Claude Sonnet/ })).focus(); await user.keyboard("{ArrowRight}");
   await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
   expect(save).toHaveBeenCalledWith("standard", "builder", { executor: "claude", account: "", model: "sonnet", reasoning: "high", fallback });
+});
+
+it("swaps the configured secondary into the primary selection in the chat", async () => {
+  const user = userEvent.setup(); const save = vi.fn();
+  const primary = { executor: "jarvis" as const, account: "work", model: "gpt", reasoning: null };
+  const secondary = { executor: "claude" as const, account: "", model: "sonnet", reasoning: "high" };
+  const modelGroups: ProviderModelGroup[] = [{ provider: "work", models: [{ value: "work/gpt", label: "GPT", reasoningLevels: [], defaultReasoningLevel: null }] }];
+  const controller = { data: { "standard/builder": { ...primary, fallback: secondary } }, saving: false, error: null, save, refresh: vi.fn() };
+  const { rerender } = render(<ChatComposer modelGroups={modelGroups} onSendMessage={vi.fn()} agentModels={controller} />);
+  await screen.findByRole("textbox", { name: "Mensagem" });
+  screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
+  (await screen.findByRole("menuitem", { name: /^Claude Sonnet/ })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
+  const swapped = { ...secondary, fallback: primary };
+  expect(save).toHaveBeenCalledWith("standard", "builder", swapped);
+  rerender(<ChatComposer modelGroups={modelGroups} onSendMessage={vi.fn()} agentModels={{ ...controller, data: { "standard/builder": swapped } }} />);
+  expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Claude Sonnet");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

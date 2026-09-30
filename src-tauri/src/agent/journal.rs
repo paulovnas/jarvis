@@ -1232,6 +1232,18 @@ pub(super) fn interrupt_tools(turn: &mut StoredTurn) {
                 ) {
                     tool.output = super::authoring::cancelled_output();
                 }
+                // Claude can expose a tool preview before its MCP callback.
+                // Closing that preview must preserve its observed call identity.
+                if !turn
+                    .wire
+                    .iter()
+                    .any(|item| item["type"] == "function_call" && item["call_id"] == tool.id)
+                {
+                    turn.wire.push(json!({
+                        "type":"function_call", "call_id":tool.id,
+                        "name":tool.name, "arguments":tool.args.to_string(),
+                    }));
+                }
                 turn.wire.push(
                     json!({"type":"function_call_output", "call_id":tool.id, "output":tool.output}),
                 );
@@ -1705,6 +1717,69 @@ mod tests {
 
         assert!(result.is_none());
         assert!(!visited);
+    }
+
+    #[test]
+    fn interrupted_claude_previews_keep_paired_calls_without_replacing_confirmed_results() {
+        let mut item = turn();
+        item.turn.options.executor = crate::claude::Executor::Claude;
+        let confirmed = ToolCall {
+            id: "confirmed".into(),
+            name: "read".into(),
+            args: json!({"path":"README.md"}),
+            status: "completed".into(),
+            output: "Confirmed content".into(),
+            duration_ms: 12,
+        };
+        item.wire.extend([
+            json!({"type":"function_call", "call_id":confirmed.id, "name":confirmed.name, "arguments":confirmed.args.to_string()}),
+            json!({"type":"function_call_output", "call_id":confirmed.id, "output":confirmed.output}),
+        ]);
+        let confirmed_wire = item.wire.clone();
+        let mut tools = vec![confirmed.clone()];
+        for (index, name) in ["ctx_search", "list", "list", "search"]
+            .into_iter()
+            .enumerate()
+        {
+            tools.push(ToolCall {
+                id: format!("preview-{index}"),
+                name: name.into(),
+                args: json!({"query":"filters"}),
+                status: "pending".into(),
+                output: String::new(),
+                duration_ms: 0,
+            });
+        }
+        item.turn.steps.push(Step {
+            text: "Checking filter references".into(),
+            tools,
+            ..Step::default()
+        });
+
+        interrupt_tools(&mut item);
+
+        assert_eq!(&item.wire[..confirmed_wire.len()], confirmed_wire);
+        assert_eq!(
+            serde_json::to_value(&item.turn.steps[0].tools[0]).unwrap(),
+            serde_json::to_value(&confirmed).unwrap()
+        );
+        assert_eq!(item.turn.steps[0].text, "Checking filter references");
+        for (index, tool) in item.turn.steps[0].tools[1..].iter().enumerate() {
+            let call = &item.wire[confirmed_wire.len() + index * 2];
+            let output = &item.wire[confirmed_wire.len() + index * 2 + 1];
+            assert_eq!(
+                call,
+                &json!({"type":"function_call", "call_id":tool.id, "name":tool.name, "arguments":tool.args.to_string()})
+            );
+            assert_eq!(
+                output,
+                &json!({"type":"function_call_output", "call_id":tool.id, "output":UNKNOWN_TOOL_OUTPUT})
+            );
+            assert_eq!(tool.status, "error");
+        }
+        let paired_wire = item.wire.clone();
+        interrupt_tools(&mut item);
+        assert_eq!(item.wire, paired_wire);
     }
 
     #[test]

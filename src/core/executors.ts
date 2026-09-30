@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ModelChoice } from "./provider-references";
 
 export const executorSchema = z.enum(["jarvis", "claude"]);
 export type Executor = z.infer<typeof executorSchema>;
@@ -7,6 +8,17 @@ export type ExecutionSelection = { executor?: Executor; model: string; reasoning
 export const executorOf = (choice?: { executor?: Executor } | null): Executor => choice?.executor ?? "jarvis";
 export const executionLabel = (choice: ExecutionChoice) => `${executorOf(choice) === "claude" ? "Claude Code" : choice.account} / ${choice.model}`;
 export const sameExecutionTarget = (first: ExecutionChoice, second: ExecutionChoice) => executorOf(first) === executorOf(second) && first.account === second.account && first.model === second.model;
+
+export function selectModelChoice(current: ModelChoice | null | undefined, next: ExecutionChoice, slot: "primary" | "secondary"): ModelChoice {
+  if (!current) return next;
+  const { fallback, ...primary } = current;
+  const opposite = slot === "primary" ? fallback : primary;
+  if (opposite && sameExecutionTarget(next, opposite)) {
+    // Without a secondary, there is no alternate primary to swap in.
+    return fallback ? { ...fallback, fallback: primary } : current;
+  }
+  return slot === "primary" ? { ...current, ...next } : { ...current, fallback: next };
+}
 
 export function executionSelection(choice?: ExecutionChoice | null): ExecutionSelection | null {
   return choice ? { executor: executorOf(choice), model: executorOf(choice) === "claude" ? choice.model : `${choice.account}/${choice.model}`, reasoning: choice.reasoning } : null;

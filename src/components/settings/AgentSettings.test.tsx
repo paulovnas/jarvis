@@ -83,6 +83,29 @@ it("shows no secondary by default, saves it for one native agent, restores it an
   expect(save).toHaveBeenLastCalledWith("planned", "planner", { ...primary, fallback: null });
 });
 
+it.each(["primary", "secondary"] as const)("swaps both configured native agent models when selecting the other target as %s", async slot => {
+  const user = userEvent.setup();
+  const primary = { executor: "jarvis" as const, account: accounts[0].alias, model: "gpt-5.6-sol", reasoning: "high" };
+  const fallback = { ...primary, account: "backup", reasoning: "xhigh" };
+  const providerAccounts = [...accounts, { ...accounts[0], alias: "backup" }];
+  vi.mocked(useAgentModels).mockReturnValue({ data: { "planned/planner": { ...primary, fallback } }, error: null, saving: false, save, refresh: vi.fn() });
+  const { rerender } = render(<AgentSettings accounts={providerAccounts} flowFilter="planned" />);
+  const primaryName = "Modelo de Planejador no fluxo Planejado";
+  const secondaryName = "Modelo secundário de Planejador no fluxo Planejado";
+  await user.click(screen.getByRole("button", { name: slot === "primary" ? primaryName : secondaryName }));
+  (await screen.findByRole("menuitem", { name: slot === "primary" ? "backup" : primary.account })).focus(); await user.keyboard("{ArrowRight}");
+  (await screen.findByRole("menuitem", { name: /^GPT 5\.6 Sol/ })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
+
+  const swapped = { ...fallback, fallback: primary };
+  expect(save).toHaveBeenCalledExactlyOnceWith("planned", "planner", swapped);
+  vi.mocked(useAgentModels).mockReturnValue({ data: { "planned/planner": swapped }, error: null, saving: false, save, refresh: vi.fn() });
+  rerender(<AgentSettings accounts={providerAccounts} flowFilter="planned" />);
+  expect(screen.getByRole("button", { name: primaryName })).toHaveTextContent("Extra alto");
+  expect(screen.getByRole("button", { name: secondaryName })).toHaveTextContent("personal · GPT 5.6 Sol · Alto");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("opens the chosen agent instructions on demand as read-only formatted Markdown", async () => {
   let resolve!: (value: unknown) => void;
   call.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
