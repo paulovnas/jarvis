@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRight, Copy, ExternalLink, RefreshCw, TerminalSquare } from "lucide-react";
+import { ChevronRight, Copy, ExternalLink, RefreshCw } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { claudeModels, DEFAULT_CLAUDE_PREFERENCES, type ClaudeProviderPreferences } from "@/core/executors";
@@ -14,6 +14,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { ProviderIcon } from "@/components/ProviderIcon";
 
 function ClaudeProviderDetails() {
   const runtime = useClaudeRuntime();
@@ -28,7 +29,7 @@ function ClaudeProviderDetails() {
   const error = runtime.error ?? runtime.data?.error;
   return <>
     <DialogHeader className="min-w-0 shrink-0 pr-6">
-      <DialogTitle className="flex items-center gap-2"><TerminalSquare className="size-5" aria-hidden="true" />Claude Code</DialogTitle>
+      <DialogTitle className="flex items-center gap-2"><ProviderIcon kind="claude-code" className="size-5" />Claude Code</DialogTitle>
       <DialogDescription>Provedor local único. Requer o CLI oficial instalado e autenticado nesta máquina. A conta, os limites e a cobrança seguem a configuração do Claude Code.</DialogDescription>
     </DialogHeader>
     <div role="region" aria-label="Configurações do Claude Code" className="-mx-4 flex min-h-0 min-w-0 flex-col gap-4 overflow-x-hidden overflow-y-auto px-4 py-1 wrap-anywhere [scrollbar-gutter:stable]">
@@ -76,7 +77,7 @@ export function ClaudeProviderCard() {
     <Card size="sm" className="min-w-0 gap-0 py-0" data-testid="provider-account-claude-code">
       <DialogTrigger render={<CardHeader />} nativeButton={false} aria-label="Detalhes de Claude Code" className="cursor-pointer rounded-lg py-3 transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><TerminalSquare className="size-4" aria-hidden="true" /></span>
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><ProviderIcon kind="claude-code" className="size-4" /></span>
           <div className="flex min-w-0 flex-1 flex-col gap-1"><CardTitle>Claude Code</CardTitle><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{status}</Badge><CardDescription>CLI local · {claudeModels(runtime.data).length} modelos ativos</CardDescription></div></div>
           <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         </div>

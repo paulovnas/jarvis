@@ -30,6 +30,105 @@ fn fixture() -> (Connection, tempfile::TempDir) {
 }
 
 #[test]
+fn chat_title_model_is_visible_remapped_and_guarded_against_later_user_edits() {
+    let (mut db, home) = fixture();
+    let original = choice("openai-codex-old", "old-model");
+    let preferences = crate::system::Preferences {
+        chat_title_model: Some(original.clone()),
+        ..crate::system::Preferences::default()
+    };
+    let path = crate::data_dir::root(home.path()).join("system.json");
+    std::fs::write(&path, serde_json::to_vec(&preferences).unwrap()).unwrap();
+    let preview = plan(&db, home.path(), "openai-codex-old").unwrap();
+    let title = preview
+        .items
+        .iter()
+        .find(|item| item.kind == Kind::ChatTitle)
+        .unwrap();
+    assert_eq!(title.item_key, crate::system::CHAT_TITLE_MODEL_KEY);
+    assert_eq!(title.label, "Títulos das conversas");
+    let replacement = choice("openai-codex-new", "new-model");
+    let transaction = db.transaction().unwrap();
+    apply(
+        &transaction,
+        home.path(),
+        &preview.alias,
+        &preview.revision,
+        &[Replacement {
+            id: title.id.clone(),
+            choice: replacement.clone(),
+        }],
+    )
+    .unwrap();
+    transaction.commit().unwrap();
+    assert_eq!(
+        crate::system::resolved_chat_title_model(&db, &preferences).unwrap(),
+        Some(replacement)
+    );
+    let current = inventory(&db, home.path()).unwrap();
+    assert_eq!(
+        current
+            .iter()
+            .find(|item| item.kind == Kind::ChatTitle)
+            .unwrap()
+            .choice
+            .account,
+        "openai-codex-new"
+    );
+    let edited = crate::system::Preferences {
+        chat_title_model: Some(choice("openai-codex-third", "third-model")),
+        ..preferences
+    };
+    std::fs::write(&path, serde_json::to_vec(&edited).unwrap()).unwrap();
+    assert_eq!(
+        crate::system::resolved_chat_title_model(&db, &edited).unwrap(),
+        edited.chat_title_model
+    );
+}
+
+#[test]
+fn chat_title_model_cannot_be_remapped_to_a_second_claude_session() {
+    let (db, home) = fixture();
+    let preferences = crate::system::Preferences {
+        chat_title_model: Some(choice("openai-codex-old", "old-model")),
+        ..crate::system::Preferences::default()
+    };
+    std::fs::write(
+        crate::data_dir::root(home.path()).join("system.json"),
+        serde_json::to_vec(&preferences).unwrap(),
+    )
+    .unwrap();
+    let preview = plan(&db, home.path(), "openai-codex-old").unwrap();
+    let title = preview
+        .items
+        .iter()
+        .find(|item| item.kind == Kind::ChatTitle)
+        .unwrap();
+    let external = ModelChoice {
+        executor: crate::claude::Executor::Claude,
+        account: String::new(),
+        model: "sonnet".into(),
+        reasoning: None,
+        fallback: None,
+    };
+    assert!(apply(
+        &db,
+        home.path(),
+        &preview.alias,
+        &preview.revision,
+        &[Replacement {
+            id: title.id.clone(),
+            choice: external,
+        }]
+    )
+    .is_err());
+    assert_eq!(
+        crate::system::resolved_chat_title_model(&db, &preferences).unwrap(),
+        preferences.chat_title_model
+    );
+}
+
+#[test]
 fn remaps_primary_and_secondary_independently_and_clears_both_on_explicit_edit() {
     let (mut db, home) = fixture();
     let native = ModelChoice {

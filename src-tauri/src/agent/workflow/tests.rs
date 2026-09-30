@@ -20,7 +20,7 @@ fn all_roles_can_retrieve_project_knowledge() {
 #[tokio::test]
 async fn secondary_model_is_optional_switches_once_and_updates_native_and_custom_workers() {
     for custom in [false, true] {
-        let (_fixture, hub) = hub();
+        let (fixture, hub) = hub();
         let mut task = job(&hub, Role::Builder, ".");
         let secondary = settings::ModelChoice {
             executor: crate::claude::Executor::Jarvis,
@@ -38,6 +38,7 @@ async fn secondary_model_is_optional_switches_once_and_updates_native_and_custom
         };
         if custom {
             let mut agent = catalog::tests::example().agents.remove(0);
+            agent.capability = catalog::Capability::WriteFiles;
             agent.model = Some(primary.clone());
             task.custom_agent = Some(agent);
         }
@@ -54,7 +55,46 @@ async fn secondary_model_is_optional_switches_once_and_updates_native_and_custom
             scope: vec![".".into()],
         };
         let (session, signal) = storage::worker(&hub, &task, None).unwrap();
-        let exhausted = AgentError::new("provider_retry_exhausted", "Provider unavailable");
+        let initial =
+            "<!doctype html><html lang=\"pt-BR\"><body><h1>Salesforce CLI</h1></body></html>";
+        let create = ToolCall {
+            id: "create-presentation".into(),
+            name: "write".into(),
+            args: json!({"path":"index.html", "content":initial}),
+            status: "running".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        assert!(execution.allowed(&create.name));
+        let output =
+            super::super::tools::execute(&fixture.root, &create, Mode::Build, signal.clone())
+                .await
+                .unwrap();
+        session.update(true, |data| {
+            data.turns.last_mut().unwrap().wire.extend([
+                json!({"type":"function_call", "call_id":create.id, "name":create.name, "arguments":create.args.to_string()}),
+                json!({"type":"function_call_output", "call_id":create.id, "output":output}),
+            ]);
+        }).unwrap();
+        let exhausted = if custom {
+            session.update_async(|data| {
+                data.turns.last_mut().unwrap().wire.push(json!({
+                    "type":"reasoning", "summary":[{"text":"The saved change is ready"}],
+                    "_antigravity_model":task.options.model,
+                    "_antigravity_part":{"thought":true,"text":"The saved change is ready","thoughtSignature":"signed-thought"},
+                }));
+            }).await.unwrap();
+            session.flush_async().await.unwrap();
+            let mut reminded = false;
+            super::super::remind_antigravity_final_output(&session, &mut reminded)
+                .await
+                .unwrap();
+            super::super::remind_antigravity_final_output(&session, &mut reminded)
+                .await
+                .unwrap_err()
+        } else {
+            AgentError::new("provider_retry_exhausted", "Provider unavailable")
+        };
         if !custom {
             assert!(!super::super::model_fallback::recover(
                 &session,
@@ -102,11 +142,44 @@ async fn secondary_model_is_optional_switches_once_and_updates_native_and_custom
         drop(session);
         task.recovery = Some(RecoveryCheckpoint::new(vec![]));
         assert_ne!(task.options.model, "secondary-model");
-        let (resumed, _) = storage::worker(&hub, &task, Some("Continue".into())).unwrap();
-        let data = resumed.data.lock().unwrap();
-        assert_eq!(data.turns.len(), 1);
-        assert_eq!(data.turns[0].turn.id, turn_id);
-        assert_eq!(data.turns[0].turn.options.model, "secondary-model");
+        let (resumed, signal) = storage::worker(&hub, &task, Some("Continue".into())).unwrap();
+        {
+            let data = resumed.data.lock().unwrap();
+            assert_eq!(data.turns.len(), 1);
+            assert_eq!(data.turns[0].turn.id, turn_id);
+            assert_eq!(data.turns[0].turn.options.model, "secondary-model");
+        }
+        assert_eq!(
+            std::fs::read_to_string(fixture.root.join("index.html")).unwrap(),
+            initial
+        );
+        assert_eq!(
+            resumed
+                .input()
+                .unwrap()
+                .iter()
+                .filter(|item| {
+                    item["type"] == "function_call_output" && item["call_id"] == create.id
+                })
+                .count(),
+            1
+        );
+        let extend = ToolCall {
+            id: "complete-presentation".into(),
+            name: "edit".into(),
+            args: json!({"path":"index.html", "oldText":"</body>", "newText":"<section><h2>Comandos</h2><code>sf version</code></section></body>"}),
+            status: "running".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        assert!(execution.allowed(&extend.name));
+        super::super::tools::execute(&fixture.root, &extend, Mode::Build, signal)
+            .await
+            .unwrap();
+        let completed = std::fs::read_to_string(fixture.root.join("index.html")).unwrap();
+        assert!(completed.contains("<h1>Salesforce CLI</h1>"));
+        assert!(completed.contains("<code>sf version</code>"));
+        assert_eq!(completed.matches("<h1>").count(), 1);
     }
 }
 

@@ -2518,6 +2518,26 @@ fn append_direct_task_instructions(instructions: &mut String) {
     }
 }
 
+async fn remind_antigravity_final_output(
+    session: &Arc<Session>,
+    reminded: &mut bool,
+) -> Result<(), AgentError> {
+    if *reminded {
+        return Err(AgentError::new(
+            "provider_retry_exhausted",
+            "O Antigravity concluiu duas respostas apenas com raciocínio, sem entregar o resultado nem solicitar uma ferramenta. O progresso confirmado foi preservado.",
+        ));
+    }
+    session.update_async(|data| {
+        data.turns.last_mut().unwrap().wire.push(json!({
+            "role":"user", "_jarvis_runtime":true,
+            "content":"Your completed response contained only internal reasoning. Deliver the requested final result or the required structured workflow result now, or call the next tool necessary to complete the task. Continue from confirmed results and tool receipts; do not repeat completed actions.",
+        }));
+    }).await?;
+    *reminded = true;
+    Ok(())
+}
+
 fn run_turn<'a>(
     session: &'a Arc<Session>,
     runtime: TurnRuntime<'a>,
@@ -2757,6 +2777,7 @@ fn run_turn_once<'a>(
         let mut handoff_reminded = false;
         let mut tasks_reminded = false;
         let mut mcp_reminded = false;
+        let mut antigravity_final_reminded = false;
         let mut repeated_tools = tool_loop::Guard::default();
         let mut progress_watchdog = progress::Watchdog::default();
         let mut read_reuse = tool_loop::ReadReuseCache::default();
@@ -3164,6 +3185,10 @@ fn run_turn_once<'a>(
                 Err(error) => return Err(error),
             };
             let calls = response.tool_calls().to_vec();
+            let antigravity_thought_only = telemetry::provider_kind(&credential)
+                == telemetry::ProviderKind::Antigravity
+                && response.text.trim().is_empty()
+                && calls.is_empty();
             let previous: HashSet<String> = session
                 .data
                 .lock()
@@ -3209,6 +3234,11 @@ fn run_turn_once<'a>(
             session.flush_async().await?;
             compaction::record_usage(session, usage.as_ref()).await?;
             if calls.is_empty() {
+                if antigravity_thought_only {
+                    remind_antigravity_final_output(session, &mut antigravity_final_reminded)
+                        .await?;
+                    continue;
+                }
                 let running = command_sessions.running_ids();
                 if !running.is_empty() {
                     session.update_async(|data| {
@@ -4277,15 +4307,40 @@ async fn generate_title(
     if !matches!(eligible, Ok(Ok(true))) {
         return;
     }
+    let generated = title_text(&conversation_id, &request, &state, &oauth, &home).await;
+    if let Some(title) = title::resolve(generated.as_deref(), &request.message) {
+        persist_title(&state, &home, &conversation_id, title, &app).await;
+    }
+}
+
+async fn title_text(
+    conversation_id: &str,
+    request: &TitleRequest,
+    state: &AppState,
+    oauth: &OpenAiCodexState,
+    home: &Path,
+) -> Option<String> {
+    let configuration_state = state.clone();
+    let configuration_home = home.to_path_buf();
+    let configured = tauri::async_runtime::spawn_blocking(move || {
+        let preferences = crate::system::backup_preferences(&configuration_home)
+            .map_err(|_| AgentError::storage())?;
+        configuration_state.with_connection(&configuration_home, |db| {
+            crate::system::resolved_chat_title_model(db, &preferences).map_err(AgentError::from)
+        })
+    })
+    .await
+    .ok()?
+    .ok()?;
+    let options = title::options(request.options.clone(), configured.as_ref());
+    if options.executor == crate::claude::Executor::Claude {
+        // Claude owns the foreground session; title generation never starts a
+        // second CLI session or silently bills a different API account.
+        return None;
+    }
     let state_clone = state.clone();
     let oauth = oauth.clone();
-    let home_clone = home.clone();
-    let options = request.options;
-    if options.executor == crate::claude::Executor::Claude {
-        // The local title already comes from the first user message. Do not open
-        // a second Claude session just to generate a title or use an API account.
-        return;
-    }
+    let home_clone = home.to_path_buf();
     let options_clone = options.clone();
     let auth = tauri::async_runtime::spawn_blocking(move || {
         oauth.inference_credential(
@@ -4296,21 +4351,20 @@ async fn generate_title(
             options_clone.reasoning.as_deref(),
         )
     })
-    .await;
-    let Ok(Ok(credential)) = auth else {
-        return;
-    };
+    .await
+    .ok()?
+    .ok()?;
     let input = vec![json!({
         "role":"user",
         "content":format!("First user message:\n{}", request.message),
     })];
     let (_sender, signal) = watch::channel(false);
-    let title_session_id = title::request_session_id(&conversation_id);
-    let title_trace = telemetry::trace(&conversation_id, &title_session_id);
+    let title_session_id = title::request_session_id(conversation_id);
+    let title_trace = telemetry::trace(conversation_id, &title_session_id);
     let result = tokio::time::timeout(
         Duration::from_secs(45),
         provider::stream(
-            &credential,
+            &auth,
             &title_session_id,
             &options,
             title::INSTRUCTIONS,
@@ -4321,20 +4375,28 @@ async fn generate_title(
             |_| Ok(()),
         ),
     )
+    .await
+    .ok()?
+    .ok()?;
+    Some(result.text)
+}
+
+async fn persist_title(
+    state: &AppState,
+    home: &Path,
+    conversation_id: &str,
+    title: String,
+    app: &tauri::AppHandle,
+) {
+    let state = state.clone();
+    let home = home.to_path_buf();
+    let id = conversation_id.to_owned();
+    let saved = tauri::async_runtime::spawn_blocking(move || {
+        library::save_generated_title(&state, &home, &id, &title)
+    })
     .await;
-    if let Ok(Ok(response)) = result {
-        if let Some(title) = title::normalize(&response.text) {
-            let save_state = state.clone();
-            let save_home = home.clone();
-            let save_id = conversation_id.clone();
-            let saved = tauri::async_runtime::spawn_blocking(move || {
-                library::save_generated_title(&save_state, &save_home, &save_id, &title)
-            })
-            .await;
-            if matches!(saved, Ok(Ok(true))) {
-                let _ = app.emit("library:changed", &conversation_id);
-            }
-        }
+    if matches!(saved, Ok(Ok(true))) {
+        let _ = app.emit("library:changed", conversation_id);
     }
 }
 

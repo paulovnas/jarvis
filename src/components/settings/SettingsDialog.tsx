@@ -777,7 +777,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
                 <h2 className="text-sm font-medium">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.label}</h2>
                 <p className="mt-1 text-xs text-muted-foreground">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.description}</p>
               </div>
-              <TabsContent value="general" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "general" && <div className="w-full"><SystemSettings /><ChatCleanupSettings /><BackupSettings accounts={accounts} onRestored={summary => { updateSkillCount(summary.skills); updateMcpCount(summary.mcps); }} /></div>}</TabsContent>
+              <TabsContent value="general" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "general" && <div className="w-full"><SystemSettings accounts={accounts} /><ChatCleanupSettings /><BackupSettings accounts={accounts} onRestored={summary => { updateSkillCount(summary.skills); updateMcpCount(summary.mcps); }} /></div>}</TabsContent>
               <TabsContent value="terminal" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "terminal" && <TerminalSettings />}</TabsContent>
               <TabsContent value="browser" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "browser" && <BrowserSettings />}</TabsContent>
               <TabsContent value="workspaces" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "workspaces" && <WorkspaceSettings />}</TabsContent>

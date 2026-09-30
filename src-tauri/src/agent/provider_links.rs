@@ -21,6 +21,7 @@ pub enum Kind {
     WebSearch,
     Vision,
     ImageGeneration,
+    ChatTitle,
     BuiltinAgent,
     CustomAgent,
     Conversation,
@@ -166,6 +167,19 @@ fn chat_choices(path: &Path) -> Result<Vec<(TurnOptions, bool)>, ProviderError> 
 
 pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, ProviderError> {
     let mut references = Vec::new();
+    if let Some(choice) = crate::system::backup_preferences(home)
+        .map_err(storage)?
+        .chat_title_model
+    {
+        references.push(reference(
+            db,
+            crate::system::CHAT_TITLE_MODEL_KEY.into(),
+            Kind::ChatTitle,
+            "Títulos das conversas".into(),
+            vec!["Configurações gerais".into()],
+            choice,
+        )?);
+    }
     for (table, kind, label) in [
         ("web_search_config", Kind::WebSearch, "Web Search"),
         ("vision_config", Kind::Vision, "Vision"),
@@ -431,7 +445,7 @@ fn apply(
         if replacement.choice.executor == crate::claude::Executor::Claude
             && matches!(
                 item.kind,
-                Kind::WebSearch | Kind::Vision | Kind::ImageGeneration
+                Kind::WebSearch | Kind::Vision | Kind::ImageGeneration | Kind::ChatTitle
             )
         {
             return Err(error(
@@ -626,7 +640,7 @@ pub async fn remove(
             if replacement.choice.executor == crate::claude::Executor::Claude {
                 if matches!(
                     item.kind,
-                    Kind::WebSearch | Kind::Vision | Kind::ImageGeneration
+                    Kind::WebSearch | Kind::Vision | Kind::ImageGeneration | Kind::ChatTitle
                 ) {
                     return Err(error(
                         "Esta ferramenta requer um provedor Jarvis, não um executor externo.",
@@ -731,6 +745,7 @@ pub async fn remove(
     ] {
         let _ = app.emit(event, ());
     }
+    app.state::<crate::system::SystemState>().changed(&app);
     Ok(result)
 }
 

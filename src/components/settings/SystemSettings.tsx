@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Bell, Languages, Monitor, Moon, Send, TimerReset } from "lucide-react";
+import { Bell, Languages, MessageSquareText, Monitor, Moon, Send, TimerReset } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -10,12 +10,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/TextInput";
+import { ModelPicker } from "@/components/chat/ModelPicker";
+import { accountGroups } from "./workflow/workflow-models";
+import { executionChoice, executionSelection } from "@/core/executors";
+import type { ProviderAccount } from "@/core/provider-accounts";
 import { libraryError } from "@/core/library";
 import { responseLanguages, sleepModes, systemSnapshotSchema, type SystemPreferences, type SystemSnapshot } from "@/core/system-preferences";
 
 const systemError = (cause: unknown, fallback: string) => typeof cause === "string" ? cause : libraryError(cause, fallback);
 
-export function SystemSettings() {
+export function SystemSettings({ accounts = [] }: { accounts?: ProviderAccount[] }) {
   const [snapshot, setSnapshot] = useState<SystemSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -114,6 +118,16 @@ export function SystemSettings() {
           <div className="relative w-full shrink-0 xl:w-36">
             <Input id="ask-user-timeout" aria-label="Tempo para resposta recomendada" type="number" min={1} max={3600} step={1} inputMode="numeric" value={timeoutDraft} disabled={busy} onChange={event => setTimeoutDraft(event.target.value)} onBlur={commitQuestionTimeout} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} className="h-7 pr-16 font-mono text-xs tabular-nums" />
             <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[10px] text-muted-foreground">segundos</span>
+          </div>
+        </div>
+        <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:col-span-2 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <p className="flex items-center gap-2 text-xs font-medium"><MessageSquareText className="size-3.5 text-primary" />Títulos das conversas</p>
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Escolha um modelo de um provedor conectado só para gerar títulos, sem alterar o modelo dos agentes.</p>
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Automático segue o modelo da conversa; com Claude Code, usa um título local sem abrir outra sessão.</p>
+          </div>
+          <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2">
+            <ModelPicker modelGroups={accountGroups(accounts)} selection={executionSelection(snapshot.preferences.chatTitleModel)} disabled={busy} ariaLabel="Modelo para títulos das conversas" showProviderIdentity clearLabel="Automático" onClear={() => void save({ chatTitleModel: null })} onSelect={selection => void save({ chatTitleModel: executionChoice(selection) })} />
           </div>
         </div>
       </Card>

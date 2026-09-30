@@ -11,7 +11,7 @@ export const backupSummarySchema = z.object({
 
 export const backupModelTargetSchema = z.object({
   id: z.string().min(1),
-  kind: z.enum(["builtin_agent", "custom_agent"]),
+  kind: z.enum(["builtin_agent", "custom_agent", "chat_title"]),
   label: z.string().min(1),
   details: z.array(z.string()),
 });

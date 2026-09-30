@@ -113,6 +113,190 @@ fn fixture_script() -> PathBuf {
 }
 
 #[tokio::test]
+async fn stable_gateway_receives_activated_schemas_without_relisting_its_initial_catalog() {
+    let f = Fixture::new();
+    let database = f.local("database");
+    f.local("unrelated");
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &McpIntent::default(),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    // Claude reads tools/list once. The bridge must provide the new schemas in
+    // the activation receipt even though that initial catalog cannot change.
+    let initial = clients.definitions(&f.mcp, &f.state, &f.home, true).await;
+    assert_eq!(initial.len(), 1);
+    assert_eq!(initial[0]["name"], "mcp_activate");
+    let args = json!({"server":"database"});
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &args,
+            true,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    let available = clients.definitions(&f.mcp, &f.state, &f.home, true).await;
+    let receipt = clients.discovery_schemas("mcp_activate", &args, &output, &available);
+    let lookup = runtime::wire_name(&database, "lookup");
+    let schema = receipt.iter().find(|tool| tool["name"] == lookup).unwrap();
+    assert_eq!(schema["inputSchema"]["required"], json!(["query"]));
+    assert!(!receipt
+        .iter()
+        .any(|tool| tool["name"] == runtime::wire_name(&database, "mutate")));
+    let result = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            schema["name"].as_str().unwrap(),
+            &json!({"query":"schema receipt"}),
+            true,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(result.contains("schema receipt"));
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\n"
+    );
+
+    // A resumed on-demand turn can safely reactivate through current controls,
+    // rather than guessing a cached external name or asking for a new message.
+    let mut resumed = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &McpIntent::default(),
+        signal,
+    )
+    .await
+    .unwrap();
+    let current = resumed.definitions(&f.mcp, &f.state, &f.home, true).await;
+    let recovery = resumed.discovery_schemas("", &json!({}), "", &current);
+    assert_eq!(recovery.len(), 1);
+    assert_eq!(recovery[0]["name"], "mcp_activate");
+}
+
+#[tokio::test]
+async fn stable_gateway_receipts_include_only_selected_and_permitted_deferred_schemas() {
+    let f = Fixture::new();
+    let database = f.local_with_tools("database", 2000, 48);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &McpIntent::default(),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let activate_args = json!({"server":"database"});
+    let activated = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &activate_args,
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    let available = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let controls =
+        clients.discovery_schemas("mcp_activate", &activate_args, &activated, &available);
+    assert_eq!(
+        controls
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["mcp_search_tools", "mcp_load_tool"]
+    );
+    let args = json!({"query":"catalog tool 37", "limit":1});
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_search_tools",
+            &args,
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    let selected = runtime::wire_name(&database, "catalog_tool_37");
+    let available = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let receipt = clients.discovery_schemas("mcp_search_tools", &args, &output, &available);
+    assert_eq!(receipt.len(), 3);
+    let schema = receipt
+        .iter()
+        .find(|tool| tool["name"] == selected)
+        .unwrap();
+    assert_eq!(schema["inputSchema"]["required"], json!(["query"]));
+    assert!(clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            schema["name"].as_str().unwrap(),
+            &json!({"query":"exact schema"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap()
+        .contains("exact schema"));
+
+    let load_args = json!({"tool":selected});
+    let loaded = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_load_tool",
+            &load_args,
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&loaded).unwrap()["alreadyLoaded"],
+        true
+    );
+    assert!(clients
+        .discovery_schemas("mcp_load_tool", &load_args, &loaded, &available)
+        .iter()
+        .any(|tool| tool["name"] == selected));
+
+    let restricted = clients
+        .definitions_with(&f.mcp, &f.state, &f.home, false, |name| name != selected)
+        .await;
+    assert!(!clients
+        .discovery_schemas("mcp_load_tool", &load_args, &loaded, &restricted)
+        .iter()
+        .any(|tool| tool["name"] == selected));
+}
+
+#[tokio::test]
 async fn read_only_calls_overlap_on_the_same_mcp_peer_without_exposing_mutations() {
     let f = Fixture::new();
     let server = f.local("parallel-docs");

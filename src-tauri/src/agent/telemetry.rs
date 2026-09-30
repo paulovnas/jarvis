@@ -311,6 +311,18 @@ pub(crate) enum Event {
         output_bytes: u64,
         failure: Option<FailureClass>,
     },
+    ProviderStream {
+        provider: ProviderKind,
+        model_id: String,
+        outcome: Outcome,
+        duration_ms: u64,
+        received_bytes: u64,
+        completed_events: u64,
+        buffered_bytes: u64,
+        reasoning_chars: u64,
+        transport_idle_ms: u64,
+        parsed_progress_idle_ms: u64,
+    },
     PolicyEvaluated {
         tool: ToolKind,
         tool_id: String,
@@ -527,6 +539,26 @@ impl Event {
                     ]
                     .into_iter()
                     .all(|value| value.is_none_or(|value| value <= MAX_TOKENS))
+            }
+            Self::ProviderStream {
+                model_id,
+                duration_ms,
+                received_bytes,
+                completed_events,
+                buffered_bytes,
+                reasoning_chars,
+                transport_idle_ms,
+                parsed_progress_idle_ms,
+                ..
+            } => {
+                valid_correlation(model_id)
+                    && duration(*duration_ms)
+                    && bytes(*received_bytes)
+                    && count(*completed_events)
+                    && bytes(*buffered_bytes)
+                    && bytes(*reasoning_chars)
+                    && *transport_idle_ms <= *duration_ms
+                    && *parsed_progress_idle_ms <= *duration_ms
             }
             Self::ToolFinished {
                 tool_id,
@@ -786,6 +818,7 @@ impl TelemetryState {
                         first_event_samples += 1;
                     }
                 }
+                Event::ProviderStream { .. } => {}
                 Event::ToolFinished {
                     outcome,
                     duration_ms,
@@ -1346,6 +1379,38 @@ mod tests {
             assert!(!serialized.contains(private));
         }
         assert_eq!(state.records().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn stream_counters_roundtrip_without_content_or_double_counting_requests() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = state(directory.path());
+        let context = TraceContext::fixture("b");
+        let mut event = Event::ProviderStream {
+            provider: ProviderKind::Antigravity,
+            model_id: model_id("private-model-name"),
+            outcome: Outcome::Failed,
+            duration_ms: 600_000,
+            received_bytes: 13_000_000,
+            completed_events: 3,
+            buffered_bytes: 46_000,
+            reasoning_chars: 12_000_000,
+            transport_idle_ms: 100,
+            parsed_progress_idle_ms: 300_000,
+        };
+        assert!(state.record(&context, event.clone()));
+        let serialized = fs::read_to_string(log_path(&state.inner.root, 0)).unwrap();
+        assert!(serialized.contains("parsedProgressIdleMs"));
+        assert!(!serialized.contains("private-model-name"));
+        assert_eq!(state.records().unwrap()[0].event, event);
+        assert_eq!(state.report().unwrap().provider_requests, 0);
+        if let Event::ProviderStream {
+            transport_idle_ms, ..
+        } = &mut event
+        {
+            *transport_idle_ms = 600_001;
+        }
+        assert!(!state.record(&context, event));
     }
 
     #[test]

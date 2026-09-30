@@ -143,6 +143,76 @@ fn a_running_first_turn_is_immediately_available_for_title_generation() {
 }
 
 #[test]
+fn a_claude_first_turn_can_save_a_local_title_before_the_answer_without_replacing_manual_names() {
+    let fixture = Fixture::new();
+    let state = AppState::default();
+    let session = session(&fixture);
+    let mut claude = options(ApprovalMode::Yolo);
+    claude.executor = crate::claude::Executor::Claude;
+    claude.account.clear();
+    claude.model = "sonnet".into();
+    session
+        .reserve("Verificar o MCP do database".into(), claude)
+        .unwrap();
+    let request = title_request(&session).unwrap();
+    let local = title::local(&request.message).unwrap();
+    assert_eq!(request.options.executor, crate::claude::Executor::Claude);
+    assert_eq!(
+        session.snapshot().unwrap().turns[0].status,
+        TurnStatus::Running
+    );
+    state.with_connection(&fixture.root, |db| {
+        db.execute("INSERT INTO workspaces (id,name) VALUES ('w','Workspace')", [])?;
+        db.execute("INSERT INTO projects (id,workspace_id,name,path) VALUES ('p','w','Project',?1)", [fixture.root.to_string_lossy()])?;
+        db.execute("INSERT INTO conversations (id,project_id,title,title_source) VALUES ('conversation','p','Nova Conversa','default')", [])?;
+        Ok::<_, library::LibraryError>(())
+    }).unwrap();
+    assert!(library::save_generated_title(&state, &fixture.root, "conversation", &local).unwrap());
+    assert_eq!(
+        library::notification_names(&state, &fixture.root, "conversation")
+            .unwrap()
+            .1,
+        local
+    );
+    state.with_connection(&fixture.root, |db| {
+        db.execute("UPDATE conversations SET display_title='Nome escolhido',title_source='manual' WHERE id='conversation'", [])?;
+        Ok::<_, library::LibraryError>(())
+    }).unwrap();
+    assert!(!library::save_generated_title(&state, &fixture.root, "conversation", &local).unwrap());
+    assert_eq!(
+        library::notification_names(&state, &fixture.root, "conversation")
+            .unwrap()
+            .1,
+        "Nome escolhido"
+    );
+}
+
+#[tokio::test]
+async fn failed_title_credentials_return_a_local_title_without_switching_the_chat_model() {
+    let fixture = Fixture::new();
+    let state = AppState::default();
+    let request = TitleRequest {
+        message: "Revisar integração com Salesforce".into(),
+        options: options(ApprovalMode::Yolo),
+    };
+    let generated = title_text(
+        "conversation",
+        &request,
+        &state,
+        &OpenAiCodexState::default(),
+        &fixture.root,
+    )
+    .await;
+    assert!(generated.is_none());
+    assert_eq!(
+        title::resolve(generated.as_deref(), &request.message),
+        Some(request.message.clone())
+    );
+    assert_eq!(request.options.account, "account");
+    assert_eq!(request.options.model, "model");
+}
+
+#[test]
 fn title_generation_guard_deduplicates_and_allows_retry_after_completion() {
     let state = AgentState::default();
     let first = state
@@ -161,6 +231,62 @@ fn title_generation_guard_deduplicates_and_allows_retry_after_completion() {
         .begin_title_generation("conversation")
         .unwrap()
         .is_some());
+}
+
+#[tokio::test]
+async fn antigravity_thought_only_recovery_is_bounded_and_journals_after_confirmed_output() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    session
+        .reserve("Explique o resultado".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    let thought = json!({
+        "type":"reasoning", "summary":[{"text":"The result is ready"}],
+        "_antigravity_model":"gemini-3.8-flash",
+        "_antigravity_part":{"thought":true,"text":"The result is ready","thoughtSignature":"signed-thought"},
+    });
+    session
+        .update_async(|data| {
+            data.turns.last_mut().unwrap().wire.push(thought.clone());
+        })
+        .await
+        .unwrap();
+    session.flush_async().await.unwrap();
+    let mut reminded = false;
+    remind_antigravity_final_output(&session, &mut reminded)
+        .await
+        .unwrap();
+    session.flush_async().await.unwrap();
+    let replay = history::HistoryState::default()
+        .load_replay(&session.journal, &fixture.root)
+        .unwrap();
+    let input = &replay.turns.last().unwrap().wire;
+    assert_eq!(input[input.len() - 2], thought);
+    assert_eq!(input.last().unwrap()["_jarvis_runtime"], true);
+    assert!(input.last().unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .contains("do not repeat completed actions"));
+    let before = input.len();
+    assert_eq!(
+        remind_antigravity_final_output(&session, &mut reminded)
+            .await
+            .unwrap_err()
+            .code,
+        "provider_retry_exhausted"
+    );
+    assert_eq!(
+        session
+            .data
+            .lock()
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .wire
+            .len(),
+        before
+    );
 }
 
 pub(super) fn session(fixture: &Fixture) -> Arc<Session> {

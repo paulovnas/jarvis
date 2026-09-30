@@ -370,6 +370,20 @@ impl StreamOutput {
     }
 }
 impl Sse {
+    fn pending_data_len(&self) -> usize {
+        let line = self.pending.strip_prefix(b"data:").unwrap_or_default();
+        let data = if self.data.iter().any(|byte| !byte.is_ascii_whitespace()) {
+            self.data.len()
+        } else {
+            0
+        };
+        data + if line.iter().any(|byte| !byte.is_ascii_whitespace()) {
+            line.len()
+        } else {
+            0
+        }
+    }
+
     fn wait_timeout(&mut self) -> Duration {
         if self.received_event {
             return STREAM_IDLE_TIMEOUT;
@@ -388,14 +402,16 @@ impl Sse {
         bytes: &[u8],
         limit: usize,
     ) -> Result<Vec<Value>, AgentError> {
+        // The retained tail has no newline; scan only newly received bytes.
+        let mut scan_start = self.pending.len();
         self.pending.extend_from_slice(bytes);
         let mut consumed = 0;
         let mut events = vec![];
-        while let Some(relative) = self.pending[consumed..]
+        while let Some(relative) = self.pending[scan_start..]
             .iter()
             .position(|byte| *byte == b'\n')
         {
-            let end = consumed + relative;
+            let end = scan_start + relative;
             let line = self.pending[consumed..end]
                 .strip_suffix(b"\r")
                 .unwrap_or(&self.pending[consumed..end]);
@@ -416,6 +432,7 @@ impl Sse {
                 return Err(protocol_error());
             }
             consumed = end + 1;
+            scan_start = consumed;
         }
         self.pending.drain(..consumed);
         if self.pending.len() > limit {
@@ -423,6 +440,28 @@ impl Sse {
         }
         Ok(events)
     }
+}
+
+#[test]
+fn sse_fragmented_lines_and_delimiters_preserve_complete_events() {
+    let mut parser = Sse::default();
+    let mut events = vec![];
+    for chunk in [
+        "da",
+        "ta: {\"value\":1}",
+        "\r",
+        "\n",
+        "\r",
+        "\n",
+        ": comment\ndata: {\"value\":2}\n\n",
+        "data: [DO",
+        "NE]\n\n",
+    ] {
+        events.extend(parser.push(chunk.as_bytes()).unwrap());
+    }
+    assert_eq!(events, vec![json!({"value":1}), json!({"value":2})]);
+    assert!(parser.done);
+    assert_eq!(parser.pending_data_len(), 0);
 }
 fn protocol_error() -> AgentError {
     AgentError::new("provider_protocol", "O provedor retornou uma resposta incompleta ou inválida. O progresso recebido foi preservado.")
@@ -811,6 +850,7 @@ async fn stream_once(
     input: Vec<Value>,
     tools: Vec<Value>,
     signal: watch::Receiver<bool>,
+    telemetry: &super::telemetry::TraceContext,
     on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
     let provider = if credential.custom.is_some() {
@@ -846,6 +886,7 @@ async fn stream_once(
             input,
             tools,
             signal,
+            telemetry,
             on_delta,
         )
         .await

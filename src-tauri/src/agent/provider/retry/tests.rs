@@ -27,6 +27,42 @@ fn incomplete_inference_is_retryable_but_output_limits_and_refusals_are_not() {
     }
 }
 
+#[test]
+fn antigravity_timeouts_allow_one_retry_while_other_failures_keep_the_shared_budget() {
+    let mut antigravity = CodexCredential::new("synthetic-key", "", i64::MAX, "", None, None);
+    antigravity.project_id = Some("synthetic-project".into());
+    let codex = CodexCredential::new("synthetic-key", "", i64::MAX, "", None, None);
+    let custom = credential("http://127.0.0.1:1".into(), Protocol::OpenaiCompletions);
+    let timeout = AgentError::new("provider_timeout", "Buffered tool generation stalled");
+
+    let attempts: Vec<_> = (0..=MAX_RETRIES)
+        .take_while(|retries| *retries <= retry_limit(&antigravity, Some(&timeout)))
+        .collect();
+    assert_eq!(
+        attempts,
+        vec![0, 1],
+        "Only two inference requests may stall"
+    );
+    for other_provider in [&codex, &custom] {
+        assert_eq!(retry_limit(other_provider, Some(&timeout)), MAX_RETRIES);
+    }
+    for code in [
+        "provider_network",
+        "provider_unavailable",
+        "provider_limit",
+        "provider_protocol",
+        "provider_incomplete",
+        "provider_failed",
+    ] {
+        let error = AgentError::new(code, "Transient inference failure");
+        assert_eq!(retry_limit(&antigravity, Some(&error)), MAX_RETRIES);
+    }
+    assert!(
+        2 > retry_limit(&antigravity, Some(&timeout)),
+        "Earlier failures must count toward timeout exhaustion"
+    );
+}
+
 fn options() -> TurnOptions {
     TurnOptions {
         executor: crate::claude::Executor::Jarvis,

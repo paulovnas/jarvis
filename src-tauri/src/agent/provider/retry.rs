@@ -4,6 +4,18 @@ use serde::{Deserialize, Serialize};
 
 pub(super) const MAX_RETRIES: u8 = 5;
 
+fn retry_limit(credential: &CodexCredential, error: Option<&AgentError>) -> u8 {
+    if super::super::telemetry::provider_kind(credential)
+        == super::super::telemetry::ProviderKind::Antigravity
+        && error.is_some_and(|error| error.code == "provider_timeout")
+    {
+        // A single retry already allows two five-minute buffered-tool waits.
+        1
+    } else {
+        MAX_RETRIES
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(rename = "RetryStatus"))]
@@ -55,17 +67,21 @@ impl Request<'_> {
             if *signal.borrow() {
                 return Err(AgentError::cancelled());
             }
-            let credential = match self.authentication {
+            let mut credential = match self.authentication {
                 Some(auth) => {
                     std::borrow::Cow::Owned(auth.credential(false, signal.clone()).await?)
                 }
                 None => std::borrow::Cow::Borrowed(self.credential),
             };
+            let provider = super::super::telemetry::provider_kind(self.credential);
+            if provider == super::super::telemetry::ProviderKind::Antigravity && retries > 0 {
+                let endpoint = antigravity::retry_endpoint(&credential, retries);
+                credential.to_mut().antigravity_endpoint = Some(endpoint);
+            }
             if retries > 0 || auth_retried {
                 emit(Delta::Reset)?;
             }
             let attempt = retries.saturating_add(1 + u8::from(auth_retried));
-            let provider = super::super::telemetry::provider_kind(self.credential);
             let model_id = super::super::telemetry::model_id(&self.options.model);
             let input_bytes = super::super::telemetry::serialized_bytes(&self.input)
                 .saturating_add(super::super::telemetry::serialized_bytes(&self.tools))
@@ -95,6 +111,7 @@ impl Request<'_> {
                 self.input.clone(),
                 self.tools.clone(),
                 signal.clone(),
+                &self.telemetry,
                 |delta| {
                     if first_event_ms.is_none()
                         && matches!(delta, Delta::Text(_) | Delta::Summary(_))
@@ -117,11 +134,12 @@ impl Request<'_> {
             let recover_auth = !auth_retried
                 && self.authentication.is_some()
                 && result.as_ref().err().is_some_and(auth::unauthorized);
+            let max_retries = retry_limit(self.credential, result.as_ref().err());
             let will_retry = recover_auth
                 || result
                     .as_ref()
                     .err()
-                    .is_some_and(|error| retryable(error) && retries < MAX_RETRIES);
+                    .is_some_and(|error| retryable(error) && retries < max_retries);
             let response_error = result.as_ref().err();
             let usage = result
                 .as_ref()
@@ -157,15 +175,15 @@ impl Request<'_> {
                     }
                 }
                 Err(error) if !retryable(&error) => return Err(error),
-                Err(error) if retries == MAX_RETRIES => return Err(AgentError {
+                Err(error) if retries >= max_retries => return Err(AgentError {
                     code: "provider_retry_exhausted".into(),
-                    message: format!("Não foi possível reconectar após {MAX_RETRIES} tentativas consecutivas. {} O progresso concluído foi preservado.", error.message),
+                    message: format!("Não foi possível reconectar após {retries} {}. {} O progresso concluído foi preservado.", if retries == 1 { "tentativa consecutiva" } else { "tentativas consecutivas" }, error.message),
                     ..error
                 }),
                 Err(error) => {
                     retries += 1;
                     let delay = backoff(retries, base_delay, error.retry_after);
-                    emit(Delta::Retry(Some(Status { attempt: retries, max_attempts: MAX_RETRIES, retry_at: super::super::now().saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX)), message: error.message })))?;
+                    emit(Delta::Retry(Some(Status { attempt: retries, max_attempts: max_retries, retry_at: super::super::now().saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX)), message: error.message })))?;
                     tokio::select! {
                         biased;
                         _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),

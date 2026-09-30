@@ -62,7 +62,7 @@ fn switch(data: &mut SessionData, choice: &ModelChoice) {
     let current = data.turns.last_mut().expect("active turn");
     let previous = &current.turn.options;
     let notice = format!(
-        "O modelo {} esgotou as tentativas de reconexão. Continuando com o modelo secundário {} e preservando o progresso desta tarefa.",
+        "O modelo {} esgotou as tentativas de recuperação. Continuando com o modelo secundário {} e preservando o progresso desta tarefa.",
         previous.model, choice.model,
     );
     current.wire.push(json!({

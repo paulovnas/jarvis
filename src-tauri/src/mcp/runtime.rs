@@ -1008,6 +1008,46 @@ impl TurnClients {
         }
     }
 
+    /// Stable tool gateways cannot assume their client re-reads tools/list after
+    /// discovery. Return the selected schemas from the already filtered catalog.
+    pub(crate) fn discovery_schemas(
+        &self,
+        name: &str,
+        args: &Value,
+        output: &str,
+        definitions: &[Value],
+    ) -> Vec<Value> {
+        let result = serde_json::from_str::<Value>(output).unwrap_or(Value::Null);
+        definitions
+            .iter()
+            .filter(|definition| {
+                let Some(candidate) = definition["name"].as_str() else {
+                    return false;
+                };
+                if matches!(candidate, MCP_ACTIVATE | MCP_SEARCH_TOOLS | MCP_LOAD_TOOL) {
+                    return true;
+                }
+                match name {
+                    MCP_ACTIVATE => self
+                        .tool_metadata(candidate)
+                        .is_some_and(|(server, _, _)| args["server"].as_str() == Some(server)),
+                    MCP_SEARCH_TOOLS => result["autoLoaded"]
+                        .as_array()
+                        .is_some_and(|loaded| loaded.iter().any(|tool| tool == candidate)),
+                    MCP_LOAD_TOOL => args["tool"].as_str() == Some(candidate),
+                    _ => false,
+                }
+            })
+            .map(|definition| {
+                json!({
+                    "name":definition["name"],
+                    "description":definition["description"],
+                    "inputSchema":definition["parameters"],
+                })
+            })
+            .collect()
+    }
+
     pub fn requires_explicit_attempt(&self) -> bool {
         self.exposure == Exposure::Explicit && !self.explicit_attempted.load(Ordering::Relaxed)
     }

@@ -7,6 +7,23 @@ use crate::openai_codex::antigravity::{user_agent, ENDPOINTS};
 // Keep a bounded wait that permits this gap without changing other providers.
 pub(super) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
+fn first_response_timeout(model: &str) -> Duration {
+    if model.starts_with("gemini-") && model.contains("-flash") {
+        Duration::from_secs(60)
+    } else {
+        STREAM_IDLE_TIMEOUT
+    }
+}
+
+pub(super) fn retry_endpoint(credential: &CodexCredential, retries: u8) -> String {
+    let preferred = credential
+        .antigravity_endpoint
+        .as_deref()
+        .and_then(|endpoint| ENDPOINTS.iter().position(|allowed| *allowed == endpoint))
+        .unwrap_or_default();
+    ENDPOINTS[(preferred + usize::from(retries)) % ENDPOINTS.len()].into()
+}
+
 fn push_part(contents: &mut Vec<Value>, role: &str, part: Value) {
     if let Some(last) = contents.last_mut().filter(|last| last["role"] == role) {
         if let Some(parts) = last["parts"].as_array_mut() {
@@ -15,6 +32,39 @@ fn push_part(contents: &mut Vec<Value>, role: &str, part: Value) {
         }
     }
     contents.push(json!({"role":role,"parts":[part]}));
+}
+
+fn push_model_part(contents: &mut Vec<Value>, mut part: Value, claude: bool) {
+    let signed = part["thoughtSignature"].as_str().is_some_and(|signature| {
+        !signature.is_empty() && signature != "skip_thought_signature_validator"
+    });
+    if part["thought"] == true && !signed {
+        if claude {
+            return;
+        }
+        let Some(text) = part["text"].as_str().filter(|text| !text.is_empty()) else {
+            return;
+        };
+        // Unsigned native thoughts are silently ignored by Gemini on replay.
+        part = json!({"text":format!("Previous reasoning summary (reference only):\n{text}")});
+    }
+    if !signed {
+        if let Some(object) = part.as_object_mut() {
+            object.remove("thoughtSignature");
+        }
+    }
+    if !claude && !signed && part["functionCall"].is_object() {
+        let first_call = contents.last().is_none_or(|last| {
+            last["role"] != "model"
+                || last["parts"]
+                    .as_array()
+                    .is_none_or(|parts| !parts.iter().any(|part| part["functionCall"].is_object()))
+        });
+        if first_call {
+            part["thoughtSignature"] = json!("skip_thought_signature_validator");
+        }
+    }
+    push_part(contents, "model", part);
 }
 
 #[cfg(test)]
@@ -42,7 +92,7 @@ fn contents(input: &[Value], model: &str) -> Result<Vec<Value>, AgentError> {
             );
         }
         if item["_antigravity_model"] == model && item["_antigravity_part"].is_object() {
-            push_part(&mut result, "model", item["_antigravity_part"].clone());
+            push_model_part(&mut result, item["_antigravity_part"].clone(), claude);
             continue;
         }
         match kind {
@@ -83,16 +133,7 @@ fn contents(input: &[Value], model: &str) -> Result<Vec<Value>, AgentError> {
                 if claude {
                     part["functionCall"]["id"] = item["call_id"].clone();
                 }
-                let first_call = result.last().is_none_or(|last| {
-                    last["role"] != "model"
-                        || last["parts"].as_array().is_none_or(|parts| {
-                            !parts.iter().any(|p| p["functionCall"].is_object())
-                        })
-                });
-                if !claude && first_call {
-                    part["thoughtSignature"] = json!("skip_thought_signature_validator");
-                }
-                push_part(&mut result, "model", part);
+                push_model_part(&mut result, part, claude);
             }
             "function_call_output" => {
                 let id = item["call_id"].as_str().ok_or_else(protocol_error)?;
@@ -130,6 +171,7 @@ fn schema(value: &Value, root: &Value, depth: usize) -> Value {
         return json!({"type":"object"});
     };
     let mut output = serde_json::Map::new();
+    let mut constraints = vec![];
     for (key, value) in map {
         match key.as_str() {
             "type" | "description" | "enum" | "required" | "nullable" | "format" => {
@@ -173,6 +215,40 @@ fn schema(value: &Value, root: &Value, depth: usize) -> Value {
                     }
                 }
             }
+            "minimum"
+            | "maximum"
+            | "exclusiveMinimum"
+            | "exclusiveMaximum"
+            | "multipleOf"
+            | "minLength"
+            | "maxLength"
+            | "pattern"
+            | "minItems"
+            | "maxItems"
+            | "uniqueItems"
+            | "minProperties"
+            | "maxProperties"
+            | "additionalProperties"
+            | "allOf"
+            | "not"
+            | "contains"
+            | "minContains"
+            | "maxContains"
+            | "propertyNames"
+            | "patternProperties"
+            | "unevaluatedProperties"
+            | "unevaluatedItems"
+            | "dependentRequired"
+            | "dependentSchemas"
+            | "dependencies"
+            | "if"
+            | "then"
+            | "else"
+            | "prefixItems"
+            | "default"
+            | "examples" => {
+                constraints.push(format!("{key}: {value}"));
+            }
             _ => {}
         }
     }
@@ -187,6 +263,21 @@ fn schema(value: &Value, root: &Value, depth: usize) -> Value {
         if nullable {
             output.insert("nullable".into(), json!(true));
         }
+    }
+    if !constraints.is_empty() {
+        let description = output
+            .get("description")
+            .and_then(Value::as_str)
+            .filter(|description| !description.is_empty())
+            .map(|description| format!("{description}\n"))
+            .unwrap_or_default();
+        output.insert(
+            "description".into(),
+            json!(format!(
+                "{description}Schema constraints: {}",
+                constraints.join("; ")
+            )),
+        );
     }
     Value::Object(output)
 }
@@ -209,7 +300,7 @@ fn generation(
         .unwrap_or(if claude { 64_000 } else { 65_536 })
         .min(if claude { 64_000 } else { 65_536 });
     let mut config = json!({"maxOutputTokens":limit});
-    if capabilities.reasoning.supported && metadata["supportsThinking"] == true {
+    if capabilities.reasoning.supported && metadata["supportsThinking"] != false {
         let effort = effective_effort(metadata, options);
         let mut thinking = json!({"includeThoughts":true});
         let model = options.model.as_str();
@@ -220,6 +311,7 @@ fn generation(
         if metadata["_thinking_mode"] == "level"
             || model.starts_with("gemini-3.6")
             || model.starts_with("gemini-3.7")
+            || model.starts_with("gemini-3.8")
             || model.starts_with("gemini-3.1-flash-lite")
             || model == "gemini-3-pro"
         {
@@ -520,9 +612,8 @@ impl Output {
             item["_antigravity_part"] = part;
             output.push(item);
         }
-        if text.is_empty() && ids.is_empty() {
-            return Err(protocol_error());
-        }
+        // A completed thought-only response must reach session recovery with
+        // its signatures and usage intact, rather than repeat identical inference.
         // Validate all calls before any file, terminal or MCP action is permitted.
         tool_calls(&output)?;
         if let (Some(item), Some(execution)) = (output.last_mut(), self.execution) {
@@ -577,6 +668,7 @@ pub(super) async fn stream_with_client(
     input: Vec<Value>,
     tools: Vec<Value>,
     signal: watch::Receiver<bool>,
+    telemetry: &super::super::telemetry::TraceContext,
     on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
     let body = request_body(
@@ -588,8 +680,16 @@ pub(super) async fn stream_with_client(
         &input,
         &tools,
     )?;
-    let mut response =
-        send_body(client, credential, &body, &options.model, signal, on_delta).await?;
+    let mut response = send_body(
+        client,
+        credential,
+        &body,
+        &options.model,
+        signal,
+        Some(telemetry),
+        on_delta,
+    )
+    .await?;
     if let Some(item) = response.output.last_mut() {
         let step = body["request"]["labels"]["last_step_index"]
             .as_str()
@@ -643,7 +743,7 @@ pub(crate) async fn grounded_search(
 ) -> Result<Response, AgentError> {
     let body = grounded_body(credential, session, model, query, response_language)?;
     let client = super::http_client_for(credential)?;
-    let result = send_body(&client, credential, &body, model, signal, |_| Ok(())).await;
+    let result = send_body(&client, credential, &body, model, signal, None, |_| Ok(())).await;
     if let Err(error) = &result {
         if error.code == "context_overflow" || error.code.starts_with("provider_") {
             crate::diagnostics::record_provider_failure(
@@ -662,13 +762,11 @@ async fn send_body(
     body: &Value,
     model: &str,
     mut signal: watch::Receiver<bool>,
+    telemetry: Option<&super::super::telemetry::TraceContext>,
     mut on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
-    let endpoint = credential
-        .antigravity_endpoint
-        .as_deref()
-        .filter(|s| ENDPOINTS.contains(s))
-        .unwrap_or(ENDPOINTS[0]);
+    let endpoint = retry_endpoint(credential, 0);
+    let startup_timeout = first_response_timeout(model);
     let request = client
         .post(format!(
             "{endpoint}/v1internal:streamGenerateContent?alt=sse"
@@ -679,27 +777,29 @@ async fn send_body(
         .json(&body);
     let response = tokio::select! {
         _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-        result = request.send() => result.map_err(|error| {
+        result = tokio::time::timeout(startup_timeout, request.send()) => result
+            .map_err(|_| timeout_error("aguardando os cabeçalhos da resposta", startup_timeout))?
+            .map_err(|error| {
             if error.is_timeout() {
                 if error.is_connect() {
                     AgentError::new("provider_timeout", "A conexão com o Antigravity expirou antes de receber a resposta.")
                 } else {
-                    timeout_error("aguardando os cabeçalhos da resposta")
+                    timeout_error("aguardando os cabeçalhos da resposta", startup_timeout)
                 }
             } else {
                 super::connection_error(error, "Não foi possível conectar ao Antigravity.")
             }
         })?,
     };
-    receive(response, model, signal, &mut on_delta).await
+    receive(response, model, signal, telemetry, &mut on_delta).await
 }
 
-fn timeout_error(phase: &str) -> AgentError {
+fn timeout_error(phase: &str, timeout: Duration) -> AgentError {
     AgentError::new(
         "provider_timeout",
         &format!(
             "O Antigravity ficou {} segundos sem responder ({phase}).",
-            STREAM_IDLE_TIMEOUT.as_secs()
+            timeout.as_secs()
         ),
     )
 }
@@ -708,6 +808,7 @@ async fn receive(
     mut response: reqwest::Response,
     model: &str,
     mut signal: watch::Receiver<bool>,
+    telemetry: Option<&super::super::telemetry::TraceContext>,
     on_delta: &mut impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
     if *signal.borrow() {
@@ -737,55 +838,117 @@ async fn receive(
     }
     let mut parser = Sse::default();
     let mut output = Output::default();
-    let mut size = 0;
+    let mut size = 0_usize;
+    let mut completed_events = 0_u64;
+    let mut reasoning_chars = 0_u64;
     let mut received_output = false;
-    let mut deadline = tokio::time::Instant::now() + STREAM_IDLE_TIMEOUT;
-    loop {
-        let phase = if received_output {
-            "aguardando a continuação da resposta"
-        } else {
-            "aguardando o primeiro evento"
-        };
-        let chunk = tokio::select! {
-            _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-            result = tokio::time::timeout_at(deadline, response.chunk()) => {
-                result.map_err(|_| timeout_error(phase)).and_then(|result| {
-                    result.map_err(|error| if error.is_timeout() {
-                        timeout_error(phase)
-                    } else {
-                        super::stream_read_error(error)
-                    })
-                }).map_err(|error| super::with_provider_metadata(
-                    error, Some(response.status().as_u16()), None, super::request_id(&response),
-                ))?
+    let started = tokio::time::Instant::now();
+    let mut last_transport = started;
+    let mut last_progress = started;
+    let mut last_frame_progress = started;
+    let result = async {
+        let mut forward = |delta: Delta| {
+            if let Delta::Summary(summary) = &delta {
+                reasoning_chars = reasoning_chars.saturating_add(summary.chars().count() as u64);
             }
+            on_delta(delta)
         };
-        let Some(chunk) = chunk else { break };
-        size += chunk.len();
-        if size > MAX_STREAM {
-            return Err(protocol_error());
-        }
-        for event in parser.push(&chunk)? {
-            if output
-                .event(&event, on_delta)
-                .map_err(|error| super::with_response_request_id(error, &response))?
-            {
-                // Comments and empty events are transport keepalives, not progress.
-                received_output = true;
-                deadline = tokio::time::Instant::now() + STREAM_IDLE_TIMEOUT;
+        loop {
+            let pending_data = parser.pending_data_len();
+            let timeout = if received_output || pending_data > 0 {
+                STREAM_IDLE_TIMEOUT
+            } else {
+                first_response_timeout(model)
+            };
+            let deadline = if pending_data > 0 {
+                last_frame_progress + timeout
+            } else {
+                last_progress + timeout
+            };
+            let phase = if pending_data > 0 {
+                "aguardando a continuação de um evento incompleto"
+            } else if received_output {
+                "aguardando a continuação da resposta"
+            } else {
+                "aguardando o primeiro evento"
+            };
+            let chunk = tokio::select! {
+                _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+                result = tokio::time::timeout_at(deadline, response.chunk()) => {
+                    result.map_err(|_| timeout_error(phase, timeout)).and_then(|result| {
+                        result.map_err(|error| if error.is_timeout() {
+                            timeout_error(phase, timeout)
+                        } else {
+                            super::stream_read_error(error)
+                        })
+                    }).map_err(|error| super::with_provider_metadata(
+                        error, Some(response.status().as_u16()), None, super::request_id(&response),
+                    ))?
+                }
+            };
+            let Some(chunk) = chunk else { break };
+            last_transport = tokio::time::Instant::now();
+            size = size.saturating_add(chunk.len());
+            if size > MAX_STREAM {
+                return Err(protocol_error());
+            }
+            let events = parser.push(&chunk)?;
+            let completed = !events.is_empty();
+            completed_events = completed_events.saturating_add(events.len() as u64);
+            for event in events {
+                if output
+                    .event(&event, &mut forward)
+                    .map_err(|error| super::with_response_request_id(error, &response))?
+                {
+                    received_output = true;
+                    last_progress = last_transport;
+                }
+            }
+            let next_pending = parser.pending_data_len();
+            if next_pending > pending_data || (completed && next_pending > 0) {
+                // Renew only for growing event data. Comments cannot keep an
+                // unfinished JSON frame alive; a completed empty event restores
+                // the semantic deadline instead of proving inference progress.
+                last_frame_progress = last_transport;
+            }
+            // Process the entire chunk first to retain trailing usage metadata.
+            if output.finished {
+                return output.finish(model);
             }
         }
-        // STOP completes the generation even if the server keeps SSE open.
-        // Process the entire chunk first to retain trailing usage metadata.
-        if output.finished {
-            return output.finish(model);
+        // Some SSE implementations omit the final blank line at EOF.
+        for event in parser.push(b"\n\n")? {
+            completed_events = completed_events.saturating_add(1);
+            if output.event(&event, &mut forward)? {
+                last_progress = tokio::time::Instant::now();
+            }
         }
+        output.finish(model)
     }
-    // Some SSE implementations omit the final blank line at EOF.
-    for event in parser.push(b"\n\n")? {
-        output.event(&event, on_delta)?;
+    .await;
+    if let Some(context) = telemetry {
+        use super::super::telemetry::{self, Event, ProviderKind};
+        let now = tokio::time::Instant::now();
+        let milliseconds = |instant: tokio::time::Instant| {
+            u64::try_from(now.duration_since(instant).as_millis()).unwrap_or(u64::MAX)
+        };
+        telemetry::record(
+            context,
+            Event::ProviderStream {
+                provider: ProviderKind::Antigravity,
+                model_id: telemetry::model_id(model),
+                outcome: telemetry::outcome(result.as_ref().err(), false),
+                duration_ms: milliseconds(started),
+                received_bytes: size as u64,
+                completed_events,
+                buffered_bytes: (parser.pending.len() + parser.data.len()) as u64,
+                reasoning_chars,
+                transport_idle_ms: milliseconds(last_transport),
+                parsed_progress_idle_ms: milliseconds(last_progress),
+            },
+        );
     }
-    output.finish(model)
+    result
 }
 
 #[cfg(test)]

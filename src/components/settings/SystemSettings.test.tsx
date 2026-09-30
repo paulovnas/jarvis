@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import { SystemSettings } from "./SystemSettings";
 import type { SystemSnapshot } from "@/core/system-preferences";
+import type { ProviderAccount } from "@/core/provider-accounts";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -81,6 +82,41 @@ describe("system preferences", () => {
     await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { ...initial.preferences, responseLanguage: "en" } }));
     expect(select).toHaveTextContent("English");
     expect(screen.getByText(/A interface permanece em pt-BR\./)).toBeVisible();
+  });
+  it("saves an independent title model and restores automatic mode without changing other settings", async () => {
+    const user = userEvent.setup();
+    const account: ProviderAccount = {
+      alias: "openai-codex-pessoal", providerKind: "openai-codex", enabled: true,
+      createdAt: 1, email: null, accountType: "unknown", modelsAvailable: true,
+      models: [{ id: "gpt-6-luna", name: "GPT 6 Luna", reasoningLevels: [], defaultReasoningLevel: null }],
+    };
+    render(<SystemSettings accounts={[account]} />);
+    const picker = await screen.findByRole("button", { name: "Modelo para títulos das conversas" });
+    expect(picker).toHaveTextContent("Automático");
+    expect(screen.getByText(/com Claude Code, usa um título local/)).toBeVisible();
+    const choice = { executor: "jarvis", account: account.alias, model: "gpt-6-luna", reasoning: null };
+    call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, chatTitleModel: choice } });
+    await user.click(picker);
+    await user.hover(await screen.findByRole("menuitem", { name: account.alias }));
+    const model = await screen.findByRole("menuitem", { name: "GPT 6 Luna" });
+    act(() => model.focus());
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", {
+      preferences: { ...initial.preferences, chatTitleModel: choice },
+    }));
+    expect(picker).toHaveTextContent("pessoal · GPT 6 Luna");
+    call.mockRejectedValueOnce("Não foi possível salvar o modelo.");
+    await user.click(picker);
+    await user.click(await screen.findByRole("menuitem", { name: "Automático" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível salvar o modelo");
+    expect(picker).toHaveTextContent("GPT 6 Luna");
+    call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, chatTitleModel: null } });
+    await user.click(picker);
+    await user.click(await screen.findByRole("menuitem", { name: "Automático" }));
+    await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", {
+      preferences: { ...initial.preferences, chatTitleModel: null },
+    }));
+    expect(picker).toHaveTextContent("Automático");
   });
   it("saves the ask_user countdown in seconds and rejects out-of-range values", async () => {
     const user = userEvent.setup(); render(<SystemSettings />);

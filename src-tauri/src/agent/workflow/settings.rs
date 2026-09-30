@@ -549,6 +549,10 @@ mod instruction_tests {
         }
         for prompt in prompts {
             for guidance in [
+                "plans, briefs and implementation proportional to the requested outcome",
+                "syntactically valid initial version with real requested content early",
+                "complete it through focused edits",
+                "An initial structure or partial artifact is not completion",
                 "current turn's advertised catalog",
                 "Prefer native HTTP tools over ad-hoc curl/Python",
                 "HTTP requests do not inherit browser cookies",

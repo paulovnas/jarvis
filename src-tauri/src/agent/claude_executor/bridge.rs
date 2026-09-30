@@ -89,7 +89,7 @@ impl<'a> Bridge<'a> {
         };
         let mut activities = Vec::new();
         let mut prompt = tools::instructions(&session.root, options.mode, options.approval_mode);
-        prompt.push_str("\nExecution backend: Claude Code. Keep your native reasoning and conversation management. All project operations, commands, tasks, questions, workflow coordination, approvals and external integrations are exposed by the Jarvis MCP server. Use these tools rather than describing actions for the user to execute. Jarvis owns their permissions and durable results. Do not create a second task/agent system. For dynamically discovered MCP tools, load their schema then call call_mcp_tool with the exact name and arguments. The native Claude built-in tools are intentionally disabled to preserve the selected Jarvis role, project scope and approval contract.\n");
+        prompt.push_str("\nExecution backend: Claude Code. Keep your native reasoning and conversation management. All project operations, commands, tasks, questions, workflow coordination, approvals and external integrations are exposed by the Jarvis MCP server. Use these tools rather than describing actions for the user to execute. Jarvis owns their permissions and durable results. Do not create a second task/agent system. MCP discovery results include availableTools with exact schemas. Execute newly available tools and discovery controls through call_mcp_tool using their exact name and arguments; no new user message or tools/list refresh is required. Search results marked loaded:true already include their schema; do not load them again. The native Claude built-in tools are intentionally disabled to preserve the selected Jarvis role, project scope and approval contract.\n");
         prompt.push_str(&crate::library::repositories::prompt(
             runtime.state,
             home,
@@ -457,6 +457,49 @@ impl<'a> Bridge<'a> {
             )?;
         }
         result
+    }
+
+    pub async fn discovery_content(
+        &mut self,
+        tool: &ToolCall,
+        output: &str,
+        status: &str,
+    ) -> Result<Option<Value>, AgentError> {
+        if !tool.name.starts_with("mcp_") {
+            return Ok(None);
+        }
+        let discovery = matches!(
+            tool.name.as_str(),
+            "mcp_activate" | "mcp_search_tools" | "mcp_load_tool"
+        );
+        let unavailable = status == "error"
+            && serde_json::from_str::<Value>(output).is_ok_and(|result| {
+                matches!(
+                    result["error"]["code"].as_str(),
+                    Some("tool_unavailable" | "mcp_scope_violation")
+                )
+            });
+        if !(discovery && status != "error" || unavailable) {
+            return Ok(None);
+        }
+        let definitions = self.definitions().await?;
+        let schemas = self.clients.discovery_schemas(
+            if status == "error" { "" } else { &tool.name },
+            &tool.args,
+            output,
+            &definitions,
+        );
+        if schemas.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(json!({
+            "type":"text",
+            "text":json!({
+                "availableTools":schemas,
+                "callWith":"mcp__jarvis__call_mcp_tool",
+                "catalogChanged":true,
+            }).to_string(),
+        })))
     }
 
     async fn dispatch(

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { claudeProviderPreferencesSchema } from "./executors";
+import { modelChoiceSchema } from "./workflow-catalog";
 
 export const sleepModes = {
   off: "Desligado",
@@ -44,6 +45,7 @@ export const systemSnapshotSchema = z.object({
     notifications: z.boolean(),
     askUserTimeoutSeconds: z.number().int().min(1).max(3600),
     responseLanguage: z.enum(responseLanguageValues).default("pt-BR"),
+    chatTitleModel: modelChoiceSchema.nullish(),
     terminal: terminalPreferencesSchema.default(DEFAULT_TERMINAL_PREFERENCES),
     browser: browserPreferencesSchema.default(DEFAULT_BROWSER_PREFERENCES),
     claude: claudeProviderPreferencesSchema.optional(),

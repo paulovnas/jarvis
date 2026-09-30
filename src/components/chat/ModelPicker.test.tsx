@@ -30,6 +30,18 @@ it("identifies the selected provider when accounts offer the same model", () => 
   expect(trigger.querySelector("[style]")?.getAttribute("style")).toContain("provider-openai.svg");
 });
 
+it("uses the Claude brand mark in the selected model and provider menu", async () => {
+  const user = userEvent.setup();
+  const models = [{ value: "sonnet", label: "Sonnet", reasoningLevels: [], defaultReasoningLevel: null }];
+  render(<ModelPicker modelGroups={[{ provider: "Claude Code", executor: "claude", models }]} selection={{ executor: "claude", model: "sonnet", reasoning: null }} onSelect={vi.fn()} showProviderIdentity />);
+  const trigger = screen.getByRole("button", { name: "Selecionar modelo de IA" });
+  expect(trigger).toHaveTextContent("Claude Code · Sonnet");
+  expect(trigger.querySelector("[style]")?.getAttribute("style")).toContain("provider-claude.svg");
+  await user.click(trigger);
+  const provider = await screen.findByRole("menuitem", { name: "Claude Code" });
+  expect(provider.querySelector("[style]")?.getAttribute("style")).toContain("provider-claude.svg");
+});
+
 it("offers model refresh inside the menu and prevents repeated refresh while loading", async () => {
   const user = userEvent.setup();
   const refresh = vi.fn();
@@ -44,4 +56,15 @@ it("offers model refresh inside the menu and prevents repeated refresh while loa
   expect(pending).toHaveAttribute("aria-disabled", "true");
   await user.click(pending);
   expect(refresh).toHaveBeenCalledOnce();
+});
+
+it("uses an explicit label for an automatic model selection and its reset action", async () => {
+  const user = userEvent.setup();
+  const clear = vi.fn();
+  render(<ModelPicker modelGroups={[]} onSelect={vi.fn()} onClear={clear} clearLabel="Automático" />);
+  const trigger = screen.getByRole("button", { name: "Selecionar modelo de IA" });
+  expect(trigger).toHaveTextContent("Automático");
+  await user.click(trigger);
+  await user.click(await screen.findByRole("menuitem", { name: "Automático" }));
+  expect(clear).toHaveBeenCalledOnce();
 });

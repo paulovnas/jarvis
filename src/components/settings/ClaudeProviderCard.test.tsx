@@ -26,9 +26,11 @@ it("configures one local provider and updates all model selectors after successf
   });
   render(<><ClaudeProviderCard /><ExecutorModelPicker modelGroups={[]} onSelect={vi.fn()} /></>);
   await waitFor(() => expect(screen.getByTestId("provider-account-claude-code")).toHaveTextContent("Conectado"));
+  expect(screen.getByTestId("provider-account-claude-code").querySelector("[style]")?.getAttribute("style")).toContain("provider-claude.svg");
   expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "get_claude_runtime")).toHaveLength(1);
   await user.click(screen.getByRole("button", { name: "Detalhes de Claude Code" }));
   const dialog = screen.getByRole("dialog", { name: "Claude Code" });
+  expect(within(dialog).getByRole("heading", { name: "Claude Code" }).querySelector("[style]")?.getAttribute("style")).toContain("provider-claude.svg");
   const settings = within(dialog).getByRole("region", { name: "Configurações do Claude Code" });
   expect(dialog).toHaveTextContent("Provedor local único");
   expect(dialog).toHaveTextContent("Requer o CLI oficial instalado e autenticado");

@@ -451,7 +451,7 @@ async fn control_request(
                 Some("tools/list") => {
                     let mut tools: Vec<Value> = bridge.definitions().await?.iter().map(|definition| json!({"name":definition["name"],"description":definition["description"],"inputSchema":definition["parameters"]})).collect();
                     if !bridge.clients.instructions().is_empty() {
-                        tools.push(json!({"name":"call_mcp_tool","description":"Execute an external MCP tool after mcp_load_tool has returned its exact schema. Tool name, scope and arguments are validated by Jarvis.","inputSchema":{"type":"object","properties":{"name":{"type":"string","pattern":"^mcp_"},"arguments":{"type":"object"}},"required":["name","arguments"],"additionalProperties":false}}));
+                        tools.push(json!({"name":"call_mcp_tool","description":"Execute an MCP tool or discovery control using the exact name and inputSchema in availableTools from a Jarvis discovery result. Activated eager tools and automatically loaded search results are ready immediately. Tool name, scope and arguments are validated by Jarvis.","inputSchema":{"type":"object","properties":{"name":{"type":"string","pattern":"^mcp_"},"arguments":{"type":"object"}},"required":["name","arguments"],"additionalProperties":false}}));
                     }
                     json!({"tools":tools})
                 }
@@ -542,6 +542,9 @@ async fn execute_tool(
         structured.as_deref(),
     )
     .await?;
+    let catalog = bridge
+        .discovery_content(&tool, structured.as_deref().unwrap_or(&output), status)
+        .await?;
     let captured = bridge
         .context
         .post_tool(
@@ -560,6 +563,11 @@ async fn execute_tool(
     }
     let guidance = pending_input(bridge.session, &mut bridge.delivered_wire)?;
     let mut content = vec![json!({"type":"text","text":replay})];
+    // Keep schemas outside context-mode compaction and in the durable native
+    // receipt, even when the CLI keeps its initial tools/list catalog.
+    if let Some(catalog) = catalog {
+        content.push(catalog);
+    }
     if !guidance.is_empty() {
         content.push(json!({"type":"text","text":format!("Additional live user guidance and Jarvis task state for the current execution. Incorporate it without repeating confirmed actions:\n{}", guidance.join("\n\n"))}));
     }

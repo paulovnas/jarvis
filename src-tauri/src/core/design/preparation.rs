@@ -217,6 +217,50 @@ fn terms(text: &str) -> BTreeSet<String> {
 }
 
 fn score(resource: &Resource, query: &BTreeSet<String>) -> usize {
+    if matches!(resource.kind.as_str(), "system" | "template")
+        && ![
+            resource.id.rsplit('/').next().unwrap_or(""),
+            resource.name.as_str(),
+        ]
+        .into_iter()
+        .any(|name| {
+            let subject: BTreeSet<_> = terms(name)
+                .into_iter()
+                .filter(|word| {
+                    ![
+                        "html",
+                        "index",
+                        "preview",
+                        "real",
+                        "single",
+                        "page",
+                        "design",
+                        "template",
+                        "system",
+                        "systems",
+                        "skill",
+                        "web",
+                        "open",
+                        "experience",
+                        "prototype",
+                        "layout",
+                        "professional",
+                        "premium",
+                        "simple",
+                        "modern",
+                        "responsive",
+                        "accessible",
+                    ]
+                    .contains(&word.as_str())
+                })
+                .collect();
+            // Description overlap alone cannot select a specialized topic.
+            // ponytail: lexical topics; explicit discovery handles aliases and translations.
+            !subject.is_empty() && subject.is_subset(query)
+        })
+    {
+        return 0;
+    }
     let words = terms(&format!(
         "{} {} {}",
         resource.id, resource.name, resource.description
@@ -231,6 +275,107 @@ mod tests {
     fn pack(dir: &Path) -> Pack {
         super::super::tests::prepare_fixture(dir, &[]).unwrap();
         Pack::at(dir, "1.2.3").unwrap()
+    }
+
+    fn specialized_pack(dir: &Path) -> Pack {
+        super::super::tests::prepare_fixture(
+            dir,
+            &[
+                (
+                    "design-templates/webgl-experience/SKILL.md",
+                    "---\nname: WebGL Experience\ndescription: Real-time WebGL visuals in a single index.html with powered preview.\n---\n# WEBGL_REFERENCE",
+                ),
+                (
+                    "design-templates/worker-visualizer/SKILL.md",
+                    "---\nname: Worker Visualizer\ndescription: Real-time worker particle simulation in a single index.html with powered preview.\n---\n# WORKER_REFERENCE",
+                ),
+                (
+                    "design-templates/email-marketing/SKILL.md",
+                    "---\nname: Email Marketing\ndescription: Professional email layouts in a single index.html preview.\n---\n# EMAIL_REFERENCE",
+                ),
+                (
+                    "design-systems/trading/manifest.json",
+                    r#"{"name":"Trading","description":"Professional real-time HTML layouts with index previews"}"#,
+                ),
+                ("design-systems/trading/DESIGN.md", "TRADING_REFERENCE"),
+            ],
+        )
+        .unwrap();
+        Pack::at(dir, "1.2.3").unwrap()
+    }
+
+    #[test]
+    fn salesforce_presentation_does_not_load_specialized_format_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let pack = specialized_pack(dir.path());
+        let prepared = pack.prepare_context(
+            root.path(),
+            "Crie index.html: apresentação simples e profissional do Salesforce CLI, Tailwind inline, versão real e comandos de preview. HTML único, sem build.",
+            &["index.html".into()],
+            "Página única com layout profissional e contraste acessível.",
+        );
+        assert!(!prepared.prompt.contains("WEBGL_REFERENCE"));
+        assert!(!prepared.prompt.contains("WORKER_REFERENCE"));
+        assert!(!prepared.prompt.contains("EMAIL_REFERENCE"));
+        assert!(!prepared.prompt.contains("TRADING_REFERENCE"));
+        assert!(prepared
+            .activity
+            .sources
+            .contains(&"open-design:skills/design-brief".into()));
+        assert!(prepared
+            .activity
+            .sources
+            .contains(&"open-design:craft/color.md".into()));
+        // Automatic qualification does not restrict explicit discovery or reads.
+        assert!(pack
+            .execute("design_search", &serde_json::json!({"query":"webgl"}))
+            .unwrap()
+            .contains("design-templates/webgl-experience"));
+        assert!(pack
+            .execute(
+                "design_read",
+                &serde_json::json!({"id":"design-templates/webgl-experience","file":"design-templates/webgl-experience/SKILL.md"}),
+            )
+            .unwrap()
+            .contains("WEBGL_REFERENCE"));
+    }
+
+    #[test]
+    fn explicit_webgl_request_loads_its_reference_without_other_templates() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let prepared = specialized_pack(dir.path()).prepare_context(
+            root.path(),
+            "Crie uma experiência WebGL em index.html, com preview real.",
+            &[],
+            "",
+        );
+        assert!(prepared.prompt.contains("WEBGL_REFERENCE"));
+        assert!(!prepared.prompt.contains("WORKER_REFERENCE"));
+        assert!(!prepared.prompt.contains("EMAIL_REFERENCE"));
+        assert!(!prepared.prompt.contains("TRADING_REFERENCE"));
+    }
+
+    #[test]
+    fn email_data_restriction_does_not_select_marketing_but_named_subject_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let pack = specialized_pack(dir.path());
+        let restricted = pack.prepare_context(
+            root.path(),
+            "Crie index.html sobre Salesforce. Não exibir email, usernames, tokens ou IDs.",
+            &[],
+            "",
+        );
+        assert!(!restricted.prompt.contains("EMAIL_REFERENCE"));
+        let requested = pack.prepare_context(
+            root.path(),
+            "Crie um email marketing profissional.",
+            &[],
+            "",
+        );
+        assert!(requested.prompt.contains("EMAIL_REFERENCE"));
     }
 
     #[test]

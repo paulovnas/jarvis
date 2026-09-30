@@ -130,16 +130,25 @@ impl NormalizedOutput {
         let mut summaries = Vec::new();
         let mut calls = Vec::new();
         let mut ids = HashSet::new();
+        let mut antigravity_thought = false;
         for wire in output {
             let event = ProviderOutputEvent::parse(wire)?;
             match &event {
                 ProviderOutputEvent::Message { text: delta, .. } => text.push_str(delta),
                 ProviderOutputEvent::Reasoning {
-                    summary, replay, ..
+                    wire,
+                    summary,
+                    replay,
                 } => {
                     // Reading the replay tag here makes the provider boundary
                     // explicit while the opaque payload stays untouched.
                     let _provider_scoped = *replay != ReplayKind::None;
+                    antigravity_thought |= *replay == ReplayKind::Antigravity
+                        && wire["_antigravity_part"]["thought"] == true
+                        && (!summary.trim().is_empty()
+                            || wire["_antigravity_part"]["thoughtSignature"]
+                                .as_str()
+                                .is_some_and(|signature| !signature.trim().is_empty()));
                     if !summary.is_empty() {
                         summaries.push(summary.clone());
                     }
@@ -154,7 +163,7 @@ impl NormalizedOutput {
             }
             events.push(event);
         }
-        if text.is_empty() && calls.is_empty() {
+        if text.is_empty() && calls.is_empty() && !antigravity_thought {
             return Err(protocol_error());
         }
         Ok(Self {
@@ -260,5 +269,37 @@ mod tests {
             None
         )
         .is_err());
+    }
+
+    #[test]
+    fn only_genuine_antigravity_thoughts_can_complete_without_text_or_calls() {
+        let thought = serde_json::json!({
+            "type":"reasoning", "summary":[{"text":"Planning the answer"}],
+            "_antigravity_model":"gemini-3.8-flash",
+            "_antigravity_part":{"thought":true,"text":"Planning the answer","thoughtSignature":"signed"},
+        });
+        let normalized = NormalizedOutput::parse(vec![thought.clone()], None).unwrap();
+        assert_eq!(normalized.wire_output(), vec![thought.clone()]);
+        assert_eq!(normalized.summary, "Planning the answer");
+        assert!(normalized.text.is_empty());
+        assert!(normalized.calls.is_empty());
+
+        let mut signed_only = thought.clone();
+        signed_only["summary"] = json!([]);
+        signed_only["_antigravity_part"]["text"] = json!("");
+        assert!(NormalizedOutput::parse(vec![signed_only.clone()], None).is_ok());
+        signed_only["_antigravity_part"]["thoughtSignature"] = json!("");
+        assert!(NormalizedOutput::parse(vec![signed_only], None).is_err());
+
+        let mut not_a_thought = thought;
+        not_a_thought["_antigravity_part"]["thought"] = json!(false);
+        assert!(NormalizedOutput::parse(vec![not_a_thought], None).is_err());
+        for opaque in [
+            json!({"type":"reasoning","summary":[{"text":"Planning"}],"encrypted_content":"signed"}),
+            json!({"type":"reasoning","summary":[{"text":"Planning"}],"_custom":{"blocks":[]}}),
+            json!({"type":"reasoning","summary":[{"text":"Planning"}]}),
+        ] {
+            assert!(NormalizedOutput::parse(vec![opaque], None).is_err());
+        }
     }
 }

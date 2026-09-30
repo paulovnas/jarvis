@@ -6,7 +6,7 @@ import { executorOf, sameExecutionTarget } from "./executors";
 export type ModelChoice = z.infer<typeof modelChoiceSchema>;
 export const providerReferenceSchema = z.object({
   id: z.string(), itemKey: z.string(),
-  kind: z.enum(["web_search", "vision", "image_generation", "builtin_agent", "custom_agent", "conversation"]),
+  kind: z.enum(["web_search", "vision", "image_generation", "chat_title", "builtin_agent", "custom_agent", "conversation"]),
   label: z.string(), details: z.array(z.string()), choice: modelChoiceSchema,
 });
 export const modelBindingSchema = z.object({ itemKey: z.string(), source: modelChoiceSchema, target: modelChoiceSchema });

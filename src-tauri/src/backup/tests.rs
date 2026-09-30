@@ -80,6 +80,69 @@ fn round_trip_preserves_portable_settings_and_skill_payload() {
 }
 
 #[test]
+fn backup_sanitizes_chat_title_provider_and_offers_a_portable_mapping_target() {
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir(crate::data_dir::root(home.path())).unwrap();
+    let path = home.path().join("title-settings.zip");
+    let mut settings = payload();
+    let choice: workflow::settings::ModelChoice = serde_json::from_value(serde_json::json!({
+        "account":"private-title-provider", "model":"private-title-model", "reasoning":null,
+    }))
+    .unwrap();
+    settings.system.chat_title_model = Some(choice);
+    assert!(validate_payload(&settings).is_err());
+    settings.system = clean_system_preferences(settings.system, &mut settings.model_targets);
+    assert!(settings.system.chat_title_model.is_none());
+    assert!(settings.model_targets.contains(&chat_title_target()));
+    validate_payload(&settings).unwrap();
+    let serialized = serde_json::to_string(&settings).unwrap();
+    assert!(!serialized.contains("private-title-provider"));
+    assert!(!serialized.contains("private-title-model"));
+    write_archive(&path, &settings, &[]).unwrap();
+    let loaded = read_archive(&path).unwrap();
+    assert!(preview(&loaded)
+        .model_targets
+        .contains(&chat_title_target()));
+    let (_, _, bindings, title) = prepare_import(
+        &loaded,
+        home.path(),
+        &AppState::default(),
+        &OpenAiCodexState::default(),
+        vec![],
+    )
+    .unwrap();
+    assert!(
+        title.is_none(),
+        "unmapped title generation falls back to automatic"
+    );
+    assert!(bindings.contains(&system::CHAT_TITLE_MODEL_KEY.into()));
+
+    let external: workflow::settings::ModelChoice = serde_json::from_value(serde_json::json!({
+        "executor":"claude", "account":"", "model":"sonnet", "reasoning":null,
+    }))
+    .unwrap();
+    assert!(prepare_import(
+        &loaded,
+        home.path(),
+        &AppState::default(),
+        &OpenAiCodexState::default(),
+        vec![ModelMapping {
+            target_id: system::CHAT_TITLE_MODEL_KEY.into(),
+            choice: external
+        }],
+    )
+    .is_err());
+    let mut invalid = loaded.payload.clone();
+    invalid
+        .model_targets
+        .iter_mut()
+        .find(|target| target.kind == ModelTargetKind::ChatTitle)
+        .unwrap()
+        .label = "Wrong title".into();
+    assert!(validate_payload(&invalid).is_err());
+}
+
+#[test]
 fn sanitized_catalog_and_targets_never_serialize_provider_assignments() {
     let choice = workflow::settings::ModelChoice {
         executor: crate::claude::Executor::Jarvis,
@@ -132,7 +195,7 @@ fn backup_preserves_external_executors_without_provider_mapping_or_credentials()
     let path = home.path().join("external-executor.zip");
     write_archive(&path, &settings, &[]).unwrap();
     let loaded = read_archive(&path).unwrap();
-    let (catalog, native, _) = prepare_import(
+    let (catalog, native, _, _) = prepare_import(
         &loaded,
         home.path(),
         &AppState::default(),
@@ -221,7 +284,7 @@ fn import_mapping_preserves_secondary_and_clears_its_stale_binding() {
         "fallback":{"executor":"claude","account":"","model":"opus","reasoning":"max"}
     }))
     .unwrap();
-    let (catalog, _, bindings) = prepare_import(
+    let (catalog, _, bindings, _) = prepare_import(
         &loaded,
         home.path(),
         &AppState::default(),

@@ -201,6 +201,7 @@ pub struct Preferences {
     pub(crate) terminal: TerminalPreferences,
     pub(crate) claude: crate::claude::ProviderPreferences,
     pub(crate) browser: crate::agent::browser::BrowserPreferences,
+    pub(crate) chat_title_model: Option<crate::agent::workflow::settings::ModelChoice>,
 }
 
 impl Default for Preferences {
@@ -213,6 +214,7 @@ impl Default for Preferences {
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
             browser: crate::agent::browser::BrowserPreferences::default(),
+            chat_title_model: None,
         }
     }
 }
@@ -224,8 +226,39 @@ impl Preferences {
         }
         self.terminal.validate()?;
         self.claude.validate()?;
+        if let Some(choice) = &self.chat_title_model {
+            validate_chat_title_model(choice)?;
+        }
         Ok(())
     }
+}
+
+pub(crate) const CHAT_TITLE_MODEL_KEY: &str = "chat_title";
+
+pub(crate) fn validate_chat_title_model(
+    choice: &crate::agent::workflow::settings::ModelChoice,
+) -> Result<(), String> {
+    choice
+        .validate_shape()
+        .map_err(|error| error.message().to_owned())?;
+    if choice.executor != crate::claude::Executor::Jarvis || choice.fallback.is_some() {
+        return Err("Para os títulos, escolha um provedor Jarvis e um único modelo.".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn resolved_chat_title_model(
+    db: &rusqlite::Connection,
+    preferences: &Preferences,
+) -> Result<
+    Option<crate::agent::workflow::settings::ModelChoice>,
+    crate::persistence::PersistenceError,
+> {
+    preferences
+        .chat_title_model
+        .as_ref()
+        .map(|choice| crate::model_bindings::resolve(db, CHAT_TITLE_MODEL_KEY, choice))
+        .transpose()
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -415,10 +448,28 @@ impl SystemState {
             terminal_font_error,
         })
     }
-    fn changed(&self, app: &tauri::AppHandle) {
-        if let Ok(snapshot) = self.snapshot() {
+    pub(crate) fn changed(&self, app: &tauri::AppHandle) {
+        if let Ok(snapshot) = self.configured_snapshot(app) {
             let _ = app.emit("system:changed", snapshot);
         }
+    }
+
+    fn configured_snapshot(&self, app: &tauri::AppHandle) -> Result<Snapshot, String> {
+        let mut snapshot = self.snapshot()?;
+        if snapshot.preferences.chat_title_model.is_none() {
+            return Ok(snapshot);
+        }
+        let home = app
+            .path()
+            .home_dir()
+            .map_err(|_| "Pasta pessoal indisponível.")?;
+        snapshot.preferences.chat_title_model = app
+            .state::<crate::persistence::AppState>()
+            .with_connection(&home, |db| {
+                resolved_chat_title_model(db, &snapshot.preferences)
+            })
+            .map_err(|_| "Não foi possível ler o modelo dos títulos.")?;
+        Ok(snapshot)
     }
     fn notification_result(&self, app: &tauri::AppHandle, result: &Result<(), String>) {
         if let Ok(mut error) = self.notification_error.lock() {
@@ -649,8 +700,11 @@ pub(crate) fn notify_usage_limit(app: &tauri::AppHandle, title: &str, body: &str
 }
 
 #[tauri::command]
-pub fn get_system_preferences(state: tauri::State<'_, SystemState>) -> Result<Snapshot, String> {
-    state.snapshot()
+pub fn get_system_preferences(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SystemState>,
+) -> Result<Snapshot, String> {
+    state.configured_snapshot(&app)
 }
 
 #[tauri::command]
@@ -685,10 +739,38 @@ pub(crate) async fn save_claude_provider_preferences(
 pub async fn save_system_preferences(
     app: tauri::AppHandle,
     state: tauri::State<'_, SystemState>,
+    providers: tauri::State<'_, crate::persistence::AppState>,
+    oauth: tauri::State<'_, crate::openai_codex::OpenAiCodexState>,
     preferences: Preferences,
 ) -> Result<Snapshot, String> {
     let _edit = state.edit.lock().await;
     preferences.validate()?;
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|_| "Pasta pessoal indisponível.")?;
+    let previous_preferences = state.preferences()?;
+    let previous_title_model = providers
+        .with_connection(&home, |db| {
+            resolved_chat_title_model(db, &previous_preferences)
+        })
+        .map_err(|_| "Não foi possível ler o modelo dos títulos.")?;
+    if let Some(choice) = preferences
+        .chat_title_model
+        .as_ref()
+        .filter(|choice| Some(*choice) != previous_title_model.as_ref())
+    {
+        let providers = providers.inner().clone();
+        let oauth = oauth.inner().clone();
+        let home = home.clone();
+        let choice = choice.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::agent::workflow::settings::validate_choice(&providers, &oauth, &home, &choice)
+        })
+        .await
+        .map_err(|_| "Não foi possível validar o modelo dos títulos.")?
+        .map_err(|error| error.message().to_owned())?;
+    }
     // Fail a stale or misspelled custom executable before persisting it. Any
     // already-running PTY remains alive because only future spawns read this value.
     if preferences.terminal.shell != state.preferences()?.terminal.shell {
@@ -711,6 +793,11 @@ pub async fn save_system_preferences(
             .map_err(|error| error.clone())?
             .save(preferences.clone())?;
     }
+    providers
+        .with_connection(&home, |db| {
+            crate::model_bindings::forget_item(db, CHAT_TITLE_MODEL_KEY)
+        })
+        .map_err(|_| "Não foi possível atualizar o modelo dos títulos.")?;
     app.state::<crate::agent::AgentState>()
         .terminals
         .set_preferences(preferences.terminal);
@@ -721,7 +808,7 @@ pub async fn save_system_preferences(
     }
     state.changed(&app);
     let _ = unread::refresh(&app).await;
-    state.snapshot()
+    state.configured_snapshot(&app)
 }
 
 #[tauri::command]

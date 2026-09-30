@@ -1,6 +1,64 @@
 use super::*;
 
 #[test]
+fn dedicated_chat_title_model_defaults_to_automatic_and_survives_restart() {
+    let home = tempfile::tempdir().unwrap();
+    let path = crate::data_dir::root(home.path()).join("system.json");
+    let legacy: Preferences = serde_json::from_str(r#"{"notifications":false}"#).unwrap();
+    assert!(legacy.chat_title_model.is_none());
+    let choice: crate::agent::workflow::settings::ModelChoice = serde_json::from_value(
+        serde_json::json!({"account":"cheap-provider","model":"cheap-model","reasoning":null}),
+    )
+    .unwrap();
+    let mut store = Store::open(path.clone()).unwrap();
+    let mut preferences = legacy;
+    preferences.chat_title_model = Some(choice.clone());
+    store.save(preferences.clone()).unwrap();
+    assert_eq!(
+        Store::open(path.clone())
+            .unwrap()
+            .preferences
+            .chat_title_model,
+        Some(choice.clone())
+    );
+    assert_eq!(
+        backup_preferences(home.path()).unwrap().chat_title_model,
+        Some(choice.clone())
+    );
+    assert_eq!(
+        serde_json::to_value(&preferences).unwrap()["chatTitleModel"]["model"],
+        "cheap-model"
+    );
+
+    let mut invalid = choice.clone();
+    invalid.executor = crate::claude::Executor::Claude;
+    invalid.account.clear();
+    invalid.model = "sonnet".into();
+    assert!(validate_chat_title_model(&invalid).is_err());
+    invalid = choice.clone();
+    invalid.fallback = Some(Box::new(crate::agent::workflow::settings::ModelChoice {
+        model: "different-model".into(),
+        ..choice.clone()
+    }));
+    assert!(validate_chat_title_model(&invalid).is_err());
+    preferences.chat_title_model = Some(invalid);
+    assert!(store.save(preferences).is_err());
+    assert_eq!(
+        Store::open(path.clone())
+            .unwrap()
+            .preferences
+            .chat_title_model,
+        Some(choice)
+    );
+    store.save(Preferences::default()).unwrap();
+    assert!(Store::open(path)
+        .unwrap()
+        .preferences
+        .chat_title_model
+        .is_none());
+}
+
+#[test]
 fn browser_preferences_default_to_embedded_and_persist_without_pairing_credentials() {
     use crate::agent::browser::{BrowserApplication, BrowserMode};
     let legacy: Preferences = serde_json::from_str(r#"{"notifications":false}"#).unwrap();
@@ -154,6 +212,7 @@ fn preferences_restore_all_modes_without_touching_layout() {
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
             browser: crate::agent::browser::BrowserPreferences::default(),
+            chat_title_model: None,
         };
         store.save(preferences.clone()).unwrap();
         assert_eq!(Store::open(path.clone()).unwrap().preferences, preferences);
@@ -186,6 +245,7 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
             browser: crate::agent::browser::BrowserPreferences::default(),
+            chat_title_model: None,
         })
         .is_err());
     assert_eq!(store.preferences, Preferences::default());
