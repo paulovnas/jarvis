@@ -280,6 +280,7 @@ fn search_requests_the_configured_model_independently_of_the_chat() {
         context_window: None,
         reasoning_levels: vec![],
         default_reasoning_level: None,
+        multi_agent_reasoning_effort: None,
     });
     require_search_model(&catalog, "gpt-5.5").unwrap();
     let body = search_body(
@@ -305,6 +306,7 @@ fn missing_selected_model_is_an_error_instead_of_silent_fallback() {
         context_window: None,
         reasoning_levels: vec![],
         default_reasoning_level: None,
+        multi_agent_reasoning_effort: None,
     }];
     let error = require_search_model(&catalog, "gpt-5.6-luna").unwrap_err();
     assert_eq!(error.code, "web_search_model");

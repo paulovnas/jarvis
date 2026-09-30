@@ -206,6 +206,7 @@ mod tests {
             name: "Model".into(),
             reasoning_levels: vec!["medium".into()],
             default_reasoning_level: Some("medium".into()),
+            multi_agent_reasoning_effort: None,
             context_window: Some(128_000),
         };
         Arc::new(super::super::provider::ModelCapabilities::resolve(

@@ -231,6 +231,7 @@ impl Config {
                 name: m.name.clone(),
                 reasoning_levels: m.reasoning_levels.clone(),
                 default_reasoning_level: m.default_reasoning_level.clone(),
+                multi_agent_reasoning_effort: None,
                 context_window: Some(m.context_window),
             })
             .collect()

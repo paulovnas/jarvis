@@ -97,6 +97,7 @@ async fn interrupted_turn_compacts_reloads_and_continues_through_the_transport()
         reasoning_levels: vec![],
         default_reasoning_level: None,
         context_window: Some(128_000),
+        multi_agent_reasoning_effort: None,
     };
     let provider = TurnSession::new(
         credential,

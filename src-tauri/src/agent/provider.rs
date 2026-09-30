@@ -728,7 +728,7 @@ fn request_body(
     }
     if capabilities.reasoning.supported {
         if let Some(effort) = &options.reasoning {
-            let mut reasoning = json!({"effort": if effort == "off" { "none" } else { effort }});
+            let mut reasoning = json!({"effort": capabilities.wire_reasoning_effort(effort)});
             if capabilities.reasoning.summaries {
                 reasoning["summary"] = json!("auto");
             }
@@ -1447,6 +1447,7 @@ mod tests {
             name: "Fixture".into(),
             reasoning_levels: vec![],
             default_reasoning_level: None,
+            multi_agent_reasoning_effort: None,
             context_window: Some(window),
         };
         let capabilities = std::sync::Arc::new(ModelCapabilities::resolve(&credential, &model));
@@ -1588,6 +1589,55 @@ mod tests {
         assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
         assert_eq!(body["store"], false);
         assert!(body.get("account").is_none());
+    }
+
+    #[test]
+    fn codex_ultra_is_normalized_for_turns_workers_and_standalone_requests() {
+        let mut options = super::super::tests::options(ApprovalMode::Yolo);
+        options.reasoning = Some("ultra".into());
+        let model: ProviderModel = serde_json::from_value(json!({
+            "id":options.model, "name":"Fixture", "reasoningLevels":["high", "max", "ultra"],
+            "defaultReasoningLevel":"high", "multiAgentReasoningEffort":"high",
+        }))
+        .unwrap();
+        let mut credential = CodexCredential::new("synthetic", "", 0, "fixture", None, None);
+        credential.inference_model = Some(model.clone());
+        let turn = TurnSession::new(
+            credential.clone(),
+            &model,
+            "parent".into(),
+            super::super::telemetry::trace("fixture", "turn"),
+        )
+        .unwrap();
+        let standalone = ModelCapabilities::resolve_for_options(&credential, &options);
+        for capabilities in [turn.capabilities().as_ref(), &standalone] {
+            for session in ["parent", "worker"] {
+                let body = request_body(
+                    &options,
+                    capabilities,
+                    "Instructions",
+                    vec![],
+                    vec![],
+                    session,
+                );
+                assert_eq!(body["reasoning"]["effort"], "high");
+                assert_eq!(body["prompt_cache_key"], session);
+            }
+            for effort in ["low", "medium", "high", "xhigh", "max"] {
+                options.reasoning = Some(effort.into());
+                let body = request_body(
+                    &options,
+                    capabilities,
+                    "Instructions",
+                    vec![],
+                    vec![],
+                    "parent",
+                );
+                assert_eq!(body["reasoning"]["effort"], effort);
+            }
+            options.reasoning = Some("ultra".into());
+        }
+        assert_eq!(options.reasoning.as_deref(), Some("ultra"));
     }
 
     #[test]

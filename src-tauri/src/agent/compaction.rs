@@ -1474,6 +1474,7 @@ mod tests {
             reasoning_levels: vec![],
             default_reasoning_level: None,
             context_window: Some(256_000),
+            multi_agent_reasoning_effort: None,
         };
         let capabilities = Arc::new(provider::ModelCapabilities::resolve(&credential, &model));
         let step = context_manager::StepContext::capture(

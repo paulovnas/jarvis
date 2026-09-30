@@ -32,8 +32,34 @@ pub(crate) struct ProviderModel {
     pub(crate) reasoning_levels: Vec<String>,
     #[serde(rename = "defaultReasoningLevel")]
     pub(crate) default_reasoning_level: Option<String>,
+    #[serde(
+        default,
+        rename = "multiAgentReasoningEffort",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) multi_agent_reasoning_effort: Option<String>,
     #[serde(default, rename = "contextWindow")]
     pub(crate) context_window: Option<u64>,
+}
+
+impl ProviderModel {
+    /// Ultra is a client mode, not an inference effort. Honor the model's
+    /// declared override, then prefer Max or its last ordinary catalog preset.
+    pub(crate) fn codex_ultra_effort(&self) -> &str {
+        if let Some(effort) = self.multi_agent_reasoning_effort.as_deref() {
+            if effort != "ultra" && self.reasoning_levels.iter().any(|level| level == effort) {
+                return effort;
+            }
+        }
+        if self.reasoning_levels.iter().any(|level| level == "max") {
+            return "max";
+        }
+        self.reasoning_levels
+            .iter()
+            .rev()
+            .find(|level| level.as_str() != "ultra")
+            .map_or("medium", String::as_str)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -163,6 +189,8 @@ pub(crate) struct CodexCredential {
     pub(crate) antigravity_endpoint: Option<String>,
     #[serde(skip)]
     pub(crate) custom: Option<custom::Config>,
+    #[serde(skip)]
+    pub(crate) inference_model: Option<ProviderModel>,
 }
 
 impl CodexCredential {
@@ -186,6 +214,7 @@ impl CodexCredential {
             antigravity_models: Default::default(),
             antigravity_endpoint: None,
             custom: None,
+            inference_model: None,
         }
     }
 }
@@ -936,6 +965,7 @@ mod tests {
                     context_window: None,
                     reasoning_levels: vec!["medium".to_owned()],
                     default_reasoning_level: None,
+                    multi_agent_reasoning_effort: None,
                 },
                 ProviderModel {
                     id: "gpt-later".to_owned(),
@@ -943,6 +973,7 @@ mod tests {
                     context_window: None,
                     reasoning_levels: vec!["none".to_owned()],
                     default_reasoning_level: Some("none".to_owned()),
+                    multi_agent_reasoning_effort: None,
                 },
             ])
         );
@@ -1030,6 +1061,79 @@ mod tests {
                 "defaultReasoningLevel": "medium", "contextWindow": null
             }])
         );
+    }
+
+    #[test]
+    fn codex_ultra_uses_catalog_override_or_an_ordinary_supported_preset() {
+        for (levels, override_value, expected) in [
+            (
+                serde_json::json!(["low", "high", "xhigh", "max", "ultra"]),
+                serde_json::json!("high"),
+                "high",
+            ),
+            (
+                serde_json::json!(["low", "max", "xhigh", "ultra"]),
+                serde_json::Value::Null,
+                "max",
+            ),
+            (
+                serde_json::json!(["low", "xhigh", "ultra"]),
+                serde_json::json!("high"),
+                "xhigh",
+            ),
+            (
+                serde_json::json!(["low", "xhigh", "ultra"]),
+                serde_json::json!("ultra"),
+                "xhigh",
+            ),
+            (
+                serde_json::json!(["low", "ultra"]),
+                serde_json::json!("<invalid>"),
+                "low",
+            ),
+            (
+                serde_json::json!(["ultra"]),
+                serde_json::Value::Null,
+                "medium",
+            ),
+            (serde_json::json!([]), serde_json::Value::Null, "medium"),
+        ] {
+            let models = normalize_codex_models(&serde_json::json!({"models":[{
+                "id":"model", "supported_reasoning_levels":levels,
+                "multi_agent_reasoning_effort":override_value,
+            }]}))
+            .unwrap();
+            let cached: ProviderModel =
+                serde_json::from_value(serde_json::to_value(&models[0]).unwrap()).unwrap();
+            assert_eq!(cached.codex_ultra_effort(), expected);
+            assert_eq!(
+                serde_json::to_value(&cached.reasoning_levels).unwrap(),
+                levels
+            );
+        }
+    }
+
+    #[test]
+    fn model_metadata_is_optional_in_legacy_catalogs_and_not_saved_with_credentials() {
+        let legacy = serde_json::json!({
+            "id":"model", "name":"Model", "reasoningLevels":["high", "ultra"],
+            "defaultReasoningLevel":"ultra",
+        });
+        let mut model: ProviderModel = serde_json::from_value(legacy).unwrap();
+        assert_eq!(model.codex_ultra_effort(), "high");
+        model.multi_agent_reasoning_effort = Some("high".into());
+        assert_eq!(
+            serde_json::to_value(&model).unwrap()["multiAgentReasoningEffort"],
+            "high"
+        );
+        let mut credential = CodexCredential::new("synthetic", "", 0, "fixture", None, None);
+        credential.inference_model = Some(model);
+        let stored = serde_json::to_value(&credential).unwrap();
+        assert!(stored.get("inference_model").is_none());
+        assert!(serde_json::from_value::<CodexCredential>(stored)
+            .unwrap()
+            .inference_model
+            .is_none());
     }
 
     #[test]
@@ -1674,7 +1778,7 @@ impl OpenAiCodexState {
         model: &str,
         reasoning: Option<&str>,
     ) -> Result<(CodexCredential, ProviderModel), ProviderError> {
-        let (credential, models) = self.credential_and_models(state, home, alias)?;
+        let (mut credential, models) = self.credential_and_models(state, home, alias)?;
         let selected = models.iter().find(|item| item.id == model).ok_or_else(|| {
             ProviderError::new(
                 "invalid_model",
@@ -1692,6 +1796,7 @@ impl OpenAiCodexState {
                 "O nível de raciocínio não é aceito pelo modelo selecionado.",
             ));
         }
+        credential.inference_model = Some(selected.clone());
         Ok((credential, selected.clone()))
     }
 
@@ -2658,6 +2763,10 @@ fn normalize_codex_models(payload: &serde_json::Value) -> Option<Vec<ProviderMod
                 name: name.to_owned(),
                 reasoning_levels,
                 default_reasoning_level,
+                multi_agent_reasoning_effort: reasoning_level(
+                    entry.get("multi_agent_reasoning_effort"),
+                )
+                .map(str::to_owned),
                 context_window: entry
                     .get("context_window")
                     .and_then(serde_json::Value::as_u64)

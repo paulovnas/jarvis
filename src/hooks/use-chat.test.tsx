@@ -81,6 +81,21 @@ it("reports provider failures from execution events through Sonner without repea
   expect(notice).toHaveBeenCalledWith("O modelo da conversa está indisponível", expect.objectContaining({ description: "O provedor foi removido." }));
 });
 
+it.each([
+  ["provider_request", "O provedor recusou a solicitação"],
+  ["invalid_reasoning", "O nível de raciocínio não é aceito pelo modelo"],
+])("distinguishes %s from a missing model", async (code, title) => {
+  const notice = vi.spyOn(toast, "error");
+  const { result } = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(result.current.snapshot).not.toBeNull());
+  const failure: ChatSnapshot = { ...completed(), turns: [{ ...savedTurn(), status: "error", error: { code, message: "Revise o nível de raciocínio." } }] };
+  await emit("agent:event", update(10, failure));
+  await emit("agent:event", update(10, failure));
+  expect(notice).toHaveBeenCalledTimes(1);
+  expect(notice).toHaveBeenCalledWith(title, expect.objectContaining({ description: "Revise o nível de raciocínio." }));
+  expect(result.current.snapshot?.turns[0].error?.code).toBe(code);
+});
+
 it("recovers a missed completion when the native window regains focus", async () => {
   const { result } = renderHook(() => useChat("c1"));
   await waitFor(() => expect(result.current.snapshot?.activeTurnId).toBe("turn1"));

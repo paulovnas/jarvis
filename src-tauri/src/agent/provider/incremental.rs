@@ -592,6 +592,7 @@ mod tests {
             reasoning_levels: vec![],
             default_reasoning_level: None,
             context_window: Some(64000),
+            multi_agent_reasoning_effort: None,
         };
         let provider = super::super::TurnSession::new(
             credential,

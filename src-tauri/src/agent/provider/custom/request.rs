@@ -184,6 +184,7 @@ pub(super) fn body(
             antigravity_models: Default::default(),
             antigravity_endpoint: None,
             custom: Some(config.clone()),
+            inference_model: None,
         },
         options,
     );

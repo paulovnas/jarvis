@@ -57,7 +57,12 @@ export function useChat(conversationId: string | null) {
     const last = next.turns[next.turns.length - 1];
     if (last?.error && /^(account_|provider_|credential_|invalid_model|invalid_reasoning)/.test(last.error.code) && !modelNotices.current.has(last.id)) {
       modelNotices.current.add(last.id);
-      toast.error("O modelo da conversa está indisponível", { id: `chat-model:${last.id}`, description: last.error.message });
+      const title = last.error.code === "provider_request"
+        ? "O provedor recusou a solicitação"
+        : last.error.code === "invalid_reasoning"
+          ? "O nível de raciocínio não é aceito pelo modelo"
+          : "O modelo da conversa está indisponível";
+      toast.error(title, { id: `chat-model:${last.id}`, description: last.error.message });
     }
   }, []);
   const accept = useCallback((value: unknown, id: string) => {

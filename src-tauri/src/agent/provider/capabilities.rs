@@ -36,10 +36,12 @@ pub(crate) struct Modalities {
     pub(crate) image: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct ReasoningCapabilities {
     pub(crate) supported: bool,
     pub(crate) summaries: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) ultra_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -116,6 +118,7 @@ impl ModelCapabilities {
                 reasoning: ReasoningCapabilities {
                     supported: reasoning != Reasoning::None,
                     summaries: reasoning != Reasoning::None,
+                    ultra_effort: None,
                 },
                 context_window,
                 effective_context_window,
@@ -152,6 +155,7 @@ impl ModelCapabilities {
                 reasoning: ReasoningCapabilities {
                     supported: reasoning,
                     summaries: reasoning,
+                    ultra_effort: None,
                 },
                 context_window,
                 effective_context_window,
@@ -179,6 +183,7 @@ impl ModelCapabilities {
             reasoning: ReasoningCapabilities {
                 supported: !model.reasoning_levels.is_empty(),
                 summaries: !model.reasoning_levels.is_empty(),
+                ultra_effort: Some(model.codex_ultra_effort().to_owned()),
             },
             context_window,
             effective_context_window,
@@ -194,6 +199,13 @@ impl ModelCapabilities {
         credential: &CodexCredential,
         options: &super::super::TurnOptions,
     ) -> Self {
+        if let Some(model) = credential
+            .inference_model
+            .as_ref()
+            .filter(|model| model.id == options.model)
+        {
+            return Self::resolve(credential, model);
+        }
         let model = if let Some(config) = &credential.custom {
             config
                 .models
@@ -205,6 +217,7 @@ impl ModelCapabilities {
                         name: options.model.clone(),
                         reasoning_levels: Vec::new(),
                         default_reasoning_level: None,
+                        multi_agent_reasoning_effort: None,
                         context_window: None,
                     },
                     |item| ProviderModel {
@@ -212,6 +225,7 @@ impl ModelCapabilities {
                         name: item.name.clone(),
                         reasoning_levels: item.reasoning_levels.clone(),
                         default_reasoning_level: item.default_reasoning_level.clone(),
+                        multi_agent_reasoning_effort: None,
                         context_window: Some(item.context_window),
                     },
                 )
@@ -229,6 +243,7 @@ impl ModelCapabilities {
                     Vec::new()
                 },
                 default_reasoning_level: None,
+                multi_agent_reasoning_effort: None,
                 context_window: metadata["maxTokens"].as_u64().filter(|value| *value > 0),
             }
         } else {
@@ -237,10 +252,21 @@ impl ModelCapabilities {
                 name: options.model.clone(),
                 reasoning_levels: options.reasoning.iter().cloned().collect(),
                 default_reasoning_level: None,
+                multi_agent_reasoning_effort: None,
                 context_window: None,
             }
         };
         Self::resolve(credential, &model)
+    }
+
+    pub(super) fn wire_reasoning_effort<'a>(&'a self, selected: &'a str) -> &'a str {
+        match (self.family, selected) {
+            (_, "off") => "none",
+            (ProviderFamily::OpenAiCodex, "ultra") => {
+                self.reasoning.ultra_effort.as_deref().unwrap_or("medium")
+            }
+            _ => selected,
+        }
     }
 
     pub(super) fn accepts_input(&self, input: &[Value]) -> bool {
@@ -265,6 +291,7 @@ mod tests {
             name: "Model".into(),
             reasoning_levels: vec!["low".into(), "high".into()],
             default_reasoning_level: Some("high".into()),
+            multi_agent_reasoning_effort: None,
             context_window: Some(100_000),
         }
     }
@@ -283,6 +310,31 @@ mod tests {
         assert!(capabilities.reasoning.summaries);
         assert_eq!(capabilities.effective_context_window, Some(80_000));
         assert!(capabilities.replay.opaque_state);
+    }
+
+    #[test]
+    fn ultra_translation_does_not_change_other_provider_contracts_or_off() {
+        let mut credential = credential();
+        let mut model = model();
+        model.multi_agent_reasoning_effort = Some("low".into());
+        let codex = ModelCapabilities::resolve(&credential, &model);
+        assert_eq!(codex.wire_reasoning_effort("ultra"), "low");
+        assert_eq!(codex.wire_reasoning_effort("off"), "none");
+        credential.project_id = Some("project".into());
+        let antigravity = ModelCapabilities::resolve(&credential, &model);
+        assert_eq!(antigravity.wire_reasoning_effort("ultra"), "ultra");
+        assert!(antigravity.reasoning.ultra_effort.is_none());
+        credential.custom = Some(Config {
+            base_url: "https://example.com/v1".into(),
+            protocol: Protocol::OpenaiResponses,
+            auth_mode: AuthMode::Bearer,
+            token_field: TokenField::MaxTokens,
+            replay_unsigned_thinking: false,
+            models: vec![],
+        });
+        let custom = ModelCapabilities::resolve(&credential, &model);
+        assert_eq!(custom.wire_reasoning_effort("ultra"), "ultra");
+        assert!(custom.reasoning.ultra_effort.is_none());
     }
 
     #[test]

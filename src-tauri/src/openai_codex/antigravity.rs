@@ -419,6 +419,7 @@ fn model_list(models: &std::collections::BTreeMap<String, Value>) -> Vec<Provide
                 .unwrap_or(id)
                 .into(),
             reasoning_levels: levels,
+            multi_agent_reasoning_effort: None,
             default_reasoning_level: default,
             context_window: Some(
                 value["maxTokens"]

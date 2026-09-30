@@ -108,6 +108,7 @@ mod tests {
                 name: "Test model".into(),
                 reasoning_levels: vec![],
                 default_reasoning_level: None,
+                multi_agent_reasoning_effort: None,
                 context_window: None,
             }],
             true,
