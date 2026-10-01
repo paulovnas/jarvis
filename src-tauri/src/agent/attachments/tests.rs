@@ -2,6 +2,125 @@ use super::*;
 use std::io::Write;
 
 #[test]
+fn project_images_become_owned_generation_references_without_changing_the_source() {
+    let home = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path().canonicalize().unwrap();
+    let conversation = "a".repeat(32);
+    let mut png = Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(8, 4)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    fs::create_dir(root.join("assets")).unwrap();
+    fs::write(root.join("assets/logo.png"), png.get_ref()).unwrap();
+    let args = json!({"path":"assets/logo.png","id":null,"offset":null,"limit":null});
+    assert!(
+        jsonschema::validator_for(&project_definition()["parameters"])
+            .unwrap()
+            .is_valid(&args)
+    );
+    assert!(!jsonschema::validator_for(&definition()["parameters"])
+        .unwrap()
+        .is_valid(&args));
+    let output = read_tool_with_project(home.path(), &conversation, Some(&root), &args).unwrap();
+    let value: Value = serde_json::from_str(&output).unwrap();
+    let id = value["image_ids"][0].as_str().unwrap();
+    let item = metadata(home.path(), &conversation, id).unwrap();
+    assert_eq!(item.kind, "image");
+    assert_eq!(item.name, "logo.png");
+    assert_eq!(value["attachment"]["id"], id);
+    assert_eq!(value["path"], "assets/logo.png");
+    assert!(!output.contains("base64"));
+    assert_eq!(
+        bounded_read(
+            &location(home.path(), &conversation, id)
+                .unwrap()
+                .join("source"),
+            MAX_BYTES
+        )
+        .unwrap(),
+        *png.get_ref()
+    );
+    assert_eq!(
+        fs::read(root.join("assets/logo.png")).unwrap(),
+        *png.get_ref()
+    );
+    assert!(metadata(home.path(), &"b".repeat(32), id).is_err());
+    assert!(super::super::vision::input(
+        home.path(),
+        &conversation,
+        &json!({"ids":[id],"question":"Identify this logo."})
+    )
+    .is_ok());
+    assert!(definition()["parameters"]["properties"]
+        .get("path")
+        .is_none());
+    assert!(project_definition()["parameters"]["properties"]
+        .get("path")
+        .is_some());
+}
+
+#[test]
+fn project_image_reference_rejects_escapes_ambiguous_requests_and_unsupported_or_oversize_files() {
+    let home = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path().canonicalize().unwrap();
+    let conversation = "a".repeat(32);
+    fs::write(root.join("unsupported.bin"), [0, 1, 2]).unwrap();
+    fs::write(root.join("broken.png"), b"\x89PNG\r\n\x1a\ninvalid").unwrap();
+    let oversized = fs::File::create(root.join("oversized.png")).unwrap();
+    oversized.set_len(MAX_BYTES as u64 + 1).unwrap();
+    for args in [
+        json!({}),
+        json!({"id":"valid","path":"logo.png"}),
+        json!({"path":"../outside.png"}),
+        json!({"path":home.path().join("outside.png")}),
+        json!({"path":"unsupported.bin"}),
+        json!({"path":"broken.png"}),
+        json!({"path":"oversized.png"}),
+        json!({"path":"logo.png","limit":1}),
+    ] {
+        assert!(
+            read_tool_with_project(home.path(), &conversation, Some(&root), &args).is_err(),
+            "{args}"
+        );
+    }
+    assert!(read_tool_with_project(
+        home.path(),
+        &conversation,
+        None,
+        &json!({"path":"logo.png"})
+    )
+    .is_err());
+    assert!(read_tool(
+        home.path(),
+        &conversation,
+        &json!({"id":"valid","path":"logo.png"})
+    )
+    .is_err());
+    #[cfg(unix)]
+    {
+        let mut png = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(4, 4)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        fs::write(root.join("valid.png"), png.get_ref()).unwrap();
+        std::os::unix::fs::symlink(root.join("valid.png"), root.join("linked.png")).unwrap();
+        std::os::unix::fs::symlink(&root, root.join("linked-dir")).unwrap();
+        for path in ["linked.png", "linked-dir/valid.png"] {
+            assert!(read_tool_with_project(
+                home.path(),
+                &conversation,
+                Some(&root),
+                &json!({"path":path})
+            )
+            .is_err());
+        }
+    }
+    assert!(!directory(home.path(), &conversation).unwrap().exists());
+}
+
+#[test]
 fn pdf_text_is_available_to_the_document_reader() {
     let stream = "BT /F1 12 Tf 20 50 Td (Jarvis PDF reference) Tj ET";
     let objects = [

@@ -1,5 +1,101 @@
 use super::*;
 
+#[tokio::test]
+async fn image_specialists_can_inspect_real_project_evidence_without_unrelated_mutations() {
+    let (fixture, hub) = hub();
+    std::fs::write(
+        fixture.root.join("theme.css"),
+        ":root { --brand: #61afef; }",
+    )
+    .unwrap();
+    for id in ["main", "child"] {
+        let execution = Execution {
+            hub: hub.clone(),
+            id: id.into(),
+            role: Role::ImageGenerator,
+            flow: Flow::ImageGenerator,
+            scope: vec![".jarvis-image-attachments".into()],
+        };
+        let mut definitions = tools::definitions(Mode::Build);
+        definitions.extend(crate::core::beads::definitions(true));
+        definitions.extend(crate::core::beads::project_definitions());
+        definitions.extend(crate::core::graft::definitions());
+        definitions.extend([
+            crate::skills::definition(),
+            crate::skills::search_definition(),
+        ]);
+        definitions.extend(crate::agent::image_tasks::definitions());
+        definitions.push(image_definition(true));
+        execution.filter(&mut definitions);
+        for name in [
+            "read",
+            "list",
+            "search",
+            "browser_open",
+            "browser_navigate",
+            "browser_snapshot",
+            "browser_screenshot",
+            "beads_show",
+            "project_beads_show",
+            "graft_find_code",
+            "read_skill",
+            "generate_image",
+            "image_process",
+            crate::agent::knowledge::TOOL,
+        ] {
+            assert!(
+                definitions.iter().any(|tool| tool["name"] == name),
+                "{id}: {name}"
+            );
+        }
+        for name in [
+            "write",
+            "bash",
+            "terminal_start",
+            "beads_update",
+            "jarvis_propose_publication",
+            "video_audio",
+            "http_send",
+        ] {
+            assert!(
+                !definitions.iter().any(|tool| tool["name"] == name),
+                "{id}: {name}"
+            );
+        }
+        assert!(execution.allowed("mcp_activate"));
+        assert!(execution.allowed("mcp_project_assets"));
+        let read = ToolCall {
+            id: "read-theme".into(),
+            name: "read".into(),
+            args: json!({"path":"theme.css"}),
+            status: "running".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        assert!(execution.preflight(&read).is_none());
+        let (_, signal) = watch::channel(false);
+        let evidence = tools::execute(&fixture.root, &read, Mode::Build, signal)
+            .await
+            .unwrap();
+        assert!(evidence.contains("--brand: #61afef"));
+        let outside = ToolCall {
+            args: json!({"path":"../outside.css"}),
+            ..read
+        };
+        let (_, signal) = watch::channel(false);
+        assert!(tools::execute(&fixture.root, &outside, Mode::Build, signal)
+            .await
+            .is_err());
+    }
+    let native = catalog::builtin_agent(Role::ImageGenerator).unwrap();
+    let agent = catalog::Catalog::default()
+        .resolve_agent(&native.id)
+        .unwrap();
+    let instructions = custom::direct_instructions(&agent);
+    assert!(instructions.contains("ground the work in the actual project before generating"));
+    assert!(instructions.contains("image_ids"));
+}
+
 #[test]
 fn native_image_role_separates_direct_user_execution_from_managed_child_handoff() {
     let (_fixture, hub) = hub();
@@ -638,7 +734,7 @@ fn structural_discovery_is_mandatory_for_project_roles_and_available_during_reco
                 }
             }
         }
-        assert!(!Role::ImageGenerator.allows(Flow::ImageGenerator, name, true));
+        assert!(Role::ImageGenerator.allows(Flow::ImageGenerator, name, true));
         assert!(!Role::Video.allows(Flow::Video, name, true));
         for capability in [
             catalog::Capability::ReadOnly,

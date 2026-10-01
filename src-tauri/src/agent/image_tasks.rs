@@ -70,9 +70,13 @@ pub(super) fn processing_schema() -> Value {
     },"additionalProperties":false})
 }
 pub(super) fn definitions() -> Vec<Value> {
-    vec![
+    let mut definitions = vec![
         json!({"type":"function","name":"image_process","description":"Process existing image attachments through required ComfyUI, without calling or charging the image provider again. Resize, interpolate upscale, remove background or export PNG/JPG/WEBP. Returns final displayed image attachments, verified workflow/report paths and optional project exports.","parameters":{"type":"object","properties":{"image_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":4},"processing":processing_schema()},"required":["image_ids"],"additionalProperties":false}}),
-    ]
+    ];
+    definitions
+        .iter_mut()
+        .for_each(super::execution_sandbox::add_permission_parameters);
+    definitions
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -113,7 +117,12 @@ fn preserve(mut cause: AgentError, ids: &[String]) -> AgentError {
         .unwrap_or_else(|| json!({}));
     result["error"] = json!({"code":cause.code,"message":cause.message});
     result["sourceImageIds"] = json!(ids);
-    result["recovery"] = json!("Original and produced images are preserved. Inspect producedImageIds/exports first. Retry only missing image_process operations; never generate or charge for the same images again.");
+    let preservation = json!("Original and produced images are preserved. Inspect producedImageIds/exports first. Retry only missing image_process operations; never generate or charge for the same images again.");
+    if result["recovery"].is_object() {
+        result["recovery"]["preservation"] = preservation;
+    } else {
+        result["recovery"] = preservation;
+    }
     cause.tool_result = Some(result.to_string());
     cause
 }
@@ -141,8 +150,9 @@ pub(super) async fn execute(
     args: &Value,
     signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
-    let request: Request = serde_json::from_value(args.clone())
-        .map_err(|_| error("Informe imagens e opções válidas para o processamento."))?;
+    let request: Request =
+        serde_json::from_value(super::execution_sandbox::command_arguments(args))
+            .map_err(|_| error("Informe imagens e opções válidas para o processamento."))?;
     let ids = request.image_ids.clone();
     process(home, owner, session, commands, sandbox, &request, signal)
         .await
@@ -226,7 +236,7 @@ async fn process(
     };
     let mut call = call(
         "bash",
-        json!({"command":"ComfyUI image processing","yieldTimeMs":1000}),
+        json!({"command":"ComfyUI image processing","yieldTimeMs":1000,"nativeTool":"image_process","nativeArguments":{"image_ids":request.image_ids,"processing":request.processing}}),
     );
     let mut result: Value = serde_json::from_str(
         &commands

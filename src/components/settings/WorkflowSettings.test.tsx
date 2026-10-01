@@ -23,6 +23,7 @@ it("separates immutable built-in flow and agent cards from custom management", a
   expect(within(nativeAgents).getAllByRole("button")).toHaveLength(10);
   expect(within(nativeAgents).getByRole("button", { name: "Ver agente GitHub" })).toHaveTextContent("Misto");
   expect(within(nativeAgents).getByRole("button", { name: "Ver agente Gerador de vídeos" })).toHaveTextContent("Misto");
+  expect(within(nativeAgents).getByRole("button", { name: "Ver agente Gerador de vídeos" })).toHaveTextContent("Ajuda a definir público, mensagem e roteiro.");
   expect(within(nativeAgents).getByRole("button", { name: "Ver agente Gerador de imagens" })).toHaveTextContent("Misto");
   expect(screen.getByRole("button", { name: "Editar Analista próprio" })).toBeVisible();
 });

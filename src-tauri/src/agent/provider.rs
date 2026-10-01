@@ -1653,6 +1653,36 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_preserves_real_graft_function_envelopes_and_optional_arguments() {
+        let options = super::super::tests::options(ApprovalMode::Yolo);
+        let credential = CodexCredential::new("", "", 0, "", None, None);
+        let capabilities = ModelCapabilities::resolve_for_options(&credential, &options);
+        let tools = crate::core::graft::definitions();
+        let body = request_body(
+            &options,
+            &capabilities,
+            "instructions",
+            vec![json!({"role":"user","content":"Inspect this project's visual identity"})],
+            tools.clone(),
+            "session",
+        );
+        let sent = body["tools"].as_array().unwrap();
+        assert_eq!(sent, &tools);
+        assert_eq!(sent.len(), 6);
+        for tool in sent {
+            assert_eq!(tool["type"], "function", "{}", tool["name"]);
+            assert_eq!(tool["strict"], false, "{}", tool["name"]);
+            assert_eq!(tool["parameters"]["type"], "object");
+        }
+        let find = sent
+            .iter()
+            .find(|tool| tool["name"] == "graft_find_code")
+            .unwrap();
+        assert_eq!(find["parameters"]["required"], json!(["query"]));
+        assert!(find["parameters"]["properties"].get("limit").is_some());
+    }
+
+    #[test]
     fn native_optional_arguments_are_not_promoted_by_responses_strict_normalization() {
         let options = super::super::tests::options(ApprovalMode::Yolo);
         let credential = CodexCredential::new("", "", 0, "", None, None);

@@ -35,6 +35,76 @@ fn options(model: &str) -> TurnOptions {
     }
 }
 
+#[tokio::test]
+#[ignore = "Requires a selected connected Codex account; sends one text-only schema diagnostic, never executes tools"]
+async fn live_codex_accepts_native_graft_tools() {
+    assert_eq!(
+        crate::data_dir::profile(),
+        crate::data_dir::Profile::Production,
+        "Run this explicit diagnostic with --release to use the production account"
+    );
+    let mut options =
+        options(&std::env::var("JARVIS_LIVE_MODEL").expect("Set JARVIS_LIVE_MODEL explicitly"));
+    options.account =
+        std::env::var("JARVIS_LIVE_ACCOUNT").expect("Set JARVIS_LIVE_ACCOUNT to a connected alias");
+    options.reasoning = Some("max".into());
+    let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+    let auth_options = options.clone();
+    let credential = tokio::task::spawn_blocking(move || {
+        crate::openai_codex::OpenAiCodexState::default().inference_credential(
+            &crate::persistence::AppState::default(),
+            &home,
+            &auth_options.account,
+            &auth_options.model,
+            auth_options.reasoning.as_deref(),
+        )
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    let session = crate::library::new_id().unwrap();
+    let body = request_body(
+        &options,
+        &ModelCapabilities::resolve_for_options(&credential, &options),
+        "Respond only OK. Do not call any tools.",
+        vec![json!({"role":"user","content":"Responda somente OK, sem usar ferramentas."})],
+        crate::core::graft::definitions(),
+        &session,
+    );
+    let mut response = authenticated_request(&credential, &session, &body, Duration::from_secs(90))
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+    if !response.status().is_success() {
+        let status = response.status();
+        // This probe contains only the public tool schema and a fixed message;
+        // never send project history or attachments through this diagnostic.
+        let detail = response.text().await.unwrap();
+        panic!(
+            "Native Graft schema rejected ({status}): {}",
+            detail.chars().take(2000).collect::<String>()
+        );
+    }
+    let mut parser = Sse::default();
+    let mut completed = false;
+    while let Some(chunk) = response.chunk().await.unwrap() {
+        for event in parser.push(&chunk).unwrap() {
+            match event["type"].as_str() {
+                Some("error" | "response.failed") => {
+                    panic!("Native Graft schema diagnostic failed: {event}");
+                }
+                Some("response.completed") => completed = true,
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        completed,
+        "The text-only schema diagnostic did not complete"
+    );
+}
+
 fn custom_config(protocol: Protocol) -> Config {
     Config {
         base_url: "https://example.com/v1".into(),

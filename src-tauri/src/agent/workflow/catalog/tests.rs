@@ -13,7 +13,21 @@ fn image_generator_is_a_mixed_native_agent_available_solo_and_in_custom_flows() 
     assert!(solo.instructions.contains("ComfyUI"));
     assert!(custom::allowed(&solo, "generate_image"));
     assert!(custom::allowed(&solo, "image_process"));
-    for name in ["bash", "http_send", "mcp_activate", "write", "video_audio"] {
+    for name in [
+        "read",
+        "list",
+        "search",
+        "browser_open",
+        "browser_screenshot",
+        "mcp_activate",
+        "beads_show",
+        "project_beads_show",
+        "ctx_search",
+        "graft_find_code",
+    ] {
+        assert!(custom::allowed(&solo, name), "{name}");
+    }
+    for name in ["bash", "http_send", "write", "video_audio", "beads_update"] {
         assert!(!custom::allowed(&solo, name), "{name}");
     }
     let mut catalog = example();
@@ -321,6 +335,49 @@ fn video_generator_labels_preserve_native_identity_and_user_owned_names() {
         .unwrap();
     assert_eq!(flow.steps[0].agent_id, "builtin:video");
     assert!(flow.description.contains("narração, música"));
+}
+
+#[test]
+fn video_director_contract_reaches_native_selection_and_existing_custom_flows() {
+    let mut catalog = example();
+    for step in &mut catalog.flows[0].steps {
+        step.agent_id = "builtin:video".into();
+    }
+    catalog.validate().unwrap();
+    let restored: Catalog = serde_json::from_slice(&serde_json::to_vec(&catalog).unwrap()).unwrap();
+    let direct = restored.resolve_agent("builtin:video").unwrap();
+    let run = restored.resolve(&restored.flows[0].id).unwrap();
+    let prompts = [
+        contracts::prompt(Flow::Video, Role::Video, "builtin:video"),
+        custom::direct_instructions(&direct),
+        custom::instructions(&run.agents[0]),
+    ];
+    for prompt in prompts {
+        for requirement in [
+            "creative marketing director and video producer",
+            "project_knowledge product/design/learning",
+            "real navigation and clicks",
+            "grouping at most three concise questions",
+            "script/storyboard",
+            "without redundant approvals",
+            "Native voice generation supports PT-BR only",
+            "New padding does not alter existing WAVs",
+            "first/last syllables and natural pauses",
+            "provided licensed track without asking the same question again",
+            "static checks alone do not prove that speech sounds natural",
+        ] {
+            assert!(prompt.contains(requirement), "Missing: {requirement}");
+        }
+    }
+    for tool in [
+        "ask_user",
+        "project_knowledge",
+        "browser_click",
+        "video_audio",
+    ] {
+        assert!(custom::allowed(&direct, tool), "{tool}");
+        assert!(custom::allowed(&run.agents[0], tool), "{tool}");
+    }
 }
 
 #[test]

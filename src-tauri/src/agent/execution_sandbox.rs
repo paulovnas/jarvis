@@ -153,6 +153,17 @@ impl SandboxPlan {
         }
         plan
     }
+
+    /// Managed Hyperframes lowers its own worker priority; headless Chromium
+    /// subscribes to system-power notifications during startup. Neither grant
+    /// broadens filesystem, networking or arbitrary IOKit device access.
+    pub(super) fn with_managed_video_runtime(&self) -> Self {
+        let mut plan = self.clone();
+        if let Launcher::Seatbelt { profile, .. } = &mut plan.launcher {
+            profile.push_str("(allow system-sched (target same-sandbox))\n(allow iokit-open (iokit-user-client-class \"RootDomainUserClient\"))\n(allow mach-register (global-name-regex #\"^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$\"))\n");
+        }
+        plan
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,18 +269,35 @@ pub(super) fn command_failure(
     if !denied {
         return super::AgentError::new("tool_error", &message);
     }
-    let mut retry = args.clone();
+    let native_tool = args["nativeTool"].as_str();
+    let mut retry = args
+        .get("nativeArguments")
+        .filter(|_| native_tool.is_some())
+        .cloned()
+        .unwrap_or_else(|| args.clone());
     retry["sandboxPermissions"] = "require_escalated".into();
+    retry["justification"] = "O isolamento bloqueou a execução necessária; confira os resultados preservados antes de retomar esta operação.".into();
     let guidance = "O ambiente negou um acesso. Verifique os efeitos já produzidos antes de repetir. Se ainda necessário, execute com sandboxPermissions=require_escalated e justification. No modo YOLO, a execução já está autorizada e não exige confirmação; no modo manual, o Jarvis solicitará aprovação quando não houver uma autorização compatível.";
     let mut error = super::AgentError::new("sandbox_denied", &format!("{message}\n{guidance}"));
-    error.tool_result = Some(serde_json::json!({"error":{"code":"sandbox_denied","message":message},"recovery":{"arguments":retry,"approvalPolicy":"according_to_turn","sideEffects":"unknown","instructions":guidance}}).to_string());
+    let mut result = serde_json::json!({"error":{"code":"sandbox_denied","message":message},"recovery":{"arguments":retry,"approvalPolicy":"according_to_turn","sideEffects":"unknown","instructions":guidance}});
+    if let Some(tool) = native_tool {
+        result["recovery"]["tool"] = tool.into();
+    }
+    error.tool_result = Some(result.to_string());
     error
 }
 
 pub(super) fn add_permission_parameters(definition: &mut serde_json::Value) {
     if !matches!(
         definition["name"].as_str(),
-        Some("bash" | "process_start" | "terminal_start")
+        Some(
+            "bash"
+                | "process_start"
+                | "terminal_start"
+                | "video_run"
+                | "video_audio"
+                | "image_process"
+        )
     ) {
         return;
     }
@@ -476,6 +504,122 @@ fn bubblewrap_arguments(writable_root: &Path, network: bool) -> Vec<OsString> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_video_grants_runtime_ipc_and_scheduling_without_broadening_host_access() {
+        #[cfg(target_os = "macos")]
+        if std::env::var_os("JARVIS_TEST_VIDEO_PRIORITY_SANDBOX").is_some() {
+            assert_eq!(unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 19) }, 0);
+            return;
+        }
+        let plan = prepare_for(
+            Platform::Macos,
+            AdapterAvailability {
+                seatbelt: Some("/usr/bin/sandbox-exec".into()),
+                bubblewrap: None,
+            },
+            Path::new("/project"),
+            &ExecutionEffects::default(),
+        );
+        let native = plan.with_managed_video_runtime();
+        let (_, arguments) = native.wrap(Path::new("/private/core/node"), []);
+        let policy = arguments[1].to_string_lossy();
+        assert!(policy.contains("(allow system-sched (target same-sandbox))"));
+        assert!(policy.contains("(iokit-user-client-class \"RootDomainUserClient\")"));
+        assert!(policy.contains("^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$"));
+        assert!(!policy.contains("(allow iokit-open)"));
+        assert!(!policy.contains("(allow mach-register)"));
+        assert!(!policy.contains("(allow network*)"));
+        assert!(!policy.contains("(subpath \"/private/core\")"));
+        assert_eq!(native.report(), plan.report());
+        let (_, original) = plan.wrap(Path::new("/private/core/node"), []);
+        assert!(!original[1].to_string_lossy().contains("system-sched"));
+        #[cfg(target_os = "macos")]
+        {
+            let launch = |plan: &SandboxPlan| {
+                let (program, arguments) = plan.wrap(
+                    &std::env::current_exe().unwrap(),
+                    ["--exact".into(), "agent::execution_sandbox::tests::managed_video_grants_runtime_ipc_and_scheduling_without_broadening_host_access".into()],
+                );
+                std::process::Command::new(program)
+                    .args(arguments)
+                    .env("JARVIS_TEST_VIDEO_PRIORITY_SANDBOX", "1")
+                    .output()
+                    .unwrap()
+            };
+            assert!(!launch(&plan).status.success());
+            let result = launch(&native);
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+    }
+
+    #[test]
+    fn native_media_denials_return_executable_original_tool_arguments() {
+        let mut definitions = super::super::video::definitions(super::super::Mode::Build);
+        definitions.extend(super::super::image_tasks::definitions());
+        let catalog = super::super::tool_contract::Catalog::new(&definitions);
+        let root = tempfile::tempdir().unwrap();
+        let plan = prepare_for(
+            Platform::Macos,
+            AdapterAvailability {
+                seatbelt: Some("/usr/bin/sandbox-exec".into()),
+                bubblewrap: None,
+            },
+            root.path(),
+            &ExecutionEffects::default(),
+        );
+        for (name, args) in [
+            (
+                "video_run",
+                serde_json::json!({"action":"render","path":"videos/demo","output":"videos/demo/ready.mp4","quality":"looks"}),
+            ),
+            (
+                "video_audio",
+                serde_json::json!({"action":"narrate","text":"Olá","output":"voice.wav"}),
+            ),
+            (
+                "image_process",
+                serde_json::json!({"image_ids":["a".repeat(32)],"processing":{"format":"png","remove_background":true}}),
+            ),
+        ] {
+            let failure = command_failure(
+                Some(&plan),
+                &serde_json::json!({"command":"Host-managed media task","nativeTool":name,"nativeArguments":args}),
+                Some(1),
+                "EPERM",
+            );
+            let result: serde_json::Value =
+                serde_json::from_str(failure.tool_result.as_deref().unwrap()).unwrap();
+            assert_eq!(result["recovery"]["tool"], name);
+            let retry = super::super::ToolCall {
+                id: "retry".into(),
+                name: name.into(),
+                args: result["recovery"]["arguments"].clone(),
+                status: "pending".into(),
+                output: String::new(),
+                duration_ms: 0,
+            };
+            catalog.validate(&retry).unwrap();
+            assert_eq!(command_arguments(&retry.args), args);
+            let policy = super::super::execution_policy::inspect_tool(
+                root.path(),
+                &retry,
+                catalog.capabilities(name).unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+            assert!(policy.outcome.native_working_directory.is_some());
+            assert_eq!(
+                prepare(&policy).unwrap().report().backend,
+                SandboxBackend::Native
+            );
+            assert_eq!(result["recovery"]["sideEffects"], "unknown");
+        }
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

@@ -177,9 +177,22 @@ impl Role {
             return self == Self::ImageGenerator;
         }
         if self == Self::ImageGenerator {
+            // Image assets need evidence from the real project, even when the
+            // worker's write scope is limited to its image export directory.
+            if tool.starts_with("browser_")
+                || tool.starts_with("graft_")
+                || tool.starts_with("mcp_")
+                || tool.starts_with("project_beads_")
+                || (tool.starts_with("beads_") && !crate::core::beads::needs_approval(tool))
+            {
+                return true;
+            }
             return matches!(
                 tool,
                 "generate_image"
+                    | "read"
+                    | "list"
+                    | "search"
                     | "read_attachment"
                     | "vision"
                     | "inspect_image"

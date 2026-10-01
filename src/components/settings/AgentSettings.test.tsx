@@ -26,7 +26,7 @@ it("groups the fourteen immutable model profiles by flow and offers useful role-
   expect(within(standard).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
   expect(within(designer).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
   expect(within(video).getByRole("button", { name: "Modelo de Gerador de vídeos no fluxo Vídeo" })).toBeVisible();
-  expect(within(video).getByText(/Gera apresentações de projetos com animação, narração e música/)).toBeVisible();
+  expect(within(video).getByText(/Ajuda a definir público, mensagem e roteiro/)).toBeVisible();
   expect(within(planned).queryByText("Gerador de vídeos")).not.toBeInTheDocument();
   expect(within(complete).queryByText("Gerador de vídeos")).not.toBeInTheDocument();
   expect(within(planned).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(3);

@@ -143,8 +143,9 @@ export function ToolCallCard({ tool, detailContext }: { tool: ToolCallItem; deta
   const current = loaded ?? tool;
   const deferred = hasDeferredDetails(tool) && loaded === null;
   const presentation = tools[current.name as keyof typeof tools] ?? { label: current.name, icon: Wrench };
-  const Icon = presentation.icon;
-  const label = current.name === "video_audio" && current.args?.action === "narrate" ? "Gerar narração" : current.name === "video_audio" && current.args?.action === "music" ? "Gerar música" : presentation.label;
+  const projectImage = current.name === "read_attachment" && typeof current.args?.path === "string";
+  const Icon = projectImage ? ImagePlus : presentation.icon;
+  const label = projectImage ? "Imagem do projeto" : current.name === "video_audio" && current.args?.action === "narrate" ? "Gerar narração" : current.name === "video_audio" && current.args?.action === "music" ? "Gerar música" : presentation.label;
   const detail = current.name === "read_skill" ? current.output?.match(/^Skill: (.+)/)?.[1] ?? current.args?.path
     : current.name.startsWith("graft_") ? current.args?.query ?? current.args?.file ?? current.args?.symbol ?? current.args?.pattern ?? current.args?.in
       : current.args?.title ?? current.args?.path ?? current.args?.output ?? current.args?.command ?? current.args?.query ?? current.args?.question ?? current.args?.url;

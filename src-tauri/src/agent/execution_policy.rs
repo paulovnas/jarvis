@@ -169,6 +169,12 @@ pub(super) fn inspect_tool(
             read_paths: vec![PathBuf::from(tool.args["path"].as_str().unwrap_or("."))],
             write_paths: vec![],
         },
+        "read_attachment" if tool.args["path"].is_string() => ExecutionOperation::Filesystem {
+            read_paths: vec![PathBuf::from(
+                tool.args["path"].as_str().unwrap_or_default(),
+            )],
+            write_paths: vec![],
+        },
         "write" | "edit" => ExecutionOperation::Filesystem {
             read_paths: (tool.name == "edit")
                 .then(|| PathBuf::from(tool.args["path"].as_str().unwrap_or(".")))
@@ -1123,6 +1129,36 @@ mod tests {
         let outcome = decide("rm -rf ../../outside", NetworkPolicy::Allow);
         assert_eq!(outcome.decision, ExecutionDecision::Deny);
         assert_eq!(outcome.code, "write_scope_escape");
+    }
+
+    #[test]
+    fn project_image_import_is_a_scoped_read_and_does_not_escalate_external_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let imported = tool(
+            "read_attachment",
+            serde_json::json!({"path":"assets/logo.png"}),
+        );
+        let outcome = inspect_tool(&root, &imported, capabilities(Effect::ReadOnly))
+            .unwrap()
+            .unwrap()
+            .outcome;
+        assert_eq!(outcome.decision, ExecutionDecision::Allow);
+        assert!(outcome.effects.reads_filesystem);
+        assert!(!outcome.effects.writes_filesystem);
+        assert_eq!(outcome.read_paths, vec![root.join("assets/logo.png")]);
+        let outside = tool(
+            "read_attachment",
+            serde_json::json!({"path":"../outside.png","sandboxPermissions":"require_escalated","justification":"Reference image"}),
+        );
+        assert_eq!(
+            inspect_tool(&root, &outside, capabilities(Effect::ReadOnly))
+                .unwrap()
+                .unwrap()
+                .outcome
+                .decision,
+            ExecutionDecision::Deny
+        );
     }
 
     #[test]

@@ -42,7 +42,8 @@ fn sandbox(root: &Path, call: &ToolCall) -> SandboxPlan {
 impl NativeTools<'_> {
     async fn execute(&mut self, name: &str, args: Value) -> Value {
         let call = tool(name, args);
-        let plan = (name == "video_audio").then(|| sandbox(&self.session.root, &call));
+        let plan =
+            matches!(name, "video_audio" | "video_run").then(|| sandbox(&self.session.root, &call));
         let mut result: Value = serde_json::from_str(
             &self
                 .jobs
@@ -96,6 +97,75 @@ impl NativeTools<'_> {
         assert_eq!(result["exitCode"], 0, "{result}");
         eprintln!("Native {name}: {output}");
         result
+    }
+}
+
+#[tokio::test]
+#[ignore = "Requires an installed private Hyperframes runtime; exercises actual OS sandbox rendering"]
+async fn managed_video_renders_inside_production_sandbox() {
+    let home = std::env::var_os("JARVIS_TEST_VIDEO_HOME")
+        .expect("Set JARVIS_TEST_VIDEO_HOME to a home with managed Hyperframes installed");
+    let home = Path::new(&home);
+    crate::core::hyperframes::runtime(home).unwrap();
+    let fixture = super::super::tests::Fixture::new();
+    let (_stop, signal) = watch::channel(false);
+    let mut native = NativeTools {
+        home,
+        session: super::super::tests::session(&fixture),
+        jobs: Jobs::default(),
+        commands: CommandSessions::default(),
+        signal,
+    };
+    let directory = fixture.root.join("smoke");
+    if let Some(source) = std::env::var_os("JARVIS_TEST_VIDEO_COMPOSITION") {
+        copy_composition(Path::new(&source), &directory);
+    } else {
+        native
+            .execute("video_run", json!({"action":"init","path":"smoke"}))
+            .await;
+        fs::create_dir(directory.join("compositions")).unwrap();
+        fs::write(directory.join("compositions/intro.html"), r##"<!doctype html><html><head><meta charset="UTF-8"></head><body><template><style>#intro-root{position:absolute;inset:0;width:320px;height:180px;color:white;font-family:sans-serif}</style><div id="intro-root" data-composition-id="sandbox-intro" data-width="320" data-height="180" data-duration="1"><div id="title">Jarvis sandbox render</div></div><script>const child=gsap.timeline({paused:true});child.to("#title",{x:20,duration:1,ease:"none"},0);window.__timelines["sandbox-intro"]=child;</script></template></body></html>"##).unwrap();
+        fs::write(directory.join("index.html"), r##"<!doctype html><html><head><meta charset="UTF-8"><script src="assets/vendor/gsap.min.js"></script><style>html,body{margin:0;width:320px;height:180px;overflow:hidden;background:#181b20}</style></head><body><main data-composition-id="sandbox-smoke" data-width="320" data-height="180" data-start="0" data-duration="1"><div id="intro" class="clip" data-composition-id="sandbox-intro" data-composition-src="compositions/intro.html" data-width="320" data-height="180" data-start="0" data-duration="1" data-track-index="0"></div></main><script>window.__timelines={};window.__timelines["sandbox-smoke"]=gsap.timeline({paused:true}).to({},{duration:1},0);</script></body></html>"##).unwrap();
+    }
+    native
+        .execute("video_run", json!({"action":"check","path":"smoke"}))
+        .await;
+    let rendered = native
+        .execute(
+            "video_run",
+            json!({"action":"render","path":"smoke","quality":"draft","output":"smoke/ready.mp4"}),
+        )
+        .await;
+    assert_eq!(rendered["path"], "smoke/ready.mp4");
+    verify_video(&fixture.root, "smoke/ready.mp4").unwrap();
+    assert!(native.commands.running_ids().is_empty());
+    if std::env::var_os("JARVIS_TEST_VIDEO_COMPOSITION").is_some() {
+        let artifact = tempfile::Builder::new()
+            .prefix("jarvis-native-video-")
+            .suffix(".mp4")
+            .tempfile()
+            .unwrap();
+        fs::copy(directory.join("ready.mp4"), artifact.path()).unwrap();
+        let (_, path) = artifact.keep().unwrap();
+        eprintln!("NATIVE_SANDBOX_MP4={}", path.display());
+    }
+}
+
+fn copy_composition(source: &Path, destination: &Path) {
+    fs::create_dir(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let kind = entry.file_type().unwrap();
+        assert!(
+            !kind.is_symlink(),
+            "Composition fixtures must not contain links"
+        );
+        let target = destination.join(entry.file_name());
+        if kind.is_dir() {
+            copy_composition(&entry.path(), &target);
+        } else if kind.is_file() {
+            fs::copy(entry.path(), target).unwrap();
+        }
     }
 }
 

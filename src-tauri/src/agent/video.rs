@@ -340,6 +340,14 @@ impl Jobs {
         signal: watch::Receiver<bool>,
     ) -> Result<String, AgentError> {
         let Context { session, home, app } = context;
+        let sandbox = sandbox.map(|plan| {
+            if tool.name == "video_run" {
+                plan.with_managed_video_runtime()
+            } else {
+                plan.clone()
+            }
+        });
+        let sandbox = sandbox.as_ref();
         if tool.name == "video_docs" {
             return docs(home, &tool.args);
         }
@@ -357,6 +365,8 @@ impl Jobs {
             }
             call.name = "bash".into();
             call.args = json!({"command":format!("Audiovisual {}", tool.args["action"].as_str().unwrap_or_default()), "yieldTimeMs":tool.args["yieldTimeMs"].as_u64().unwrap_or(1000)});
+            call.args["nativeTool"] = tool.name.clone().into();
+            call.args["nativeArguments"] = tool.args.clone();
             command
         } else if tool.name == "video_run" {
             if tool.args["action"] == "render" {
@@ -391,6 +401,8 @@ impl Jobs {
                 .current_dir(&prepared.directory);
             call.name = "bash".into();
             call.args = json!({"command":format!("Hyperframes {}",tool.args["action"].as_str().unwrap_or_default()),"workdir":prepared.directory.strip_prefix(&session.root).map_err(|_| AgentError::internal())?.to_string_lossy(),"yieldTimeMs":tool.args["yieldTimeMs"].as_u64().unwrap_or(1000)});
+            call.args["nativeTool"] = tool.name.clone().into();
+            call.args["nativeArguments"] = tool.args.clone();
             let mut command = publication_command(process, prepared, session, app, &tool.args)?;
             if tool.args["action"] == "init" {
                 let root = session.root.clone();

@@ -58,7 +58,7 @@ impl<'a> Bridge<'a> {
                 .and_then(|turn| turn.mcp_intent.clone())
                 .unwrap_or_else(|| data.inherited_mcp_intent.clone())
         };
-        let clients = if publication || global_companion || image_specialist {
+        let clients = if publication || global_companion {
             crate::mcp::runtime::TurnClients::default()
         } else {
             crate::mcp::runtime::TurnClients::discover_for_intent(
@@ -71,7 +71,7 @@ impl<'a> Bridge<'a> {
             )
             .await?
         };
-        let context = if global_companion || image_specialist {
+        let context = if global_companion {
             crate::core::context::ContextMode::without_project(&session.root, &session.id)
         } else {
             crate::core::context::ContextMode::open(
@@ -83,7 +83,6 @@ impl<'a> Bridge<'a> {
             .await?
         };
         let graft = if global_companion
-            || image_specialist
             || execution
                 .as_ref()
                 .is_some_and(workflow::Execution::video_specialist)
@@ -102,18 +101,20 @@ impl<'a> Bridge<'a> {
             .turn
             .user
             .clone();
-        core_runtime::prepare_graft(session, &graft, &user, signal.clone()).await?;
-        let beads = if direct_tasks || publication || global_companion || image_specialist {
+        if !image_specialist {
+            core_runtime::prepare_graft(session, &graft, &user, signal.clone()).await?;
+        }
+        let beads = if (direct_tasks && !image_specialist) || publication || global_companion {
             None
         } else {
             Some(crate::core::beads::Beads::new(
                 home,
                 owner.project_id()?,
                 &owner.id,
-                options.mode == Mode::Plan,
+                image_specialist || options.mode == Mode::Plan,
             )?)
         };
-        let project_beads = if direct_tasks && !image_specialist {
+        let project_beads = if !global_companion && (direct_tasks || image_specialist) {
             crate::core::beads::ProjectBeads::open(home, &session.root)?
         } else {
             None
@@ -169,7 +170,7 @@ impl<'a> Bridge<'a> {
                 owner.project_id()?,
             )?));
         }
-        if !publication && !global_companion && !image_specialist {
+        if !publication && !global_companion {
             prompt.push_str(authoring::INSTRUCTIONS);
             prompt.push_str(web_search::instructions(web_search::enabled(
                 runtime.state,
@@ -242,7 +243,7 @@ impl<'a> Bridge<'a> {
                 })
                 .await?;
         }
-        if global_companion || image_specialist {
+        if global_companion {
             let instructions = if execution
                 .as_ref()
                 .is_some_and(workflow::Execution::image_generator)
@@ -307,12 +308,10 @@ impl<'a> Bridge<'a> {
             .execution
             .as_ref()
             .is_some_and(workflow::Execution::image_generator);
-        if image_specialist {
+        if image_specialist && companion_chat::is_global_session(&self.owner().id) {
             let mut definitions = workflow::image_tools(
-                companion_chat::is_global_session(&self.owner().id),
                 image_generation::enabled(self.runtime.state, self.runtime.home),
                 Some(super::native_vision::definition()),
-                self.direct_tasks,
             );
             if let Some(exec) = &self.execution {
                 exec.filter(&mut definitions);
@@ -339,7 +338,7 @@ impl<'a> Bridge<'a> {
         }
         let mut definitions = tools::definitions(self.options.mode);
         definitions.push(publication::inspection::definition());
-        definitions.push(attachments::definition());
+        definitions.push(attachments::project_definition());
         if self.options.mode == Mode::Build {
             definitions.push(publication::definition());
         }
@@ -348,7 +347,7 @@ impl<'a> Bridge<'a> {
         }
         if self.beads.is_some() {
             definitions.extend(crate::core::beads::definitions(
-                self.options.mode == Mode::Plan,
+                image_specialist || self.options.mode == Mode::Plan,
             ));
         }
         if self.project_beads.is_some() {
@@ -754,7 +753,13 @@ impl<'a> Bridge<'a> {
                 .await
                 .map_err(AgentError::from),
             Handler::Lsp => self.lsp.execute(tool, signal).await,
-            Handler::Attachment => attachments::read_tool(home, &self.owner().id, &tool.args),
+            Handler::Attachment => attachments::read_tool_with_project(
+                home,
+                &self.owner().id,
+                (!companion_chat::is_global_session(&self.owner().id))
+                    .then_some(self.session.root.as_path()),
+                &tool.args,
+            ),
             Handler::ImageGeneration => {
                 let exec = self.execution.as_ref().ok_or_else(AgentError::internal)?;
                 if exec.image_generator() {

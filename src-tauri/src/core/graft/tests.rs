@@ -30,6 +30,29 @@ fn receipts_do_not_claim_missing_stale_or_partial_graphs_are_reused() {
 }
 
 #[test]
+fn structural_tools_expose_provider_ready_function_contracts() {
+    let tools = definitions();
+    assert_eq!(tools.len(), 6);
+    for tool in &tools {
+        assert_eq!(tool["type"], "function", "{}", tool["name"]);
+        assert_eq!(tool["strict"], false, "{}", tool["name"]);
+        assert_eq!(tool["parameters"]["type"], "object");
+        assert_eq!(tool["parameters"]["additionalProperties"], false);
+    }
+    let find = tools
+        .iter()
+        .find(|tool| tool["name"] == "graft_find_code")
+        .unwrap();
+    assert_eq!(find["parameters"]["required"], json!(["query"]));
+    assert!(find["parameters"]["properties"].get("limit").is_some());
+    let map = tools
+        .iter()
+        .find(|tool| tool["name"] == "graft_repo_map")
+        .unwrap();
+    assert_eq!(map["parameters"]["required"], json!([]));
+}
+
+#[test]
 fn structural_tools_validate_scope_limits_and_types() {
     assert_eq!(definitions().len(), 6);
     for (name, args) in [

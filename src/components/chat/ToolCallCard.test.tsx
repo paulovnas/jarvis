@@ -9,6 +9,17 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 describe("ToolCallCard Web Search", () => {
+  it("identifies a project image reference and keeps its source path visible", async () => {
+    const user = userEvent.setup();
+    const output = JSON.stringify({ kind: "project_image_reference", path: "public/assets/logo.png", attachment: { id: "owned-logo" }, image_ids: ["owned-logo"] });
+    render(<ToolCallCard tool={{ id: "logo", name: "read_attachment", status: "completed", args: { path: "public/assets/logo.png" }, output }} />);
+    const trigger = screen.getByRole("button", { name: /Imagem do projeto.*public\/assets\/logo\.png.*Concluída/ });
+    expect(trigger).toBeVisible();
+    expect(trigger.querySelector(".text-primary")).toBeInTheDocument();
+    expect(screen.queryByText(output)).not.toBeInTheDocument();
+    await user.click(trigger);
+    expect(screen.getByText(output)).toBeVisible();
+  });
   it("loads deferred history details only when the action is expanded", async () => {
     const user = userEvent.setup();
     vi.mocked(invoke).mockResolvedValue({ id: "read-large", name: "read", status: "completed", args: { path: "src/grande.ts" }, output: "conteúdo completo", durationMs: 18 });

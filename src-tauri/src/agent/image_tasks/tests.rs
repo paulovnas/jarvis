@@ -18,6 +18,26 @@ fn request() -> Request {
         processing: default_processing(),
     }
 }
+
+#[test]
+fn local_processing_escalation_keeps_originals_and_structured_native_recovery() {
+    let args = json!({"image_ids":["a".repeat(32)],"processing":{"format":"png"},"sandboxPermissions":"require_escalated","justification":"Continue the preserved local processing"});
+    let request: Request =
+        serde_json::from_value(super::super::execution_sandbox::command_arguments(&args)).unwrap();
+    assert_eq!(request.image_ids, vec!["a".repeat(32)]);
+    let mut failure = error("Local sandbox denied processing");
+    failure.tool_result = Some(json!({"recovery":{"tool":"image_process","arguments":args},"producedImageIds":["b".repeat(32)]}).to_string());
+    let preserved = preserve(failure, &request.image_ids);
+    let result: Value = serde_json::from_str(preserved.tool_result.as_deref().unwrap()).unwrap();
+    assert_eq!(result["recovery"]["tool"], "image_process");
+    assert_eq!(result["recovery"]["arguments"], args);
+    assert_eq!(result["sourceImageIds"], json!(request.image_ids));
+    assert_eq!(result["producedImageIds"], json!(["b".repeat(32)]));
+    assert!(result["recovery"]["preservation"]
+        .as_str()
+        .unwrap()
+        .contains("never generate or charge"));
+}
 #[test]
 fn closed_processing_contract_rejects_models_workflows_and_invalid_alpha_exports() {
     let catalog = super::super::tool_contract::Catalog::new(&definitions());

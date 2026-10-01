@@ -2710,7 +2710,7 @@ fn run_turn_once<'a>(
         }
         if options.executor != crate::claude::Executor::Jarvis {
             let learning_owner = execution.as_ref().map_or(session, |exec| exec.root());
-            if !global_companion && !image_specialist {
+            if !global_companion {
                 learning::prepare(session, learning_owner, state, home).await;
             }
             let runtime = TurnRuntime {
@@ -2763,7 +2763,7 @@ fn run_turn_once<'a>(
                 data.turns.last_mut().unwrap().turn.context_window = model.context_window;
             })
             .await?;
-        let mut mcp_clients = if publication_agent || global_companion || image_specialist {
+        let mut mcp_clients = if publication_agent || global_companion {
             crate::mcp::runtime::TurnClients::default()
         } else {
             let discovery_signal = signal.clone();
@@ -2772,7 +2772,7 @@ fn run_turn_once<'a>(
                 clients = crate::mcp::runtime::TurnClients::discover_for_intent(mcp, state, home, &session.root, &mcp_intent, discovery_signal) => clients.map_err(AgentError::from)?,
             }
         };
-        let mut context = if global_companion || image_specialist {
+        let mut context = if global_companion {
             crate::core::context::ContextMode::without_project(&session.root, &session.id)
         } else {
             crate::core::context::ContextMode::open(
@@ -2784,7 +2784,6 @@ fn run_turn_once<'a>(
             .await?
         };
         let mut graft = if global_companion
-            || image_specialist
             || execution
                 .as_ref()
                 .is_some_and(workflow::Execution::video_specialist)
@@ -2823,17 +2822,18 @@ fn run_turn_once<'a>(
             .map_or(options.mode == Mode::Plan, |exec| {
                 exec.role_mode() == Mode::Plan
             });
-        let beads = if direct_tasks || publication_agent || global_companion || image_specialist {
+        let beads = if (direct_tasks && !image_specialist) || publication_agent || global_companion
+        {
             None
         } else {
             Some(crate::core::beads::Beads::new(
                 home,
                 owner.project_id()?,
                 &owner.id,
-                options.mode == Mode::Plan,
+                image_specialist || options.mode == Mode::Plan,
             )?)
         };
-        let project_beads = if direct_tasks && !image_specialist {
+        let project_beads = if !global_companion && (direct_tasks || image_specialist) {
             crate::core::beads::ProjectBeads::open(home, &session.root)?
         } else {
             None
@@ -2865,7 +2865,9 @@ fn run_turn_once<'a>(
             .hooks
             .run_resilient(Event::UserPrompt, json!({"text":user}), signal.clone())
             .await?;
-        core_runtime::prepare_graft(session, &graft, &user, signal.clone()).await?;
+        if !image_specialist {
+            core_runtime::prepare_graft(session, &graft, &user, signal.clone()).await?;
+        }
         let mut overflow_retried = false;
         let mut handoff_reminded = false;
         let mut tasks_reminded = false;
@@ -2952,7 +2954,7 @@ fn run_turn_once<'a>(
                     core_activities.push(activity);
                 }
             }
-            if !global_companion && !image_specialist {
+            if !global_companion {
                 learning::prepare(session, owner, state, home).await;
             }
             let mut instructions =
@@ -2988,7 +2990,7 @@ fn run_turn_once<'a>(
                 &options.model,
             );
             let mut definitions = tools::definitions(options.mode);
-            if !global_companion && !image_specialist {
+            if !global_companion {
                 definitions.push(publication::inspection::definition());
                 if !publication_agent {
                     definitions.extend(authoring::definitions());
@@ -2996,7 +2998,7 @@ fn run_turn_once<'a>(
                 if options.mode == Mode::Build {
                     definitions.push(publication::definition());
                 }
-                definitions.push(attachments::definition());
+                definitions.push(attachments::project_definition());
                 if !publication_agent && vision::enabled(state, home, &options) {
                     definitions.push(vision::definition());
                 } else if !publication_agent {
@@ -3018,11 +3020,14 @@ fn run_turn_once<'a>(
                 }
                 if direct_tasks {
                     definitions.push(tasks::definition());
-                    if project_beads.is_some() {
-                        definitions.extend(crate::core::beads::project_definitions());
-                    }
-                } else if !publication_agent {
-                    definitions.extend(crate::core::beads::definitions(options.mode == Mode::Plan));
+                }
+                if project_beads.is_some() {
+                    definitions.extend(crate::core::beads::project_definitions());
+                }
+                if beads.is_some() {
+                    definitions.extend(crate::core::beads::definitions(
+                        image_specialist || options.mode == Mode::Plan,
+                    ));
                 }
                 if !publication_agent {
                     let skills = tokio::select! {
@@ -3073,10 +3078,8 @@ fn run_turn_once<'a>(
                 };
                 definitions = if image_specialist {
                     workflow::image_tools(
-                        global_companion,
                         image_generation::enabled(state, home),
                         vision::enabled(state, home, &options).then(vision::definition),
-                        direct_tasks,
                     )
                 } else {
                     companion_chat::tools()
@@ -3585,7 +3588,12 @@ fn run_turn_once<'a>(
                                     .await?
                                 }
                                 tool_contract::Handler::Attachment => {
-                                    attachments::read_tool(home, &owner.id, &call.args)?
+                                    attachments::read_tool_with_project(
+                                        home,
+                                        &owner.id,
+                                        (!global_companion).then_some(session.root.as_path()),
+                                        &call.args,
+                                    )?
                                 }
                                 tool_contract::Handler::SkillRead => {
                                     crate::skills::read(home, &session.root, &call.args)
@@ -4039,7 +4047,7 @@ fn run_turn_once<'a>(
                             .await
                         }
                         Some(tool_contract::Handler::Attachment) => {
-                            attachments::read_tool(home, &owner.id, &tool.args)
+                            attachments::read_tool_with_project(home, &owner.id, (!global_companion).then_some(session.root.as_path()), &tool.args)
                         }
                         Some(tool_contract::Handler::Vision) => {
                             vision::execute(

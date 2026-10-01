@@ -14,7 +14,7 @@ import subprocess
 import sys
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import wave
 
 
@@ -99,6 +99,43 @@ class AudioRunnerTests(unittest.TestCase):
         self.assertEqual((output[0], output[-1]), (0, 0))
         self.assertTrue(all(math.isfinite(value) for value in output))
         self.assertTrue(any(abs(value) > 0.2 for value in output))
+
+    def test_narration_respiros_preserve_every_speech_sample_and_extend_wav_duration(self):
+        speech = array("f", [0.0002, 0.4, -0.4, -0.0002] * 100)
+        samples = runner.narration_samples(speech, 1000)
+        self.assertEqual(samples[:250], array("f", [0] * 250))
+        self.assertEqual(samples[250:-200], speech)
+        self.assertEqual(samples[-200:], array("f", [0] * 200))
+        output = self.root / "voice.wav"
+        result = runner.write_wav(output, samples, 1000)
+        self.assertEqual(result["duration"], 0.85)
+        with wave.open(str(output), "rb") as wav:
+            pcm = array("h", wav.readframes(wav.getnframes()))
+        self.assertEqual(pcm[:250], array("h", [0] * 250))
+        self.assertEqual(pcm[-200:], array("h", [0] * 200))
+        self.assertEqual(pcm[250:-200], array("h", (round(value * 32767) for value in speech)))
+
+    def test_narration_keeps_natural_phonemes_and_punctuation_pauses(self):
+        model_root = self.root / "kokoro"
+        model_root.mkdir()
+        for name in ("kokoro-v1.0.onnx", "voices-v1.0.bin"):
+            (model_root / name).touch()
+        kokoro = SimpleNamespace(get_voices=lambda: ["pm_alex"])
+        speech = [0.0002, 0.4, -0.4, -0.0002]
+        kokoro.create = Mock(return_value=(SimpleNamespace(tolist=lambda: speech), 1000))
+        modules = {
+            "espeakng_loader": SimpleNamespace(get_library_path=lambda: "managed-espeak"),
+            "onnxruntime": SimpleNamespace(SessionOptions=SimpleNamespace, InferenceSession=lambda *args, **kwargs: object()),
+            "kokoro_onnx": SimpleNamespace(Kokoro=SimpleNamespace(from_session=lambda *args: kokoro)),
+        }
+        with patch.dict(sys.modules, modules), redirect_stdout(io.StringIO()):
+            result = runner.narrate(self.request(text="  Primeira frase. Segunda frase.  "))
+        kokoro.create.assert_called_once_with(
+            "Primeira frase. Segunda frase.", voice="pm_alex", speed=1, lang="pt-br",
+            trim=False, sentence_pause=0.35, clause_pause=0.15,
+        )
+        self.assertEqual(result["narrationTiming"], {"leadIn": 0.25, "tailOut": 0.2})
+        self.assertEqual(result["frames"], 454)
 
     def test_auto_music_device_stays_cpu_without_cuda_even_with_mps(self):
         torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False), backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)))

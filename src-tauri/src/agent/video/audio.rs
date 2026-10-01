@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 pub(super) fn definition() -> Value {
     super::super::tools::definition(
         "video_audio",
-        "Generate one reusable PT-BR narration scene or instrumental music with Jarvis's required private Audiovisual Core. No downloads or package installation during inference. Narration voices: pf_dora, pm_alex (default), pm_santa. Use a new project-relative WAV output; exact confirmed requests reuse their existing receipt, changed requests never overwrite. MusicGen weights are CC-BY-NC-4.0: music requires nonCommercial=true ONLY when the user confirmed noncommercial use; for commercial work use a licensed supplied soundtrack instead. Music creates a short seed and crossfade-loops it to duration. Heavy generation is serialized across chats, may take time on CPU, and has no total timeout. Continue with video_wait/video_cancel using the returned sessionId.",
+        "Generate one reusable PT-BR narration scene or instrumental music with Jarvis's required private Audiovisual Core. No downloads or package installation during inference. Narration voices: pf_dora, pm_alex (default), pm_santa. Narration preserves natural speech edges and embeds 250ms of lead-in plus 200ms of tail-out; video_presentation uses the complete actual WAV duration, including these pauses. Do not trim syllables, overlap scene narration or shorten audio to force a target duration. Use a new project-relative WAV output; exact confirmed requests reuse their existing receipt, changed requests never overwrite. MusicGen weights are CC-BY-NC-4.0: music requires nonCommercial=true ONLY when the user confirmed noncommercial use; for commercial work use a licensed supplied soundtrack instead. Music creates a short seed and crossfade-loops it to duration. Heavy generation is serialized across chats, may take time on CPU, and has no total timeout. Continue with video_wait/video_cancel using the returned sessionId.",
         json!({"action":{"type":"string","enum":["narrate","music"]},"output":{"type":"string","minLength":1,"maxLength":4096},"text":{"type":"string","minLength":1,"maxLength":4000},"prompt":{"type":"string","minLength":1,"maxLength":1000},"voice":{"type":"string","enum":["pf_dora","pm_alex","pm_santa"]},"speed":{"type":"number","minimum":0.5,"maximum":2},"duration":{"type":"number","minimum":1,"maximum":600},"seed":{"type":"integer","minimum":0,"maximum":2147483647},"nonCommercial":{"type":"boolean"},"yieldTimeMs":{"type":"integer","minimum":1,"maximum":30000}}),
         &["action","output"],
     )
@@ -34,7 +34,7 @@ fn request(args: &Value) -> Result<Value, AgentError> {
                 return Err(error("Velocidade da voz inválida."));
             }
             Ok(
-                json!({"action":"narrate","text":text(args,"text",4000)?,"voice":voice,"speed":speed}),
+                json!({"action":"narrate","text":text(args,"text",4000)?,"voice":voice,"speed":speed,"narrationPolicy":2}),
             )
         }
         Some("music") => {
@@ -346,6 +346,47 @@ pub(super) mod tests {
             &json!({"action":"music","prompt":"synth","duration":5,"nonCommercial":true})
         )
         .is_ok());
+    }
+
+    #[test]
+    fn new_narration_timing_does_not_misidentify_old_receipts_as_new_generation() {
+        let fixture = super::super::super::tests::Fixture::new();
+        let session = super::super::super::tests::session(&fixture);
+        let path = fixture.root.join("voice.wav");
+        write_wave(&path, 2);
+        let previous = json!({"action":"narrate","text":"Olá","voice":"pm_alex","speed":1.0});
+        let record = json!({"version":1,"request":previous,"requestHash":hash(previous.to_string().as_bytes()),"audioHash":hash_file(&path).unwrap()});
+        let confirmed = fs::read(&path).unwrap();
+        fs::write(receipt_path(&path), record.to_string()).unwrap();
+        assert!(valid_receipt(&record, &path));
+        let next = request(&json!({"action":"narrate","text":"Olá"})).unwrap();
+        assert_eq!(next["narrationPolicy"], 2);
+        assert_ne!(record["requestHash"], hash(next.to_string().as_bytes()));
+        let failure = generate(
+            &session,
+            &fixture.root,
+            &json!({"action":"narrate","text":"Olá","output":"voice.wav"}),
+            None,
+        )
+        .err()
+        .unwrap();
+        assert!(failure.message.contains("preservado"));
+        assert_eq!(fs::read(&path).unwrap(), confirmed);
+        assert_eq!(
+            fs::read_to_string(receipt_path(&path)).unwrap(),
+            record.to_string()
+        );
+        fs::write(
+            fixture.root.join("presentation.json"),
+            json!({"scenes":[{"id":"intro","narration":"Olá","audio":"voice.wav"}]}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            super::super::presentation::inspect(&fixture.root, &json!({"path":"."})).unwrap()
+                ["ready"],
+            true
+        );
+        assert_eq!(wave(&path).unwrap().duration, 2.0);
     }
     #[test]
     fn duration_comes_from_samples_and_truncation_is_rejected() {

@@ -160,7 +160,7 @@ fn role_description(role: Role) -> &'static str {
         Role::Writer => "Registra especificações, critérios de aceite e dependências de forma executável.",
         Role::Orchestrator => "Coordena dependências, execução paralela, revisões e retomadas do fluxo.",
         Role::Designer => "Implementa interfaces e interações dentro do sistema visual e valida o escopo de frontend.",
-        Role::Video => "Gera apresentações de projetos com animação, narração e música e entrega o vídeo em MP4.",
+        Role::Video => "Ajuda a definir público, mensagem e roteiro. Dirige demonstrações com navegação, animação, narração e música e entrega o vídeo em MP4.",
         Role::ImageGenerator => "Cria e refina imagens e assets com o modelo configurado e a pipeline nativa do ComfyUI.",
         Role::Builder => "Implementa o comportamento solicitado, executa verificações e corrige o próprio trabalho.",
         Role::Reviewer => "Revisa a implementação de forma independente e decide se há correções pendentes.",

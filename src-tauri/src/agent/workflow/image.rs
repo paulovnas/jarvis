@@ -10,10 +10,8 @@ pub(in crate::agent) fn definition(specialist: bool) -> Value {
 }
 
 pub(in crate::agent) fn specialist_tools(
-    global: bool,
     generation_enabled: bool,
     vision: Option<Value>,
-    direct_tasks: bool,
 ) -> Vec<Value> {
     let mut tools = vec![
         super::super::attachments::definition(),
@@ -23,12 +21,6 @@ pub(in crate::agent) fn specialist_tools(
     tools.extend(super::super::image_tasks::definitions());
     if generation_enabled {
         tools.push(definition(true));
-    }
-    if !global {
-        tools.push(super::super::knowledge::definition());
-    }
-    if direct_tasks {
-        tools.push(super::super::tasks::definition());
     }
     tools
 }

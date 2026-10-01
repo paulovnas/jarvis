@@ -323,7 +323,7 @@ pub(crate) fn definitions() -> Vec<Value> {
         ("graft_find_all", "Search indexed code references grouped by symbol. Unindexed documents/configuration still require focused native search. Regex runs in a cancellable private process.", json!({"pattern":text("Pattern or literal text",300),"in":text("Project-relative directory prefix",1024),"fixed":{"type":"boolean"},"ignore_case":{"type":"boolean"}}), vec!["pattern"]),
         ("graft_check_freshness", "Report current graph drift without rebuilding or claiming absent/partial graphs are complete. Subsequent structural retrieval refreshes automatically.", json!({}), vec![]),
     ];
-    rows.into_iter().map(|(name,description,properties,required)| json!({"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}})).collect()
+    rows.into_iter().map(|(name,description,properties,required)| json!({"type":"function","name":name,"description":description,"strict":false,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}})).collect()
 }
 pub(super) fn install_assets(package: &Path) -> Result<(), CoreError> {
     install::graft_wasm(package)?;

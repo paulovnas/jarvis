@@ -22,6 +22,8 @@ import warnings
 
 VOICES = ("pf_dora", "pm_alex", "pm_santa")
 DEVICES = ("auto", "cpu", "cuda", "mps")
+NARRATION_LEAD_IN = 0.25
+NARRATION_TAIL_OUT = 0.2
 
 
 class AudioError(Exception):
@@ -198,6 +200,14 @@ def loop_background(samples: array, sample_rate: int, duration: float) -> array:
     return output
 
 
+def narration_samples(samples: array, sample_rate: int) -> array:
+    """Give scene transitions breathing room without trimming speech samples."""
+    output = array("f", [0]) * round(NARRATION_LEAD_IN * sample_rate)
+    output.extend(samples)
+    output.extend(array("f", [0]) * round(NARRATION_TAIL_OUT * sample_rate))
+    return output
+
+
 def narrate(request: dict) -> dict:
     # Lazy imports keep TTS (NumPy 2) separate from the MusicGen environment.
     import espeakng_loader
@@ -220,11 +230,19 @@ def narrate(request: dict) -> dict:
         raise AudioError("voice_missing", "A voz PT-BR escolhida não está instalada. Repare o componente Audiovisual no Core.")
     progress("narrating")
     samples, sample_rate = kokoro.create(
-        request["text"].strip(), voice=voice, speed=request.get("speed", 1), lang="pt-br"
+        request["text"].strip(), voice=voice, speed=request.get("speed", 1), lang="pt-br",
+        # The model's natural edge silence protects quiet opening/closing
+        # phonemes. Trimming it made speech jump in at every scene transition.
+        trim=False, sentence_pause=0.35, clause_pause=0.15,
     )
+    samples = narration_samples(array("f", samples.tolist()), int(sample_rate))
     progress("writing")
-    result = write_wav(Path(request["output"]), array("f", samples.tolist()), int(sample_rate))
-    return {"engine": "kokoro-onnx", "device": "cpu", "voice": voice, "language": "pt-br", **result}
+    result = write_wav(Path(request["output"]), samples, int(sample_rate))
+    return {
+        "engine": "kokoro-onnx", "device": "cpu", "voice": voice, "language": "pt-br",
+        "narrationTiming": {"leadIn": NARRATION_LEAD_IN, "tailOut": NARRATION_TAIL_OUT},
+        **result,
+    }
 
 
 def music_device(torch, requested: str) -> str:

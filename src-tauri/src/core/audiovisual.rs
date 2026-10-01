@@ -63,7 +63,29 @@ pub(crate) struct Runtime {
 }
 pub(crate) fn runtime(home: &Path) -> Result<Runtime, CoreError> {
     let record = installed(home, ComponentId::Audiovisual)?;
-    Ok(Runtime::at(&record.path(home)?))
+    let package = record.path(home)?;
+    refresh_runner(&package)?;
+    Ok(Runtime::at(&package))
+}
+
+fn refresh_runner(package: &Path) -> Result<(), CoreError> {
+    use std::io::Write;
+    let entry = contained_file(package, ENTRY)?;
+    let source = include_bytes!("audiovisual/runner.py");
+    if fs::read(&entry)? == source {
+        return Ok(());
+    }
+    // The runtime/dependency contract is unchanged. Publish just the bundled
+    // runner atomically so existing installations receive narration fixes.
+    let mut staged = tempfile::NamedTempFile::new_in(package)?;
+    staged.write_all(source)?;
+    staged.as_file().sync_all()?;
+    staged
+        .persist(entry)
+        .map_err(|_| error("Não foi possível atualizar o executor de áudio do Core."))?;
+    #[cfg(unix)]
+    fs::File::open(package)?.sync_all()?;
+    Ok(())
 }
 pub(super) fn python_path(package: &Path) -> PathBuf {
     package.join(if cfg!(windows) {
@@ -564,6 +586,55 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert!(validate(package.path(), VERSION).is_err());
+    }
+
+    #[test]
+    fn refreshes_only_old_runner_without_reinstalling_or_rewriting_current_runtime() {
+        let package = tempfile::tempdir().unwrap();
+        fixture(package.path());
+        let entry = package.path().join(ENTRY);
+        let dependency = package.path().join("packages_tts/kokoro_onnx/__init__.py");
+        let model = package.path().join("models/kokoro/kokoro-v1.0.onnx");
+        let dependency_before = fs::read(&dependency).unwrap();
+        let model_before = fs::metadata(&model).unwrap().modified().unwrap();
+        refresh_runner(package.path()).unwrap();
+        assert_eq!(
+            fs::read(&entry).unwrap(),
+            include_bytes!("audiovisual/runner.py")
+        );
+        assert_eq!(fs::read(&dependency).unwrap(), dependency_before);
+        assert_eq!(
+            fs::metadata(&model).unwrap().modified().unwrap(),
+            model_before
+        );
+        assert!(validate(package.path(), VERSION).is_ok());
+        let old_time = std::time::UNIX_EPOCH + Duration::from_secs(1);
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&entry)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(old_time))
+            .unwrap();
+        refresh_runner(package.path()).unwrap();
+        assert_eq!(fs::metadata(&entry).unwrap().modified().unwrap(), old_time);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runner_refresh_never_follows_a_symlink_outside_the_private_runtime() {
+        let package = tempfile::tempdir().unwrap();
+        fixture(package.path());
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        fs::write(outside.path(), "external script").unwrap();
+        let entry = package.path().join(ENTRY);
+        fs::remove_file(&entry).unwrap();
+        std::os::unix::fs::symlink(outside.path(), &entry).unwrap();
+        assert!(refresh_runner(package.path()).is_err());
+        assert_eq!(
+            fs::read_to_string(outside.path()).unwrap(),
+            "external script"
+        );
+        assert!(entry.is_symlink());
     }
 
     #[cfg(unix)]

@@ -161,28 +161,25 @@ fn the_parent_facade_preserves_the_native_request_schema() {
 }
 
 #[test]
-fn specialist_tool_catalog_is_small_and_project_knowledge_is_retrieved_only_on_demand() {
-    for global in [false, true] {
-        let tools = specialist_tools(global, true, None, !global);
-        assert!(tools.iter().any(|tool| tool["name"] == "generate_image"));
+fn global_image_catalog_has_attachment_capabilities_without_project_access() {
+    for generation_enabled in [false, true] {
+        let tools = specialist_tools(generation_enabled, None);
+        assert_eq!(
+            tools.iter().any(|tool| tool["name"] == "generate_image"),
+            generation_enabled
+        );
         assert!(tools.iter().any(|tool| tool["name"] == "image_process"));
-        assert_eq!(
-            tools
-                .iter()
-                .any(|tool| tool["name"] == crate::agent::knowledge::TOOL),
-            !global
-        );
-        assert_eq!(
-            tools.iter().any(|tool| tool["name"] == "update_tasks"),
-            !global
-        );
+        assert!(!tools
+            .iter()
+            .any(|tool| tool["name"] == crate::agent::knowledge::TOOL));
+        assert!(!tools.iter().any(|tool| tool["name"] == "update_tasks"));
         assert!(tools.iter().all(|tool| !matches!(
             tool["name"].as_str(),
             Some("bash" | "read" | "mcp_activate" | "ctx_search" | "http_send")
         )));
         assert!(tools.len() <= 6);
     }
-    assert!(specialist_tools(false, false, None, false)
+    assert!(specialist_tools(false, None)
         .iter()
         .all(|tool| tool["name"] != "generate_image"));
 }

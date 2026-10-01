@@ -32,12 +32,24 @@ Other action fields are ignored, so optional provider placeholders do not block
 scaffolding or diagnostics. Set the actual desired render settings when calling
 `render`; a filename supplied to `init` does not request a render.
 
-Confirm subject, target audience, duration, aspect ratio and important content
-from the request/project context. Ask only for missing decisions that materially
-change the deliverable. A short requested demo does not require an elaborate
-production pipeline. Reuse project design tokens, brand assets and components
-when relevant. Source/generate images or audio only when they improve the brief;
-do not fabricate claims about provided products or people.
+## Creative direction before production
+
+Read relevant `project_knowledge`, references, brand assets and actual pages.
+Recommend a project-specific demonstration, promotion or montage; offer clicks,
+cursor/callouts, narration and music instead of a raw silent screenshot sequence.
+Honor explicit slideshow, silence or script choices. Use `ask_user` only for
+material missing choices: at most three concise questions, short presets and a
+recommended option. Do not repeat known answers or restart intake for an edit,
+accepted brief or request to decide and execute.
+
+Show a compact script/storyboard: message, hook, feature/benefit sequence, closing
+action; per scene, visuals, interaction/motion, spoken line, audio and rough time.
+Retain this direction in `presentation.json`; approval is required only at a
+user-requested review checkpoint. Verify real page navigation/clicks and capture
+before/after states. A reconstruction with animated cursor is possible, but is
+not a screen recording. Disclose unobservable interactions and propose a truthful
+alternative. Reuse project design, preserve user data and avoid invented claims.
+Pace from content and measured voice, about 2–2.5 spoken words/second plus pauses.
 
 ## Composition and timing
 
@@ -54,12 +66,18 @@ required Core's initial model downloads; no external API or local conversational
 LLM is needed. CPU inference can take time. Use the returned session/cursor with
 `video_wait`; cancel with `video_cancel`. Heavy generation queues rather than
 loading multiple models across chats. Do not start a second copy while waiting.
+Generated voice preserves phrase boundaries, with 0.25s leading and 0.20s
+trailing silence per WAV plus sentence/clause pauses. Keep this padding and
+complete syllables; do not guess media offsets. Establish visuals before speech
+and hold after it.
 
 `video_presentation(path="videos/<name>")` reads the manifest without changing
 it and returns missing/stale narration tasks, scene starts/durations and actual
 audio lengths. A scene lasts at least its requested duration or the actual voice
 plus `tail` (default 0.35 seconds), whichever is longer. Use that same timeline
-for visuals, narration and captions. Insert the returned `audioHtml` inside the
+for visuals, narration and captions; the measured WAV already includes its
+leading/trailing silence, so do not add another manual narration start offset.
+Insert the returned `audioHtml` inside the
 root once; optional `captionHtml` needs project-appropriate styling. Set root
 duration and GSAP endpoints from the returned total duration. Do not create a
 second independent timing plan or stretch speech to fit a guessed duration.
@@ -68,19 +86,24 @@ and `data-duration`. Keep the returned audio IDs/paths/timing in static HTML.
 Native rendering verifies that these declarations match the manifest, preventing
 an old or silent composition from being published as a completed presentation.
 
-Confirmed identical requests reuse their WAV and receipt. When narration changes,
-choose a new WAV path and update that scene's `audio` property; other scenes are
-preserved. Explicit `audio` can also refer to a provided PCM16 WAV recording.
-The default generated scene path is `assets/audio/voice/<scene-id>.wav`.
+Keep unchanged WAVs/receipts, including legacy narration: new padding is not
+retroactive. For changed text or a requested improvement to an older recording,
+generate to a new WAV path and update only that scene's `audio`; never overwrite.
+Explicit `audio` accepts supplied PCM16 WAV; the generated default path is
+`assets/audio/voice/<scene-id>.wav`.
 
 Music generation uses MusicGen-small weights under **CC-BY-NC-4.0**. Ask about
-usage before generating; pass `nonCommercial=true` only following the user's
-confirmation. For professional/commercial presentations use a supplied licensed
-soundtrack instead. `video_audio(action="music", prompt="instrumental subtle
+usage only if not already answered; pass `nonCommercial=true` only following the
+user's confirmation. For professional/commercial presentations use a supplied
+licensed soundtrack instead. A supplied licensed track needs no repeat question.
+Continue scripting, captures and voice generation while an unavailable licensed
+soundtrack is pending; report that missing element before final delivery.
+`video_audio(action="music", prompt="instrumental subtle
 synths, no vocals", duration=45, nonCommercial=true, output=".../soundtrack.wav")`
 generates a short seed and crossfade-loops it to the requested duration. Set
 `music.path` in the manifest after narration determines the actual total length.
-Omit `music` when no soundtrack is requested. The returned audio markup uses
+Omit `music` when the brief selects no soundtrack. Offer the choice rather than
+silently defaulting a product presentation to silence. The returned audio markup uses
 Hyperframes volume automation for fades and ducking (default bed gain 0.16),
 so preview and render share their mix. Inspect with `video_presentation` again
 after changing any voice or audio asset. Do not trim longer narration silently.
@@ -93,7 +116,23 @@ Put a standalone root directly under body,
 with width/height filling its canvas. Give each audio element a unique ID;
 video elements need `muted playsinline`. Do not time both an ordinary clip
 wrapper and its descendant video, which would apply offsets twice.
-Nested compositions use `data-composition-src` with project-relative HTML paths.
+Put each visual scene with nested layout into a separate HTML sub-composition
+under `compositions/`; mount it with `data-composition-src` in `index.html`.
+Keep the manifest scene ID on the host mount along with its `data-start`,
+`data-duration`, `data-track-index`, `data-width` and `data-height`.
+The host's `data-composition-id` must match the child root's composition ID and
+the child's registered timeline key. Inside each child file, put its styles,
+markup and scripts inside `<template>`; the child `<head>` is not mounted.
+Style the child root by its unique ID, and keep child animation times local
+(starting at zero). Assets in child files also use composition-root-relative
+paths such as `assets/page.png`, never `../assets/page.png`. Read `video_docs(topic="core",
+file="references/sub-compositions.md")` for this cross-file contract before
+splitting scenes. Do not merely add attributes to silence diagnostics.
+The managed runtime flags `nested_structure_needs_subcomposition` for ordinary
+timed scene wrappers with nested layout, and `timeline_track_too_dense` for dense
+inline scene tracks. Proper sub-composition mounts avoid these warnings while
+preserving the scene timeline. Audio and caption markup returned by
+`video_presentation` can stay at the root; it does not generate visual layouts.
 Place picture/audio media through the framework's timed media attributes rather
 than custom autoplay, setTimeout or animation-frame loops. Media timing belongs
 to Hyperframes; animate an inner wrapper for crop/zoom/visual transitions.
@@ -118,7 +157,15 @@ sufficient contrast. Do not put implementation/debug labels into the video.
 ## Validate and deliver
 
 Use `video_run(action="check")` to obtain lint, runtime, layout and motion
-diagnostics. Correct material failures before rendering. `video_run(action="render")`
+diagnostics. The check is strict: fix its errors and warnings (including authoring
+structure warnings) before rendering. Validate a representative scene early,
+then the complete composition; preserve screenshots, valid scenes and confirmed
+audio while repairing only the reported issue. Check the output against the
+accepted storyboard, legibility, navigation/click sequence and complete speech
+boundaries. When playback/audio inspection is available, listen to the opening,
+scene joins and ending; a passing technical check does not prove speech sounds
+natural. Report that limitation when listening is unavailable.
+`video_run(action="render")`
 uses MP4, strict validation and no best-effort fallback; quality is `draft`,
 `looks` (default) or `delivery`. It creates a new output file rather than silently
 overwriting an existing deliverable. An explicit `output` is project-relative.
