@@ -10,6 +10,7 @@ pub enum Icon {
     Search,
     Code,
     Palette,
+    Film,
     Shield,
     Terminal,
     Wrench,

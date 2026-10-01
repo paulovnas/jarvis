@@ -2,7 +2,7 @@
 use super::*;
 use crate::agent::{
     attachments, authoring, browser, image_generation, processes, publication, terminals, tools,
-    vision, web_search,
+    video, vision, web_search,
 };
 
 pub(crate) fn required(name: &str) -> bool {
@@ -84,6 +84,10 @@ fn description(name: &str) -> &'static str {
         "read_attachment" => "Ler documentos anexados à conversa.",
         "vision" => "Analisar imagens usando Vision.",
         "generate_image" => "Gerar imagens com a conta configurada.",
+        "video_docs" => "Consultar contratos e guias de composição do Hyperframes.",
+        "video_run" => "Criar, verificar ou renderizar uma composição de vídeo.",
+        "video_wait" => "Aguardar o resultado de uma operação de vídeo.",
+        "video_cancel" => "Cancelar uma operação de vídeo em andamento.",
         "read_skill" => "Ler instruções de uma skill ativa.",
         "find_skills" => "Encontrar skills ativas para a tarefa.",
         "ctx_search" => "Recuperar trechos da memória e do conteúdo indexado.",
@@ -221,6 +225,7 @@ pub(crate) fn builtin_permissions() -> Vec<Permission> {
             crate::core::beads::project_definitions(),
         ),
         ("Open Design · Core", crate::core::design::definitions()),
+        ("Hyperframes · Core", video::definitions(Mode::Build)),
         ("Context7 · Core", crate::core::context7::definitions()),
         (
             "Fluxo",

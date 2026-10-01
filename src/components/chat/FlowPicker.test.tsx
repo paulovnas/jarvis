@@ -1,15 +1,15 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import { builtinGithubAgent, customAgent, customFlow } from "@/test/workflow-fixtures";
+import { builtinGithubAgent, builtinVideoAgent, customAgent, customFlow } from "@/test/workflow-fixtures";
 import { FlowPicker } from "./FlowPicker";
 
-it("offers the four Jarvis flows with descriptions and commits only the chosen flow", async () => {
+it("offers the five Jarvis flows with descriptions and commits only the chosen flow", async () => {
   const user = userEvent.setup(), change = vi.fn();
   render(<FlowPicker value="standard" onChange={change} />);
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
   const list = await screen.findByRole("listbox", { name: "Opções de fluxo e agente" });
-  expect(within(list).getAllByRole("option")).toHaveLength(4);
+  expect(within(list).getAllByRole("option")).toHaveLength(5);
   expect(within(list).getByText("Fluxos Jarvis")).toBeVisible();
   const designer = within(list).getByRole("option", { name: "Designer" });
   expect(within(designer).getByText("Implementação especializada em design e frontend.")).toBeVisible();
@@ -21,11 +21,11 @@ it("blocks selection during execution", () => {
   expect(screen.getByRole("button", { name: "Selecionar fluxo" })).toBeDisabled();
 });
 
-it("selects a saved custom flow without changing the four Jarvis choices", async () => {
+it("selects a saved custom flow without changing the five Jarvis choices", async () => {
   const user = userEvent.setup(), change = vi.fn();
   render(<FlowPicker value="standard" onChange={change} customFlows={[customFlow]} />);
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
-  expect(await screen.findAllByRole("option")).toHaveLength(5);
+  expect(await screen.findAllByRole("option")).toHaveLength(6);
   await user.click(screen.getByRole("option", { name: "Meu fluxo" }));
   expect(change).toHaveBeenCalledExactlyOnceWith(`custom:${customFlow.id}`);
 });
@@ -89,10 +89,10 @@ it("filters flows and agents while keeping native and custom groups distinct", a
   render(<FlowPicker value="standard" onChange={change} customFlows={[customFlow]} customAgents={[customAgent]} builtinAgents={[builtinGithubAgent]} />);
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
   const list = await screen.findByRole("listbox");
-  expect(within(list).getAllByRole("option")).toHaveLength(7);
+  expect(within(list).getAllByRole("option")).toHaveLength(8);
   for (const heading of ["Fluxos Jarvis", "Fluxos personalizados", "Agentes Jarvis", "Agentes personalizados"]) expect(within(list).getByText(heading)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Fluxos" }));
-  expect(within(list).getAllByRole("option")).toHaveLength(5);
+  expect(within(list).getAllByRole("option")).toHaveLength(6);
   expect(within(list).queryByText("Agentes Jarvis")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Agentes" }));
   expect(within(list).getAllByRole("option")).toHaveLength(2);
@@ -110,7 +110,7 @@ it("filters flows and agents while keeping native and custom groups distinct", a
   expect(change).not.toHaveBeenCalled();
   expect(list).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Todos" }));
-  expect(within(list).getAllByRole("option")).toHaveLength(7);
+  expect(within(list).getAllByRole("option")).toHaveLength(8);
   expect(change).not.toHaveBeenCalled();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
@@ -146,7 +146,7 @@ it("restores focus on Escape and opens the committed selection in a large catalo
   trigger.focus();
   await user.keyboard("{ArrowDown}");
   const selected = await screen.findByRole("option", { name: "Fluxo 26" });
-  expect(screen.getAllByRole("option")).toHaveLength(34);
+  expect(screen.getAllByRole("option")).toHaveLength(35);
   expect(selected).toHaveAttribute("aria-selected", "true");
   expect(selected).toHaveAttribute("aria-current", "true");
   const search = screen.getByRole("combobox", { name: "Buscar fluxo ou agente" });
@@ -185,4 +185,13 @@ it("keeps an unavailable selection explicit and offers valid replacements", asyn
   expect(change).not.toHaveBeenCalled();
   await user.click(screen.getByRole("option", { name: "Padrão" }));
   expect(change).toHaveBeenCalledExactlyOnceWith("standard");
+});
+
+ it("offers the video flow and creator as distinct native choices", async () => {
+  const user = userEvent.setup(), change = vi.fn();
+  render(<FlowPicker value="standard" onChange={change} builtinAgents={[builtinVideoAgent]} />);
+  await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
+  expect(await screen.findByRole("option", { name: "Vídeo" })).toBeVisible();
+  await user.click(screen.getByRole("option", { name: "Criador de vídeos" }));
+  expect(change).toHaveBeenCalledExactlyOnceWith("agent:builtin:video");
 });

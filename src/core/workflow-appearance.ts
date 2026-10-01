@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const appearanceColorSchema = z.enum(["blue", "green", "cyan", "yellow", "red", "purple", "neutral"]);
-const workflowIconSchema = z.enum(["bot", "workflow", "route", "brain", "search", "code", "palette", "shield", "terminal", "wrench", "book", "sparkles", "target", "pen", "lightbulb", "rocket"]);
+const workflowIconSchema = z.enum(["bot", "workflow", "route", "brain", "search", "code", "palette", "film", "shield", "terminal", "wrench", "book", "sparkles", "target", "pen", "lightbulb", "rocket"]);
 const projectIconSchema = z.enum(["bot", "workflow", "route", "brain", "search", "code", "palette", "shield", "terminal", "wrench", "book", "sparkles", "target", "pen", "lightbulb", "rocket", "folder", "folder-code", "package", "database", "globe", "app-window"]);
 
 export const workflowAppearanceSchema = z.object({

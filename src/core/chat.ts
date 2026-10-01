@@ -5,6 +5,7 @@ import { attachmentSchema } from "./attachments";
 import { pendingAuthoringSchema } from "./authoring";
 import type { PendingAuthoring } from "./authoring";
 import { executorSchema, type Executor } from "./executors";
+import { coreIdSchema } from "./core-components";
 import {
   IPC_PROTOCOL_VERSION,
   type ApprovalDecision as GeneratedApprovalDecision,
@@ -50,7 +51,7 @@ export const turnOptionsSchema = z.object({
   model: z.string(),
   reasoning: z.string().nullable(),
   mode: z.enum(["plan", "build"]),
-  workflow: z.enum(["standard", "designer", "planned", "complete", "publication", "custom"]).nullable().optional(),
+  workflow: z.enum(["standard", "designer", "video", "planned", "complete", "publication", "custom"]).nullable().optional(),
   customWorkflowId: z.string().nullable().optional(),
   customAgentId: z.string().nullable().optional(),
   approvalMode: z.enum(["manual", "yolo"]),
@@ -109,7 +110,7 @@ export const usageSchema = z.object({
 });
 export const agentStepSchema = z.object({
   coreActivities: z.array(z.object({
-    component: z.enum(["context-mode", "ponytail", "beads", "open-design", "context7", "lsp"]),
+    component: coreIdSchema,
     action: z.string(), status: z.enum(["applied", "reused", "unavailable", "pending", "issues"]),
     summary: z.string(), sources: z.array(z.string()), fingerprint: z.string().nullable().optional(),
     durationMs: z.number().nonnegative(),

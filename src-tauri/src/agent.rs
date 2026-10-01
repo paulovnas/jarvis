@@ -52,6 +52,7 @@ mod tool_contract;
 mod tool_loop;
 mod tools;
 pub(crate) mod turn_state;
+pub(crate) mod video;
 pub(crate) mod vision;
 pub(crate) mod web_search;
 pub(crate) mod workflow;
@@ -195,7 +196,9 @@ pub struct TurnOptions {
 impl TurnOptions {
     fn direct(&self) -> bool {
         match self.workflow {
-            Some(workflow::Flow::Standard | workflow::Flow::Designer) => true,
+            Some(workflow::Flow::Standard | workflow::Flow::Designer | workflow::Flow::Video) => {
+                true
+            }
             Some(workflow::Flow::Custom) => self.custom_agent_id.is_some(),
             Some(
                 workflow::Flow::Planned | workflow::Flow::Complete | workflow::Flow::Publication,
@@ -2815,6 +2818,7 @@ fn run_turn_once<'a>(
         let mut progress_watchdog = progress::Watchdog::default();
         let mut read_reuse = tool_loop::ReadReuseCache::default();
         let mut command_sessions = command_sessions::CommandSessions::default();
+        let mut video_jobs = video::Jobs::default();
         let mut project_instructions = instructions::Resolver::new(&session.root)?;
         let response_language = crate::system::response_language(home);
         let mut lsp = lsp::Registry::new(&session.root, home)?;
@@ -3950,7 +3954,26 @@ fn run_turn_once<'a>(
                         }
                         Some(tool_contract::Handler::Native) => {
                             let execution =
-                                if command_sessions::CommandSessions::handles(&tool.name) {
+                                if tool.name.starts_with("video_") {
+                                    video_jobs
+                                        .execute(
+                                            &mut command_sessions,
+                                            video::Context {
+                                                session: owner,
+                                                home,
+                                                app: execution.as_ref().and_then(workflow::Execution::native_app),
+                                            },
+                                            &tool,
+                                            sandbox_plan.as_ref(),
+                                            signal.clone(),
+                                        )
+                                        .await
+                                        .map(|output| tools::ExecutionResult {
+                                            output,
+                                            revision: None,
+                                            read: None,
+                                        })
+                                } else if command_sessions::CommandSessions::handles(&tool.name) {
                                     command_sessions
                                         .execute(
                                             &session.root,

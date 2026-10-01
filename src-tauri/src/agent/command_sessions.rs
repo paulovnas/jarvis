@@ -27,6 +27,13 @@ struct Output {
     cancelled: bool,
     failed: bool,
     duration_ms: Option<u64>,
+    completion_error: Option<AgentError>,
+}
+
+pub(super) struct PreparedCommand {
+    pub process: tokio::process::Command,
+    pub metadata: Value,
+    pub on_success: Option<Box<dyn FnOnce() -> Result<(), AgentError> + Send>>,
 }
 
 struct Command {
@@ -36,6 +43,7 @@ struct Command {
     started: Instant,
     args: Value,
     sandbox: Option<SandboxPlan>,
+    metadata: Value,
 }
 
 impl Command {
@@ -76,9 +84,14 @@ impl Command {
         }
         let cursor = offset + bytes.len() as u64;
         output.delivered = cursor;
-        Ok(
-            json!({"sessionId":id,"status":if !output.finished {"running"} else if output.cancelled {"cancelled"} else if output.failed {"failed"} else {"completed"},"exitCode":output.exit_code,"output":String::from_utf8_lossy(&bytes),"cursor":cursor,"truncated":requested < output.start,"durationMs":output.duration_ms.unwrap_or_else(|| self.started.elapsed().as_millis() as u64)}),
-        )
+        let mut result = json!({"sessionId":id,"status":if !output.finished {"running"} else if output.cancelled {"cancelled"} else if output.failed {"failed"} else {"completed"},"exitCode":output.exit_code,"output":String::from_utf8_lossy(&bytes),"cursor":cursor,"truncated":requested < output.start,"durationMs":output.duration_ms.unwrap_or_else(|| self.started.elapsed().as_millis() as u64)});
+        if let Some(metadata) = self.metadata.as_object() {
+            let result = result.as_object_mut().ok_or_else(AgentError::internal)?;
+            for (key, value) in metadata {
+                result.entry(key.clone()).or_insert_with(|| value.clone());
+            }
+        }
+        Ok(result)
     }
 }
 
@@ -96,6 +109,10 @@ impl Drop for CommandSessions {
 }
 
 impl CommandSessions {
+    pub(super) fn metadata(&self, id: &str) -> Option<&Value> {
+        self.commands.get(id).map(|command| &command.metadata)
+    }
+
     pub(super) fn handles(name: &str) -> bool {
         matches!(name, "bash" | "bash_wait" | "bash_cancel")
     }
@@ -121,11 +138,25 @@ impl CommandSessions {
         sandbox: Option<&SandboxPlan>,
         signal: watch::Receiver<bool>,
     ) -> Result<String, AgentError> {
+        self.execute_prepared(root, tool, sandbox, signal, None)
+            .await
+    }
+
+    /// A native tool supplies validated argv/env while retaining the same owner,
+    /// output limits, cancellation, process-tree cleanup and wait contract.
+    pub(super) async fn execute_prepared(
+        &mut self,
+        root: &Path,
+        tool: &ToolCall,
+        sandbox: Option<&SandboxPlan>,
+        signal: watch::Receiver<bool>,
+        process: Option<PreparedCommand>,
+    ) -> Result<String, AgentError> {
         if *signal.borrow() {
             return Err(AgentError::cancelled());
         }
         let id = if tool.name == "bash" {
-            self.start(root, &tool.args, sandbox, signal.clone())?
+            self.start(root, &tool.args, sandbox, signal.clone(), process)?
         } else {
             tool.args["sessionId"]
                 .as_str()
@@ -166,17 +197,22 @@ impl CommandSessions {
         if snapshot["status"] == "failed" {
             // Admission recovery must see earlier chunks too, even if the caller
             // already consumed the line that explains the failure.
-            let retained_output = {
+            let (retained_output, completion_error) = {
                 let output = command.output.lock().map_err(|_| AgentError::internal())?;
-                String::from_utf8_lossy(&output.bytes.iter().copied().collect::<Vec<_>>())
-                    .into_owned()
+                (
+                    String::from_utf8_lossy(&output.bytes.iter().copied().collect::<Vec<_>>())
+                        .into_owned(),
+                    output.completion_error.clone(),
+                )
             };
-            let mut error = super::execution_sandbox::command_failure(
-                command.sandbox.as_ref(),
-                &command.args,
-                snapshot["exitCode"].as_i64().map(|value| value as i32),
-                &retained_output,
-            );
+            let mut error = completion_error.unwrap_or_else(|| {
+                super::execution_sandbox::command_failure(
+                    command.sandbox.as_ref(),
+                    &command.args,
+                    snapshot["exitCode"].as_i64().map(|value| value as i32),
+                    &retained_output,
+                )
+            });
             let mut result = error
                 .tool_result
                 .as_deref()
@@ -195,6 +231,7 @@ impl CommandSessions {
         args: &Value,
         sandbox: Option<&SandboxPlan>,
         signal: watch::Receiver<bool>,
+        process: Option<PreparedCommand>,
     ) -> Result<String, AgentError> {
         if self.running_ids().len() >= MAX_RUNNING {
             return Err(AgentError::new(
@@ -222,8 +259,22 @@ impl CommandSessions {
                 !command.trim().is_empty() && command.len() <= 16_000 && !command.contains('\0')
             })
             .ok_or_else(|| AgentError::new("command_arguments", "Informe um comando válido."))?;
-        let mut child = super::shell::spawn(text, &directory, sandbox)
+        let (child, metadata, mut on_success) = match process {
+            Some(prepared) => (
+                super::shell::spawn_process(prepared.process),
+                prepared.metadata,
+                prepared.on_success,
+            ),
+            None => (
+                super::shell::spawn(text, &directory, sandbox),
+                Value::Null,
+                None,
+            ),
+        };
+        let mut child = child
             .map_err(|_| AgentError::new("command_start", "Não foi possível iniciar o comando."))?;
+        #[cfg(unix)]
+        let root_process = child.id().and_then(super::shell::process_identity);
         let stdout = child.stdout().take().ok_or_else(AgentError::internal)?;
         let stderr = child.stderr().take().ok_or_else(AgentError::internal)?;
         let id = crate::library::new_id().map_err(|_| AgentError::internal())?;
@@ -235,6 +286,7 @@ impl CommandSessions {
             started: Instant::now(),
             args: args.clone(),
             sandbox: sandbox.cloned(),
+            metadata,
         });
         self.commands.insert(id.clone(), command.clone());
         tokio::spawn(async move {
@@ -247,19 +299,41 @@ impl CommandSessions {
                 _ = cancelled(&mut stop) => None,
                 result = child.wait() => Some(result),
             };
+            #[cfg(unix)]
+            if status.is_none() {
+                if let Some(root_process) = root_process {
+                    let _ = tokio::task::spawn_blocking(move || {
+                        super::shell::kill_descendants(&root_process);
+                    })
+                    .await;
+                }
+            }
             // Also reap descendants that kept inherited output pipes open.
             let _ = Box::into_pin(child.kill()).await;
             let _ = child.wait().await;
             finish_capture(stdout).await;
             finish_capture(stderr).await;
+            let was_cancelled = status.is_none() || *signal.borrow() || *stop.borrow();
+            let successful = status
+                .as_ref()
+                .is_some_and(|result| result.as_ref().is_ok_and(|status| status.success()));
+            let completion_error = if successful && !was_cancelled {
+                on_success.take().and_then(|finish| finish().err())
+            } else {
+                None
+            };
+            // Cancellation and process failure drop worker-owned temporary artifacts before completion is visible.
+            drop(on_success);
             if let Ok(mut output) = command.output.lock() {
                 output.finished = true;
-                output.cancelled = status.is_none();
-                output.failed = status
-                    .as_ref()
-                    .is_some_and(|result| result.as_ref().map_or(true, |status| !status.success()));
+                output.cancelled = was_cancelled;
+                output.failed = completion_error.is_some()
+                    || status.as_ref().is_some_and(|result| {
+                        result.as_ref().map_or(true, |status| !status.success())
+                    });
                 output.exit_code = status.and_then(Result::ok).and_then(|status| status.code());
                 output.duration_ms = Some(command.started.elapsed().as_millis() as u64);
+                output.completion_error = completion_error;
             }
             command.changed.notify_one();
         });
@@ -452,6 +526,173 @@ mod tests {
         assert_eq!(stop["status"], "cancelled");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn detached_command_fixture() {
+        use std::{os::unix::process::CommandExt, process::Stdio};
+
+        // Re-entered through current_exe by the cancellation regressions below.
+        let Some(directory) = std::env::var_os("JARVIS_TEST_DETACHED_SESSION_DIRECTORY") else {
+            return;
+        };
+        let mut process = std::process::Command::new("/bin/sh");
+        process
+            .args(["-c", "sleep 30 & printf '%s\\n' \"$JARVIS_TEST_DETACHED_PARENT\" \"$$\" \"$!\" > \"$JARVIS_TEST_DETACHED_SESSION_DIRECTORY/pids\"; wait"])
+            .stdin(Stdio::null())
+            .env("JARVIS_TEST_DETACHED_SESSION_DIRECTORY", directory)
+            .env("JARVIS_TEST_DETACHED_PARENT", std::process::id().to_string());
+        unsafe {
+            process.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
+        let _ = process.spawn().unwrap().wait();
+    }
+
+    #[cfg(unix)]
+    async fn detached_tree_is_stopped(drop_owner: bool) {
+        struct Cleanup(Option<std::path::PathBuf>);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let Some(path) = self.0.take() else { return };
+                if let Ok(text) = std::fs::read_to_string(path) {
+                    for pid in text.lines().filter_map(|line| line.parse::<i32>().ok()) {
+                        if pid > 0 && pid != std::process::id() as i32 {
+                            unsafe { libc::kill(-pid, libc::SIGKILL) };
+                            unsafe { libc::kill(pid, libc::SIGKILL) };
+                        }
+                    }
+                }
+            }
+        }
+
+        let fixture = super::super::tests::Fixture::new();
+        let mut cleanup = Cleanup(Some(fixture.root.join("pids")));
+        let mut control = tokio::process::Command::new("/bin/sleep")
+            .arg("30")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut process = tokio::process::Command::new(std::env::current_exe().unwrap());
+        process
+            .args([
+                "--exact",
+                "agent::command_sessions::tests::detached_command_fixture",
+                "--nocapture",
+            ])
+            .current_dir(&fixture.root)
+            .env("JARVIS_TEST_DETACHED_SESSION_DIRECTORY", &fixture.root);
+        let mut sessions = CommandSessions::default();
+        let (_cancel, signal) = watch::channel(false);
+        let start: Value = serde_json::from_str(
+            &sessions
+                .execute_prepared(
+                    &fixture.root,
+                    &call(
+                        "bash",
+                        json!({"command":"detached cancellation fixture","yieldTimeMs":5}),
+                    ),
+                    None,
+                    signal.clone(),
+                    Some(PreparedCommand {
+                        process,
+                        metadata: Value::Null,
+                        on_success: None,
+                    }),
+                )
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let pids = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(text) = std::fs::read_to_string(fixture.root.join("pids")) {
+                    let pids: Vec<u32> =
+                        text.lines().filter_map(|line| line.parse().ok()).collect();
+                    if pids.len() == 3 {
+                        break pids;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("detached fixture did not become ready");
+        assert!(pids
+            .iter()
+            .all(|pid| super::super::shell::process_identity(*pid).is_some()));
+        assert_eq!(unsafe { libc::getpgid(pids[0] as i32) }, pids[0] as i32);
+        assert_eq!(unsafe { libc::getsid(pids[1] as i32) }, pids[1] as i32);
+        assert_eq!(unsafe { libc::getpgid(pids[2] as i32) }, pids[1] as i32);
+        assert_ne!(unsafe { libc::getpgid(pids[1] as i32) }, pids[0] as i32);
+        let command = sessions.commands[start["sessionId"].as_str().unwrap()].clone();
+        if drop_owner {
+            drop(sessions);
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let changed = command.changed.notified();
+                    if command.output.lock().unwrap().finished {
+                        break;
+                    }
+                    changed.await;
+                }
+            })
+            .await
+            .expect("owner drop did not finish process cleanup");
+            assert!(command.output.lock().unwrap().cancelled);
+        } else {
+            let stopped: Value = serde_json::from_str(
+                &sessions
+                    .execute(
+                        &fixture.root,
+                        &call(
+                            "bash_cancel",
+                            json!({"sessionId":start["sessionId"],"yieldTimeMs":5000}),
+                        ),
+                        None,
+                        signal,
+                    )
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(stopped["status"], "cancelled");
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while pids
+                .iter()
+                .any(|pid| super::super::shell::process_identity(*pid).is_some())
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("a detached process survived command cancellation");
+        cleanup.0 = None;
+        assert!(
+            control.try_wait().unwrap().is_none(),
+            "unrelated process was cancelled"
+        );
+        control.kill().await.unwrap();
+        control.wait().await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancel_reaps_detached_descendants_without_touching_another_process() {
+        detached_tree_is_stopped(false).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn owner_drop_reaps_detached_descendants_without_touching_another_process() {
+        detached_tree_is_stopped(true).await;
+    }
+
     #[test]
     fn bounded_output_reports_truncation_and_does_not_repeat_delivered_bytes() {
         let (cancel, _rx) = watch::channel(false);
@@ -462,6 +703,7 @@ mod tests {
             started: Instant::now(),
             args: Value::Null,
             sandbox: None,
+            metadata: Value::Null,
         };
         command.append(&vec![b'a'; OUTPUT_LIMIT + 40]);
         let first = command.snapshot("id", Some(0)).unwrap();
@@ -480,6 +722,7 @@ mod tests {
             started: Instant::now(),
             args: Value::Null,
             sandbox: None,
+            metadata: Value::Null,
         };
         command.append(&[0xc3]);
         assert_eq!(command.snapshot("id", None).unwrap()["output"], "");

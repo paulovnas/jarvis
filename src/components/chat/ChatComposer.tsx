@@ -157,6 +157,7 @@ export function ChatComposer({
   const selectedBuiltinAgent = catalog.data?.builtinAgents.find(agent => agent.id === selectedFlow.customAgentId);
   const selectedAgent = selectedCustomAgent ?? selectedBuiltinAgent;
   const githubSelected = selectedFlow.customAgentId === "builtin:github";
+  const builtinProfileFlow = githubSelected ? "publication" : selectedFlow.customAgentId === "builtin:video" ? "video" : null;
   const customUnavailable = selectedFlow.workflow === "custom" && (selectedFlow.customAgentId
     ? !selectedAgent || selectedAgent.usage === "flow_only"
     : !customFlow);
@@ -195,15 +196,15 @@ export function ChatComposer({
   };
 
   const nativeModels = modelGroups.flatMap((group) => group.models);
-  const selectedProfile = githubSelected
-    ? agentModels?.data?.["publication/github"]
+  const selectedProfile = builtinProfileFlow
+    ? agentModels?.data?.[`${builtinProfileFlow}/${rootRole(builtinProfileFlow)}`]
     : selectedFlow.workflow === "custom" ? undefined : agentModels?.data?.[`${workflow}/${rootRole(selectedFlow.workflow ?? "standard")}`];
   const defaultProfile = agentModels?.data?.["standard/builder"];
   const profile = selectedProfile ?? (!nativeModels.length && executorOf(defaultProfile) !== "jarvis" ? defaultProfile : undefined);
   const boundChoice = selection && manualBindings !== modelBindings ? resolveChatModel(modelBindings, draftKey, executionChoice(selection)) : null;
   const effectiveSelection = running && initialOptions ? executionSelection(initialOptions) : executionSelection(selectedCustomAgent?.model) ?? executionSelection(profile) ?? executionSelection(boundChoice) ?? selection;
   const configuredAgents = selectedFlow.customAgentId
-    ? selectedCustomAgent?.model ? [{ name: selectedCustomAgent.name, choice: selectedCustomAgent.model }] : githubSelected && profile ? [{ name: "GitHub", choice: profile }] : []
+    ? selectedCustomAgent?.model ? [{ name: selectedCustomAgent.name, choice: selectedCustomAgent.model }] : selectedBuiltinAgent && profile ? [{ name: selectedBuiltinAgent.name, choice: profile }] : []
     : selectedFlow.workflow === "custom"
       ? catalog.data?.agents.flatMap(agent => agent.model && customFlow?.steps.some(step => step.agentId === agent.id) ? [{ name: agent.name, choice: agent.model }] : []) ?? []
       : Object.entries(agentModels?.data ?? {}).flatMap(([key, choice]) => key.startsWith(`${workflow}/`) ? [{ name: key, choice }] : []);
@@ -240,7 +241,7 @@ export function ChatComposer({
       : currentModelDef ? defaultReasoning(currentModelDef) : null;
   const chooseModel = (next: ModelSelection) => {
     if (selectedCustomAgent?.model) return;
-    if (agentModels && (selectedFlow.workflow !== "custom" || githubSelected)) { const targetFlow = githubSelected ? "publication" : selectedFlow.workflow ?? "standard"; void agentModels.save(targetFlow, rootRole(targetFlow), selectModelChoice(agentModels.data?.[`${targetFlow}/${rootRole(targetFlow)}`], executionChoice(next), "primary")); }
+    if (agentModels && (selectedFlow.workflow !== "custom" || builtinProfileFlow)) { const targetFlow = builtinProfileFlow ?? selectedFlow.workflow ?? "standard"; void agentModels.save(targetFlow, rootRole(targetFlow), selectModelChoice(agentModels.data?.[`${targetFlow}/${rootRole(targetFlow)}`], executionChoice(next), "primary")); }
     else {
       const choice = executionChoice(next);
       const bound = resolveChatModel(modelBindings, draftKey, choice);
@@ -255,7 +256,7 @@ export function ChatComposer({
     const currentFlow = currentOptions.workflow;
     const leavingCoordinatedFlow = (["planned", "complete"].includes(currentFlow ?? "")
       || currentFlow === "custom" && !!currentOptions.customWorkflowId && !currentOptions.customAgentId)
-      && (next === "standard" || next === "designer" || next.startsWith("agent:"));
+      && (next === "standard" || next === "designer" || next === "video" || next.startsWith("agent:"));
     const currentSnapshot = workflowSnapshot;
     const hasWorkflowState = currentSnapshot != null && currentSnapshot.flow === currentFlow
       && (currentSnapshot.agents.some(agent => agent.id !== "main")
@@ -265,7 +266,7 @@ export function ChatComposer({
       return;
     }
     setWorkflow(next);
-    if (next === "standard" || next === "designer" || next.startsWith("agent:")) setManualValidation(false);
+    if (next === "standard" || next === "designer" || next === "video" || next.startsWith("agent:")) setManualValidation(false);
   };
 
   const refreshModels = async () => {
@@ -353,7 +354,7 @@ export function ChatComposer({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="cursor-pointer">Manter fluxo atual</AlertDialogCancel>
-            <AlertDialogAction data-confirm-action className="cursor-pointer" onClick={() => { if (pendingWorkflow) { setWorkflow(pendingWorkflow); if (pendingWorkflow === "standard" || pendingWorkflow === "designer" || pendingWorkflow.startsWith("agent:")) setManualValidation(false); } setPendingWorkflow(null); }}>Trocar fluxo</AlertDialogAction>
+            <AlertDialogAction data-confirm-action className="cursor-pointer" onClick={() => { if (pendingWorkflow) { setWorkflow(pendingWorkflow); if (pendingWorkflow === "standard" || pendingWorkflow === "designer" || pendingWorkflow === "video" || pendingWorkflow.startsWith("agent:")) setManualValidation(false); } setPendingWorkflow(null); }}>Trocar fluxo</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -26,11 +26,13 @@ import { AuthoringApprovalDrawer } from "./AuthoringApprovalDrawer";
 import { WorkflowRecoveryAlert } from "./WorkflowRecoveryAlert";
 import { Hint } from "@/components/ui/hint";
 import { ActiveExecutionStatus } from "./ActiveExecutionStatus";
+import { useVideoReady } from "@/hooks/use-video-ready";
 
 function ConversationView({ context, modelGroups, modelBindings, modelsReady, onRefreshModels, refreshingModels, chat, workflow, agentModels, drafts, questionDrafts, httpDrafts, onLatestVisibility, files }: { context: ConversationDetails; modelGroups: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; onRefreshModels?: () => Promise<ModelCatalogRefresh | null>; refreshingModels?: boolean; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; drafts: Map<string, ChatDraft>; questionDrafts: Map<string, QuestionDraft>; httpDrafts: Map<string, HttpTab[]>; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController }) {
   const footer = useRef<HTMLElement>(null);
   const previousQuestion = useRef<string | undefined>(undefined);
   const snapshot = chat.snapshot;
+  useVideoReady(context.project.id, context.conversation.id, files, snapshot);
   const http = useHttpClient(context.conversation.id, context.project.id, !!snapshot, httpDrafts);
   const [draftInsertion, setDraftInsertion] = useState<{ id: string; text: string }>();
   const browser = useBrowser(context.conversation.id, () => { files?.select(null); http.select(null); }, !!snapshot);
@@ -39,7 +41,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
   useEffect(() => {
     if (attention !== previousAttention.current) {
       previousAttention.current = attention;
-      if (attention && (browser.snapshot.activeId || http.activeId)) { browser.select(null); files?.select(null); http.select(null); }
+      if (attention && (files?.tabs.activePath || browser.snapshot.activeId || http.activeId)) { browser.select(null); files?.select(null); http.select(null); }
     }
   }, [attention, browser, files, http]);
   useEffect(() => {

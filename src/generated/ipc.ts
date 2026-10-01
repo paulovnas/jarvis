@@ -48,7 +48,7 @@ export type ApprovalGrantRequest = { scope: ApprovalGrantScope, duration: Approv
 
 export type ApprovalDecision = { approved: boolean, grant: ApprovalGrantRequest | null, };
 
-export type Flow = "standard" | "designer" | "planned" | "complete" | "publication" | "custom";
+export type Flow = "standard" | "designer" | "video" | "planned" | "complete" | "publication" | "custom";
 
 export type Attachment = { id: string, conversationId: string, name: string, mime: string, size: number, kind: "image" | "document", };
 
@@ -72,7 +72,7 @@ export type ContextReduction = { callId: string, originalBytes: number, retained
 
 export type CoreActivityStatus = "applied" | "reused" | "unavailable" | "pending" | "issues";
 
-export type CoreActivity = { component: "context-mode" | "ponytail" | "beads" | "open-design" | "context7" | "lsp", action: string, status: CoreActivityStatus, summary: string, sources: Array<string>, fingerprint?: string | null, durationMs: number, };
+export type CoreActivity = { component: "context-mode" | "ponytail" | "beads" | "open-design" | "context7" | "lsp" | "hyperframes", action: string, status: CoreActivityStatus, summary: string, sources: Array<string>, fingerprint?: string | null, durationMs: number, };
 
 export type AgentStep = { coreActivities?: Array<CoreActivity>, contextId?: string | null, contextSearches: number, contextReductions?: Array<ContextReduction>, readReuses?: Array<ContextReduction>, loopSteers?: number, loopAvoidedCalls?: number, progressEvents?: number, evidenceEvents?: number, progressCheckpoints?: number, progressPauses?: number, retry?: RetryStatus | null, durationMs: number, text: string, summary: string, tools: Array<AgentTool>, usage: Usage | null, };
 

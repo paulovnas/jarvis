@@ -191,6 +191,9 @@ pub(super) fn inspect_tool(
         ),
         "terminal_close" => ExecutionOperation::ProcessControl,
         "http_send" => ExecutionOperation::Network,
+        "video_run" => {
+            ExecutionOperation::Command(parse_or_dynamic("hyperframes native-video-task"))
+        }
         "jarvis_propose_publication" => publication_operation(&tool.args, project_root),
         _ => return Ok(None),
     };

@@ -182,6 +182,38 @@ fn sanitized_catalog_and_targets_never_serialize_provider_assignments() {
 }
 
 #[test]
+fn video_model_mapping_preserves_its_secondary_and_native_identity() {
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir(crate::data_dir::root(home.path())).unwrap();
+    let path = home.path().join("video-settings.zip");
+    let mut settings = payload();
+    let target = builtin_target("video/video").unwrap();
+    assert_eq!(target.label, "Criador de vídeos");
+    assert!(target.details.contains(&"Fluxo Vídeo".into()));
+    settings.model_targets.push(target);
+    write_archive(&path, &settings, &[]).unwrap();
+    let loaded = read_archive(&path).unwrap();
+    let choice: workflow::settings::ModelChoice = serde_json::from_value(serde_json::json!({
+        "executor":"claude", "account":"", "model":"sonnet", "reasoning":null,
+        "fallback":{"executor":"claude", "account":"", "model":"opus", "reasoning":"max"}
+    }))
+    .unwrap();
+    let (_, native, bindings, _) = prepare_import(
+        &loaded,
+        home.path(),
+        &AppState::default(),
+        &OpenAiCodexState::default(),
+        vec![ModelMapping {
+            target_id: "builtin:video/video".into(),
+            choice: choice.clone(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(native.get("video/video"), Some(&choice));
+    assert!(bindings.contains(&"builtin:video/video:fallback".into()));
+}
+
+#[test]
 fn backup_preserves_external_executors_without_provider_mapping_or_credentials() {
     let home = tempfile::tempdir().unwrap();
     fs::create_dir(crate::data_dir::root(home.path())).unwrap();

@@ -26,9 +26,9 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
   const [reinstall, setReinstall] = useState<CoreId | null>(null);
   const checkStarted = useRef(false);
   useEffect(() => { if (snapshot && !core.checked && !checkStarted.current) { checkStarted.current = true; void check(); } }, [snapshot, core.checked, check]);
-  if (!snapshot && !error) return <div role="status" aria-label="Carregando Core" className="space-y-3"><Skeleton className="mb-5 h-5 w-24" /><div className="core-card-grid">{[0, 1, 2, 3, 4, 5].map(id => <Skeleton key={id} className="h-56 w-full rounded-lg" />)}</div></div>;
+  if (!snapshot && !error) return <div role="status" aria-label="Carregando Core" className="space-y-3"><Skeleton className="mb-5 h-5 w-24" /><div className="core-card-grid">{[0, 1, 2, 3, 4, 5, 6].map(id => <Skeleton key={id} className="h-56 w-full rounded-lg" />)}</div></div>;
   if (!snapshot) return <div role="alert" className="space-y-3"><p className="text-sm text-destructive">{error}</p><Button variant="outline" onClick={() => void refresh()}>Tentar novamente</Button></div>;
-  const essential = snapshot.items.filter(item => item.id !== "context7");
+  const essential = snapshot.items.filter(item => item.id !== "context7" && item.id !== "hyperframes");
   const missing = essential.filter(item => !item.installed).map(item => item.id);
   const reinstallTarget = snapshot.items.find(item => item.id === reinstall);
   return <TooltipProvider delay={150}><section aria-label="Core" className="space-y-4">
@@ -39,7 +39,7 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
     </div>
     <div className="core-card-grid">{snapshot.items.map(item => {
       const { icon: Icon, label, description, color, tint } = CORE_DETAILS[item.id];
-      const optional = item.id === "context7";
+      const optional = item.id === "context7" || item.id === "hyperframes";
       const action = item.installed ? "Atualizar" : "Instalar";
       const usable = item.installed && item.configured && !item.healthError;
       const canInstall = !item.installed && !item.installedVersion;

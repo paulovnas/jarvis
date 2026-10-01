@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fileName } from "@/core/project-files";
+import { fileName, isVideoFile } from "@/core/project-files";
 import type { ProjectFilesController } from "@/hooks/use-project-files";
 import { FileIcon } from "./FileIcon";
 import type { BrowserController } from "@/hooks/use-browser";
@@ -18,6 +18,7 @@ import type { HttpClientController } from "@/hooks/use-http-client";
 import type { HttpRun } from "@/core/http-client";
 import { HttpPanel } from "@/components/http/HttpPanel";
 import { HttpCloseDialog } from "@/components/http/HttpCloseDialog";
+import { VideoSkeleton, VideoViewer } from "./VideoViewer";
 
 const CodeViewer = lazy(async () => {
   // Monaco resolves translated labels while its modules initialize. Finish the
@@ -102,9 +103,10 @@ export function FileWorkspace({ files, browser, http, onAnalyzeHttp, terminalLau
         <Hint content="Atualizar arquivo"><Button type="button" variant="ghost" size="icon" aria-label="Atualizar arquivo" onClick={files.refresh} disabled={files.active.loading} className="size-6 cursor-pointer"><RefreshCw className="size-3.5" /></Button></Hint>
       </div>
       <div className="min-h-0 min-w-0 flex-1">
-        {files.active.loading ? <FileSkeleton /> : files.active.error ? <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center"><FileSearch className="size-8 text-muted-foreground" /><p role="alert" className="max-w-md text-sm text-muted-foreground">{files.active.error}</p><Button type="button" variant="outline" onClick={files.refresh} className="cursor-pointer">Tentar novamente</Button></div> : files.active.data ? <ViewerBoundary key={files.projectId}><Suspense fallback={<FileSkeleton />}><CodeViewer file={files.active.data} paths={files.tabs.paths} visible /></Suspense></ViewerBoundary> : null}
+        {files.active.loading ? isVideoFile(active) ? <VideoSkeleton /> : <FileSkeleton /> : files.active.error ? <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center"><FileSearch className="size-8 text-muted-foreground" /><p role="alert" className="max-w-md text-sm text-muted-foreground">{files.active.error}</p><Button type="button" variant="outline" onClick={files.refresh} className="cursor-pointer">Tentar novamente</Button></div> : files.active.video && files.projectId ? <VideoViewer key={files.active.video.url} projectId={files.projectId} file={files.active.video} /> : files.active.data ? <ViewerBoundary key={files.projectId}><Suspense fallback={<FileSkeleton />}><CodeViewer file={files.active.data} paths={files.tabs.paths} visible /></Suspense></ViewerBoundary> : null}
       </div>
       {files.active.data && <div className="flex h-6 shrink-0 items-center justify-end gap-3 border-t border-border px-3 font-mono text-[10px] text-muted-foreground"><span>{files.active.data.encoding}</span><span>{files.active.data.size.toLocaleString("pt-BR")} bytes</span></div>}
+      {files.active.video && <div className="flex h-6 shrink-0 items-center justify-end gap-3 border-t border-border px-3 font-mono text-[10px] text-muted-foreground"><span>{files.active.video.mime}</span><span>{files.active.video.size.toLocaleString("pt-BR")} bytes</span></div>}
     </TabsContent>}
   </Tabs>;
 }

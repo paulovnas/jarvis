@@ -60,6 +60,14 @@ it("does not invent activity for legacy or empty histories", () => {
   expect(container).toBeEmptyDOMElement();
 });
 
+it("shows video tool calls under the managed Hyperframes resource", async () => {
+  const user = userEvent.setup();
+  render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [{ id: "video", name: "video_render", status: "completed" }] }]} />);
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  expect(screen.getByText("Hyperframes")).toBeVisible();
+  expect(screen.getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();
+});
+
 function diagnostic(path: string, status: CoreActivity["status"], summary: string): CoreActivity {
   return { ...prepared, component: "lsp", action: "file_diagnostics", sources: [path], status, summary, fingerprint: "current" };
 }

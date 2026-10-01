@@ -135,7 +135,7 @@ fn agent_schema() -> Value {
             "capability":{"type":"string","enum":["read_only","write_files","commands"]},
             "deniedTools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":128}},
             "model":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["account","model","reasoning"],"properties":{"executor":{"type":"string","enum":["jarvis","claude"],"description":"Defaults to jarvis. Claude uses the official local CLI and an empty account; it is not a Jarvis API provider."},"account":{"type":"string","maxLength":200},"model":{"type":"string","minLength":1,"maxLength":200},"reasoning":{"anyOf":[{"type":"null"},{"type":"string","minLength":1,"maxLength":40}]}}}]},
-            "appearance":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["icon","color"],"properties":{"icon":{"type":"string","enum":["bot","workflow","route","brain","search","code","palette","shield","terminal","wrench","book","sparkles","target","pen","lightbulb","rocket"]},"color":{"type":"string","enum":["blue","green","cyan","yellow","red","purple","neutral"]}}}]}
+            "appearance":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["icon","color"],"properties":{"icon":{"type":"string","enum":["bot","workflow","route","brain","search","code","palette","film","shield","terminal","wrench","book","sparkles","target","pen","lightbulb","rocket"]},"color":{"type":"string","enum":["blue","green","cyan","yellow","red","purple","neutral"]}}}]}
         }
     })
 }
@@ -152,13 +152,13 @@ fn flow_schema() -> Value {
             "maxSteps":{"type":"integer","minimum":1,"maximum":48},
             "steps":{"type":"array","minItems":1,"maxItems":24,"items":{"type":"object","additionalProperties":false,"required":["id","agentId","instructions","position","next","onRework"],"properties":{
                 "id":{"type":"string","pattern":"^[a-fA-F0-9]{32}$"},
-                "agentId":{"description":"A custom 32-character hexadecimal agent ID or an immutable builtin:* ID returned by jarvis_catalog.","anyOf":[{"type":"string","pattern":"^[a-fA-F0-9]{32}$"},{"type":"string","enum":["builtin:planner","builtin:investigator","builtin:writer","builtin:orchestrator","builtin:designer","builtin:builder","builtin:reviewer"]}]},
+                "agentId":{"description":"A custom 32-character hexadecimal agent ID or an immutable builtin:* ID returned by jarvis_catalog.","anyOf":[{"type":"string","pattern":"^[a-fA-F0-9]{32}$"},{"type":"string","enum":["builtin:planner","builtin:investigator","builtin:writer","builtin:orchestrator","builtin:designer","builtin:video","builtin:builder","builtin:reviewer","builtin:github"]}]},
                 "instructions":{"type":"string","maxLength":8000},
                 "position":{"type":"object","additionalProperties":false,"required":["x","y"],"properties":{"x":{"type":"number","minimum":-100000,"maximum":100000},"y":{"type":"number","minimum":-100000,"maximum":100000}}},
                 "next":{"anyOf":[{"type":"null"},{"type":"string","pattern":"^[a-fA-F0-9]{32}$"}]},
                 "onRework":{"anyOf":[{"type":"null"},{"type":"string","pattern":"^[a-fA-F0-9]{32}$"}]}
             }}},
-            "appearance":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["icon","color"],"properties":{"icon":{"type":"string","enum":["bot","workflow","route","brain","search","code","palette","shield","terminal","wrench","book","sparkles","target","pen","lightbulb","rocket"]},"color":{"type":"string","enum":["blue","green","cyan","yellow","red","purple","neutral"]}}}]}
+            "appearance":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["icon","color"],"properties":{"icon":{"type":"string","enum":["bot","workflow","route","brain","search","code","palette","film","shield","terminal","wrench","book","sparkles","target","pen","lightbulb","rocket"]},"color":{"type":"string","enum":["blue","green","cyan","yellow","red","purple","neutral"]}}}]}
         }
     })
 }

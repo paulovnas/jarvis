@@ -13,6 +13,9 @@ fn fixture(home: &Path) -> Manifest {
         if id == ComponentId::OpenDesign {
             design::tests::prepare_fixture(&path, &[]).unwrap();
         }
+        if id == ComponentId::Hyperframes {
+            hyperframes::tests::fixture(&path, "1.0.0");
+        }
         let record = Installation {
             version: if id == ComponentId::OpenDesign {
                 "1.2.3"

@@ -15,6 +15,7 @@ pub(in crate::agent) struct Bridge<'a> {
     design: Option<crate::core::design::Pack>,
     lsp: lsp::Registry,
     commands: command_sessions::CommandSessions,
+    video_jobs: video::Jobs,
     instructions: instructions::Resolver,
     repeated: tool_loop::Guard,
     diagnostics: Vec<String>,
@@ -253,6 +254,7 @@ impl<'a> Bridge<'a> {
             design,
             lsp: lsp::Registry::new(&session.root, home)?,
             commands: command_sessions::CommandSessions::default(),
+            video_jobs: video::Jobs::default(),
             instructions: instructions::Resolver::new(&session.root)?,
             repeated: tool_loop::Guard::default(),
             diagnostics: vec![],
@@ -726,6 +728,26 @@ impl<'a> Bridge<'a> {
                 Ok(outcome.output)
             }
             Handler::Native => {
+                if tool.name.starts_with("video_") {
+                    let owner = self.owner().clone();
+                    return self
+                        .video_jobs
+                        .execute(
+                            &mut self.commands,
+                            video::Context {
+                                session: &owner,
+                                home,
+                                app: self
+                                    .execution
+                                    .as_ref()
+                                    .and_then(workflow::Execution::native_app),
+                            },
+                            tool,
+                            sandbox,
+                            signal,
+                        )
+                        .await;
+                }
                 if command_sessions::CommandSessions::handles(&tool.name) {
                     return self
                         .commands

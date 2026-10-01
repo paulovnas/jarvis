@@ -305,6 +305,14 @@ fn context7_release(releases: Vec<Release>) -> Result<Release, CoreError> {
         .ok_or_else(|| error("Nenhuma release estável do Context7 MCP disponível."))
 }
 pub(super) async fn component_release(id: ComponentId) -> Result<Release, CoreError> {
+    if id == ComponentId::Hyperframes {
+        return Ok(Release {
+            tag_name: latest_registry_version("hyperframes").await?,
+            assets: Vec::new(),
+            draft: false,
+            prerelease: false,
+        });
+    }
     if id != ComponentId::Context7 {
         return release(id.repository()).await;
     }
@@ -611,11 +619,11 @@ async fn latest_registry_version(name: &str) -> Result<String, CoreError> {
     let version = metadata["version"]
         .as_str()
         .filter(|_| metadata["name"] == name)
-        .ok_or_else(|| error("O registro npm não retornou um pacote LSP válido."))?;
+        .ok_or_else(|| error("O registro npm não retornou um pacote válido."))?;
     let parsed = semver::Version::parse(version)
-        .map_err(|_| error("O pacote LSP não possui uma versão válida."))?;
+        .map_err(|_| error("O pacote npm não possui uma versão válida."))?;
     if !parsed.pre.is_empty() {
-        return Err(error("Nenhuma versão estável do pacote LSP disponível."));
+        return Err(error("Nenhuma versão estável do pacote npm disponível."));
     }
     Ok(version.to_owned())
 }
@@ -715,6 +723,127 @@ pub(super) async fn install(
     let destination = staging.path();
     let mut required = Vec::<String>::new();
     match id {
+        ComponentId::Hyperframes => {
+            let (os, arch) = platform()?;
+            if arch == "arm64" && os != "darwin" {
+                return Err(error("A instalação automática de vídeo requer macOS, Linux x64 ou Windows x64. O restante do Jarvis continua disponível."));
+            }
+            stage("Baixando runtime Node");
+            install_node(destination, &stage, &progress).await?;
+            stage("Baixando Hyperframes");
+            let packages = [
+                ("hyperframes", version.as_str(), "hyperframes.tgz"),
+                ("@puppeteer/browsers", "3.2.2", "browsers.tgz"),
+            ];
+            for (name, version, filename) in packages {
+                fs::write(
+                    destination.join(filename),
+                    registry_package(name, version, &progress).await?,
+                )?;
+            }
+            fs::write(destination.join("package.json"), serde_json::to_vec(&serde_json::json!({
+                "name":"jarvis-core-hyperframes", "private":true,
+                "dependencies":{
+                    "hyperframes":"file:hyperframes.tgz", "@puppeteer/browsers":"file:browsers.tgz"
+                }
+            })).map_err(|_| error("Configuração do Hyperframes inválida."))?)?;
+            fs::write(destination.join("empty.npmrc"), b"")?;
+            stage("Instalando ambiente de vídeo");
+            let mut command = tokio::process::Command::new(node_path(destination));
+            command
+                .arg(npm_path(destination))
+                .args([
+                    "install",
+                    "--ignore-scripts",
+                    "--omit=dev",
+                    "--no-audit",
+                    "--no-fund",
+                    "--package-lock=true",
+                    "--global=false",
+                    "--workspaces=false",
+                    "--registry=https://registry.npmjs.org",
+                ])
+                .arg("--prefix")
+                .arg(destination)
+                .current_dir(destination)
+                .env("NODE_OPTIONS", "")
+                .env("npm_config_cache", root(home).join("cache/npm"))
+                .env("npm_config_userconfig", destination.join("empty.npmrc"));
+            self::command(command, 300).await?;
+            stage("Baixando FFmpeg e FFprobe");
+            let encoders: Release = serde_json::from_value(
+                json("https://api.github.com/repos/eugeneware/ffmpeg-static/releases/tags/b6.1.1")
+                    .await?,
+            )
+            .map_err(|_| error("Release dos codificadores de vídeo inválida."))?;
+            if encoders.tag_name != "b6.1.1" || encoders.draft || encoders.prerelease {
+                return Err(error("Versão dos codificadores de vídeo divergente."));
+            }
+            let ffmpeg_os = if os == "windows" { "win32" } else { os };
+            let ffmpeg_arch = if arch == "amd64" { "x64" } else { arch };
+            fs::create_dir_all(destination.join("bin"))?;
+            for name in ["ffmpeg", "ffprobe"] {
+                let filename = format!("{name}-{ffmpeg_os}-{ffmpeg_arch}.gz");
+                let asset = encoders
+                    .assets
+                    .iter()
+                    .find(|asset| asset.name == filename)
+                    .ok_or_else(|| error("Codificador de vídeo indisponível para este sistema."))?;
+                if !asset.browser_download_url.starts_with(
+                    "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/",
+                ) {
+                    return Err(error("Origem dos codificadores de vídeo inválida."));
+                }
+                let digest = asset
+                    .digest
+                    .as_deref()
+                    .filter(|digest| digest.starts_with("sha256:"))
+                    .ok_or_else(|| error("O codificador de vídeo não oferece checksum SHA-256."))?;
+                let bytes =
+                    download_with_progress(&asset.browser_download_url, DOWNLOAD_LIMIT, &progress)
+                        .await?;
+                check_hash(&bytes, digest)?;
+                let target = destination.join("bin").join(executable(name));
+                tokio::task::spawn_blocking(move || {
+                    let decoder = flate2::read::GzDecoder::new(Cursor::new(bytes));
+                    let mut output = fs::File::create(target)?;
+                    if std::io::copy(&mut decoder.take(DOWNLOAD_LIMIT as u64 + 1), &mut output)?
+                        > DOWNLOAD_LIMIT as u64
+                    {
+                        return Err(error(
+                            "O codificador de vídeo excedeu o limite de extração.",
+                        ));
+                    }
+                    Ok::<(), CoreError>(())
+                })
+                .await
+                .map_err(|_| error("Falha ao extrair os codificadores de vídeo."))??;
+            }
+            stage("Baixando navegador de renderização");
+            // Use the same Chrome pins as Hyperframes, keeping its entire cache in this generation.
+            let script = r#"
+const {install,Browser,detectBrowserPlatform}=await import('@puppeteer/browsers');
+const {join,relative}=require('node:path');
+const {release}=require('node:os');
+const {writeFileSync}=require('node:fs');
+const buildId=process.platform==='darwin' && Number(release().split('.')[0])<22 ? '150.0.7871.124' : '152.0.7977.30';
+const result=await install({browser:Browser.CHROMEHEADLESSSHELL,buildId,platform:detectBrowserPlatform(),cacheDir:join(process.cwd(),'browser')});
+writeFileSync('jarvis-hyperframes.json',JSON.stringify({browser:relative(process.cwd(),result.executablePath),ffmpeg:join('bin',process.platform==='win32'?'ffmpeg.exe':'ffmpeg'),ffprobe:join('bin',process.platform==='win32'?'ffprobe.exe':'ffprobe')}));
+"#;
+            let mut command = tokio::process::Command::new(node_path(destination));
+            command.args(["-e", &format!("(async()=>{{{script}}})().catch(error=>{{console.error(error);process.exit(1)}})")])
+                .current_dir(destination).env("NODE_OPTIONS", "");
+            self::command(command, 600).await?;
+            hyperframes::Runtime::at(destination)?;
+            #[cfg(unix)]
+            for executable in hyperframes::executable_paths(destination)? {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(executable, fs::Permissions::from_mode(0o755))?;
+            }
+            required.extend(hyperframes::required_files(destination)?);
+            stage("Validando ambiente de vídeo");
+            hyperframes::verify(destination, &version).await?;
+        }
         ComponentId::Context7 => {
             stage("Baixando runtime Node");
             install_node(destination, &stage, &progress).await?;
@@ -1344,6 +1473,27 @@ mod tests {
         assert_eq!(context7_release(releases).unwrap().version(), "4.0.5");
         assert!(context7_release(vec![]).is_err());
     }
+    #[tokio::test]
+    #[ignore = "Downloads and verifies the official video CLI, encoders and managed Chrome"]
+    async fn official_hyperframes_install() {
+        let home = tempfile::tempdir().unwrap();
+        let version = install(
+            home.path(),
+            ComponentId::Hyperframes,
+            |stage| eprintln!("{stage}"),
+            |_| {},
+        )
+        .await
+        .unwrap();
+        let record = installed(home.path(), ComponentId::Hyperframes).unwrap();
+        let package = record.path(home.path()).unwrap();
+        hyperframes::verify(&package, &version).await.unwrap();
+        assert!(hyperframes::SKILLS
+            .iter()
+            .all(|file| package.join(file).is_file()));
+        crate::agent::video::tests::smoke_render(home.path()).await;
+    }
+
     #[tokio::test]
     #[ignore = "Downloads and verifies the official Context7 MCP package with its private Node runtime"]
     async fn official_context7_install() {

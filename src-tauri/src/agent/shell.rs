@@ -1,12 +1,11 @@
 //! Platform shell resolution and tree-killable process spawning.
 //!
 //! Unix runs bash in its own process group; Windows runs PowerShell inside a
-//! job object. Both wrappers make `start_kill` terminate the whole process
-//! tree, so cancellation and timeouts never orphan descendants.
+//! job object. Command sessions also capture detached Unix descendants before
+//! cancellation, since a descendant can create its own process group.
 use portable_pty::CommandBuilder;
 use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
 use std::{
-    collections::HashSet,
     ffi::{OsStr, OsString},
     path::{Path, PathBuf},
     process::Stdio,
@@ -14,7 +13,11 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::{ffi::CStr, os::unix::fs::PermissionsExt};
+use std::{
+    collections::{HashMap, HashSet},
+    ffi::CStr,
+    os::unix::fs::PermissionsExt,
+};
 
 use crate::system::TerminalPreferences;
 
@@ -449,6 +452,146 @@ pub(crate) fn spawn_process(
     crate::background::windows_job(&mut wrapped);
     wrapped.wrap(KillOnDrop);
     wrapped.spawn()
+}
+
+#[cfg(unix)]
+#[derive(Clone)]
+pub(super) struct ProcessIdentity {
+    pid: i32,
+    parent: i32,
+    started: (u64, u64),
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const MAX_PROCESS_SNAPSHOT: usize = 65_536;
+
+#[cfg(unix)]
+pub(super) fn process_identity(pid: u32) -> Option<ProcessIdentity> {
+    read_process(i32::try_from(pid).ok()?)
+}
+
+/// Capture the live tree before killing its root: detached groups otherwise
+/// escape the wrapper, and killing ancestors first loses their PPID links.
+#[cfg(unix)]
+pub(super) fn kill_descendants(root: &ProcessIdentity) {
+    if !read_process(root.pid).is_some_and(|current| current.started == root.started) {
+        return;
+    }
+    let mut children = HashMap::new();
+    for child in process_snapshot() {
+        children
+            .entry(child.parent)
+            .or_insert_with(Vec::new)
+            .push(child);
+    }
+    let mut owned = vec![root.clone()];
+    let mut visited = HashSet::from([root.pid]);
+    let mut index = 0;
+    while index < owned.len() {
+        let parent = owned[index].pid;
+        for child in children.remove(&parent).unwrap_or_default() {
+            if child.pid != std::process::id() as i32 && visited.insert(child.pid) {
+                owned.push(child);
+            }
+        }
+        index += 1;
+    }
+    for child in owned.into_iter().skip(1).rev() {
+        // PPID may change after an ancestor exits; start time pins identity.
+        if read_process(child.pid).is_some_and(|current| current.started == child.started) {
+            unsafe { libc::kill(child.pid, libc::SIGKILL) };
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn read_process(pid: i32) -> Option<ProcessIdentity> {
+    if pid <= 0 {
+        return None;
+    }
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if read != size {
+        return None;
+    }
+    let info = unsafe { info.assume_init() };
+    if info.pbi_pid != pid as u32 || info.pbi_status == libc::SZOMB {
+        return None;
+    }
+    Some(ProcessIdentity {
+        pid,
+        parent: i32::try_from(info.pbi_ppid).ok()?,
+        started: (info.pbi_start_tvsec, info.pbi_start_tvusec),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn process_snapshot() -> Vec<ProcessIdentity> {
+    let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
+    if count <= 0 {
+        return Vec::new();
+    }
+    let mut pids = vec![0_i32; (count as usize + 256).min(MAX_PROCESS_SNAPSHOT)];
+    // proc_listallpids returns a PID count, but takes a buffer size in bytes.
+    let count = unsafe {
+        libc::proc_listallpids(
+            pids.as_mut_ptr().cast(),
+            std::mem::size_of_val(pids.as_slice()) as i32,
+        )
+    };
+    pids.iter()
+        .take(usize::try_from(count).unwrap_or(0))
+        .filter_map(|pid| read_process(*pid))
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn read_process(pid: i32) -> Option<ProcessIdentity> {
+    if pid <= 0 {
+        return None;
+    }
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // comm can contain spaces or parentheses; fields after its final ')' start at state.
+    let fields: Vec<_> = stat.rsplit_once(')')?.1.split_whitespace().collect();
+    if fields.first() == Some(&"Z") {
+        return None;
+    }
+    Some(ProcessIdentity {
+        pid,
+        parent: fields.get(1)?.parse().ok()?,
+        started: (fields.get(19)?.parse().ok()?, 0),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn process_snapshot() -> Vec<ProcessIdentity> {
+    std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .take(MAX_PROCESS_SNAPSHOT)
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse().ok())
+        .filter_map(read_process)
+        .collect()
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+fn read_process(_pid: i32) -> Option<ProcessIdentity> {
+    None
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+fn process_snapshot() -> Vec<ProcessIdentity> {
+    Vec::new()
 }
 
 #[cfg(test)]

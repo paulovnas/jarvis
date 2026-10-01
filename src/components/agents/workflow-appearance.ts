@@ -1,11 +1,11 @@
-import { AppWindow, BookOpen, Bot, Brain, CodeXml, Database, Folder, FolderCode, Globe2, Lightbulb, Package, Palette, PenLine, Rocket, Route, Search, ShieldCheck, Sparkles, Target, Terminal, Workflow, Wrench } from "lucide-react";
+import { AppWindow, BookOpen, Bot, Brain, CodeXml, Database, Film, Folder, FolderCode, Globe2, Lightbulb, Package, Palette, PenLine, Rocket, Route, Search, ShieldCheck, Sparkles, Target, Terminal, Workflow, Wrench } from "lucide-react";
 import { agentAppearance, type IdentityAppearance, type WorkflowAppearance } from "@/core/workflow-appearance";
 
 export const WORKFLOW_ICONS = {
   bot: { label: "Robô", Icon: Bot }, workflow: { label: "Fluxo", Icon: Workflow },
   route: { label: "Rota", Icon: Route }, brain: { label: "Cérebro", Icon: Brain },
   search: { label: "Pesquisa", Icon: Search }, code: { label: "Código", Icon: CodeXml },
-  palette: { label: "Design", Icon: Palette }, shield: { label: "Escudo", Icon: ShieldCheck },
+  palette: { label: "Design", Icon: Palette }, film: { label: "Vídeo", Icon: Film }, shield: { label: "Escudo", Icon: ShieldCheck },
   terminal: { label: "Terminal", Icon: Terminal }, wrench: { label: "Ferramenta", Icon: Wrench },
   book: { label: "Livro", Icon: BookOpen }, sparkles: { label: "Estrelas", Icon: Sparkles },
   target: { label: "Alvo", Icon: Target }, pen: { label: "Escrita", Icon: PenLine },
@@ -14,8 +14,8 @@ export const WORKFLOW_ICONS = {
   package: { label: "Pacote", Icon: Package }, database: { label: "Banco de dados", Icon: Database },
   globe: { label: "Web", Icon: Globe2 }, "app-window": { label: "Aplicativo", Icon: AppWindow },
 } as const;
-export const WORKFLOW_ICON_KEYS: readonly WorkflowAppearance["icon"][] = ["bot", "workflow", "route", "brain", "search", "code", "palette", "shield", "terminal", "wrench", "book", "sparkles", "target", "pen", "lightbulb", "rocket"];
-export const PROJECT_ICON_KEYS = Object.keys(WORKFLOW_ICONS) as IdentityAppearance["icon"][];
+export const WORKFLOW_ICON_KEYS: readonly WorkflowAppearance["icon"][] = ["bot", "workflow", "route", "brain", "search", "code", "palette", "film", "shield", "terminal", "wrench", "book", "sparkles", "target", "pen", "lightbulb", "rocket"];
+export const PROJECT_ICON_KEYS = Object.keys(WORKFLOW_ICONS).filter(icon => icon !== "film") as IdentityAppearance["icon"][];
 export const WORKFLOW_COLORS = {
   blue: { label: "Azul", value: "var(--color-onedark-blue)" },
   green: { label: "Verde", value: "var(--color-onedark-green)" },

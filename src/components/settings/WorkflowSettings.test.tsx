@@ -15,13 +15,14 @@ it("separates immutable built-in flow and agent cards from custom management", a
   const user = userEvent.setup(); render(<WorkflowSettings accounts={[]} />);
   expect(screen.getByRole("tablist", { name: "Workflow" })).toHaveAttribute("aria-orientation", "horizontal");
   const jarvis = screen.getByRole("region", { name: "Fluxos Jarvis" });
-  expect(within(jarvis).getAllByRole("button")).toHaveLength(4);
+  expect(within(jarvis).getAllByRole("button")).toHaveLength(5);
   expect(within(jarvis).queryByRole("button", { name: /Excluir|Editar/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Editar Meu fluxo" })).toBeVisible();
   await user.click(screen.getByRole("tab", { name: "Agentes" }));
   const nativeAgents = screen.getByRole("region", { name: "Agentes Jarvis" });
-  expect(within(nativeAgents).getAllByRole("button")).toHaveLength(8);
+  expect(within(nativeAgents).getAllByRole("button")).toHaveLength(9);
   expect(within(nativeAgents).getByRole("button", { name: "Ver agente GitHub" })).toHaveTextContent("Misto");
+  expect(within(nativeAgents).getByRole("button", { name: "Ver agente Criador de vídeos" })).toHaveTextContent("Misto");
   expect(screen.getByRole("button", { name: "Editar Analista próprio" })).toBeVisible();
 });
 

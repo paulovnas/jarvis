@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { ChatComposer } from "./ChatComposer";
-import { builtinGithubAgent, customAgent, customCatalog, customFlow } from "@/test/workflow-fixtures";
+import { builtinGithubAgent, builtinVideoAgent, customAgent, customCatalog, customFlow } from "@/test/workflow-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const models = [{ provider: "local", models: [{ value: "local/model", label: "Model", reasoningLevels: [], defaultReasoningLevel: null }] }];
@@ -93,4 +93,23 @@ it("reopens an old GitHub chat with its current configured model", async () => {
   expect(screen.queryByText(/gpt-5\.6-luna.*indisponível/)).not.toBeInTheDocument();
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Liste as PRs abertas{Enter}");
   expect(send).toHaveBeenCalledWith("Liste as PRs abertas", expect.objectContaining({ model: "gpt-6-luna", customAgentId: "builtin:github" }));
+});
+
+it("runs the native mixed video creator with its saved model and secondary", async () => {
+  const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true), save = vi.fn();
+  const profile = { account: "local", model: "model", reasoning: null, fallback: { account: "local", model: "model", reasoning: null } };
+  vi.mocked(invoke).mockImplementation(async command => command === "get_workflow_catalog" ? { ...customCatalog, builtinAgents: [builtinVideoAgent] } : []);
+  render(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "video/video": profile }, error: null, saving: false, save, refresh: vi.fn() }} />);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_workflow_catalog"));
+  await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
+  await user.click(await screen.findByRole("option", { name: "Criador de vídeos" }));
+  expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Model");
+  await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Crie a abertura{Enter}");
+  expect(send).toHaveBeenCalledWith("Crie a abertura", { executor: "jarvis", account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customAgentId: "builtin:video", approvalMode: "yolo" });
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  await user.click(await screen.findByRole("menuitem", { name: "local" }));
+  const model = await screen.findByRole("menuitem", { name: "Model" });
+  model.focus();
+  await user.keyboard("{Enter}");
+  expect(save).toHaveBeenCalledWith("video", "video", profile);
 });

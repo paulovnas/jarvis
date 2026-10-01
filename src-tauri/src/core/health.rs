@@ -159,6 +159,7 @@ fn repair_local(home: &Path, id: ComponentId) -> Result<(), CoreError> {
         ],
         ComponentId::Context7 => vec![install::node_path(&path)],
         ComponentId::Lsp => vec![install::node_path(&path)],
+        ComponentId::Hyperframes => hyperframes::executable_paths(&path)?,
         ComponentId::Beads => vec![path.join("bd"), path.join("dolt/bin/dolt")],
         _ => vec![],
     } {
@@ -187,6 +188,7 @@ async fn runtime(home: &Path, id: ComponentId, record: &Installation) -> Result<
         ComponentId::ContextMode => context::verify(&path).await,
         ComponentId::Context7 => context7::verify(&path).await,
         ComponentId::Lsp => lsp::verify(&path).await,
+        ComponentId::Hyperframes => hyperframes::verify(&path, &record.version).await,
         ComponentId::Beads => {
             for executable in [
                 path.join(if cfg!(windows) { "bd.exe" } else { "bd" }),

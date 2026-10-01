@@ -118,7 +118,7 @@ fn custom_flows_accept_immutable_native_agents_and_freeze_their_runtime_contract
 #[test]
 fn native_canvas_topology_is_derived_from_the_real_delegation_contract() {
     let agents = builtin_agents();
-    assert_eq!(agents.len(), 8);
+    assert_eq!(agents.len(), 9);
     assert!(agents.iter().all(|agent| agent.immutable));
     assert_eq!(
         agents
@@ -134,9 +134,27 @@ fn native_canvas_topology_is_derived_from_the_real_delegation_contract() {
         .unwrap();
     assert_eq!(github.name, "GitHub");
     assert_eq!(github.usage, AgentUsage::Mixed);
+    let video = builtin_agent(Role::Video).unwrap();
+    assert_eq!(video.name, "Criador de vídeos");
+    assert_eq!(video.usage, AgentUsage::Mixed);
+    assert_eq!(video.capability, Capability::Commands);
+    assert_eq!(video.appearance.icon, appearance::Icon::Film);
 
     let flows = builtin_flows();
-    assert_eq!(flows.len(), 4);
+    assert_eq!(flows.len(), 5);
+    let video = flows.iter().find(|flow| flow.id == Flow::Video).unwrap();
+    assert_eq!(video.steps.len(), 1);
+    assert_eq!(video.steps[0].agent_id, "builtin:video");
+    assert!(video.connections.is_empty());
+    for flow in flows
+        .iter()
+        .filter(|flow| matches!(flow.id, Flow::Planned | Flow::Complete))
+    {
+        assert!(flow
+            .steps
+            .iter()
+            .all(|step| step.agent_id != "builtin:video"));
+    }
     let complete = flows.iter().find(|flow| flow.id == Flow::Complete).unwrap();
     let pairs: Vec<_> = complete
         .connections
@@ -169,10 +187,11 @@ fn catalog_view_keeps_user_definitions_separate_from_immutable_native_graphs() {
     let value = serde_json::to_value(CatalogView::from(example())).unwrap();
     assert_eq!(value["agents"].as_array().unwrap().len(), 1);
     assert_eq!(value["flows"].as_array().unwrap().len(), 1);
-    assert_eq!(value["builtinAgents"].as_array().unwrap().len(), 8);
-    assert_eq!(value["builtinFlows"].as_array().unwrap().len(), 4);
-    assert_eq!(value["builtinFlows"][3]["immutable"], true);
-    assert_eq!(value["builtinFlows"][3]["id"], "complete");
+    assert_eq!(value["builtinAgents"].as_array().unwrap().len(), 9);
+    assert_eq!(value["builtinFlows"].as_array().unwrap().len(), 5);
+    assert_eq!(value["builtinFlows"][2]["id"], "video");
+    assert_eq!(value["builtinFlows"][4]["immutable"], true);
+    assert_eq!(value["builtinFlows"][4]["id"], "complete");
 }
 
 #[test]
@@ -229,6 +248,11 @@ fn agent_usage_controls_direct_selection_and_flow_membership() {
     let github = catalog.resolve_agent("builtin:github").unwrap();
     assert_eq!(github.native_role, Some(Role::Github));
     assert_eq!(github.usage, AgentUsage::Mixed);
+    let video = builtin_agent(Role::Video).unwrap();
+    assert_eq!(video.name, "Criador de vídeos");
+    assert_eq!(video.usage, AgentUsage::Mixed);
+    assert_eq!(video.capability, Capability::Commands);
+    assert_eq!(video.appearance.icon, appearance::Icon::Film);
     assert!(catalog.resolve_agent("builtin:planner").is_err());
 }
 
@@ -323,7 +347,7 @@ fn builtins_cannot_be_overridden_or_deleted_and_corruption_is_not_overwritten() 
     let mut built_in = example().agents[0].clone();
     built_in.id = "builder".into();
     assert!(apply(&mut catalog, Mutation::SaveAgent { agent: built_in }).is_err());
-    for id in ["standard", "designer", "planned", "complete"] {
+    for id in ["standard", "designer", "video", "planned", "complete"] {
         let mut flow = example().flows[0].clone();
         flow.id = id.into();
         assert!(apply(&mut catalog, Mutation::SaveFlow { flow }).is_err());

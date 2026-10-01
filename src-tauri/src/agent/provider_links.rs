@@ -233,6 +233,7 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
         let flow_label = match flow {
             workflow::Flow::Standard => "Padrão",
             workflow::Flow::Designer => "Designer",
+            workflow::Flow::Video => "Vídeo",
             workflow::Flow::Planned => "Planejado",
             workflow::Flow::Complete => "Completo",
             workflow::Flow::Custom => "Customizado",

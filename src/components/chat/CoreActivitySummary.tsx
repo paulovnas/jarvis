@@ -8,7 +8,7 @@ import type { AssistantWorkData, ToolCallItem } from "./types";
 
 const names: Record<CoreActivity["component"], string> = {
   "context-mode": "Context-mode", ponytail: "Ponytail", beads: "Beads",
-  "open-design": "Open Design", context7: "Context7", lsp: "LSP",
+  "open-design": "Open Design", context7: "Context7", lsp: "LSP", hyperframes: "Hyperframes",
 };
 const statuses = { applied: "Aplicado", reused: "Reutilizado", unavailable: "Indisponível", pending: "Aguardando diagnóstico", issues: "Diagnósticos encontrados" };
 
@@ -18,6 +18,7 @@ function componentFor(tool: ToolCallItem): CoreActivity["component"] | undefined
   if (tool.name.startsWith("context7_")) return "context7";
   if (tool.name.startsWith("beads_")) return "beads";
   if (tool.name.startsWith("lsp_")) return "lsp";
+  if (tool.name.startsWith("video_")) return "hyperframes";
 }
 
 type DiagnosticState = { current: CoreActivity; warning?: CoreActivity; resolved?: CoreActivity };

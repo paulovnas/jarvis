@@ -9,6 +9,7 @@ fn native_canvas_instructions_match_the_available_tools_and_routing() {
         Role::Writer,
         Role::Orchestrator,
         Role::Designer,
+        Role::Video,
         Role::Builder,
         Role::Reviewer,
         Role::Github,
@@ -91,45 +92,50 @@ fn standalone_github_contract_uses_direct_questions_and_completion() {
 }
 
 #[test]
-fn standalone_github_keeps_the_configured_secondary_and_resumed_effective_model() {
-    let fixture = crate::agent::tests::Fixture::new();
-    let state = AppState::default();
-    state
-        .with_connection(&fixture.root, |_| Ok::<_, AgentError>(()))
+fn standalone_native_agents_keep_the_configured_secondary_and_resumed_effective_model() {
+    for (id, profile_key) in [
+        ("builtin:github", "publication/github"),
+        ("builtin:video", "video/video"),
+    ] {
+        let fixture = crate::agent::tests::Fixture::new();
+        let state = AppState::default();
+        state
+            .with_connection(&fixture.root, |_| Ok::<_, AgentError>(()))
+            .unwrap();
+        let choice: settings::ModelChoice = serde_json::from_value(json!({
+            "executor":"claude", "account":"", "model":"sonnet", "reasoning":null,
+            "fallback":{"executor":"claude", "account":"", "model":"opus", "reasoning":null}
+        }))
         .unwrap();
-    let choice: settings::ModelChoice = serde_json::from_value(json!({
-        "executor":"claude", "account":"", "model":"sonnet", "reasoning":null,
-        "fallback":{"executor":"claude", "account":"", "model":"opus", "reasoning":null}
-    }))
-    .unwrap();
-    std::fs::write(
-        crate::data_dir::root(&fixture.root).join("agents.json"),
-        json!({"publication/github":choice}).to_string(),
-    )
-    .unwrap();
-    let mut options = crate::agent::tests::options(ApprovalMode::Yolo);
-    options.workflow = Some(Flow::Custom);
-    options.custom_agent_id = Some("builtin:github".into());
-    let agent = resolve_agent(
-        &state,
-        &OpenAiCodexState::default(),
-        &fixture.root,
-        &options,
-        false,
-    )
-    .unwrap();
-    assert_eq!(agent.model.as_ref(), Some(&choice));
-    choice.fallback.as_ref().unwrap().apply(&mut options);
-    let resumed = resolve_agent(
-        &state,
-        &OpenAiCodexState::default(),
-        &fixture.root,
-        &options,
-        true,
-    )
-    .unwrap();
-    assert_eq!(resumed.model.as_ref(), Some(&choice));
-    assert_eq!(options.model, "opus");
+        std::fs::write(
+            crate::data_dir::root(&fixture.root).join("agents.json"),
+            json!({(profile_key):choice}).to_string(),
+        )
+        .unwrap();
+        let mut options = crate::agent::tests::options(ApprovalMode::Yolo);
+        options.workflow = Some(Flow::Custom);
+        options.custom_agent_id = Some(id.into());
+        let agent = resolve_agent(
+            &state,
+            &OpenAiCodexState::default(),
+            &fixture.root,
+            &options,
+            false,
+        )
+        .unwrap();
+        assert_eq!(agent.model.as_ref(), Some(&choice));
+        choice.fallback.as_ref().unwrap().apply(&mut options);
+        let resumed = resolve_agent(
+            &state,
+            &OpenAiCodexState::default(),
+            &fixture.root,
+            &options,
+            true,
+        )
+        .unwrap();
+        assert_eq!(resumed.model.as_ref(), Some(&choice));
+        assert_eq!(options.model, "opus");
+    }
 }
 
 #[tokio::test]

@@ -134,6 +134,7 @@ impl Capabilities {
                 | "jarvis_catalog"
                 | "http_requests"
                 | "http_result"
+                | "video_docs"
         ) || (name.starts_with("ctx_")
             && !crate::core::context::needs_approval(name))
             || name.starts_with("context7_")

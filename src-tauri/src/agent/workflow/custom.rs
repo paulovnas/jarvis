@@ -50,11 +50,14 @@ pub(super) fn resolve_agent(
     let mut agent = state.with_connection(home, |db| {
         catalog::read_configured(db, home)?.resolve_agent(id)
     })?;
-    // The composer uses the Github profile for its built-in direct agent too.
+    // The composer uses each selectable native agent's direct-flow profile.
     // Keep the complete choice in the manifest, including its secondary model.
-    if agent.native_role == Some(Role::Github) {
-        agent.model =
-            settings::load(state, home)?.remove(&settings::key(Flow::Publication, Role::Github));
+    if let Some((flow, role)) = match agent.native_role {
+        Some(Role::Github) => Some((Flow::Publication, Role::Github)),
+        Some(Role::Video) => Some((Flow::Video, Role::Video)),
+        _ => None,
+    } {
+        agent.model = settings::load(state, home)?.remove(&settings::key(flow, role));
     }
     let mut choice = options.clone();
     if !preserve_model {
@@ -117,6 +120,9 @@ pub(super) fn allowed(agent: &catalog::AgentDefinition, name: &str) -> bool {
 }
 
 pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
+    if matches!(name, "video_run" | "video_wait" | "video_cancel") {
+        return capability == Capability::Commands;
+    }
     if crate::agent::http::mutating(name) {
         return capability == Capability::Commands;
     }

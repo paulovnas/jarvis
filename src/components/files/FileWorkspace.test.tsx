@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DesktopLayoutProvider } from "@/components/layout/DesktopLayoutProvider";
@@ -14,7 +14,7 @@ import { FileWorkspace } from "./FileWorkspace";
 import { ProjectExplorer } from "./ProjectExplorer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), convertFileSrc: (path: string) => `asset://localhost/${encodeURIComponent(path)}` }));
 vi.mock("./CodeViewer", () => ({ default: ({ file }: { file: FilePreview }) => <div role="textbox" aria-label={`Arquivo ${file.path}`} aria-readonly="true">{file.content}</div> }));
 const mockedInvoke = vi.mocked(invoke);
 
@@ -55,10 +55,37 @@ beforeEach(() => {
     const input = args as { projectId: string; path: string } | undefined;
     if (command === "get_desktop_layout") return DEFAULT_DESKTOP_LAYOUT;
     if (command === "save_desktop_layout") return;
-    if (command === "list_project_directory") return { path: input?.path, truncated: false, entries: input?.path === "src" ? [{ name: "app.ts", path: "src/app.ts", kind: "file" }] : [{ name: "src", path: "src", kind: "directory" }, { name: "README.md", path: "README.md", kind: "file" }] };
+    if (command === "list_project_directory") return { path: input?.path, truncated: false, entries: input?.path === "src" ? [{ name: "app.ts", path: "src/app.ts", kind: "file" }] : [{ name: "src", path: "src", kind: "directory" }, { name: "README.md", path: "README.md", kind: "file" }, { name: "demo.mp4", path: "demo.mp4", kind: "file" }] };
     if (command === "read_project_file") return { path: input?.path, content: `${input?.projectId}: ${input?.path}`, size: 20, encoding: "UTF-8" };
+    if (command === "get_project_video") return { path: input?.path, absolutePath: `/project/${input?.path}`, size: 4_000_000, mime: "video/mp4" };
+    if (command === "save_project_video") return true;
+    if (command === "open_project_video") return;
     throw new Error(`Unexpected ${command}`);
   });
+});
+
+it("opens video files with native controls and keeps the chat draft available", async () => {
+  const user = userEvent.setup();
+  render(<Workspace />);
+  const draft = screen.getByRole("textbox", { name: "Rascunho do chat" });
+  await user.type(draft, "Ajustar depois de assistir");
+  await user.click(await screen.findByRole("treeitem", { name: "demo.mp4" }));
+  const video = await screen.findByLabelText("Vídeo demo.mp4");
+  expect(video).toHaveAttribute("controls");
+  expect(video).toHaveAttribute("preload", "metadata");
+  expect(video).toHaveAttribute("src", "asset://localhost/%2Fproject%2Fdemo.mp4?v=1");
+  expect(mockedInvoke).not.toHaveBeenCalledWith("read_project_file", { projectId: "project-1", path: "demo.mp4" });
+  fireEvent.loadedMetadata(video);
+  expect(screen.queryByRole("status", { name: "Carregando vídeo" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Salvar vídeo" }));
+  expect(mockedInvoke).toHaveBeenCalledWith("save_project_video", { projectId: "project-1", path: "demo.mp4" });
+  await user.click(screen.getByRole("button", { name: "Abrir no aplicativo padrão" }));
+  expect(mockedInvoke).toHaveBeenCalledWith("open_project_video", { projectId: "project-1", path: "demo.mp4" });
+  await user.click(screen.getByRole("button", { name: "Atualizar arquivo" }));
+  expect(await screen.findByLabelText("Vídeo demo.mp4")).toHaveAttribute("src", "asset://localhost/%2Fproject%2Fdemo.mp4?v=2");
+  await user.click(screen.getByRole("tab", { name: "Chat" }));
+  expect(screen.getByRole("textbox", { name: "Rascunho do chat" })).toBe(draft);
+  expect(draft).toHaveValue("Ajustar depois de assistir");
 });
 
 it("only explains Explorer names when they are clipped or the path adds context", async () => {

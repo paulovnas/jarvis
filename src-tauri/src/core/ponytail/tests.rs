@@ -35,6 +35,9 @@ fn install_fixture(home: &Path) -> Manifest {
         if id == ComponentId::OpenDesign {
             crate::core::design::tests::prepare_fixture(&path, &[]).unwrap();
         }
+        if id == ComponentId::Hyperframes {
+            crate::core::hyperframes::tests::fixture(&path, "4.9.0");
+        }
         manifest.installations.insert(
             id,
             Installation {

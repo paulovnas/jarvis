@@ -37,6 +37,7 @@ O Jarvis evolui continuamente. Relate problemas e sugestões nas [issues do proj
 | **Agentes e fluxos** | Agentes nativos e personalizados, uso individual ou em fluxos, permissões por ferramenta e editor visual em canvas. Alterações de agentes e fluxos feitas pela IA exigem aprovação. |
 | **Planejamento** | Tasks para agentes diretos e planos persistentes com épicos, tarefas, dependências, comentários e validações nos fluxos Planejado e Completo. |
 | **Ambiente** | Explorer, visualização de arquivos, diff das alterações, terminal configurável, processos persistentes, navegador integrado, LSP e patch transacional. |
+| **Vídeos** | Composições editáveis com Hyperframes, validação e renderização MP4 pelo agente Criador de vídeos, reprodução em uma aba do chat e ações para salvar ou abrir externamente. |
 | **Detalhes do projeto** | Métricas de uso, atividade dos agentes, Kanban e opções próprias de publicação para cada projeto. |
 | **Desktop** | Notificações do sistema, badges de mensagens não lidas, prevenção de repouso, atalhos controlados, backup de configurações e atualização automática do aplicativo e dos recursos. |
 
@@ -48,6 +49,7 @@ Os fluxos nativos cobrem diferentes níveis de coordenação:
 | --- | --- |
 | **Padrão** | Trabalhar diretamente com o Construtor em implementações e ajustes gerais. |
 | **Designer** | Investigar, projetar e implementar interfaces com foco em experiência e acabamento visual. |
+| **Vídeo** | Criar e editar vídeos com o Criador de vídeos, desde a composição até o MP4 pronto para reprodução. |
 | **Planejado** | Criar um plano persistente e delegar a execução aos agentes adequados. |
 | **Completo** | Coordenar planejamento, investigação, documentação, design, construção e revisão. |
 
@@ -57,7 +59,7 @@ Nos fluxos Planejado e Completo, o Inspector acompanha o agente em atividade, o 
 
 ## Core
 
-O Core instala cinco recursos essenciais ao harness do Jarvis. O Context7 é uma integração opcional de documentação: pode ser instalado e configurado depois, sem impedir o uso do chat. Versões, integridade, atualizações, diagnóstico e reparo ficam em **Configurações → Ferramentas → Core**. Os pacotes gerenciados são armazenados em `~/.jarvis`.
+O Core instala cinco recursos essenciais ao harness do Jarvis. Context7 e Hyperframes são integrações opcionais, disponíveis depois sem impedir o uso do chat. Versões, integridade, atualizações, diagnóstico e reparo ficam em **Configurações → Ferramentas → Core**. Os pacotes gerenciados são armazenados em `~/.jarvis`.
 
 | Componente | Papel no Jarvis |
 | --- | --- |
@@ -67,6 +69,9 @@ O Core instala cinco recursos essenciais ao harness do Jarvis. O Context7 é uma
 | [Open Design](https://github.com/nexu-io/open-design) | Disponibiliza sistemas visuais, referências, templates e recursos usados pelo Designer. |
 | [Context7](https://github.com/upstash/context7) | Opcional: consulta documentação e exemplos atualizados de bibliotecas. A chave fica no armazenamento seguro do sistema. |
 | [Servidores LSP](https://github.com/typescript-language-server/typescript-language-server) | Localiza definições, referências, símbolos e diagnósticos em projetos TypeScript, JavaScript e Python. Rust e Go usam a toolchain do projeto quando disponível. |
+| [Hyperframes](https://github.com/heygen-com/hyperframes) | Opcional: cria e renderiza vídeos a partir de HTML/CSS e animações GSAP. O Jarvis instala Node, Chrome e FFmpeg em um ambiente privado, sem exigir configuração manual. |
+
+Para criar vídeos, instale **Hyperframes** no Core e configure o modelo do agente **Criador de vídeos**. Ele também pode participar de fluxos personalizados. A composição e seus assets ficam dentro do projeto, junto com o MP4 final. Renderizações não têm limite total de tempo; podem ser acompanhadas e canceladas. A instalação automática suporta macOS Intel/Apple Silicon, Linux x64 e Windows x64. No Linux, o Chrome ainda depende das bibliotecas do sistema necessárias ao Chromium.
 
 Se um componente essencial estiver ausente ou inválido, o Jarvis bloqueia novas interações e abre o fluxo de **Diagnóstico e Reparo** para corrigir ou reinstalar o recurso.
 

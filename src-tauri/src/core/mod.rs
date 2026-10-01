@@ -6,6 +6,7 @@ pub mod context7;
 pub mod design;
 pub mod health;
 pub mod hooks;
+pub(crate) mod hyperframes;
 mod install;
 pub mod lsp;
 pub mod ponytail;
@@ -29,15 +30,17 @@ pub enum ComponentId {
     OpenDesign,
     Context7,
     Lsp,
+    Hyperframes,
 }
 impl ComponentId {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::ContextMode,
         Self::Ponytail,
         Self::Beads,
         Self::OpenDesign,
         Self::Context7,
         Self::Lsp,
+        Self::Hyperframes,
     ];
     pub fn key(self) -> &'static str {
         match self {
@@ -47,13 +50,13 @@ impl ComponentId {
             Self::OpenDesign => "open-design",
             Self::Context7 => "context7",
             Self::Lsp => "lsp",
+            Self::Hyperframes => "hyperframes",
         }
     }
     pub fn required(self) -> bool {
-        // Context-mode is part of Jarvis' execution harness. Context7 enriches
-        // library research, but requires an independently managed API key and
-        // must never prevent a user from starting a local coding session.
-        self != Self::Context7
+        // Documentation credentials and the optional video runtime must never
+        // prevent a user from starting a local coding session.
+        !matches!(self, Self::Context7 | Self::Hyperframes)
     }
     fn name(self) -> &'static str {
         match self {
@@ -63,6 +66,7 @@ impl ComponentId {
             Self::OpenDesign => "Open Design",
             Self::Context7 => "Context7",
             Self::Lsp => "Servidores LSP",
+            Self::Hyperframes => "Hyperframes",
         }
     }
     fn repository(self) -> &'static str {
@@ -73,6 +77,7 @@ impl ComponentId {
             Self::OpenDesign => "nexu-io/open-design",
             Self::Context7 => "upstash/context7",
             Self::Lsp => "typescript-language-server/typescript-language-server",
+            Self::Hyperframes => "heygen-com/hyperframes",
         }
     }
 }
@@ -150,6 +155,9 @@ impl Installation {
         }
         if id == ComponentId::OpenDesign {
             design::Pack::at(&path, &self.version)?;
+        }
+        if id == ComponentId::Hyperframes {
+            hyperframes::validate(&path, &self.version)?;
         }
         Ok(path)
     }

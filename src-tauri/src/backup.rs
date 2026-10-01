@@ -196,6 +196,7 @@ fn builtin_target(key: &str) -> Option<ModelTarget> {
     let (flow_label, roles): (&str, &[(&str, &str)]) = match flow {
         "standard" => ("Padrão", &[("builder", "Construtor")]),
         "designer" => ("Designer", &[("designer", "Designer")]),
+        "video" => ("Vídeo", &[("video", "Criador de vídeos")]),
         "planned" => (
             "Planejado",
             &[

@@ -1,5 +1,5 @@
-import { FileCode2, FileJson2, FileText, Image, FileCog, type LucideIcon } from "lucide-react";
-import { fileLanguage } from "@/core/project-files";
+import { FileCode2, FileJson2, FileText, Image, FileCog, Film, type LucideIcon } from "lucide-react";
+import { fileLanguage, isVideoFile } from "@/core/project-files";
 
 export function FileIcon({ path, className = "size-3.5" }: { path: string; className?: string }) {
   const language = fileLanguage(path);
@@ -11,5 +11,6 @@ export function FileIcon({ path, className = "size-3.5" }: { path: string; class
   else if (["ini", "yaml", "dockerfile"].includes(language)) { Icon = FileCog; color = "text-onedark-purple"; }
   else { Icon = FileCode2; color = "text-onedark-green"; }
   if (/\.(png|jpe?g|webp|gif|ico|svg)$/i.test(path)) { Icon = Image; color = "text-onedark-purple"; }
+  if (isVideoFile(path)) { Icon = Film; color = "text-onedark-purple"; }
   return <Icon aria-hidden="true" className={`${className} shrink-0 ${color}`} />;
 }

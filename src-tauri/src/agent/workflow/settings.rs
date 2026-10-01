@@ -119,7 +119,7 @@ pub(crate) fn read(home: &Path) -> Result<ModelSettings, AgentError> {
     let settings: ModelSettings =
         serde_json::from_slice(&fs::read(path).map_err(|_| AgentError::storage())?)
             .map_err(|_| AgentError::storage())?;
-    if settings.len() > 13
+    if settings.len() > 14
         || settings
             .values()
             .any(|choice| choice.validate_shape().is_err())
@@ -127,6 +127,7 @@ pub(crate) fn read(home: &Path) -> Result<ModelSettings, AgentError> {
             ![
                 Flow::Standard,
                 Flow::Designer,
+                Flow::Video,
                 Flow::Planned,
                 Flow::Complete,
                 Flow::Publication,
@@ -255,6 +256,37 @@ pub async fn set_agent_model(
 #[cfg(test)]
 mod instruction_tests {
     use super::*;
+
+    #[test]
+    fn all_native_profiles_persist_with_video_secondary_without_expanding_coordinated_rosters() {
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir_all(crate::data_dir::root(home.path())).unwrap();
+        let choice: ModelChoice = serde_json::from_value(json!({
+            "executor":"claude", "account":"", "model":"sonnet", "reasoning":null,
+            "fallback":{"executor":"claude", "account":"", "model":"opus", "reasoning":null}
+        }))
+        .unwrap();
+        let mut profiles: ModelSettings = [
+            Flow::Standard,
+            Flow::Designer,
+            Flow::Video,
+            Flow::Planned,
+            Flow::Complete,
+            Flow::Publication,
+        ]
+        .into_iter()
+        .flat_map(|flow| roster(flow).iter().map(move |role| key(flow, *role)))
+        .map(|key| (key, choice.clone()))
+        .collect();
+        assert_eq!(profiles.len(), 14);
+        let path = crate::data_dir::root(home.path()).join("agents.json");
+        fs::write(&path, serde_json::to_vec(&profiles).unwrap()).unwrap();
+        assert_eq!(read(home.path()).unwrap(), profiles);
+        profiles.remove("planned/builder");
+        profiles.insert("planned/video".into(), choice);
+        fs::write(path, serde_json::to_vec(&profiles).unwrap()).unwrap();
+        assert!(read(home.path()).is_err());
+    }
 
     #[test]
     fn executor_choices_default_legacy_records_and_apply_without_a_fake_provider() {

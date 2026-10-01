@@ -15,15 +15,19 @@ const save = vi.fn().mockResolvedValue(true);
 const accounts: ProviderAccount[] = [{ alias:"openai-codex-personal",providerKind:"openai-codex",enabled:true,createdAt:0,email:null,accountType:"personal",modelsAvailable:true,models:[{ id:"gpt-5.6-sol",name:"GPT 5.6 Sol",reasoningLevels:["high","xhigh"],defaultReasoningLevel:"high" }] }];
 beforeEach(() => { call.mockReset(); save.mockClear(); vi.mocked(useAgentModels).mockReturnValue({ data:{},error:null,saving:false,save,refresh:vi.fn() }); });
 
-it("groups the thirteen immutable agents by flow and offers useful role-specific model guidance", async () => {
+it("groups the fourteen immutable model profiles by flow and offers useful role-specific model guidance", async () => {
   const user = userEvent.setup(); render(<AgentSettings accounts={accounts} />);
   const standard = screen.getByRole("region",{ name:"Agentes do fluxo Padrão" });
   const designer = screen.getByRole("region",{ name:"Agentes do fluxo Designer" });
+  const video = screen.getByRole("region",{ name:"Agentes do fluxo Vídeo" });
   const planned = screen.getByRole("region",{ name:"Agentes do fluxo Planejado" });
   const complete = screen.getByRole("region",{ name:"Agentes do fluxo Completo" });
   const publication = screen.getByRole("region",{ name:"Agentes do fluxo GitHub" });
   expect(within(standard).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
   expect(within(designer).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
+  expect(within(video).getByRole("button", { name: "Modelo de Criador de vídeos no fluxo Vídeo" })).toBeVisible();
+  expect(within(planned).queryByText("Criador de vídeos")).not.toBeInTheDocument();
+  expect(within(complete).queryByText("Criador de vídeos")).not.toBeInTheDocument();
   expect(within(planned).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(3);
   expect(within(complete).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(7);
   expect(within(publication).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
@@ -143,7 +147,7 @@ it("lets the user retry an instruction load failure without changing the model",
 
 it("gives every agent a distinct accent within each flow", () => {
   render(<AgentSettings accounts={accounts} />);
-  for (const flow of ["Padrão", "Designer", "Planejado", "Completo", "GitHub"]) {
+  for (const flow of ["Padrão", "Designer", "Vídeo", "Planejado", "Completo", "GitHub"]) {
     const group = screen.getByRole("region", { name: `Agentes do fluxo ${flow}` });
     const colors = Object.values(ROLE_LABELS).flatMap(label => {
       const name = within(group).queryByText(label, { selector: "[data-slot=card-title]" });

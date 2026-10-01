@@ -125,6 +125,20 @@ describe("ChatComposer model reasoning", () => {
     await user.click(within(reasoning).getByRole("menuitem", { name: "Extra alto" }));
     expect(save).toHaveBeenCalledWith("designer", "designer", { executor: "jarvis", account: "pessoal", model: "compact", reasoning: "xhigh" });
   });
+  it("selects Video with its own model and preserves its secondary when changing the primary", async () => {
+    const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true); const save = vi.fn();
+    const fallback = { account: "pessoal", model: "plain", reasoning: null };
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "video/video": { account: "pessoal", model: "flexible", reasoning: "high", fallback } }, error: null, saving: false, save, refresh: vi.fn() }} />);
+    await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
+    await user.click(await screen.findByRole("option", { name: "Vídeo" }));
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Flexible · Alto");
+    await user.type(screen.getByRole("textbox"), "Crie um vídeo de abertura{Enter}");
+    expect(send).toHaveBeenCalledWith("Crie um vídeo de abertura", expect.objectContaining({ workflow: "video", model: "flexible", reasoning: "high" }));
+    expect(send.mock.calls[0][1]).not.toHaveProperty("manualValidation");
+    const reasoning = await openModel(user, /Compact/);
+    await user.click(within(reasoning).getByRole("menuitem", { name: "Extra alto" }));
+    expect(save).toHaveBeenCalledWith("video", "video", { executor: "jarvis", account: "pessoal", model: "compact", reasoning: "xhigh", fallback });
+  });
   it("offers final manual validation only for coordinated flows and sends the enabled choice", async () => {
     const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} />);

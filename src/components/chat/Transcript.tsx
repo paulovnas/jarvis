@@ -18,7 +18,7 @@ import { useChatLearning } from "@/hooks/use-chat-learning";
 function retryableTurn(turn: AgentTurn): boolean {
   if (!turn.error || (turn.status !== "error" && turn.status !== "interrupted")) return false;
   const flow = turn.options.workflow;
-  return flow === undefined || flow === null || flow === "standard" || flow === "designer"
+  return flow === undefined || flow === null || flow === "standard" || flow === "designer" || flow === "video"
     || flow === "planned" || flow === "complete" || flow === "publication"
     || flow === "custom";
 }

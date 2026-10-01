@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { DEFAULT_FILE_TABS, type FileTabsLayout } from "@/core/desktop-layout";
-import { fileError, type FilePreview, type PreviewState } from "@/core/project-files";
+import { fileError, isVideoFile, videoPreviewSchema, type FilePreview, type PreviewState } from "@/core/project-files";
 import { useDesktopLayout } from "./use-desktop-layout";
 
 function cachePreview(current: Record<string, PreviewState>, key: string, preview: PreviewState) {
@@ -19,6 +19,8 @@ export function useProjectFiles(projectId: string | null) {
   const tabs = projectId ? layout.fileTabs[projectId] ?? DEFAULT_FILE_TABS : DEFAULT_FILE_TABS;
   const [previews, setPreviews] = useState<Record<string, PreviewState>>({});
   const versions = useRef(new Map<string, number>());
+  // Keep completed outputs remembered when a chat remounts or its video tab closes.
+  const presentedVideos = useRef(new Set<string>());
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
@@ -34,8 +36,13 @@ export function useProjectFiles(projectId: string | null) {
     versions.current.set(key, version);
     setPreviews(current => cachePreview(current, key, { loading: true }));
     try {
-      const data = await invoke<FilePreview>("read_project_file", { projectId, path });
-      if (mounted.current && versions.current.get(key) === version) setPreviews(current => cachePreview(current, key, { loading: false, data }));
+      const preview: PreviewState = isVideoFile(path)
+        ? await invoke("get_project_video", { projectId, path }).then(value => {
+          const video = videoPreviewSchema.parse(value);
+          return { loading: false, video: { ...video, url: `${convertFileSrc(video.absolutePath)}?v=${version}` } };
+        })
+        : { loading: false, data: await invoke<FilePreview>("read_project_file", { projectId, path }) };
+      if (mounted.current && versions.current.get(key) === version) setPreviews(current => cachePreview(current, key, preview));
     } catch (error) {
       if (mounted.current && versions.current.get(key) === version) setPreviews(current => cachePreview(current, key, { loading: false, error: fileError(error) }));
     }
@@ -47,10 +54,11 @@ export function useProjectFiles(projectId: string | null) {
     if (tabs.activePath && !active) void load(tabs.activePath);
   }, [tabs.activePath, active, load]);
 
-  const open = useCallback((path: string) => {
+  const open = useCallback((path: string, reload = false) => {
     if (tabs.paths.length >= 30 && !tabs.paths.includes(path)) { toast.error("Feche uma aba antes de abrir mais arquivos (limite de 30)."); return; }
+    if (reload) void load(path);
     remember(current => ({ paths: current.paths.includes(path) ? current.paths : [...current.paths, path], activePath: path }));
-  }, [remember, tabs.paths]);
+  }, [remember, tabs.paths, load]);
   const select = useCallback((path: string | null) => remember(current => ({ ...current, activePath: path === null || current.paths.includes(path) ? path : null })), [remember]);
   const close = useCallback((path: string) => {
     if (projectId) {
@@ -65,7 +73,7 @@ export function useProjectFiles(projectId: string | null) {
     });
   }, [projectId, remember]);
   const refresh = useCallback(() => { if (tabs.activePath) void load(tabs.activePath); }, [tabs.activePath, load]);
-  return { projectId, tabs, active: active ?? { loading: true }, open, select, close, refresh };
+  return { projectId, tabs, active: active ?? { loading: true }, open, select, close, refresh, presentedVideos: presentedVideos.current };
 }
 
 export type ProjectFilesController = ReturnType<typeof useProjectFiles>;

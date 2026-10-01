@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn requires_essential_components_without_requiring_context7() {
+fn requires_essential_components_without_requiring_optional_documentation_or_video() {
     let home = tempfile::tempdir().unwrap();
     let mut manifest = Manifest::default();
     assert!(require_ready(home.path()).is_err());
@@ -15,6 +15,9 @@ fn requires_essential_components_without_requiring_context7() {
         }
         if id == ComponentId::OpenDesign {
             design::tests::prepare_fixture(&path, &[]).unwrap();
+        }
+        if id == ComponentId::Hyperframes {
+            hyperframes::tests::fixture(&path, "1.0.0");
         }
         manifest.installations.insert(
             id,
@@ -68,6 +71,11 @@ fn requires_essential_components_without_requiring_context7() {
     assert!(snapshot.ready);
     assert!(snapshot.items.iter().all(|item| item.error.is_none()));
     assert_eq!(snapshot.items[0].latest_version.as_deref(), Some("1.0.1"));
+    manifest.installations.remove(&ComponentId::Hyperframes);
+    save_manifest(home.path(), &manifest).unwrap();
+    assert!(require_ready(home.path()).is_ok());
+    assert!(state.snapshot(home.path()).unwrap().ready);
+    assert!(hyperframes::runtime(home.path()).is_err());
     fs::remove_file(root(home.path()).join("ponytail/test/verified")).unwrap();
     assert!(!state.snapshot(home.path()).unwrap().ready);
     assert!(require_ready(home.path()).is_err());

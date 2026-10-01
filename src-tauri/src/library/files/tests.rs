@@ -90,3 +90,82 @@ fn explorer_does_not_follow_directory_links_outside_the_project() {
     assert!(directory(&root, "link").is_err());
     assert!(preview(&root, "link/private.txt").is_err());
 }
+
+#[test]
+fn video_preview_resolves_only_nonempty_supported_project_files_without_reading_bytes() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    fs::create_dir(root.join("renders")).unwrap();
+    let path = root.join("renders/vídeo.MP4");
+    fs::File::create(&path)
+        .unwrap()
+        .set_len(MAX_FILE_BYTES + 1)
+        .unwrap();
+    let result = video(&root, "renders\\vídeo.MP4").unwrap();
+    assert_eq!(result.path, "renders/vídeo.MP4");
+    assert_eq!(Path::new(&result.absolute_path), path);
+    assert_eq!(result.mime, "video/mp4");
+    assert_eq!(result.size, MAX_FILE_BYTES + 1);
+    for path in [
+        "../outside.mp4",
+        "/outside.mp4",
+        "C:\\outside.mp4",
+        "missing.mp4",
+        "renders",
+        "",
+    ] {
+        assert!(video(&root, path).is_err(), "accepted {path}");
+    }
+    fs::write(root.join("empty.mp4"), []).unwrap();
+    assert!(video(&root, "empty.mp4").is_err());
+    fs::write(root.join("unsupported.avi"), [1]).unwrap();
+    assert_eq!(
+        video(&root, "unsupported.avi").unwrap_err().code,
+        "video_format"
+    );
+    for (extension, mime) in [
+        ("webm", "video/webm"),
+        ("mov", "video/quicktime"),
+        ("m4v", "video/mp4"),
+        ("ogv", "video/ogg"),
+    ] {
+        let name = format!("video.{extension}");
+        fs::write(root.join(&name), [1]).unwrap();
+        assert_eq!(video(&root, &name).unwrap().mime, mime);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn video_preview_rejects_symlinks_outside_the_project_and_links_to_other_formats() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir(&root).unwrap();
+    fs::write(temp.path().join("outside.mp4"), [1]).unwrap();
+    fs::write(root.join("private.txt"), [1]).unwrap();
+    std::os::unix::fs::symlink(temp.path().join("outside.mp4"), root.join("escape.mp4")).unwrap();
+    std::os::unix::fs::symlink(root.join("private.txt"), root.join("disguised.mp4")).unwrap();
+    let root = root.canonicalize().unwrap();
+    assert!(video(&root, "escape.mp4").is_err());
+    assert!(video(&root, "disguised.mp4").is_err());
+}
+
+#[test]
+fn saving_video_preserves_source_and_replaces_destination_atomically() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("render.mp4");
+    let destination = temp.path().join("saved.mp4");
+    fs::write(&source, b"rendered video").unwrap();
+    fs::write(&destination, b"older render").unwrap();
+    save_video(&source, &destination).unwrap();
+    assert_eq!(fs::read(&destination).unwrap(), b"rendered video");
+    save_video(&source.canonicalize().unwrap(), &source).unwrap();
+    assert_eq!(fs::read(&source).unwrap(), b"rendered video");
+    let hardlink = temp.path().join("hardlink.mp4");
+    fs::hard_link(&source, &hardlink).unwrap();
+    save_video(&source, &hardlink).unwrap();
+    assert_eq!(fs::read(&source).unwrap(), b"rendered video");
+    assert_eq!(fs::read(&hardlink).unwrap(), b"rendered video");
+    assert!(save_video(&source, &temp.path().join("missing/saved.mp4")).is_err());
+    assert_eq!(fs::read(&source).unwrap(), b"rendered video");
+}

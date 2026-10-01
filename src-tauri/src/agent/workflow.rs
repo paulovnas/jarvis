@@ -567,6 +567,9 @@ impl Execution {
     pub(super) fn designer(&self) -> bool {
         self.role == Role::Designer
     }
+    pub(super) fn native_app(&self) -> Option<&tauri::AppHandle> {
+        self.hub.env.browser_app.as_ref()
+    }
     pub(super) fn publication(&self) -> bool {
         self.flow == Flow::Publication
     }
@@ -1126,6 +1129,7 @@ fn recovery_inspection_tool(name: &str, mcp_mutating: bool) -> bool {
             | "workflow_check"
             | "design_search"
             | "design_read"
+            | "video_docs"
             | "ctx_search"
             | "ctx_stats"
             | "beads_show"

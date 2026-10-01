@@ -54,6 +54,11 @@ describe("Inspector", () => {
     view.rerender(<Inspector library={populatedLibrary()} chat={{ ...directChat, turns: [{ ...turn }] }} />);
     expect(screen.getByRole("button", { name: /Tarefas.*2/ })).toBeVisible();
 
+    turn.options.workflow = "video";
+    view.rerender(<Inspector library={populatedLibrary()} chat={{ ...directChat, turns: [{ ...turn }] }} />);
+    expect(screen.getByRole("button", { name: /Tarefas.*2/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Subagentes" })).not.toBeInTheDocument();
+
     turn.options.workflow = "custom";
     turn.options.customAgentId = "a".repeat(32);
     view.rerender(<Inspector library={populatedLibrary()} chat={{ ...directChat, turns: [{ ...turn }] }} />);
@@ -78,7 +83,7 @@ describe("Inspector", () => {
     view.rerender(<Inspector library={library} chat={coordinatedChat} workflow={{ ...workflow, data: { ...workflow.data, flow: "complete" } }} />);
     expect(screen.getByRole("button", { name: "Validação" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Subagentes" })).toBeVisible();
-    for (const flow of ["standard", "designer"] as const) {
+    for (const flow of ["standard", "designer", "video"] as const) {
       view.rerender(<Inspector library={library} chat={coordinatedChat} workflow={{ ...workflow, data: { ...workflow.data, flow } }} />);
       expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Subagentes" })).not.toBeInTheDocument();

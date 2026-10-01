@@ -4,8 +4,8 @@ import { workflowAppearanceSchema } from "./workflow-appearance";
 import { executorSchema } from "./executors";
 
 const id = z.string().regex(/^[a-f0-9]{32}$/i);
-const builtinRoleSchema = z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer", "github"]);
-const builtinAgentIdSchema = z.string().regex(/^builtin:(planner|investigator|writer|orchestrator|designer|builder|reviewer|github)$/);
+const builtinRoleSchema = z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "video", "builder", "reviewer", "github"]);
+const builtinAgentIdSchema = z.string().regex(/^builtin:(planner|investigator|writer|orchestrator|designer|video|builder|reviewer|github)$/);
 const agentReferenceIdSchema = z.union([id, builtinAgentIdSchema]);
 const modelTargetSchema = z.object({ executor: executorSchema.optional(), account: z.string(), model: z.string(), reasoning: z.string().nullable() });
 export const modelChoiceSchema = modelTargetSchema.extend({ fallback: modelTargetSchema.strict().nullish() });
@@ -34,7 +34,7 @@ export const workflowConnectionSchema = z.object({
   id: z.string(), source: z.string(), target: z.string(), kind: z.literal("delegation"), label: z.string(),
 });
 export const builtinFlowSchema = z.object({
-  id: z.enum(["standard", "designer", "planned", "complete"]), name: z.string(), description: z.string(), entry: z.string(),
+  id: z.enum(["standard", "designer", "video", "planned", "complete"]), name: z.string(), description: z.string(), entry: z.string(),
   maxSteps: z.number().int().positive(), steps: z.array(workflowStepSchema.extend({ id: z.string(), next: z.null(), onRework: z.null() })),
   connections: z.array(workflowConnectionSchema), appearance: workflowAppearanceSchema, immutable: z.literal(true),
 });
@@ -51,7 +51,7 @@ export type WorkflowConnection = z.infer<typeof workflowConnectionSchema>;
 export type FlowAgent = CustomAgent | BuiltinAgentDefinition;
 export type WorkflowGraph = CustomFlow | BuiltinFlowDefinition;
 export type WorkflowCatalog = z.infer<typeof workflowCatalogSchema>;
-export type BuiltinFlow = "standard" | "designer" | "planned" | "complete";
+export type BuiltinFlow = "standard" | "designer" | "video" | "planned" | "complete";
 export type FlowSelection = BuiltinFlow | `custom:${string}` | `agent:${string}`;
 export type CatalogMutation = { kind: "save_agent"; agent: CustomAgent } | { kind: "save_flow"; flow: CustomFlow } | { kind: "delete_agent" | "delete_flow"; id: string };
 export const customId = () => crypto.randomUUID().replace(/-/g, "");

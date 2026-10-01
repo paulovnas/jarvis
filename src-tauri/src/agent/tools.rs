@@ -70,6 +70,7 @@ pub(super) fn needs_approval(name: &str) -> bool {
         "write" | "edit" | "apply_patch" | "bash" | "terminal_start"
     ) || super::browser::mutating(name)
         || super::http::mutating(name)
+        || super::video::mutating(name)
 }
 
 pub(super) fn definitions(mode: Mode) -> Vec<Value> {
@@ -83,6 +84,7 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
         definition("search", "Find literal text in project files recursively, excluding symlinks and common dependency/generated directories. Search an explicit dependency path only when exact installed source is needed. Output is bounded.", json!({"path":string,"query":string}), &["path","query"]),
     ];
     tools.extend(super::lsp::definitions());
+    tools.extend(super::video::definitions(mode));
     if mode == Mode::Build {
         tools.extend(super::command_sessions::definitions());
         tools.extend([

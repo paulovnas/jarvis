@@ -248,6 +248,7 @@ fn recovery_contract_is_available_to_every_native_role_and_custom_capability() {
         Role::Writer,
         Role::Orchestrator,
         Role::Designer,
+        Role::Video,
         Role::Builder,
         Role::Reviewer,
         Role::Github,
@@ -680,6 +681,88 @@ fn direct_designer_has_questions_and_design_tools_but_no_delegation() {
     }
     assert_eq!(Flow::Designer.root(), Role::Designer);
     assert!(settings::validate(Flow::Designer, &BTreeMap::new()).is_ok());
+}
+
+#[test]
+fn video_flow_has_native_commands_and_tasks_without_coordinated_agents() {
+    let (_fixture, hub) = hub();
+    let direct = Execution {
+        hub,
+        id: "main".into(),
+        role: Role::Video,
+        flow: Flow::Video,
+        scope: vec![".".into()],
+    };
+    let mut definitions = tools::definitions(Mode::Build);
+    definitions.extend(crate::agent::video::definitions(Mode::Build));
+    definitions.extend(crate::core::beads::definitions(false));
+    definitions.push(super::super::tasks::definition());
+    direct.filter(&mut definitions);
+    for name in [
+        "ask_user",
+        "write",
+        "video_docs",
+        "video_run",
+        "video_wait",
+        "video_cancel",
+        "update_tasks",
+    ] {
+        assert!(
+            definitions.iter().any(|tool| tool["name"] == name),
+            "missing {name}"
+        );
+    }
+    assert!(definitions.iter().all(|tool| {
+        let name = tool["name"].as_str().unwrap();
+        !name.starts_with("hub_") && !name.starts_with("beads_")
+    }));
+    assert_eq!(Flow::Video.root(), Role::Video);
+    assert!(Flow::Video.direct());
+    assert_eq!(Flow::Video.roster(), &[Role::Video]);
+    assert!(Flow::Video.delegations().is_empty());
+    assert!(!Flow::Planned.roster().contains(&Role::Video));
+    assert!(!Flow::Complete.roster().contains(&Role::Video));
+    assert!(settings::validate(Flow::Video, &BTreeMap::new()).is_ok());
+    assert!(Role::Video.contract().contains("video_docs"));
+}
+
+#[test]
+fn video_commands_require_command_capability_while_docs_allow_every_role() {
+    use catalog::Capability;
+    for role in [
+        Role::Planner,
+        Role::Investigator,
+        Role::Writer,
+        Role::Orchestrator,
+        Role::Builder,
+        Role::Designer,
+        Role::Video,
+        Role::Reviewer,
+        Role::Github,
+        Role::Custom,
+    ] {
+        assert!(role.allows(Flow::Custom, "video_docs", false));
+        for name in ["video_run", "video_wait", "video_cancel"] {
+            assert_eq!(
+                role.allows(Flow::Custom, name, true),
+                matches!(role, Role::Builder | Role::Designer | Role::Video)
+            );
+        }
+    }
+    for capability in [
+        Capability::ReadOnly,
+        Capability::WriteFiles,
+        Capability::Commands,
+    ] {
+        assert!(custom::capability_allows(capability, "video_docs"));
+        for name in ["video_run", "video_wait", "video_cancel"] {
+            assert_eq!(
+                custom::capability_allows(capability, name),
+                capability == Capability::Commands
+            );
+        }
+    }
+    assert!(recovery_inspection_tool("video_docs", false));
 }
 
 #[test]

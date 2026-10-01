@@ -49,7 +49,7 @@ it.each([false, true])("finishes update discovery despite status events and avoi
     finishCheck();
   });
   expect(await screen.findByText("Consulta concluída")).toBeVisible();
-  expect(screen.getAllByText("Pronto")).toHaveLength(6);
+  expect(screen.getAllByText("Pronto")).toHaveLength(7);
   expect(screen.queryByRole("button", { name: /Reinstalar/ })).not.toBeInTheDocument();
   if (fail) expect(toast.error).toHaveBeenCalledWith(message);
   else expect(toast.error).not.toHaveBeenCalled();
@@ -61,7 +61,7 @@ it.each([false, true])("finishes update discovery despite status events and avoi
   await act(async () => finishCheck());
 });
 
-it.each([0, 1, 2, 3, 4, 5])("updates real download progress for Core item %i and resets it between stages", async index => {
+it.each([0, 1, 2, 3, 4, 5, 6])("updates real download progress for Core item %i and resets it between stages", async index => {
   const state = coreFixture(false);
   state.items[index].stage = "Baixando recursos";
   invokeMock.mockResolvedValue(state);
@@ -137,6 +137,17 @@ it("offers Open Design installation alongside the other Core resources", async (
   expect(screen.getByText("4/5 essenciais")).toBeInTheDocument();
 });
 
+it("offers managed video installation without blocking the essential Core", async () => {
+  const state = coreFixture();
+  const video = state.items.find(item => item.id === "hyperframes")!;
+  video.installed = false; video.configured = false; video.installedVersion = null;
+  invokeMock.mockResolvedValue(state);
+  render(<CoreSettings />);
+  fireEvent.click(await screen.findByRole("button", { name: "Instalar Hyperframes" }));
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "hyperframes" }));
+  expect(screen.getByText("5/5 essenciais")).toBeVisible();
+});
+
 it("mostra versões e só oferece atualização quando há release maior", async () => {
   const state = coreFixture(); state.items[0].latestVersion = "1.1.0"; state.items[0].updateAvailable = true;
   invokeMock.mockResolvedValue(state);
@@ -177,7 +188,7 @@ it("mantém a versão instalada quando uma atualização falha e permite nova te
   render(<CoreSettings />);
   fireEvent.click(await screen.findByRole("button", { name: "Atualizar Context-mode" }));
   expect(await screen.findByText("Download interrompido")).toBeInTheDocument();
-  expect(screen.getAllByText("v1.0.0")).toHaveLength(6);
+  expect(screen.getAllByText("v1.0.0")).toHaveLength(7);
   await waitFor(() => expect(screen.getByRole("button", { name: "Atualizar Context-mode" })).toBeEnabled());
 });
 

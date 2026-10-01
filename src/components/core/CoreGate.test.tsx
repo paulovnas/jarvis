@@ -25,7 +25,7 @@ it("bloqueia o chat com skeleton até confirmar o Core, inclusive em falhas", as
   expect(screen.queryByText("Chat liberado")).not.toBeInTheDocument();
 });
 
-it("analisa ao solucionar e só libera o chat com os seis componentes prontos", async () => {
+it("analisa ao solucionar e só libera o chat com os componentes essenciais prontos", async () => {
   invokeMock.mockResolvedValue(coreFixture(false));
   render(<CoreGate><div>Chat liberado</div></CoreGate>);
   fireEvent.click(await screen.findByRole("button", { name: "Solucionar" }));
@@ -93,4 +93,14 @@ it("não confunde uma consulta de atualização sem rede com Core quebrado", asy
   render(<CoreGate><div>Chat liberado</div></CoreGate>);
   expect(await screen.findByText("Chat liberado")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Solucionar" })).not.toBeInTheDocument();
+});
+
+it("permite iniciar o chat sem o runtime opcional de vídeo", async () => {
+  const state = coreFixture();
+  const video = state.items.find(item => item.id === "hyperframes")!;
+  video.installed = false; video.configured = false; video.installedVersion = null;
+  video.healthError = "Navegador indisponível nesta plataforma";
+  invokeMock.mockResolvedValue(state);
+  render(<CoreGate><div>Chat liberado</div></CoreGate>);
+  expect(await screen.findByText("Chat liberado")).toBeVisible();
 });

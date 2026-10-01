@@ -77,6 +77,12 @@ fn catalog_tools_expose_overview_and_typed_proposals() {
         .as_array()
         .unwrap();
     assert!(native_agent_ids.contains(&json!("builtin:designer")));
+    assert!(native_agent_ids.contains(&json!("builtin:video")));
+    let icons = definitions[1]["parameters"]["properties"]["agent"]["properties"]["appearance"]
+        ["anyOf"][1]["properties"]["icon"]["enum"]
+        .as_array()
+        .unwrap();
+    assert!(icons.contains(&json!("film")));
 
     let catalog = workflow::catalog::tests::example();
     let overview: Value =
