@@ -12,8 +12,23 @@ Read the relevant `video_docs` sections once. Inspect existing compositions with
 `video_run(action="timeline")` before editing their timing. For new compositions,
 use `video_run(action="init", path="videos/<name>")` in a new/empty directory.
 Use existing file tools to write/edit source, keeping all assets project-local.
+For actual page imagery, use `browser_screenshot` with
+`savePath="videos/<name>/assets/page.png"` in Build mode. Both browser backends
+save the original PNG and return its project-relative `path` plus an attachment
+for `vision`. Reuse that file directly in the composition; do not embed base64
+or recapture an unchanged page. Existing assets are never overwritten.
 Do not install a second CLI, invoke upstream skills installers or require the
 user to configure Node, Chromium or FFmpeg manually. Jarvis manages that runtime.
+
+`video_docs(topic="composition")` always returns this fixed contract; `file`
+does not select another document for that topic. For official CLI/media/workflow
+references, omit `file` or use null/blank to read `SKILL.md`; use an exact relative
+Markdown path only when that document points to a reference.
+
+Only `init` uses `resolution`; only `render` uses `quality` and `output`.
+Other action fields are ignored, so optional provider placeholders do not block
+scaffolding or diagnostics. Set the actual desired render settings when calling
+`render`; a filename supplied to `init` does not request a render.
 
 Confirm subject, target audience, duration, aspect ratio and important content
 from the request/project context. Ask only for missing decisions that materially

@@ -68,6 +68,7 @@ fn application_command_allowed(label: &str, command: &str) -> bool {
                     | "confirm_companion_project"
                     | "get_companion_conversations"
                     | "stop_companion_chat"
+                    | "clear_companion_chat"
                     | "get_companion_models"
             ))
 }
@@ -93,6 +94,7 @@ mod companion_policy_tests {
             "confirm_companion_project",
             "get_companion_conversations",
             "stop_companion_chat",
+            "clear_companion_chat",
             "get_companion_models",
         ] {
             assert!(application_command_allowed("companion", command));
@@ -221,6 +223,7 @@ pub fn run() {
                 agent::companion_chat::confirm_companion_project,
                 agent::companion_chat::get_companion_conversations,
                 agent::companion_chat::stop_companion_chat,
+                agent::companion_chat::clear_companion_chat,
                 agent::companion_chat::get_companion_models,
                 http_client::get_project_http_settings,
                 http_client::save_project_http_settings,

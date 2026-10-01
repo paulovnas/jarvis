@@ -102,7 +102,9 @@ pub(super) fn definition(
     properties: Value,
     required: &[&str],
 ) -> Value {
-    let mut definition = json!({"type":"function","name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}});
+    // Responses otherwise normalizes optional fields into required arguments;
+    // native handlers depend on omission to apply defaults and action-specific fields.
+    let mut definition = json!({"type":"function","name":name,"description":description,"strict":false,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}});
     super::execution_sandbox::add_permission_parameters(&mut definition);
     definition
 }

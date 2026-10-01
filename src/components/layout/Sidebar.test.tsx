@@ -35,6 +35,44 @@ describe("Persistent sidebar", () => {
     const chats = screen.getByRole("list", { name: "Conversas do projeto" });
     expect(within(chats).getAllByRole("button", { name: /^(Primeira|Terceira)/ }).map(button => button.textContent)).toEqual(["Primeira conversa", "Terceira conversa"]);
   });
+  it("keeps new chats visible before Ver mais and preserves saved manual order after reload", async () => {
+    const user = userEvent.setup();
+    const stored = populatedLibrary();
+    const manual = ["c3", "c1", "c4", "c5", "c6"];
+    stored.conversations = manual.map((id, index) => ({
+      id, projectId: "p1", title: `Conversa ${id.slice(1)}`,
+      createdAt: index, lastActivityAt: 100 + index,
+    }));
+    stored.conversations.push(
+      { id: "recent", projectId: "p1", title: "Conversa recente", createdAt: 30, lastActivityAt: 31 },
+      { id: "previous", projectId: "p1", title: "Conversa anterior", createdAt: 29, lastActivityAt: 30 },
+    );
+    const savedLayout = { ...DEFAULT_DESKTOP_LAYOUT, itemOrder: { "chats:p1": manual } };
+    call.mockImplementation(async command => {
+      if (command === "get_desktop_layout") return savedLayout;
+      if (command === "save_desktop_layout") return undefined;
+      if (command === "create_conversation") {
+        stored.conversations.push({ id: "new", projectId: "p1", title: "Nova Conversa", createdAt: 40, lastActivityAt: 40 });
+        stored.selection.conversationId = "new";
+      }
+      return structuredClone(stored);
+    });
+    const titles = () => within(screen.getByRole("list", { name: "Conversas do projeto" }))
+      .getAllByRole("button", { name: /^(Conversa|Nova Conversa)/ }).map(button => button.textContent);
+    const view = render(<DesktopLayoutProvider><Harness /></DesktopLayoutProvider>);
+    await screen.findByRole("button", { name: "Conversa recente" });
+    expect(titles()).toEqual(["Conversa recente", "Conversa anterior", "Conversa 3"]);
+    await user.click(screen.getByRole("button", { name: "Nova conversa em Jarvis" }));
+    expect(await screen.findByRole("button", { name: "Nova Conversa" })).toHaveAttribute("aria-current", "page");
+    expect(titles()).toEqual(["Nova Conversa", "Conversa recente", "Conversa anterior"]);
+    await user.click(screen.getByRole("button", { name: /Ver mais/ }));
+    expect(titles()).toEqual(["Nova Conversa", "Conversa recente", "Conversa anterior", "Conversa 3", "Conversa 1", "Conversa 4", "Conversa 5", "Conversa 6"]);
+    expect(call).toHaveBeenCalledWith("save_desktop_layout", { layout: expect.objectContaining({ itemOrder: savedLayout.itemOrder }) });
+    view.unmount();
+    render(<DesktopLayoutProvider><Harness /></DesktopLayoutProvider>);
+    expect(await screen.findByRole("button", { name: "Nova Conversa" })).toHaveAttribute("aria-current", "page");
+    expect(titles()).toEqual(["Nova Conversa", "Conversa recente", "Conversa anterior"]);
+  });
   it("offers direct chat deletion on hover and moves a project with its history", async () => {
     const user = userEvent.setup(); const stored = populatedLibrary();
     call.mockResolvedValue(stored); render(<Harness />);

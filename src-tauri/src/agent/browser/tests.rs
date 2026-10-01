@@ -49,6 +49,24 @@ fn read_only_agents_cannot_navigate_or_interact() {
 }
 
 #[test]
+fn screenshot_save_path_is_optional_in_build_and_rejected_by_the_read_only_catalog() {
+    for mode in [crate::agent::Mode::Plan, crate::agent::Mode::Build] {
+        let tools = definitions(mode);
+        let screenshot = tools
+            .iter()
+            .find(|tool| tool["name"] == "browser_screenshot")
+            .unwrap();
+        let schema = jsonschema::validator_for(&screenshot["parameters"]).unwrap();
+        assert!(schema.is_valid(&json!({"id":"tab"})));
+        assert_eq!(
+            schema.is_valid(&json!({"id":"tab","savePath":"videos/demo/assets/page.png"})),
+            mode == crate::agent::Mode::Build
+        );
+        assert_eq!(screenshot["parameters"]["required"], json!(["id"]));
+    }
+}
+
+#[test]
 fn bounds_reject_nan_negative_and_oversized_surfaces() {
     let good = Viewport {
         x: 50.,

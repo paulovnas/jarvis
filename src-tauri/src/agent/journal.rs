@@ -1100,6 +1100,13 @@ pub(super) fn compact(path: &Path) -> Result<u64, AgentError> {
     Ok(before.bytes.saturating_sub(after))
 }
 
+pub(super) fn clear(path: &Path) -> Result<(), AgentError> {
+    let lock = journal_lock(path)?;
+    let _guard = lock.write().map_err(|_| AgentError::internal())?;
+    recover_swap(path)?;
+    vacuum_unlocked(path, &[], &Extras::default())
+}
+
 fn vacuum_unlocked(path: &Path, turns: &[StoredTurn], extras: &Extras) -> Result<(), AgentError> {
     let metadata = fs::symlink_metadata(path).map_err(|_| AgentError::storage())?;
     if !metadata.is_file() || metadata.is_symlink() {

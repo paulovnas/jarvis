@@ -239,7 +239,7 @@ export function AppSidebar({
                       <SortableList ids={projects.map(item => item.id)} onReorder={ids => saveOrder(projectOrderKey, ids)}><SidebarMenu aria-label="Projetos do workspace">
                         {projects.map((item) => {
                           const conversations = orderedItems(snapshot.conversations.filter(entry => entry.projectId === item.id)
-                            .sort((a, b) => (b.lastActivityAt ?? b.createdAt) - (a.lastActivityAt ?? a.createdAt) || b.createdAt - a.createdAt || a.id.localeCompare(b.id)), layout.itemOrder[`chats:${item.id}`], entry => entry.id);
+                            .sort((a, b) => (b.lastActivityAt ?? b.createdAt) - (a.lastActivityAt ?? a.createdAt) || b.createdAt - a.createdAt || a.id.localeCompare(b.id)), layout.itemOrder[`chats:${item.id}`], entry => entry.id, "first");
                           const visibleCount = visibleCounts[item.id] ?? 3;
                           const isCurrentProject = item.id === project?.id;
                           const isOpen = expanded[item.id] ?? item.id === project?.id;

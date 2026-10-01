@@ -113,7 +113,10 @@ fn global_companion_workflow_never_adds_project_tools() {
     let mut definitions = crate::agent::tools::definitions(Mode::Build);
     definitions.extend(crate::agent::companion_chat::tools());
     execution.filter(&mut definitions);
-    assert_eq!(definitions.len(), 5);
+    assert_eq!(definitions.len(), 6);
+    assert!(definitions
+        .iter()
+        .any(|definition| definition["name"] == "jarvito_list_executors"));
     assert!(definitions.iter().all(|definition| {
         crate::agent::companion_chat::allowed_tool(definition["name"].as_str().unwrap())
     }));

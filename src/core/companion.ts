@@ -9,6 +9,7 @@ export const companionItemSchema = z.object({
   activity: z.string(), result: z.string().nullish(), durationMs: z.number().nonnegative(), activeSince: z.number().nullable(), updatedAt: z.number(),
   pendingQuestion: pendingQuestionSchema.nullish(), requiresConversation: z.boolean(),
   attentionId: z.string(), acknowledged: z.boolean(),
+  revision: z.number().nonnegative().optional(),
 });
 export const companionSnapshotSchema = z.object({ items: z.array(companionItemSchema), truncated: z.boolean() });
 export const companionGeometrySchema = z.object({
@@ -18,6 +19,7 @@ export const companionGeometrySchema = z.object({
 export const companionProjectProposalSchema = z.object({
   id: z.string(), projectId: z.string(), projectName: z.string(), workspaceName: z.string(),
   conversationId: z.string().nullable(), reason: z.string(), message: z.string(),
+  execution: z.object({ kind: z.enum(["flow", "agent"]), id: z.string(), name: z.string() }).nullish(),
 });
 export const companionChatSchema = z.object({
   conversationId: z.string(), projectId: z.string().nullable(), projectName: z.string().nullable(),

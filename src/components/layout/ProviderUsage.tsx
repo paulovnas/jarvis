@@ -12,7 +12,7 @@ import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { aliasSuffix, planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, expectedQuotaRemaining, type UsageWindow } from "@/core/provider-usage";
 
-function WindowBar({ window, now, stale }: { window: UsageWindow; now: number; stale: boolean }) {
+export function WindowBar({ window, now, stale }: { window: UsageWindow; now: number; stale: boolean }) {
   const reset = remainingTime(window.resetsAt, now);
   const reserve = stale ? null : quotaReserve(window, now);
   const expected = stale ? null : expectedQuotaRemaining(window, now);

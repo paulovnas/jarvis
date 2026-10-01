@@ -45,8 +45,8 @@ function component(type, name, parent, props = {}) {
 }
 component(1, "Jarvito", null, { 7: 120, 8: 140, 236: 0 });
 function node(name, parent, x = 0, y = 0, props = {}) { return component(2, name, parent, { 13: x, 14: y, ...props }); }
-function paint(shape, name, fill, stroke = false, thickness = 1) {
-  const id = component(stroke ? 24 : 20, `${name} paint`, shape, stroke ? { 47: thickness, 48: 1, 49: 1 } : {});
+function paint(shape, name, fill, stroke = false, thickness = 1, props = {}) {
+  const id = component(stroke ? 24 : 20, `${name} paint`, shape, stroke ? { 47: thickness, 48: 1, 49: 1, ...props } : props);
   if (Array.isArray(fill)) {
     const gradient = component(22, `${name} gradient`, id, { 42: -35, 33: -35, 34: 25, 35: 40 });
     fill.forEach((c, i) => component(19, `${name} stop ${i}`, gradient, { 38: c, 39: i / (fill.length - 1) }));
@@ -67,7 +67,7 @@ function line(name, parent, points, stroke, thickness = 1, options = {}) {
   const id = component(3, name, parent, { ...(options.opacity !== undefined ? { 18: options.opacity } : {}) });
   const path = component(16, `${name} path`, id);
   const vertices = points.map((p, i) => component(6, `${name} point ${i}`, path, { 24: p[0], 25: p[1], 84: p[2] ?? 0, 85: p[3] ?? 0, 86: p[4] ?? 0, 87: p[5] ?? 0 }));
-  const c = paint(id, name, stroke, true, thickness);
+  const c = paint(id, name, stroke, true, thickness, options.fixedStroke ? { 50: false } : {});
   if (options.light) lights.push(c);
   return { id, vertices };
 }
@@ -116,18 +116,28 @@ shape("Cheek right", attention, 25, 15, 7, 2, 1, palette.cyan, { opacity: .15, l
 const gazeX = node("Gaze X", attention);
 const gazeY = node("Gaze Y", gazeX);
 const wander = node("Wander", gazeY);
-const blink = node("Blink", wander, 0, -1);
+const eyeExpression = node("Eye expression", wander);
+const blink = node("Blink", eyeExpression, 0, -1);
 const leftEye = node("Left eye", blink, -16, -2);
 const rightEye = node("Right eye", blink, 16, -2);
-shape("Left eye lens", leftEye, 0, 0, 10, 14, 5, palette.cyan, { light: true });
-shape("Right eye lens", rightEye, 0, 0, 10, 14, 5, palette.cyan, { light: true });
-shape("Left eye glint", leftEye, -1.5, -3, 2.2, 3.5, 1.1, palette.white, { opacity: .65 });
-shape("Right eye glint", rightEye, -1.5, -3, 2.2, 3.5, 1.1, palette.white, { opacity: .65 });
-const mouth = line("Smile", wander, [[-6, 13, 0, 0, .6, 5], [6, 13, Math.PI - .6, 5]], palette.cyan, 2.4, { light: true });
-const leftBrow = node("Left brow", wander, -16, -14, { 18: .08 });
-shape("Left brow bar", leftBrow, 0, 0, 11, 2, 1, palette.cyan, { light: true });
-const rightBrow = node("Right brow", wander, 16, -14, { 18: .08 });
-shape("Right brow bar", rightBrow, 0, 0, 11, 2, 1, palette.cyan, { light: true });
+const leftLens = node("Left eye open", leftEye);
+const rightLens = node("Right eye open", rightEye);
+shape("Left eye lens", leftLens, 0, 0, 10, 14, 5, palette.cyan, { light: true });
+shape("Right eye lens", rightLens, 0, 0, 10, 14, 5, palette.cyan, { light: true });
+shape("Left eye glint", leftLens, -1.5, -3, 2.2, 3.5, 1.1, palette.white, { opacity: .65 });
+shape("Right eye glint", rightLens, -1.5, -3, 2.2, 3.5, 1.1, palette.white, { opacity: .65 });
+const leftHappyEye = node("Left eye happy", leftEye, 0, 0, { 16: 0, 18: 0 });
+const rightHappyEye = node("Right eye happy", rightEye, 0, 0, { 16: 0, 18: 0 });
+line("Left happy eye curve", leftHappyEye, [[-5, 0, 0, 0, -.8, 6], [5, 0, Math.PI + .8, 6]], palette.cyan, 3.2, { light: true, fixedStroke: true });
+line("Right happy eye curve", rightHappyEye, [[-5, 0, 0, 0, -.8, 6], [5, 0, Math.PI + .8, 6]], palette.cyan, 3.2, { light: true, fixedStroke: true });
+// Shape-level transforms give every state a readable mouth silhouette at 96px.
+// Keeping stroke width fixed preserves the thinking line and inverted sad curve.
+const mouth = node("Mouth expression", wander, 0, 12, { 17: .55 });
+line("Smile", mouth, [[-8, 0, 0, 0, .75, 10], [8, 0, Math.PI - .75, 10]], palette.cyan, 2.8, { light: true, fixedStroke: true });
+const leftBrow = node("Left brow", wander, -16, -14, { 18: .32 });
+shape("Left brow bar", leftBrow, 0, 0, 14, 2.5, 1.25, palette.cyan, { light: true });
+const rightBrow = node("Right brow", wander, 16, -14, { 18: .32 });
+shape("Right brow bar", rightBrow, 0, 0, 14, 2.5, 1.25, palette.cyan, { light: true });
 shape("Chin light", attention, 0, 32, 12, 2, 1, palette.cyan, { opacity: .5, light: true });
 shape("Shell screw", attention, 27, -27, 3.2, 3.2, 0, palette.cyan, { ellipse: true, opacity: .6, light: true });
 const rightArm = node("Right shoulder", dragPose, 39, -33);
@@ -145,8 +155,12 @@ const settle = component(28, "Overshoot settle", 0, { 63: .2, 64: 1.18, 65: .45,
 // keeping parents before children and remapping all animated object references.
 const ordered = [];
 function orderChildren(parent) {
-  // ponytail: this authored rig has 266 nodes; index parents if it grows to thousands.
-  for (const child of scene.filter((item) => item.parent === parent).reverse()) {
+  // ponytail: this small authored rig uses a scan; index parents if it grows to thousands.
+  const children = scene.filter((item) => item.parent === parent);
+  // Vertices define geometry, not draw order: reversing them discards the
+  // authored outgoing/incoming handles and turns a two-point curve into a line.
+  if (![16, 22].includes(scene[parent]?.type)) children.reverse();
+  for (const child of children) {
     ordered.push(child);
     orderChildren(child.id);
   }
@@ -170,7 +184,7 @@ function animation(name, duration, tracks = [], loop = true) {
 }
 const track = (id, key, frames, options = {}) => ({ id, key, frames, ...options });
 const fixed = (id, key, value) => track(id, key, [[0, value]]);
-const neutral = [fixed(rig, 14, 112), fixed(rig, 15, 0), fixed(head, 15, 0), fixed(head, 13, 0), fixed(head, 14, -44), fixed(leftArm, 15, 0), fixed(rightArm, 15, 0), fixed(leftForearm, 15, 0), fixed(rightForearm, 15, 0), fixed(leftEye, 17, 1), fixed(rightEye, 17, 1), fixed(leftBrow, 18, .08), fixed(rightBrow, 18, .08), fixed(leftBrow, 15, 0), fixed(rightBrow, 15, 0), fixed(mouth.vertices[0], 86, .6), fixed(mouth.vertices[1], 84, Math.PI - .6)];
+const neutral = [fixed(rig, 14, 112), fixed(rig, 15, 0), fixed(head, 15, 0), fixed(head, 13, 0), fixed(head, 14, -44), fixed(leftArm, 15, 0), fixed(rightArm, 15, 0), fixed(leftForearm, 15, 0), fixed(rightForearm, 15, 0), fixed(leftEye, 17, 1), fixed(rightEye, 17, 1), fixed(leftEye, 15, 0), fixed(rightEye, 15, 0), fixed(leftLens, 16, 1), fixed(rightLens, 16, 1), fixed(leftLens, 18, 1), fixed(rightLens, 18, 1), fixed(leftHappyEye, 16, 0), fixed(rightHappyEye, 16, 0), fixed(leftHappyEye, 18, 0), fixed(rightHappyEye, 18, 0), fixed(eyeExpression, 13, 0), fixed(eyeExpression, 14, 0), fixed(leftBrow, 18, .32), fixed(rightBrow, 18, .32), fixed(leftBrow, 14, -14), fixed(rightBrow, 14, -14), fixed(leftBrow, 15, 0), fixed(rightBrow, 15, 0), fixed(mouth, 13, 0), fixed(mouth, 14, 12), fixed(mouth, 15, 0), fixed(mouth, 16, 1), fixed(mouth, 17, .55)];
 function pose(changes) {
   const merged = new Map(neutral.map((t) => [`${t.id}:${t.key}`, t]));
   changes.forEach((t) => merged.set(`${t.id}:${t.key}`, t));
@@ -189,37 +203,45 @@ const thinking = pose([
   track(head, 14, [[0, -44], [50, -46], [200, -46], [290, -44], [440, -45], [640, -46], [720, -44]]),
   track(rightArm, 15, [[0, 0], [55, 1.58], [220, 1.45], [285, .12], [385, .12], [460, 1.52], [630, 1.55], [720, 0]]),
   track(rightForearm, 15, [[0, 0], [55, 1.02], [220, .94], [285, 0], [385, 0], [460, .94], [630, 1.02], [720, 0]]),
-  fixed(leftBrow, 18, .75), fixed(rightBrow, 18, .75),
-  track(leftBrow, 15, [[0, -.1], [100, -.18], [340, .08], [500, -.18], [720, -.1]]),
-  track(rightBrow, 15, [[0, .12], [100, .03], [340, .16], [500, .03], [720, .12]]),
-  fixed(mouth.vertices[0], 86, .1), fixed(mouth.vertices[1], 84, Math.PI - .1),
+  fixed(leftBrow, 18, 1), fixed(rightBrow, 18, 1),
+  track(leftBrow, 14, [[0, -18], [240, -17], [400, -18], [720, -18]]),
+  fixed(rightBrow, 14, -11.5),
+  track(leftBrow, 15, [[0, -.22], [100, -.3], [340, -.13], [500, -.3], [720, -.22]]),
+  track(rightBrow, 15, [[0, .17], [100, .09], [340, .22], [500, .09], [720, .17]]),
+  fixed(leftEye, 17, .74), fixed(rightEye, 17, 1.04),
+  fixed(eyeExpression, 13, -1.5), fixed(eyeExpression, 14, -2.2),
+  fixed(mouth, 13, 2.5), fixed(mouth, 15, -.1), fixed(mouth, 16, .7), fixed(mouth, 17, .06),
 ]);
 const waiting = pose([
   track(head, 15, [[0, 0], [45, .13], [150, .1], [210, -.055], [275, .02], [330, 0]]),
   track(leftArm, 15, [[0, 0], [60, -.18], [180, -.12], [270, 0], [330, 0]]),
-  fixed(leftBrow, 18, .85), fixed(rightBrow, 18, .6), fixed(leftBrow, 15, -.12), fixed(rightBrow, 15, .16),
-  fixed(leftEye, 17, 1.12), fixed(rightEye, 17, 1.12),
-  fixed(mouth.vertices[0], 86, .2), fixed(mouth.vertices[1], 84, Math.PI - .2),
+  fixed(leftBrow, 18, .9), fixed(rightBrow, 18, .9), fixed(leftBrow, 15, -.15), fixed(rightBrow, 15, .18),
+  fixed(leftBrow, 14, -18), fixed(rightBrow, 14, -16),
+  fixed(leftEye, 17, 1.18), fixed(rightEye, 17, 1.18),
+  fixed(eyeExpression, 14, -1), fixed(mouth, 16, .8), fixed(mouth, 17, .75),
 ]);
 const reconnecting = pose([
   track(head, 15, [[0, -.05], [70, -.12], [180, .12], [280, -.08], [360, -.05]]),
-  fixed(leftBrow, 18, .7), fixed(rightBrow, 18, .7), fixed(leftEye, 17, .82), fixed(rightEye, 17, .82),
-  fixed(mouth.vertices[0], 86, 0), fixed(mouth.vertices[1], 84, Math.PI),
+  fixed(leftBrow, 18, .9), fixed(rightBrow, 18, .9), fixed(leftEye, 17, .82), fixed(rightEye, 17, .82),
+  fixed(mouth, 17, .04),
 ]);
 const completed = pose([
   track(rig, 14, [[0, 112], [15, 114], [34, 101], [52, 112], [66, 110], [84, 112], [180, 112]], { easing: settle }),
   track(head, 15, [[0, 0], [35, -.12], [60, .09], [87, -.03], [115, 0], [180, 0]]),
   track(leftArm, 15, [[0, 0], [30, -1.6], [67, -.45], [105, -.08], [180, -.08]], { easing: settle }),
   track(rightArm, 15, [[0, 0], [30, 1.65], [67, .4], [105, .08], [180, .08]], { easing: settle }),
-  fixed(leftEye, 17, .48), fixed(rightEye, 17, .48), fixed(leftEye, 15, -.1), fixed(rightEye, 15, .1),
-  fixed(mouth.vertices[0], 86, .9), fixed(mouth.vertices[1], 84, Math.PI - .9),
+  fixed(leftLens, 16, 0), fixed(rightLens, 16, 0), fixed(leftLens, 18, 0), fixed(rightLens, 18, 0),
+  fixed(leftHappyEye, 16, 1), fixed(rightHappyEye, 16, 1), fixed(leftHappyEye, 18, 1), fixed(rightHappyEye, 18, 1),
+  fixed(leftBrow, 14, -17), fixed(rightBrow, 14, -17), fixed(leftBrow, 15, -.12), fixed(rightBrow, 15, .12),
+  fixed(mouth, 16, 1.12), fixed(mouth, 17, 1.35),
 ]);
 const failed = pose([
   track(head, 15, [[0, 0], [22, -.09], [39, .09], [57, -.06], [78, .055], [115, .035], [190, .035]]),
   track(head, 14, [[0, -44], [60, -42], [120, -41], [190, -41]]),
   track(leftArm, 15, [[0, 0], [100, -.1], [190, -.1]]), track(rightArm, 15, [[0, 0], [100, .1], [190, .1]]),
-  fixed(leftEye, 17, .65), fixed(rightEye, 17, .65), fixed(leftBrow, 18, .8), fixed(rightBrow, 18, .8),
-  fixed(leftBrow, 15, .18), fixed(rightBrow, 15, -.18), fixed(mouth.vertices[0], 86, -.5), fixed(mouth.vertices[1], 84, Math.PI + .5),
+  fixed(leftEye, 17, .58), fixed(rightEye, 17, .58), fixed(leftBrow, 18, 1), fixed(rightBrow, 18, 1),
+  fixed(eyeExpression, 14, 1.5), fixed(leftBrow, 14, -12.5), fixed(rightBrow, 14, -12.5),
+  fixed(leftBrow, 15, -.38), fixed(rightBrow, 15, .38), fixed(mouth, 14, 14), fixed(mouth, 17, -.95),
 ]);
 [idle, thinking, waiting, reconnecting, completed, failed].forEach((tracks, i) => {
   const c = [palette.cyan, palette.cyan, palette.yellow, palette.yellow, palette.green, palette.red][i];

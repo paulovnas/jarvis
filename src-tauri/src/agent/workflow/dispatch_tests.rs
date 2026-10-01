@@ -1554,3 +1554,37 @@ fn narrow_write_scope_allows_project_reads_but_rejects_out_of_scope_mutations() 
         })
         .is_some());
 }
+
+#[test]
+fn screenshot_exports_respect_the_assigned_write_scope_without_restricting_visual_inspection() {
+    let (_fixture, hub) = hub();
+    for role in [Role::Builder, Role::Designer] {
+        let exec = Execution {
+            hub: hub.clone(),
+            id: "worker".into(),
+            role,
+            flow: Flow::Planned,
+            scope: vec!["frontend".into()],
+        };
+        let call = |args| ToolCall {
+            id: "capture".into(),
+            name: "browser_screenshot".into(),
+            args,
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        assert!(exec.preflight(&call(json!({"id":"tab"}))).is_none());
+        assert!(exec
+            .preflight(&call(
+                json!({"id":"tab","savePath":"frontend/assets/page.png"})
+            ))
+            .is_none());
+        for path in ["backend/page.png", "../outside.png"] {
+            assert_eq!(
+                exec.preflight(&call(json!({"id":"tab","savePath":path}))),
+                Some("O arquivo está fora do escopo atribuído ao agente.".into())
+            );
+        }
+    }
+}

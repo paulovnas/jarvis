@@ -411,6 +411,8 @@ pub struct BrowserRequest {
     method: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     params: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    save_path: Option<String>,
 }
 
 #[tauri::command]

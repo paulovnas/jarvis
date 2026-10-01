@@ -38,6 +38,13 @@ describe("Jarvito chat", () => {
       if (command === "get_companion_conversations") return [{ id: "project-chat", projectId: "project-1", projectName: "Portal", workspaceName: "Trabalho", title: "Ajustar relatório", lastActivityAt: 10 }];
       if (command === "get_companion_models") return [{ provider: "codex", providerKind: "openai-codex", models: [{ value: "codex/gpt-6", label: "GPT-6", reasoningLevels: [], defaultReasoningLevel: null }] }];
       if (command === "send_companion_message") return globalChat;
+      if (command === "clear_companion_chat") {
+        const revision = globalChat.chat.revision + 1;
+        const previousOptions = globalChat.options;
+        globalChat = { ...makeChat(), options: previousOptions };
+        globalChat.chat.revision = revision;
+        return globalChat;
+      }
       if (command === "confirm_companion_project") return (args as { confirmed: boolean }).confirmed ? projectChat : { ...globalChat, proposal: null };
       return true;
     });
@@ -76,6 +83,93 @@ describe("Jarvito chat", () => {
     expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeEnabled();
   });
 
+  it("clears general messages, proposals and its draft while keeping the selected model", async () => {
+    globalChat.options = options;
+    globalChat.chat.turns = [turn("Minha pergunta antiga", "Minha resposta antiga")];
+    globalChat.proposal = { id: "proposal-1", projectId: "project-1", projectName: "Portal", workspaceName: "Trabalho", conversationId: null, reason: "O pedido altera o projeto.", message: "Trabalhar no Portal." };
+    const user = userEvent.setup(); render(<CompanionChatPane />);
+    await screen.findByText("Minha resposta antiga");
+    await user.type(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }), "Rascunho antigo");
+    await user.click(screen.getByRole("button", { name: "Limpar conversa" }));
+    expect(call).toHaveBeenCalledWith("clear_companion_chat");
+    expect(await screen.findByText("Oi, eu sou o Jarvito.")).toBeVisible();
+    expect(screen.queryByText("Minha pergunta antiga")).not.toBeInTheDocument();
+    expect(screen.queryByText("Minha resposta antiga")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Continuar em um projeto" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Mensagem para Jarvito" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Modelo do Jarvito" })).toHaveTextContent("codex · GPT-6");
+    await user.type(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }), "Novo assunto");
+    await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
+    expect(call).toHaveBeenCalledWith("send_companion_message", { conversationId: null, content: "Novo assunto", options: { ...options, executor: "jarvis" } });
+  });
+
+  it("preserves the general history and draft if clearing fails and allows retrying", async () => {
+    globalChat.chat.turns = [turn("Minha pergunta", "Minha resposta")];
+    const user = userEvent.setup(); render(<CompanionChatPane />);
+    await screen.findByText("Minha resposta");
+    await user.type(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }), "Ainda não enviei");
+    call.mockRejectedValueOnce("Não foi possível limpar a conversa.");
+    await user.click(screen.getByRole("button", { name: "Limpar conversa" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível limpar");
+    expect(screen.getByText("Minha resposta")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Mensagem para Jarvito" })).toHaveValue("Ainda não enviei");
+    expect(screen.getByRole("button", { name: "Limpar conversa" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Limpar conversa" }));
+    expect(await screen.findByText("Oi, eu sou o Jarvito.")).toBeVisible();
+  });
+
+  it("keeps a new draft typed while the general conversation is being cleared", async () => {
+    globalChat.chat.turns = [turn("Pergunta antiga", "Resposta antiga")];
+    const user = userEvent.setup(); render(<CompanionChatPane />);
+    await screen.findByText("Resposta antiga");
+    const input = screen.getByRole("textbox", { name: "Mensagem para Jarvito" });
+    await user.type(input, "Rascunho antigo");
+    let finish: ((value: CompanionChat) => void) | undefined;
+    call.mockImplementationOnce(() => new Promise<CompanionChat>(resolve => { finish = resolve; }));
+    await user.click(screen.getByRole("button", { name: "Limpar conversa" }));
+    await user.clear(input); await user.type(input, "Meu próximo pedido");
+    globalChat = makeChat(); globalChat.chat.revision = 2;
+    await act(async () => { finish?.(globalChat); });
+    expect(await screen.findByText("Oi, eu sou o Jarvito.")).toBeVisible();
+    expect(input).toHaveValue("Meu próximo pedido");
+    await user.click(screen.getByRole("combobox", { name: "Conversa do Jarvito" }));
+    await user.click(await screen.findByRole("option", { name: /Ajustar relatório.*Trabalho.*Portal/ }));
+    await screen.findByText("Projeto Portal · conversa compartilhada com o Jarvis");
+    await user.click(screen.getByRole("combobox", { name: "Conversa do Jarvito" }));
+    await user.click(await screen.findByRole("option", { name: /Conversar com Jarvito.*Sem projeto/ }));
+    await screen.findByText("Oi, eu sou o Jarvito.");
+    expect(input).toHaveValue("Meu próximo pedido");
+  });
+
+  it.each(["running", "queued", "compacting"])("prevents clearing a general conversation with ongoing work: %s", async status => {
+    globalChat.chat.turns = [turn("Meu pedido", "Meu histórico", status === "running" ? "running" : "completed")];
+    if (status === "running") globalChat.chat.activeTurnId = "turn-1";
+    if (status === "queued") globalChat.chat.queuedMessages = [{ id: "queued-1", content: "Pedido na fila", options }];
+    if (status === "compacting") globalChat.chat.compacting = true;
+    const user = userEvent.setup(); render(<CompanionChatPane />);
+    await screen.findByText("Meu histórico");
+    const clear = screen.getByRole("button", { name: "Limpar conversa" });
+    expect(clear).toBeDisabled();
+    await user.click(clear);
+    expect(call.mock.calls.some(([command]) => command === "clear_companion_chat")).toBe(false);
+  });
+
+  it("does not restore cleared messages when an earlier refresh resolves later", async () => {
+    globalChat.chat.turns = [turn("Minha pergunta antiga", "Minha resposta antiga")];
+    const previous = companionChatSchema.parse(globalChat);
+    const user = userEvent.setup(); render(<CompanionChatPane />);
+    await screen.findByText("Minha resposta antiga");
+    let finish: ((value: CompanionChat) => void) | undefined;
+    call.mockImplementationOnce(() => new Promise<CompanionChat>(resolve => { finish = resolve; }));
+    act(() => events.get("companion:chat_changed")?.({ conversationId: globalChat.conversationId }));
+    await waitFor(() => expect(finish).toBeDefined());
+    await user.click(screen.getByRole("button", { name: "Limpar conversa" }));
+    await screen.findByText("Oi, eu sou o Jarvito.");
+    await act(async () => { finish?.(previous); });
+    expect(screen.getByText("Oi, eu sou o Jarvito.")).toBeVisible();
+    expect(screen.queryByText("Minha resposta antiga")).not.toBeInTheDocument();
+  });
+
   it("keeps the composer and model control reachable by scrolling when the island is short", async () => {
     const user = userEvent.setup();
     render(<div style={{ height: 138 }}><CompanionChatPane /></div>);
@@ -99,6 +193,7 @@ describe("Jarvito chat", () => {
     await user.click(screen.getByRole("combobox", { name: "Conversa do Jarvito" }));
     await user.click(await screen.findByRole("option", { name: /Ajustar relatório.*Trabalho.*Portal/ }));
     expect(await screen.findByText("Estou conferindo os componentes.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Limpar conversa" })).not.toBeInTheDocument();
     expect(call).toHaveBeenCalledWith("get_companion_chat", { conversationId: "project-chat" });
     expect(call.mock.calls.some(([name]) => name === "send_companion_message")).toBe(false);
     await user.type(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }), "Preserve a paleta atual");
@@ -130,6 +225,19 @@ describe("Jarvito chat", () => {
     expect(call).toHaveBeenCalledWith("confirm_companion_project", { proposalId: "proposal-1", confirmed: false });
     await waitFor(() => expect(screen.queryByRole("region", { name: "Continuar em um projeto" })).not.toBeInTheDocument());
     expect(screen.getByRole("combobox", { name: "Conversa do Jarvito" })).toHaveTextContent("Conversar com Jarvito");
+  });
+
+  it.each([ ["flow", "Planejamento", "Fluxo"], ["agent", "Construtor", "Agente"] ] as const)("shows the chosen %s before confirming the project handoff", async (kind, name, label) => {
+    globalChat.proposal = companionChatSchema.parse({ ...globalChat, proposal: {
+      id: "proposal-1", projectId: "project-1", projectName: "Portal", workspaceName: "Trabalho", conversationId: null,
+      reason: "Execução solicitada na conversa.", message: "Implementar a busca.", execution: { kind, id: "selected-executor", name },
+    } }).proposal;
+    const user = userEvent.setup(); render(<CompanionChatPane />);
+    expect(await screen.findByText(`${label}: ${name}`)).toBeVisible();
+    expect(call.mock.calls.some(([command]) => command === "confirm_companion_project")).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Confirmar" }));
+    expect(call).toHaveBeenCalledWith("confirm_companion_project", { proposalId: "proposal-1", confirmed: true });
+    expect(await screen.findByText("Projeto Portal · conversa compartilhada com o Jarvis")).toBeVisible();
   });
 
   it("refreshes streaming messages during continuous events and unsubscribes on close", async () => {

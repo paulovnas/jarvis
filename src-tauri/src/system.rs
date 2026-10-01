@@ -661,6 +661,11 @@ pub(crate) fn notify(
     event_id: &str,
     notice: Notice,
 ) {
+    // The hidden general conversation is observed and announced by Jarvito.
+    // Main navigation cannot select it to acknowledge an unread cursor.
+    if conversation_id == crate::library::companion::GLOBAL_CONVERSATION_ID {
+        return;
+    }
     let system = app.state::<SystemState>();
     // OS banners and in-app unread marks share the event source, not preferences.
     let event_key = format!("{conversation_id}/{event_id}/{notice:?}");

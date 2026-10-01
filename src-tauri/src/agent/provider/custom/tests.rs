@@ -368,6 +368,55 @@ fn openrouter_attribution_identifies_jarvis_for_each_protocol_only_on_its_offici
 }
 
 #[test]
+fn native_optional_schemas_keep_responses_opt_out_without_leaking_it_to_other_protocols() {
+    let native = super::super::super::tools::definition(
+        "optional_reference",
+        "Read the default reference when file is omitted.",
+        json!({"topic":{"type":"string"},"file":{"type":"string"}}),
+        &["topic"],
+    );
+    for protocol in [
+        Protocol::OpenaiResponses,
+        Protocol::OpenaiCompletions,
+        Protocol::AnthropicMessages,
+    ] {
+        let config = config(protocol);
+        let body = request::body(
+            &config,
+            &config.models[0],
+            &options(),
+            "instructions",
+            vec![],
+            vec![native.clone()],
+        )
+        .unwrap();
+        let tool = &body["tools"][0];
+        let (parameters, description) = match protocol {
+            Protocol::OpenaiResponses => {
+                assert_eq!(tool, &native);
+                assert_eq!(tool["strict"], false);
+                (&tool["parameters"], &tool["description"])
+            }
+            Protocol::OpenaiCompletions => {
+                assert!(tool.get("strict").is_none());
+                assert!(tool["function"].get("strict").is_none());
+                (
+                    &tool["function"]["parameters"],
+                    &tool["function"]["description"],
+                )
+            }
+            Protocol::AnthropicMessages => {
+                assert!(tool.get("strict").is_none());
+                (&tool["input_schema"], &tool["description"])
+            }
+        };
+        assert_eq!(parameters, &native["parameters"]);
+        assert_eq!(parameters["required"], json!(["topic"]));
+        assert_eq!(description, &native["description"]);
+    }
+}
+
+#[test]
 fn protocols_translate_tools_history_images_and_output_limits_without_codex_fields() {
     for protocol in [
         Protocol::OpenaiCompletions,

@@ -49,6 +49,12 @@ pub(in crate::agent) fn definitions(mode: Mode) -> Vec<Value> {
         if mode == Mode::Plan && mutating(&name) {
             continue;
         }
+        let mut properties = properties;
+        let mut description = description.to_owned();
+        if name == "browser_screenshot" && mode == Mode::Build {
+            properties["savePath"] = json!({"type":"string","minLength":1,"maxLength":4096,"description":"Optional new project-relative .png file, e.g. videos/demo/assets/dashboard.png. Saves the original capture without base64 or a user dialog; existing files are never overwritten. Returns path plus the existing attachment for vision."});
+            description.push_str(" Use savePath to reuse a real screenshot as a project asset, including video compositions. Omit it for visual inspection alone.");
+        }
         // Responses strict normalization would require every optional selector field.
         // Cross-field constraints stay in routing validation because Gemini drops `not`.
         values.push(json!({"type":"function","name":name,"strict":false,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}));

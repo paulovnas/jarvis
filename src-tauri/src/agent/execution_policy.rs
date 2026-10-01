@@ -183,6 +183,14 @@ pub(super) fn inspect_tool(
                 .map(PathBuf::from)
                 .collect(),
         },
+        "browser_screenshot" if tool.args["savePath"].is_string() => {
+            ExecutionOperation::Filesystem {
+                read_paths: vec![],
+                write_paths: vec![PathBuf::from(
+                    tool.args["savePath"].as_str().unwrap_or_default(),
+                )],
+            }
+        }
         "bash" => ExecutionOperation::Command(parse_or_dynamic(
             tool.args["command"].as_str().unwrap_or_default(),
         )),
@@ -996,6 +1004,46 @@ mod tests {
         assert_eq!(plan.invocations[0].argv, ["rg", "two words", "src"]);
         assert_eq!(plan.invocations[1].argv, ["git", "status", "--short"]);
         assert!(!plan.dynamic);
+    }
+
+    #[test]
+    fn screenshot_asset_declares_project_write_without_changing_inspection_policy() {
+        let root = Path::new("/workspace/project");
+        assert!(inspect_tool(
+            root,
+            &tool("browser_screenshot", serde_json::json!({"id":"tab"})),
+            capabilities(Effect::Stateful)
+        )
+        .unwrap()
+        .is_none());
+        let export = inspect_tool(
+            root,
+            &tool(
+                "browser_screenshot",
+                serde_json::json!({"id":"tab","savePath":"videos/demo/assets/page.png"}),
+            ),
+            capabilities(Effect::Mutating),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(export.outcome.effects.writes_filesystem);
+        assert!(!export.outcome.effects.uses_network);
+        assert_eq!(export.outcome.decision, ExecutionDecision::Ask);
+        assert_eq!(
+            export.outcome.write_paths,
+            [root.join("videos/demo/assets/page.png")]
+        );
+        let escape = inspect_tool(
+            root,
+            &tool(
+                "browser_screenshot",
+                serde_json::json!({"id":"tab","savePath":"../outside.png"}),
+            ),
+            capabilities(Effect::Mutating),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(escape.outcome.decision, ExecutionDecision::Deny);
     }
 
     #[test]

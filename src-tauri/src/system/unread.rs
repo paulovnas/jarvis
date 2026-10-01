@@ -27,12 +27,20 @@ pub struct Snapshot {
 }
 
 fn entries(db: &Connection) -> Result<Vec<Entry>, PersistenceError> {
+    // Remove cursors left by earlier versions before recomputing the Dock badge.
+    db.execute(
+        "DELETE FROM conversation_unread WHERE conversation_id = ?1",
+        [crate::library::companion::GLOBAL_CONVERSATION_ID],
+    )?;
     Ok(db.prepare("SELECT conversation_id, event_key FROM conversation_unread WHERE unread = 1 ORDER BY conversation_id")?
         .query_map([], |row| Ok(Entry { conversation_id: row.get(0)?, event_key: row.get(1)? }))?
         .collect::<Result<_, _>>()?)
 }
 
 fn record(db: &Connection, id: &str, key: &str) -> Result<bool, PersistenceError> {
+    if id == crate::library::companion::GLOBAL_CONVERSATION_ID {
+        return Ok(false);
+    }
     Ok(db.execute(
         "INSERT INTO conversation_unread(conversation_id, event_key, unread)
         SELECT id, ?2, 1 FROM conversations WHERE id = ?1
@@ -152,6 +160,52 @@ mod tests {
             INSERT INTO conversations(id, project_id, title) VALUES ('a', 'p1', 'First'), ('b', 'p2', 'Second');
             INSERT INTO navigation_selection(id, workspace_id, project_id, conversation_id) VALUES (1, 'workspace', 'p1', 'a')
             ON CONFLICT(id) DO UPDATE SET workspace_id='workspace', project_id='p1', conversation_id='a';").unwrap();
+    }
+
+    #[test]
+    fn general_chat_never_counts_as_unread_and_legacy_badges_clear_on_refresh() {
+        let home = tempfile::tempdir().unwrap();
+        let mut db = Connection::open_in_memory().unwrap();
+        seed(&mut db);
+        crate::library::companion::ensure_global(&mut db, home.path()).unwrap();
+        let general = crate::library::companion::GLOBAL_CONVERSATION_ID;
+
+        assert!(!record(&db, general, "completed").unwrap());
+        assert!(entries(&db).unwrap().is_empty());
+        // Simulate an unread cursor persisted by an older Jarvis version.
+        db.execute(
+            "INSERT INTO conversation_unread(conversation_id, event_key, unread) VALUES (?1, 'legacy', 1)",
+            [general],
+        )
+        .unwrap();
+        record(&db, "b", "project-completed").unwrap();
+        assert_eq!(
+            entries(&db).unwrap(),
+            vec![Entry {
+                conversation_id: "b".into(),
+                event_key: "project-completed".into(),
+            }]
+        );
+        assert!(!record(&db, general, "new-response").unwrap());
+        assert_eq!(entries(&db).unwrap().len(), 1);
+        assert_eq!(
+            db.query_row(
+                "SELECT count(*) FROM conversation_unread WHERE conversation_id = ?1",
+                [general],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            db.query_row(
+                "SELECT count(*) FROM conversations WHERE id = ?1",
+                [general],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
     }
 
     #[test]

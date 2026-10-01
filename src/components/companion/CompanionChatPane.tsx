@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowUp, Check, MessageCircle, Square, X } from "lucide-react";
+import { ArrowUp, Check, Eraser, MessageCircle, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -24,7 +24,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
   active?: boolean;
   externalQuestions?: boolean;
   onQuestionChange?: (context: CompanionQuestionContext | null) => void;
-  onView?: (conversationId: string) => void;
+  onView?: (conversationId: string, revision: number) => void;
 }) {
   const [selected, setSelected] = useState("global");
   const [conversations, setConversations] = useState<CompanionConversation[]>([]);
@@ -128,6 +128,23 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
     catch (cause) { setActionError(errorMessage(cause)); }
     finally { setBusy(false); }
   };
+  const clear = async () => {
+    if (selected !== "global" || !chat?.global || busy || loading || clearBlocked) return;
+    setBusy(true); setActionError(null);
+    try {
+      const result = companionChatSchema.parse(await invoke("clear_companion_chat"));
+      if (!result.global || result.conversationId !== chat.conversationId) throw new Error("A resposta não corresponde à conversa geral do Jarvito.");
+      applyChat(result);
+      setDraft(current => {
+        if (current !== draft) return current;
+        drafts.current.delete(draftKey); drafts.current.delete("global"); return "";
+      });
+      setPreservedRequest(null); setError(null);
+      if (selectedModel) setModelOverride({ conversation: selected, selection: selectedModel });
+      stickToBottom.current = true;
+    } catch (cause) { setActionError(errorMessage(cause)); }
+    finally { setBusy(false); }
+  };
   const confirm = async (confirmed: boolean) => {
     if (!chat?.proposal || busy) return;
     const proposal = chat.proposal;
@@ -161,6 +178,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
     } catch (cause) { setActionError(errorMessage(cause)); return false; }
   };
   const running = Boolean(chat?.chat.activeTurnId);
+  const clearBlocked = running || Boolean(chat?.chat.queuedMessages?.length || chat?.chat.compacting || chat?.chat.context?.compacting);
   const selectedModel = modelOverride?.conversation === selected ? modelOverride.selection : executionSelection(chat?.options);
   const selectedTitle = selected === "global" ? "Conversar com Jarvito" : conversations.find(item => item.id === selected)?.title ?? chat?.projectName ?? "Conversa do projeto";
 
@@ -173,7 +191,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
     } : null);
   }, [active, chat, selectedTitle, onQuestionChange]);
   useEffect(() => {
-    if (active && chat && !chat.chat.pendingQuestion && !chat.chat.pendingApproval && !chat.chat.pendingAuthoring) onView?.(chat.conversationId);
+    if (active && chat && !chat.chat.activeTurnId && !chat.chat.compacting && !chat.chat.pendingQuestion && !chat.chat.pendingApproval && !chat.chat.pendingAuthoring) onView?.(chat.conversationId, chat.chat.revision);
   }, [active, chat, onView]);
 
   if (active && chat && (chat.chat.pendingQuestion || chat.chat.pendingApproval || chat.chat.pendingAuthoring) && !externalQuestions) return <CompanionQuestion context={{
@@ -183,13 +201,16 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
 
   return <ScrollArea role="region" aria-label="Conversa e controles do Jarvito" className="companion-chat h-full min-h-0 pr-2">
     <div className="flex h-full min-h-[250px] flex-col gap-2">
+    <div className="flex items-center gap-1">
     <Select value={selected} onValueChange={value => { if (typeof value === "string") chooseConversation(value); }}>
-      <SelectTrigger aria-label="Conversa do Jarvito" size="sm" disabled={busy} className="w-full cursor-pointer text-[11px]"><SelectValue>{selectedTitle}</SelectValue></SelectTrigger>
+      <SelectTrigger aria-label="Conversa do Jarvito" size="sm" disabled={busy} className="min-w-0 flex-1 cursor-pointer text-[11px]"><SelectValue>{selectedTitle}</SelectValue></SelectTrigger>
       <SelectContent className="max-h-64 max-w-[calc(100vw-36px)]">
         <SelectItem value="global" className="cursor-pointer text-[11px]"><span className="flex flex-col gap-0.5"><span>Conversar com Jarvito</span><span className="text-[9px] text-muted-foreground">Sem projeto · perguntas e ajuda do dia a dia</span></span></SelectItem>
         {conversations.map(item => <SelectItem key={item.id} value={item.id} className="cursor-pointer text-[11px]"><span className="flex min-w-0 flex-col gap-0.5"><span className="truncate">{item.title}</span><span className="truncate font-mono text-[9px] text-muted-foreground">{item.workspaceName} · {item.projectName}</span></span></SelectItem>)}
       </SelectContent>
     </Select>
+    {selected === "global" && <Hint content={running ? "Pare a resposta antes de limpar a conversa." : clearBlocked ? "Aguarde as operações da conversa terminarem para limpar." : "Limpar histórico e começar uma nova conversa."}><Button type="button" aria-label="Limpar conversa" aria-busy={busy} variant="ghost" size="icon-sm" disabled={busy || loading || !chat?.global || clearBlocked} className="shrink-0 cursor-pointer text-muted-foreground" onClick={() => { void clear(); }}><Eraser className="size-3.5" /></Button></Hint>}
+    </div>
     <p className="px-1 text-[9px] text-muted-foreground">{chat?.global === false ? `Projeto ${chat.projectName} · conversa compartilhada com o Jarvis` : "Ajuda sem projeto. Para trabalhar em arquivos, Jarvito pede sua confirmação."}</p>
     <ScrollArea ref={scroll} className="min-h-0 flex-1 pr-2" onScrollCapture={event => {
       const target = event.target;
@@ -209,6 +230,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
         {chat?.chat.queuedMessages?.map(message => <div key={message.id} className="ml-7 space-y-1 rounded-xl border border-border bg-secondary/40 px-3 py-2"><p className="whitespace-pre-wrap break-words text-[11px] leading-5">{message.content}</p><Badge variant="outline" className="font-mono text-[9px]">Aguardando envio</Badge></div>)}
         {chat?.proposal && <section aria-label="Continuar em um projeto" className="space-y-2 rounded-xl border border-onedark-cyan/30 bg-onedark-cyan/5 p-3">
           <p className="text-xs font-medium">{chat.proposal.conversationId ? "Continuar a conversa" : "Criar conversa"} em {chat.proposal.projectName}?</p>
+          {chat.proposal.execution && <Badge variant="outline" className="max-w-full text-[10px]"><span className="truncate">{chat.proposal.execution.kind === "flow" ? "Fluxo" : "Agente"}: {chat.proposal.execution.name}</span></Badge>}
           <p className="text-[10px] leading-4 text-muted-foreground">{chat.proposal.reason}</p>
           <p className="whitespace-pre-wrap break-words text-[11px] leading-5">{chat.proposal.message}</p>
           <div className="flex gap-2"><Button size="sm" disabled={busy} className="h-7 cursor-pointer text-[10px]" onClick={() => { void confirm(true); }}><Check className="size-3" />Confirmar</Button><Button variant="ghost" size="sm" disabled={busy} className="h-7 cursor-pointer text-[10px]" onClick={() => { void confirm(false); }}><X className="size-3" />Agora não</Button></div>

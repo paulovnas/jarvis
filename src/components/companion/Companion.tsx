@@ -7,13 +7,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Hint } from "@/components/ui/hint";
-import { Progress } from "@/components/ui/progress";
+import { ProviderIcon } from "@/components/ProviderIcon";
+import { WindowBar } from "@/components/layout/ProviderUsage";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { companionGeometrySchema, companionItemKey, companionSnapshotSchema, companionStatusLabels, type CompanionGeometry, type CompanionItem, type CompanionSnapshot, type CompanionStatus } from "@/core/companion";
-import { accountUsageSchema, aliasSuffix, quotaPercent, remainingTime, type AccountUsage } from "@/core/provider-usage";
+import { accountUsageSchema, aliasSuffix } from "@/core/provider-usage";
 import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/questions";
 import { ROLE_LABELS } from "@/core/workflow";
 import { libraryError } from "@/core/library";
@@ -33,22 +34,23 @@ const statusColor: Record<CompanionStatus, string> = {
   running: "text-primary", waiting: "text-onedark-yellow", reconnecting: "text-onedark-yellow",
   completed: "text-onedark-green", failed: "text-onedark-red", idle: "text-muted-foreground",
 };
-const usageSchema = z.array(accountUsageSchema);
+const usageSchema = z.array(accountUsageSchema.extend({ providerKind: z.enum(["openai-codex", "antigravity", "claude-code"]) }));
+type CompanionUsage = z.infer<typeof usageSchema>[number];
+const usageProviderLabels = { "openai-codex": "OpenAI Codex", antigravity: "Antigravity", "claude-code": "Claude Code" };
 
-function Usage({ accounts, error, now }: { accounts: AccountUsage[] | null; error: string | null; now: number }) {
+function Usage({ accounts, error, now }: { accounts: CompanionUsage[] | null; error: string | null; now: number }) {
   if (error && !accounts) return <p role="alert" className="text-xs text-onedark-yellow">{error}</p>;
   if (!accounts) return <div role="status" aria-label="Carregando limites" className="space-y-4"><Skeleton className="h-4 w-36" /><Skeleton className="h-2" /><Skeleton className="h-4 w-32" /><Skeleton className="h-2" /></div>;
   return <div className="space-y-4">
     {error && <p role="status" className="text-xs text-onedark-yellow">{error}</p>}
     {!accounts.length && <p className="py-8 text-center text-xs text-muted-foreground">Nenhum limite disponível nos provedores conectados.</p>}
     {accounts.map(account => <section key={account.alias} aria-label={`Limites de ${account.alias}`} className="space-y-3 rounded-md border border-border bg-sidebar/40 p-3">
-      <p className="truncate text-xs font-medium">{aliasSuffix(account.alias)}</p>
+      <div className="flex min-w-0 items-center gap-2 text-xs font-medium"><span role="img" aria-label={usageProviderLabels[account.providerKind]} className="flex shrink-0"><ProviderIcon kind={account.providerKind} /></span><p className="truncate">{aliasSuffix(account.alias)}</p></div>
       {account.error && <p role="status" className="text-[11px] text-onedark-yellow">{account.fetchedAt ? "Limites desatualizados" : "Limites indisponíveis"}</p>}
       {!account.error && !account.windows.length && <p className="text-[11px] text-muted-foreground">Nenhuma janela informada.</p>}
       {account.windows.map(window => <div key={window.id} className="space-y-1.5">
-        <div className="flex items-center justify-between gap-3 font-mono text-[10px]"><span className="truncate text-muted-foreground">{window.group} · {window.label}</span><span className={window.remainingPercent !== null && window.remainingPercent <= 10 ? "text-onedark-red" : window.remainingPercent !== null && window.remainingPercent <= 30 ? "text-onedark-yellow" : "text-onedark-green"}>{quotaPercent(window.remainingPercent)} restante</span></div>
-        {window.remainingPercent !== null && <Progress aria-label={`${window.group} ${window.label} restante`} value={window.remainingPercent} className={window.remainingPercent <= 10 ? "[&_[data-slot=progress-indicator]]:bg-onedark-red" : window.remainingPercent <= 30 ? "[&_[data-slot=progress-indicator]]:bg-onedark-yellow" : "[&_[data-slot=progress-indicator]]:bg-onedark-green"} />}
-        {window.resetsAt !== null && <p className="font-mono text-[9px] text-muted-foreground">{remainingTime(window.resetsAt, now) === "agora" ? "Reset previsto agora" : `Renova em ${remainingTime(window.resetsAt, now)}`}</p>}
+        <p className="truncate font-mono text-[10px] text-muted-foreground">{window.group}</p>
+        <WindowBar window={window} now={now} stale={Boolean(error || account.error) || !account.fetchedAt || now - account.fetchedAt > 5 * 60_000} />
       </div>)}
       {account.fetchedAt && <p className="font-mono text-[9px] text-muted-foreground/70">Atualizado às {new Date(account.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>}
     </section>)}
@@ -62,7 +64,7 @@ export function Companion() {
   const [attempt, setAttempt] = useState(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [tab, setTab] = useState("activity");
-  const [usage, setUsage] = useState<AccountUsage[] | null>(null);
+  const [usage, setUsage] = useState<CompanionUsage[] | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [usageAt, setUsageAt] = useState(() => Date.now());
   const [usageAttempt, setUsageAttempt] = useState(0);
@@ -186,10 +188,10 @@ export function Companion() {
     const afterPaint = window.setTimeout(() => { void acknowledge(focused); }, 0);
     return () => window.clearTimeout(afterPaint);
   }, [geometry.expanded, visible, tab, question, focused, acknowledge]);
-  const viewedChat = useCallback((conversationId: string) => {
+  const viewedChat = useCallback((conversationId: string, revision: number) => {
     if (!visible || question) return;
     const item = snapshot?.items.find(item => item.conversationId === conversationId && item.agentId === null);
-    if (item) void acknowledge(item);
+    if (item?.revision !== undefined && item.revision <= revision) void acknowledge(item);
   }, [visible, question, snapshot, acknowledge]);
 
   useEffect(() => {

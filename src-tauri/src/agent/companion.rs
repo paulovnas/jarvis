@@ -71,7 +71,7 @@ pub(crate) struct Item {
     status: Status,
     attention_id: String,
     acknowledged: bool,
-    #[serde(skip)]
+    #[serde(rename = "revision")]
     attention_generation: u64,
     activity: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -882,6 +882,10 @@ mod tests {
         snapshot.turns[0].status = TurnStatus::Completed;
         let recent = Recent::default();
         let completed = project(&snapshot).unwrap();
+        assert_eq!(
+            serde_json::to_value(&completed.item).unwrap()["revision"],
+            snapshot.revision
+        );
         recent.record(completed.clone()).unwrap();
         recent.acknowledge(&completed.item).unwrap();
         // A passive refresh and a later revision of the same outcome preserve acknowledgement.

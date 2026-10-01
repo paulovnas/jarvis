@@ -139,6 +139,7 @@ impl Capabilities {
                 | "http_result"
                 | "video_docs"
                 | "jarvito_list_projects"
+                | "jarvito_list_executors"
                 | "jarvito_list_conversations"
                 | "jarvito_read_conversation"
         ) || (name.starts_with("ctx_")
@@ -341,9 +342,17 @@ impl Orchestrator {
         self.catalog
             .specs
             .get(&tool.name)
-            .map(|spec| PreparedTool {
-                capabilities: spec.capabilities,
-                handler: spec.handler,
+            .map(|spec| {
+                let mut capabilities = spec.capabilities;
+                if tool.name == "browser_screenshot" && tool.args["savePath"].is_string() {
+                    capabilities.effect = Effect::Mutating;
+                    capabilities.approval = ApprovalPolicy::AccordingToTurn;
+                    capabilities.parallel_safe = false;
+                }
+                PreparedTool {
+                    capabilities,
+                    handler: spec.handler,
+                }
             })
             .ok_or_else(|| {
                 recoverable(
@@ -407,6 +416,30 @@ mod tests {
             catalog.specs["jarvito_list_projects"].handler,
             Handler::Companion
         );
+        assert_eq!(
+            catalog.specs["jarvito_list_executors"].handler,
+            Handler::Companion
+        );
+        assert_eq!(
+            catalog.specs["jarvito_list_executors"].capabilities.effect,
+            Effect::ReadOnly
+        );
+        assert!(catalog
+            .validate(&call("jarvito_list_executors", json!({})))
+            .is_ok());
+        assert!(catalog.validate(&call("jarvito_propose_project", json!({
+            "projectId":"a".repeat(32),"reason":"Implementar","message":"Corrigir com o fluxo planejado",
+            "execution":{"kind":"flow","id":"planned"}
+        }))).is_ok());
+        assert!(catalog
+            .validate(&call(
+                "jarvito_propose_project",
+                json!({
+                    "projectId":"a".repeat(32),"reason":"Implementar","message":"Corrigir",
+                    "execution":{"kind":"unknown","id":"planned"}
+                })
+            ))
+            .is_err());
         assert_eq!(
             catalog.specs["jarvito_propose_project"].capabilities.effect,
             Effect::Interactive
@@ -478,6 +511,41 @@ mod tests {
         }
         let calls = super::super::provider::tool_calls(&[json!({"type":"function_call","call_id":"b","name":"read","arguments":"{\"path\":\"README.md\"}"})]).unwrap();
         assert!(catalog.validate(&calls[0]).is_ok());
+    }
+
+    #[test]
+    fn screenshot_export_uses_file_write_approval_while_plain_capture_stays_read_only() {
+        let build = Orchestrator::new(&super::super::browser::definitions(
+            super::super::Mode::Build,
+        ));
+        let plain = build
+            .preflight(&call("browser_screenshot", json!({"id":"tab"})))
+            .unwrap();
+        assert_eq!(plain.capabilities.approval, ApprovalPolicy::Never);
+        let export = build
+            .preflight(&call(
+                "browser_screenshot",
+                json!({"id":"tab","savePath":"assets/page.png"}),
+            ))
+            .unwrap();
+        assert_eq!(export.capabilities.effect, Effect::Mutating);
+        assert_eq!(
+            export.capabilities.approval,
+            ApprovalPolicy::AccordingToTurn
+        );
+        assert!(!export.capabilities.parallel_safe);
+        let plan = Orchestrator::new(&super::super::browser::definitions(
+            super::super::Mode::Plan,
+        ));
+        assert!(plan
+            .preflight(&call("browser_screenshot", json!({"id":"tab"})))
+            .is_ok());
+        assert!(plan
+            .preflight(&call(
+                "browser_screenshot",
+                json!({"id":"tab","savePath":"assets/page.png"})
+            ))
+            .is_err());
     }
 
     #[test]

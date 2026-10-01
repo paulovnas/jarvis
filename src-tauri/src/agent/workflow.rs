@@ -899,7 +899,16 @@ impl Execution {
         {
             return Some("Aguarde o Construtor concluir a resolução com hub_wait antes de editar ou continuar a publicação.".into());
         }
-        let paths_allowed = if tool.name == "apply_patch" {
+        let screenshot_export =
+            tool.name == "browser_screenshot" && tool.args["savePath"].is_string();
+        let paths_allowed = if screenshot_export {
+            dispatch::path_allowed(
+                &self.hub.root.root,
+                &json!({"path":tool.args["savePath"]}),
+                &self.scope,
+                self.role,
+            )
+        } else if tool.name == "apply_patch" {
             let paths = match super::patch::target_paths(&tool.args) {
                 Ok(paths) => paths,
                 Err(error) => return Some(error.message),
@@ -916,7 +925,9 @@ impl Execution {
         } else {
             dispatch::path_allowed(&self.hub.root.root, &tool.args, &self.scope, self.role)
         };
-        if matches!(tool.name.as_str(), "write" | "edit" | "apply_patch") && !paths_allowed {
+        if (screenshot_export || matches!(tool.name.as_str(), "write" | "edit" | "apply_patch"))
+            && !paths_allowed
+        {
             return Some("O arquivo está fora do escopo atribuído ao agente.".into());
         }
         if matches!(self.role, Role::Investigator | Role::Reviewer)

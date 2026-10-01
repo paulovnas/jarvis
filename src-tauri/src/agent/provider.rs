@@ -1653,6 +1653,60 @@ mod tests {
     }
 
     #[test]
+    fn native_optional_arguments_are_not_promoted_by_responses_strict_normalization() {
+        let options = super::super::tests::options(ApprovalMode::Yolo);
+        let credential = CodexCredential::new("", "", 0, "", None, None);
+        let capabilities = ModelCapabilities::resolve_for_options(&credential, &options);
+        let tools: Vec<_> = super::super::tools::definitions(Mode::Build)
+            .into_iter()
+            .filter(|tool| {
+                matches!(
+                    tool["name"].as_str(),
+                    Some("video_docs" | "video_run" | "read")
+                )
+            })
+            .collect();
+        let mcp = json!({"type":"function","name":"mcp_example","description":"External contract","strict":true,"parameters":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"],"additionalProperties":false}});
+        let external = json!({"type":"function","name":"custom_example","description":"External optional contract","parameters":{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"}},"required":["query"]}});
+        let mut catalog = tools.clone();
+        catalog.extend([mcp.clone(), external.clone()]);
+        let body = request_body(
+            &options,
+            &capabilities,
+            "instructions",
+            vec![],
+            catalog,
+            "session",
+        );
+        let sent = body["tools"].as_array().unwrap();
+        for (name, optional, required) in [
+            ("video_docs", "file", json!(["topic"])),
+            ("video_run", "resolution", json!(["action", "path"])),
+            ("read", "offset", json!(["path"])),
+        ] {
+            let tool = sent.iter().find(|tool| tool["name"] == name).unwrap();
+            assert_eq!(
+                tool["strict"], false,
+                "normalization must be disabled for {name}"
+            );
+            assert_eq!(tool["parameters"]["required"], required);
+            assert!(tool["parameters"]["properties"].get(optional).is_some());
+            assert_eq!(
+                tool,
+                tools.iter().find(|tool| tool["name"] == name).unwrap()
+            );
+        }
+        assert_eq!(
+            sent.iter().find(|tool| tool["name"] == "mcp_example"),
+            Some(&mcp)
+        );
+        assert_eq!(
+            sent.iter().find(|tool| tool["name"] == "custom_example"),
+            Some(&external)
+        );
+    }
+
+    #[test]
     fn codex_ultra_is_normalized_for_turns_workers_and_standalone_requests() {
         let mut options = super::super::tests::options(ApprovalMode::Yolo);
         options.reasoning = Some("ultra".into());

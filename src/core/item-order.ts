@@ -1,7 +1,8 @@
-/** Unlisted items keep their default order after the explicitly arranged items. */
-export function orderedItems<T>(items: readonly T[], order: readonly string[] | undefined, key: (item: T) => string): T[] {
+/** Unlisted items keep their default order on the chosen side of arranged items. */
+export function orderedItems<T>(items: readonly T[], order: readonly string[] | undefined, key: (item: T) => string, unlisted: "first" | "last" = "last"): T[] {
   const rank = new Map((order ?? []).map((id, index) => [id, index]));
-  return [...items].sort((a, b) => (rank.get(key(a)) ?? Infinity) - (rank.get(key(b)) ?? Infinity));
+  const fallback = unlisted === "first" ? -1 : Infinity;
+  return [...items].sort((a, b) => (rank.get(key(a)) ?? fallback) - (rank.get(key(b)) ?? fallback));
 }
 
 export function moveItem(ids: readonly string[], from: string, to: string): string[] {

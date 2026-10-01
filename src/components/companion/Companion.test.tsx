@@ -20,12 +20,14 @@ const base: CompanionItem = {
   conversationId: "conversation-1", agentId: null, projectId: "project-1", projectName: "Portal",
   title: "Melhorar o relatório", role: "builder", status: "running", activity: "Verificando o relatório",
   durationMs: 120_000, activeSince: 990_000, updatedAt: 1_000_000, requiresConversation: false, attentionId: "turn-1/running", acknowledged: false,
+  revision: 1,
 };
 let snapshot: CompanionSnapshot;
-const accounts: AccountUsage[] = [{
-  alias: "openai-codex-pessoal", fetchedAt: 1_000_000, email: null, plan: null, error: null, resetCredits: null,
+const account: AccountUsage & { providerKind: string } = {
+  alias: "openai-codex-pessoal", providerKind: "openai-codex", fetchedAt: 1_000_000, email: null, plan: null, error: null, resetCredits: null,
   windows: [{ id: "window-1", group: "Codex", thirdParty: false, label: "5h", durationSeconds: 18_000, remainingPercent: 72, resetsAt: 1_200_000 }],
-}];
+};
+let accounts: (typeof account)[];
 async function expanded() {
   const user = userEvent.setup();
   render(<Companion />);
@@ -37,6 +39,7 @@ async function expanded() {
 
 describe("Desktop companion", () => {
   beforeEach(() => {
+    accounts = [account];
     snapshot = { items: [{ ...base }], truncated: false };
     events.clear(); stop.mockClear();
     vi.spyOn(Date, "now").mockReturnValue(1_000_000);
@@ -252,6 +255,86 @@ describe("Desktop companion", () => {
     expect(speech).not.toHaveTextContent("Concluí: Jarvito");
   });
 
+  it.each([true, false])("only announces a general chat response when it was not viewed in the island: viewed=%s", async viewed => {
+    snapshot.items = [{ ...base, conversationId: "global-chat", title: "Jarvito", projectName: "Chat geral" }];
+    const chat = {
+      conversationId: "global-chat", projectId: null, projectName: null, global: true, proposal: null,
+      chat: { conversationId: "global-chat", revision: 1, turns: [], activeTurnId: "turn-1" as string | null, pendingApproval: null },
+    };
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => {
+      if (command === "get_companion_chat") return chat;
+      if (command === "get_companion_conversations" || command === "get_companion_models") return [];
+      if (command === "ack_companion_item") {
+        snapshot.items = snapshot.items.map(item => ({ ...item, acknowledged: true }));
+        return true;
+      }
+      return original?.(command, args);
+    });
+    const user = await expanded();
+    await user.click(screen.getByRole("tab", { name: "Chat" }));
+    await screen.findByRole("textbox", { name: "Mensagem para Jarvito" });
+    if (!viewed) {
+      await user.click(screen.getByRole("button", { name: "Recolher painel" }));
+      await waitFor(() => expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument());
+    }
+    snapshot.items = [{ ...snapshot.items[0], status: "completed", activeSince: null, attentionId: "general/completed", revision: 2, result: "A resposta da sua pergunta." }];
+    chat.chat.revision++; chat.chat.activeTurnId = null;
+    act(() => {
+      events.get("companion:changed")?.({});
+      events.get("companion:chat_changed")?.({ conversationId: "global-chat" });
+    });
+    if (viewed) {
+      await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "global-chat", agentId: null, attentionId: "general/completed" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Recolher assistente Jarvis" }).querySelector("svg[data-state=idle]")).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: "Recolher painel" }));
+      await waitFor(() => expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument());
+      expect(screen.queryByRole("status", { name: "Aviso do Jarvito" })).not.toBeInTheDocument();
+    } else {
+      expect(await screen.findByRole("status", { name: "Aviso do Jarvito" })).toHaveTextContent("A resposta da sua pergunta.");
+      expect(call.mock.calls.some(([command]) => command === "ack_companion_item")).toBe(false);
+    }
+  });
+
+  it("does not mark a new response as viewed until the corresponding transcript is displayed", async () => {
+    snapshot.items = [{ ...base, conversationId: "global-chat", title: "Jarvito", projectName: "Chat geral" }];
+    const makeChat = (revision: number, text: string) => ({
+      conversationId: "global-chat", projectId: null, projectName: null, global: true,
+      chat: { conversationId: "global-chat", revision, activeTurnId: null, pendingApproval: null, turns: [{
+        id: `turn-${revision}`, createdAt: 1, durationMs: 10, user: "Minha pergunta", status: "completed", error: null,
+        options: { account: "codex", model: "gpt-6", reasoning: null, mode: "build", approvalMode: "yolo" },
+        steps: [{ durationMs: 10, text, summary: "", tools: [], usage: null }],
+      }] },
+    });
+    let chat = makeChat(1, "Resposta anterior");
+    let completeRefresh: ((value: unknown) => void) | undefined;
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => {
+      if (command === "get_companion_chat") return chat;
+      if (command === "get_companion_conversations" || command === "get_companion_models") return [];
+      return original?.(command, args);
+    });
+    const user = await expanded();
+    await user.click(screen.getByRole("tab", { name: "Chat" }));
+    await screen.findByText("Resposta anterior");
+    const loaded = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => command === "get_companion_chat"
+      ? new Promise(resolve => { completeRefresh = resolve; }) : loaded?.(command, args));
+    snapshot.items = [{ ...snapshot.items[0], status: "completed", revision: 2, activeSince: null, attentionId: "new-response/completed" }];
+    act(() => {
+      events.get("companion:changed")?.({});
+      events.get("companion:chat_changed")?.({ conversationId: "global-chat" });
+    });
+    await waitFor(() => expect(completeRefresh).toBeDefined());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Recolher assistente Jarvis" }).querySelector("svg[data-state=completed]")).toBeInTheDocument());
+    expect(screen.getByText("Resposta anterior")).toBeVisible();
+    expect(call.mock.calls.some(([command]) => command === "ack_companion_item")).toBe(false);
+    chat = makeChat(2, "Nova resposta pronta");
+    await act(async () => completeRefresh?.(chat));
+    expect(await screen.findByText("Nova resposta pronta")).toBeVisible();
+    await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "global-chat", agentId: null, attentionId: "new-response/completed" }));
+  });
+
   it.each(["waiting", "completed", "failed"] as const)("restores a %s bubble only after dragging ends, without acknowledging or dismissing it", async status => {
     snapshot.items = [{ ...base, status, activeSince: null, pendingQuestion: status === "waiting" ? { turnId: "turn-q", toolId: "ask-q", questions: [{ id: "scope", question: "Qual tela revisar?", options: [] }] } : null }];
     const original = call.getMockImplementation();
@@ -345,7 +428,7 @@ describe("Desktop companion", () => {
     const user = await expanded();
     expect(call.mock.calls.some(([command]) => command === "get_companion_usage")).toBe(false);
     await user.click(screen.getByRole("tab", { name: "Limites" }));
-    expect(await screen.findByText("72% restante")).toBeVisible();
+    expect(await screen.findByText("72%")).toBeVisible();
     expect(screen.getByRole("progressbar", { name: "Codex 5h restante" })).toHaveAttribute("aria-valuenow", "72");
     const count = () => call.mock.calls.filter(([command]) => command === "get_companion_usage").length;
     expect(count()).toBe(1);
@@ -357,6 +440,58 @@ describe("Desktop companion", () => {
     expect(call).toHaveBeenLastCalledWith("get_companion_usage", { refresh: true });
     const panel = screen.getByRole("tabpanel", { name: "Limites" });
     expect(within(panel).getByText("pessoal")).toBeVisible();
+  });
+
+  it("identifies providers with icons while preserving shortened and custom aliases", async () => {
+    const providers = [
+      { alias: "openai-codex-pessoal", providerKind: "openai-codex", label: "pessoal", name: "OpenAI Codex" },
+      { alias: "antigravity-pessoal", providerKind: "antigravity", label: "pessoal", name: "Antigravity" },
+      { alias: "Claude Code", providerKind: "claude-code", label: "Claude Code", name: "Claude Code" },
+      { alias: "conta do trabalho", providerKind: "antigravity", label: "conta do trabalho", name: "Antigravity" },
+    ];
+    accounts = providers.map(provider => ({ ...account, alias: provider.alias, providerKind: provider.providerKind }));
+    const user = await expanded();
+    await user.click(screen.getByRole("tab", { name: "Limites" }));
+    for (const provider of providers) {
+      const section = await screen.findByRole("region", { name: `Limites de ${provider.alias}` });
+      expect(within(section).getByRole("img", { name: provider.name })).toBeVisible();
+      expect(within(section).getByText(provider.label)).toBeVisible();
+    }
+  });
+
+  it.each([
+    { remaining: 78, days: 3.5, expected: "28% em reserva" },
+    { remaining: 76, days: 6.5, expected: "17% em déficit" },
+    { remaining: 50, days: 3.5, expected: "No ritmo da janela" },
+    { remaining: 78, days: 3.5, error: "offline", expected: null },
+    { remaining: 78, days: 3.5, ageMs: 300_001, expected: null },
+    { remaining: 78, days: 3.5, durationSeconds: null, expected: null },
+  ])("shows the same quota pace as the status bar for current windows: $expected", async ({ remaining, days, expected, error = null, ageMs = 0, durationSeconds = 604_800 }) => {
+    accounts = [{ ...account, error, fetchedAt: Date.now() - ageMs, windows: [{ ...account.windows[0], remainingPercent: remaining, durationSeconds, resetsAt: Date.now() + days * 86_400_000 }] }];
+    const user = await expanded();
+    await user.click(screen.getByRole("tab", { name: "Limites" }));
+    await screen.findByText(`${remaining}%`);
+    const panel = screen.getByRole("tabpanel", { name: "Limites" });
+    if (expected) {
+      expect(within(panel).getByText(expected)).toBeVisible();
+      expect(within(panel).getByRole("img", { name: `Restante esperado: ${Math.round(days / 7 * 100)}%` })).toBeVisible();
+    } else {
+      expect(within(panel).queryByText(/% em (reserva|déficit)|No ritmo da janela/)).not.toBeInTheDocument();
+      expect(within(panel).queryByRole("img", { name: /Restante esperado/ })).not.toBeInTheDocument();
+    }
+  });
+
+  it("preserves cached limits but hides pace estimates after a failed refresh", async () => {
+    const user = await expanded();
+    await user.click(screen.getByRole("tab", { name: "Limites" }));
+    await screen.findByText("72%");
+    expect(screen.getByText("71% em reserva")).toBeVisible();
+    call.mockRejectedValueOnce("Sem conexão");
+    await user.click(screen.getByRole("button", { name: "Atualizar limites" }));
+    await screen.findByText("Sem conexão");
+    expect(screen.getByText("72%")).toBeVisible();
+    expect(screen.queryByText(/% em (reserva|déficit)/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /Restante esperado/ })).not.toBeInTheDocument();
   });
 
   it("distinguishes dragging from clicking and follows geometry without switching the app", async () => {

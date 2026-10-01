@@ -7,3 +7,10 @@ it("restores custom order while tolerating additions and deletions", () => {
   expect(moveItem(["a", "b", "c"], "c", "a")).toEqual(["c", "a", "b"]);
   expect(moveItem(["a", "b"], "unknown", "a")).toEqual(["a", "b"]);
 });
+
+it("prepends new items in their default order without rearranging saved items", () => {
+  const order = ["older", "deleted", "recent"];
+  expect(orderedItems(["newest", "recent", "new", "older"], order, id => id, "first")).toEqual(["newest", "new", "older", "recent"]);
+  expect(order).toEqual(["older", "deleted", "recent"]);
+  expect(orderedItems(["newest", "new"], undefined, id => id, "first")).toEqual(["newest", "new"]);
+});

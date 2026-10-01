@@ -16,6 +16,14 @@ const PET_HEIGHT: f64 = 112.0;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct CompanionUsage {
+    provider_kind: String,
+    #[serde(flatten)]
+    usage: AccountUsage,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct Geometry {
     expanded: bool,
     bubble: bool,
@@ -152,7 +160,7 @@ pub(crate) struct CompanionState {
     revision: AtomicU64,
     anchor: Mutex<Option<CompanionPosition>>,
     error: Mutex<Option<String>>,
-    usage: Mutex<Vec<AccountUsage>>,
+    usage: Mutex<Vec<CompanionUsage>>,
     #[cfg(target_os = "windows")]
     expected_position: Mutex<Option<PhysicalPosition<i32>>>,
     #[cfg(target_os = "windows")]
@@ -1218,7 +1226,7 @@ mod windows {
 pub(crate) async fn get_companion_usage(
     app: tauri::AppHandle,
     refresh: Option<bool>,
-) -> Result<Vec<AccountUsage>, String> {
+) -> Result<Vec<CompanionUsage>, String> {
     let state = app.state::<CompanionState>();
     if refresh == Some(true) && state.enabled.load(Ordering::SeqCst) {
         let usage = refresh_usage(&app).await;
@@ -1243,7 +1251,7 @@ fn unavailable(alias: String, message: String) -> AccountUsage {
     }
 }
 
-async fn refresh_usage(app: &tauri::AppHandle) -> Vec<AccountUsage> {
+async fn refresh_usage(app: &tauri::AppHandle) -> Vec<CompanionUsage> {
     let mut probes = tokio::task::JoinSet::new();
     if let Ok(home) = app.path().home_dir() {
         if let Ok(accounts) = app
@@ -1271,7 +1279,10 @@ async fn refresh_usage(app: &tauri::AppHandle) -> Vec<AccountUsage> {
                     usage
                         .windows
                         .retain(|window| !window.third_party || account.show_third_party_usage);
-                    usage
+                    CompanionUsage {
+                        provider_kind: account.provider_kind,
+                        usage,
+                    }
                 });
             }
         }
@@ -1280,9 +1291,13 @@ async fn refresh_usage(app: &tauri::AppHandle) -> Vec<AccountUsage> {
         if preferences.claude.enabled && preferences.claude.show_usage {
             let app = app.clone();
             probes.spawn(async move {
-                crate::claude::get_claude_usage(app.state(), app.state())
+                let usage = crate::claude::get_claude_usage(app.state(), app.state())
                     .await
-                    .unwrap_or_else(|error| unavailable("Claude Code".into(), error))
+                    .unwrap_or_else(|error| unavailable("Claude Code".into(), error));
+                CompanionUsage {
+                    provider_kind: "claude-code".into(),
+                    usage,
+                }
             });
         }
     }
@@ -1292,7 +1307,7 @@ async fn refresh_usage(app: &tauri::AppHandle) -> Vec<AccountUsage> {
             usage.push(value);
         }
     }
-    usage.sort_by(|a, b| a.alias.cmp(&b.alias));
+    usage.sort_by(|a, b| a.usage.alias.cmp(&b.usage.alias));
     usage
 }
 
@@ -1355,6 +1370,32 @@ pub(crate) async fn companion_pause_question(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn companion_usage_preserves_provider_identity_and_the_flat_report() {
+        for provider_kind in ["openai-codex", "antigravity", "claude-code"] {
+            let mut usage = unavailable("personal".into(), "offline".into());
+            usage.fetched_at = Some(1_000);
+            usage.email = Some("test@example.com".into());
+            usage.plan = Some("pro".into());
+            usage.windows.push(crate::openai_codex::usage::UsageWindow {
+                id: "weekly".into(),
+                group: "Models".into(),
+                third_party: false,
+                label: "7d".into(),
+                duration_seconds: Some(604_800.0),
+                remaining_percent: Some(78.0),
+                resets_at: Some(302_401_000),
+            });
+            let mut expected = serde_json::to_value(&usage).unwrap();
+            expected["providerKind"] = provider_kind.into();
+            let report = CompanionUsage {
+                provider_kind: provider_kind.into(),
+                usage,
+            };
+            assert_eq!(serde_json::to_value(&report).unwrap(), expected);
+        }
+    }
 
     fn robot_origin(placement: &Placement, scale: f64) -> CompanionPosition {
         let width = (PET_WIDTH * scale).round() as u32;
