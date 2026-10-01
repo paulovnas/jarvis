@@ -6,6 +6,7 @@
 use portable_pty::CommandBuilder;
 use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
 use std::{
+    collections::HashSet,
     ffi::{OsStr, OsString},
     path::{Path, PathBuf},
     process::Stdio,
@@ -13,11 +14,7 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::{
-    collections::{HashMap, HashSet},
-    ffi::CStr,
-    os::unix::fs::PermissionsExt,
-};
+use std::{collections::HashMap, ffi::CStr, os::unix::fs::PermissionsExt};
 
 use crate::system::TerminalPreferences;
 
@@ -597,6 +594,23 @@ fn process_snapshot() -> Vec<ProcessIdentity> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovered_terminal_shells_can_be_selected_on_every_platform() {
+        let shells = interactive_shells();
+        assert!(!shells.is_empty());
+        assert_eq!(shells.iter().collect::<HashSet<_>>().len(), shells.len());
+        for shell in shells {
+            let preferences = TerminalPreferences {
+                shell: Some(shell.clone()),
+                ..TerminalPreferences::default()
+            };
+            assert_eq!(
+                interactive_shell(&preferences).unwrap(),
+                PathBuf::from(shell)
+            );
+        }
+    }
 
     #[test]
     fn terminal_starts_in_the_native_project_directory() {
