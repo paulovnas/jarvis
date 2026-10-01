@@ -644,16 +644,6 @@ pub async fn complete_onboarding(
                 .models
                 .iter()
                 .any(|model| status.preferences.allows(&model.id))
-    } else if selected_executor == Some(crate::claude::Executor::Agy) {
-        let status = crate::agy::get_agy_runtime(app.state(), app.state())
-            .await
-            .map_err(PersistenceError::new)?;
-        status.installed
-            && status.authenticated
-            && status
-                .models
-                .iter()
-                .any(|model| status.preferences.allows(&model.id))
     } else {
         false
     };

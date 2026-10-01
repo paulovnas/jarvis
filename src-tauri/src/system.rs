@@ -196,13 +196,28 @@ impl TerminalPreferences {
 pub struct Preferences {
     pub prevent_sleep: SleepMode,
     pub notifications: bool,
+    pub companion_enabled: bool,
     pub ask_user_timeout_seconds: u16,
     pub(crate) response_language: ResponseLanguage,
     pub(crate) terminal: TerminalPreferences,
     pub(crate) claude: crate::claude::ProviderPreferences,
-    pub(crate) agy: crate::agy::ProviderPreferences,
+    // Old system files may contain the retired CLI settings. Consume them without
+    // exposing a provider or carrying its configuration into future saves.
+    #[serde(
+        default,
+        skip_serializing,
+        rename = "agy",
+        deserialize_with = "discard_retired_cli_preferences"
+    )]
+    pub(crate) _retired_cli_preferences: (),
     pub(crate) browser: crate::agent::browser::BrowserPreferences,
     pub(crate) chat_title_model: Option<crate::agent::workflow::settings::ModelChoice>,
+}
+
+fn discard_retired_cli_preferences<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<(), D::Error> {
+    serde::de::IgnoredAny::deserialize(deserializer).map(|_| ())
 }
 
 impl Default for Preferences {
@@ -210,11 +225,12 @@ impl Default for Preferences {
         Self {
             prevent_sleep: SleepMode::Off,
             notifications: false,
+            companion_enabled: false,
             ask_user_timeout_seconds: DEFAULT_ASK_USER_TIMEOUT_SECONDS,
             response_language: ResponseLanguage::default(),
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
-            agy: crate::agy::ProviderPreferences::default(),
+            _retired_cli_preferences: (),
             browser: crate::agent::browser::BrowserPreferences::default(),
             chat_title_model: None,
         }
@@ -228,7 +244,6 @@ impl Preferences {
         }
         self.terminal.validate()?;
         self.claude.validate()?;
-        self.agy.validate()?;
         if let Some(choice) = &self.chat_title_model {
             validate_chat_title_model(choice)?;
         }
@@ -276,6 +291,8 @@ pub struct Snapshot {
     resolved_terminal_shell: Option<String>,
     terminal_error: Option<String>,
     terminal_font_error: Option<String>,
+    companion_supported: bool,
+    companion_error: Option<String>,
 }
 
 struct Store {
@@ -406,11 +423,7 @@ impl SystemState {
         Ok(self.preferences()?.claude)
     }
 
-    pub(crate) fn agy_preferences(&self) -> Result<crate::agy::ProviderPreferences, String> {
-        Ok(self.preferences()?.agy)
-    }
-
-    fn preferences(&self) -> Result<Preferences, String> {
+    pub(crate) fn preferences(&self) -> Result<Preferences, String> {
         let store = self
             .store
             .lock()
@@ -453,6 +466,8 @@ impl SystemState {
             resolved_terminal_shell,
             terminal_error,
             terminal_font_error,
+            companion_supported: crate::companion::SUPPORTED,
+            companion_error: None,
         })
     }
     pub(crate) fn changed(&self, app: &tauri::AppHandle) {
@@ -463,6 +478,7 @@ impl SystemState {
 
     fn configured_snapshot(&self, app: &tauri::AppHandle) -> Result<Snapshot, String> {
         let mut snapshot = self.snapshot()?;
+        snapshot.companion_error = crate::companion::error(app);
         if snapshot.preferences.chat_title_model.is_none() {
             return Ok(snapshot);
         }
@@ -512,6 +528,7 @@ impl SystemState {
                 let _ = wake.send(false);
             }
         }
+        crate::companion::configure(app);
         self.changed(app);
         Ok(())
     }
@@ -743,34 +760,6 @@ pub(crate) async fn save_claude_provider_preferences(
 }
 
 #[tauri::command]
-pub(crate) async fn save_agy_provider_preferences(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, SystemState>,
-    mut preferences: crate::agy::ProviderPreferences,
-) -> Result<crate::agy::ProviderPreferences, String> {
-    preferences.validate()?;
-    preferences.disabled_models.sort();
-    preferences.disabled_models.dedup();
-    let _edit = state.edit.lock().await;
-    {
-        let mut store = state
-            .store
-            .lock()
-            .map_err(|_| "Preferências indisponíveis.")?;
-        let store = store
-            .as_mut()
-            .ok_or("Preferências ainda não carregadas.")?
-            .as_mut()
-            .map_err(|error| error.clone())?;
-        let mut next = store.preferences.clone();
-        next.agy = preferences.clone();
-        store.save(next)?;
-    }
-    state.changed(&app);
-    Ok(preferences)
-}
-
-#[tauri::command]
 pub async fn save_system_preferences(
     app: tauri::AppHandle,
     state: tauri::State<'_, SystemState>,
@@ -841,6 +830,7 @@ pub async fn save_system_preferences(
             let _ = wake.send(false);
         }
     }
+    crate::companion::configure(&app);
     state.changed(&app);
     let _ = unread::refresh(&app).await;
     state.configured_snapshot(&app)

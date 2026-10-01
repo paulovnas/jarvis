@@ -9,7 +9,6 @@ import { ProviderRemovalDialog } from "./ProviderRemovalDialog";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 vi.mock("@/hooks/use-claude-runtime", () => ({ useClaudeRuntime: () => ({ data: { installed: true, authenticated: true, version: "2", error: null, models: [{ id: "sonnet", name: "Sonnet", description: "", reasoningLevels: [], defaultReasoning: null }] }, loading: false, error: null }) }));
-vi.mock("@/hooks/use-agy-runtime", () => ({ useAgyRuntime: () => ({ data: { installed: true, authenticated: true, version: "1.2.13", preferences: { enabled: true, disabledModels: [] }, error: null, models: [{ id: "gemini", name: "Gemini", description: "", reasoningLevels: ["high"], defaultReasoning: "high" }] }, loading: false, error: null }) }));
 const call = vi.mocked(invoke);
 const item = providerReference();
 const plan = { alias: "antigo", revision: "review-1", items: [item] };
@@ -76,19 +75,16 @@ it("explains when the last compatible provider is removed and cancellation has n
   expect(call).not.toHaveBeenCalledWith("disconnect_provider_account", expect.anything());
 });
 
-it.each(["claude", "agy"] as const)("replaces agent references with %s without fabricating a provider account", async executor => {
+it("replaces agent references with Claude without fabricating a provider account", async () => {
   const { user, removed } = setup([referenceAccount("antigo")]);
   const picker = await screen.findByRole("button", { name: "Modelo CLI para Analista" });
   picker.focus(); await user.keyboard("{Enter}");
-  (await screen.findByRole("menuitem", { name: executor === "agy" ? "Antigravity CLI" : "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
-  if (executor === "agy") {
-    (await screen.findByRole("menuitem", { name: "Gemini" })).focus(); await user.keyboard("{ArrowRight}");
-    await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
-  } else await user.click(await screen.findByRole("menuitem", { name: "Sonnet" }));
+  (await screen.findByRole("menuitem", { name: "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Sonnet" }));
   expect(screen.queryByRole("combobox", { name: "Novo modelo para Analista" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Substituir e remover" }));
   await waitFor(() => expect(removed).toHaveBeenCalled());
-  expect(call).toHaveBeenCalledWith("disconnect_provider_account", { alias: "antigo", revision: "review-1", replacements: [{ id: item.id, choice: { executor, account: "", model: executor === "agy" ? "gemini" : "sonnet", reasoning: executor === "agy" ? "high" : null } }] });
+  expect(call).toHaveBeenCalledWith("disconnect_provider_account", { alias: "antigo", revision: "review-1", replacements: [{ id: item.id, choice: { executor: "claude", account: "", model: "sonnet", reasoning: null } }] });
 });
 
 it.each(["web_search", "vision", "image_generation", "chat_title"] as const)("keeps CLI executors out of %s replacements", async kind => {

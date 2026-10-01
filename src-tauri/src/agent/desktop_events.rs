@@ -60,6 +60,9 @@ pub(super) fn finished(app: &tauri::AppHandle, session: &Session, home: &std::pa
     let validation = workflow::awaiting_validation(home, &session.id, &id);
     if let Some(notice) = terminal_notice(status, error_code.as_deref(), active, queued, validation)
     {
+        if notice == Notice::Validation {
+            super::companion::validation(app, &session.id);
+        }
         system::notify(app, &session.id, &id, notice);
     }
 }

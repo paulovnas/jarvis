@@ -10,7 +10,6 @@ const deadlines = {
   get_library_snapshot: 15_000,
   get_provider_usage: 45_000,
   get_claude_usage: 45_000,
-  get_agy_usage: 45_000,
   check_core_updates: 40_000,
   check_app_update: 45_000,
   refresh_provider_models: 120_000,

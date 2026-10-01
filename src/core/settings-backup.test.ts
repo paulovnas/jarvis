@@ -14,3 +14,8 @@ it("includes the independent chat title model among import mappings", () => {
   const choice = { account: "personal", model: "gpt-6-luna", reasoning: null };
   expect(backupModelMappingSchema.parse({ targetId: target.id, choice }).choice).toEqual(choice);
 });
+
+it("keeps retired model targets readable without silently mapping them to a supported executor", () => {
+  const choice = { executor: "agy", account: "", model: "gemini", reasoning: "high", fallback: { executor: "claude", account: "", model: "sonnet", reasoning: null } };
+  expect(backupModelMappingSchema.parse({ targetId: "builtin:standard/builder", choice }).choice).toEqual({ ...choice, executor: "unavailable" });
+});

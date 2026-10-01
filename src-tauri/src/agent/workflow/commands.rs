@@ -36,6 +36,8 @@ pub struct AgentCard {
     role: Role,
     title: String,
     status: Status,
+    #[serde(skip_serializing_if = "is_false")]
+    reconnecting: bool,
     updated_at: u64,
     created_at: u64,
     started_at: u64,
@@ -114,7 +116,7 @@ fn restore_stored_durations(
     }
 }
 
-fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError> {
+pub(super) fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError> {
     let mut agents = vec![AgentCard {
         id: "main".into(),
         parent_id: None,
@@ -148,6 +150,7 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
             |agent| agent.name.clone(),
         ),
         status: state.root_status,
+        reconnecting: false,
         created_at: state.updated_at,
         updated_at: state.updated_at,
         started_at: state.updated_at,
@@ -173,6 +176,13 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
         agents[0].duration_ms = duration_ms;
         agents[0].active_since = active_since;
         agents[0].current_thought = current_thought;
+        agents[0].reconnecting = data.active.is_some()
+            && data.turns.last().is_some_and(|turn| {
+                turn.turn
+                    .steps
+                    .last()
+                    .is_some_and(|step| step.retry.is_some())
+            });
         if data
             .active
             .as_ref()
@@ -210,6 +220,7 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
             }),
             title: job.title.clone(),
             status: job.status,
+            reconnecting: false,
             created_at: job.created_at,
             updated_at: job.updated_at,
             started_at: job.updated_at.saturating_sub(job.duration_ms),
@@ -238,6 +249,13 @@ fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, AgentError>
             card.duration_ms = duration_ms;
             card.active_since = active_since;
             card.current_thought = current_thought;
+            card.reconnecting = data.active.is_some()
+                && data.turns.last().is_some_and(|turn| {
+                    turn.turn
+                        .steps
+                        .last()
+                        .is_some_and(|step| step.retry.is_some())
+                });
             if let Some(active) = &data.active {
                 card.pending_approval = active.pending_approval_request().cloned();
                 card.pending_question = active

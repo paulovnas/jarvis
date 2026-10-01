@@ -101,6 +101,18 @@ pub struct ContextMode {
     activity: Mutex<Vec<super::activity::Activity>>,
 }
 impl ContextMode {
+    /// A general companion conversation has no project tools or auxiliary processes.
+    pub(crate) fn without_project(root: &Path, session: &str) -> Self {
+        Self {
+            client: None,
+            hooks: Hooks::inactive(root, session),
+            root: root.into(),
+            indexing_unavailable: AtomicBool::new(true),
+            recall_unavailable: AtomicBool::new(true),
+            activity: Mutex::new(Vec::new()),
+        }
+    }
+
     pub async fn open(
         home: &Path,
         root: &Path,
@@ -669,6 +681,35 @@ pub(super) async fn verify(package: &Path) -> Result<(), CoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn projectless_context_has_no_tools_processes_or_core_warnings() {
+        let directory = tempfile::tempdir().unwrap();
+        let context = ContextMode::without_project(directory.path(), "jarvito");
+        let (sender, signal) = watch::channel(false);
+        assert!(!context.available());
+        assert!(context.definitions(false).is_empty());
+        assert_eq!(
+            context
+                .hooks
+                .run_resilient(Event::SessionStart, json!({}), signal.clone())
+                .await
+                .unwrap(),
+            ""
+        );
+        assert!(context.take_activity().is_empty());
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+        sender.send(true).unwrap();
+        assert_eq!(
+            context
+                .hooks
+                .run_resilient(Event::TurnEnd, json!({}), signal)
+                .await
+                .unwrap_err()
+                .code,
+            "cancelled"
+        );
+    }
 
     #[tokio::test]
     async fn startup_fallback_does_not_advertise_or_route_to_missing_tools() {

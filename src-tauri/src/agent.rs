@@ -1,4 +1,3 @@
-mod agy_executor;
 pub(crate) mod attachments;
 pub(crate) mod authoring;
 pub(crate) mod browser;
@@ -6,6 +5,8 @@ mod claude_executor;
 pub(crate) mod cleanup;
 mod command_sessions;
 mod compaction;
+pub(crate) mod companion;
+pub(crate) mod companion_chat;
 mod context_manager;
 mod core_runtime;
 pub(crate) mod dashboard;
@@ -88,6 +89,12 @@ pub struct AgentError {
 impl AgentError {
     pub(crate) fn message(&self) -> &str {
         &self.message
+    }
+    pub(crate) fn unsupported_executor() -> Self {
+        Self::new(
+            "unsupported_executor",
+            "Este executor foi removido ou não está disponível. O histórico foi preservado; escolha um modelo suportado para continuar.",
+        )
     }
     fn new(code: &str, message: &str) -> Self {
         Self {
@@ -838,6 +845,7 @@ impl Session {
         id: Option<String>,
         parts: Vec<skill_input::MessagePart>,
     ) -> Result<watch::Receiver<bool>, AgentError> {
+        options.executor.require_available()?;
         if data.active.is_some() || data.compacting || data.manual_compaction {
             return Err(AgentError::new(
                 "already_running",
@@ -990,6 +998,7 @@ impl Session {
                 "Apenas a execução mais recente desta conversa pode ser retomada.",
             ));
         }
+        current.turn.options.executor.require_available()?;
         let workflow = resumable_workflow_turn(&current);
         if !workflow && !retryable_without_workflow_checkpoint(&current) {
             return Err(AgentError::new(
@@ -1239,6 +1248,8 @@ pub struct AgentState {
     title_generations: Arc<Mutex<HashSet<String>>>,
     histories: history::HistoryState,
     workflows: workflow::Registry,
+    companion_recent: companion::Recent,
+    companion_chat: companion_chat::State,
     journal_maintenance: Arc<AtomicBool>,
     admission: turn_state::TurnAdmission,
 }
@@ -1256,6 +1267,8 @@ impl Default for AgentState {
             title_generations: Default::default(),
             histories: Default::default(),
             workflows: Default::default(),
+            companion_recent: Default::default(),
+            companion_chat: Default::default(),
             journal_maintenance: Default::default(),
             admission: Default::default(),
         }
@@ -1592,6 +1605,8 @@ impl AgentState {
                 manual_compaction: false,
             }),
             emit: Arc::new(move |snapshot| {
+                companion::observe(&handle, &snapshot);
+                companion_chat::changed(&handle, &snapshot);
                 desktop_events::attention(&handle, &snapshot.conversation_id, &snapshot);
                 event_protocol.emit(&snapshot);
             }),
@@ -1713,7 +1728,10 @@ fn resumable_direct_turn(turn: &StoredTurn) -> bool {
             && turn.turn.error.as_ref().is_some_and(|error| {
                 matches!(error.code.as_str(), "interrupted" | "progress_paused")
             }));
-    recoverable_status && turn.turn.options.direct() && journal::safe_to_resume(turn)
+    turn.turn.options.executor != crate::claude::Executor::Unavailable
+        && recoverable_status
+        && turn.turn.options.direct()
+        && journal::safe_to_resume(turn)
 }
 
 fn retryable_without_workflow_checkpoint(turn: &StoredTurn) -> bool {
@@ -1722,7 +1740,8 @@ fn retryable_without_workflow_checkpoint(turn: &StoredTurn) -> bool {
             && turn.turn.error.as_ref().is_some_and(|error| {
                 matches!(error.code.as_str(), "interrupted" | "progress_paused")
             }));
-    recoverable_status
+    turn.turn.options.executor != crate::claude::Executor::Unavailable
+        && recoverable_status
         && (turn.turn.options.direct()
             || (turn.turn.options.workflow.is_none() && turn.turn.options.mode == Mode::Plan)
             || turn.turn.options.workflow == Some(workflow::Flow::Publication))
@@ -1735,7 +1754,8 @@ fn resumable_workflow_turn(turn: &StoredTurn) -> bool {
             && turn.turn.error.as_ref().is_some_and(|error| {
                 matches!(error.code.as_str(), "interrupted" | "progress_paused")
             }));
-    recoverable_status
+    turn.turn.options.executor != crate::claude::Executor::Unavailable
+        && recoverable_status
         && !turn.turn.options.direct()
         && matches!(
             turn.turn.options.workflow,
@@ -1876,7 +1896,9 @@ pub async fn start_agent_turn(
     let run_app = app.clone();
     let run_state = state.clone();
     let run_home = home.clone();
-    app.state::<crate::core::CoreState>().require_ready(&home)?;
+    if !companion_chat::is_global_session(&conversation_id) {
+        app.state::<crate::core::CoreState>().require_ready(&home)?;
+    }
     let mcp = app.state::<crate::mcp::McpState>().inner().clone();
     let validation_oauth = oauth.clone();
     let (session, signal) = tauri::async_runtime::spawn_blocking(move || {
@@ -1887,7 +1909,7 @@ pub async fn start_agent_turn(
         state.with_connection(&home, |db| {
             provider_links::resolve_chat(db, &conversation_id, &mut options)
         })?;
-        workflow::validate_options(&state, &validation_oauth, &home, &options)?;
+        workflow::validate_options(&state, &validation_oauth, &home, &options, &conversation_id)?;
         let mut parts = parts.unwrap_or_default();
         attachments::validate_parts(&home, &conversation_id, &mut parts)?;
         let (content, parts) = skill_input::normalize(&home, &session.root, content, parts)?;
@@ -2624,7 +2646,7 @@ fn run_turn_once<'a>(
             home,
         } = runtime;
         session.transition(turn_state::TurnPhase::Preparing)?;
-        crate::core::require_ready(home)?;
+        let global_companion = companion_chat::is_global_session(&session.id);
         let (turn_id, options, initial_items, initial_bytes) = {
             let data = session.data.lock().map_err(|_| AgentError::internal())?;
             let current = data.turns.last().ok_or_else(AgentError::internal)?;
@@ -2636,6 +2658,10 @@ fn run_turn_once<'a>(
                 telemetry::serialized_bytes(&input),
             )
         };
+        options.executor.require_available()?;
+        if !global_companion {
+            crate::core::require_ready(home)?;
+        }
         let telemetry = telemetry::trace(&session.id, &turn_id);
         let preparation = telemetry::phase(&telemetry, telemetry::Phase::Preparation);
         telemetry::record(
@@ -2673,7 +2699,9 @@ fn run_turn_once<'a>(
         }
         if options.executor != crate::claude::Executor::Jarvis {
             let learning_owner = execution.as_ref().map_or(session, |exec| exec.root());
-            learning::prepare(session, learning_owner, state, home).await;
+            if !global_companion {
+                learning::prepare(session, learning_owner, state, home).await;
+            }
             let runtime = TurnRuntime {
                 grants,
                 state,
@@ -2685,10 +2713,9 @@ fn run_turn_once<'a>(
                 crate::claude::Executor::Claude => {
                     claude_executor::run(session, runtime, signal, execution).await
                 }
-                crate::claude::Executor::Agy => {
-                    agy_executor::run(session, runtime, signal, execution).await
+                crate::claude::Executor::Jarvis | crate::claude::Executor::Unavailable => {
+                    unreachable!()
                 }
-                crate::claude::Executor::Jarvis => unreachable!(),
             };
         }
         let auth_state = state.clone();
@@ -2725,7 +2752,7 @@ fn run_turn_once<'a>(
                 data.turns.last_mut().unwrap().turn.context_window = model.context_window;
             })
             .await?;
-        let mut mcp_clients = if publication_agent {
+        let mut mcp_clients = if publication_agent || global_companion {
             crate::mcp::runtime::TurnClients::default()
         } else {
             let discovery_signal = signal.clone();
@@ -2734,18 +2761,22 @@ fn run_turn_once<'a>(
                 clients = crate::mcp::runtime::TurnClients::discover_for_intent(mcp, state, home, &session.root, &mcp_intent, discovery_signal) => clients.map_err(AgentError::from)?,
             }
         };
-        let mut context = crate::core::context::ContextMode::open(
-            home,
-            &session.root,
-            &session.id,
-            signal.clone(),
-        )
-        .await?;
+        let mut context = if global_companion {
+            crate::core::context::ContextMode::without_project(&session.root, &session.id)
+        } else {
+            crate::core::context::ContextMode::open(
+                home,
+                &session.root,
+                &session.id,
+                signal.clone(),
+            )
+            .await?
+        };
         let owner = execution.as_ref().map_or(session, |exec| exec.root());
         let project_id = owner.project_id()?.to_owned();
         let publication_settings = publication::load(state, home, &project_id)?;
         let repository_context = crate::library::repositories::prompt(state, home, &project_id)?;
-        let direct_tasks = options.direct() && owner.id == session.id;
+        let direct_tasks = !global_companion && options.direct() && owner.id == session.id;
         let mut core_activities = Vec::new();
         let design_repository_paths =
             crate::library::repositories::configured_paths(state, home, &project_id)?;
@@ -2771,7 +2802,7 @@ fn run_turn_once<'a>(
             .map_or(options.mode == Mode::Plan, |exec| {
                 exec.role_mode() == Mode::Plan
             });
-        let beads = if direct_tasks || publication_agent {
+        let beads = if direct_tasks || publication_agent || global_companion {
             None
         } else {
             Some(crate::core::beads::Beads::new(
@@ -2803,7 +2834,11 @@ fn run_turn_once<'a>(
             .hooks
             .run_resilient(Event::SessionStart, json!({}), signal.clone())
             .await?;
-        let recall = context.recall_resilient(&user, signal.clone()).await?;
+        let recall = if global_companion {
+            String::new()
+        } else {
+            context.recall_resilient(&user, signal.clone()).await?
+        };
         let mut context_searches = u64::from(context.available());
         context
             .hooks
@@ -2876,8 +2911,11 @@ fn run_turn_once<'a>(
             if *signal.borrow() {
                 return Err(AgentError::cancelled());
             }
-            let search_enabled = !publication_agent && web_search::enabled(state, home, &options);
-            let context7_enabled = !publication_agent && crate::core::context7::configured(home);
+            let search_enabled = !global_companion
+                && !publication_agent
+                && web_search::enabled(state, home, &options);
+            let context7_enabled =
+                !global_companion && !publication_agent && crate::core::context7::configured(home);
             if let (Some(pack), Some(exec)) = (&design, &execution) {
                 let (mut scopes, brief) = exec.design_inputs()?;
                 if exec.direct() {
@@ -2892,7 +2930,9 @@ fn run_turn_once<'a>(
                     core_activities.push(activity);
                 }
             }
-            learning::prepare(session, owner, state, home).await;
+            if !global_companion {
+                learning::prepare(session, owner, state, home).await;
+            }
             let mut instructions =
                 tools::instructions(&session.root, options.mode, options.approval_mode);
             project_instructions.append_prompt(&mut instructions);
@@ -2925,74 +2965,80 @@ fn run_turn_once<'a>(
                 &options.model,
             );
             let mut definitions = tools::definitions(options.mode);
-            definitions.push(publication::inspection::definition());
-            if !publication_agent {
-                definitions.extend(authoring::definitions());
-            }
-            if options.mode == Mode::Build {
-                definitions.push(publication::definition());
-            }
-            definitions.push(attachments::definition());
-            if !publication_agent && vision::enabled(state, home, &options) {
-                definitions.push(vision::definition());
-            } else if !publication_agent {
-                instructions.push_str(" Vision is disabled or unavailable for the selected provider/model. You cannot inspect images; ask the user to configure Vision if their request requires image analysis. Documents remain readable through read_attachment.");
-            }
-            if owner.id != session.id {
-                let data = owner.data.lock().map_err(|_| AgentError::internal())?;
-                if let Some(turn) = data.turns.last() {
-                    instructions.push_str(&attachments::prompt(&turn.turn.parts));
+            if !global_companion {
+                definitions.push(publication::inspection::definition());
+                if !publication_agent {
+                    definitions.extend(authoring::definitions());
                 }
-            }
-            if design.is_some() {
-                definitions.extend(crate::core::design::definitions());
-            }
-            definitions.extend(context.definitions(restricted));
-            if context7_enabled {
-                definitions.extend(crate::core::context7::definitions());
-            }
-            if direct_tasks {
-                definitions.push(tasks::definition());
-                if project_beads.is_some() {
-                    definitions.extend(crate::core::beads::project_definitions());
+                if options.mode == Mode::Build {
+                    definitions.push(publication::definition());
                 }
-            } else if !publication_agent {
-                definitions.extend(crate::core::beads::definitions(options.mode == Mode::Plan));
-            }
-            if !publication_agent {
-                let skills = tokio::select! {
-                    _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-                    skills = crate::skills::active(home, &session.root) => skills.map_err(|cause| AgentError::new("skill_error", &cause.message))?,
+                definitions.push(attachments::definition());
+                if !publication_agent && vision::enabled(state, home, &options) {
+                    definitions.push(vision::definition());
+                } else if !publication_agent {
+                    instructions.push_str(" Vision is disabled or unavailable for the selected provider/model. You cannot inspect images; ask the user to configure Vision if their request requires image analysis. Documents remain readable through read_attachment.");
+                }
+                if owner.id != session.id {
+                    let data = owner.data.lock().map_err(|_| AgentError::internal())?;
+                    if let Some(turn) = data.turns.last() {
+                        instructions.push_str(&attachments::prompt(&turn.turn.parts));
+                    }
+                }
+                if design.is_some() {
+                    definitions.extend(crate::core::design::definitions());
+                }
+                definitions.extend(context.definitions(restricted));
+                if context7_enabled {
+                    definitions.extend(crate::core::context7::definitions());
+                }
+                if direct_tasks {
+                    definitions.push(tasks::definition());
+                    if project_beads.is_some() {
+                        definitions.extend(crate::core::beads::project_definitions());
+                    }
+                } else if !publication_agent {
+                    definitions.extend(crate::core::beads::definitions(options.mode == Mode::Plan));
+                }
+                if !publication_agent {
+                    let skills = tokio::select! {
+                        _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+                        skills = crate::skills::active(home, &session.root) => skills.map_err(|cause| AgentError::new("skill_error", &cause.message))?,
+                    };
+                    instructions.push_str(&crate::skills::prompt(&skills));
+                    if !skills.is_empty() {
+                        definitions.extend([
+                            crate::skills::definition(),
+                            crate::skills::search_definition(),
+                        ]);
+                    }
+                }
+                let mcp_definitions = if publication_agent {
+                    Vec::new()
+                } else {
+                    tokio::select! {
+                        _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+                        definitions = mcp_clients.definitions_with(mcp, state, home, restricted, |name| execution.as_ref().is_none_or(|exec| exec.allowed(name))) => definitions,
+                    }
                 };
-                instructions.push_str(&crate::skills::prompt(&skills));
-                if !skills.is_empty() {
-                    definitions.extend([
-                        crate::skills::definition(),
-                        crate::skills::search_definition(),
-                    ]);
+                if !mcp_definitions.is_empty() {
+                    instructions.push_str(&mcp_clients.instructions());
+                    definitions.extend(mcp_definitions);
                 }
-            }
-            let mcp_definitions = if publication_agent {
-                Vec::new()
+                if search_enabled {
+                    definitions.push(web_search::definition());
+                }
+                if !publication_agent && image_generation::enabled(state, home) {
+                    definitions.push(image_generation::definition());
+                    instructions.push_str(" Use generate_image for requested image creation. It uses the independently configured Antigravity account. The resulting images are displayed directly in chat and stored as conversation attachments; do not embed base64 or repeat their preview in Markdown. Never claim an image was created without a successful tool result.");
+                }
+                if let Some(definition) = progress_watchdog.definition() {
+                    definitions.push(definition);
+                }
             } else {
-                tokio::select! {
-                    _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-                    definitions = mcp_clients.definitions_with(mcp, state, home, restricted, |name| execution.as_ref().is_none_or(|exec| exec.allowed(name))) => definitions,
-                }
-            };
-            if !mcp_definitions.is_empty() {
-                instructions.push_str(&mcp_clients.instructions());
-                definitions.extend(mcp_definitions);
-            }
-            if search_enabled {
-                definitions.push(web_search::definition());
-            }
-            if !publication_agent && image_generation::enabled(state, home) {
-                definitions.push(image_generation::definition());
-                instructions.push_str(" Use generate_image for requested image creation. It uses the independently configured Antigravity account. The resulting images are displayed directly in chat and stored as conversation attachments; do not embed base64 or repeat their preview in Markdown. Never claim an image was created without a successful tool result.");
-            }
-            if let Some(definition) = progress_watchdog.definition() {
-                definitions.push(definition);
+                instructions = companion_chat::global_prompt().to_owned();
+                definitions = companion_chat::tools();
+                definitions.push(questions::definition());
             }
             if let Some(exec) = &execution {
                 exec.filter(&mut definitions);
@@ -3735,6 +3781,12 @@ fn run_turn_once<'a>(
                         None => None,
                     };
                     match prepared.map(|prepared| prepared.handler) {
+                        Some(tool_contract::Handler::Companion) => {
+                            let app = execution.as_ref()
+                                .and_then(workflow::Execution::native_app)
+                                .ok_or_else(AgentError::internal)?;
+                            companion_chat::execute(app, state, home, session, &tool, signal.clone()).await.map(|value| value.to_string())
+                        }
                         Some(tool_contract::Handler::Knowledge) => learning::retrieve(state, home, owner, &tool.args),
                         Some(tool_contract::Handler::Learning) => learning::remember(state, home, owner, &tool.args),
                         Some(tool_contract::Handler::Progress) => {
@@ -4316,6 +4368,9 @@ struct TitleRequest {
 }
 
 fn title_request(session: &Session) -> Option<TitleRequest> {
+    if companion_chat::is_global_session(&session.id) {
+        return None;
+    }
     session.data.lock().ok().and_then(|data| {
         data.turns.first().map(|first| TitleRequest {
             message: first.turn.user.chars().take(2_000).collect(),

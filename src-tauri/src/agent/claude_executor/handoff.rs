@@ -18,10 +18,9 @@ fn excerpt(text: &str, limit: usize) -> String {
 
 pub(in crate::agent) fn history(data: &SessionData) -> Value {
     let fallback = data.turns.last().is_some_and(|turn| {
-        turn.wire.iter().any(|item| {
-            item.get("_jarvis_model_fallback").is_some()
-                || item.get("_jarvis_agy_restart").is_some()
-        })
+        turn.wire
+            .iter()
+            .any(|item| item.get("_jarvis_model_fallback").is_some())
     });
     let previous = &data.turns[..data.turns.len().saturating_sub(usize::from(!fallback))];
     // Keep the original objective and immediately preceding request/corrections

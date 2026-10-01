@@ -1,12 +1,12 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod agent;
-mod agy;
 mod app_exit;
 #[cfg(target_os = "macos")]
 mod app_menu;
 mod background;
 mod backup;
 mod claude;
+mod companion;
 mod core;
 mod data_dir;
 mod desktop;
@@ -39,13 +39,77 @@ fn main_only(
     invoke: tauri::ipc::Invoke<tauri::Wry>,
     handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool,
 ) -> bool {
-    if invoke.message.webview().label() != "main" {
+    if !application_command_allowed(invoke.message.webview().label(), invoke.message.command()) {
         invoke
             .resolver
             .reject("Application commands are unavailable in browser tabs.");
         return true;
     }
     handler(invoke)
+}
+
+fn application_command_allowed(label: &str, command: &str) -> bool {
+    label == "main"
+        || (label == "companion"
+            && matches!(
+                command,
+                "get_companion_snapshot"
+                    | "ack_companion_item"
+                    | "get_companion_usage"
+                    | "set_companion_expanded"
+                    | "set_companion_bubble"
+                    | "companion_start_drag"
+                    | "companion_set_interacting"
+                    | "companion_open_conversation"
+                    | "companion_answer_question"
+                    | "companion_pause_question"
+                    | "get_companion_chat"
+                    | "send_companion_message"
+                    | "confirm_companion_project"
+                    | "get_companion_conversations"
+                    | "stop_companion_chat"
+                    | "get_companion_models"
+            ))
+}
+
+#[cfg(test)]
+mod companion_policy_tests {
+    use super::application_command_allowed;
+    #[test]
+    fn auxiliary_window_has_only_its_commands_and_browser_tabs_have_none() {
+        assert!(application_command_allowed(
+            "main",
+            "save_system_preferences"
+        ));
+        for command in [
+            "get_companion_snapshot",
+            "ack_companion_item",
+            "get_companion_usage",
+            "set_companion_bubble",
+            "companion_answer_question",
+            "companion_open_conversation",
+            "get_companion_chat",
+            "send_companion_message",
+            "confirm_companion_project",
+            "get_companion_conversations",
+            "stop_companion_chat",
+            "get_companion_models",
+        ] {
+            assert!(application_command_allowed("companion", command));
+            assert!(!application_command_allowed("browser-1", command));
+        }
+        for command in [
+            "save_system_preferences",
+            "browser_command",
+            "get_chat",
+            "subscribe_chat",
+            "run_shell",
+            "disconnect_provider_account",
+        ] {
+            assert!(!application_command_allowed("companion", command));
+            assert!(!application_command_allowed("other", command));
+        }
+    }
 }
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -68,11 +132,11 @@ pub fn run() {
     }));
     builder
         .manage(desktop::DesktopState::default())
+        .manage(companion::CompanionState::default())
         .manage(core::CoreState::default())
         .manage(persistence::AppState::default())
         .manage(openai_codex::OpenAiCodexState::default())
         .manage(claude::ClaudeState::default())
-        .manage(agy::AgyState::default())
         .manage(agent::AgentState::default())
         .manage(agent::knowledge::generation::KnowledgeJobs::default())
         .manage(agent::learning::capture::LearningJobs::default())
@@ -115,6 +179,7 @@ pub fn run() {
             skills::setup(&home).map_err(|error| std::io::Error::other(error.message))?;
             core::health::start_monitor(app.handle());
             system::setup(app.handle())?;
+            companion::setup(app.handle());
             let agent = app.state::<agent::AgentState>();
             agent
                 .terminals
@@ -133,11 +198,30 @@ pub fn run() {
             agent::browser::extension::start_if_configured(app.handle());
             Ok(())
         })
-        .on_window_event(desktop::on_window_event)
+        .on_window_event(|window, event| {
+            desktop::on_window_event(window, event);
+            companion::on_window_event(window, event);
+        })
         .invoke_handler(|invoke| {
             // Remote child views must never call privileged application commands,
             // even if a site navigates to a local URL matching the development origin.
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                companion::get_companion_snapshot,
+                companion::ack_companion_item,
+                companion::get_companion_usage,
+                companion::set_companion_expanded,
+                companion::set_companion_bubble,
+                companion::companion_start_drag,
+                companion::companion_set_interacting,
+                companion::companion_open_conversation,
+                companion::companion_answer_question,
+                companion::companion_pause_question,
+                agent::companion_chat::get_companion_chat,
+                agent::companion_chat::send_companion_message,
+                agent::companion_chat::confirm_companion_project,
+                agent::companion_chat::get_companion_conversations,
+                agent::companion_chat::stop_companion_chat,
+                agent::companion_chat::get_companion_models,
                 http_client::get_project_http_settings,
                 http_client::save_project_http_settings,
                 http_client::get_http_snapshot,
@@ -178,10 +262,6 @@ pub fn run() {
                 claude::refresh_claude_runtime,
                 claude::get_claude_usage,
                 system::save_claude_provider_preferences,
-                agy::get_agy_runtime,
-                agy::refresh_agy_runtime,
-                agy::get_agy_usage,
-                system::save_agy_provider_preferences,
                 system::get_system_preferences,
                 system::save_system_preferences,
                 system::test_system_notification,
@@ -341,6 +421,16 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = &event {
+                use tauri::Manager;
+                // A visible companion does not mean the user's main window is visible.
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if app_exit::request(app) {
                     api.prevent_exit();

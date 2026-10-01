@@ -39,7 +39,38 @@ O Jarvis evolui continuamente. Relate problemas e sugestões nas [issues do proj
 | **Ambiente** | Explorer, visualização de arquivos, diff das alterações, terminal configurável, processos persistentes, navegador integrado, LSP e patch transacional. |
 | **Vídeos** | Composições editáveis com Hyperframes, validação e renderização MP4 pelo agente Criador de vídeos, reprodução em uma aba do chat e ações para salvar ou abrir externamente. |
 | **Detalhes do projeto** | Métricas de uso, atividade dos agentes, Kanban e opções próprias de publicação para cada projeto. |
-| **Desktop** | Notificações do sistema, badges de mensagens não lidas, prevenção de repouso, atalhos controlados, backup de configurações e atualização automática do aplicativo e dos recursos. |
+| **Desktop** | Notificações do sistema, badges de mensagens não lidas, prevenção de repouso, atalhos controlados, backup de configurações e atualização automática do aplicativo e dos recursos. Assistente flutuante opcional no macOS e Windows. |
+
+### Jarvito desktop companion
+
+Enable **Configurações → Geral → Assistente na área de trabalho** on macOS or
+Windows. Drag the original, transparent robot to place it; its position survives
+restarts. Click it to expand the animated island around its current screen position;
+Jarvito keeps the nearest corner as the island opens and closes. It shows agents,
+subagents, active time, questions, recent results and provider usage. Speech bubbles
+return after dragging and describe the actual response or error. Clicking outside
+collapses the island smoothly. Motion pauses when hidden and respects reduced motion.
+
+The character uses a locally bundled Rive vector rig with coordinated expressions,
+gestures and blended transitions. The Canvas runtime and both WASM variants are
+packaged with the application; animation does not contact a CDN or an AI provider.
+The original artwork and choreography are reproducible with
+`bun scripts/generate-jarvito-rive.mjs`; `--check` verifies the committed asset.
+The Sobo marketplace character informed motion quality only; its artwork is not
+distributed. The rig uses the public input API supported by the pinned runtime.
+
+The Chat tab supports general conversations without choosing a folder, project
+discovery across workspaces and access to existing chats. Project proposals require
+explicit confirmation before creating or continuing a project conversation. This
+handoff and subsequent messages reuse the normal agent runtime without moving the
+main window or its navigation selection. The general conversation has no project
+filesystem, shell or MCP tools. Detailed approvals can open their chat explicitly.
+
+The companion remains available while Jarvis is minimized, never resumes chats
+just by observing them and does not activate another window on activity updates.
+On macOS, an independent nonactivating panel handles companion interactions; the
+Dock restores the main window even while the companion remains visible. Closing
+Jarvis still exits the application. Linux is not supported by this feature.
 
 ## Fluxos e agentes
 

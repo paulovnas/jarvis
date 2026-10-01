@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn retired_cli_settings_do_not_prevent_loading_or_reappear_in_saved_preferences() {
+    let home = tempfile::tempdir().unwrap();
+    let path = crate::data_dir::root(home.path()).join("system.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        r#"{
+        "notifications":true,"askUserTimeoutSeconds":75,
+        "claude":{"enabled":true,"showUsage":false,"disabledModels":["opus"]},
+        "agy":{"enabled":true,"showUsage":true,"disabledModels":["gemini-3-flash"]}
+    }"#,
+    )
+    .unwrap();
+    let mut store = Store::open(path.clone()).unwrap();
+    assert!(store.preferences.notifications);
+    assert_eq!(store.preferences.ask_user_timeout_seconds, 75);
+    assert_eq!(store.preferences.claude.disabled_models, ["opus"]);
+    assert!(!store.preferences.claude.show_usage);
+    store.save(store.preferences.clone()).unwrap();
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert!(saved.get("agy").is_none());
+    assert!(Store::open(path).unwrap().preferences.notifications);
+    assert!(serde_json::from_str::<Preferences>(r#"{"unexpectedSetting":true}"#).is_err());
+}
+
+#[test]
+fn companion_is_opt_in_and_survives_restart_and_backup() {
+    let home = tempfile::tempdir().unwrap();
+    let legacy: Preferences = serde_json::from_str(r#"{"notifications":false}"#).unwrap();
+    assert!(!legacy.companion_enabled);
+    let path = crate::data_dir::root(home.path()).join("system.json");
+    let mut store = Store::open(path.clone()).unwrap();
+    store
+        .save(Preferences {
+            companion_enabled: true,
+            ..legacy
+        })
+        .unwrap();
+    assert!(Store::open(path).unwrap().preferences.companion_enabled);
+    assert!(backup_preferences(home.path()).unwrap().companion_enabled);
+}
+
+#[test]
 fn dedicated_chat_title_model_defaults_to_automatic_and_survives_restart() {
     let home = tempfile::tempdir().unwrap();
     let path = crate::data_dir::root(home.path()).join("system.json");
@@ -128,35 +171,6 @@ fn claude_provider_preferences_survive_restart_and_preserve_legacy_choices() {
 }
 
 #[test]
-fn agy_is_opt_in_and_model_preferences_survive_restart_without_credentials() {
-    let home = tempfile::tempdir().unwrap();
-    let path = crate::data_dir::root(home.path()).join("system.json");
-    let legacy: Preferences = serde_json::from_str(r#"{"notifications":true}"#).unwrap();
-    assert!(!legacy.agy.enabled);
-    assert!(legacy.agy.show_usage);
-    let mut store = Store::open(path.clone()).unwrap();
-    let mut preferences = legacy;
-    preferences.agy.enabled = true;
-    preferences.agy.disabled_models = vec!["gemini-3-flash".into()];
-    store.save(preferences.clone()).unwrap();
-    assert_eq!(
-        Store::open(path.clone()).unwrap().preferences.agy,
-        preferences.agy
-    );
-    assert!(crate::agy::validate_available_model(home.path(), "gemini-3-pro").is_ok());
-    assert!(crate::agy::validate_available_model(home.path(), "gemini-3-flash").is_err());
-    preferences.agy.disabled_models = vec!["--unsafe".into()];
-    assert!(store.save(preferences).is_err());
-    assert_eq!(
-        Store::open(path).unwrap().preferences.agy.disabled_models,
-        ["gemini-3-flash"]
-    );
-    assert!(
-        serde_json::from_str::<crate::agy::ProviderPreferences>(r#"{"token":"secret"}"#).is_err()
-    );
-}
-
-#[test]
 fn terminal_fonts_prioritize_nerd_fonts_and_report_missing_configurations() {
     let fonts = order_terminal_fonts([
         "Menlo".to_string(),
@@ -232,6 +246,7 @@ fn preferences_restore_all_modes_without_touching_layout() {
         let preferences = Preferences {
             prevent_sleep: mode,
             notifications: mode != SleepMode::Off,
+            companion_enabled: false,
             ask_user_timeout_seconds: 45,
             response_language: if mode == SleepMode::Active {
                 ResponseLanguage::English
@@ -240,7 +255,7 @@ fn preferences_restore_all_modes_without_touching_layout() {
             },
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
-            agy: crate::agy::ProviderPreferences::default(),
+            _retired_cli_preferences: (),
             browser: crate::agent::browser::BrowserPreferences::default(),
             chat_title_model: None,
         };
@@ -270,11 +285,12 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
         .save(Preferences {
             prevent_sleep: SleepMode::Open,
             notifications: true,
+            companion_enabled: false,
             ask_user_timeout_seconds: 30,
             response_language: ResponseLanguage::Spanish,
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
-            agy: crate::agy::ProviderPreferences::default(),
+            _retired_cli_preferences: (),
             browser: crate::agent::browser::BrowserPreferences::default(),
             chat_title_model: None,
         })

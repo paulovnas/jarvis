@@ -37,6 +37,7 @@ export function modelProblem(choice: ModelChoice, accounts: ProviderAccount[], k
 }
 
 function modelTargetProblem(choice: ModelChoice, accounts: ProviderAccount[], kind: ReferenceKind): string | null {
+  if (executorOf(choice) === "unavailable") return "Este executor foi removido. Escolha outro provedor e modelo.";
   if (executorOf(choice) !== "jarvis") return null;
   const account = accounts.find(account => account.alias === choice.account);
   if (!account) return `O provedor ${choice.account} não existe mais. Escolha outro provedor e modelo.`;

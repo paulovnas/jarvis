@@ -101,3 +101,18 @@ model, then only the reasoning levels reported by that model.
 Review the native application at default, narrow and wide sizes: sidebar truncation,
 composer controls, expanded tool rows, questions, settings cards and diff viewer. Verify
 real resize/restart restoration and maximization separately from the user's acceptance test.
+
+The optional Jarvito desktop companion uses an original graphite robot with cyan
+eyes and semantic state accents, without a background tile. A locally bundled Rive
+vector rig coordinates breathing, blinking, gaze, articulated gestures and
+expressions with soft transitions, without React animation loops. Island travel
+uses the native CSS timeline; Rive steps follow it and pause during interaction.
+Reduced motion retains the same character in a static state-specific pose. The glossy
+graphite island expands from the robot, preserving its screen position in the
+corresponding top/bottom and left/right corner. Both opening and closing animate
+around that origin, including collapse on outside interaction. Speech hides during
+native drag and returns afterward with a bounded response/error preview. Scrollable
+activity/chat content adapts to the available screen height. Use shadcn controls, the existing
+question card and active-duration display. Pause motion when hidden and respect
+reduced motion. Pet interaction must not activate the main window; only explicit
+Open in Jarvis actions navigate there.

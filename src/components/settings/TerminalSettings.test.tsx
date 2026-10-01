@@ -16,6 +16,7 @@ const initial: SystemSnapshot = {
   preferences: {
     preventSleep: "active",
     notifications: true,
+    companionEnabled: false,
     askUserTimeoutSeconds: 45,
     responseLanguage: "pt-BR",
     terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 },
@@ -24,6 +25,8 @@ const initial: SystemSnapshot = {
   sleepInhibited: true,
   sleepError: null,
   notificationError: null,
+  companionSupported: true,
+  companionError: null,
   availableTerminalShells: ["/bin/zsh", "/bin/bash"],
   availableTerminalFonts: ["NotoSansM Nerd Font Mono", "JetBrains Mono"],
   resolvedTerminalShell: "/bin/zsh",

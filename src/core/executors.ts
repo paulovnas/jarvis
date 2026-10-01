@@ -1,19 +1,14 @@
 import { z } from "zod";
 import type { ModelChoice } from "./provider-references";
 
-export const executorSchema = z.enum(["jarvis", "claude", "agy"]);
+// Retired executors remain readable in saved history without becoming runnable.
+export const executorSchema = z.string().transform(value => value === "jarvis" ? "jarvis" as const : value === "claude" ? "claude" as const : "unavailable" as const);
 export type Executor = z.infer<typeof executorSchema>;
 export type ExecutionChoice = { executor?: Executor; account: string; model: string; reasoning: string | null };
 export type ExecutionSelection = { executor?: Executor; model: string; reasoning: string | null };
 export const executorOf = (choice?: { executor?: Executor } | null): Executor => choice?.executor ?? "jarvis";
-export const executionLabel = (choice: ExecutionChoice) => `${executorOf(choice) === "claude" ? "Claude Code" : executorOf(choice) === "agy" ? "Antigravity CLI" : choice.account} / ${choice.model}`;
-export const sameExecutionTarget = (first: ExecutionChoice, second: ExecutionChoice) => executorOf(first) === executorOf(second) && first.account === second.account && normalizeExecutionSelection(first).model === normalizeExecutionSelection(second).model;
-
-export function normalizeExecutionSelection(selection: ExecutionSelection): ExecutionSelection {
-  if (executorOf(selection) !== "agy") return selection;
-  const variant = /^(.+)-(low|medium|high|max)$/.exec(selection.model);
-  return variant ? { ...selection, model: variant[1], reasoning: selection.reasoning ?? variant[2] } : selection;
-}
+export const executionLabel = (choice: ExecutionChoice) => `${executorOf(choice) === "claude" ? "Claude Code" : executorOf(choice) === "unavailable" ? "Executor removido" : choice.account} / ${choice.model}`;
+export const sameExecutionTarget = (first: ExecutionChoice, second: ExecutionChoice) => executorOf(first) === executorOf(second) && first.account === second.account && first.model === second.model;
 
 export function selectModelChoice(current: ModelChoice | null | undefined, next: ExecutionChoice, slot: "primary" | "secondary"): ModelChoice {
   if (!current) return next;
@@ -27,14 +22,13 @@ export function selectModelChoice(current: ModelChoice | null | undefined, next:
 }
 
 export function executionSelection(choice?: ExecutionChoice | null): ExecutionSelection | null {
-  return choice ? normalizeExecutionSelection({ executor: executorOf(choice), model: executorOf(choice) !== "jarvis" ? choice.model : `${choice.account}/${choice.model}`, reasoning: choice.reasoning }) : null;
+  return choice ? { executor: executorOf(choice), model: executorOf(choice) !== "jarvis" ? choice.model : `${choice.account}/${choice.model}`, reasoning: choice.reasoning } : null;
 }
 
 export function executionChoice(selection: ExecutionSelection): ExecutionChoice {
-  const normalized = normalizeExecutionSelection(selection);
-  if (executorOf(normalized) !== "jarvis") return { executor: executorOf(normalized), account: "", model: normalized.model, reasoning: normalized.reasoning };
-  const split = normalized.model.indexOf("/");
-  return { executor: "jarvis", account: split < 0 ? "" : normalized.model.slice(0, split), model: split < 0 ? normalized.model : normalized.model.slice(split + 1), reasoning: normalized.reasoning };
+  if (executorOf(selection) !== "jarvis") return { executor: executorOf(selection), account: "", model: selection.model, reasoning: selection.reasoning };
+  const split = selection.model.indexOf("/");
+  return { executor: "jarvis", account: split < 0 ? "" : selection.model.slice(0, split), model: split < 0 ? selection.model : selection.model.slice(split + 1), reasoning: selection.reasoning };
 }
 
 export const claudeProviderPreferencesSchema = z.object({

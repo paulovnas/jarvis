@@ -189,6 +189,13 @@ struct Preferences {
     version: u32,
     layout: LayoutPreferences,
     window: WindowPreferences,
+    companion_position: Option<CompanionPosition>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct CompanionPosition {
+    pub x: i32,
+    pub y: i32,
 }
 
 impl Default for Preferences {
@@ -197,6 +204,7 @@ impl Default for Preferences {
             version: 1,
             layout: LayoutPreferences::default(),
             window: WindowPreferences::default(),
+            companion_position: None,
         }
     }
 }
@@ -241,6 +249,35 @@ impl Store {
 pub struct DesktopState {
     store: Arc<Mutex<Option<Store>>>,
     revision: Arc<AtomicU64>,
+}
+
+impl DesktopState {
+    pub(crate) fn companion_position(&self) -> Option<CompanionPosition> {
+        self.store
+            .lock()
+            .ok()?
+            .as_ref()?
+            .preferences
+            .companion_position
+    }
+
+    pub(crate) fn save_companion_position(
+        &self,
+        position: CompanionPosition,
+    ) -> Result<(), String> {
+        let mut guard = self.store.lock().map_err(|_| "Desktop lock poisoned")?;
+        let store = guard.as_mut().ok_or("Desktop preferences unavailable")?;
+        let previous = store.preferences.companion_position;
+        if previous == Some(position) {
+            return Ok(());
+        }
+        store.preferences.companion_position = Some(position);
+        if let Err(error) = store.save() {
+            store.preferences.companion_position = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -456,6 +493,27 @@ pub async fn save_desktop_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn companion_position_survives_main_layout_edits_and_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("desktop.json");
+        let state = DesktopState::default();
+        *state.store.lock().unwrap() = Some(Store::open(path.clone()).unwrap());
+        let anchor = CompanionPosition { x: -900, y: 540 };
+        state.save_companion_position(anchor).unwrap();
+        {
+            let mut guard = state.store.lock().unwrap();
+            let store = guard.as_mut().unwrap();
+            store.preferences.layout.sidebar_collapsed = true;
+            store.save().unwrap();
+        }
+        assert_eq!(
+            Store::open(path).unwrap().preferences.companion_position,
+            Some(anchor)
+        );
+        assert_eq!(state.companion_position(), Some(anchor));
+    }
 
     #[test]
     fn layout_and_window_survive_atomic_round_trip() {

@@ -53,7 +53,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { accountList, enabledModels, type ProviderAccount, type ProviderUsageAlert } from "@/core/provider-accounts";
 import { ProviderAccountCard } from "./ProviderAccountCard";
 import { ClaudeProviderCard } from "./ClaudeProviderCard";
-import { AgyProviderCard } from "./AgyProviderCard";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
@@ -580,7 +579,6 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
 
           <div className="grid items-start gap-3 sm:grid-cols-2">
             <ClaudeProviderCard />
-            <AgyProviderCard />
             {accounts.map((account) => (
               <ProviderAccountCard
                 key={account.alias}

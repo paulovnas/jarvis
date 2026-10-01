@@ -10,7 +10,7 @@ import { ProjectKnowledgeSettings } from "./ProjectKnowledgeSettings";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
-vi.mock("@/components/chat/ExecutorModelPicker", () => ({ ExecutorModelPicker: ({ onSelect }: { onSelect: (choice: ExecutionSelection) => void }) => <><button onClick={() => onSelect({ model: "account/model", reasoning: null })}>Modelo de teste</button><button onClick={() => onSelect({ executor: "claude", model: "sonnet", reasoning: null })}>Claude de teste</button><button onClick={() => onSelect({ executor: "agy", model: "gemini", reasoning: "high" })}>AGY de teste</button></> }));
+vi.mock("@/components/chat/ExecutorModelPicker", () => ({ ExecutorModelPicker: ({ onSelect }: { onSelect: (choice: ExecutionSelection) => void }) => <><button onClick={() => onSelect({ model: "account/model", reasoning: null })}>Modelo de teste</button><button onClick={() => onSelect({ executor: "claude", model: "sonnet", reasoning: null })}>Claude de teste</button></> }));
 
 const call = vi.mocked(invoke);
 const initial = (): KnowledgeDocument[] => [".", "frontend"].flatMap(scope => Object.keys(KNOWLEDGE_KINDS).map(kind => ({
@@ -80,15 +80,15 @@ it("generates a reviewable draft without overwriting edits or saving automatical
   await waitFor(() => expect(call).toHaveBeenCalledWith("save_project_knowledge", expect.objectContaining({ document: expect.objectContaining({ content: "# Produto gerado revisado", sources: [{ path: "README.md", fingerprint: "hash" }] }) })));
 });
 
-it.each(["claude", "agy"] as const)("cancels %s generation and ignores its late result", async executor => {
+it("cancels Claude generation and ignores its late result", async () => {
   let resolve!: (draft: KnowledgeDraft) => void;
   generate = () => new Promise(done => { resolve = done; });
   const user = userEvent.setup();
   render(<ProjectKnowledgeSettings projectId="p1" />);
   const editor = await markdownSource(user, "Produto · Markdown");
-  await user.click(screen.getByRole("button", { name: executor === "agy" ? "AGY de teste" : "Claude de teste" }));
+  await user.click(screen.getByRole("button", { name: "Claude de teste" }));
   await user.click(screen.getByRole("button", { name: "Analisar e gerar produto" }));
-  expect(call).toHaveBeenCalledWith("generate_project_knowledge", expect.objectContaining({ request: expect.objectContaining({ choice: { executor, account: "", model: executor === "agy" ? "gemini" : "sonnet", reasoning: executor === "agy" ? "high" : null } }) }));
+  expect(call).toHaveBeenCalledWith("generate_project_knowledge", expect.objectContaining({ request: expect.objectContaining({ choice: { executor: "claude", account: "", model: "sonnet", reasoning: null } }) }));
   await user.type(editor, " nova edição");
   await user.click(screen.getByRole("button", { name: "Cancelar geração" }));
   await act(async () => resolve({ content: "resultado antigo", revision: "original", sources: [] }));

@@ -40,6 +40,12 @@ pub struct Hooks {
     activity: Mutex<Vec<super::activity::Activity>>,
 }
 impl Hooks {
+    pub(super) fn inactive(root: &Path, session: &str) -> Self {
+        let hooks = Self::at(Path::new(""), Path::new(""), root, session);
+        hooks.degraded.store(true, Ordering::Relaxed);
+        hooks
+    }
+
     pub fn new(home: &Path, root: &Path, session: &str) -> Result<Self, CoreError> {
         let ponytail = installed(home, ComponentId::Ponytail)?;
         Ok(Self {

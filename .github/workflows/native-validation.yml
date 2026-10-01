@@ -82,7 +82,7 @@ jobs:
         run: >-
           cargo test --locked --manifest-path src-tauri/Cargo.toml --lib -- system:: secrets:: secrets_linux:: updater::
           agent::execution_sandbox:: agent::shell:: agent::command_sessions:: agent::processes:: agent::terminals::
-          mcp::executable:: mcp::stdio:: claude:: --test-threads=1
+          mcp::executable:: mcp::stdio:: claude:: companion:: --test-threads=1
       - name: Validar cofre Linux isolado
         if: runner.os == 'Linux'
         run: bash scripts/check-linux-keyring.sh

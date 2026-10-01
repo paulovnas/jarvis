@@ -269,9 +269,9 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
             )?);
         }
     }
-    let mut statement = db.prepare("SELECT c.id,c.project_id,COALESCE(c.display_title,c.title),p.name FROM conversations c JOIN projects p ON p.id=c.project_id ORDER BY c.id").map_err(storage)?;
+    let mut statement = db.prepare("SELECT c.id,c.project_id,COALESCE(c.display_title,c.title),p.name FROM conversations c JOIN projects p ON p.id=c.project_id WHERE c.project_id<>?1 ORDER BY c.id").map_err(storage)?;
     let rows = statement
-        .query_map([], |row| {
+        .query_map([library::companion::GLOBAL_PROJECT_ID], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,

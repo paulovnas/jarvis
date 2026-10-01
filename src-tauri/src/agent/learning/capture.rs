@@ -122,6 +122,9 @@ fn user_feedback(text: &str) -> Option<String> {
 }
 
 pub(super) fn feedback(session: &Session) -> Result<Vec<Feedback>, AgentError> {
+    if super::super::companion_chat::is_global_session(&session.id) {
+        return Ok(vec![]);
+    }
     let data = session.data.lock().map_err(|_| AgentError::internal())?;
     let Some(current) = data.turns.last() else {
         return Ok(vec![]);
@@ -212,6 +215,9 @@ pub(in crate::agent) fn schedule(
     oauth: &OpenAiCodexState,
     home: &Path,
 ) {
+    if super::super::companion_chat::is_global_session(&session.id) {
+        return;
+    }
     let Ok(project) = session.project_id().map(str::to_owned) else {
         return;
     };
@@ -469,6 +475,24 @@ fn parse(text: &str) -> Result<Vec<Candidate>, AgentError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn global_jarvito_chat_does_not_capture_project_learning() {
+        use crate::agent::{
+            companion_chat::GLOBAL_CONVERSATION_ID,
+            tests::{options, session_with_id, Fixture},
+            ApprovalMode,
+        };
+        let fixture = Fixture::new();
+        let session = session_with_id(&fixture, GLOBAL_CONVERSATION_ID);
+        session
+            .reserve(
+                "Lembre: sempre use o Select do projeto e exiba o label.".into(),
+                options(ApprovalMode::Yolo),
+            )
+            .unwrap();
+        assert!(feedback(&session).unwrap().is_empty());
+    }
+
     #[test]
     fn only_actual_new_feedback_is_eligible() {
         assert!(user_feedback("Lembre: sempre use o Select do projeto e exiba o label.").is_some());

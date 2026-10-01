@@ -92,9 +92,11 @@ pub(super) fn portable(items: &mut Vec<Value>) {
         if item["type"] == "reasoning" {
             return false;
         }
-        if (item.get("_jarvis_claude_session").is_some()
-            || item.get("_jarvis_agy_session").is_some())
-            && item.get("role").is_none()
+        if item.as_object().is_some_and(|object| {
+            object
+                .keys()
+                .any(|key| key.starts_with("_jarvis_") && key.ends_with("_session"))
+        }) && item.get("role").is_none()
             && item.get("type").is_none()
         {
             return false;

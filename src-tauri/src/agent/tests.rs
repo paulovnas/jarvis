@@ -120,6 +120,20 @@ fn a_new_user_turn_inherits_the_latest_durable_mcp_intent() {
 }
 
 #[test]
+fn global_jarvito_chat_keeps_its_title() {
+    let fixture = Fixture::new();
+    let session = session_with_id(&fixture, companion_chat::GLOBAL_CONVERSATION_ID);
+    session
+        .reserve(
+            "Lembre: sempre use o Select do projeto e exiba o label.".into(),
+            options(ApprovalMode::Yolo),
+        )
+        .unwrap();
+
+    assert!(title_request(&session).is_none());
+}
+
+#[test]
 fn a_running_first_turn_is_immediately_available_for_title_generation() {
     let fixture = Fixture::new();
     let session = session(&fixture);
@@ -293,7 +307,7 @@ pub(super) fn session(fixture: &Fixture) -> Arc<Session> {
     session_with_id(fixture, "conversation")
 }
 
-fn session_with_id(fixture: &Fixture, id: &str) -> Arc<Session> {
+pub(super) fn session_with_id(fixture: &Fixture, id: &str) -> Arc<Session> {
     let journal = fixture.root.join("session.jsonl");
     fs::write(&journal, "{}\n").unwrap();
     let writer = session_writer::SessionWriter::start(journal.clone(), id.into(), None).unwrap();

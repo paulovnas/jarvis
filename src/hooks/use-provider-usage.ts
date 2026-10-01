@@ -3,7 +3,7 @@ import { readResource } from "@/core/resource-request";
 import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 import { accountUsageSchema, type AccountUsage } from "@/core/provider-usage";
 
-export function useProviderUsage(alias: string, { pollWhileHidden = false, source = "account" }: { pollWhileHidden?: boolean; source?: "account" | "claude" | "agy" } = {}) {
+export function useProviderUsage(alias: string, { pollWhileHidden = false, source = "account" }: { pollWhileHidden?: boolean; source?: "account" | "claude" } = {}) {
   const bootstrap = useBootstrapResources();
   const updateBootstrapUsage = source === "account" ? bootstrap?.updateUsage : undefined;
   const cached = source === "account" ? bootstrap?.resources.usageByAlias[alias] : undefined;
@@ -26,7 +26,7 @@ export function useProviderUsage(alias: string, { pollWhileHidden = false, sourc
       if (!active || fetching || navigator.onLine === false || (!pollWhileHidden && document.visibilityState === "hidden")) return;
       fetching = true;
       try {
-        const result = accountUsageSchema.parse(await (source === "claude" ? readResource("get_claude_usage") : source === "agy" ? readResource("get_agy_usage") : readResource("get_provider_usage", { alias })));
+        const result = accountUsageSchema.parse(await (source === "claude" ? readResource("get_claude_usage") : readResource("get_provider_usage", { alias })));
         if (result.alias !== alias) throw new Error("Account mismatch");
         if (active) store(result, false);
       } catch { if (active) store(latestData.current, true); }

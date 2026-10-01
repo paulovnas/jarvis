@@ -16,6 +16,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use crate::persistence::{AppState, PersistenceError};
 
 pub(crate) mod cleanup;
+pub(crate) mod companion;
 pub(crate) mod dashboard;
 pub(crate) mod deletion;
 pub(crate) mod files;
@@ -275,13 +276,15 @@ fn conversation(connection: &Connection, id: &str) -> Result<Conversation, Libra
 
 fn snapshot(connection: &Connection) -> Result<LibrarySnapshot, LibraryError> {
     let workspaces = connection
-        .prepare("SELECT id, name, created_at FROM workspaces ORDER BY created_at, rowid")?
-        .query_map([], workspace_row)?
+        .prepare(
+            "SELECT id, name, created_at FROM workspaces WHERE id <> ?1 ORDER BY created_at, rowid",
+        )?
+        .query_map([companion::GLOBAL_WORKSPACE_ID], workspace_row)?
         .collect::<Result<Vec<_>, _>>()?;
-    let projects = connection.prepare("SELECT id, workspace_id, name, path, icon, color, created_at FROM projects ORDER BY created_at, rowid")?
-        .query_map([], project_row)?.collect::<Result<Vec<_>, _>>()?;
-    let conversations = connection.prepare("SELECT id, project_id, COALESCE(display_title, title), created_at, title, COALESCE(last_activity_at, created_at) FROM conversations ORDER BY COALESCE(last_activity_at, created_at) DESC, rowid DESC")?
-        .query_map([], conversation_row)?.collect::<Result<Vec<_>, _>>()?;
+    let projects = connection.prepare("SELECT id, workspace_id, name, path, icon, color, created_at FROM projects WHERE workspace_id <> ?1 ORDER BY created_at, rowid")?
+        .query_map([companion::GLOBAL_WORKSPACE_ID], project_row)?.collect::<Result<Vec<_>, _>>()?;
+    let conversations = connection.prepare("SELECT id, project_id, COALESCE(display_title, title), created_at, title, COALESCE(last_activity_at, created_at) FROM conversations WHERE project_id <> ?1 ORDER BY COALESCE(last_activity_at, created_at) DESC, rowid DESC")?
+        .query_map([companion::GLOBAL_PROJECT_ID], conversation_row)?.collect::<Result<Vec<_>, _>>()?;
     let selection = connection.query_row(
         "SELECT workspace_id, project_id, conversation_id FROM navigation_selection WHERE id = 1", [],
         |row| Ok(Selection { workspace_id: row.get(0)?, project_id: row.get(1)?, conversation_id: row.get(2)? }),

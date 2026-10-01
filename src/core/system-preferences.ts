@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { claudeProviderPreferencesSchema } from "./executors";
-import { agyProviderPreferencesSchema } from "./agy";
 import { modelChoiceSchema } from "./workflow-catalog";
 
 export const sleepModes = {
@@ -44,17 +43,19 @@ export const systemSnapshotSchema = z.object({
   preferences: z.object({
     preventSleep: z.enum(["off", "active", "open"]),
     notifications: z.boolean(),
+    companionEnabled: z.boolean().default(false),
     askUserTimeoutSeconds: z.number().int().min(1).max(3600),
     responseLanguage: z.enum(responseLanguageValues).default("pt-BR"),
     chatTitleModel: modelChoiceSchema.nullish(),
     terminal: terminalPreferencesSchema.default(DEFAULT_TERMINAL_PREFERENCES),
     browser: browserPreferencesSchema.default(DEFAULT_BROWSER_PREFERENCES),
     claude: claudeProviderPreferencesSchema.optional(),
-    agy: agyProviderPreferencesSchema.optional(),
   }),
   sleepInhibited: z.boolean(),
   sleepError: z.string().nullable(),
   notificationError: z.string().nullable(),
+  companionSupported: z.boolean().default(false),
+  companionError: z.string().nullable().default(null),
   availableTerminalShells: z.array(z.string()).default([]),
   availableTerminalFonts: z.array(z.string()).default([]),
   resolvedTerminalShell: z.string().nullable().default(null),

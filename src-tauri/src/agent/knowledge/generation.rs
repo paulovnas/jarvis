@@ -425,47 +425,6 @@ fn claude_result(event: &Value) -> Option<Result<String, AgentError>> {
     )
 }
 
-async fn agy_text(
-    root: &Path,
-    choice: &Choice,
-    prompt: String,
-    input: String,
-) -> Result<String, AgentError> {
-    let workspace =
-        tempfile::tempdir().map_err(|_| error("Não foi possível preparar a análise AGY."))?;
-    let mut process = crate::agy::AgyProcess::spawn(crate::agy::RunOptions {
-        cwd: root.into(),
-        workspace_dir: workspace.path().into(),
-        session_id: None,
-        model: choice.model.clone(),
-        effort: choice.reasoning.clone(),
-        prompt,
-        mcp_url: String::new(),
-        mcp_token: String::new(),
-        mcp_aliases: vec![],
-    })
-    .map_err(|e| error(&e))?;
-    process.send_user(&input).await.map_err(|e| error(&e))?;
-    while let Some(event) = process.next_event().await.map_err(|e| error(&e))? {
-        if event["step_update"]["step_type"] == "tool" {
-            return Err(error("O Antigravity CLI solicitou ações durante a análise. Nenhuma ação foi executada; selecione outro modelo ou tente novamente."));
-        }
-        if let Some(result) = super::super::agy_executor::projection::final_result(&event) {
-            result?;
-            let content = super::super::agy_executor::projection::reply(&event);
-            if content.trim().is_empty() {
-                return Err(error("O Antigravity CLI não retornou um documento."));
-            }
-            let content = content.to_owned();
-            process.cancel().await.map_err(|e| error(&e))?;
-            return Ok(content);
-        }
-    }
-    Err(error(
-        "O Antigravity CLI encerrou antes de concluir o documento.",
-    ))
-}
-
 async fn cancellable<T>(
     mut signal: watch::Receiver<bool>,
     operation: impl Future<Output = Result<T, AgentError>>,
@@ -496,6 +455,7 @@ pub(crate) async fn generate_project_knowledge(
     jobs: tauri::State<'_, KnowledgeJobs>,
     request: Request,
 ) -> Result<Draft, AgentError> {
+    request.choice.executor.require_available()?;
     let (_lease, signal) = jobs.start(&request.id)?;
     let operation = async {
         let root = project_root(&app, &state, request.project_id.clone()).await?;
@@ -547,10 +507,6 @@ pub(crate) async fn generate_project_knowledge(
             crate::claude::validate_available_model(&home, &request.choice.model)
                 .map_err(|e| error(&e))?;
             claude_text(&root, &request.choice, instructions(request.kind), input).await?
-        } else if request.choice.executor == crate::claude::Executor::Agy {
-            crate::agy::validate_available_model(&home, &request.choice.model)
-                .map_err(|e| error(&e))?;
-            agy_text(&root, &request.choice, instructions(request.kind), input).await?
         } else {
             let options = TurnOptions {
                 executor: request.choice.executor,
@@ -638,26 +594,13 @@ pub(in crate::agent) async fn synthesize(
     signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
     let (state, oauth, home) = runtime;
+    options.executor.require_available()?;
     if options.executor == crate::claude::Executor::Claude {
         return claude_text(
             root,
             &Choice {
                 executor: options.executor,
                 account: options.account.clone(),
-                model: options.model.clone(),
-                reasoning: Some("low".into()),
-            },
-            prompt.into(),
-            input,
-        )
-        .await;
-    }
-    if options.executor == crate::claude::Executor::Agy {
-        return agy_text(
-            root,
-            &Choice {
-                executor: options.executor,
-                account: String::new(),
                 model: options.model.clone(),
                 reasoning: Some("low".into()),
             },

@@ -23,9 +23,6 @@ pub(in crate::agent) struct Bridge<'a> {
     restricted: bool,
     publication: bool,
     pub prompt: String,
-    /// AGY snapshots system instructions; mutable state travels in the current user frame.
-    /// Claude retains its existing appended-system-prompt contract and leaves this empty.
-    pub dynamic_prompt: String,
     pub delivered_wire: usize,
     pub request_scope: String,
 }
@@ -39,6 +36,7 @@ impl<'a> Bridge<'a> {
         signal: watch::Receiver<bool>,
     ) -> Result<Self, AgentError> {
         let owner = execution.as_ref().map_or(session, |exec| exec.root());
+        let global_companion = companion_chat::is_global_session(&session.id);
         let home = runtime.home;
         let publication = execution
             .as_ref()
@@ -48,7 +46,7 @@ impl<'a> Bridge<'a> {
             .map_or(options.mode == Mode::Plan, |exec| {
                 exec.role_mode() == Mode::Plan
             });
-        let direct_tasks = options.direct() && owner.id == session.id;
+        let direct_tasks = !global_companion && options.direct() && owner.id == session.id;
         let intent = {
             let data = session.data.lock().map_err(|_| AgentError::internal())?;
             data.turns
@@ -56,7 +54,7 @@ impl<'a> Bridge<'a> {
                 .and_then(|turn| turn.mcp_intent.clone())
                 .unwrap_or_else(|| data.inherited_mcp_intent.clone())
         };
-        let clients = if publication {
+        let clients = if publication || global_companion {
             crate::mcp::runtime::TurnClients::default()
         } else {
             crate::mcp::runtime::TurnClients::discover_for_intent(
@@ -69,14 +67,18 @@ impl<'a> Bridge<'a> {
             )
             .await?
         };
-        let context = crate::core::context::ContextMode::open(
-            home,
-            &session.root,
-            &session.id,
-            signal.clone(),
-        )
-        .await?;
-        let beads = if direct_tasks || publication {
+        let context = if global_companion {
+            crate::core::context::ContextMode::without_project(&session.root, &session.id)
+        } else {
+            crate::core::context::ContextMode::open(
+                home,
+                &session.root,
+                &session.id,
+                signal.clone(),
+            )
+            .await?
+        };
+        let beads = if direct_tasks || publication || global_companion {
             None
         } else {
             Some(crate::core::beads::Beads::new(
@@ -92,23 +94,10 @@ impl<'a> Bridge<'a> {
             None
         };
         let mut activities = Vec::new();
-        let is_agy = options.executor == crate::claude::Executor::Agy;
-        let mut dynamic_prompt = String::new();
         let mut prompt = tools::instructions(&session.root, options.mode, options.approval_mode);
-        let backend = if is_agy {
-            "Antigravity CLI"
-        } else {
-            "Claude Code"
-        };
-        let mcp_dispatcher = if is_agy {
-            "execute_mcp_tool"
-        } else {
-            "call_mcp_tool"
-        };
+        let backend = "Claude Code";
+        let mcp_dispatcher = "call_mcp_tool";
         prompt.push_str(&format!("\nExecution backend: {backend}. Keep your native reasoning and conversation management. All project operations, commands, tasks, questions, workflow coordination, approvals and external integrations are exposed by the Jarvis MCP server. Use these tools rather than describing actions for the user to execute. Jarvis owns their permissions and durable results. Do not create a second task/agent system. MCP discovery results include availableTools with exact schemas. Execute newly available tools and discovery controls through {mcp_dispatcher} using their exact name and arguments; no new user message or tools/list refresh is required. Search results marked loaded:true already include their schema; do not load them again. Native built-in tools are intentionally disabled to preserve the selected Jarvis role, project scope and approval contract.\n"));
-        if is_agy {
-            prompt.push_str("\nAntigravity tool routing: Jarvis owns every tool effect. Use the native call_mcp_tool dispatcher for actions. For Jarvis tools, ServerName is jarvis and ToolName is the exact exposed name. For an external MCP namespace configured by Jarvis, use its announced ServerName and original ToolName; these namespaces also route through Jarvis permissions and durable receipts. Arguments must match that tool schema. Deferred/discovered tools can always use ServerName=jarvis, ToolName=execute_mcp_tool, Arguments={name:<exact availableTools name>,arguments:<tool input>}. Never substitute a Claude-style mcp__jarvis__ name for ServerName or ToolName. Route filesystem, shell, browser, HTTP, skills, Core, memory and delegation through Jarvis tools. Never use native built-in tools, list_resources, read_resource or an unconfigured server. Continue using actual MCP results within this process; do not stop after a tool call. A prior response or remembered result does not prove that a newly requested action ran: wait for its current confirmed tool receipt before claiming completion.\n");
-        }
         prompt.push_str(&crate::library::repositories::prompt(
             runtime.state,
             home,
@@ -124,20 +113,12 @@ impl<'a> Bridge<'a> {
                 },
             )?;
             prompt.push_str(&exec.instructions()?);
-            if is_agy {
-                dynamic_prompt.push_str(&exec.context()?);
-            } else {
-                prompt.push_str(&exec.context()?);
-            }
+            prompt.push_str(&exec.context()?);
         }
         prompt.push_str(context.instructions());
         if direct_tasks {
             prompt.push_str(tasks::INSTRUCTIONS);
-            if is_agy {
-                dynamic_prompt.push_str(&session.task_context()?);
-            } else {
-                prompt.push_str(&session.task_context()?);
-            }
+            prompt.push_str(&session.task_context()?);
         }
         if project_beads.is_some() {
             prompt.push_str(crate::core::beads::PROJECT_INSTRUCTIONS);
@@ -153,11 +134,7 @@ impl<'a> Bridge<'a> {
                 })
                 .await?;
             let snapshot = format!("\nBeads state (reference data):\n{snapshot}");
-            if is_agy {
-                dynamic_prompt.push_str(&snapshot);
-            } else {
-                prompt.push_str(&snapshot);
-            }
+            prompt.push_str(&snapshot);
         }
         if options.mode == Mode::Build {
             prompt.push_str(&publication::instructions(&publication::load(
@@ -166,7 +143,7 @@ impl<'a> Bridge<'a> {
                 owner.project_id()?,
             )?));
         }
-        if !publication {
+        if !publication && !global_companion {
             prompt.push_str(authoring::INSTRUCTIONS);
             prompt.push_str(web_search::instructions(web_search::enabled(
                 runtime.state,
@@ -239,6 +216,9 @@ impl<'a> Bridge<'a> {
                 })
                 .await?;
         }
+        if global_companion {
+            prompt = format!("{}\nExecution backend: {backend}. Use only the Jarvis MCP tools advertised for this conversation. Native built-in tools and project filesystem operations are disabled until the user confirms a project in the Jarvito interface.\n", companion_chat::global_prompt());
+        }
         context.hooks.before_agent(&mut prompt);
         tools::append_response_language(&mut prompt, crate::system::response_language(home));
         Ok(Self {
@@ -262,7 +242,6 @@ impl<'a> Bridge<'a> {
             restricted,
             publication,
             prompt,
-            dynamic_prompt,
             delivered_wire: 0,
             request_scope: crate::claude::new_session_id().map_err(super::runtime_error)?,
         })
@@ -275,6 +254,11 @@ impl<'a> Bridge<'a> {
     }
 
     pub async fn definitions(&mut self) -> Result<Vec<Value>, AgentError> {
+        if companion_chat::is_global_session(&self.session.id) {
+            let mut definitions = companion_chat::tools();
+            definitions.push(questions::definition());
+            return Ok(definitions);
+        }
         let mut definitions = tools::definitions(self.options.mode);
         definitions.push(publication::inspection::definition());
         definitions.push(attachments::definition());
@@ -526,11 +510,7 @@ impl<'a> Bridge<'a> {
         if schemas.is_empty() {
             return Ok(None);
         }
-        let call_with = if self.options.executor == crate::claude::Executor::Agy {
-            json!({"tool":"call_mcp_tool","ServerName":"jarvis","ToolName":"execute_mcp_tool","Arguments":{"name":"<availableTools.name>","arguments":{}}})
-        } else {
-            json!("mcp__jarvis__call_mcp_tool")
-        };
+        let call_with = json!("mcp__jarvis__call_mcp_tool");
         Ok(Some(json!({
             "type":"text",
             "text":json!({
@@ -554,8 +534,20 @@ impl<'a> Bridge<'a> {
             .execution
             .as_ref()
             .map_or(self.session, |exec| exec.root());
-        learning::prepare(self.session, owner, state, home).await;
+        if !companion_chat::is_global_session(&self.session.id) {
+            learning::prepare(self.session, owner, state, home).await;
+        }
         match handler {
+            Handler::Companion => {
+                let app = self
+                    .execution
+                    .as_ref()
+                    .and_then(workflow::Execution::native_app)
+                    .ok_or_else(AgentError::internal)?;
+                companion_chat::execute(app, state, home, self.session, tool, signal)
+                    .await
+                    .map(|value| value.to_string())
+            }
             Handler::Knowledge => learning::retrieve(state, home, owner, &tool.args),
             Handler::Learning => learning::remember(state, home, owner, &tool.args),
             Handler::PublicationInspection => {

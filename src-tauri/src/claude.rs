@@ -96,12 +96,21 @@ pub(crate) enum Executor {
     #[default]
     Jarvis,
     Claude,
-    Agy,
+    /// Retired or unknown executors remain readable without acquiring another provider.
+    #[serde(other)]
+    Unavailable,
 }
 
 impl Executor {
     pub(crate) fn is_jarvis(&self) -> bool {
         *self == Self::Jarvis
+    }
+
+    pub(crate) fn require_available(&self) -> Result<(), crate::agent::AgentError> {
+        if *self == Self::Unavailable {
+            return Err(crate::agent::AgentError::unsupported_executor());
+        }
+        Ok(())
     }
 }
 

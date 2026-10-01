@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Bell, Languages, MessageSquareText, Monitor, Moon, Send, TimerReset } from "lucide-react";
+import { Bell, Bot, Languages, MessageSquareText, Monitor, Moon, Send, TimerReset } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -71,7 +71,7 @@ export function SystemSettings({ accounts = [] }: { accounts?: ProviderAccount[]
     }
     if (value !== snapshot.preferences.askUserTimeoutSeconds) void save({ askUserTimeoutSeconds: value });
   };
-  const problem = error ?? snapshot?.sleepError ?? snapshot?.notificationError;
+  const problem = error ?? snapshot?.sleepError ?? snapshot?.notificationError ?? snapshot?.companionError;
   return <section aria-labelledby="system-settings-title" className="space-y-3">
     <h2 id="system-settings-title" className="micro-label flex items-center gap-2 text-muted-foreground"><Monitor className="size-3.5" />Sistema</h2>
     {!snapshot ? error ? <div className="space-y-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button size="sm" variant="outline" className="cursor-pointer" onClick={() => { setError(null); setAttempt(n => n + 1); }}>Tentar novamente</Button></div> : <Card role="status" aria-label="Carregando preferências do sistema" size="sm" className="grid gap-0 rounded-lg py-0 lg:grid-cols-2">{[0, 1, 2, 3].map((key) => <div key={key} className={`space-y-3 p-4 ${key > 0 ? "border-t border-border" : ""} ${key % 2 === 1 ? "lg:border-l" : ""} ${key === 1 ? "lg:border-t-0" : ""}`}><Skeleton className="h-4 w-36" /><Skeleton className="h-3 w-3/4" /><Skeleton className="h-7 w-48" /></div>)}</Card> : <>
@@ -120,11 +120,18 @@ export function SystemSettings({ accounts = [] }: { accounts?: ProviderAccount[]
             <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[10px] text-muted-foreground">segundos</span>
           </div>
         </div>
+        {snapshot.companionSupported && <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:col-span-2 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <Label htmlFor="desktop-companion" className="flex cursor-pointer items-center gap-2 text-xs font-medium"><Bot className="size-3.5 text-onedark-cyan" />Assistente na área de trabalho</Label>
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Converse com o Jarvito, acompanhe atividades, responda perguntas e veja os limites de uso, mesmo com o Jarvis minimizado. Clique para abrir a ilha ou arraste o robô para reposicionar.</p>
+          </div>
+          <Switch id="desktop-companion" size="sm" checked={snapshot.preferences.companionEnabled} disabled={busy} onCheckedChange={companionEnabled => void save({ companionEnabled })} className="shrink-0 cursor-pointer" />
+        </div>}
         <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:col-span-2 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
             <p className="flex items-center gap-2 text-xs font-medium"><MessageSquareText className="size-3.5 text-primary" />Títulos das conversas</p>
             <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Escolha um modelo de um provedor conectado só para gerar títulos, sem alterar o modelo dos agentes.</p>
-            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Automático segue o modelo da conversa; com Claude Code ou Antigravity CLI, usa um título local sem abrir outra sessão.</p>
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Automático segue o modelo da conversa; com Claude Code, usa um título local sem abrir outra sessão.</p>
           </div>
           <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2">
             <ModelPicker modelGroups={accountGroups(accounts)} selection={executionSelection(snapshot.preferences.chatTitleModel)} disabled={busy} ariaLabel="Modelo para títulos das conversas" showProviderIdentity clearLabel="Automático" onClear={() => void save({ chatTitleModel: null })} onSelect={selection => void save({ chatTitleModel: executionChoice(selection) })} />

@@ -28,6 +28,22 @@ impl QueuedMessage {
     }
 }
 
+fn validate_next_queued_executor(data: &SessionData) -> Result<(), AgentError> {
+    if data
+        .extras
+        .queue
+        .iter()
+        .find(|message| message.scheduled())
+        .is_some_and(|message| message.options.executor == crate::claude::Executor::Unavailable)
+    {
+        return Err(AgentError::new(
+            "unsupported_executor",
+            "Uma mensagem na fila usa um executor removido. Retire-a da fila para editar, escolha um modelo suportado e envie novamente. A fila e seu pedido foram preservados.",
+        ));
+    }
+    Ok(())
+}
+
 impl Session {
     #[cfg(test)]
     pub(super) fn submit(
@@ -57,6 +73,9 @@ impl Session {
                 "Aguarde a compactação terminar.",
             ));
         }
+        if data.active.is_none() && data.recovery.is_none() {
+            validate_next_queued_executor(&data)?;
+        }
         if data.active.is_none() && data.recovery.is_none() && data.extras.queue.is_empty() {
             return self
                 .reserve_locked(&mut data, content, options, None, parts)
@@ -75,6 +94,7 @@ impl Session {
             .map(|turn| turn.turn.options.clone())
             .unwrap_or(options);
         options.approval_mode = ApprovalMode::Yolo;
+        options.executor.require_available()?;
         let mut queue = data.extras.queue.clone();
         queue.push(QueuedMessage {
             id: library::new_id()?,
@@ -101,6 +121,7 @@ impl Session {
         {
             return Ok(None);
         }
+        validate_next_queued_executor(&data)?;
         let Some((index, message)) = data
             .extras
             .queue
@@ -481,6 +502,68 @@ pub async fn send_queued_message_now(
 mod tests {
     use super::*;
     use crate::agent::tests::Fixture;
+    use std::fs;
+
+    #[test]
+    fn retired_executor_queue_can_be_opened_and_retrieved_without_starting_or_losing_it() {
+        let fixture = Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        let mut old_options = serde_json::to_value(tests_options()).unwrap();
+        old_options["executor"] = json!("agy");
+        old_options["account"] = json!("");
+        old_options["model"] = json!("gemini-3-pro");
+        let old_queue = json!([{
+            "id":"queued-before-removal","content":"Continue de onde parou","options":old_options
+        }]);
+        journal::append_event(&session.journal, "queue_checkpoint", &old_queue).unwrap();
+        let (_, extras) = journal::load_all(&session.journal).unwrap();
+        assert_eq!(
+            extras.queue[0].options.executor,
+            crate::claude::Executor::Unavailable
+        );
+        session.data.lock().unwrap().extras = extras;
+        let before = fs::read(&session.journal).unwrap();
+        let error = session
+            .submit("Novo pedido com modelo suportado".into(), tests_options())
+            .unwrap_err();
+        assert_eq!(error.code, "unsupported_executor");
+        assert!(error.message.contains("Retire-a da fila para editar"));
+        assert_eq!(fs::read(&session.journal).unwrap(), before);
+        assert_eq!(session.snapshot().unwrap().queued_messages.len(), 1);
+        assert_eq!(
+            session.reserve_next().unwrap_err().code,
+            "unsupported_executor"
+        );
+        assert_eq!(fs::read(&session.journal).unwrap(), before);
+        assert!(session.snapshot().unwrap().turns.is_empty());
+        assert_eq!(
+            session.snapshot().unwrap().queued_messages[0].id,
+            "queued-before-removal"
+        );
+        assert_eq!(
+            journal::load_all(&session.journal).unwrap().1.queue.len(),
+            1
+        );
+        let retrieved = session.remove_queued("queued-before-removal").unwrap();
+        assert_eq!(retrieved.content, "Continue de onde parou");
+        assert_eq!(retrieved.options.model, "gemini-3-pro");
+        assert!(journal::load_all(&session.journal)
+            .unwrap()
+            .1
+            .queue
+            .is_empty());
+        assert!(session
+            .submit("Novo pedido com modelo suportado".into(), tests_options())
+            .unwrap()
+            .is_some());
+        let snapshot = session.snapshot().unwrap();
+        assert_eq!(snapshot.turns.len(), 1);
+        assert_eq!(snapshot.turns[0].user, "Novo pedido com modelo suportado");
+        assert_eq!(
+            snapshot.turns[0].options.executor,
+            crate::claude::Executor::Jarvis
+        );
+    }
 
     #[test]
     fn queued_messages_keep_order_options_and_cannot_be_removed_after_reservation() {

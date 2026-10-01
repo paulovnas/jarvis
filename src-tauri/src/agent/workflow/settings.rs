@@ -26,8 +26,9 @@ impl ModelChoice {
                 .is_some_and(|value| !valid(value, 40))
             || match self.executor {
                 crate::claude::Executor::Jarvis => !valid(&self.account, 200),
-                crate::claude::Executor::Claude | crate::claude::Executor::Agy => {
-                    !self.account.is_empty()
+                crate::claude::Executor::Claude => !self.account.is_empty(),
+                crate::claude::Executor::Unavailable => {
+                    !self.account.is_empty() && !valid(&self.account, 200)
                 }
             }
         {
@@ -37,20 +38,11 @@ impl ModelChoice {
             crate::claude::validate_selection(&self.model, self.reasoning.as_deref())
                 .map_err(|message| invalid(&message))?;
         }
-        if self.executor == crate::claude::Executor::Agy {
-            crate::agy::validate_selection(&self.model, self.reasoning.as_deref())
-                .map_err(|message| invalid(&message))?;
-        }
         if let Some(fallback) = &self.fallback {
             if fallback.fallback.is_some()
                 || (self.executor == fallback.executor
                     && self.account == fallback.account
-                    && if self.executor == crate::claude::Executor::Agy {
-                        crate::agy::model_selection(&self.model, None).0
-                            == crate::agy::model_selection(&fallback.model, None).0
-                    } else {
-                        self.model == fallback.model
-                    })
+                    && self.model == fallback.model)
             {
                 return Err(invalid(
                     "Escolha um único modelo secundário diferente do principal.",
@@ -77,12 +69,10 @@ pub(crate) fn validate_choice(
 ) -> Result<(), AgentError> {
     choice.validate_shape()?;
     for selection in std::iter::once(choice).chain(choice.fallback.as_deref()) {
+        selection.executor.require_available()?;
         if selection.executor == crate::claude::Executor::Claude {
             crate::claude::validate_available_model(home, &selection.model)
                 .map_err(|message| AgentError::new("claude_provider", &message))?;
-        } else if selection.executor == crate::claude::Executor::Agy {
-            crate::agy::validate_available_model(home, &selection.model)
-                .map_err(|message| AgentError::new("agy_provider", &message))?;
         } else {
             oauth.inference_model(
                 state,
@@ -258,6 +248,42 @@ mod instruction_tests {
     use super::*;
 
     #[test]
+    fn retired_profile_loads_without_silently_selecting_an_available_executor() {
+        let home = tempfile::tempdir().unwrap();
+        let directory = crate::data_dir::root(home.path());
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("agents.json"),
+            r#"{
+            "standard/builder":{
+                "executor":"agy","account":"","model":"gemini-3-pro","reasoning":"high",
+                "fallback":{"executor":"claude","account":"","model":"sonnet","reasoning":"low"}
+            }
+        }"#,
+        )
+        .unwrap();
+        let state = AppState::default();
+        let profiles = load(&state, home.path()).unwrap();
+        let choice = &profiles["standard/builder"];
+        assert_eq!(choice.executor, crate::claude::Executor::Unavailable);
+        assert_eq!(choice.model, "gemini-3-pro");
+        assert_eq!(choice.reasoning.as_deref(), Some("high"));
+        assert_eq!(
+            choice.fallback.as_ref().unwrap().executor,
+            crate::claude::Executor::Claude
+        );
+        let error =
+            validate_choice(&state, &OpenAiCodexState::default(), home.path(), choice).unwrap_err();
+        assert_eq!(error.code, "unsupported_executor");
+        let mut options = crate::agent::tests::options(ApprovalMode::Yolo);
+        choice.apply(&mut options);
+        assert_eq!(options.executor, crate::claude::Executor::Unavailable);
+        assert_eq!(options.model, "gemini-3-pro");
+        assert!(options.account.is_empty());
+        assert_eq!(read(home.path()).unwrap()["standard/builder"], *choice);
+    }
+
+    #[test]
     fn all_native_profiles_persist_with_video_secondary_without_expanding_coordinated_rosters() {
         let home = tempfile::tempdir().unwrap();
         fs::create_dir_all(crate::data_dir::root(home.path())).unwrap();
@@ -367,17 +393,6 @@ mod instruction_tests {
             .unwrap(),
         ));
         assert!(choice.validate_shape().is_err());
-    }
-
-    #[test]
-    fn agy_variants_cannot_be_a_secondary_for_the_same_base_model() {
-        let mut choice: ModelChoice = serde_json::from_value(json!({
-            "executor":"agy","account":"","model":"gemini-3.8-flash","reasoning":"high",
-            "fallback":{"executor":"agy","account":"","model":"gemini-3.8-flash-low","reasoning":null}
-        })).unwrap();
-        assert!(choice.validate_shape().is_err());
-        choice.fallback.as_mut().unwrap().model = "gemini-3.7-flash".into();
-        assert!(choice.validate_shape().is_ok());
     }
 
     #[test]

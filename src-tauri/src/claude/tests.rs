@@ -32,6 +32,24 @@ fn executor_and_selection_keep_legacy_jarvis_defaults() {
 }
 
 #[test]
+fn retired_executors_remain_readable_without_switching_provider() {
+    for name in ["agy", "retired-custom-executor", "unavailable"] {
+        let executor: Executor = serde_json::from_value(json!(name)).unwrap();
+        assert_eq!(executor, Executor::Unavailable);
+        assert!(!executor.is_jarvis());
+        let error = executor.require_available().unwrap_err();
+        assert_eq!(
+            serde_json::to_value(&error).unwrap()["code"],
+            "unsupported_executor"
+        );
+        assert!(error.message().contains("histórico foi preservado"));
+        assert_eq!(serde_json::to_value(executor).unwrap(), "unavailable");
+    }
+    assert!(Executor::Claude.require_available().is_ok());
+    assert!(Executor::Jarvis.require_available().is_ok());
+}
+
+#[test]
 fn launch_preserves_native_auth_and_uses_only_the_scoped_jarvis_tools() {
     let directory = tempfile::tempdir().unwrap();
     let mut options = RunOptions {

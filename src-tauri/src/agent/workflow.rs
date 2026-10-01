@@ -256,6 +256,61 @@ pub(super) struct Execution {
 pub(super) struct Registry(Arc<Mutex<HashMap<String, Arc<Hub>>>>);
 
 impl Registry {
+    pub(super) fn loaded_root_identity(
+        &self,
+        conversation_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<String>, AgentError> {
+        // Desktop presentation must never wait on runtime ownership or a manifest save.
+        let hubs = match self.0.try_lock() {
+            Ok(hubs) => hubs,
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err(AgentError::internal()),
+        };
+        let hub = hubs.get(conversation_id).cloned();
+        drop(hubs);
+        let Some(hub) = hub else {
+            return Ok(None);
+        };
+        let state = match hub.manifest.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err(AgentError::internal()),
+        };
+        if state.flow != Flow::Custom || state.run_id != turn_id {
+            return Ok(None);
+        }
+        Ok(state.custom_agent.as_ref().map_or_else(
+            || {
+                state
+                    .custom_definition
+                    .as_ref()
+                    .map(|definition| definition.flow.name.clone())
+            },
+            |agent| Some(agent.name.clone()),
+        ))
+    }
+
+    pub(super) fn loaded_snapshots(&self) -> Result<Vec<commands::Snapshot>, AgentError> {
+        let hubs: Vec<_> = self
+            .0
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .values()
+            .cloned()
+            .collect();
+        hubs.into_iter()
+            .map(|hub| {
+                let state = hub
+                    .manifest
+                    .lock()
+                    .map_err(|_| AgentError::internal())?
+                    .clone();
+                commands::snapshot(&state, Some(&hub))
+            })
+            .collect()
+    }
+
     pub(super) fn active_ids(&self) -> Result<Vec<String>, AgentError> {
         Ok(self
             .0
@@ -487,6 +542,9 @@ impl Execution {
         &self.hub.root
     }
     pub(super) fn secondary_model(&self) -> Result<Option<settings::ModelChoice>, AgentError> {
+        if super::companion_chat::is_global_session(&self.hub.root.id) {
+            return Ok(None);
+        }
         let state = self
             .hub
             .manifest
@@ -737,6 +795,14 @@ impl Execution {
     }
 
     pub(super) fn filter(&self, definitions: &mut Vec<Value>) {
+        if super::companion_chat::is_global_session(&self.hub.root.id) {
+            definitions.retain(|definition| {
+                definition["name"]
+                    .as_str()
+                    .is_some_and(super::companion_chat::allowed_tool)
+            });
+            return;
+        }
         let direct = self.direct();
         definitions.extend(processes::definitions(self.role_mode()));
         definitions.extend(terminals::definitions(self.role_mode()));
@@ -756,6 +822,9 @@ impl Execution {
         }
     }
     pub(super) fn allowed(&self, name: &str) -> bool {
+        if super::companion_chat::is_global_session(&self.hub.root.id) {
+            return super::companion_chat::allowed_tool(name);
+        }
         if self.flow == Flow::Publication
             && self.role == Role::Builder
             && name == "jarvis_propose_publication"
@@ -1212,7 +1281,32 @@ pub(super) fn validate_options(
     oauth: &OpenAiCodexState,
     home: &Path,
     options: &TurnOptions,
+    conversation_id: &str,
 ) -> Result<(), AgentError> {
+    options.executor.require_available()?;
+    if super::companion_chat::is_global_session(conversation_id) {
+        if options.mode != Mode::Build
+            || options.workflow != Some(Flow::Standard)
+            || options.custom_workflow_id.is_some()
+            || options.custom_agent_id.is_some()
+            || options.manual_validation
+            || options.automatic_publication.is_some()
+        {
+            return Err(invalid("A conversa global do Jarvito não executa fluxos de projeto. Confirme um projeto para continuar."));
+        }
+        return settings::validate_choice(
+            state,
+            oauth,
+            home,
+            &settings::ModelChoice {
+                executor: options.executor,
+                account: options.account.clone(),
+                model: options.model.clone(),
+                reasoning: options.reasoning.clone(),
+                fallback: None,
+            },
+        );
+    }
     if let Some(actions) = &options.automatic_publication {
         if !(actions.commit || actions.push || actions.pull_request)
             || (actions.pull_request && !actions.push)
@@ -1316,6 +1410,18 @@ pub(super) fn validate_recovery_checkpoint(
         Ok(())
     } else {
         Err(invalid("Checkpoint do fluxo não encontrado."))
+    }
+}
+
+fn apply_root_model(
+    options: &mut TurnOptions,
+    profiles: &settings::ModelSettings,
+    flow: Flow,
+    conversation_id: &str,
+) {
+    // Global chat already resolved saved/explicit selection or its initial default.
+    if !super::companion_chat::is_global_session(conversation_id) {
+        settings::apply(options, profiles, flow, flow.root());
     }
 }
 
@@ -1467,7 +1573,8 @@ pub(super) async fn run(
     session.update(true, |data| {
         data.turns.last_mut().unwrap().turn.options = options.clone();
     })?;
-    let profiles = if flow == Flow::Custom {
+    let profiles = if flow == Flow::Custom || super::companion_chat::is_global_session(&session.id)
+    {
         BTreeMap::new()
     } else {
         settings::load(&env.0, &env.3)?
@@ -1475,11 +1582,11 @@ pub(super) async fn run(
     settings::validate(flow, &profiles)?;
     session.update(true, |data| {
         if !using_secondary {
-            settings::apply(
+            apply_root_model(
                 &mut data.turns.last_mut().unwrap().turn.options,
                 &profiles,
                 flow,
-                flow.root(),
+                &session.id,
             );
         }
     })?;
@@ -1617,4 +1724,48 @@ pub(super) fn awaiting_validation(home: &Path, id: &str, turn: &str) -> bool {
                     .as_ref()
                     .is_some_and(|batch| !batch.submitted && !batch.stale && batch.run_id == turn)
         })
+}
+
+#[cfg(test)]
+mod companion_identity_tests {
+    use super::*;
+
+    #[test]
+    fn loaded_root_identity_never_waits_for_registry_or_manifest_locks() {
+        let (_fixture, hub) = tests::hub();
+        let agent = catalog::tests::example().agents.remove(0);
+        let turn_id = {
+            let mut state = hub.manifest.lock().unwrap();
+            state.flow = Flow::Custom;
+            state.custom_agent = Some(agent.clone());
+            state.run_id.clone()
+        };
+        let registry = Registry::default();
+        registry
+            .0
+            .lock()
+            .unwrap()
+            .insert(hub.root.id.clone(), hub.clone());
+
+        let registry_guard = registry.0.lock().unwrap();
+        assert!(registry
+            .loaded_root_identity(&hub.root.id, &turn_id)
+            .unwrap()
+            .is_none());
+        drop(registry_guard);
+
+        let manifest_guard = hub.manifest.lock().unwrap();
+        assert!(registry
+            .loaded_root_identity(&hub.root.id, &turn_id)
+            .unwrap()
+            .is_none());
+        drop(manifest_guard);
+
+        assert_eq!(
+            registry
+                .loaded_root_identity(&hub.root.id, &turn_id)
+                .unwrap(),
+            Some(agent.name)
+        );
+    }
 }

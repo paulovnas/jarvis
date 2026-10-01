@@ -35,6 +35,7 @@ fn begin(session: Arc<Session>) -> Result<(CompactionLease, TurnOptions), AgentE
                 "Ainda não há histórico para compactar.",
             )
         })?;
+    options.executor.require_available()?;
     if options.executor != crate::claude::Executor::Jarvis {
         return Err(AgentError::new(
             "external_context",

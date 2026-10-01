@@ -13,10 +13,12 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 const call = vi.mocked(invoke);
 const initial: SystemSnapshot = {
-  preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30, responseLanguage: "pt-BR", terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 }, browser: { mode: "embedded", application: "chrome" } },
+  preferences: { preventSleep: "off", notifications: false, companionEnabled: false, askUserTimeoutSeconds: 30, responseLanguage: "pt-BR", terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 }, browser: { mode: "embedded", application: "chrome" } },
   sleepInhibited: false,
   sleepError: null,
   notificationError: null,
+  companionSupported: true,
+  companionError: null,
   availableTerminalShells: ["/bin/zsh", "/bin/bash"],
   availableTerminalFonts: ["NotoSansM Nerd Font Mono", "JetBrains Mono"],
   resolvedTerminalShell: "/bin/zsh",
@@ -37,6 +39,26 @@ describe("system preferences", () => {
     expect(within(panel).getByRole("combobox", { name: "Impedir repouso" })).toHaveAttribute("data-size", "sm");
     expect(within(panel).getByRole("switch", { name: "Notificações do sistema" })).toHaveAttribute("data-size", "sm");
     expect(within(panel).getByRole("spinbutton", { name: "Tempo para resposta recomendada" })).toBeVisible();
+  });
+  it("enables the optional desktop companion without changing the other preferences", async () => {
+    const user = userEvent.setup(); render(<SystemSettings />);
+    const toggle = await screen.findByRole("switch", { name: "Assistente na área de trabalho" });
+    expect(toggle).not.toBeChecked();
+    call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, companionEnabled: true } });
+    await user.click(toggle);
+    await waitFor(() => expect(toggle).toBeChecked());
+    expect(call).toHaveBeenCalledWith("save_system_preferences", { preferences: { ...initial.preferences, companionEnabled: true } });
+  });
+  it("hides the companion toggle on unsupported systems and exposes native window failures", async () => {
+    call.mockResolvedValue({ ...initial, companionSupported: false });
+    const view = render(<SystemSettings />);
+    await screen.findByRole("combobox", { name: "Idioma dos agentes" });
+    expect(screen.queryByRole("switch", { name: "Assistente na área de trabalho" })).not.toBeInTheDocument();
+    view.unmount();
+    call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, companionEnabled: true }, companionError: "Não foi possível abrir o assistente." });
+    render(<SystemSettings />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível abrir o assistente");
+    expect(screen.getByRole("switch", { name: "Assistente na área de trabalho" })).toBeChecked();
   });
   it.each([["open", "Enquanto Jarvis aberto"], ["off", "Desligado"], ["active", "Enquanto houver agentes/chats ativos"]])("saves sleep mode %s without changing notifications", async (value, label) => {
     const user = userEvent.setup();
@@ -93,7 +115,7 @@ describe("system preferences", () => {
     render(<SystemSettings accounts={[account]} />);
     const picker = await screen.findByRole("button", { name: "Modelo para títulos das conversas" });
     expect(picker).toHaveTextContent("Automático");
-    expect(screen.getByText(/com Claude Code ou Antigravity CLI, usa um título local/)).toBeVisible();
+    expect(screen.getByText(/com Claude Code, usa um título local/)).toBeVisible();
     const choice = { executor: "jarvis", account: account.alias, model: "gpt-6-luna", reasoning: null };
     call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, chatTitleModel: choice } });
     await user.click(picker);

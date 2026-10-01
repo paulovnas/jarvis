@@ -10,12 +10,13 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/questions";
 import { ExpandQuestionVisual, QuestionVisual } from "./QuestionVisual";
 
-export function QuestionCard({ request, drafts, draftKey, onAnswer, onInteract }: {
+export function QuestionCard({ request, drafts, draftKey, onAnswer, onInteract, autoFocus = true }: {
   request: PendingQuestion;
   drafts: Map<string, QuestionDraft>;
   draftKey: string;
   onAnswer: (request: PendingQuestion, response: QuestionResponse) => Promise<boolean>;
   onInteract: (request: PendingQuestion) => Promise<boolean>;
+  autoFocus?: boolean;
 }) {
   const [draft, setDraft] = useState<QuestionDraft>(() => drafts.get(draftKey) ?? { index: 0, answers: {}, custom: {} });
   const [pending, setPending] = useState(false);
@@ -53,7 +54,7 @@ export function QuestionCard({ request, drafts, draftKey, onAnswer, onInteract }
     drafts.set(draftKey, updated); setDraft(updated);
   };
   const navigate = (index: number) => { update({ ...draft, index }); title.current?.focus(); };
-  useEffect(() => { title.current?.focus(); }, []);
+  useEffect(() => { if (autoFocus) title.current?.focus(); }, [autoFocus]);
   const submitResponse = useCallback(async (response: QuestionResponse) => {
     if (submitting.current) return;
     submitting.current = true; setPending(true);

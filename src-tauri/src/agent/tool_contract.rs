@@ -37,6 +37,7 @@ pub(super) enum Handler {
     Patch,
     ContextMode,
     AskUser,
+    Companion,
     Mcp,
     WebSearch,
     Attachment,
@@ -86,6 +87,8 @@ impl Handler {
             Self::Patch
         } else if name.starts_with("ctx_") {
             Self::ContextMode
+        } else if name.starts_with("jarvito_") {
+            Self::Companion
         } else if name == "ask_user" {
             Self::AskUser
         } else if name.starts_with("mcp_") {
@@ -135,6 +138,9 @@ impl Capabilities {
                 | "http_requests"
                 | "http_result"
                 | "video_docs"
+                | "jarvito_list_projects"
+                | "jarvito_list_conversations"
+                | "jarvito_read_conversation"
         ) || (name.starts_with("ctx_")
             && !crate::core::context::needs_approval(name))
             || name.starts_with("context7_")
@@ -144,7 +150,9 @@ impl Capabilities {
                 "project_beads_list" | "project_beads_ready" | "project_beads_show"
             )
             || matches!(name, "beads_list" | "beads_ready" | "beads_show");
-        let interactive = name == "ask_user" || name.starts_with("jarvis_propose_");
+        let interactive = name == "ask_user"
+            || name.starts_with("jarvis_propose_")
+            || name == "jarvito_propose_project";
         let stateful = name.starts_with("process_")
             || name.starts_with("terminal_")
             || name.starts_with("browser_")
@@ -176,7 +184,7 @@ impl Capabilities {
         Self {
             effect,
             approval,
-            parallel_safe: effect == Effect::ReadOnly,
+            parallel_safe: effect == Effect::ReadOnly && !name.starts_with("jarvito_"),
         }
     }
 }
@@ -377,6 +385,43 @@ mod tests {
             output: String::new(),
             duration_ms: 0,
         }
+    }
+
+    #[test]
+    fn projectless_companion_catalog_cannot_dispatch_filesystem_or_mcp_tools() {
+        let mut definitions = super::super::companion_chat::tools();
+        definitions.push(super::super::questions::definition());
+        let catalog = Catalog::new(&definitions);
+        for name in [
+            "write",
+            "bash",
+            "ctx_execute",
+            "mcp_activate",
+            "terminal_start",
+            "jarvito_confirm_project",
+        ] {
+            let error = catalog.validate(&call(name, json!({}))).unwrap_err();
+            assert_eq!(error.code, "tool_unavailable", "{name}");
+        }
+        assert_eq!(
+            catalog.specs["jarvito_list_projects"].handler,
+            Handler::Companion
+        );
+        assert_eq!(
+            catalog.specs["jarvito_propose_project"].capabilities.effect,
+            Effect::Interactive
+        );
+        assert!(
+            !catalog.specs["jarvito_list_projects"]
+                .capabilities
+                .parallel_safe
+        );
+        assert!(catalog
+            .validate(&call(
+                "jarvito_read_conversation",
+                json!({"conversationId":42})
+            ))
+            .is_err());
     }
 
     #[test]

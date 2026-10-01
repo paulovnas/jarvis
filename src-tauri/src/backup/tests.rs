@@ -36,6 +36,27 @@ fn payload() -> SettingsPayload {
 }
 
 #[test]
+fn retired_executor_settings_backup_keeps_profiles_without_restoring_the_removed_cli() {
+    let mut raw = serde_json::to_value(payload()).unwrap();
+    raw["system"]["agy"] = serde_json::json!({"enabled":true,"showUsage":true,"disabledModels":[]});
+    raw["executorModels"] = serde_json::json!({
+        "standard/builder":{"executor":"agy","account":"","model":"gemini-3-pro","reasoning":"high"}
+    });
+    let settings: SettingsPayload = serde_json::from_value(raw).unwrap();
+    validate_payload(&settings).unwrap();
+    let choice = &settings.executor_models["standard/builder"];
+    assert_eq!(choice.executor, crate::claude::Executor::Unavailable);
+    assert_eq!(choice.model, "gemini-3-pro");
+    assert!(choice.executor.require_available().is_err());
+    let encoded = serde_json::to_value(settings).unwrap();
+    assert!(encoded["system"].get("agy").is_none());
+    assert_eq!(
+        encoded["executorModels"]["standard/builder"]["executor"],
+        "unavailable"
+    );
+}
+
+#[test]
 fn round_trip_preserves_portable_settings_and_skill_payload() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("backup.zip");
@@ -45,15 +66,10 @@ fn round_trip_preserves_portable_settings_and_skill_payload() {
         show_usage: false,
         disabled_models: vec!["opus".into()],
     };
-    settings.system.agy = crate::agy::ProviderPreferences {
-        enabled: true,
-        show_usage: false,
-        disabled_models: vec!["gemini-3-flash".into()],
-    };
     settings.executor_models.insert(
         "standard/builder".into(),
         serde_json::from_value(serde_json::json!({
-            "executor":"agy","account":"","model":"gemini-3-pro","reasoning":"high",
+            "executor":"claude","account":"","model":"opus","reasoning":"high",
             "fallback":{"executor":"claude","account":"","model":"sonnet","reasoning":"low"}
         }))
         .unwrap(),
@@ -81,7 +97,6 @@ fn round_trip_preserves_portable_settings_and_skill_payload() {
     assert_eq!(loaded.payload.catalog.agents[0].name, "Especialista");
     assert_eq!(loaded.payload.catalog.agents[0].model, None);
     assert_eq!(loaded.payload.system.claude, settings.system.claude);
-    assert_eq!(loaded.payload.system.agy, settings.system.agy);
     assert_eq!(loaded.payload.executor_models, settings.executor_models);
     assert_eq!(loaded.payload.system.browser, settings.system.browser);
     assert_eq!(loaded.skill_files[0].path, Path::new("review/SKILL.md"));

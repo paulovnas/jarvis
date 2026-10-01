@@ -16,8 +16,6 @@ import { toast } from "sonner";
 import { libraryError } from "@/core/library";
 import { claudeModels, executionChoice, executorOf, type ExecutionSelection } from "@/core/executors";
 import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
-import { agyModels } from "@/core/agy";
-import { useAgyRuntime } from "@/hooks/use-agy-runtime";
 import { ExecutorModelPicker } from "@/components/chat/ExecutorModelPicker";
 import { accountGroups } from "@/components/settings/workflow/workflow-models";
 import { defaultReasoning } from "@/core/reasoning";
@@ -36,16 +34,14 @@ export function Onboarding({ saving, onComplete }: { saving: boolean; onComplete
   const [selection, setSelection] = useState<ExecutionSelection | null>(null);
   const [finishing, setFinishing] = useState(false);
   const claude = useClaudeRuntime(step >= 3);
-  const agy = useAgyRuntime(false);
   const core = useCore();
   const groups = accountGroups(accounts);
   const nativeModels = groups.flatMap(group => group.models);
   const cliModels = claudeModels(claude.data);
-  const agyRuntimeModels = agyModels(agy.data);
-  const first = nativeModels[0] ?? cliModels[0] ?? agyRuntimeModels[0];
-  const choice = selection ?? (first ? { executor: nativeModels.length ? "jarvis" as const : cliModels.length ? "claude" as const : "agy" as const, model: first.value, reasoning: defaultReasoning(first) } : null);
-  const selectedModel = (executorOf(choice) === "claude" ? cliModels : executorOf(choice) === "agy" ? agyRuntimeModels : nativeModels).find(model => model.value === choice?.model);
-  const runtime = executorOf(choice) === "claude" ? claude : executorOf(choice) === "agy" ? agy : null;
+  const first = nativeModels[0] ?? cliModels[0];
+  const choice = selection ?? (first ? { executor: nativeModels.length ? "jarvis" as const : "claude" as const, model: first.value, reasoning: defaultReasoning(first) } : null);
+  const selectedModel = (executorOf(choice) === "claude" ? cliModels : nativeModels).find(model => model.value === choice?.model);
+  const runtime = executorOf(choice) === "claude" ? claude : null;
   const providerReady = Boolean(selectedModel && (!choice?.reasoning || selectedModel.reasoningLevels.includes(choice.reasoning)) && (!runtime || !runtime.loading && !runtime.error && runtime.data?.installed && runtime.data.authenticated));
   const blocked = saving || finishing || (step === 1 && (!core.snapshot?.ready || core.busy)) || (step === 2 && optionalBusy) || (step === 3 && (!providerReady || providerBusy)) || (step === 4 && (!core.snapshot?.ready || !providerReady));
   const navigatingBusy = saving || finishing || core.busy || (step === 2 && optionalBusy) || (step === 3 && providerBusy);
@@ -68,7 +64,7 @@ export function Onboarding({ saving, onComplete }: { saving: boolean; onComplete
         {step === 0 && <div className="space-y-7 py-4"><div className="max-w-xl space-y-3"><h1 className="text-2xl font-medium tracking-tight">Bem-vindo ao Jarvis</h1><p className="text-sm leading-6 text-muted-foreground">Transforme ideias em projetos com agentes de IA. Planeje, investigue, construa e revise código no seu próprio ambiente.</p></div><div className="grid gap-4 sm:grid-cols-3">{[{ icon: Code2, title: "Do plano ao código", text: "Agentes especializados trabalham em conjunto no seu projeto." }, { icon: Network, title: "Seus modelos", text: "Conecte provedores e escolha o modelo ideal para cada agente." }, { icon: Layers, title: "Tudo organizado", text: "Workspaces, projetos e conversas com histórico e tarefas persistentes." }].map(({ icon: Icon, title, text }) => <div key={title} className="space-y-3 border-t border-border pt-4"><Icon className="size-5 text-primary" /><h2 className="text-sm font-medium">{title}</h2><p className="text-xs leading-5 text-muted-foreground">{text}</p></div>)}</div><BackupSettings accounts={accounts} restoreOnly onRestored={() => setBackupRestored(true)} />{backupRestored && <p role="status" className="text-xs text-onedark-green">Backup restaurado. Conecte os provedores desta instalação para continuar.</p>}</div>}
         {step === 1 && <div className="space-y-5"><div className="space-y-2"><h1 className="text-2xl font-medium tracking-tight">Prepare o essencial</h1><p className="text-sm text-muted-foreground">Cinco componentes locais deixam o Jarvis pronto. Context7 é opcional e pode ser configurado depois.</p></div><CorePanel core={core} setup /></div>}
         {step === 2 && <OptionalToolsStep onBusyChange={setOptionalBusy} />}
-        {step === 3 && <div className="flex flex-col gap-5"><div className="flex flex-col gap-2"><h1 className="text-2xl font-medium tracking-tight">Conecte sua inteligência</h1><p className="text-sm text-muted-foreground">Configure suas contas ou a instalação local do Claude Code ou Antigravity CLI e escolha um modelo para começar.</p></div><Suspense fallback={<CardsSkeleton label="Carregando provedores" columns />}><Providers open embeddedProviders onOpenChange={ignoreOpen} onAccountsChange={setAccounts} onBusyChange={setProviderBusy} /></Suspense><div className="flex flex-col gap-2"><p className="micro-label text-muted-foreground">Modelo inicial</p><div className="flex items-center gap-1"><ExecutorModelPicker selection={choice} modelGroups={groups} showProviderIdentity onSelect={setSelection} /></div></div></div>}
+        {step === 3 && <div className="flex flex-col gap-5"><div className="flex flex-col gap-2"><h1 className="text-2xl font-medium tracking-tight">Conecte sua inteligência</h1><p className="text-sm text-muted-foreground">Configure suas contas ou a instalação local do Claude Code e escolha um modelo para começar.</p></div><Suspense fallback={<CardsSkeleton label="Carregando provedores" columns />}><Providers open embeddedProviders onOpenChange={ignoreOpen} onAccountsChange={setAccounts} onBusyChange={setProviderBusy} /></Suspense><div className="flex flex-col gap-2"><p className="micro-label text-muted-foreground">Modelo inicial</p><div className="flex items-center gap-1"><ExecutorModelPicker selection={choice} modelGroups={groups} showProviderIdentity onSelect={setSelection} /></div></div></div>}
         {step === 4 && <div className="mx-auto max-w-lg space-y-6 py-4"><div className="flex size-12 items-center justify-center rounded-lg border border-onedark-green/25 bg-onedark-green/10 text-onedark-green"><Check className="size-6" /></div><div className="space-y-2"><h1 className="text-2xl font-medium tracking-tight">Tudo pronto para começar</h1><p className="text-sm leading-6 text-muted-foreground">Dê um nome ao seu workspace. Depois, adicione a pasta do seu primeiro projeto.</p></div><div className="space-y-2"><Label htmlFor="first-workspace">Workspace padrão</Label><Input id="first-workspace" placeholder="Pessoal" value={workspace} maxLength={120} disabled={saving || finishing} onChange={event => setWorkspace(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !blocked) void complete(); }} /></div></div>}
       </CardContent>
       <CardFooter className="shrink-0 justify-between border-t border-border bg-sidebar/40 px-6 py-4"><div>{step > 0 && <Button variant="ghost" disabled={navigatingBusy} onClick={() => setStep(step - 1)}><ArrowLeft className="size-4" />Voltar</Button>}</div><Button disabled={blocked} aria-busy={saving || finishing || (step === 2 && optionalBusy)} onClick={() => { if (step < 4) setStep(step + 1); else void complete(); }}>{step === 4 ? <><FolderPlus className="size-4" />{saving || finishing ? "Preparando…" : "Começar"}</> : <>Avançar<ArrowRight className="size-4" /></>}</Button></CardFooter>

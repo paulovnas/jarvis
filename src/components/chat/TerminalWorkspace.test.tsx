@@ -44,10 +44,12 @@ const terminals = [
 
 const service: ProjectTerminal = { id: "service", origin: "agent", projectId: "chat", conversationId: "origin-chat", title: "Vite", command: "bun run dev", cwd: "/project", pid: 123, startedAt: 1, endedAt: null, exitCode: null, status: "running" };
 const systemSnapshot: SystemSnapshot = {
-  preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30, responseLanguage: "pt-BR", terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 }, browser: { mode: "embedded", application: "chrome" } },
+  preferences: { preventSleep: "off", notifications: false, companionEnabled: false, askUserTimeoutSeconds: 30, responseLanguage: "pt-BR", terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 }, browser: { mode: "embedded", application: "chrome" } },
   sleepInhibited: false,
   sleepError: null,
   notificationError: null,
+  companionSupported: true,
+  companionError: null,
   availableTerminalShells: ["/bin/zsh", "/bin/bash"],
   availableTerminalFonts: ["NotoSansM Nerd Font Mono", "JetBrains Mono"],
   resolvedTerminalShell: "/bin/zsh",

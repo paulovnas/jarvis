@@ -1,6 +1,137 @@
 use super::*;
 
 #[test]
+fn global_companion_validates_explicit_model_independently_of_a_retired_project_profile() {
+    let home = tempfile::tempdir().unwrap();
+    let directory = crate::data_dir::root(home.path());
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("agents.json"),
+        r#"{
+        "standard/builder":{"executor":"agy","account":"","model":"gemini-3-pro","reasoning":"high"}
+    }"#,
+    )
+    .unwrap();
+    let state = AppState::default();
+    let oauth = OpenAiCodexState::default();
+    let mut explicit = super::super::tests::options(ApprovalMode::Yolo);
+    explicit.executor = crate::claude::Executor::Claude;
+    explicit.account.clear();
+    explicit.model = "sonnet".into();
+    explicit.reasoning = Some("high".into());
+    explicit.workflow = Some(Flow::Standard);
+    let global_id = super::super::companion_chat::GLOBAL_CONVERSATION_ID;
+    validate_options(&state, &oauth, home.path(), &explicit, global_id).unwrap();
+    assert_eq!(
+        validate_options(&state, &oauth, home.path(), &explicit, &"a".repeat(32))
+            .unwrap_err()
+            .code,
+        "unsupported_executor"
+    );
+    assert_eq!(
+        settings::read(home.path()).unwrap()["standard/builder"].executor,
+        crate::claude::Executor::Unavailable
+    );
+    explicit.executor = crate::claude::Executor::Unavailable;
+    assert_eq!(
+        validate_options(&state, &oauth, home.path(), &explicit, global_id)
+            .unwrap_err()
+            .code,
+        "unsupported_executor"
+    );
+    explicit.executor = crate::claude::Executor::Claude;
+    explicit.custom_agent_id = Some("b".repeat(32));
+    assert!(validate_options(&state, &oauth, home.path(), &explicit, global_id).is_err());
+}
+
+#[test]
+fn global_companion_preserves_explicit_model_while_project_chat_uses_its_profile() {
+    let mut explicit = super::super::tests::options(ApprovalMode::Yolo);
+    explicit.executor = crate::claude::Executor::Claude;
+    explicit.account.clear();
+    explicit.model = "sonnet".into();
+    explicit.reasoning = Some("high".into());
+    let profile = settings::ModelChoice {
+        executor: crate::claude::Executor::Jarvis,
+        account: "configured-account".into(),
+        model: "configured-model".into(),
+        reasoning: None,
+        fallback: None,
+    };
+    let profiles = BTreeMap::from([(settings::key(Flow::Standard, Role::Builder), profile)]);
+    let mut global = explicit.clone();
+    apply_root_model(
+        &mut global,
+        &profiles,
+        Flow::Standard,
+        super::super::companion_chat::GLOBAL_CONVERSATION_ID,
+    );
+    assert_eq!(global.executor, explicit.executor);
+    assert_eq!(global.account, explicit.account);
+    assert_eq!(global.model, explicit.model);
+    assert_eq!(global.reasoning, explicit.reasoning);
+    let mut project = explicit;
+    apply_root_model(&mut project, &profiles, Flow::Standard, &"a".repeat(32));
+    assert_eq!(project.executor, crate::claude::Executor::Jarvis);
+    assert_eq!(project.account, "configured-account");
+    assert_eq!(project.model, "configured-model");
+}
+
+#[test]
+fn global_companion_workflow_never_adds_project_tools() {
+    let (_fixture, mut hub) = hub();
+    let hub_mut = Arc::get_mut(&mut hub).unwrap();
+    Arc::get_mut(&mut hub_mut.root).unwrap().id =
+        crate::agent::companion_chat::GLOBAL_CONVERSATION_ID.to_owned();
+    // Old manifests can still contain a project profile after reopening. Its
+    // fallback is not an authorization to change the globally selected model.
+    let mut retired: settings::ModelChoice = serde_json::from_value(json!({
+        "executor":"agy","account":"","model":"gemini-3-pro","reasoning":"high"
+    }))
+    .unwrap();
+    retired.fallback = Some(Box::new(settings::ModelChoice {
+        executor: crate::claude::Executor::Claude,
+        account: String::new(),
+        model: "sonnet".into(),
+        reasoning: None,
+        fallback: None,
+    }));
+    hub_mut
+        .manifest
+        .lock()
+        .unwrap()
+        .profiles
+        .insert(settings::key(Flow::Complete, Role::Builder), retired);
+    let execution = Execution {
+        hub,
+        id: "main".into(),
+        role: Role::Builder,
+        flow: Flow::Complete,
+        scope: vec![".".into()],
+    };
+    assert!(execution.secondary_model().unwrap().is_none());
+    let mut definitions = crate::agent::tools::definitions(Mode::Build);
+    definitions.extend(crate::agent::companion_chat::tools());
+    execution.filter(&mut definitions);
+    assert_eq!(definitions.len(), 5);
+    assert!(definitions.iter().all(|definition| {
+        crate::agent::companion_chat::allowed_tool(definition["name"].as_str().unwrap())
+    }));
+    for name in [
+        "write",
+        "bash",
+        "browser_open",
+        "http_send",
+        "terminal_start",
+        "hub_spawn",
+        "mcp_activate",
+        "jarvito_confirm_project",
+    ] {
+        assert!(!execution.allowed(name), "{name}");
+    }
+}
+
+#[test]
 fn all_roles_can_retrieve_project_knowledge() {
     for role in [
         Role::Planner,

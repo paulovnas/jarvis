@@ -1386,6 +1386,62 @@ mod tests {
     }
 
     #[test]
+    fn retired_executor_journals_preserve_messages_receipts_and_history_totals() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("retired-executor.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        let mut old = turn();
+        old.turn.status = TurnStatus::Completed;
+        old.turn.steps.push(Step {
+            text: "Resultado confirmado".into(),
+            tools: vec![ToolCall {
+                id: "confirmed-read".into(),
+                name: "read".into(),
+                args: json!({"path":"README.md"}),
+                output: "Documentação preservada".into(),
+                status: "completed".into(),
+                duration_ms: 1,
+            }],
+            ..Step::default()
+        });
+        old.wire.push(json!({"type":"function_call_output","call_id":"confirmed-read","output":"Documentação preservada"}));
+        let mut raw = serde_json::to_value(&old).unwrap();
+        raw["turn"]["options"]["executor"] = json!("agy");
+        raw["turn"]["options"]["account"] = json!("");
+        raw["turn"]["options"]["model"] = json!("gemini-3-pro");
+        append_event(&path, "turn_checkpoint", &raw).unwrap();
+        let replay = crate::agent::history::HistoryState::default()
+            .load_replay(&path, &fixture.root)
+            .unwrap();
+        assert_eq!(replay.total_turns, 1);
+        let restored = &replay.turns[0];
+        assert_eq!(
+            restored.turn.options.executor,
+            crate::claude::Executor::Unavailable
+        );
+        assert_eq!(restored.turn.options.model, "gemini-3-pro");
+        assert_eq!(restored.turn.user, "Read");
+        assert_eq!(restored.turn.steps[0].text, "Resultado confirmado");
+        assert_eq!(
+            restored.turn.steps[0].tools[0].output,
+            "Documentação preservada"
+        );
+        assert_eq!(restored.wire.last().unwrap()["call_id"], "confirmed-read");
+        let mut interrupted = restored.clone();
+        mark_interrupted(&mut interrupted);
+        assert!(!crate::agent::resumable_direct_turn(&interrupted));
+        assert!(!crate::agent::resumable_workflow_turn(&interrupted));
+        assert!(!crate::agent::retryable_without_workflow_checkpoint(
+            &interrupted
+        ));
+        append(&path, &interrupted).unwrap();
+        assert_eq!(
+            load_all(&path).unwrap().0[0].turn.steps[0].tools[0].id,
+            "confirmed-read"
+        );
+    }
+
+    #[test]
     fn legacy_queue_time_is_removed_once_across_retries_and_vacuum() {
         let fixture = Fixture::new();
         let path = fixture.root.join("legacy-queue-time.jsonl");

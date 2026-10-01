@@ -25,7 +25,7 @@ name = "browser-probe"
 required-features = ["browser-probe"]
 
 [dependencies]
-tauri = { version = "2", features = ["unstable", "protocol-asset"] }
+tauri = { version = "2", features = ["unstable", "protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
@@ -45,7 +45,6 @@ tauri-plugin-dialog = "2"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs", "net"] }
 libc = "0.2.189"
 rmcp = { version = "3.2.0", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client-reqwest", "reqwest"] }
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 jsonschema = { version = "0.53.0", default-features = false }
 process-wrap = { version = "10.0.0", default-features = false, features = ["tokio1", "process-group", "job-object", "kill-on-drop", "creation-flags"] }
 similar = "2.7"
@@ -73,6 +72,7 @@ objc2-user-notifications = "0.3"
 block2 = "0.6"
 objc2-web-kit = "0.3"
 objc2-app-kit = "0.3"
+dispatch2 = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
@@ -87,7 +87,7 @@ zbus = { version = "5", default-features = false, features = ["tokio", "p2p"] }
 [target.'cfg(windows)'.dependencies]
 notify-rust = "4"
 webview2-com = "0.38"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
 windows = { version = "0.61", features = ["UI_Notifications", "Win32_System_WinRT", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_UI_Shell_PropertiesSystem", "Win32_Storage_EnhancedStorage"] }
 windows-registry = "0.6"
 

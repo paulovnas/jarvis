@@ -30,6 +30,31 @@ fn fixture() -> (Connection, tempfile::TempDir) {
 }
 
 #[test]
+fn global_jarvito_history_does_not_surface_as_an_invisible_project_model_warning() {
+    let (mut db, home) = fixture();
+    let before = inventory(&db, home.path()).unwrap();
+    library::companion::ensure_global(&mut db, home.path()).unwrap();
+    let path = library::session_path(
+        home.path(),
+        library::companion::GLOBAL_PROJECT_ID,
+        library::companion::GLOBAL_CONVERSATION_ID,
+        false,
+    )
+    .unwrap();
+    let mut journal = std::fs::read_to_string(&path).unwrap();
+    let options = super::super::tests::options(super::super::ApprovalMode::Yolo);
+    journal.push_str(&format!("{}\n", json!({"type":"turn_checkpoint","version":1,"data":{"turn":{"id":"global-turn","options":options}}})));
+    std::fs::write(&path, journal).unwrap();
+    // The saved model exists, but global chat is never a phantom project dependency.
+    assert_eq!(chat_choices(&path).unwrap().len(), 1);
+    let after = inventory(&db, home.path()).unwrap();
+    assert_eq!(after.len(), before.len());
+    assert!(!after.iter().any(
+        |item| item.item_key == format!("chat:{}", library::companion::GLOBAL_CONVERSATION_ID)
+    ));
+}
+
+#[test]
 fn chat_title_model_is_visible_remapped_and_guarded_against_later_user_edits() {
     let (mut db, home) = fixture();
     let original = choice("openai-codex-old", "old-model");
