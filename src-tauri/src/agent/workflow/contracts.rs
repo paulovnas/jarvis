@@ -8,6 +8,7 @@ pub enum Flow {
     Standard,
     Designer,
     Video,
+    ImageGenerator,
     Planned,
     Complete,
     Publication,
@@ -23,6 +24,7 @@ pub enum Role {
     Orchestrator,
     Designer,
     Video,
+    ImageGenerator,
     Builder,
     Reviewer,
     Github,
@@ -35,6 +37,7 @@ impl Flow {
             Self::Standard => "standard",
             Self::Designer => "designer",
             Self::Video => "video",
+            Self::ImageGenerator => "image_generator",
             Self::Planned => "planned",
             Self::Complete => "complete",
             Self::Publication => "publication",
@@ -46,13 +49,17 @@ impl Flow {
             Self::Standard => Role::Builder,
             Self::Designer => Role::Designer,
             Self::Video => Role::Video,
+            Self::ImageGenerator => Role::ImageGenerator,
             Self::Publication => Role::Github,
             Self::Custom => Role::Custom,
             _ => Role::Planner,
         }
     }
     pub(in crate::agent) fn direct(self) -> bool {
-        matches!(self, Self::Standard | Self::Designer | Self::Video)
+        matches!(
+            self,
+            Self::Standard | Self::Designer | Self::Video | Self::ImageGenerator
+        )
     }
     pub(super) fn roster(self) -> &'static [Role] {
         match self {
@@ -60,6 +67,7 @@ impl Flow {
             Self::Standard => &[Role::Builder],
             Self::Designer => &[Role::Designer],
             Self::Video => &[Role::Video],
+            Self::ImageGenerator => &[Role::ImageGenerator],
             Self::Publication => &[Role::Github],
             Self::Planned => &[Role::Planner, Role::Builder, Role::Designer],
             Self::Complete => &[
@@ -89,7 +97,9 @@ impl Flow {
                 (Role::Orchestrator, Role::Reviewer),
             ],
             Self::Publication => &[(Role::Github, Role::Builder)],
-            Self::Standard | Self::Designer | Self::Video | Self::Custom => &[],
+            Self::Standard | Self::Designer | Self::Video | Self::ImageGenerator | Self::Custom => {
+                &[]
+            }
         }
     }
 }
@@ -102,6 +112,7 @@ impl Role {
             Self::Orchestrator => "orchestrator",
             Self::Designer => "designer",
             Self::Video => "video",
+            Self::ImageGenerator => "image_generator",
             Self::Builder => "builder",
             Self::Reviewer => "reviewer",
             Self::Github => "github",
@@ -116,6 +127,7 @@ impl Role {
             "builtin:orchestrator" => Some(Self::Orchestrator),
             "builtin:designer" => Some(Self::Designer),
             "builtin:video" => Some(Self::Video),
+            "builtin:image_generator" => Some(Self::ImageGenerator),
             "builtin:builder" => Some(Self::Builder),
             "builtin:reviewer" => Some(Self::Reviewer),
             "builtin:github" => Some(Self::Github),
@@ -131,7 +143,12 @@ impl Role {
     pub(super) fn writes(self) -> bool {
         matches!(
             self,
-            Self::Builder | Self::Designer | Self::Video | Self::Writer | Self::Github
+            Self::Builder
+                | Self::Designer
+                | Self::Video
+                | Self::ImageGenerator
+                | Self::Writer
+                | Self::Github
         )
     }
     pub(in crate::agent) fn label(self) -> &'static str {
@@ -141,7 +158,8 @@ impl Role {
             Self::Writer => "Redator",
             Self::Orchestrator => "Orquestrador",
             Self::Designer => "Designer",
-            Self::Video => "Criador de vídeos",
+            Self::Video => "Gerador de vídeos",
+            Self::ImageGenerator => "Gerador de imagens",
             Self::Builder => "Construtor",
             Self::Reviewer => "Revisor",
             Self::Github => "GitHub",
@@ -149,20 +167,53 @@ impl Role {
         }
     }
     pub(super) fn spawns(self, flow: Flow, role: Self) -> bool {
+        if role == Self::ImageGenerator {
+            return self != Self::ImageGenerator;
+        }
         flow.delegations().contains(&(self, role))
     }
     pub(super) fn allows(self, flow: Flow, tool: &str, broad: bool) -> bool {
+        if tool == "image_process" {
+            return self == Self::ImageGenerator;
+        }
+        if self == Self::ImageGenerator {
+            return matches!(
+                tool,
+                "generate_image"
+                    | "read_attachment"
+                    | "vision"
+                    | "inspect_image"
+                    | "ask_user"
+                    | "hub_complete"
+                    | "update_tasks"
+                    | "ctx_search"
+                    | "ctx_stats"
+                    | "read_skill"
+                    | "find_skills"
+            ) || tool == crate::agent::progress::TOOL_NAME
+                || tool == crate::agent::knowledge::TOOL;
+        }
+        if tool.starts_with("graft_") {
+            return self != Self::Video;
+        }
+        if tool == "generate_image" {
+            return true;
+        }
         if tool == crate::agent::progress::TOOL_NAME
             || tool == crate::agent::knowledge::TOOL
             || tool == crate::agent::learning::TOOL
             || tool == "video_docs"
+            || tool == "video_presentation"
         {
             return true;
         }
         if matches!(tool, "http_requests" | "http_result") {
             return true;
         }
-        if matches!(tool, "video_run" | "video_wait" | "video_cancel") {
+        if matches!(
+            tool,
+            "video_run" | "video_audio" | "video_wait" | "video_cancel"
+        ) {
             return matches!(self, Self::Builder | Self::Designer | Self::Video);
         }
         if crate::agent::http::mutating(tool) {
@@ -216,7 +267,7 @@ impl Role {
                 || match self {
                     Self::Planner => flow == Flow::Planned || tool == "beads_close",
                     Self::Investigator | Self::Reviewer => tool == "beads_update",
-                    Self::Builder | Self::Designer | Self::Video => {
+                    Self::Builder | Self::Designer | Self::Video | Self::ImageGenerator => {
                         matches!(tool, "beads_claim" | "beads_update")
                     }
                     Self::Writer => tool != "beads_close",
@@ -257,6 +308,7 @@ impl Role {
         Self::Orchestrator => "Coordinate the assigned outcome against the current user request and acceptance criteria. Use existing task state, decisions and structured handoffs; do not repeat workers' discovery or verification. Separate completed outcomes, repairable findings and demonstrated external dependencies. Keep independent work independent and preserve required integration dependencies. Route all concrete findings together to the appropriate specialist, reuse valid evidence, and change the recovery approach when the same failure recurs without progress. Do not weaken criteria or treat a rework verdict as an external blocker. Report unresolved decisions precisely. Do not implement product code or treat review approval as authorization to publish.",
         Self::Designer => "Deliver the requested frontend/design outcome within the authorized scope. When a task is assigned, read it and the relevant project design system, components and user references. Reuse valid evidence and preserve product identity. For a small correction, inspect and change the affected surface without restarting discovery or redesigning unrelated areas. Resolve the actual component/layout/interaction cause and cover the affected responsive, accessibility and UI states. Ask only for a material missing decision through the channel available in this execution mode. Run checks proportional to the changed surface, then report implemented outcomes, evidence and visual-validation limits. An assessment alone does not fulfill an implementation request; a critique-only request does not authorize edits.",
         Self::Video => include_str!("video.md"),
+        Self::ImageGenerator => include_str!("image.md"),
         Self::Builder => "Read the assigned task and smallest relevant project instructions. Implement the smallest complete solution within scope. For an incident, follow the actual failing request through active configuration, code and observed response; separate confirmed causes, disproved hypotheses and unknowns. Locate existing authorized credentials/integration configuration before asking the user for access; do not expose secret values. A failed probe or plausible diagnosis does not finish a request to resolve the incident. Continue reachable work until its acceptance criteria are verified or an external dependency is demonstrated. Reuse valid evidence; load a skill only for missing specialized procedure. For a narrow operation with no source edits, use the established mechanism and bounded preflight/action/postcondition sequence; skip code-quality gates unless the runbook or user requires them. Preserve unknown working-tree changes and re-read only when needed before mutation. For source changes, run checks proportional to the affected surface and correct failures. Record material progress in Beads for delegated work or the native task list in direct flows. Return outcomes, paths, actual validation and remaining blockers; delegated task closure belongs to the coordinator.",
         Self::Reviewer => "Independently inspect the actual change and affected consumers against the current user request, assigned specification and acceptance criteria. Treat worker claims as leads, not proof. Report demonstrated, actionable in-scope defects and unmet criteria; separate unrelated pre-existing issues and optional improvements. Speculative risks or stylistic preferences do not justify rework. Use workflow_check for relevant checks; reuse recorded results only while their inputs are unchanged, and rerun when required by the project, changed inputs or a specific unresolved risk. Missing tooling is a validation limitation, not proof of a code defect. Review corrections together and focus subsequent rounds on their delta and affected criteria. Do not edit product code. Approve only verified technical criteria; request rework for concrete repairable failures; report blocked only when missing evidence or a prerequisite actually prevents assessment. Include cause, affected paths/input classes, regression expectations and limitations. Distinguish automated checks, visual inspection and user acceptance.",
         Self::Github => "Act as Jarvis\'s dedicated GitHub agent. For publication, start with jarvis_inspect_publication to identify independent repositories and their current state. Use the known paths for later refreshes instead of rediscovering the tree. Inspect the relevant diff once; read surrounding source only to resolve a specific ambiguity. Reuse checks already verified on unchanged content. Publication is not a request to redesign, refactor or audit whole files. For informational Git/GitHub questions, use the smallest read-only query and answer. Edit product files only to resolve publication conflicts, preserving both sides' intended behavior. Resolve bounded conflicts yourself when this execution mode has no delegation tools. Use native file tools and run focused checks for the repaired scope. Do not mutate Git/GitHub through shell, terminals, processes or MCPs. When a configured reference branch exists, rebase onto it using syncBase and use it as PR base. A conflict is recoverable: inspect the returned paths, repair them and submit sync=rebase_continue with files and commitMessage=null, then finish the remaining publication actions. Per-chat automatic publication settings already authorize the selected actions; use authorization=null and never ask again for those actions. Treat a current user request that names commit, remote synchronization, push, pull request, merge, reset or another supported Git operation as authorization for that named operation; never ask the user to decide it again. Resolve routine details from repository conventions and inspected state. When asked to update a local branch from its remote, include sync in jarvis_propose_publication. Prefer ff_only for a sync-only operation; use rebase when the proposal also creates a local commit, because Jarvis fetches the latest remote state only at execution. Never infer a push from a request to update the local branch. Use ask_user only for a material choice that the current request and evidence cannot resolve. Group compatible authorized operations through jarvis_propose_publication. Execute required preparation separately when its typed contract requires it, then continue only remaining operations without repeating confirmed results. For authorization, use explicit_request with a verbatim current-message excerpt when all mutations were directly requested, autonomous when that same excerpt also waives another question or confirmation, and null when review or a configured missing decision is still required. Never tell the user to execute a supported operation manually. Open pull requests are reusable state: locate and reuse the matching PR, then include an authorized merge instead of attempting a duplicate. After execution, reuse the tool\'s per-repository results and perform only the missing postcondition checks; do not repeat an uncertain action. Recoverable errors require a bounded state refresh and a corrected action, not an artificial blocker. Report actual commits, synchronizations, pushes, PRs, merges and remaining concrete external blockers through the completion channel of this execution mode.",
@@ -353,6 +405,9 @@ pub(super) fn instruction_sections(flow: Flow, role: Role) -> Vec<InstructionSec
 pub(super) fn prompt(flow: Flow, role: Role, id: &str) -> String {
     let mut text = format!("\nJarvis built-in workflow: {flow:?}. Your immutable role is {role:?}; agent ID {id}.\n{}\n{}\n", include_str!("common.md"), role_instructions(flow, role));
     for section in supplemental_instructions(flow, role) {
+        if id != "main" && section.title == "Tarefas do fluxo direto" {
+            continue;
+        }
         text.push_str(section.content);
     }
     text

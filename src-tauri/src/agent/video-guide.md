@@ -11,6 +11,8 @@ render session.
 Read the relevant `video_docs` sections once. Inspect existing compositions with
 `video_run(action="timeline")` before editing their timing. For new compositions,
 use `video_run(action="init", path="videos/<name>")` in a new/empty directory.
+Initialization also includes pinned local GSAP at `assets/vendor/gsap.min.js`;
+reuse that script path for offline animation instead of a CDN.
 Use existing file tools to write/edit source, keeping all assets project-local.
 For actual page imagery, use `browser_screenshot` with
 `savePath="videos/<name>/assets/page.png"` in Build mode. Both browser backends
@@ -38,6 +40,50 @@ when relevant. Source/generate images or audio only when they improve the brief;
 do not fabricate claims about provided products or people.
 
 ## Composition and timing
+
+For presentations, keep an editable `presentation.json` in the composition:
+
+```json
+{"project":{"name":"Example"},"voice":{"language":"pt-BR","voice":"pm_alex","speed":1},"music":{"path":"assets/audio/music/soundtrack.wav","volume":0.16},"scenes":[{"id":"intro","duration":3,"narration":"Conheça o nosso projeto.","visual":"Product introduction"}]}
+```
+
+Use `video_audio(action="narrate", text="...", voice="pm_alex",
+output="videos/<name>/assets/audio/voice/intro.wav")` for each scene. PT-BR
+voices are `pm_alex`, `pm_santa`, `pf_dora`. Generation is local after the
+required Core's initial model downloads; no external API or local conversational
+LLM is needed. CPU inference can take time. Use the returned session/cursor with
+`video_wait`; cancel with `video_cancel`. Heavy generation queues rather than
+loading multiple models across chats. Do not start a second copy while waiting.
+
+`video_presentation(path="videos/<name>")` reads the manifest without changing
+it and returns missing/stale narration tasks, scene starts/durations and actual
+audio lengths. A scene lasts at least its requested duration or the actual voice
+plus `tail` (default 0.35 seconds), whichever is longer. Use that same timeline
+for visuals, narration and captions. Insert the returned `audioHtml` inside the
+root once; optional `captionHtml` needs project-appropriate styling. Set root
+duration and GSAP endpoints from the returned total duration. Do not create a
+second independent timing plan or stretch speech to fit a guessed duration.
+Each visual scene's timed element uses the manifest's exact `id`, `data-start`
+and `data-duration`. Keep the returned audio IDs/paths/timing in static HTML.
+Native rendering verifies that these declarations match the manifest, preventing
+an old or silent composition from being published as a completed presentation.
+
+Confirmed identical requests reuse their WAV and receipt. When narration changes,
+choose a new WAV path and update that scene's `audio` property; other scenes are
+preserved. Explicit `audio` can also refer to a provided PCM16 WAV recording.
+The default generated scene path is `assets/audio/voice/<scene-id>.wav`.
+
+Music generation uses MusicGen-small weights under **CC-BY-NC-4.0**. Ask about
+usage before generating; pass `nonCommercial=true` only following the user's
+confirmation. For professional/commercial presentations use a supplied licensed
+soundtrack instead. `video_audio(action="music", prompt="instrumental subtle
+synths, no vocals", duration=45, nonCommercial=true, output=".../soundtrack.wav")`
+generates a short seed and crossfade-loops it to the requested duration. Set
+`music.path` in the manifest after narration determines the actual total length.
+Omit `music` when no soundtrack is requested. The returned audio markup uses
+Hyperframes volume automation for fades and ducking (default bed gain 0.16),
+so preview and render share their mix. Inspect with `video_presentation` again
+after changing any voice or audio asset. Do not trim longer narration silently.
 
 The entry file is `index.html`. Define a root with `data-composition-id`,
 `data-width`, `data-height` and `data-duration` (seconds). Use `data-start` and

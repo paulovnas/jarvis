@@ -136,6 +136,55 @@ fn output_persists_images_without_binary_payloads_or_private_thoughts() {
 }
 
 #[test]
+fn generation_supports_bounded_variants_and_processing_without_model_override() {
+    let args = arguments(&json!({"prompt":"Uma árvore","variants":3,"processing":{"width":128,"height":72,"format":"webp","remove_background":true}})).unwrap();
+    assert_eq!(args.variants, 3);
+    assert_eq!(args.processing.width, Some(128));
+    assert!(args.processing.remove_background);
+    assert_eq!(
+        arguments(&json!({"prompt":"Uma árvore"}))
+            .unwrap()
+            .processing
+            .format,
+        "png"
+    );
+    for value in [
+        json!({"prompt":"x","variants":0}),
+        json!({"prompt":"x","variants":5}),
+        json!({"prompt":"x","processing":{"model":"override"}}),
+    ] {
+        assert!(arguments(&value).is_err());
+    }
+    let ids = vec!["a".repeat(32)];
+    let error = preserve_sources(invalid("provider failure"), &ids);
+    let result: Value = serde_json::from_str(error.tool_result.as_deref().unwrap()).unwrap();
+    assert_eq!(result["sourceImageIds"], json!(ids));
+    assert!(result["recovery"].as_str().unwrap().contains("paid"));
+}
+
+#[test]
+fn partial_paid_output_keeps_confirmed_images_and_merges_recovery_receipts() {
+    let home = tempfile::tempdir().unwrap();
+    let owner = "a".repeat(32);
+    let output = Output {
+        images: vec![png(), b"\x89PNG\r\n\x1a\ntruncated".to_vec()],
+        finished: true,
+        ..Output::default()
+    };
+    let cause = persist(home.path(), &owner, "google", output).unwrap_err();
+    let result: Value = serde_json::from_str(cause.tool_result.as_deref().unwrap()).unwrap();
+    let id = result["sourceImageIds"][0].as_str().unwrap();
+    assert!(attachments::metadata(home.path(), &owner, id).is_ok());
+    let combined = preserve_sources(cause, &["b".repeat(32)]);
+    let receipt: Value = serde_json::from_str(combined.tool_result.as_deref().unwrap()).unwrap();
+    assert_eq!(receipt["sourceImageIds"].as_array().unwrap().len(), 2);
+    assert!(receipt["sourceImageIds"]
+        .as_array()
+        .unwrap()
+        .contains(&json!(id)));
+}
+
+#[test]
 fn malformed_blocked_empty_and_incomplete_results_fail() {
     assert!(Output::default()
         .event(&json!({"response":{"promptFeedback":{"blockReason":"SAFETY"}}}))

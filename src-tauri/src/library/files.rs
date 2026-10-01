@@ -227,12 +227,13 @@ fn video(root: &Path, relative: &str) -> Result<VideoPreview, LibraryError> {
         "webm" => "video/webm",
         "mov" => "video/quicktime",
         "ogv" => "video/ogg",
-        _ => {
-            return Err(LibraryError::new(
-                "video_format",
-                "Este formato de vídeo não é suportado. Use MP4, WebM, MOV, M4V ou OGV.",
-            ))
-        }
+        "wav" => "audio/wav",
+        "mp3" => "audio/mpeg",
+        "ogg" => "audio/ogg",
+        _ => return Err(LibraryError::new(
+            "video_format",
+            "Este formato de mídia não é suportado. Use MP4, WebM, MOV, M4V, OGV, WAV, MP3 ou OGG.",
+        )),
     };
     Ok(VideoPreview {
         path: relative,
@@ -243,7 +244,7 @@ fn video(root: &Path, relative: &str) -> Result<VideoPreview, LibraryError> {
 }
 
 fn save_video(source: &Path, destination: &Path) -> Result<(), LibraryError> {
-    let failed = || LibraryError::new("save_video", "Não foi possível salvar o vídeo.");
+    let failed = || LibraryError::new("save_video", "Não foi possível salvar o arquivo de mídia.");
     if destination.canonicalize().ok().as_deref() == Some(source) {
         return Ok(());
     }
@@ -335,7 +336,11 @@ pub async fn save_project_video(
         let Some(destination) = app
             .dialog()
             .file()
-            .set_title("Salvar vídeo")
+            .set_title(if preview.mime.starts_with("audio/") {
+                "Salvar áudio"
+            } else {
+                "Salvar vídeo"
+            })
             .set_file_name(
                 source
                     .file_name()
@@ -373,7 +378,7 @@ pub async fn open_project_video(
             .map_err(|_| {
                 LibraryError::new(
                     "open_video",
-                    "Não foi possível abrir o vídeo no aplicativo padrão.",
+                    "Não foi possível abrir o arquivo de mídia no aplicativo padrão.",
                 )
             })
     })

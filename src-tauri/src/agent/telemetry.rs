@@ -1035,6 +1035,8 @@ pub(crate) fn tool_kind(name: &str) -> ToolKind {
     match name {
         "read" | "read_attachment" | "read_skill" => ToolKind::Read,
         "search" | "list" | "search_skills" => ToolKind::Search,
+        "graft_file_api" => ToolKind::Read,
+        name if name.starts_with("graft_") => ToolKind::Search,
         "write" | "edit" => ToolKind::Write,
         "apply_patch" => ToolKind::Patch,
         "bash" => ToolKind::Shell,
@@ -1243,6 +1245,20 @@ fn write_record(root: &Path, record: &Record) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structural_discovery_is_accounted_as_native_read_and_search_work() {
+        assert_eq!(tool_kind("graft_file_api"), ToolKind::Read);
+        for name in [
+            "graft_find_code",
+            "graft_trace_calls",
+            "graft_find_all",
+            "graft_repo_map",
+            "graft_check_freshness",
+        ] {
+            assert_eq!(tool_kind(name), ToolKind::Search, "{name}");
+        }
+    }
 
     #[test]
     fn reports_overlap_percentiles_and_event_loss_without_content() {

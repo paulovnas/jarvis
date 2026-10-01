@@ -1,0 +1,71 @@
+{
+  "revision": "kokoro-v1.0/model-files-v1.1+musicgen-small@4c8334b02c6ec4e8664a91979669a501ec497792",
+  "models": [
+    {
+      "path": "kokoro/kokoro-v1.0.onnx",
+      "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.0.onnx",
+      "size": 325505369,
+      "sha256": "beb0d1848dee9a49da392cc3df26958d46cfa35d321edf434f52949153f0df3a"
+    },
+    {
+      "path": "kokoro/voices-v1.0.bin",
+      "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.0.bin",
+      "size": 28214398,
+      "sha256": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+    },
+    {
+      "path": "musicgen/model.safetensors",
+      "url": "https://huggingface.co/facebook/musicgen-small/resolve/4c8334b02c6ec4e8664a91979669a501ec497792/model.safetensors",
+      "size": 2364427288,
+      "sha256": "1bdc99d43eb6c775967df24b65b0a9f847c0907e95664698d93b5a1c35f5090d"
+    },
+    {
+      "path": "musicgen/spiece.model",
+      "url": "https://huggingface.co/facebook/musicgen-small/resolve/4c8334b02c6ec4e8664a91979669a501ec497792/spiece.model",
+      "size": 791656,
+      "sha256": "d60acb128cf7b7f2536e8f38a5b18a05535c9e14c7a355904270e15b0945ea86"
+    },
+    {
+      "path": "musicgen/config.json",
+      "url": "https://huggingface.co/facebook/musicgen-small/resolve/4c8334b02c6ec4e8664a91979669a501ec497792/config.json",
+      "size": 7866,
+      "sha256": "36bba569a817511fa54ddd1c42b157c24c8f6a178b7b85484d7475e71ce30f6d"
+    },
+    {
+      "path": "musicgen/generation_config.json",
+      "url": "https://huggingface.co/facebook/musicgen-small/resolve/4c8334b02c6ec4e8664a91979669a501ec497792/generation_config.json",
+      "size": 224,
+      "sha256": "3126e10627aad71cce75772137b1043bae6a066751f0aaebf7a1ba440a5fc3c4"
+    },
+    {
+      "path": "musicgen/preprocessor_config.json",
+      "url": "https://huggingface.co/facebook/musicgen-small/resolve/4c8334b02c6ec4e8664a91979669a501ec497792/preprocessor_config.json",
+      "size": 275,
+      "sha256": "3f820c9214aed413cde1d72fe2bed2f5ce5e5929d4ac2cc12bfddaf0ba0b8465"
+    },
+    {
+      "path": "musicgen/special_tokens_map.json",
+      "url": "https://huggingface.co/facebook/musicgen-small/resolve/4c8334b02c6ec4e8664a91979669a501ec497792/special_tokens_map.json",
+      "size": 2201,
+      "sha256": "5c87151ef0f72a99d1f766a4c418bd2a1f90aaa30a8e22fe5eca9641daebb64f"
+    },
+    {
+      "path": "musicgen/tokenizer.json",
+      "url": "https://huggingface.co/facebook/musicgen-small/resolve/4c8334b02c6ec4e8664a91979669a501ec497792/tokenizer.json",
+      "size": 2422095,
+      "sha256": "5f0ed8ab5b8cfa9812bb73752f1d80c292e52bcf5a87a144dc9ab2d251056cbb"
+    },
+    {
+      "path": "musicgen/tokenizer_config.json",
+      "url": "https://huggingface.co/facebook/musicgen-small/resolve/4c8334b02c6ec4e8664a91979669a501ec497792/tokenizer_config.json",
+      "size": 2366,
+      "sha256": "88922cb67999604f60f3176db748b20975efc9ea7f72d5c80211be02d93c3b92"
+    },
+    {
+      "path": "musicgen/README.md",
+      "url": "https://huggingface.co/facebook/musicgen-small/resolve/4c8334b02c6ec4e8664a91979669a501ec497792/README.md",
+      "size": 12309,
+      "sha256": "fd82bcd1695c15550d5a047b911980038fc776f3bf417450c4596c6486d0cd2d"
+    }
+  ]
+}

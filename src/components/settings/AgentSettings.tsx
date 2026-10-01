@@ -19,7 +19,7 @@ import { Hint } from "@/components/ui/hint";
 
 type Role = WorkflowAgent["role"];
 const GROUPS: { flow: Workflow; roles: Role[] }[] = [
-  { flow: "standard", roles: ["builder"] }, { flow: "designer", roles: ["designer"] }, { flow: "video", roles: ["video"] }, { flow: "planned", roles: ["planner", "builder", "designer"] },
+  { flow: "standard", roles: ["builder"] }, { flow: "designer", roles: ["designer"] }, { flow: "video", roles: ["video"] }, { flow: "image_generator", roles: ["image_generator"] }, { flow: "planned", roles: ["planner", "builder", "designer"] },
   { flow: "complete", roles: ["planner", "investigator", "writer", "orchestrator", "designer", "builder", "reviewer"] },
   { flow: "publication", roles: ["github"] },
 ];
@@ -30,7 +30,8 @@ const GUIDANCE: Record<Role, string> = {
   writer: "Busque clareza e consistência ao escrever tarefas e critérios de aceite. Exemplo: GPT 5.6 Luna com Médio ou Terra com Alto para especificações complexas.",
   orchestrator: "Priorize seguir contratos, dependências e decisões entre agentes. Exemplo: GPT 5.6 Sol com Alto; Extra alto para fluxos complexos.",
   designer: "Prefira um modelo capaz de analisar referências visuais e implementar interfaces. Exemplo: GPT 5.6 Sol com Alto ou Terra com Alto. A inspeção visual também depende das ferramentas disponíveis.",
-  video: "Prefira um modelo capaz de combinar direção visual, animação e código. Use raciocínio maior para composições com várias cenas e sincronização de áudio.",
+  video: "Prefira um modelo capaz de combinar roteiro, direção visual e código. Ele coordena animações, narração e música; as ferramentas do Core geram o áudio. Use raciocínio maior para várias cenas e sincronização.",
+  image_generator: "Este modelo interpreta o pedido e coordena os workflows do ComfyUI. A geração visual usa o provedor de imagem definido em Configurações > Provedores > Ferramentas; essa escolha permanece independente do raciocínio do agente.",
   builder: "Equilibre capacidade de programação e volume de trabalho. Exemplo: GPT 5.6 Terra com Alto; Sol com Extra alto para alterações complexas; Luna com Alto para tarefas menores.",
   reviewer: "Priorize análise crítica independente. Exemplo: GPT 5.6 Sol com Extra alto. Usar um modelo diferente do Construtor pode trazer outra perspectiva, sem garantir a detecção de todos os problemas.",
   github: "Um modelo rápido e econômico costuma ser suficiente para inspecionar diffs, executar checks e preparar commits e pull requests. Use raciocínio maior em projetos com vários repositórios.",
@@ -44,6 +45,7 @@ export function AgentSettings({ accounts, flowFilter }: { accounts: ProviderAcco
   if (!models.data) return <div role="status" aria-label="Carregando modelos dos agentes" className="grid grid-cols-2 gap-3"><Skeleton className="h-24" /><Skeleton className="h-24" /><Skeleton className="h-24" /><Skeleton className="h-24" /></div>;
   return <TooltipProvider delay={150}><div className="space-y-6">{GROUPS.filter(group => !flowFilter || group.flow === flowFilter).map(({ flow, roles }) => <section key={flow} aria-label={`Agentes do fluxo ${FLOW_LABELS[flow]}`}>
     <h3 className="micro-label mb-3 text-muted-foreground">{FLOW_LABELS[flow]}</h3>
+    {flow === "image_generator" && <p className="mb-3 text-xs leading-5 text-muted-foreground">Modelo de raciocínio do agente. O provedor de imagens é configurado separadamente em Provedores → Ferramentas → Gerar imagens.</p>}
     <div className="grid gap-3 sm:grid-cols-2">{roles.map(role => {
       const choice = models.data?.[`${flow}/${role}`];
       const problem = choice ? modelProblem(choice, accounts) : null;

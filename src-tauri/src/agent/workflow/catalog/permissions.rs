@@ -1,8 +1,8 @@
 //! Tool visibility and dispatch share the same capability intersection.
 use super::*;
 use crate::agent::{
-    attachments, authoring, browser, image_generation, processes, publication, terminals, tools,
-    video, vision, web_search,
+    attachments, authoring, browser, image_generation, image_tasks, processes, publication,
+    terminals, tools, video, vision, web_search,
 };
 
 pub(crate) fn required(name: &str) -> bool {
@@ -15,6 +15,12 @@ pub(crate) fn required(name: &str) -> bool {
             | "update_tasks"
             | "progress_checkpoint"
             | "project_knowledge"
+            | "graft_find_code"
+            | "graft_file_api"
+            | "graft_trace_calls"
+            | "graft_find_all"
+            | "graft_repo_map"
+            | "graft_check_freshness"
     )
 }
 
@@ -65,6 +71,12 @@ fn description(name: &str) -> &'static str {
         "lsp_references" => "Encontrar referências de um símbolo de código.",
         "lsp_symbols" => "Listar símbolos estruturais de um arquivo.",
         "lsp_diagnostics" => "Consultar diagnósticos do servidor de linguagem.",
+        "graft_find_code" => "Encontrar código relevante no grafo estrutural do projeto.",
+        "graft_file_api" => "Consultar assinaturas e posições de símbolos de um arquivo.",
+        "graft_trace_calls" => "Rastrear dependências e referências estruturais de um símbolo.",
+        "graft_find_all" => "Pesquisar texto nos arquivos cobertos pelo grafo estrutural.",
+        "graft_repo_map" => "Consultar uma visão compacta da estrutura do repositório.",
+        "graft_check_freshness" => "Verificar alterações desde a geração do grafo estrutural.",
         "bash" => "Executar comandos no shell.",
         "ask_user" => "Solicitar respostas e escolhas visuais ao usuário.",
         "jarvis_catalog" => "Consultar agentes, fluxos e recursos do Jarvis.",
@@ -83,9 +95,14 @@ fn description(name: &str) -> &'static str {
         "web_search" => "Pesquisar na web com a conta configurada.",
         "read_attachment" => "Ler documentos anexados à conversa.",
         "vision" => "Analisar imagens usando Vision.",
-        "generate_image" => "Gerar imagens com a conta configurada.",
+        "generate_image" => "Delegar imagens ao especialista com a conta e pipeline configuradas.",
+        "image_process" => "Refinar anexos de imagem com a pipeline nativa do ComfyUI.",
         "video_docs" => "Consultar contratos e guias de composição do Hyperframes.",
         "video_run" => "Criar, verificar ou renderizar uma composição de vídeo.",
+        "video_audio" => "Gerar narração PT-BR por cena ou música instrumental local.",
+        "video_presentation" => {
+            "Verificar a apresentação e sincronizar a timeline com a narração real."
+        }
         "video_wait" => "Aguardar o resultado de uma operação de vídeo.",
         "video_cancel" => "Cancelar uma operação de vídeo em andamento.",
         "read_skill" => "Ler instruções de uma skill ativa.",
@@ -226,7 +243,9 @@ pub(crate) fn builtin_permissions() -> Vec<Permission> {
         ),
         ("Open Design · Core", crate::core::design::definitions()),
         ("Hyperframes · Core", video::definitions(Mode::Build)),
+        ("ComfyUI · Core", image_tasks::definitions()),
         ("Context7 · Core", crate::core::context7::definitions()),
+        ("Graft · Core", crate::core::graft::definitions()),
         (
             "Fluxo",
             [
@@ -303,6 +322,12 @@ mod tests {
             "apply_patch",
             "lsp_definition",
             "ctx_search",
+            "graft_find_code",
+            "graft_file_api",
+            "graft_trace_calls",
+            "graft_find_all",
+            "graft_repo_map",
+            "graft_check_freshness",
             "terminal_start",
             "terminal_close",
             "browser_screenshot",

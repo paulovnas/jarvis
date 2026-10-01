@@ -53,6 +53,21 @@ describe("Project Dashboard", () => {
     await user.click(screen.getByRole("button", { name: /Ver quadro/ }));
     expect(await screen.findByRole("button", { name: "Tarefa: Validar integração" })).toBeInTheDocument();
   });
+  it.each([false, true])("shows measured Graft calls without attributing unrelated context work (used: %s)", async used => {
+    const metrics = projectMetrics();
+    if (used) metrics.metrics.tools = { ...metrics.metrics.tools, graft_find_code: 2, graft_trace_calls: 3, other_graft_find_code: 100 };
+    const fallback = call.getMockImplementation();
+    call.mockImplementation((command, args, options) => command === "get_project_metrics"
+      ? Promise.resolve(metrics)
+      : fallback!(command, args, options));
+    render(<ProjectDashboard project={project} projectUpdater={projectUpdater} onSelectSession={vi.fn()} />);
+    const graft = (await screen.findByText("Graft")).parentElement!;
+    expect(within(graft).getByText(used ? "5" : "0")).toBeVisible();
+    expect(within(graft).getByText("Chamadas no chat · v1.0.0")).toBeVisible();
+    expect(within(graft).queryByText(/economia|redução/i)).not.toBeInTheDocument();
+    const context = screen.getByText("Context-mode").parentElement!;
+    expect(within(context).getByText("3")).toBeVisible();
+  });
   it.each(["/projects/jarvis", "C:\\Users\\João Silva\\projetos\\Jarvis"])("opens the registered project instead of passing %s to the scoped frontend opener", async path => {
     const user = userEvent.setup();
     render(<ProjectDashboard project={{ ...project, path }} projectUpdater={projectUpdater} onSelectSession={vi.fn()} />);

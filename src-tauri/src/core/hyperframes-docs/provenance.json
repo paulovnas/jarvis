@@ -1,0 +1,25 @@
+{
+  "source": "https://github.com/heygen-com/hyperframes",
+  "revision": "bc57e282fdde4afdccec1d1a2bacd94a9c3c5383",
+  "upstreamVersion": "0.8.105",
+  "license": "Apache-2.0",
+  "scope": "Unmodified Markdown skill documents only; no upstream scripts are installed.",
+  "files": [
+    "hyperframes-audio/SKILL.md",
+    "hyperframes-audio/references/attributes.md",
+    "hyperframes-audio/references/diagnosis.md",
+    "hyperframes-audio/references/fx-registry.md",
+    "hyperframes-audio/references/presets.md",
+    "hyperframes-core/SKILL.md",
+    "hyperframes-core/references/composition-patterns.md",
+    "hyperframes-core/references/creator-editing-recipes.md",
+    "hyperframes-core/references/data-attributes.md",
+    "hyperframes-core/references/determinism-rules.md",
+    "hyperframes-core/references/full-screen-motion.md",
+    "hyperframes-core/references/minimal-composition.md",
+    "hyperframes-core/references/sub-compositions.md",
+    "hyperframes-core/references/tailwind.md",
+    "hyperframes-core/references/tracks-and-clips.md",
+    "hyperframes-core/references/variables-and-media.md"
+  ]
+}

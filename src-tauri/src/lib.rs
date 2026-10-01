@@ -284,6 +284,7 @@ pub fn run() {
                 core::get_core_status,
                 core::check_core_updates,
                 core::install_core_component,
+                core::cancel_core_installation,
                 core::health::diagnose_core,
                 core::health::repair_core_component,
                 diagnostics::get_diagnostic_summary,

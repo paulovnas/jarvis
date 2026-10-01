@@ -139,6 +139,11 @@ describe("ResourceUpdates", () => {
     expect(progress).not.toHaveAttribute("aria-valuenow");
     expect(screen.getByText("12 MB")).toBeVisible();
 
+    invokeMock.mockResolvedValueOnce(downloading);
+    await user.click(screen.getByRole("button", { name: "Cancelar atualização de Open Design" }));
+    expect(invokeMock).toHaveBeenCalledWith("cancel_core_installation", { id: "open-design" });
+    expect(screen.getByRole("button", { name: "Cancelar atualização de Open Design" })).toBeDisabled();
+
     await act(async () => finishInstall(finished));
   });
 

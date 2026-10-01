@@ -1,4 +1,4 @@
-import { AlertCircle, BookOpen, Bot, Braces, Check, ChevronRight, Eye, FilePenLine, FileText, FolderSearch, GitBranch, Globe, ImagePlus, Layers3, ListTodo, Search, Stethoscope, Terminal, TriangleAlert, Wrench } from "lucide-react";
+import { AlertCircle, AudioLines, BookOpen, Bot, Braces, Check, ChevronRight, Eye, FilePenLine, FileText, Film, FolderSearch, GitBranch, Globe, ImagePlus, Layers3, ListTodo, Search, Stethoscope, Terminal, TriangleAlert, Wrench } from "lucide-react";
 import { readWebSearchResult } from "@/core/web-search";
 import { readVisionResult } from "@/core/attachments";
 import { agentToolSchema } from "@/core/chat";
@@ -49,12 +49,25 @@ const tools = {
   ctx_batch_execute: { label: "Context Mode · Lote", icon: Layers3 },
   ctx_fetch_and_index: { label: "Context Mode · Web", icon: Globe },
   ctx_stats: { label: "Context Mode · Economia", icon: Layers3 },
+  graft_find_code: { label: "Graft · Encontrar código", icon: Search },
+  graft_find_all: { label: "Graft · Busca estrutural", icon: Search },
+  graft_file_api: { label: "Graft · API do arquivo", icon: FileText },
+  graft_trace_calls: { label: "Graft · Dependências", icon: GitBranch },
+  graft_repo_map: { label: "Graft · Mapa do projeto", icon: FolderSearch },
+  graft_check_freshness: { label: "Graft · Verificar índice", icon: Check },
   read: { label: "Leitura de arquivo", icon: FileText },
   project_knowledge: { label: "Conhecimento do projeto", icon: BookOpen },
   learn_project: { label: "Aprendizado do projeto", icon: BookOpen },
   read_attachment: { label: "Leitura de anexo", icon: FileText },
   vision: { label: "Análise de imagem", icon: Eye },
   generate_image: { label: "Geração de imagem", icon: ImagePlus },
+  image_process: { label: "Processar imagem", icon: ImagePlus },
+  video_docs: { label: "Vídeo · Documentação", icon: BookOpen },
+  video_run: { label: "Vídeo · Executar etapa", icon: Film },
+  video_wait: { label: "Vídeo e áudio · Aguardar etapa", icon: Film },
+  video_cancel: { label: "Vídeo e áudio · Cancelar etapa", icon: TriangleAlert },
+  video_audio: { label: "Gerar áudio", icon: AudioLines },
+  video_presentation: { label: "Vídeo · Verificar apresentação", icon: Film },
   read_skill: { label: "Leitura de skill", icon: BookOpen },
   context7_resolve_library_id: { label: "Bibliotecas · Context7", icon: Search },
   context7_query_docs: { label: "Documentação · Context7", icon: BookOpen },
@@ -129,8 +142,12 @@ export function ToolCallCard({ tool, detailContext }: { tool: ToolCallItem; deta
   if (tool.name === "ask_user") return <QuestionHistory tool={tool} />;
   const current = loaded ?? tool;
   const deferred = hasDeferredDetails(tool) && loaded === null;
-  const { label, icon: Icon } = tools[current.name as keyof typeof tools] ?? { label: current.name, icon: Wrench };
-  const detail = current.name === "read_skill" ? current.output?.match(/^Skill: (.+)/)?.[1] ?? current.args?.path : current.args?.title ?? current.args?.path ?? current.args?.command ?? current.args?.query ?? current.args?.question ?? current.args?.url;
+  const presentation = tools[current.name as keyof typeof tools] ?? { label: current.name, icon: Wrench };
+  const Icon = presentation.icon;
+  const label = current.name === "video_audio" && current.args?.action === "narrate" ? "Gerar narração" : current.name === "video_audio" && current.args?.action === "music" ? "Gerar música" : presentation.label;
+  const detail = current.name === "read_skill" ? current.output?.match(/^Skill: (.+)/)?.[1] ?? current.args?.path
+    : current.name.startsWith("graft_") ? current.args?.query ?? current.args?.file ?? current.args?.symbol ?? current.args?.pattern ?? current.args?.in
+      : current.args?.title ?? current.args?.path ?? current.args?.output ?? current.args?.command ?? current.args?.query ?? current.args?.question ?? current.args?.url;
   const searchResult = current.name === "web_search" && current.output ? readWebSearchResult(current.output) : null;
   const visionResult = current.name === "vision" && current.output ? readVisionResult(current.output) : null;
   const warning = isTaskReminder(current);

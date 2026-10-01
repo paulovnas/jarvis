@@ -22,7 +22,7 @@ pub struct Activity {
     #[cfg_attr(
         test,
         ts(
-            type = "\"context-mode\" | \"ponytail\" | \"beads\" | \"open-design\" | \"context7\" | \"lsp\" | \"hyperframes\""
+            type = "\"context-mode\" | \"ponytail\" | \"beads\" | \"open-design\" | \"context7\" | \"lsp\" | \"hyperframes\" | \"audiovisual\" | \"comfyui\" | \"graft\""
         )
     )]
     pub component: ComponentId,

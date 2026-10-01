@@ -128,11 +128,60 @@ fn video_preview_resolves_only_nonempty_supported_project_files_without_reading_
         ("mov", "video/quicktime"),
         ("m4v", "video/mp4"),
         ("ogv", "video/ogg"),
+        ("wav", "audio/wav"),
+        ("MP3", "audio/mpeg"),
+        ("ogg", "audio/ogg"),
     ] {
         let name = format!("video.{extension}");
         fs::write(root.join(&name), [1]).unwrap();
         assert_eq!(video(&root, &name).unwrap().mime, mime);
     }
+}
+
+#[test]
+fn audio_preview_keeps_project_scope_and_does_not_decode_binary_or_limit_audio_to_text_size() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir_all(root.join("presentation/audio")).unwrap();
+    let root = root.canonicalize().unwrap();
+    let source = root.join("presentation/audio/narração.WAV");
+    fs::File::create(&source)
+        .unwrap()
+        .set_len(MAX_FILE_BYTES + 1)
+        .unwrap();
+    let audio = video(&root, "presentation\\audio\\narração.WAV").unwrap();
+    assert_eq!(audio.path, "presentation/audio/narração.WAV");
+    assert_eq!(Path::new(&audio.absolute_path), source);
+    assert_eq!(audio.mime, "audio/wav");
+    assert_eq!(audio.size, MAX_FILE_BYTES + 1);
+    for path in [
+        "../outside.wav",
+        "/outside.wav",
+        "C:\\outside.mp3",
+        "audio.ogg:stream",
+        "missing.wav",
+        "presentation/audio",
+        "",
+    ] {
+        assert!(video(&root, path).is_err(), "accepted {path}");
+    }
+    fs::write(root.join("empty.wav"), []).unwrap();
+    assert!(video(&root, "empty.wav").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn audio_preview_rejects_links_outside_the_project_and_disguised_nonmedia_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir(&root).unwrap();
+    fs::write(temp.path().join("outside.wav"), [1]).unwrap();
+    fs::write(root.join("private.txt"), [1]).unwrap();
+    std::os::unix::fs::symlink(temp.path().join("outside.wav"), root.join("escape.wav")).unwrap();
+    std::os::unix::fs::symlink(root.join("private.txt"), root.join("disguised.mp3")).unwrap();
+    let root = root.canonicalize().unwrap();
+    assert!(video(&root, "escape.wav").is_err());
+    assert!(video(&root, "disguised.mp3").is_err());
 }
 
 #[cfg(unix)]

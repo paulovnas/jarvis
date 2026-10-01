@@ -793,6 +793,43 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_structural_reads_never_become_uncertain_project_mutations() {
+        let calls = [
+            tool(
+                "lost-graft-read",
+                "graft_file_api",
+                json!({"file":"result.ts"}),
+            ),
+            tool(
+                "lost-graft-search",
+                "graft_find_code",
+                json!({"query":"authentication"}),
+            ),
+            tool(
+                "lost-write",
+                "write",
+                json!({"path":"result.ts","content":"confirmed"}),
+            ),
+        ];
+        let (_fixture, exec) = recovering(&calls);
+        let data = exec.hub.root.data.lock().unwrap();
+        let uncertain = collect(data.turns.last().unwrap());
+        assert_eq!(uncertain.len(), 1);
+        assert_eq!(uncertain[0].name, "write");
+        drop(data);
+        let graph = tool(
+            "current-graft",
+            "graft_file_api",
+            json!({"file":"result.ts"}),
+        );
+        observe(&exec, &graph, |_| None);
+        assert!(
+            resolve(&exec, &calls[2], &graph, "applied").is_err(),
+            "signatures and graph coverage do not prove a lost source mutation was applied"
+        );
+    }
+
+    #[test]
     fn lost_write_receipt_requires_exact_durable_evidence_and_survives_checkpoint_reload() {
         let write = tool(
             "lost-write",

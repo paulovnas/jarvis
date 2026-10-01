@@ -55,6 +55,7 @@ pub(super) fn resolve_agent(
     if let Some((flow, role)) = match agent.native_role {
         Some(Role::Github) => Some((Flow::Publication, Role::Github)),
         Some(Role::Video) => Some((Flow::Video, Role::Video)),
+        Some(Role::ImageGenerator) => Some((Flow::ImageGenerator, Role::ImageGenerator)),
         _ => None,
     } {
         agent.model = settings::load(state, home)?.remove(&settings::key(flow, role));
@@ -120,7 +121,16 @@ pub(super) fn allowed(agent: &catalog::AgentDefinition, name: &str) -> bool {
 }
 
 pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
-    if matches!(name, "video_run" | "video_wait" | "video_cancel") {
+    if name == "image_process" {
+        return false;
+    }
+    if name == "generate_image" {
+        return true;
+    }
+    if matches!(
+        name,
+        "video_run" | "video_audio" | "video_wait" | "video_cancel"
+    ) {
         return capability == Capability::Commands;
     }
     if crate::agent::http::mutating(name) {

@@ -2,6 +2,215 @@ use super::super::tests::{hub, job};
 use super::*;
 
 #[test]
+fn image_requests_create_durable_jobs_without_beads_and_reuse_only_identical_active_requests() {
+    let (_fixture, hub) = hub();
+    let execution = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::Builder,
+        flow: Flow::Standard,
+        scope: vec![".".into()],
+    };
+    let request =
+        json!({"prompt":"Create a friendly robot","variants":2,"processing":{"format":"png"}});
+    let (first, created) = image_job(&execution, &request).unwrap();
+    assert!(created);
+    assert_eq!(first.role, Role::ImageGenerator);
+    assert_eq!(first.options.workflow, Some(Flow::ImageGenerator));
+    assert_eq!(first.parent_id, "main");
+    assert!(first.bead_id.is_none());
+    assert!(first.dependencies.is_empty());
+    assert_eq!(first.options.account, "root-account");
+    assert_eq!(first.options.model, "root-model");
+    let persisted = storage::load(&hub.directory, &hub.root.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(persisted.jobs[&first.id].prompt, first.prompt);
+    let (duplicate, created) = image_job(&execution, &request).unwrap();
+    assert!(!created);
+    assert_eq!(duplicate.id, first.id);
+    let (different, created) =
+        image_job(&execution, &json!({"prompt":"Create a landscape"})).unwrap();
+    assert!(created);
+    assert_ne!(different.id, first.id);
+    let specialist = Execution {
+        hub: hub.clone(),
+        id: first.id,
+        role: Role::ImageGenerator,
+        flow: Flow::ImageGenerator,
+        scope: first.scope,
+    };
+    assert!(image_job(&specialist, &request).is_err());
+}
+
+#[test]
+fn image_job_conversational_primary_and_fallback_do_not_replace_the_independent_image_account() {
+    let (_fixture, hub) = hub();
+    let specialist: settings::ModelChoice = serde_json::from_value(json!({
+        "executor":"claude","account":"","model":"sonnet","reasoning":"high",
+        "fallback":{"executor":"claude","account":"","model":"opus","reasoning":"max"}
+    }))
+    .unwrap();
+    let profiles = BTreeMap::from([(
+        settings::key(Flow::ImageGenerator, Role::ImageGenerator),
+        specialist.clone(),
+    )]);
+    let directory = crate::data_dir::root(&hub.env.home);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("agents.json"),
+        serde_json::to_vec(&profiles).unwrap(),
+    )
+    .unwrap();
+    hub.env.state.with_connection(&hub.env.home,|db| {
+        db.execute("INSERT INTO image_generation_config(id,account_alias) VALUES(1,'independent-image-account')",[]).map_err(|_|AgentError::storage())?;
+        Ok::<_,AgentError>(())
+    }).unwrap();
+    let execution = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::Planner,
+        flow: Flow::Complete,
+        scope: vec![".".into()],
+    };
+    let (child, _) = image_job(&execution, &json!({"prompt":"Create a robot"})).unwrap();
+    assert_eq!(child.options.executor, crate::claude::Executor::Claude);
+    assert_eq!(child.options.model, "sonnet");
+    assert!(child.options.account.is_empty());
+    assert_eq!(
+        hub.manifest.lock().unwrap().profiles["image_generator/image_generator"],
+        specialist
+    );
+    hub.env
+        .state
+        .with_connection(&hub.env.home, |db| {
+            let alias: String = db
+                .query_row(
+                    "SELECT account_alias FROM image_generation_config WHERE id=1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|_| AgentError::storage())?;
+            assert_eq!(alias, "independent-image-account");
+            Ok::<_, AgentError>(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn image_admission_releases_waiting_parent_slots_without_bypassing_independent_writer_capacity() {
+    let (_fixture, hub) = hub();
+    let mut state = hub.manifest.lock().unwrap().clone();
+    let mut target = job(&hub, Role::ImageGenerator, ".jarvis-image-attachments");
+    for index in 0..MAX_ACTIVE {
+        let mut parent = job(&hub, Role::Builder, &format!("src/area-{index}"));
+        parent.status = Status::Waiting;
+        let mut child = job(&hub, Role::ImageGenerator, ".jarvis-image-attachments");
+        child.parent_id = parent.id.clone();
+        if index == 0 {
+            target = child.clone();
+        }
+        state.jobs.insert(parent.id.clone(), parent);
+        state.jobs.insert(child.id.clone(), child);
+    }
+    assert!(admitted(&state, &target).unwrap());
+    for index in 0..MAX_ACTIVE {
+        let mut worker = job(&hub, Role::Builder, &format!("other-{index}"));
+        worker.status = Status::Running;
+        state.jobs.insert(worker.id.clone(), worker);
+    }
+    assert!(!admitted(&state, &target).unwrap());
+}
+
+#[test]
+fn attachment_only_images_run_beside_sibling_writers_but_real_image_exports_remain_serialized() {
+    let (_fixture, hub) = hub();
+    let mut state = hub.manifest.lock().unwrap().clone();
+    let mut builder = job(&hub, Role::Builder, ".");
+    builder.status = Status::Running;
+    let image = job(&hub, Role::ImageGenerator, ".jarvis-image-attachments");
+    state.jobs.insert(builder.id.clone(), builder);
+    assert!(admitted(&state, &image).unwrap());
+    let mut sibling = job(&hub, Role::ImageGenerator, ".jarvis-image-attachments");
+    sibling.status = Status::Running;
+    state.jobs.insert(sibling.id.clone(), sibling);
+    assert!(admitted(&state, &image).unwrap());
+    let export = job(&hub, Role::ImageGenerator, "assets/images");
+    assert!(!admitted(&state, &export).unwrap());
+    let execution = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::Builder,
+        flow: Flow::Standard,
+        scope: vec![".".into()],
+    };
+    let (explicit_reserved_export,_) = image_job(&execution,&json!({"prompt":"Create a robot","processing":{"output_directory":".jarvis-image-attachments"}})).unwrap();
+    assert!(!attachment_only_image(&explicit_reserved_export));
+    assert!(!admitted(&state, &explicit_reserved_export).unwrap());
+    state.jobs.clear();
+    let mut same_export = job(&hub, Role::ImageGenerator, "assets/images");
+    same_export.status = Status::Running;
+    state.jobs.insert(same_export.id.clone(), same_export);
+    assert!(!admitted(&state, &export).unwrap());
+}
+
+#[test]
+fn image_exports_cannot_escape_requesting_worker_scope_or_global_conversation() {
+    let (_fixture, mut hub) = hub();
+    let execution = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::Builder,
+        flow: Flow::Standard,
+        scope: vec!["src/assets".into()],
+    };
+    assert!(image_job(
+        &execution,
+        &json!({"prompt":"Create a robot","processing":{"output_directory":"other"}})
+    )
+    .is_err());
+    assert!(image_job(
+        &execution,
+        &json!({"prompt":"Create a robot","processing":{"output_directory":"src/assets"}})
+    )
+    .is_ok());
+    drop(execution);
+    let hub_mut = Arc::get_mut(&mut hub).unwrap();
+    Arc::get_mut(&mut hub_mut.root).unwrap().id =
+        crate::agent::companion_chat::GLOBAL_CONVERSATION_ID.into();
+    let execution = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::Builder,
+        flow: Flow::Standard,
+        scope: vec![".".into()],
+    };
+    assert!(image_job(
+        &execution,
+        &json!({"prompt":"Create a robot","processing":{"output_directory":"images"}})
+    )
+    .is_err());
+    assert!(image_job(&execution, &json!({"prompt":"Create a robot"})).is_ok());
+}
+
+#[tokio::test]
+async fn cancellation_of_image_wait_stops_its_native_worker_session() {
+    let (_fixture, hub) = hub();
+    let execution = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::Builder,
+        flow: Flow::Standard,
+        scope: vec![".".into()],
+    };
+    let (child, _) = image_job(&execution, &json!({"prompt":"Create a robot"})).unwrap();
+    let (session, signal) = storage::worker(&hub, &child, None).unwrap();
+    hub.live.lock().unwrap().insert(child.id.clone(), session);
+    cancel_image(&hub, &child.id).unwrap();
+    assert!(*signal.borrow());
+}
+
+#[test]
 fn every_native_delegate_can_request_guidance_without_broader_permissions() {
     let (_fixture, hub) = hub();
     for flow in [Flow::Planned, Flow::Complete, Flow::Publication] {

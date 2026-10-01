@@ -38,11 +38,26 @@ fn install_fixture(home: &Path) -> Manifest {
         if id == ComponentId::Hyperframes {
             crate::core::hyperframes::tests::fixture(&path, "4.9.0");
         }
+        if id == ComponentId::Audiovisual {
+            crate::core::audiovisual::tests::fixture(&path);
+        }
+        if id == ComponentId::Comfyui {
+            crate::core::comfyui::tests::fixture(&path);
+        }
+        if id == ComponentId::Graft {
+            crate::core::graft::fixture(&path);
+        }
         manifest.installations.insert(
             id,
             Installation {
                 version: if id == ComponentId::OpenDesign {
                     "1.2.3"
+                } else if id == ComponentId::Audiovisual {
+                    crate::core::audiovisual::VERSION
+                } else if id == ComponentId::Comfyui {
+                    crate::core::comfyui::VERSION
+                } else if id == ComponentId::Graft {
+                    crate::core::install::GRAFT_VERSION
                 } else {
                     "4.9.0"
                 }

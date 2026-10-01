@@ -21,6 +21,7 @@ mod execution_sandbox;
 pub(crate) mod history;
 mod http;
 pub(crate) mod image_generation;
+pub(crate) mod image_tasks;
 mod instructions;
 mod journal;
 pub(crate) mod journal_maintenance;
@@ -203,9 +204,12 @@ pub struct TurnOptions {
 impl TurnOptions {
     fn direct(&self) -> bool {
         match self.workflow {
-            Some(workflow::Flow::Standard | workflow::Flow::Designer | workflow::Flow::Video) => {
-                true
-            }
+            Some(
+                workflow::Flow::Standard
+                | workflow::Flow::Designer
+                | workflow::Flow::Video
+                | workflow::Flow::ImageGenerator,
+            ) => true,
             Some(workflow::Flow::Custom) => self.custom_agent_id.is_some(),
             Some(
                 workflow::Flow::Planned | workflow::Flow::Complete | workflow::Flow::Publication,
@@ -2646,7 +2650,14 @@ fn run_turn_once<'a>(
             home,
         } = runtime;
         session.transition(turn_state::TurnPhase::Preparing)?;
-        let global_companion = companion_chat::is_global_session(&session.id);
+        let image_specialist = execution
+            .as_ref()
+            .is_some_and(workflow::Execution::image_generator);
+        let global_companion = companion_chat::is_global_session(
+            execution
+                .as_ref()
+                .map_or(&session.id, |exec| &exec.root().id),
+        );
         let (turn_id, options, initial_items, initial_bytes) = {
             let data = session.data.lock().map_err(|_| AgentError::internal())?;
             let current = data.turns.last().ok_or_else(AgentError::internal)?;
@@ -2659,7 +2670,7 @@ fn run_turn_once<'a>(
             )
         };
         options.executor.require_available()?;
-        if !global_companion {
+        if !global_companion || image_specialist {
             crate::core::require_ready(home)?;
         }
         let telemetry = telemetry::trace(&session.id, &turn_id);
@@ -2699,7 +2710,7 @@ fn run_turn_once<'a>(
         }
         if options.executor != crate::claude::Executor::Jarvis {
             let learning_owner = execution.as_ref().map_or(session, |exec| exec.root());
-            if !global_companion {
+            if !global_companion && !image_specialist {
                 learning::prepare(session, learning_owner, state, home).await;
             }
             let runtime = TurnRuntime {
@@ -2752,7 +2763,7 @@ fn run_turn_once<'a>(
                 data.turns.last_mut().unwrap().turn.context_window = model.context_window;
             })
             .await?;
-        let mut mcp_clients = if publication_agent || global_companion {
+        let mut mcp_clients = if publication_agent || global_companion || image_specialist {
             crate::mcp::runtime::TurnClients::default()
         } else {
             let discovery_signal = signal.clone();
@@ -2761,7 +2772,7 @@ fn run_turn_once<'a>(
                 clients = crate::mcp::runtime::TurnClients::discover_for_intent(mcp, state, home, &session.root, &mcp_intent, discovery_signal) => clients.map_err(AgentError::from)?,
             }
         };
-        let mut context = if global_companion {
+        let mut context = if global_companion || image_specialist {
             crate::core::context::ContextMode::without_project(&session.root, &session.id)
         } else {
             crate::core::context::ContextMode::open(
@@ -2771,6 +2782,16 @@ fn run_turn_once<'a>(
                 signal.clone(),
             )
             .await?
+        };
+        let mut graft = if global_companion
+            || image_specialist
+            || execution
+                .as_ref()
+                .is_some_and(workflow::Execution::video_specialist)
+        {
+            crate::core::graft::Graft::inactive()
+        } else {
+            crate::core::graft::Graft::open(home, &session.root, signal.clone()).await?
         };
         let owner = execution.as_ref().map_or(session, |exec| exec.root());
         let project_id = owner.project_id()?.to_owned();
@@ -2802,7 +2823,7 @@ fn run_turn_once<'a>(
             .map_or(options.mode == Mode::Plan, |exec| {
                 exec.role_mode() == Mode::Plan
             });
-        let beads = if direct_tasks || publication_agent || global_companion {
+        let beads = if direct_tasks || publication_agent || global_companion || image_specialist {
             None
         } else {
             Some(crate::core::beads::Beads::new(
@@ -2812,7 +2833,7 @@ fn run_turn_once<'a>(
                 options.mode == Mode::Plan,
             )?)
         };
-        let project_beads = if direct_tasks {
+        let project_beads = if direct_tasks && !image_specialist {
             crate::core::beads::ProjectBeads::open(home, &session.root)?
         } else {
             None
@@ -2844,6 +2865,7 @@ fn run_turn_once<'a>(
             .hooks
             .run_resilient(Event::UserPrompt, json!({"text":user}), signal.clone())
             .await?;
+        core_runtime::prepare_graft(session, &graft, &user, signal.clone()).await?;
         let mut overflow_retried = false;
         let mut handoff_reminded = false;
         let mut tasks_reminded = false;
@@ -2930,7 +2952,7 @@ fn run_turn_once<'a>(
                     core_activities.push(activity);
                 }
             }
-            if !global_companion {
+            if !global_companion && !image_specialist {
                 learning::prepare(session, owner, state, home).await;
             }
             let mut instructions =
@@ -2941,6 +2963,7 @@ fn run_turn_once<'a>(
                 instructions.push_str(&exec.instructions()?);
             }
             instructions.push_str(context.instructions());
+            instructions.push_str(graft.instructions());
             if direct_tasks {
                 append_direct_task_instructions(&mut instructions);
                 if project_beads.is_some() {
@@ -2965,7 +2988,7 @@ fn run_turn_once<'a>(
                 &options.model,
             );
             let mut definitions = tools::definitions(options.mode);
-            if !global_companion {
+            if !global_companion && !image_specialist {
                 definitions.push(publication::inspection::definition());
                 if !publication_agent {
                     definitions.extend(authoring::definitions());
@@ -2989,6 +3012,7 @@ fn run_turn_once<'a>(
                     definitions.extend(crate::core::design::definitions());
                 }
                 definitions.extend(context.definitions(restricted));
+                definitions.extend(graft.definitions());
                 if context7_enabled {
                     definitions.extend(crate::core::context7::definitions());
                 }
@@ -3028,17 +3052,46 @@ fn run_turn_once<'a>(
                 if search_enabled {
                     definitions.push(web_search::definition());
                 }
-                if !publication_agent && image_generation::enabled(state, home) {
-                    definitions.push(image_generation::definition());
-                    instructions.push_str(" Use generate_image for requested image creation. It uses the independently configured Antigravity account. The resulting images are displayed directly in chat and stored as conversation attachments; do not embed base64 or repeat their preview in Markdown. Never claim an image was created without a successful tool result.");
+                if execution.is_some() && image_generation::enabled(state, home) {
+                    definitions.push(workflow::image_definition(image_specialist));
+                    instructions.push_str(" Use generate_image for requested image creation or editing. Unless you are the immutable Gerador de imagens specialist, this delegates to that managed subagent, which uses the independently configured image-generation account/model and required ComfyUI pipeline. The final verified images appear directly in this chat; do not embed base64 or duplicate previews in Markdown. Never claim completion without a successful tool result.");
+                }
+                if image_specialist {
+                    definitions.extend(image_tasks::definitions());
                 }
                 if let Some(definition) = progress_watchdog.definition() {
                     definitions.push(definition);
                 }
             } else {
-                instructions = companion_chat::global_prompt().to_owned();
-                definitions = companion_chat::tools();
-                definitions.push(questions::definition());
+                instructions = if image_specialist {
+                    execution
+                        .as_ref()
+                        .ok_or_else(AgentError::internal)?
+                        .instructions()?
+                } else {
+                    companion_chat::global_prompt().to_owned()
+                };
+                definitions = if image_specialist {
+                    workflow::image_tools(
+                        global_companion,
+                        image_generation::enabled(state, home),
+                        vision::enabled(state, home, &options).then(vision::definition),
+                        direct_tasks,
+                    )
+                } else {
+                    companion_chat::tools()
+                };
+                if image_specialist {
+                    let data = owner.data.lock().map_err(|_| AgentError::internal())?;
+                    if let Some(turn) = data.turns.last() {
+                        instructions.push_str(&attachments::prompt(&turn.turn.parts));
+                    }
+                } else {
+                    definitions.push(questions::definition());
+                    if image_generation::enabled(state, home) {
+                        definitions.push(workflow::image_definition(false));
+                    }
+                }
             }
             if let Some(exec) = &execution {
                 exec.filter(&mut definitions);
@@ -3122,6 +3175,7 @@ fn run_turn_once<'a>(
                 },
             );
             core_activities.extend(context.take_activity());
+            core_activities.extend(graft.take_activity());
             session
                 .update_async(|data| {
                     data.turns.last_mut().unwrap().turn.steps.push(Step {
@@ -3390,7 +3444,9 @@ fn run_turn_once<'a>(
                     .run_resilient(Event::TurnEnd, json!({"text":reply}), signal.clone())
                     .await?;
                 core_runtime::record(session, context.take_activity())?;
+                core_runtime::record(session, graft.take_activity())?;
                 context.close().await;
+                graft.close().await;
                 return Ok(());
             }
             session.transition(turn_state::TurnPhase::ExecutingTools)?;
@@ -3417,7 +3473,8 @@ fn run_turn_once<'a>(
                             tool_contract::Handler::Lsp => lsp.parallel_ready(call),
                             tool_contract::Handler::Attachment
                             | tool_contract::Handler::Knowledge
-                            | tool_contract::Handler::SkillRead => true,
+                            | tool_contract::Handler::SkillRead
+                            | tool_contract::Handler::Graft => true,
                             _ => false,
                         };
                         supported
@@ -3475,6 +3532,7 @@ fn run_turn_once<'a>(
                             .await?;
                         let mcp_clients = &mcp_clients;
                         let lsp = &lsp;
+                        let graft = &graft;
                         let runtime = &tool_runtime;
                         let signal = &signal;
                         let queued = std::time::Instant::now();
@@ -3516,6 +3574,15 @@ fn run_turn_once<'a>(
                                     .map_err(AgentError::from)?,
                                 tool_contract::Handler::Lsp => {
                                     lsp.execute_ready(&call, signal.clone()).await?
+                                }
+                                tool_contract::Handler::Graft => {
+                                    core_runtime::execute_graft(
+                                        graft,
+                                        &call.name,
+                                        &call.args,
+                                        signal.clone(),
+                                    )
+                                    .await?
                                 }
                                 tool_contract::Handler::Attachment => {
                                     attachments::read_tool(home, &owner.id, &call.args)?
@@ -3910,6 +3977,11 @@ fn run_turn_once<'a>(
                         Some(tool_contract::Handler::Lsp) => {
                             lsp.execute(&tool, signal.clone()).await
                         }
+                        Some(tool_contract::Handler::Graft) => {
+                            core_runtime::execute_graft(
+                                &graft, &tool.name, &tool.args, signal.clone(),
+                            ).await
+                        }
                         Some(tool_contract::Handler::Patch) => match patch::execute(
                             &session.root,
                             &tool.args,
@@ -3982,15 +4054,18 @@ fn run_turn_once<'a>(
                             .await
                         }
                         Some(tool_contract::Handler::ImageGeneration) => {
-                            image_generation::execute(
-                                state,
-                                oauth,
-                                home,
-                                &owner.id,
-                                &tool.args,
-                                signal.clone(),
-                            )
-                            .await
+                            if image_specialist {
+                                image_generation::execute_pipeline(
+                                    state, oauth, home, &owner.id, owner,
+                                    &mut command_sessions, sandbox_plan.as_ref(),
+                                    &tool.args, signal.clone(),
+                                ).await
+                            } else {
+                                match &execution {
+                                    Some(exec) => exec.delegate_image(session, &tool.args, signal.clone()).await,
+                                    None => Err(AgentError::new("tool_unavailable", "Selecione um agente para delegar a geração de imagens.")),
+                                }
+                            }
                         }
                         Some(tool_contract::Handler::SkillRead) => tokio::select! {
                             _ = cancelled(&mut signal) => Err(AgentError::cancelled()),
@@ -4006,7 +4081,10 @@ fn run_turn_once<'a>(
                         }
                         Some(tool_contract::Handler::Native) => {
                             let execution =
-                                if tool.name.starts_with("video_") {
+                                if tool.name == "image_process" && image_specialist {
+                                    image_tasks::execute(state, oauth, home, &owner.id, owner, &mut command_sessions, sandbox_plan.as_ref(), &tool.args, signal.clone())
+                                        .await.map(|output| tools::ExecutionResult { output, revision: None, read: None })
+                                } else if tool.name.starts_with("video_") {
                                     video_jobs
                                         .execute(
                                             &mut command_sessions,
@@ -4137,7 +4215,8 @@ fn run_turn_once<'a>(
                     .await;
                 let (wire_output, indexed) =
                     core_runtime::captured_result(&tool.name, &output, structured_error, &captured);
-                let activities = context.take_activity();
+                let mut activities = context.take_activity();
+                activities.extend(graft.take_activity());
                 drop(postprocessing);
                 if reused_read.is_none() {
                     if let Some(observation) = read_observation {
@@ -4247,6 +4326,7 @@ fn run_turn_once<'a>(
                             .await?;
                     }
                     context.close().await;
+                    graft.close().await;
                     return Ok(());
                 }
             }

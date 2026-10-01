@@ -1,7 +1,8 @@
 import { z } from "zod";
 
-export const coreIdSchema = z.enum(["context-mode", "ponytail", "beads", "open-design", "context7", "lsp", "hyperframes"]);
+export const coreIdSchema = z.enum(["context-mode", "ponytail", "beads", "open-design", "context7", "lsp", "hyperframes", "audiovisual", "comfyui", "graft"]);
 export type CoreId = z.infer<typeof coreIdSchema>;
+export const optionalCore = (id: CoreId) => id === "context7";
 export const coreDownloadSchema = z.object({
   receivedBytes: z.number().int().nonnegative(), totalBytes: z.number().int().positive().nullable(),
 });
@@ -15,8 +16,8 @@ export const coreSnapshotSchema = z.object({
     download: coreDownloadSchema.nullable(),
     healthError: z.string().nullable().default(null),
     diagnostics: z.array(z.object({ label: z.string(), passed: z.boolean(), message: z.string() })).default([]),
-  })).length(7).refine(items => new Set(items.map(item => item.id)).size === 7),
-}).refine(value => value.ready === value.items.every(item => item.id === "context7" || item.id === "hyperframes" || (item.installed && item.configured && !item.healthError)));
+  })).length(coreIdSchema.options.length).refine(items => new Set(items.map(item => item.id)).size === coreIdSchema.options.length),
+}).refine(value => value.ready === value.items.every(item => optionalCore(item.id) || (item.installed && item.configured && !item.healthError)));
 export type CoreSnapshot = z.infer<typeof coreSnapshotSchema>;
 export function coreError(cause: unknown): string {
   const error = z.object({ message: z.string().min(1) }).safeParse(cause);

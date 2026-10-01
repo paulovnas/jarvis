@@ -37,14 +37,14 @@ const presentation = {
   },
 } as const;
 
-export function DirectTasks({ tasks, active, flow }: { tasks: DirectTask[]; active: boolean; flow: "standard" | "designer" | "video" | "custom" }) {
+export function DirectTasks({ tasks, active, flow }: { tasks: DirectTask[]; active: boolean; flow: "standard" | "designer" | "video" | "image_generator" | "custom" }) {
   if (tasks.length === 0) {
     return <p role="status" className="text-xs leading-5 text-muted-foreground">
       {active ? "O agente ainda está organizando o trabalho." : "Nenhuma tarefa registrada nesta solicitação."}
     </p>;
   }
   const completed = tasks.filter(task => task.status === "completed").length;
-  const accent = flow === "designer" ? ROLE_COLORS.designer : flow === "video" ? ROLE_COLORS.video : ROLE_COLORS.builder;
+  const accent = flow === "designer" ? ROLE_COLORS.designer : flow === "video" ? ROLE_COLORS.video : flow === "image_generator" ? ROLE_COLORS.image_generator : ROLE_COLORS.builder;
   const accentStyle = { "--task-accent": accent } as CSSProperties;
   return <div className="space-y-3">
     <div className="space-y-2">

@@ -9,6 +9,7 @@ pub(in crate::agent) struct Bridge<'a> {
     pub options: TurnOptions,
     pub signal: watch::Receiver<bool>,
     pub context: crate::core::context::ContextMode,
+    pub graft: crate::core::graft::Graft,
     pub clients: crate::mcp::runtime::TurnClients,
     beads: Option<crate::core::beads::Beads>,
     project_beads: Option<crate::core::beads::ProjectBeads>,
@@ -36,7 +37,10 @@ impl<'a> Bridge<'a> {
         signal: watch::Receiver<bool>,
     ) -> Result<Self, AgentError> {
         let owner = execution.as_ref().map_or(session, |exec| exec.root());
-        let global_companion = companion_chat::is_global_session(&session.id);
+        let global_companion = companion_chat::is_global_session(&owner.id);
+        let image_specialist = execution
+            .as_ref()
+            .is_some_and(workflow::Execution::image_generator);
         let home = runtime.home;
         let publication = execution
             .as_ref()
@@ -54,7 +58,7 @@ impl<'a> Bridge<'a> {
                 .and_then(|turn| turn.mcp_intent.clone())
                 .unwrap_or_else(|| data.inherited_mcp_intent.clone())
         };
-        let clients = if publication || global_companion {
+        let clients = if publication || global_companion || image_specialist {
             crate::mcp::runtime::TurnClients::default()
         } else {
             crate::mcp::runtime::TurnClients::discover_for_intent(
@@ -67,7 +71,7 @@ impl<'a> Bridge<'a> {
             )
             .await?
         };
-        let context = if global_companion {
+        let context = if global_companion || image_specialist {
             crate::core::context::ContextMode::without_project(&session.root, &session.id)
         } else {
             crate::core::context::ContextMode::open(
@@ -78,7 +82,28 @@ impl<'a> Bridge<'a> {
             )
             .await?
         };
-        let beads = if direct_tasks || publication || global_companion {
+        let graft = if global_companion
+            || image_specialist
+            || execution
+                .as_ref()
+                .is_some_and(workflow::Execution::video_specialist)
+        {
+            crate::core::graft::Graft::inactive()
+        } else {
+            crate::core::graft::Graft::open(home, &session.root, signal.clone()).await?
+        };
+        let user = session
+            .data
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .turns
+            .last()
+            .ok_or_else(AgentError::internal)?
+            .turn
+            .user
+            .clone();
+        core_runtime::prepare_graft(session, &graft, &user, signal.clone()).await?;
+        let beads = if direct_tasks || publication || global_companion || image_specialist {
             None
         } else {
             Some(crate::core::beads::Beads::new(
@@ -88,12 +113,12 @@ impl<'a> Bridge<'a> {
                 options.mode == Mode::Plan,
             )?)
         };
-        let project_beads = if direct_tasks {
+        let project_beads = if direct_tasks && !image_specialist {
             crate::core::beads::ProjectBeads::open(home, &session.root)?
         } else {
             None
         };
-        let mut activities = Vec::new();
+        let mut activities = graft.take_activity();
         let mut prompt = tools::instructions(&session.root, options.mode, options.approval_mode);
         let backend = "Claude Code";
         let mcp_dispatcher = "call_mcp_tool";
@@ -116,6 +141,7 @@ impl<'a> Bridge<'a> {
             prompt.push_str(&exec.context()?);
         }
         prompt.push_str(context.instructions());
+        prompt.push_str(graft.instructions());
         if direct_tasks {
             prompt.push_str(tasks::INSTRUCTIONS);
             prompt.push_str(&session.task_context()?);
@@ -143,7 +169,7 @@ impl<'a> Bridge<'a> {
                 owner.project_id()?,
             )?));
         }
-        if !publication && !global_companion {
+        if !publication && !global_companion && !image_specialist {
             prompt.push_str(authoring::INSTRUCTIONS);
             prompt.push_str(web_search::instructions(web_search::enabled(
                 runtime.state,
@@ -216,8 +242,30 @@ impl<'a> Bridge<'a> {
                 })
                 .await?;
         }
-        if global_companion {
-            prompt = format!("{}\nExecution backend: {backend}. Use only the Jarvis MCP tools advertised for this conversation. Native built-in tools and project filesystem operations are disabled until the user confirms a project in the Jarvito interface.\n", companion_chat::global_prompt());
+        if global_companion || image_specialist {
+            let instructions = if execution
+                .as_ref()
+                .is_some_and(workflow::Execution::image_generator)
+            {
+                execution
+                    .as_ref()
+                    .ok_or_else(AgentError::internal)?
+                    .instructions()?
+            } else {
+                companion_chat::global_prompt().into()
+            };
+            prompt = format!("{instructions}\nExecution backend: {backend}. Use only the Jarvis MCP tools advertised for this conversation. Native built-in tools and project filesystem operations are disabled until the user confirms a project in the Jarvito interface. Managed image attachments may be generated without granting project access.\n");
+            if image_specialist {
+                prompt = format!("{instructions}\nExecution backend: {backend}. Use only the native image, attachment, question, knowledge and handoff tools advertised by Jarvis. Built-in Claude tools and alternate image engines are disabled. Use the exact native generation request; its provider and local ComfyUI processing are managed by Jarvis.\n");
+                let data = owner.data.lock().map_err(|_| AgentError::internal())?;
+                if let Some(turn) = data.turns.last() {
+                    prompt.push_str(&attachments::prompt(&turn.turn.parts));
+                }
+                if direct_tasks {
+                    prompt.push_str(tasks::INSTRUCTIONS);
+                    prompt.push_str(&session.task_context()?);
+                }
+            }
         }
         context.hooks.before_agent(&mut prompt);
         tools::append_response_language(&mut prompt, crate::system::response_language(home));
@@ -228,6 +276,7 @@ impl<'a> Bridge<'a> {
             options,
             signal,
             context,
+            graft,
             clients,
             beads,
             project_beads,
@@ -254,9 +303,38 @@ impl<'a> Bridge<'a> {
     }
 
     pub async fn definitions(&mut self) -> Result<Vec<Value>, AgentError> {
-        if companion_chat::is_global_session(&self.session.id) {
-            let mut definitions = companion_chat::tools();
+        let image_specialist = self
+            .execution
+            .as_ref()
+            .is_some_and(workflow::Execution::image_generator);
+        if image_specialist {
+            let mut definitions = workflow::image_tools(
+                companion_chat::is_global_session(&self.owner().id),
+                image_generation::enabled(self.runtime.state, self.runtime.home),
+                Some(super::native_vision::definition()),
+                self.direct_tasks,
+            );
+            if let Some(exec) = &self.execution {
+                exec.filter(&mut definitions);
+            }
+            return Ok(definitions);
+        }
+        if companion_chat::is_global_session(&self.owner().id) {
+            let mut definitions = if image_specialist {
+                vec![attachments::definition()]
+            } else {
+                companion_chat::tools()
+            };
             definitions.push(questions::definition());
+            if image_generation::enabled(self.runtime.state, self.runtime.home) {
+                definitions.push(workflow::image_definition(image_specialist));
+            }
+            if image_specialist {
+                definitions.extend(image_tasks::definitions());
+            }
+            if let Some(exec) = &self.execution {
+                exec.filter(&mut definitions);
+            }
             return Ok(definitions);
         }
         let mut definitions = tools::definitions(self.options.mode);
@@ -280,6 +358,7 @@ impl<'a> Bridge<'a> {
             definitions.extend(crate::core::design::definitions());
         }
         definitions.extend(self.context.definitions(self.restricted));
+        definitions.extend(self.graft.definitions());
         if !self.publication {
             definitions.extend(authoring::definitions());
             definitions.extend([
@@ -288,9 +367,6 @@ impl<'a> Bridge<'a> {
             ]);
             if crate::core::context7::configured(self.runtime.home) {
                 definitions.extend(crate::core::context7::definitions());
-            }
-            if image_generation::enabled(self.runtime.state, self.runtime.home) {
-                definitions.push(image_generation::definition());
             }
             definitions.push(super::native_vision::definition());
             if web_search::enabled(self.runtime.state, self.runtime.home, &self.options) {
@@ -311,6 +387,14 @@ impl<'a> Bridge<'a> {
                     )
                     .await,
             );
+        }
+        if self.execution.is_some()
+            && image_generation::enabled(self.runtime.state, self.runtime.home)
+        {
+            definitions.push(workflow::image_definition(image_specialist));
+        }
+        if image_specialist {
+            definitions.extend(image_tasks::definitions());
         }
         if let Some(exec) = &self.execution {
             exec.filter(&mut definitions);
@@ -644,6 +728,9 @@ impl<'a> Bridge<'a> {
                 .execute(&tool.name, &tool.args, self.restricted, signal)
                 .await
                 .map_err(AgentError::from),
+            Handler::Graft => {
+                core_runtime::execute_graft(&self.graft, &tool.name, &tool.args, signal).await
+            }
             Handler::Context7 => crate::core::context7::execute(
                 home,
                 &self.session.root,
@@ -669,15 +756,24 @@ impl<'a> Bridge<'a> {
             Handler::Lsp => self.lsp.execute(tool, signal).await,
             Handler::Attachment => attachments::read_tool(home, &self.owner().id, &tool.args),
             Handler::ImageGeneration => {
-                image_generation::execute(
-                    state,
-                    self.runtime.oauth,
-                    home,
-                    &self.owner().id,
-                    &tool.args,
-                    signal,
-                )
-                .await
+                let exec = self.execution.as_ref().ok_or_else(AgentError::internal)?;
+                if exec.image_generator() {
+                    let owner = self.owner().clone();
+                    image_generation::execute_pipeline(
+                        state,
+                        self.runtime.oauth,
+                        home,
+                        &owner.id,
+                        &owner,
+                        &mut self.commands,
+                        sandbox,
+                        &tool.args,
+                        signal,
+                    )
+                    .await
+                } else {
+                    exec.delegate_image(self.session, &tool.args, signal).await
+                }
             }
             Handler::Vision => {
                 self.native_vision_content(&tool.args)?;
@@ -720,6 +816,26 @@ impl<'a> Bridge<'a> {
                 Ok(outcome.output)
             }
             Handler::Native => {
+                if tool.name == "image_process"
+                    && self
+                        .execution
+                        .as_ref()
+                        .is_some_and(workflow::Execution::image_generator)
+                {
+                    let owner = self.owner().clone();
+                    return image_tasks::execute(
+                        state,
+                        self.runtime.oauth,
+                        home,
+                        &owner.id,
+                        &owner,
+                        &mut self.commands,
+                        sandbox,
+                        &tool.args,
+                        signal,
+                    )
+                    .await;
+                }
                 if tool.name.starts_with("video_") {
                     let owner = self.owner().clone();
                     return self

@@ -159,7 +159,10 @@ fn repair_local(home: &Path, id: ComponentId) -> Result<(), CoreError> {
         ],
         ComponentId::Context7 => vec![install::node_path(&path)],
         ComponentId::Lsp => vec![install::node_path(&path)],
+        ComponentId::Graft => vec![install::node_path(&path)],
         ComponentId::Hyperframes => hyperframes::executable_paths(&path)?,
+        ComponentId::Audiovisual => vec![audiovisual::python_path(&path)],
+        ComponentId::Comfyui => vec![comfyui::python_path(&path)],
         ComponentId::Beads => vec![path.join("bd"), path.join("dolt/bin/dolt")],
         _ => vec![],
     } {
@@ -178,6 +181,9 @@ fn repair_local(home: &Path, id: ComponentId) -> Result<(), CoreError> {
         file.persist(path.join("jarvis-hook.mjs"))
             .map_err(|_| error("Não foi possível restaurar os hooks."))?;
     }
+    if id == ComponentId::Graft {
+        graft::install_assets(&path)?;
+    }
     record.validate(home, id)?;
     save_receipt(home, id, record)
 }
@@ -189,6 +195,9 @@ async fn runtime(home: &Path, id: ComponentId, record: &Installation) -> Result<
         ComponentId::Context7 => context7::verify(&path).await,
         ComponentId::Lsp => lsp::verify(&path).await,
         ComponentId::Hyperframes => hyperframes::verify(&path, &record.version).await,
+        ComponentId::Audiovisual => audiovisual::verify(&path, &record.version).await,
+        ComponentId::Comfyui => comfyui::verify(&path, &record.version).await,
+        ComponentId::Graft => graft::verify(&path).await,
         ComponentId::Beads => {
             for executable in [
                 path.join(if cfg!(windows) { "bd.exe" } else { "bd" }),
@@ -313,6 +322,7 @@ pub async fn repair_core_component(
         .open(root(&home).join("install.lock"))?;
     fs2::FileExt::try_lock_exclusive(&lock)
         .map_err(|_| error("Outro Jarvis está alterando o Core."))?;
+    let operation = core.begin_installation(id)?;
     core.stage(
         &app,
         &home,
@@ -328,11 +338,12 @@ pub async fn repair_core_component(
         if reinstall {
             let old = read_manifest(&home)?.installations.remove(&id);
             // Verify and publish a fresh package before deleting the previous generation.
-            install::install(
+            install::install_cancellable(
                 &home,
                 id,
                 |stage| core.stage(&app, &home, id, stage),
                 |progress| core.download(&app, id, progress),
+                operation.signal.clone(),
             )
             .await?;
             if let Some(old) = old {

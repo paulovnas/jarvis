@@ -25,9 +25,10 @@ it("groups the fourteen immutable model profiles by flow and offers useful role-
   const publication = screen.getByRole("region",{ name:"Agentes do fluxo GitHub" });
   expect(within(standard).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
   expect(within(designer).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
-  expect(within(video).getByRole("button", { name: "Modelo de Criador de vídeos no fluxo Vídeo" })).toBeVisible();
-  expect(within(planned).queryByText("Criador de vídeos")).not.toBeInTheDocument();
-  expect(within(complete).queryByText("Criador de vídeos")).not.toBeInTheDocument();
+  expect(within(video).getByRole("button", { name: "Modelo de Gerador de vídeos no fluxo Vídeo" })).toBeVisible();
+  expect(within(video).getByText(/Gera apresentações de projetos com animação, narração e música/)).toBeVisible();
+  expect(within(planned).queryByText("Gerador de vídeos")).not.toBeInTheDocument();
+  expect(within(complete).queryByText("Gerador de vídeos")).not.toBeInTheDocument();
   expect(within(planned).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(3);
   expect(within(complete).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(7);
   expect(within(publication).getAllByRole("button",{name:/^Modelo de/})).toHaveLength(1);
@@ -147,7 +148,7 @@ it("lets the user retry an instruction load failure without changing the model",
 
 it("gives every agent a distinct accent within each flow", () => {
   render(<AgentSettings accounts={accounts} />);
-  for (const flow of ["Padrão", "Designer", "Vídeo", "Planejado", "Completo", "GitHub"]) {
+  for (const flow of ["Padrão", "Designer", "Vídeo", "Imagens", "Planejado", "Completo", "GitHub"]) {
     const group = screen.getByRole("region", { name: `Agentes do fluxo ${flow}` });
     const colors = Object.values(ROLE_LABELS).flatMap(label => {
       const name = within(group).queryByText(label, { selector: "[data-slot=card-title]" });
@@ -162,4 +163,13 @@ it("represents loading with the card structure", () => {
   vi.mocked(useAgentModels).mockReturnValue({ data:null,error:null,saving:false,save,refresh:vi.fn() });
   render(<AgentSettings accounts={accounts} />);
   expect(screen.getByRole("status",{name:"Carregando modelos dos agentes"})).toBeInTheDocument();
+});
+
+it("explains the separate reasoning profile for the image specialist", () => {
+  render(<AgentSettings accounts={accounts} flowFilter="image_generator" />);
+  const section = screen.getByRole("region", { name: "Agentes do fluxo Imagens" });
+  expect(within(section).getByRole("button", { name: "Modelo de Gerador de imagens no fluxo Imagens" })).toBeVisible();
+  expect(within(section).getByRole("button", { name: "Modelo secundário de Gerador de imagens no fluxo Imagens" })).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Agentes do fluxo Vídeo" })).not.toBeInTheDocument();
+  expect(within(section).getByText(/Modelo de raciocínio do agente/)).toHaveTextContent("configurado separadamente em Provedores → Ferramentas → Gerar imagens");
 });

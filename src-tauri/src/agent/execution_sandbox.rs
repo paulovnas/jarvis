@@ -115,6 +115,44 @@ impl SandboxPlan {
             Launcher::Native => (program.to_path_buf(), child_arguments),
         }
     }
+
+    /// Only the host supplies this path: managed inference shares one OS lock,
+    /// while project data and model weights retain their existing protections.
+    pub(super) fn with_host_writable_file(&self, path: &Path) -> Self {
+        let mut plan = self.clone();
+        match &mut plan.launcher {
+            Launcher::Seatbelt { profile, .. } => profile.push_str(&format!(
+                "(allow file-write* (literal \"{}\"))\n",
+                seatbelt_string(path)
+            )),
+            Launcher::Bubblewrap { arguments, .. } => arguments.extend([
+                OsString::from("--bind"),
+                path.as_os_str().to_owned(),
+                path.as_os_str().to_owned(),
+            ]),
+            Launcher::Native => {}
+        }
+        plan
+    }
+
+    /// A trusted native task owns this temporary directory. Model and runtime
+    /// directories remain read-only; model arguments cannot add grants.
+    pub(super) fn with_host_writable_directory(&self, path: &Path) -> Self {
+        let mut plan = self.clone();
+        match &mut plan.launcher {
+            Launcher::Seatbelt { profile, .. } => profile.push_str(&format!(
+                "(allow file-write* (subpath \"{}\"))\n",
+                seatbelt_string(path)
+            )),
+            Launcher::Bubblewrap { arguments, .. } => arguments.extend([
+                OsString::from("--bind"),
+                path.as_os_str().to_owned(),
+                path.as_os_str().to_owned(),
+            ]),
+            Launcher::Native => {}
+        }
+        plan
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -388,10 +426,13 @@ fn seatbelt_profile(writable_root: &Path, network: bool) -> String {
     let temporary = std::fs::canonicalize(&temporary).unwrap_or(temporary);
     let temporary = seatbelt_string(&temporary);
     let network_rule = if network { "(allow network*)\n" } else { "" };
+    // OpenMP registers its loaded library through a PID-named shared object.
+    // Permit that lifecycle without exposing arbitrary shared memory.
+    let openmp_rule = "(allow ipc-posix-shm-write-create ipc-posix-shm-write-unlink ipc-posix-shm-read-data (ipc-posix-name-regex #\"^/__KMP_REGISTERED_LIB_[0-9]+$\"))\n";
     // Git and shells open /dev/null with O_RDWR even for read-only commands.
     // Permit data I/O on that device without granting writes to the /dev tree.
     format!(
-        "(version 1)\n(deny default)\n(allow process-exec)\n(allow process-fork)\n(allow signal (target same-sandbox))\n(allow process-info* (target same-sandbox))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read*)\n(allow file-write-data (require-all (literal \"/dev/null\") (vnode-type CHARACTER-DEVICE)))\n(allow file-write* (subpath \"/tmp\"))\n(allow file-write* (subpath \"/private/tmp\"))\n(allow file-write* (subpath \"/var/tmp\"))\n(allow file-write* (subpath \"/private/var/tmp\"))\n(allow file-write* (subpath \"{temporary}\"))\n(allow file-write* (subpath \"{root}\"))\n{network_rule}"
+        "(version 1)\n(deny default)\n(allow process-exec)\n(allow process-fork)\n(allow signal (target same-sandbox))\n(allow process-info* (target same-sandbox))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow file-read*)\n(allow file-write-data (require-all (literal \"/dev/null\") (vnode-type CHARACTER-DEVICE)))\n(allow file-write* (subpath \"/tmp\"))\n(allow file-write* (subpath \"/private/tmp\"))\n(allow file-write* (subpath \"/var/tmp\"))\n(allow file-write* (subpath \"/private/var/tmp\"))\n(allow file-write* (subpath \"{temporary}\"))\n(allow file-write* (subpath \"{root}\"))\n{openmp_rule}{network_rule}"
     )
 }
 
@@ -435,6 +476,97 @@ fn bubblewrap_arguments(writable_root: &Path, network: bool) -> Vec<OsString> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn openmp_registration_is_allowed_but_unrelated_shared_memory_is_denied() {
+        const CHILD: &str = "JARVIS_TEST_OPENMP_SANDBOX";
+        if std::env::var_os(CHILD).is_some() {
+            let name =
+                std::ffi::CString::new(format!("/__KMP_REGISTERED_LIB_{}", std::process::id()))
+                    .unwrap();
+            // Exercise the OS permissions, not just the generated policy text.
+            let file =
+                unsafe { libc::shm_open(name.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600) };
+            assert!(file >= 0, "{}", std::io::Error::last_os_error());
+            assert_eq!(unsafe { libc::ftruncate(file, 16) }, 0);
+            assert_eq!(unsafe { libc::close(file) }, 0);
+            assert_eq!(unsafe { libc::shm_unlink(name.as_ptr()) }, 0);
+            let unrelated =
+                std::ffi::CString::new(format!("/jarvis-unrelated-{}", std::process::id()))
+                    .unwrap();
+            assert_eq!(
+                unsafe { libc::shm_open(unrelated.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600) },
+                -1
+            );
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let result = std::process::Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", &seatbelt_profile(root.path(), false)])
+            .arg(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "agent::execution_sandbox::tests::openmp_registration_is_allowed_but_unrelated_shared_memory_is_denied",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+
+    #[test]
+    fn managed_inference_grants_only_its_host_lock_file() {
+        let plan = prepare_for(
+            Platform::Macos,
+            AdapterAvailability {
+                seatbelt: Some("/usr/bin/sandbox-exec".into()),
+                bubblewrap: None,
+            },
+            Path::new("/project"),
+            &ExecutionEffects::default(),
+        );
+        let granted =
+            plan.with_host_writable_file(Path::new("/private/core/audio/.inference.lock"));
+        let (_, arguments) = granted.wrap(
+            Path::new("/private/core/python"),
+            [OsString::from("--request")],
+        );
+        let profile = arguments[1].to_string_lossy();
+        assert!(profile.contains("(literal \"/private/core/audio/.inference.lock\")"));
+        assert!(!profile.contains("(subpath \"/private/core\")"));
+        assert_eq!(granted.report(), plan.report());
+    }
+
+    #[test]
+    fn managed_image_task_grants_only_its_staging_directory() {
+        let plan = prepare_for(
+            Platform::Macos,
+            AdapterAvailability {
+                seatbelt: Some("/usr/bin/sandbox-exec".into()),
+                bubblewrap: None,
+            },
+            Path::new("/project"),
+            &ExecutionEffects::default(),
+        );
+        let granted =
+            plan.with_host_writable_directory(Path::new("/private/attachments/owned/staging"));
+        let (_, arguments) = granted.wrap(
+            Path::new("/private/core/comfy/python"),
+            [OsString::from("--request")],
+        );
+        let profile = arguments[1].to_string_lossy();
+        assert!(profile.contains("(subpath \"/private/attachments/owned/staging\")"));
+        assert!(!profile.contains("(subpath \"/private/core\")"));
+        assert!(!profile.contains("(subpath \"/private/attachments\")"));
+        assert_eq!(granted.report(), plan.report());
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

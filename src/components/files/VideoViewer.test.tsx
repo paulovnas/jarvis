@@ -35,3 +35,37 @@ it("reports save failures and releases the actions for retry", async () => {
   await user.click(screen.getByRole("button", { name: "Salvar vídeo" }));
   expect(toast.success).toHaveBeenCalledWith("Vídeo salvo");
 });
+
+const audio: VideoPreview = { ...file, path: "presentation/narration.wav", absolutePath: "/project/presentation/narration.wav", url: "asset://localhost/project/presentation/narration.wav", mime: "audio/wav" };
+
+it.each(["audio/wav", "audio/mpeg", "audio/ogg"] as const)("plays %s with native controls, no autoplay, and audio-specific save feedback", async mime => {
+  const user = userEvent.setup();
+  vi.mocked(invoke).mockResolvedValue(true);
+  render(<VideoViewer projectId="project-1" file={{ ...audio, mime }} />);
+  const player = screen.getByLabelText("Áudio narration.wav");
+  expect(player.tagName).toBe("AUDIO");
+  expect(player).toHaveAttribute("src", audio.url);
+  expect(player).toHaveAttribute("controls");
+  expect(player).toHaveAttribute("preload", "metadata");
+  expect(player).not.toHaveAttribute("autoplay");
+  expect(screen.getByRole("region", { name: "Prévia do áudio" })).toBeVisible();
+  expect(screen.getByRole("status", { name: "Carregando áudio" })).toBeVisible();
+  fireEvent.loadedMetadata(player);
+  expect(screen.queryByRole("status", { name: "Carregando áudio" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Salvar áudio" }));
+  expect(invoke).toHaveBeenCalledWith("save_project_video", { projectId: "project-1", path: audio.path });
+  expect(toast.success).toHaveBeenCalledWith("Áudio salvo");
+});
+
+it("keeps audio save and external playback available when the codec is unsupported", async () => {
+  const user = userEvent.setup();
+  render(<VideoViewer projectId="project-1" file={audio} />);
+  fireEvent.error(screen.getByLabelText("Áudio narration.wav"));
+  expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível reproduzir este áudio");
+  expect(screen.queryByRole("status", { name: "Carregando áudio" })).not.toBeInTheDocument();
+  vi.mocked(invoke).mockRejectedValueOnce(new Error("Failed"));
+  await user.click(screen.getByRole("button", { name: "Salvar áudio" }));
+  expect(toast.error).toHaveBeenCalledWith("Não foi possível salvar o áudio");
+  await user.click(screen.getByRole("button", { name: "Abrir no aplicativo padrão" }));
+  expect(invoke).toHaveBeenCalledWith("open_project_video", { projectId: "project-1", path: audio.path });
+});

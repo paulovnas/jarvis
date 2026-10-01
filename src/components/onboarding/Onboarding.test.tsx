@@ -61,7 +61,9 @@ it("requires essential Core tools but leaves Context7 optional before providers"
   render(<Onboarding saving={false} onComplete={complete} />);
   expect(screen.getByRole("heading", { name: "Bem-vindo ao Jarvis" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Avançar" }));
-  await screen.findByText("5/5 essenciais");
+  await screen.findByText("9/9 essenciais");
+  expect(screen.getByRole("heading", { name: "Graft" })).toBeVisible();
+  expect(screen.getByText(/Índice local atualizado sob demanda, sem modelo nem chave/)).toBeVisible();
   expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Avançar" }));
   expect(await screen.findByRole("heading", { name: "Complete seu ambiente" })).toBeVisible();
@@ -71,6 +73,23 @@ it("requires essential Core tools but leaves Context7 optional before providers"
   expect(screen.getByRole("button", { name: "Avançar" })).toBeDisabled();
   expect(screen.queryByRole("region", { name: "Ferramentas" })).not.toBeInTheDocument();
   expect(complete).not.toHaveBeenCalled();
+});
+
+it("offers audiovisual download cancellation during guided setup", async () => {
+  const state = coreFixture();
+  const audio = state.items.find(item => item.id === "audiovisual")!;
+  audio.installed = false; audio.configured = false; audio.installedVersion = null;
+  audio.stage = "Baixando modelos de voz e música";
+  state.ready = false;
+  const stopped = structuredClone(state);
+  stopped.items.find(item => item.id === "audiovisual")!.stage = null;
+  invokeMock.mockImplementation(async command => command === "cancel_core_installation" ? stopped : state);
+  const user = userEvent.setup();
+  render(<Onboarding saving={false} onComplete={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Avançar" }));
+  await user.click(await screen.findByRole("button", { name: "Cancelar instalação de Audiovisual" }));
+  expect(invokeMock).toHaveBeenCalledWith("cancel_core_installation", { id: "audiovisual" });
+  expect(screen.getByRole("button", { name: "Avançar" })).toBeDisabled();
 });
 it("keeps tool settings visible after connection and sends the named workspace on completion", async () => {
   const accounts = [{ alias: "openai-codex-test", providerKind: "openai-codex", enabled: true, createdAt: 1, accountType: "personal", email: null, modelsAvailable: true, models: [{ id: "gpt-test", name: "Test", reasoningLevels: [], defaultReasoningLevel: null }] }];

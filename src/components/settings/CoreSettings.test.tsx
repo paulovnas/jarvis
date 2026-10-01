@@ -49,7 +49,7 @@ it.each([false, true])("finishes update discovery despite status events and avoi
     finishCheck();
   });
   expect(await screen.findByText("Consulta concluída")).toBeVisible();
-  expect(screen.getAllByText("Pronto")).toHaveLength(7);
+  expect(screen.getAllByText("Pronto")).toHaveLength(state.items.length);
   expect(screen.queryByRole("button", { name: /Reinstalar/ })).not.toBeInTheDocument();
   if (fail) expect(toast.error).toHaveBeenCalledWith(message);
   else expect(toast.error).not.toHaveBeenCalled();
@@ -61,7 +61,7 @@ it.each([false, true])("finishes update discovery despite status events and avoi
   await act(async () => finishCheck());
 });
 
-it.each([0, 1, 2, 3, 4, 5, 6])("updates real download progress for Core item %i and resets it between stages", async index => {
+it.each(coreFixture().items.map((_, index) => index))("updates real download progress for Core item %i and resets it between stages", async index => {
   const state = coreFixture(false);
   state.items[index].stage = "Baixando recursos";
   invokeMock.mockResolvedValue(state);
@@ -134,18 +134,100 @@ it("offers Open Design installation alongside the other Core resources", async (
   render(<CoreSettings />);
   fireEvent.click(await screen.findByRole("button", { name: "Instalar Open Design" }));
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "open-design" }));
-  expect(screen.getByText("4/5 essenciais")).toBeInTheDocument();
+  expect(screen.getByText("8/9 essenciais")).toBeInTheDocument();
 });
 
-it("offers managed video installation without blocking the essential Core", async () => {
+it.each(["hyperframes", "audiovisual", "comfyui", "graft"] as const)("offers required %s installation in the essential Core", async id => {
   const state = coreFixture();
-  const video = state.items.find(item => item.id === "hyperframes")!;
+  const video = state.items.find(item => item.id === id)!;
   video.installed = false; video.configured = false; video.installedVersion = null;
+  state.ready = false;
   invokeMock.mockResolvedValue(state);
   render(<CoreSettings />);
-  fireEvent.click(await screen.findByRole("button", { name: "Instalar Hyperframes" }));
-  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "hyperframes" }));
-  expect(screen.getByText("5/5 essenciais")).toBeVisible();
+  fireEvent.click(await screen.findByRole("button", { name: `Instalar ${video.name}` }));
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id }));
+  expect(screen.getByText("8/9 essenciais")).toBeVisible();
+  expect(screen.queryByText("Opcional")).not.toBeInTheDocument();
+});
+
+it("explains local audiovisual downloads, hardware variation and soundtrack licensing before installation", async () => {
+  invokeMock.mockResolvedValue(coreFixture(false));
+  render(<CoreSettings />);
+  expect(await screen.findByText(/Gera narração em PT-BR com Kokoro e música com MusicGen localmente/)).toHaveTextContent("A instalação inicial baixa vários GB");
+  expect(screen.getByText(/Gera narração em PT-BR/)).toHaveTextContent("CPU/GPU");
+  expect(screen.getByText(/Gera narração em PT-BR/)).toHaveTextContent("macOS 13 ou superior");
+  expect(screen.getByText(/Gera narração em PT-BR/)).toHaveTextContent("glibc 2.27 ou superior");
+  expect(screen.getByText(/Gera narração em PT-BR/)).toHaveTextContent("CC-BY-NC, para uso não comercial");
+  expect(screen.getByText(/Gera narração em PT-BR/)).toHaveTextContent("Em projetos comerciais, forneça uma trilha com licença adequada");
+});
+
+it("shows audiovisual model downloads through the existing progress events", async () => {
+  const state = coreFixture();
+  state.ready = false;
+  const audiovisual = state.items.find(item => item.id === "audiovisual")!;
+  audiovisual.installed = false;
+  audiovisual.configured = false;
+  audiovisual.stage = "Baixando modelos de voz e música";
+  audiovisual.download = { receivedBytes: 1048576, totalBytes: null };
+  invokeMock.mockResolvedValue(state);
+  render(<CoreSettings />);
+  await screen.findByText("1 MB");
+  await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: "audiovisual", download: { receivedBytes: 2097152, totalBytes: null } } }));
+  expect(screen.getByText("2 MB")).toBeVisible();
+  expect(screen.getByText("Baixando modelos de voz e música")).toBeVisible();
+});
+
+it("cancels an audiovisual download once, keeps progress until cleanup, and permits installation again", async () => {
+  const state = coreFixture();
+  const item = state.items.find(item => item.id === "audiovisual")!;
+  item.installed = false; item.configured = false; item.installedVersion = null;
+  item.stage = "Baixando modelos de voz e música";
+  item.download = { receivedBytes: 1048576, totalBytes: null };
+  state.ready = false;
+  let finishCancel!: (value: unknown) => void;
+  invokeMock.mockImplementation(command => command === "cancel_core_installation" ? new Promise(resolve => { finishCancel = resolve; }) : Promise.resolve(state));
+  render(<CoreSettings />);
+  const cancel = await screen.findByRole("button", { name: "Cancelar instalação de Audiovisual" });
+  fireEvent.click(cancel); fireEvent.click(cancel);
+  expect(invokeMock.mock.calls.filter(([command]) => command === "cancel_core_installation")).toEqual([["cancel_core_installation", { id: "audiovisual" }]]);
+  expect(cancel).toBeDisabled();
+  expect(cancel).toHaveTextContent("Cancelando…");
+  await act(async () => finishCancel(state));
+  expect(screen.getByRole("progressbar", { name: "Instalação de Audiovisual" })).toBeVisible();
+  expect(cancel).toBeDisabled();
+  const stopped = structuredClone(state);
+  stopped.items.find(item => item.id === "audiovisual")!.stage = null;
+  await act(async () => events.get("core:changed")?.({ event: "core:changed", id: 1, payload: stopped }));
+  expect(screen.queryByRole("button", { name: "Cancelar instalação de Audiovisual" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("progressbar", { name: "Instalação de Audiovisual" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Instalar Audiovisual" })).toBeEnabled();
+});
+
+it("does not resurrect download progress when cancellation returns after the cleanup event", async () => {
+  const state = coreFixture();
+  state.items.find(item => item.id === "audiovisual")!.stage = "Baixando modelos";
+  let finishCancel!: (value: unknown) => void;
+  invokeMock.mockImplementation(command => command === "cancel_core_installation" ? new Promise(resolve => { finishCancel = resolve; }) : Promise.resolve(state));
+  render(<CoreSettings />);
+  fireEvent.click(await screen.findByRole("button", { name: "Cancelar instalação de Audiovisual" }));
+  const stopped = structuredClone(state);
+  stopped.items.find(item => item.id === "audiovisual")!.stage = null;
+  await act(async () => events.get("core:changed")?.({ event: "core:changed", id: 1, payload: stopped }));
+  await act(async () => finishCancel(state));
+  expect(screen.queryByRole("progressbar", { name: "Instalação de Audiovisual" })).not.toBeInTheDocument();
+});
+
+it("reports cancellation failures and leaves the cancel action available for retry", async () => {
+  const state = coreFixture();
+  state.items.find(item => item.id === "audiovisual")!.stage = "Baixando modelos";
+  invokeMock.mockImplementation(async command => {
+    if (command === "cancel_core_installation") throw { message: "Não foi possível cancelar agora" };
+    return state;
+  });
+  render(<CoreSettings />);
+  fireEvent.click(await screen.findByRole("button", { name: "Cancelar instalação de Audiovisual" }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Não foi possível cancelar agora"));
+  expect(screen.getByRole("button", { name: "Cancelar instalação de Audiovisual" })).toBeEnabled();
 });
 
 it("mostra versões e só oferece atualização quando há release maior", async () => {
@@ -188,7 +270,7 @@ it("mantém a versão instalada quando uma atualização falha e permite nova te
   render(<CoreSettings />);
   fireEvent.click(await screen.findByRole("button", { name: "Atualizar Context-mode" }));
   expect(await screen.findByText("Download interrompido")).toBeInTheDocument();
-  expect(screen.getAllByText("v1.0.0")).toHaveLength(7);
+  expect(screen.getAllByText("v1.0.0")).toHaveLength(10);
   await waitFor(() => expect(screen.getByRole("button", { name: "Atualizar Context-mode" })).toBeEnabled());
 });
 

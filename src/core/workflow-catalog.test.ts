@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { flowOptions, flowSelection, modelChoiceSchema, validateGraph, workflowCatalogSchema } from "./workflow-catalog";
-import { builtinAgent, builtinFlow, builtinVideoAgent, customAgent, customFlow, customCatalog } from "@/test/workflow-fixtures";
+import { builtinAgent, builtinFlow, builtinImageAgent, builtinVideoAgent, customAgent, customFlow, customCatalog } from "@/test/workflow-fixtures";
 import { chatOptions } from "@/test/chat-fixtures";
 
 it("preserves an optional secondary target and rejects nested fallback chains", () => {
@@ -34,13 +34,14 @@ it("reads legacy identities and retains only predefined appearance choices", () 
   expect(workflowCatalogSchema.parse({ ...customCatalog, agents: [{ ...customAgent, usage: undefined }] }).agents[0].usage).toBe("flow_only");
 });
 
-it("persists the native video flow and allows its mixed agent in a custom graph", () => {
-  const flow = { ...builtinFlow, id: "video", name: "Vídeo", appearance: builtinVideoAgent.appearance, steps: [{ ...builtinFlow.steps[0], agentId: builtinVideoAgent.id }] };
-  const catalog = workflowCatalogSchema.parse({ ...customCatalog, builtinAgents: [builtinVideoAgent], builtinFlows: [flow] });
-  expect(catalog.builtinAgents[0]).toEqual(builtinVideoAgent);
-  expect(flowSelection({ ...chatOptions, ...flowOptions("video") })).toBe("video");
-  expect(flowOptions("agent:builtin:video")).toEqual({ workflow: "custom", customAgentId: "builtin:video" });
-  expect(validateGraph({ ...customFlow, steps: [{ ...customFlow.steps[0], agentId: builtinVideoAgent.id }] }, catalog.builtinAgents)).toBeNull();
+it.each([builtinVideoAgent, builtinImageAgent])("persists the $name flow and allows its mixed agent in a custom graph", agent => {
+  const flowId = agent.role === "video" ? "video" : "image_generator";
+  const flow = { ...builtinFlow, id: flowId, name: agent.name, appearance: agent.appearance, steps: [{ ...builtinFlow.steps[0], agentId: agent.id }] };
+  const catalog = workflowCatalogSchema.parse({ ...customCatalog, builtinAgents: [agent], builtinFlows: [flow] });
+  expect(catalog.builtinAgents[0]).toEqual(agent);
+  expect(flowSelection({ ...chatOptions, ...flowOptions(flowId) })).toBe(flowId);
+  expect(flowOptions(`agent:${agent.id}`)).toEqual({ workflow: "custom", customAgentId: agent.id });
+  expect(validateGraph({ ...customFlow, steps: [{ ...customFlow.steps[0], agentId: agent.id }] }, catalog.builtinAgents)).toBeNull();
 });
 
 it("validates entry, references, termination, reachability and bounded correction loops", () => {

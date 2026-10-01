@@ -16,9 +16,20 @@ fn fixture(home: &Path) -> Manifest {
         if id == ComponentId::Hyperframes {
             hyperframes::tests::fixture(&path, "1.0.0");
         }
+        if id == ComponentId::Audiovisual {
+            audiovisual::tests::fixture(&path);
+        }
+        if id == ComponentId::Comfyui {
+            comfyui::tests::fixture(&path);
+        }
+        if id == ComponentId::Graft {
+            graft::fixture(&path);
+        }
         let record = Installation {
             version: if id == ComponentId::OpenDesign {
                 "1.2.3"
+            } else if id == ComponentId::Graft {
+                install::GRAFT_VERSION
             } else {
                 "1.0.0"
             }

@@ -185,7 +185,9 @@ pub(super) async fn run(
     session.drain_interactions(result.is_err()).await;
     let cleanup = process.cancel().await;
     core_runtime::record(session, bridge.context.take_activity())?;
+    core_runtime::record(session, bridge.graft.take_activity())?;
     bridge.context.close().await;
+    bridge.graft.close().await;
     result.and_then(|()| cleanup.map_err(runtime_error))
 }
 
@@ -590,6 +592,7 @@ async fn execute_tool(
         })
         .await?;
     core_runtime::record(bridge.session, bridge.context.take_activity())?;
+    core_runtime::record(bridge.session, bridge.graft.take_activity())?;
     bridge.session.transition(turn_state::TurnPhase::Sampling)?;
     with_native_images(
         bridge,

@@ -90,7 +90,7 @@ pub async fn set_image_generation_config(
         .map_err(|_| AgentError::internal())?
 }
 pub(super) fn definition() -> Value {
-    json!({"type":"function","name":"generate_image","description":"Generate an image, or edit supplied image attachments, with Gemini 3.1 Flash Image through the Antigravity account selected in Jarvis settings. Describe the desired image in prompt. Optional image_ids reference images belonging to this conversation. The UI displays the generated images automatically. Returns attachment metadata and local source paths, never base64. Only use when the user requests visual creation or editing.","parameters":{"type":"object","properties":{"prompt":{"type":"string","minLength":1,"maxLength":8000},"aspect_ratio":{"type":"string","enum":["1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"]},"image_ids":{"type":"array","items":{"type":"string"},"maxItems":4}},"required":["prompt"],"additionalProperties":false}})
+    json!({"type":"function","name":"generate_image","description":"Create or edit images using the independently configured image account/model and required ComfyUI workflow. Optional image_ids reference owned attachments; variants requests up to four independent alternatives. Processing controls resize, background removal, interpolation upscale and verified exports. UI displays final images automatically. Returns metadata and paths, never base64. Only use for requested visual creation/editing; preserve successful sourceImageIds on errors and retry image_process instead of generating again.","parameters":{"type":"object","properties":{"prompt":{"type":"string","minLength":1,"maxLength":8000},"aspect_ratio":{"type":"string","enum":["1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"]},"image_ids":{"type":"array","items":{"type":"string"},"maxItems":4},"variants":{"type":"integer","minimum":1,"maximum":4,"default":1},"processing":super::image_tasks::processing_schema()},"required":["prompt"],"additionalProperties":false}})
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +99,13 @@ struct Arguments {
     aspect_ratio: Option<String>,
     #[serde(default)]
     image_ids: Vec<String>,
+    #[serde(default = "one")]
+    variants: u8,
+    #[serde(default = "super::image_tasks::default_processing")]
+    processing: super::image_tasks::Processing,
+}
+fn one() -> u8 {
+    1
 }
 fn arguments(args: &Value) -> Result<Arguments, AgentError> {
     let args: Arguments = serde_json::from_value(args.clone())
@@ -106,6 +113,7 @@ fn arguments(args: &Value) -> Result<Arguments, AgentError> {
     if args.prompt.trim().is_empty()
         || args.prompt.len() > 8000
         || args.image_ids.len() > 4
+        || !(1..=4).contains(&args.variants)
         || args.aspect_ratio.as_deref().is_some_and(|ratio| {
             ![
                 "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9",
@@ -117,6 +125,7 @@ fn arguments(args: &Value) -> Result<Arguments, AgentError> {
             "Revise a descrição, proporção e imagens de referência.",
         ));
     }
+    args.processing.validate()?;
     Ok(args)
 }
 fn request_body(
@@ -297,12 +306,13 @@ fn persist(
         ) {
             Ok(item) => images.push(item),
             Err(error) => {
-                for item in &images {
-                    if let Ok(path) = attachments::location(home, conversation, &item.id) {
-                        let _ = std::fs::remove_dir_all(path);
-                    }
-                }
-                return Err(error);
+                return Err(preserve_sources(
+                    error,
+                    &images
+                        .iter()
+                        .map(|item| item.id.clone())
+                        .collect::<Vec<_>>(),
+                ));
             }
         }
     }
@@ -385,6 +395,90 @@ pub(super) async fn execute(
     tauri::async_runtime::spawn_blocking(move || persist(&home, &conversation, &alias, output))
         .await
         .map_err(|_| AgentError::internal())?
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn execute_pipeline(
+    state: &AppState,
+    oauth: &OpenAiCodexState,
+    home: &Path,
+    owner: &str,
+    session: &super::Session,
+    commands: &mut super::command_sessions::CommandSessions,
+    sandbox: Option<&super::execution_sandbox::SandboxPlan>,
+    args: &Value,
+    signal: watch::Receiver<bool>,
+) -> Result<String, AgentError> {
+    let request = arguments(args)?;
+    // Missing local dependencies or invalid exports must fail before a paid call.
+    crate::core::comfyui::runtime(home).map_err(AgentError::from)?;
+    super::image_tasks::validate_export(
+        &session.root,
+        request.processing.output_directory.as_deref(),
+    )?;
+    let mut ids = Vec::new();
+    let mut original = json!({});
+    for _ in 0..request.variants {
+        match execute(state, oauth, home, owner, args, signal.clone()).await {
+            Ok(output) => {
+                original = serde_json::from_str(&output).map_err(|_| AgentError::internal())?;
+                ids.extend(
+                    original["images"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|image| image["id"].as_str().map(str::to_owned)),
+                );
+                if ids.len() > 4 {
+                    return Err(preserve_sources(invalid("O provedor entregou mais de quatro imagens. As originais foram preservadas; processe-as em lotes de até quatro."), &ids));
+                }
+            }
+            Err(cause) => return Err(preserve_sources(cause, &ids)),
+        }
+    }
+    let processed = super::image_tasks::execute(
+        state,
+        oauth,
+        home,
+        owner,
+        session,
+        commands,
+        sandbox,
+        &json!({"image_ids":ids,"processing":request.processing}),
+        signal,
+    )
+    .await?;
+    let mut result: Value = serde_json::from_str(&processed).map_err(|_| AgentError::internal())?;
+    result["accountAlias"] = original["accountAlias"].clone();
+    result["model"] = original["model"].clone();
+    result["text"] = original["text"].clone();
+    Ok(result.to_string())
+}
+fn preserve_sources(mut cause: AgentError, ids: &[String]) -> AgentError {
+    if !ids.is_empty() {
+        let mut result = cause
+            .tool_result
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+            .filter(Value::is_object)
+            .unwrap_or_else(|| json!({}));
+        let mut sources = ids.to_vec();
+        for id in result["sourceImageIds"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if !sources.iter().any(|source| source == id) {
+                sources.push(id.to_owned());
+            }
+        }
+        result["error"] = json!({"code":cause.code,"message":cause.message});
+        result["sourceImageIds"] = json!(sources);
+        result["recovery"] = json!("Preserved confirmed generations. Retry only image_process with these IDs, never repeat the paid provider request.");
+        cause.tool_result = Some(result.to_string());
+    }
+    cause
 }
 
 #[cfg(test)]

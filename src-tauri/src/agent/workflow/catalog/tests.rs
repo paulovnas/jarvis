@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn image_generator_is_a_mixed_native_agent_available_solo_and_in_custom_flows() {
+    let native = builtin_agent(Role::ImageGenerator).unwrap();
+    assert_eq!(native.id, "builtin:image_generator");
+    assert_eq!(native.name, "Gerador de imagens");
+    assert_eq!(native.usage, AgentUsage::Mixed);
+    assert_eq!(native.capability, Capability::WriteFiles);
+    assert_eq!(native.appearance.icon, appearance::Icon::Sparkles);
+    let solo = Catalog::default().resolve_agent(&native.id).unwrap();
+    assert_eq!(solo.native_role, Some(Role::ImageGenerator));
+    assert!(solo.instructions.contains("ComfyUI"));
+    assert!(custom::allowed(&solo, "generate_image"));
+    assert!(custom::allowed(&solo, "image_process"));
+    for name in ["bash", "http_send", "mcp_activate", "write", "video_audio"] {
+        assert!(!custom::allowed(&solo, name), "{name}");
+    }
+    let mut catalog = example();
+    for step in &mut catalog.flows[0].steps {
+        step.agent_id = native.id.clone();
+    }
+    catalog.validate().unwrap();
+    let run = catalog.resolve(&catalog.flows[0].id).unwrap();
+    assert_eq!(run.agents[0].native_role, Some(Role::ImageGenerator));
+    let native_flow = builtin_flows()
+        .into_iter()
+        .find(|flow| flow.id == Flow::ImageGenerator)
+        .unwrap();
+    assert_eq!(native_flow.steps.len(), 1);
+    assert_eq!(native_flow.steps[0].agent_id, native.id);
+    assert!(native_flow.connections.is_empty());
+    for flow in [Flow::Planned, Flow::Complete] {
+        assert!(!flow.roster().contains(&Role::ImageGenerator));
+    }
+}
+
+#[test]
 fn catalog_round_trip_preserves_claude_for_custom_agents_and_flow_steps() {
     let mut catalog = example();
     let choice = settings::ModelChoice {
@@ -118,7 +153,7 @@ fn custom_flows_accept_immutable_native_agents_and_freeze_their_runtime_contract
 #[test]
 fn native_canvas_topology_is_derived_from_the_real_delegation_contract() {
     let agents = builtin_agents();
-    assert_eq!(agents.len(), 9);
+    assert_eq!(agents.len(), 10);
     assert!(agents.iter().all(|agent| agent.immutable));
     assert_eq!(
         agents
@@ -135,13 +170,13 @@ fn native_canvas_topology_is_derived_from_the_real_delegation_contract() {
     assert_eq!(github.name, "GitHub");
     assert_eq!(github.usage, AgentUsage::Mixed);
     let video = builtin_agent(Role::Video).unwrap();
-    assert_eq!(video.name, "Criador de vídeos");
+    assert_eq!(video.name, "Gerador de vídeos");
     assert_eq!(video.usage, AgentUsage::Mixed);
     assert_eq!(video.capability, Capability::Commands);
     assert_eq!(video.appearance.icon, appearance::Icon::Film);
 
     let flows = builtin_flows();
-    assert_eq!(flows.len(), 5);
+    assert_eq!(flows.len(), 6);
     let video = flows.iter().find(|flow| flow.id == Flow::Video).unwrap();
     assert_eq!(video.steps.len(), 1);
     assert_eq!(video.steps[0].agent_id, "builtin:video");
@@ -187,11 +222,16 @@ fn catalog_view_keeps_user_definitions_separate_from_immutable_native_graphs() {
     let value = serde_json::to_value(CatalogView::from(example())).unwrap();
     assert_eq!(value["agents"].as_array().unwrap().len(), 1);
     assert_eq!(value["flows"].as_array().unwrap().len(), 1);
-    assert_eq!(value["builtinAgents"].as_array().unwrap().len(), 9);
-    assert_eq!(value["builtinFlows"].as_array().unwrap().len(), 5);
+    assert_eq!(value["builtinAgents"].as_array().unwrap().len(), 10);
+    assert_eq!(value["builtinFlows"].as_array().unwrap().len(), 6);
     assert_eq!(value["builtinFlows"][2]["id"], "video");
-    assert_eq!(value["builtinFlows"][4]["immutable"], true);
-    assert_eq!(value["builtinFlows"][4]["id"], "complete");
+    let complete = value["builtinFlows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|flow| flow["id"] == "complete")
+        .unwrap();
+    assert_eq!(complete["immutable"], true);
 }
 
 #[test]
@@ -249,11 +289,38 @@ fn agent_usage_controls_direct_selection_and_flow_membership() {
     assert_eq!(github.native_role, Some(Role::Github));
     assert_eq!(github.usage, AgentUsage::Mixed);
     let video = builtin_agent(Role::Video).unwrap();
-    assert_eq!(video.name, "Criador de vídeos");
+    assert_eq!(video.name, "Gerador de vídeos");
     assert_eq!(video.usage, AgentUsage::Mixed);
     assert_eq!(video.capability, Capability::Commands);
     assert_eq!(video.appearance.icon, appearance::Icon::Film);
     assert!(catalog.resolve_agent("builtin:planner").is_err());
+}
+
+#[test]
+fn video_generator_labels_preserve_native_identity_and_user_owned_names() {
+    let mut catalog = example();
+    // A user-owned name matching the former built-in label must stay unchanged.
+    catalog.agents[0].name = "Criador de vídeos".into();
+    catalog.agents[0].description = "Minha apresentação personalizada".into();
+    let custom_id = catalog.agents[0].id.clone();
+    let encoded = serde_json::to_vec(&catalog).unwrap();
+    let restored: Catalog = serde_json::from_slice(&encoded).unwrap();
+    let custom = restored.resolve_agent(&custom_id).unwrap();
+    assert_eq!(custom.name, "Criador de vídeos");
+    assert_eq!(custom.description, "Minha apresentação personalizada");
+    assert_eq!(custom.instructions, catalog.agents[0].instructions);
+
+    let video = restored.resolve_agent("builtin:video").unwrap();
+    assert_eq!(video.id, "builtin:video");
+    assert_eq!(video.name, "Gerador de vídeos");
+    assert_eq!(video.native_role, Some(Role::Video));
+    assert!(video.description.contains("narração e música"));
+    let flow = builtin_flows()
+        .into_iter()
+        .find(|flow| flow.id == Flow::Video)
+        .unwrap();
+    assert_eq!(flow.steps[0].agent_id, "builtin:video");
+    assert!(flow.description.contains("narração, música"));
 }
 
 #[test]

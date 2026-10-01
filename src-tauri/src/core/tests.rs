@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn requires_essential_components_without_requiring_optional_documentation_or_video() {
+fn requires_structural_discovery_video_and_audio_without_requiring_optional_documentation() {
     let home = tempfile::tempdir().unwrap();
     let mut manifest = Manifest::default();
     assert!(require_ready(home.path()).is_err());
@@ -19,11 +19,22 @@ fn requires_essential_components_without_requiring_optional_documentation_or_vid
         if id == ComponentId::Hyperframes {
             hyperframes::tests::fixture(&path, "1.0.0");
         }
+        if id == ComponentId::Audiovisual {
+            audiovisual::tests::fixture(&path);
+        }
+        if id == ComponentId::Comfyui {
+            comfyui::tests::fixture(&path);
+        }
+        if id == ComponentId::Graft {
+            graft::fixture(&path);
+        }
         manifest.installations.insert(
             id,
             Installation {
                 version: if id == ComponentId::OpenDesign {
                     "1.2.3"
+                } else if id == ComponentId::Graft {
+                    install::GRAFT_VERSION
                 } else {
                     "1.0.0"
                 }
@@ -71,14 +82,30 @@ fn requires_essential_components_without_requiring_optional_documentation_or_vid
     assert!(snapshot.ready);
     assert!(snapshot.items.iter().all(|item| item.error.is_none()));
     assert_eq!(snapshot.items[0].latest_version.as_deref(), Some("1.0.1"));
+    let graft = manifest.installations.remove(&ComponentId::Graft).unwrap();
+    save_manifest(home.path(), &manifest).unwrap();
+    assert!(require_ready(home.path()).is_err());
+    manifest.installations.insert(ComponentId::Graft, graft);
     manifest.installations.remove(&ComponentId::Hyperframes);
     save_manifest(home.path(), &manifest).unwrap();
-    assert!(require_ready(home.path()).is_ok());
-    assert!(state.snapshot(home.path()).unwrap().ready);
+    assert!(require_ready(home.path()).is_err());
+    assert!(!state.snapshot(home.path()).unwrap().ready);
     assert!(hyperframes::runtime(home.path()).is_err());
     fs::remove_file(root(home.path()).join("ponytail/test/verified")).unwrap();
     assert!(!state.snapshot(home.path()).unwrap().ready);
     assert!(require_ready(home.path()).is_err());
+}
+
+#[test]
+fn installation_cancel_targets_the_current_component_and_guard_clears_ownership() {
+    let core = CoreState::default();
+    let operation = core.begin_installation(ComponentId::Audiovisual).unwrap();
+    core.cancel_installation(ComponentId::Hyperframes).unwrap();
+    assert!(!*operation.signal.borrow());
+    core.cancel_installation(ComponentId::Audiovisual).unwrap();
+    assert!(*operation.signal.borrow());
+    drop(operation);
+    assert!(core.cancellation.lock().unwrap().is_none());
 }
 #[test]
 fn successful_version_discovery_preserves_installation_errors() {

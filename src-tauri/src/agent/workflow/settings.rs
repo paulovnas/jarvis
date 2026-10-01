@@ -109,7 +109,7 @@ pub(crate) fn read(home: &Path) -> Result<ModelSettings, AgentError> {
     let settings: ModelSettings =
         serde_json::from_slice(&fs::read(path).map_err(|_| AgentError::storage())?)
             .map_err(|_| AgentError::storage())?;
-    if settings.len() > 14
+    if settings.len() > 15
         || settings
             .values()
             .any(|choice| choice.validate_shape().is_err())
@@ -118,6 +118,7 @@ pub(crate) fn read(home: &Path) -> Result<ModelSettings, AgentError> {
                 Flow::Standard,
                 Flow::Designer,
                 Flow::Video,
+                Flow::ImageGenerator,
                 Flow::Planned,
                 Flow::Complete,
                 Flow::Publication,
@@ -296,6 +297,7 @@ mod instruction_tests {
             Flow::Standard,
             Flow::Designer,
             Flow::Video,
+            Flow::ImageGenerator,
             Flow::Planned,
             Flow::Complete,
             Flow::Publication,
@@ -304,7 +306,7 @@ mod instruction_tests {
         .flat_map(|flow| roster(flow).iter().map(move |role| key(flow, *role)))
         .map(|key| (key, choice.clone()))
         .collect();
-        assert_eq!(profiles.len(), 14);
+        assert_eq!(profiles.len(), 15);
         let path = crate::data_dir::root(home.path()).join("agents.json");
         fs::write(&path, serde_json::to_vec(&profiles).unwrap()).unwrap();
         assert_eq!(read(home.path()).unwrap(), profiles);
@@ -425,13 +427,23 @@ mod instruction_tests {
         for flow in [
             Flow::Standard,
             Flow::Designer,
+            Flow::Video,
+            Flow::ImageGenerator,
             Flow::Planned,
             Flow::Complete,
             Flow::Publication,
         ] {
             for role in roster(flow) {
                 let sections = get_agent_instructions(flow, *role).unwrap();
-                let runtime = contracts::prompt(flow, *role, "runtime-agent-id");
+                let runtime = contracts::prompt(
+                    flow,
+                    *role,
+                    if flow.direct() {
+                        "main"
+                    } else {
+                        "runtime-agent-id"
+                    },
+                );
                 assert_eq!(sections[0].content, role.contract());
                 assert!(sections
                     .iter()

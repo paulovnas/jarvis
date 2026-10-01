@@ -1,9 +1,12 @@
 //! Jarvis-owned packages. Installation readiness is independent of provider setup.
 pub mod activity;
+pub(crate) mod audiovisual;
 pub mod beads;
+pub(crate) mod comfyui;
 pub mod context;
 pub mod context7;
 pub mod design;
+pub(crate) mod graft;
 pub mod health;
 pub mod hooks;
 pub(crate) mod hyperframes;
@@ -31,9 +34,12 @@ pub enum ComponentId {
     Context7,
     Lsp,
     Hyperframes,
+    Audiovisual,
+    Comfyui,
+    Graft,
 }
 impl ComponentId {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 10] = [
         Self::ContextMode,
         Self::Ponytail,
         Self::Beads,
@@ -41,6 +47,9 @@ impl ComponentId {
         Self::Context7,
         Self::Lsp,
         Self::Hyperframes,
+        Self::Audiovisual,
+        Self::Comfyui,
+        Self::Graft,
     ];
     pub fn key(self) -> &'static str {
         match self {
@@ -51,12 +60,13 @@ impl ComponentId {
             Self::Context7 => "context7",
             Self::Lsp => "lsp",
             Self::Hyperframes => "hyperframes",
+            Self::Audiovisual => "audiovisual",
+            Self::Comfyui => "comfyui",
+            Self::Graft => "graft",
         }
     }
     pub fn required(self) -> bool {
-        // Documentation credentials and the optional video runtime must never
-        // prevent a user from starting a local coding session.
-        !matches!(self, Self::Context7 | Self::Hyperframes)
+        self != Self::Context7
     }
     fn name(self) -> &'static str {
         match self {
@@ -67,6 +77,9 @@ impl ComponentId {
             Self::Context7 => "Context7",
             Self::Lsp => "Servidores LSP",
             Self::Hyperframes => "Hyperframes",
+            Self::Audiovisual => "Audiovisual",
+            Self::Comfyui => "ComfyUI",
+            Self::Graft => "Graft",
         }
     }
     fn repository(self) -> &'static str {
@@ -78,6 +91,9 @@ impl ComponentId {
             Self::Context7 => "upstash/context7",
             Self::Lsp => "typescript-language-server/typescript-language-server",
             Self::Hyperframes => "heygen-com/hyperframes",
+            Self::Audiovisual => "facebookresearch/audiocraft",
+            Self::Comfyui => "Comfy-Org/ComfyUI",
+            Self::Graft => "trailhq/Graft",
         }
     }
 }
@@ -158,6 +174,20 @@ impl Installation {
         }
         if id == ComponentId::Hyperframes {
             hyperframes::validate(&path, &self.version)?;
+        }
+        if id == ComponentId::Audiovisual {
+            audiovisual::validate(&path, &self.version)?;
+        }
+        if id == ComponentId::Comfyui {
+            comfyui::validate(&path, &self.version)?;
+        }
+        if id == ComponentId::Graft {
+            if self.version != install::GRAFT_VERSION {
+                return Err(error(
+                    "A versão instalada do Graft exige atualização do runtime.",
+                ));
+            }
+            graft::validate_assets(&path)?;
         }
         Ok(path)
     }
@@ -268,14 +298,38 @@ impl StateData {
         Ok(())
     }
 }
+type InstallationCancellation = Arc<Mutex<Option<(ComponentId, tokio::sync::watch::Sender<bool>)>>>;
+
 #[derive(Clone, Default)]
 pub struct CoreState {
     data: Arc<Mutex<StateData>>,
     install_lock: Arc<tokio::sync::Mutex<()>>,
+    cancellation: InstallationCancellation,
 }
 impl CoreState {
     pub(crate) fn busy_for_update(&self) -> bool {
         self.install_lock.try_lock().is_err()
+    }
+    fn begin_installation(&self, id: ComponentId) -> Result<InstallationGuard, CoreError> {
+        let (sender, signal) = tokio::sync::watch::channel(false);
+        *self
+            .cancellation
+            .lock()
+            .map_err(|_| error("Core indisponível."))? = Some((id, sender));
+        Ok(InstallationGuard {
+            cancellation: self.cancellation.clone(),
+            signal,
+        })
+    }
+    fn cancel_installation(&self, id: ComponentId) -> Result<(), CoreError> {
+        let operation = self
+            .cancellation
+            .lock()
+            .map_err(|_| error("Core indisponível."))?;
+        if let Some((_, sender)) = operation.as_ref().filter(|(active, _)| *active == id) {
+            sender.send_replace(true);
+        }
+        Ok(())
     }
     pub fn require_ready(&self, home: &Path) -> Result<(), CoreError> {
         require_ready(home)?;
@@ -357,6 +411,17 @@ impl CoreState {
     fn emit(&self, app: &tauri::AppHandle, home: &Path) {
         if let Ok(snapshot) = self.snapshot(home) {
             let _ = app.emit("core:changed", snapshot);
+        }
+    }
+}
+struct InstallationGuard {
+    cancellation: InstallationCancellation,
+    signal: tokio::sync::watch::Receiver<bool>,
+}
+impl Drop for InstallationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.cancellation.lock() {
+            *active = None;
         }
     }
 }
@@ -451,15 +516,17 @@ pub async fn install_core_component(
         .open(root(&home).join("install.lock"))?;
     fs2::FileExt::try_lock_exclusive(&lock)
         .map_err(|_| error("Outro Jarvis está instalando o Core."))?;
+    let operation = core.begin_installation(id)?;
     if let Ok(mut data) = core.data.lock() {
         data.errors.remove(&id);
     }
     core.stage(&app, &home, id, "Consultando release");
-    let result = install::install(
+    let result = install::install_cancellable(
         &home,
         id,
         |stage| core.stage(&app, &home, id, stage),
         |download| core.download(&app, id, download),
+        operation.signal.clone(),
     )
     .await;
     if let Ok(mut data) = core.data.lock() {
@@ -477,6 +544,20 @@ pub async fn install_core_component(
     }
     core.emit(&app, &home);
     result?;
+    core.snapshot(&home)
+}
+
+#[tauri::command]
+pub async fn cancel_core_installation(
+    app: tauri::AppHandle,
+    core: tauri::State<'_, CoreState>,
+    id: ComponentId,
+) -> Result<Snapshot, CoreError> {
+    core.cancel_installation(id)?;
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|_| error("Pasta pessoal indisponível."))?;
     core.snapshot(&home)
 }
 

@@ -14,6 +14,7 @@ const actionLabels = {
   tasks: "organizou tarefas",
   design: "consultou recursos de design",
   media: "processou imagens e anexos",
+  video: "usou recursos de vídeo e áudio",
   jarvis: "configurou o Jarvis",
   integrations: "usou integrações",
   questions: "fez perguntas",
@@ -40,7 +41,7 @@ export function isTaskReminder(tool: ToolCallItem): boolean {
 
 function actionKind(name: string): ActionKind {
   if (name.startsWith("ctx_")) return "context";
-  if (["read", "list", "search"].includes(name) || name.startsWith("lsp_")) return "filesRead";
+  if (["read", "list", "search"].includes(name) || name.startsWith("lsp_") || name.startsWith("graft_")) return "filesRead";
   if (["write", "edit", "apply_patch"].includes(name)) return "filesWrite";
   if (name === "bash" || name.startsWith("process_") || name.startsWith("terminal_")) return "terminal";
   if (name === "web_search" || name.startsWith("browser_") || name.startsWith("context7_")) return "research";
@@ -48,7 +49,8 @@ function actionKind(name: string): ActionKind {
   if (name.startsWith("hub_")) return "agents";
   if (name.startsWith("beads_") || name === "update_tasks" || name.startsWith("validation_") || name === "workflow_check") return "tasks";
   if (name.startsWith("design_")) return "design";
-  if (["vision", "generate_image", "read_attachment"].includes(name)) return "media";
+  if (["vision", "generate_image", "image_process", "read_attachment"].includes(name)) return "media";
+  if (name.startsWith("video_")) return "video";
   if (name.startsWith("jarvis_")) return "jarvis";
   if (name.startsWith("mcp_")) return "integrations";
   if (name === "ask_user") return "questions";

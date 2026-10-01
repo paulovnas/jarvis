@@ -1,6 +1,118 @@
 use super::*;
 
 #[test]
+fn native_image_role_separates_direct_user_execution_from_managed_child_handoff() {
+    let (_fixture, hub) = hub();
+    let mut execution = Execution {
+        hub,
+        id: "main".into(),
+        role: Role::ImageGenerator,
+        flow: Flow::ImageGenerator,
+        scope: vec![".".into()],
+    };
+    assert!(execution.direct());
+    assert!(execution.image_generator());
+    assert!(execution.allowed("generate_image"));
+    assert!(execution.allowed("image_process"));
+    assert!(execution.allowed("ask_user"));
+    assert!(!execution.allowed("hub_complete"));
+    execution.id = "child".into();
+    assert!(!execution.direct());
+    assert!(execution.allowed("hub_complete"));
+    let mut tools = vec![image_definition(true)];
+    tools.extend(crate::agent::image_tasks::definitions());
+    execution.filter(&mut tools);
+    assert!(tools.iter().any(|tool| tool["name"] == "hub_complete"));
+    assert!(
+        !contracts::prompt(Flow::ImageGenerator, Role::ImageGenerator, "child")
+            .contains(crate::agent::tasks::INSTRUCTIONS)
+    );
+    for role in [
+        Role::Planner,
+        Role::Investigator,
+        Role::Writer,
+        Role::Orchestrator,
+        Role::Designer,
+        Role::Video,
+        Role::Builder,
+        Role::Reviewer,
+        Role::Github,
+        Role::Custom,
+    ] {
+        assert!(role.allows(Flow::Complete, "generate_image", false));
+        assert!(!role.allows(Flow::Complete, "image_process", true));
+        assert!(role.spawns(Flow::Complete, Role::ImageGenerator));
+    }
+    assert!(!Role::ImageGenerator.spawns(Flow::ImageGenerator, Role::ImageGenerator));
+    for capability in [
+        catalog::Capability::ReadOnly,
+        catalog::Capability::WriteFiles,
+        catalog::Capability::Commands,
+    ] {
+        let mut agent = catalog::tests::example().agents.remove(0);
+        agent.capability = capability;
+        assert!(custom::allowed(&agent, "generate_image"));
+        assert!(!custom::allowed(&agent, "image_process"));
+        agent.denied_tools.push("generate_image".into());
+        assert!(!custom::allowed(&agent, "generate_image"));
+    }
+}
+
+#[test]
+fn global_image_worker_keeps_attachment_capabilities_without_inheriting_project_tools() {
+    let (_fixture, mut hub) = hub();
+    let hub_mut = Arc::get_mut(&mut hub).unwrap();
+    Arc::get_mut(&mut hub_mut.root).unwrap().id =
+        crate::agent::companion_chat::GLOBAL_CONVERSATION_ID.into();
+    let execution = Execution {
+        hub,
+        id: "child".into(),
+        role: Role::ImageGenerator,
+        flow: Flow::ImageGenerator,
+        scope: vec![".jarvis-image-attachments".into()],
+    };
+    for name in [
+        "generate_image",
+        "image_process",
+        "read_attachment",
+        "vision",
+        "ask_user",
+        "hub_complete",
+    ] {
+        assert!(execution.allowed(name), "{name}");
+    }
+    for name in [
+        "write",
+        "bash",
+        "read",
+        "ctx_search",
+        "find_skills",
+        crate::agent::knowledge::TOOL,
+        "browser_open",
+        "http_send",
+        "mcp_activate",
+        "terminal_start",
+        "hub_spawn",
+    ] {
+        assert!(!execution.allowed(name), "{name}");
+    }
+    let export = ToolCall {
+        id: "export".into(),
+        name: "image_process".into(),
+        args: json!({"image_ids":["image"],"processing":{"output_directory":"images"}}),
+        status: "running".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    assert!(execution.preflight(&export).is_some());
+    let attachment = ToolCall {
+        args: json!({"image_ids":["image"],"processing":{"format":"png"}}),
+        ..export
+    };
+    assert!(execution.preflight(&attachment).is_none());
+}
+
+#[test]
 fn global_companion_validates_explicit_model_independently_of_a_retired_project_profile() {
     let home = tempfile::tempdir().unwrap();
     let directory = crate::data_dir::root(home.path());
@@ -491,6 +603,55 @@ fn mandatory_context_retrieval_is_available_in_every_role_flow_and_scope() {
         );
     }
 }
+
+#[test]
+fn structural_discovery_is_mandatory_for_project_roles_and_available_during_recovery() {
+    let names: Vec<String> = crate::core::graft::definitions()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(names.len(), 6);
+    for name in &names {
+        assert!(catalog::permissions::required(name));
+        assert!(recovery_inspection_tool(name, true));
+        for flow in [
+            Flow::Standard,
+            Flow::Designer,
+            Flow::Planned,
+            Flow::Complete,
+            Flow::Publication,
+            Flow::Custom,
+        ] {
+            for role in [
+                Role::Planner,
+                Role::Investigator,
+                Role::Writer,
+                Role::Orchestrator,
+                Role::Designer,
+                Role::Builder,
+                Role::Reviewer,
+                Role::Github,
+                Role::Custom,
+            ] {
+                for broad in [true, false] {
+                    assert!(role.allows(flow, name, broad), "{flow:?} {role:?} {name}");
+                }
+            }
+        }
+        assert!(!Role::ImageGenerator.allows(Flow::ImageGenerator, name, true));
+        assert!(!Role::Video.allows(Flow::Video, name, true));
+        for capability in [
+            catalog::Capability::ReadOnly,
+            catalog::Capability::WriteFiles,
+            catalog::Capability::Commands,
+        ] {
+            let mut agent = catalog::tests::example().agents[0].clone();
+            agent.capability = capability;
+            agent.denied_tools = vec![name.clone()];
+            assert!(custom::allowed(&agent, name));
+        }
+    }
+}
 use crate::agent::tests::Fixture;
 
 pub(super) fn hub() -> (Fixture, Arc<Hub>) {
@@ -837,6 +998,8 @@ fn video_flow_has_native_commands_and_tasks_without_coordinated_agents() {
         "write",
         "video_docs",
         "video_run",
+        "video_audio",
+        "video_presentation",
         "video_wait",
         "video_cancel",
         "update_tasks",
@@ -876,7 +1039,8 @@ fn video_commands_require_command_capability_while_docs_allow_every_role() {
         Role::Custom,
     ] {
         assert!(role.allows(Flow::Custom, "video_docs", false));
-        for name in ["video_run", "video_wait", "video_cancel"] {
+        assert!(role.allows(Flow::Custom, "video_presentation", false));
+        for name in ["video_run", "video_audio", "video_wait", "video_cancel"] {
             assert_eq!(
                 role.allows(Flow::Custom, name, true),
                 matches!(role, Role::Builder | Role::Designer | Role::Video)
@@ -889,7 +1053,8 @@ fn video_commands_require_command_capability_while_docs_allow_every_role() {
         Capability::Commands,
     ] {
         assert!(custom::capability_allows(capability, "video_docs"));
-        for name in ["video_run", "video_wait", "video_cancel"] {
+        assert!(custom::capability_allows(capability, "video_presentation"));
+        for name in ["video_run", "video_audio", "video_wait", "video_cancel"] {
             assert_eq!(
                 custom::capability_allows(capability, name),
                 capability == Capability::Commands
@@ -897,6 +1062,7 @@ fn video_commands_require_command_capability_while_docs_allow_every_role() {
         }
     }
     assert!(recovery_inspection_tool("video_docs", false));
+    assert!(recovery_inspection_tool("video_presentation", false));
 }
 
 #[test]

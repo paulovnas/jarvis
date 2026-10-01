@@ -1,4 +1,5 @@
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
 import type { CoreSnapshot } from "@/core/core-components";
 
 function megabytes(bytes: number) {
@@ -8,9 +9,13 @@ function megabytes(bytes: number) {
 export function CoreInstallProgress({
   item,
   operation = "Instalação",
+  onCancel,
+  cancelling = false,
 }: {
   item: CoreSnapshot["items"][number];
   operation?: "Instalação" | "Atualização";
+  onCancel?: () => void;
+  cancelling?: boolean;
 }) {
   const transfer = item.download;
   const percent = transfer?.totalBytes
@@ -32,5 +37,6 @@ export function CoreInstallProgress({
       className="core-install-progress [&_[data-slot=progress-track]]:h-1.5"
     />
     {amount && <p className="text-right font-mono text-[10px] tabular-nums text-muted-foreground">{amount}</p>}
+    {onCancel && item.stage !== "Analisando componente" && <div className="flex justify-end"><Button type="button" variant="ghost" size="sm" disabled={cancelling} aria-label={`Cancelar ${operation.toLowerCase()} de ${item.name}`} onClick={onCancel} className="h-7 cursor-pointer text-[11px] text-muted-foreground">{cancelling ? "Cancelando…" : "Cancelar"}</Button></div>}
   </div>;
 }

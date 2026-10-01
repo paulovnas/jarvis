@@ -67,6 +67,19 @@ impl Resolver {
                     directories.push(target.parent().unwrap_or(&self.root).to_path_buf());
                 }
             }
+            name if name.starts_with("graft_") => {
+                for key in ["file", "in"] {
+                    if let Some(path) = tool.args[key].as_str() {
+                        let target = self.safe_path(path)?;
+                        let directory = if key == "file" {
+                            target.parent().unwrap_or(&self.root).to_path_buf()
+                        } else {
+                            target
+                        };
+                        directories.push(directory);
+                    }
+                }
+            }
             "apply_patch" => {
                 for path in super::patch::target_paths(&tool.args)? {
                     let target = self.safe_path(&path)?;
@@ -273,6 +286,37 @@ mod tests {
         assert!(prompt.contains("only a"));
         assert!(!prompt.contains("only b"));
         assert!(!prompt.contains("\nroot\n"));
+    }
+
+    #[test]
+    fn structural_file_and_prefix_queries_load_only_their_local_instruction_scope() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.root.join("packages/a/src")).unwrap();
+        fs::create_dir_all(fixture.root.join("packages/b/src")).unwrap();
+        fs::write(
+            fixture.root.join("packages/a/AGENTS.md"),
+            "use a conventions",
+        )
+        .unwrap();
+        fs::write(
+            fixture.root.join("packages/b/AGENTS.md"),
+            "use b conventions",
+        )
+        .unwrap();
+        let mut resolver = Resolver::new(&fixture.root).unwrap();
+        let mut query = tool("graft_file_api", ".");
+        query.args = json!({"file":"packages/a/src/auth.ts"});
+        assert!(resolver.discover(&query).unwrap());
+        query.name = "graft_find_code".into();
+        query.args = json!({"query":"authentication","in":"packages/a"});
+        assert!(!resolver.discover(&query).unwrap());
+        let mut prompt = String::new();
+        resolver.append_prompt(&mut prompt);
+        assert!(prompt.contains("packages/a/AGENTS.md"));
+        assert!(prompt.contains("use a conventions"));
+        assert!(!prompt.contains("use b conventions"));
+        query.args = json!({"query":"authentication","in":"../outside"});
+        assert!(resolver.discover(&query).is_err());
     }
 
     #[test]

@@ -180,3 +180,22 @@ describe("Inspector", () => {
     expect(screen.getByText("Nenhuma tarefa registrada nesta solicitação.")).toBeInTheDocument();
   });
 });
+
+it.each(["standard", "designer", "image_generator"] as const)("shows a delegated image specialist in a direct %s conversation", flow => {
+  const chat = emptyChat();
+  const turn = savedTurn();
+  turn.options.workflow = flow;
+  const child = {
+    id: "image-worker", parentId: "main", role: "image_generator" as const,
+    title: "Preparar quatro banners", status: "running" as const, createdAt: 1, updatedAt: 2, startedAt: 1, durationMs: 2000,
+    currentThought: "Preparando as variações", attempts: 1, options: turn.options, beadId: null,
+    handoff: null, error: null, activeTurnId: "image-turn", pendingApproval: null, pendingQuestion: null,
+  };
+  const workflow = { data: { conversationId: chat.conversationId, revision: 1, flow, agents: [child], validation: null }, error: null, loading: false, retry: vi.fn() };
+  render(<Inspector library={populatedLibrary()} chat={{ ...chat, turns: [turn] }} workflow={workflow} />);
+  expect(screen.getByRole("button", { name: "Subagentes" })).toBeVisible();
+  expect(screen.getByText("Gerador de imagens")).toBeVisible();
+  expect(screen.getByText("Preparar quatro banners")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Plano" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Validação" })).not.toBeInTheDocument();
+});

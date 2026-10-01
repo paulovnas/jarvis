@@ -3,12 +3,16 @@ import { z } from "zod";
 export type FileEntry = { name: string; path: string; kind: "directory" | "file" | "link" };
 export type DirectoryListing = { path: string; entries: FileEntry[]; truncated: boolean };
 export type FilePreview = { path: string; content: string; size: number; encoding: string };
-export const videoPreviewSchema = z.object({ path: z.string().min(1), absolutePath: z.string().min(1), size: z.number().positive(), mime: z.enum(["video/mp4", "video/webm", "video/quicktime", "video/ogg"]) });
+export const videoPreviewSchema = z.object({ path: z.string().min(1), absolutePath: z.string().min(1), size: z.number().positive(), mime: z.enum(["video/mp4", "video/webm", "video/quicktime", "video/ogg", "audio/wav", "audio/mpeg", "audio/ogg"]) });
 export type VideoPreview = z.infer<typeof videoPreviewSchema> & { url: string };
 export type PreviewState = { loading: boolean; data?: FilePreview; video?: VideoPreview; error?: string };
 
 export function isVideoFile(path: string): boolean {
   return /\.(mp4|webm|mov|m4v|ogv)$/i.test(path);
+}
+
+export function isAudioFile(path: string): boolean {
+  return /\.(wav|mp3|ogg)$/i.test(path);
 }
 
 export function fileName(path: string): string {

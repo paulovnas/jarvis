@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { DEFAULT_FILE_TABS, type FileTabsLayout } from "@/core/desktop-layout";
-import { fileError, isVideoFile, videoPreviewSchema, type FilePreview, type PreviewState } from "@/core/project-files";
+import { fileError, isAudioFile, isVideoFile, videoPreviewSchema, type FilePreview, type PreviewState } from "@/core/project-files";
 import { useDesktopLayout } from "./use-desktop-layout";
 
 function cachePreview(current: Record<string, PreviewState>, key: string, preview: PreviewState) {
@@ -36,7 +36,7 @@ export function useProjectFiles(projectId: string | null) {
     versions.current.set(key, version);
     setPreviews(current => cachePreview(current, key, { loading: true }));
     try {
-      const preview: PreviewState = isVideoFile(path)
+      const preview: PreviewState = isVideoFile(path) || isAudioFile(path)
         ? await invoke("get_project_video", { projectId, path }).then(value => {
           const video = videoPreviewSchema.parse(value);
           return { loading: false, video: { ...video, url: `${convertFileSrc(video.absolutePath)}?v=${version}` } };

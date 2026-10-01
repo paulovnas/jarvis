@@ -51,7 +51,7 @@ export const turnOptionsSchema = z.object({
   model: z.string(),
   reasoning: z.string().nullable(),
   mode: z.enum(["plan", "build"]),
-  workflow: z.enum(["standard", "designer", "video", "planned", "complete", "publication", "custom"]).nullable().optional(),
+  workflow: z.enum(["standard", "designer", "video", "image_generator", "planned", "complete", "publication", "custom"]).nullable().optional(),
   customWorkflowId: z.string().nullable().optional(),
   customAgentId: z.string().nullable().optional(),
   approvalMode: z.enum(["manual", "yolo"]),

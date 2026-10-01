@@ -1,4 +1,4 @@
-import { Activity, ArrowDownLeft, ArrowUpRight, CheckCheck, ChevronRight, Cpu, Layers3, MessageSquare, Terminal, Workflow, Zap } from "lucide-react";
+import { Activity, ArrowDownLeft, ArrowUpRight, CheckCheck, ChevronRight, Cpu, Layers3, MessageSquare, Network, Terminal, Workflow, Zap } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,6 +32,7 @@ export function DashboardOverview({ data, issues, beadsError, components, onSele
   const epics = issues?.filter(issue => issue.issue_type === "epic").length ?? 0;
   const coreCalls = [
     { label: "Context-mode", icon: Layers3, color: "#56b6c2", count: Object.entries(m.tools).filter(([name]) => /^(ctx_|context_)/.test(name)).reduce((sum, [, count]) => sum + count, 0) },
+    { label: "Graft", icon: Network, color: "var(--color-onedark-blue)", count: Object.entries(m.tools).filter(([name]) => name.startsWith("graft_")).reduce((sum, [, count]) => sum + count, 0) },
     { label: "Ponytail", icon: Terminal, color: "#98c379", count: null },
     { label: "Beads", icon: Workflow, color: "#c678dd", count: Object.entries(m.tools).filter(([name]) => name.startsWith("beads_")).reduce((sum, [, count]) => sum + count, 0) },
   ];
@@ -69,7 +70,7 @@ export function DashboardOverview({ data, issues, beadsError, components, onSele
       </CardContent></Card>
     </div>
 
-    <Card className="dashboard-card gap-3"><CardHeader><CardTitle className="text-sm">Jarvis Core</CardTitle></CardHeader><CardContent className="grid gap-3 @xl:grid-cols-3">{coreCalls.map(item => { const component = components.find(component => component.name === item.label); return <div key={item.label} className="flex min-w-0 items-start gap-3 rounded-md border border-border bg-background/35 p-3"><item.icon className="mt-0.5 size-4 shrink-0" style={{ color: item.color }} /><div className="min-w-0 flex-1"><p className="truncate text-xs">{item.label}</p><p className={`mt-2 ${item.count === null ? "text-sm" : "font-mono text-lg"}`}>{item.count === null ? component?.installed ? "Instalado" : "Não instalado" : number(item.count)}</p><p className="mt-1 truncate text-[10px] text-muted-foreground">{item.count === null ? "Diretrizes de simplicidade" : "Chamadas no chat"}{component?.installedVersion ? ` · v${component.installedVersion}` : ""}</p></div></div>; })}</CardContent></Card>
+    <Card className="dashboard-card gap-3"><CardHeader><CardTitle className="text-sm">Jarvis Core</CardTitle></CardHeader><CardContent className="grid gap-3 @xl:grid-cols-2 @3xl:grid-cols-4">{coreCalls.map(item => { const component = components.find(component => component.name === item.label); return <div key={item.label} className="flex min-w-0 items-start gap-3 rounded-md border border-border bg-background/35 p-3"><item.icon className="mt-0.5 size-4 shrink-0" style={{ color: item.color }} /><div className="min-w-0 flex-1"><p className="truncate text-xs">{item.label}</p><p className={`mt-2 ${item.count === null ? "text-sm" : "font-mono text-lg"}`}>{item.count === null ? component?.installed ? "Instalado" : "Não instalado" : number(item.count)}</p><p className="mt-1 truncate text-[10px] text-muted-foreground">{item.count === null ? "Diretrizes de simplicidade" : "Chamadas no chat"}{component?.installedVersion ? ` · v${component.installedVersion}` : ""}</p></div></div>; })}</CardContent></Card>
     <Card className="dashboard-card gap-1"><CardHeader className="flex flex-row items-center justify-between"><CardTitle className="flex items-center gap-2 text-sm"><Activity className="size-4 text-muted-foreground" />Sessões recentes</CardTitle><span className="micro-label text-muted-foreground">Última atividade</span></CardHeader><CardContent className="space-y-1">{data.recent.length ? data.recent.map(session => <Button key={session.id} variant="ghost" className="h-auto w-full cursor-pointer justify-start gap-3 py-3 text-left" onClick={() => onSelectSession(session.id)}><MessageSquare className="size-4 text-muted-foreground" /><span className="min-w-0 flex-1 truncate text-xs">{session.title}</span><span className="shrink-0 font-mono text-[10px] font-normal text-muted-foreground">{date(session.activity, true)}</span><ChevronRight className="size-3 text-muted-foreground" /></Button>) : <QuietEmpty text="Nenhuma conversa ainda" />}</CardContent></Card>
   </div>;
 }

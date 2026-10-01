@@ -10,10 +10,106 @@ use std::{
 pub(super) const ENTRY: &str = "node_modules/hyperframes/bin/hyperframes.mjs";
 pub(super) const PACKAGE: &str = "node_modules/hyperframes/package.json";
 pub(super) const PATHS: &str = "jarvis-hyperframes.json";
-pub(super) const SKILLS: [&str; 3] = [
+pub(crate) const GSAP: &str = "node_modules/gsap/dist/gsap.min.js";
+pub(super) const GSAP_VERSION: &str = "3.14.2";
+const DOCS_RECEIPT: &str = "jarvis-hyperframes-docs.json";
+const DOCS_LICENSE: &str = "jarvis-hyperframes-docs-LICENSE";
+// The npm CLI ships only three skills. Preserve the official split contracts
+// and their Markdown references from the CLI release's immutable git revision.
+const DOCUMENTS: &[(&str, &str)] = &[
+    (
+        "hyperframes-core/SKILL.md",
+        include_str!("hyperframes-docs/hyperframes-core/SKILL.md"),
+    ),
+    (
+        "hyperframes-core/references/composition-patterns.md",
+        include_str!("hyperframes-docs/hyperframes-core/references/composition-patterns.md"),
+    ),
+    (
+        "hyperframes-core/references/creator-editing-recipes.md",
+        include_str!("hyperframes-docs/hyperframes-core/references/creator-editing-recipes.md"),
+    ),
+    (
+        "hyperframes-core/references/data-attributes.md",
+        include_str!("hyperframes-docs/hyperframes-core/references/data-attributes.md"),
+    ),
+    (
+        "hyperframes-core/references/determinism-rules.md",
+        include_str!("hyperframes-docs/hyperframes-core/references/determinism-rules.md"),
+    ),
+    (
+        "hyperframes-core/references/full-screen-motion.md",
+        include_str!("hyperframes-docs/hyperframes-core/references/full-screen-motion.md"),
+    ),
+    (
+        "hyperframes-core/references/minimal-composition.md",
+        include_str!("hyperframes-docs/hyperframes-core/references/minimal-composition.md"),
+    ),
+    (
+        "hyperframes-core/references/sub-compositions.md",
+        include_str!("hyperframes-docs/hyperframes-core/references/sub-compositions.md"),
+    ),
+    (
+        "hyperframes-core/references/tailwind.md",
+        include_str!("hyperframes-docs/hyperframes-core/references/tailwind.md"),
+    ),
+    (
+        "hyperframes-core/references/tracks-and-clips.md",
+        include_str!("hyperframes-docs/hyperframes-core/references/tracks-and-clips.md"),
+    ),
+    (
+        "hyperframes-core/references/variables-and-media.md",
+        include_str!("hyperframes-docs/hyperframes-core/references/variables-and-media.md"),
+    ),
+    (
+        "hyperframes-audio/SKILL.md",
+        include_str!("hyperframes-docs/hyperframes-audio/SKILL.md"),
+    ),
+    (
+        "hyperframes-audio/references/attributes.md",
+        include_str!("hyperframes-docs/hyperframes-audio/references/attributes.md"),
+    ),
+    (
+        "hyperframes-audio/references/diagnosis.md",
+        include_str!("hyperframes-docs/hyperframes-audio/references/diagnosis.md"),
+    ),
+    (
+        "hyperframes-audio/references/fx-registry.md",
+        include_str!("hyperframes-docs/hyperframes-audio/references/fx-registry.md"),
+    ),
+    (
+        "hyperframes-audio/references/presets.md",
+        include_str!("hyperframes-docs/hyperframes-audio/references/presets.md"),
+    ),
+];
+
+pub(super) fn install_documentation(package: &Path) -> Result<(), CoreError> {
+    for &(relative, content) in DOCUMENTS {
+        let path = package
+            .join("node_modules/hyperframes/dist/skills")
+            .join(relative);
+        fs::create_dir_all(
+            path.parent()
+                .ok_or_else(|| error("Documentação inválida."))?,
+        )?;
+        fs::write(path, content)?;
+    }
+    fs::write(
+        package.join(DOCS_RECEIPT),
+        include_str!("hyperframes-docs/provenance.json"),
+    )?;
+    fs::write(
+        package.join(DOCS_LICENSE),
+        include_str!("hyperframes-docs/LICENSE"),
+    )?;
+    Ok(())
+}
+pub(super) const SKILLS: [&str; 5] = [
     "node_modules/hyperframes/dist/skills/hyperframes/SKILL.md",
     "node_modules/hyperframes/dist/skills/hyperframes-cli/SKILL.md",
     "node_modules/hyperframes/dist/skills/media-use/SKILL.md",
+    "node_modules/hyperframes/dist/skills/hyperframes-core/SKILL.md",
+    "node_modules/hyperframes/dist/skills/hyperframes-audio/SKILL.md",
 ];
 
 #[derive(Deserialize, Serialize)]
@@ -125,8 +221,19 @@ pub(super) fn required_files(package: &Path) -> Result<Vec<String>, CoreError> {
         "node_modules/hyperframes/dist/cli.js".into(),
         "node_modules/hyperframes/dist/templates/blank/index.html".into(),
         "node_modules/hyperframes/dist/hyperframes-player.global.js".into(),
+        GSAP.into(),
+        "node_modules/gsap/package.json".into(),
+        DOCS_RECEIPT.into(),
+        DOCS_LICENSE.into(),
     ];
     files.extend(SKILLS.map(String::from));
+    files.extend(
+        DOCUMENTS
+            .iter()
+            .map(|(relative, _)| format!("node_modules/hyperframes/dist/skills/{relative}")),
+    );
+    files.sort();
+    files.dedup();
     files.extend(Binaries::read(package)?.files().map(String::from));
     files.push(
         install::node_path(package)
@@ -156,11 +263,24 @@ pub(super) fn validate(package: &Path, version: &str) -> Result<(), CoreError> {
     }
     Runtime::at(package)?;
     for file in required_files(package)? {
-        if !package.join(file).is_file() {
-            return Err(error(
-                "O pacote Hyperframes está incompleto. Reinstale o componente.",
-            ));
+        if !package.join(&file).is_file() {
+            return Err(error(format!(
+                "O pacote Hyperframes está incompleto: falta {file}. Reinstale o componente no Core."
+            )));
         }
+    }
+    let gsap: serde_json::Value =
+        serde_json::from_slice(&fs::read(package.join("node_modules/gsap/package.json"))?)
+            .map_err(|_| error("Pacote GSAP inválido. Reinstale Hyperframes no Core."))?;
+    if gsap["name"] != "gsap" || gsap["version"] != GSAP_VERSION {
+        return Err(error(
+            "A animação local do Hyperframes está desatualizada. Reinstale o componente no Core.",
+        ));
+    }
+    if fs::read_to_string(package.join(DOCS_RECEIPT))?
+        != include_str!("hyperframes-docs/provenance.json")
+    {
+        return Err(error("A documentação nativa do Hyperframes está desatualizada. Reinstale o componente no Core."));
     }
     Ok(())
 }
@@ -256,6 +376,58 @@ pub(super) mod tests {
             serde_json::json!({"name":"hyperframes","version":version}).to_string(),
         )
         .unwrap();
+        fs::write(
+            package.join("node_modules/gsap/package.json"),
+            serde_json::json!({"name":"gsap","version":GSAP_VERSION}).to_string(),
+        )
+        .unwrap();
+        install_documentation(package).unwrap();
+    }
+
+    #[test]
+    fn split_official_contracts_and_references_are_installed_without_scripts() {
+        let package = tempfile::tempdir().unwrap();
+        fixture(package.path(), "0.8.105");
+        let base = package.path().join("node_modules/hyperframes/dist/skills");
+        let audio = fs::read_to_string(base.join("hyperframes-audio/SKILL.md")).unwrap();
+        assert!(audio.contains("data-automation"));
+        assert!(base
+            .join("hyperframes-audio/references/fx-registry.md")
+            .is_file());
+        assert!(base
+            .join("hyperframes-core/references/data-attributes.md")
+            .is_file());
+        assert!(!base.join("hyperframes-audio/scripts/carve.mjs").exists());
+        let provenance: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(package.path().join(DOCS_RECEIPT)).unwrap())
+                .unwrap();
+        assert_eq!(
+            provenance["revision"],
+            "bc57e282fdde4afdccec1d1a2bacd94a9c3c5383"
+        );
+        assert_eq!(provenance["license"], "Apache-2.0");
+        validate(package.path(), "0.8.105").unwrap();
+        fs::remove_file(base.join("hyperframes-audio/references/fx-registry.md")).unwrap();
+        assert!(validate(package.path(), "0.8.105")
+            .unwrap_err()
+            .message
+            .contains("hyperframes-audio/references/fx-registry.md"));
+    }
+
+    #[test]
+    fn rendering_requires_pinned_local_animation_instead_of_a_cdn() {
+        let package = tempfile::tempdir().unwrap();
+        fixture(package.path(), "0.8.104");
+        validate(package.path(), "0.8.104").unwrap();
+        fs::write(
+            package.path().join("node_modules/gsap/package.json"),
+            serde_json::json!({"name":"gsap","version":"3.13.0"}).to_string(),
+        )
+        .unwrap();
+        assert!(validate(package.path(), "0.8.104").is_err());
+        fixture(package.path(), "0.8.104");
+        fs::remove_file(package.path().join(GSAP)).unwrap();
+        assert!(validate(package.path(), "0.8.104").is_err());
     }
 
     #[test]

@@ -112,7 +112,7 @@ function ResourceUpdatesContent({ bootstrap }: { bootstrap: BootstrapResourcesCo
               <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{item.name}</span><span className="mt-1 block truncate font-mono text-[10px] text-muted-foreground">{item.installedVersion ?? "versão local"} → {item.latestVersion ?? "nova versão"}</span></span>
               {busy && item.stage && <Badge variant="outline" className="border-onedark-cyan/25 text-onedark-cyan">Em andamento</Badge>}
             </div>
-            {busy && item.stage && <CoreInstallProgress item={item} operation="Atualização" />}
+            {busy && item.stage && <CoreInstallProgress item={item} operation="Atualização" onCancel={() => void core.cancel(item.id)} cancelling={core.cancellingId === item.id} />}
           </Card>)}
         </section>}
 

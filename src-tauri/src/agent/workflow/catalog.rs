@@ -160,7 +160,8 @@ fn role_description(role: Role) -> &'static str {
         Role::Writer => "Registra especificações, critérios de aceite e dependências de forma executável.",
         Role::Orchestrator => "Coordena dependências, execução paralela, revisões e retomadas do fluxo.",
         Role::Designer => "Implementa interfaces e interações dentro do sistema visual e valida o escopo de frontend.",
-        Role::Video => "Cria composições, valida e renderiza vídeos com o Hyperframes integrado ao Jarvis.",
+        Role::Video => "Gera apresentações de projetos com animação, narração e música e entrega o vídeo em MP4.",
+        Role::ImageGenerator => "Cria e refina imagens e assets com o modelo configurado e a pipeline nativa do ComfyUI.",
         Role::Builder => "Implementa o comportamento solicitado, executa verificações e corrige o próprio trabalho.",
         Role::Reviewer => "Revisa a implementação de forma independente e decide se há correções pendentes.",
         Role::Github => "Resolve operações Git e GitHub conforme a autorização do usuário e as opções de publicação do chat.",
@@ -171,7 +172,7 @@ fn role_description(role: Role) -> &'static str {
 fn role_capability(role: Role) -> Capability {
     match role {
         Role::Designer | Role::Video | Role::Builder | Role::Github => Capability::Commands,
-        Role::Writer => Capability::WriteFiles,
+        Role::Writer | Role::ImageGenerator => Capability::WriteFiles,
         Role::Planner | Role::Investigator | Role::Orchestrator | Role::Reviewer | Role::Custom => {
             Capability::ReadOnly
         }
@@ -205,6 +206,10 @@ fn role_appearance(role: Role) -> Appearance {
             icon: Icon::Film,
             color: Color::Red,
         },
+        Role::ImageGenerator => Appearance {
+            icon: Icon::Sparkles,
+            color: Color::Green,
+        },
         Role::Builder => Appearance {
             icon: Icon::Code,
             color: Color::Blue,
@@ -231,7 +236,7 @@ pub(crate) fn builtin_agent(role: Role) -> Option<BuiltinAgentDefinition> {
         description: role_description(role),
         instructions: role.contract(),
         role,
-        usage: if matches!(role, Role::Github | Role::Video) {
+        usage: if matches!(role, Role::Github | Role::Video | Role::ImageGenerator) {
             AgentUsage::Mixed
         } else {
             AgentUsage::FlowOnly
@@ -250,6 +255,7 @@ pub(crate) fn builtin_agents() -> Vec<BuiltinAgentDefinition> {
         Role::Orchestrator,
         Role::Designer,
         Role::Video,
+        Role::ImageGenerator,
         Role::Builder,
         Role::Reviewer,
         Role::Github,
@@ -296,10 +302,18 @@ fn flow_identity(flow: Flow) -> (&'static str, &'static str, Appearance) {
         ),
         Flow::Video => (
             "Vídeo",
-            "Criação, validação e renderização de vídeos com Hyperframes.",
+            "Apresentações de projetos com animação, narração, música e renderização MP4.",
             Appearance {
                 icon: Icon::Film,
                 color: Color::Cyan,
+            },
+        ),
+        Flow::ImageGenerator => (
+            "Imagem",
+            "Criação e refinamento de imagens com o modelo configurado e ComfyUI.",
+            Appearance {
+                icon: Icon::Sparkles,
+                color: Color::Green,
             },
         ),
         Flow::Planned => (
@@ -341,7 +355,8 @@ fn node_position(flow: Flow, role: Role) -> Position {
     let (x, y) = match (flow, role) {
         (Flow::Standard, Role::Builder)
         | (Flow::Designer, Role::Designer)
-        | (Flow::Video, Role::Video) => (80.0, 120.0),
+        | (Flow::Video, Role::Video)
+        | (Flow::ImageGenerator, Role::ImageGenerator) => (80.0, 120.0),
         (Flow::Planned, Role::Planner) => (40.0, 150.0),
         (Flow::Planned, Role::Builder) => (380.0, 40.0),
         (Flow::Planned, Role::Designer) => (380.0, 260.0),
@@ -368,7 +383,8 @@ fn delegation_label(role: Role) -> &'static str {
         Role::Writer => "Especificar",
         Role::Orchestrator => "Coordenar",
         Role::Designer => "Implementar interface",
-        Role::Video => "Criar vídeo",
+        Role::Video => "Gerar apresentação",
+        Role::ImageGenerator => "Gerar imagem",
         Role::Builder => "Implementar",
         Role::Reviewer => "Revisar",
         Role::Github => "Publicar",
@@ -381,6 +397,7 @@ pub(crate) fn builtin_flows() -> Vec<BuiltinFlowDefinition> {
         Flow::Standard,
         Flow::Designer,
         Flow::Video,
+        Flow::ImageGenerator,
         Flow::Planned,
         Flow::Complete,
     ]

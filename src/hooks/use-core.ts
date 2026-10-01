@@ -16,6 +16,8 @@ export function useCore() {
   const currentSnapshot = useRef<CoreSnapshot | null>(snapshot);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
+  const [cancellingId, setCancellingId] = useState<CoreId | null>(null);
+  const cancellation = useRef<CoreId | null>(null);
   const mounted = useRef(false);
   const revision = useRef(0);
   const busy = useRef(false);
@@ -30,7 +32,12 @@ export function useCore() {
   }, [updateBootstrapCore]);
   const accept = useCallback((value: unknown, wasChecked?: boolean) => {
     const parsed = coreSnapshotSchema.parse(value);
-    if (mounted.current) { revision.current += 1; commit(parsed, wasChecked); setError(null); }
+    if (mounted.current) {
+      revision.current += 1; commit(parsed, wasChecked); setError(null);
+      if (cancellation.current && !parsed.items.some(item => item.id === cancellation.current && item.stage !== null)) {
+        cancellation.current = null; setCancellingId(null);
+      }
+    }
     return parsed;
   }, [commit]);
   useEffect(() => { currentSnapshot.current = snapshot; }, [snapshot]);
@@ -109,6 +116,19 @@ export function useCore() {
     } catch (cause) { toast.error(coreError(cause)); await refresh(); }
     finally { busy.current = false; if (mounted.current) setInstalling(false); }
   }, [accept, refresh]);
-  return { snapshot, error, refresh, check, install, diagnose, repair, checked, busy: installing || snapshot?.items.some(item => item.stage !== null) === true };
+  const cancel = useCallback(async (id: CoreId) => {
+    if (cancellation.current || !currentSnapshot.current?.items.some(item => item.id === id && item.stage !== null)) return;
+    cancellation.current = id; setCancellingId(id);
+    const version = ++revision.current;
+    try {
+      const value = await invoke("cancel_core_installation", { id });
+      // Cleanup events may finish before this request returns its earlier snapshot.
+      if (mounted.current && version === revision.current) accept(value);
+    } catch (cause) {
+      cancellation.current = null;
+      if (mounted.current) { setCancellingId(null); toast.error(coreError(cause)); }
+    }
+  }, [accept]);
+  return { snapshot, error, refresh, check, install, diagnose, repair, cancel, cancellingId, checked, busy: installing || snapshot?.items.some(item => item.stage !== null) === true };
 }
 export type CoreController = ReturnType<typeof useCore>;

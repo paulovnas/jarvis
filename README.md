@@ -37,7 +37,8 @@ O Jarvis evolui continuamente. Relate problemas e sugestões nas [issues do proj
 | **Agentes e fluxos** | Agentes nativos e personalizados, uso individual ou em fluxos, permissões por ferramenta e editor visual em canvas. Alterações de agentes e fluxos feitas pela IA exigem aprovação. |
 | **Planejamento** | Tasks para agentes diretos e planos persistentes com épicos, tarefas, dependências, comentários e validações nos fluxos Planejado e Completo. |
 | **Ambiente** | Explorer, visualização de arquivos, diff das alterações, terminal configurável, processos persistentes, navegador integrado, LSP e patch transacional. |
-| **Vídeos** | Composições editáveis com Hyperframes, validação e renderização MP4 pelo agente Criador de vídeos, reprodução em uma aba do chat e ações para salvar ou abrir externamente. |
+| **Vídeos** | Composições editáveis com Hyperframes, validação e renderização MP4 pelo agente Gerador de vídeos, reprodução em uma aba do chat e ações para salvar ou abrir externamente. |
+| **Imagens** | Gerador de imagens especializado, variações com o provedor configurado e preparação local no ComfyUI: tamanho, remoção de fundo e exportação PNG, JPG ou WEBP. Resultados podem ser ampliados e salvos pelo chat. |
 | **Detalhes do projeto** | Métricas de uso, atividade dos agentes, Kanban e opções próprias de publicação para cada projeto. |
 | **Desktop** | Notificações do sistema, badges de mensagens não lidas, prevenção de repouso, atalhos controlados, backup de configurações e atualização automática do aplicativo e dos recursos. Assistente flutuante opcional no macOS e Windows. |
 
@@ -80,7 +81,8 @@ Os fluxos nativos cobrem diferentes níveis de coordenação:
 | --- | --- |
 | **Padrão** | Trabalhar diretamente com o Construtor em implementações e ajustes gerais. |
 | **Designer** | Investigar, projetar e implementar interfaces com foco em experiência e acabamento visual. |
-| **Vídeo** | Criar e editar vídeos com o Criador de vídeos, desde a composição até o MP4 pronto para reprodução. |
+| **Vídeo** | Criar e editar vídeos com o Gerador de vídeos, desde a composição até o MP4 pronto para reprodução. |
+| **Imagens** | Criar e preparar assets estáticos com o Gerador de imagens e workflows do ComfyUI. |
 | **Planejado** | Criar um plano persistente e delegar a execução aos agentes adequados. |
 | **Completo** | Coordenar planejamento, investigação, documentação, design, construção e revisão. |
 
@@ -90,19 +92,26 @@ Nos fluxos Planejado e Completo, o Inspector acompanha o agente em atividade, o 
 
 ## Core
 
-O Core instala cinco recursos essenciais ao harness do Jarvis. Context7 e Hyperframes são integrações opcionais, disponíveis depois sem impedir o uso do chat. Versões, integridade, atualizações, diagnóstico e reparo ficam em **Configurações → Ferramentas → Core**. Os pacotes gerenciados são armazenados em `~/.jarvis`.
+O Core reúne dez componentes: nove essenciais ao Jarvis e o Context7, opcional. Hyperframes, Audiovisual, ComfyUI e Graft fazem parte da instalação guiada. Versões, integridade, atualizações, diagnóstico, reparo e cancelamento de downloads ficam em **Configurações → Ferramentas → Core**. Os pacotes gerenciados e seus runtimes privados são armazenados em `~/.jarvis`.
 
 | Componente | Papel no Jarvis |
 | --- | --- |
 | [Context-mode](https://github.com/mksglu/context-mode) | Indexa e recupera conteúdo sob demanda para economizar contexto em leituras, buscas e análises extensas. |
+| [Graft](https://github.com/trailhq/Graft) | Localiza código, símbolos, APIs e dependências em um grafo estrutural privado, atualizado sob demanda. Trabalha com o Context-mode, que conserva os resultados extensos e o histórico. Não usa modelo, chave ou serviço externo. |
 | [Ponytail](https://github.com/DietrichGebert/ponytail) | Fornece diretrizes de execução e revisão de código para reduzir ruído e retrabalho. |
 | [Beads](https://github.com/gastownhall/beads) | Mantém épicos, tarefas, dependências e comentários persistentes por projeto. |
 | [Open Design](https://github.com/nexu-io/open-design) | Disponibiliza sistemas visuais, referências, templates e recursos usados pelo Designer. |
 | [Context7](https://github.com/upstash/context7) | Opcional: consulta documentação e exemplos atualizados de bibliotecas. A chave fica no armazenamento seguro do sistema. |
 | [Servidores LSP](https://github.com/typescript-language-server/typescript-language-server) | Localiza definições, referências, símbolos e diagnósticos em projetos TypeScript, JavaScript e Python. Rust e Go usam a toolchain do projeto quando disponível. |
-| [Hyperframes](https://github.com/heygen-com/hyperframes) | Opcional: cria e renderiza vídeos a partir de HTML/CSS e animações GSAP. O Jarvis instala Node, Chrome e FFmpeg em um ambiente privado, sem exigir configuração manual. |
+| [Hyperframes](https://github.com/heygen-com/hyperframes) | Cria e renderiza vídeos a partir de HTML/CSS e animações GSAP. O Jarvis instala Node, Chrome e FFmpeg em um ambiente privado, sem exigir configuração manual. |
+| **Audiovisual** | Gera narração em PT-BR com Kokoro e música com MusicGen localmente. O tempo varia conforme CPU/GPU; a instalação inicial baixa vários GB. Os pesos MusicGen usam licença CC-BY-NC: para projetos comerciais, forneça uma trilha com licença adequada. |
+| [ComfyUI](https://github.com/Comfy-Org/ComfyUI) | Executa workflows locais de preparação de imagens, redimensionamento, remoção de fundo e exportação PNG/JPG/WEBP. Usa um ambiente Python privado e a imagem produzida pelo provedor configurado, sem exigir créditos da ComfyUI ou modelos locais de difusão. |
 
-Para criar vídeos, instale **Hyperframes** no Core e configure o modelo do agente **Criador de vídeos**. Ele também pode participar de fluxos personalizados. A composição e seus assets ficam dentro do projeto, junto com o MP4 final. Renderizações não têm limite total de tempo; podem ser acompanhadas e canceladas. A instalação automática suporta macOS Intel/Apple Silicon, Linux x64 e Windows x64. No Linux, o Chrome ainda depende das bibliotecas do sistema necessárias ao Chromium.
+Para criar vídeos, configure o modelo do agente **Gerador de vídeos**. Ele também pode participar de fluxos personalizados. A composição, a narração, a música e seus assets ficam dentro do projeto, junto com o MP4 final. Renderizações podem ser acompanhadas e canceladas. A instalação automática suporta macOS Intel/Apple Silicon, Linux x64 e Windows x64. O Core audiovisual requer macOS 13 ou superior; no Linux, glibc 2.27 ou superior. No Linux, o Chrome ainda depende das bibliotecas do sistema necessárias ao Chromium.
+
+Para criar imagens, selecione o fluxo **Imagens** ou o agente **Gerador de imagens**. Ele também pode participar de fluxos personalizados e é acionado como subagente quando outro agente precisa gerar uma imagem. Seu modelo de raciocínio, configurado em **Workflow → Imagens**, interpreta o pedido e coordena o trabalho; o provedor de geração continua sendo o escolhido em **Provedores → Ferramentas → Gerar imagens**. A integração preserva essa configuração.
+
+Cada pedido pode produzir até quatro variações. O ComfyUI prepara as imagens finais, com tamanho configurável, remoção de fundo e exportação PNG, JPG ou WEBP; o upscale usa interpolação, sem prometer novos detalhes generativos. Os resultados aparecem no chat, com ampliação e opção de salvar, e podem ser exportados para uma pasta do projeto quando solicitado. Workflows e relatórios ficam junto dos anexos. Refinar uma imagem existente usa o processamento local, sem repetir a chamada ao provedor de geração.
 
 Se um componente essencial estiver ausente ou inválido, o Jarvis bloqueia novas interações e abre o fluxo de **Diagnóstico e Reparo** para corrigir ou reinstalar o recurso.
 
@@ -151,7 +160,7 @@ Baixe a versão mais recente em [Releases](https://github.com/paulovnas/jarvis/r
 O onboarding conduz cinco etapas:
 
 1. Conhecer os recursos principais e, se necessário, restaurar um backup antes de configurar a máquina.
-2. Instalar os cinco componentes essenciais do Core. O Context7 continua disponível como uma integração opcional de documentação.
+2. Instalar os oito componentes essenciais do Core. O Context7 continua disponível como uma integração opcional de documentação.
 3. Verificar **Git** e **GitHub CLI**. Os dois são opcionais; quando ausentes, o Jarvis oferece Homebrew no macOS, WinGet no Windows ou instruções oficiais compatíveis com o sistema. Com Git instalado, também informa se nome e e-mail estão prontos para commits; com GitHub CLI, informa se a conta está autenticada.
 4. Conectar ao menos um provedor e configurar as ferramentas de IA.
 5. Dar um nome ao workspace padrão e adicionar a pasta do primeiro projeto.

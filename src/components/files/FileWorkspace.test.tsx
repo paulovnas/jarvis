@@ -55,9 +55,9 @@ beforeEach(() => {
     const input = args as { projectId: string; path: string } | undefined;
     if (command === "get_desktop_layout") return DEFAULT_DESKTOP_LAYOUT;
     if (command === "save_desktop_layout") return;
-    if (command === "list_project_directory") return { path: input?.path, truncated: false, entries: input?.path === "src" ? [{ name: "app.ts", path: "src/app.ts", kind: "file" }] : [{ name: "src", path: "src", kind: "directory" }, { name: "README.md", path: "README.md", kind: "file" }, { name: "demo.mp4", path: "demo.mp4", kind: "file" }] };
+    if (command === "list_project_directory") return { path: input?.path, truncated: false, entries: input?.path === "src" ? [{ name: "app.ts", path: "src/app.ts", kind: "file" }] : [{ name: "src", path: "src", kind: "directory" }, { name: "README.md", path: "README.md", kind: "file" }, ...["demo.mp4", "narration.WAV", "music.mp3", "music.ogg"].map(path => ({ name: path, path, kind: "file" }))] };
     if (command === "read_project_file") return { path: input?.path, content: `${input?.projectId}: ${input?.path}`, size: 20, encoding: "UTF-8" };
-    if (command === "get_project_video") return { path: input?.path, absolutePath: `/project/${input?.path}`, size: 4_000_000, mime: "video/mp4" };
+    if (command === "get_project_video") return { path: input?.path, absolutePath: `/project/${input?.path}`, size: 4_000_000, mime: input?.path.endsWith(".WAV") ? "audio/wav" : input?.path.endsWith(".mp3") ? "audio/mpeg" : input?.path.endsWith(".ogg") ? "audio/ogg" : "video/mp4" };
     if (command === "save_project_video") return true;
     if (command === "open_project_video") return;
     throw new Error(`Unexpected ${command}`);
@@ -86,6 +86,28 @@ it("opens video files with native controls and keeps the chat draft available", 
   await user.click(screen.getByRole("tab", { name: "Chat" }));
   expect(screen.getByRole("textbox", { name: "Rascunho do chat" })).toBe(draft);
   expect(draft).toHaveValue("Ajustar depois de assistir");
+});
+
+it.each(["narration.WAV", "music.mp3", "music.ogg"])("opens %s as audio instead of text and preserves the chat draft after refresh", async path => {
+  const user = userEvent.setup();
+  render(<Workspace />);
+  const draft = screen.getByRole("textbox", { name: "Rascunho do chat" });
+  await user.type(draft, "Ajustar a narração");
+  await user.click(await screen.findByRole("treeitem", { name: path }));
+  const audio = await screen.findByLabelText(`Áudio ${path}`);
+  expect(audio.tagName).toBe("AUDIO");
+  expect(audio).toHaveAttribute("controls");
+  expect(audio).not.toHaveAttribute("autoplay");
+  expect(audio).toHaveAttribute("src", `asset://localhost/${encodeURIComponent(`/project/${path}`)}?v=1`);
+  expect(mockedInvoke).toHaveBeenCalledWith("get_project_video", { projectId: "project-1", path });
+  expect(mockedInvoke).not.toHaveBeenCalledWith("read_project_file", { projectId: "project-1", path });
+  fireEvent.loadedMetadata(audio);
+  expect(screen.queryByRole("status", { name: "Carregando áudio" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Atualizar arquivo" }));
+  expect(await screen.findByLabelText(`Áudio ${path}`)).toHaveAttribute("src", `asset://localhost/${encodeURIComponent(`/project/${path}`)}?v=2`);
+  await user.click(screen.getByRole("tab", { name: "Chat" }));
+  expect(screen.getByRole("textbox", { name: "Rascunho do chat" })).toBe(draft);
+  expect(draft).toHaveValue("Ajustar a narração");
 });
 
 it("only explains Explorer names when they are clipped or the path adds context", async () => {

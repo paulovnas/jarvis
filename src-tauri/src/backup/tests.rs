@@ -203,7 +203,8 @@ fn video_model_mapping_preserves_its_secondary_and_native_identity() {
     let path = home.path().join("video-settings.zip");
     let mut settings = payload();
     let target = builtin_target("video/video").unwrap();
-    assert_eq!(target.label, "Criador de vídeos");
+    assert_eq!(target.label, "Gerador de vídeos");
+    assert_eq!(target.id, "builtin:video/video");
     assert!(target.details.contains(&"Fluxo Vídeo".into()));
     settings.model_targets.push(target);
     write_archive(&path, &settings, &[]).unwrap();

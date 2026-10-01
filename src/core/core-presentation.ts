@@ -1,4 +1,4 @@
-import { BookOpen, Braces, BrainCircuit, Clapperboard, GitBranch, Palette, Zap } from "lucide-react";
+import { AudioLines, BookOpen, Braces, BrainCircuit, Clapperboard, GitBranch, ImagePlus, Network, Palette, Zap } from "lucide-react";
 
 export const CORE_DETAILS = {
   context7: { icon: BookOpen, label: "Documentação", description: "Consulta APIs e exemplos atualizados de bibliotecas. Dá ao Investigador referências precisas para cada versão.", color: "text-onedark-green", tint: "border-onedark-green/25 bg-onedark-green/10" },
@@ -8,4 +8,7 @@ export const CORE_DETAILS = {
   "open-design": { icon: Palette, label: "Design", description: "Sistemas visuais, templates e guias de acabamento para o Designer. Referências consultadas sob demanda.", color: "text-onedark-purple", tint: "border-onedark-purple/25 bg-onedark-purple/10" },
   lsp: { icon: Braces, label: "Navegação de código", description: "Instala servidores para localizar definições, referências, símbolos e diagnósticos em projetos TypeScript, JavaScript e Python.", color: "text-onedark-blue", tint: "border-onedark-blue/25 bg-onedark-blue/10" },
   hyperframes: { icon: Clapperboard, label: "Vídeo", description: "Cria, valida e renderiza vídeos a partir de composições HTML. Inclui o ambiente de renderização gerenciado pelo Jarvis.", color: "text-onedark-purple", tint: "border-onedark-purple/25 bg-onedark-purple/10" },
+  comfyui: { icon: ImagePlus, label: "Imagens", description: "Executa workflows locais para redimensionar imagens, remover fundos e exportar assets em PNG, JPG e WEBP. O Gerador de imagens usa o provedor de geração já configurado.", color: "text-onedark-green", tint: "border-onedark-green/25 bg-onedark-green/10" },
+  audiovisual: { icon: AudioLines, label: "Voz e música", description: "Gera narração em PT-BR com Kokoro e música com MusicGen localmente. Requer macOS 13 ou superior; no Linux, glibc 2.27 ou superior. A instalação inicial baixa vários GB; o tempo de geração varia conforme CPU/GPU. Os pesos do MusicGen usam CC-BY-NC, para uso não comercial. Em projetos comerciais, forneça uma trilha com licença adequada.", color: "text-onedark-cyan", tint: "border-onedark-cyan/25 bg-onedark-cyan/10" },
+  graft: { icon: Network, label: "Mapa do código", description: "Mapeia arquivos, símbolos e dependências do projeto para localizar código e avaliar o impacto de alterações. Índice local atualizado sob demanda, sem modelo nem chave.", color: "text-onedark-blue", tint: "border-onedark-blue/25 bg-onedark-blue/10" },
 };

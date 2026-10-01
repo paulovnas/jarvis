@@ -4,14 +4,14 @@ import { pendingQuestionSchema } from "./questions";
 import { workflowAppearanceSchema } from "./workflow-appearance";
 import { pendingAuthoringSchema } from "./authoring";
 
-export type Workflow = "standard" | "designer" | "video" | "planned" | "complete" | "publication" | "custom";
-export const FLOW_LABELS: Record<Workflow, string> = { standard: "Padrão", designer: "Designer", video: "Vídeo", planned: "Planejado", complete: "Completo", publication: "GitHub", custom: "Customizado" };
-export const rootRole = (flow: Workflow) => flow === "custom" ? "custom" : flow === "standard" ? "builder" : flow === "designer" ? "designer" : flow === "video" ? "video" : flow === "publication" ? "github" : "planner";
-export const ROLE_LABELS = { planner: "Planejador", investigator: "Investigador", writer: "Redator", orchestrator: "Orquestrador", designer: "Designer", video: "Criador de vídeos", builder: "Construtor", reviewer: "Revisor", github: "GitHub", custom: "Customizado" };
-export const ROLE_COLORS = { planner: "#c678dd", investigator: "#56b6c2", writer: "#e08a78", orchestrator: "#e5c07b", designer: "#ef8fba", video: "#e06c75", builder: "#61afef", reviewer: "#98c379", github: "#d7dce5", custom: "#969eac" };
+export type Workflow = "standard" | "designer" | "video" | "image_generator" | "planned" | "complete" | "publication" | "custom";
+export const FLOW_LABELS: Record<Workflow, string> = { standard: "Padrão", designer: "Designer", video: "Vídeo", image_generator: "Imagens", planned: "Planejado", complete: "Completo", publication: "GitHub", custom: "Customizado" };
+export const rootRole = (flow: Workflow) => flow === "custom" ? "custom" : flow === "standard" ? "builder" : flow === "designer" ? "designer" : flow === "video" ? "video" : flow === "image_generator" ? "image_generator" : flow === "publication" ? "github" : "planner";
+export const ROLE_LABELS = { planner: "Planejador", investigator: "Investigador", writer: "Redator", orchestrator: "Orquestrador", designer: "Designer", video: "Gerador de vídeos", image_generator: "Gerador de imagens", builder: "Construtor", reviewer: "Revisor", github: "GitHub", custom: "Customizado" };
+export const ROLE_COLORS = { planner: "#c678dd", investigator: "#56b6c2", writer: "#e08a78", orchestrator: "#e5c07b", designer: "#ef8fba", video: "#e06c75", image_generator: "#75c7a5", builder: "#61afef", reviewer: "#98c379", github: "#d7dce5", custom: "#969eac" };
 export const STATUS_LABELS = { queued: "Na fila", running: "Executando", waiting: "Aguardando", completed: "Concluído", blocked: "Bloqueado", failed: "Falhou", cancelled: "Cancelado", interrupted: "Interrompido" };
 export const agentCardSchema = z.object({
-  id: z.string(), parentId: z.string().nullable(), role: z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "video", "builder", "reviewer", "github", "custom"]),
+  id: z.string(), parentId: z.string().nullable(), role: z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "video", "image_generator", "builder", "reviewer", "github", "custom"]),
   title: z.string(), status: z.enum(["queued", "running", "waiting", "completed", "blocked", "failed", "cancelled", "interrupted"]),
   createdAt: z.number(), updatedAt: z.number(), startedAt: z.number(), durationMs: z.number().nonnegative(), activeSince: z.number().nullable().optional(), currentThought: z.string().nullable(), attempts: z.number(), options: turnOptionsSchema, beadId: z.string().nullable(),
   handoff: z.object({ verdict: z.enum(["completed", "approved", "rework", "blocked"]), summary: z.string() }).nullable(),
@@ -30,7 +30,7 @@ export const workflowRecoverySchema = z.object({
   affectedAgents: z.number().int().positive(),
   uncertainActions: z.array(z.object({ agentId: z.string(), agentTitle: z.string(), tool: z.string() })),
 });
-export const workflowSchema = z.object({ conversationId: z.string(), revision: z.number(), flow: z.enum(["standard", "designer", "video", "planned", "complete", "publication", "custom"]), agents: z.array(agentCardSchema), validation: validationSchema.nullable().optional(), recovery: workflowRecoverySchema.nullable().optional() });
+export const workflowSchema = z.object({ conversationId: z.string(), revision: z.number(), flow: z.enum(["standard", "designer", "video", "image_generator", "planned", "complete", "publication", "custom"]), agents: z.array(agentCardSchema), validation: validationSchema.nullable().optional(), recovery: workflowRecoverySchema.nullable().optional() });
 export type WorkflowAgent = z.infer<typeof agentCardSchema>;
 export type WorkflowSnapshot = z.infer<typeof workflowSchema>;
 export type WorkflowRecovery = z.infer<typeof workflowRecoverySchema>;

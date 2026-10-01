@@ -155,7 +155,7 @@ export function ChatComposer({
   const selectedBuiltinAgent = catalog.data?.builtinAgents.find(agent => agent.id === selectedFlow.customAgentId);
   const selectedAgent = selectedCustomAgent ?? selectedBuiltinAgent;
   const githubSelected = selectedFlow.customAgentId === "builtin:github";
-  const builtinProfileFlow = githubSelected ? "publication" : selectedFlow.customAgentId === "builtin:video" ? "video" : null;
+  const builtinProfileFlow = githubSelected ? "publication" : selectedFlow.customAgentId === "builtin:video" ? "video" : selectedFlow.customAgentId === "builtin:image_generator" ? "image_generator" : null;
   const customUnavailable = selectedFlow.workflow === "custom" && (selectedFlow.customAgentId
     ? !selectedAgent || selectedAgent.usage === "flow_only"
     : !customFlow);
@@ -250,7 +250,7 @@ export function ChatComposer({
     const currentFlow = currentOptions.workflow;
     const leavingCoordinatedFlow = (["planned", "complete"].includes(currentFlow ?? "")
       || currentFlow === "custom" && !!currentOptions.customWorkflowId && !currentOptions.customAgentId)
-      && (next === "standard" || next === "designer" || next === "video" || next.startsWith("agent:"));
+      && (next === "standard" || next === "designer" || next === "video" || next === "image_generator" || next.startsWith("agent:"));
     const currentSnapshot = workflowSnapshot;
     const hasWorkflowState = currentSnapshot != null && currentSnapshot.flow === currentFlow
       && (currentSnapshot.agents.some(agent => agent.id !== "main")
@@ -260,7 +260,7 @@ export function ChatComposer({
       return;
     }
     setWorkflow(next);
-    if (next === "standard" || next === "designer" || next === "video" || next.startsWith("agent:")) setManualValidation(false);
+    if (next === "standard" || next === "designer" || next === "video" || next === "image_generator" || next.startsWith("agent:")) setManualValidation(false);
   };
 
   const refreshModels = async () => {
@@ -348,7 +348,7 @@ export function ChatComposer({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="cursor-pointer">Manter fluxo atual</AlertDialogCancel>
-            <AlertDialogAction data-confirm-action className="cursor-pointer" onClick={() => { if (pendingWorkflow) { setWorkflow(pendingWorkflow); if (pendingWorkflow === "standard" || pendingWorkflow === "designer" || pendingWorkflow === "video" || pendingWorkflow.startsWith("agent:")) setManualValidation(false); } setPendingWorkflow(null); }}>Trocar fluxo</AlertDialogAction>
+            <AlertDialogAction data-confirm-action className="cursor-pointer" onClick={() => { if (pendingWorkflow) { setWorkflow(pendingWorkflow); if (pendingWorkflow === "standard" || pendingWorkflow === "designer" || pendingWorkflow === "video" || pendingWorkflow === "image_generator" || pendingWorkflow.startsWith("agent:")) setManualValidation(false); } setPendingWorkflow(null); }}>Trocar fluxo</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

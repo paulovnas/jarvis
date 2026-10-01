@@ -46,7 +46,7 @@ pub(super) fn history_preview(mut turn: Turn) -> Turn {
         if matches!(tool.status.as_str(), "pending" | "running")
             || matches!(
                 tool.name.as_str(),
-                "ask_user" | "generate_image" | "browser_screenshot"
+                "ask_user" | "generate_image" | "image_process" | "browser_screenshot"
             )
         {
             continue;
@@ -1514,6 +1514,24 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+    #[test]
+    fn processed_image_previews_survive_history_pagination() {
+        let mut turn = stored(0).turn;
+        let output = serde_json::json!({"kind":"generated_image","images":[{"id":"a".repeat(32)}],"processing":{"engine":"comfyui","images":[{"width":4096,"height":2048}]}}).to_string();
+        turn.steps[0].tools.push(ToolCall {
+            id: "image".into(),
+            name: "image_process".into(),
+            args: serde_json::json!({"image_ids":["a".repeat(32)]}),
+            status: "completed".into(),
+            output: output.clone(),
+            duration_ms: 5,
+        });
+        let preview = history_preview(turn);
+        let tool = preview.steps[0].tools.last().unwrap();
+        assert_eq!(tool.output, output);
+        assert_eq!(tool.args["image_ids"], serde_json::json!(["a".repeat(32)]));
+    }
+
     fn stored(index: usize) -> StoredTurn {
         StoredTurn {
             excluded_queue_ms: 0,

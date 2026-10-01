@@ -34,6 +34,7 @@ pub(super) enum Handler {
     JarvisAuthoring,
     Context7,
     Lsp,
+    Graft,
     Patch,
     ContextMode,
     AskUser,
@@ -83,6 +84,8 @@ impl Handler {
             Self::Context7
         } else if name.starts_with("lsp_") {
             Self::Lsp
+        } else if name.starts_with("graft_") {
+            Self::Graft
         } else if name == "apply_patch" {
             Self::Patch
         } else if name.starts_with("ctx_") {
@@ -138,6 +141,7 @@ impl Capabilities {
                 | "http_requests"
                 | "http_result"
                 | "video_docs"
+                | "video_presentation"
                 | "jarvito_list_projects"
                 | "jarvito_list_executors"
                 | "jarvito_list_conversations"
@@ -146,6 +150,7 @@ impl Capabilities {
             && !crate::core::context::needs_approval(name))
             || name.starts_with("context7_")
             || name.starts_with("lsp_")
+            || name.starts_with("graft_")
             || matches!(
                 name,
                 "project_beads_list" | "project_beads_ready" | "project_beads_show"
@@ -405,6 +410,7 @@ mod tests {
             "write",
             "bash",
             "ctx_execute",
+            "graft_find_code",
             "mcp_activate",
             "terminal_start",
             "jarvito_confirm_project",
@@ -455,6 +461,41 @@ mod tests {
                 json!({"conversationId":42})
             ))
             .is_err());
+    }
+
+    #[test]
+    fn graft_uses_native_read_contracts_and_rejects_unadvertised_arguments() {
+        let definitions = crate::core::graft::definitions();
+        let runtime = Orchestrator::new(&definitions);
+        let calls = [
+            call(
+                "graft_find_code",
+                json!({"query":"authentication","limit":3}),
+            ),
+            call("graft_file_api", json!({"file":"src/auth.ts"})),
+            call("graft_trace_calls", json!({"symbol":"login","depth":1})),
+            call("graft_find_all", json!({"pattern":"login","fixed":true})),
+            call("graft_repo_map", json!({})),
+            call("graft_check_freshness", json!({})),
+        ];
+        for tool in &calls {
+            let prepared = runtime.preflight(tool).unwrap();
+            assert_eq!(prepared.handler, Handler::Graft, "{}", tool.name);
+            assert_eq!(prepared.capabilities.effect, Effect::ReadOnly);
+            assert_eq!(prepared.capabilities.approval, ApprovalPolicy::Never);
+            assert!(prepared.capabilities.parallel_safe);
+        }
+        assert!(runtime.parallel_safe(&calls));
+        let invalid = runtime
+            .preflight(&call(
+                "graft_find_code",
+                json!({"query":"authentication","shell":"rm -rf project"}),
+            ))
+            .unwrap_err();
+        assert_eq!(invalid.code, "tool_arguments_invalid");
+        let output: Value = serde_json::from_str(invalid.tool_result.as_deref().unwrap()).unwrap();
+        assert_eq!(output["recoverable"], true);
+        assert_eq!(output["executed"], false);
     }
 
     #[test]

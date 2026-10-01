@@ -38,6 +38,12 @@ describe("ToolCallCard Web Search", () => {
     expect(screen.getByRole("button", { name: /Leitura de arquivo/ }).querySelector(".text-primary")).toBeInTheDocument();
   });
   it.each([
+    ["graft_find_code", "Graft · Encontrar código"],
+    ["graft_find_all", "Graft · Busca estrutural"],
+    ["graft_file_api", "Graft · API do arquivo"],
+    ["graft_trace_calls", "Graft · Dependências"],
+    ["graft_repo_map", "Graft · Mapa do projeto"],
+    ["graft_check_freshness", "Graft · Verificar índice"],
     ["jarvis_inspect_publication", "Git · Inspecionar repositórios"],
     ["jarvis_propose_publication", "GitHub · Proposta de publicação"],
     ["progress_checkpoint", "Reorganizar próxima ação"],
@@ -53,9 +59,34 @@ describe("ToolCallCard Web Search", () => {
     ["http_send", "HTTP · Executar requisição"],
     ["http_result", "HTTP · Analisar resultado"],
     ["http_cancel", "HTTP · Cancelar requisição"],
+    ["video_docs", "Vídeo · Documentação"],
+    ["image_process", "Processar imagem"],
+    ["video_run", "Vídeo · Executar etapa"],
+    ["video_wait", "Vídeo e áudio · Aguardar etapa"],
+    ["video_cancel", "Vídeo e áudio · Cancelar etapa"],
+    ["video_presentation", "Vídeo · Verificar apresentação"],
   ])("identifica a ferramenta nativa %s", (name, label) => {
     render(<ToolCallCard tool={{ id: name, name, status: "completed", args: { path: "src/app.ts" }, output: "{}" }} />);
     expect(screen.getByRole("button", { name: new RegExp(label) })).toBeVisible();
+  });
+  it.each([
+    ["graft_find_code", "query", "refresh tokens"],
+    ["graft_find_all", "pattern", "changePassword"],
+    ["graft_file_api", "file", "src/auth.ts"],
+    ["graft_trace_calls", "symbol", "AuthService.refresh"],
+  ])("identifies the structural target of %s without expanding raw arguments", (name, key, value) => {
+    render(<ToolCallCard tool={{ id: name, name, status: "completed", args: { [key]: value }, output: "Structural result" }} />);
+    expect(screen.getByRole("button", { name: new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) })).toBeVisible();
+    expect(screen.queryByText("Structural result")).not.toBeInTheDocument();
+  });
+  it.each([["narrate", "Gerar narração"], ["music", "Gerar música"], ["", "Gerar áudio"]])("identifies %s audio generation by output path and current state", async (action, label) => {
+    const user = userEvent.setup();
+    render(<ToolCallCard tool={{ id: "audio", name: "video_audio", status: "running", args: { action, output: "presentation/audio/voice.wav" }, output: "" }} />);
+    const trigger = screen.getByRole("button", { name: new RegExp(`${label}.*presentation/audio/voice.wav.*Executando`) });
+    expect(trigger).toBeVisible();
+    expect(screen.queryByText("Concluída")).not.toBeInTheDocument();
+    await user.click(trigger);
+    expect(screen.getByText(/"output": "presentation\/audio\/voice.wav"/)).toBeVisible();
   });
   it("shows native Context7 queries compactly and expands their documentation", async () => {
     const user = userEvent.setup();

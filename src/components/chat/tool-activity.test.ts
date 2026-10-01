@@ -43,7 +43,18 @@ describe("grouped tool activity", () => {
     ])).toBe("Leu e pesquisou arquivos e alterou arquivos");
   });
 
+  it("groups Graft structural discovery with precise reads instead of external integrations", () => {
+    expect(summarizeToolActivity([
+      tool("graft_repo_map", 1), tool("graft_find_code", 2), tool("graft_trace_calls", 3), tool("read", 4),
+    ])).toBe("Leu e pesquisou arquivos");
+  });
+
   it("identifies answered user questions in activity summaries", () => {
     expect(summarizeToolActivity([tool("ask_user", 1)])).toBe("Fez perguntas");
+  });
+
+  it("describes audiovisual preparation without claiming a render was produced", () => {
+    expect(summarizeToolActivity([tool("video_docs", 1), tool("video_audio", 2), tool("video_presentation", 3)]))
+      .toBe("Usou recursos de vídeo e áudio");
   });
 });

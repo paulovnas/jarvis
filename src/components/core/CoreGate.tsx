@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCore } from "@/hooks/use-core";
 import { HomeSkeleton } from "@/components/layout/LoadingSkeletons";
+import { optionalCore } from "@/core/core-components";
 
 const CoreDiagnostics = lazy(() => import("./CoreDiagnostics"));
 
@@ -14,7 +15,7 @@ export function CoreGate({ children }: { children: ReactNode }) {
   const [diagnostics, setDiagnostics] = useState(false);
   if (!core.snapshot && !core.error) return <HomeSkeleton />;
   if (core.snapshot?.ready && !core.error && !diagnostics) return children;
-  const affected = core.snapshot?.items.filter(item => !item.installed || !item.configured || item.healthError).map(item => item.name).join(" · ");
+  const affected = core.snapshot?.items.filter(item => !optionalCore(item.id) && (!item.installed || !item.configured || item.healthError)).map(item => item.name).join(" · ");
   return <div className="flex min-h-0 flex-1 flex-col">
     <Alert variant="destructive" className="flex shrink-0 items-center gap-3 rounded-none border-x-0 border-t-0 border-destructive/30 bg-destructive/10 px-5 py-2">
       <ShieldAlert className="size-4 shrink-0" /><AlertTitle className="flex-1 text-xs">O Core precisa de atenção. Uso do Jarvis pausado.</AlertTitle>

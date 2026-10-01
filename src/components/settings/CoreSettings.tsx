@@ -10,7 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { coreError, type CoreId } from "@/core/core-components";
+import { coreError, coreIdSchema, optionalCore, type CoreId } from "@/core/core-components";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/TextInput";
 import { Label } from "@/components/ui/label";
@@ -26,9 +26,9 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
   const [reinstall, setReinstall] = useState<CoreId | null>(null);
   const checkStarted = useRef(false);
   useEffect(() => { if (snapshot && !core.checked && !checkStarted.current) { checkStarted.current = true; void check(); } }, [snapshot, core.checked, check]);
-  if (!snapshot && !error) return <div role="status" aria-label="Carregando Core" className="space-y-3"><Skeleton className="mb-5 h-5 w-24" /><div className="core-card-grid">{[0, 1, 2, 3, 4, 5, 6].map(id => <Skeleton key={id} className="h-56 w-full rounded-lg" />)}</div></div>;
+  if (!snapshot && !error) return <div role="status" aria-label="Carregando Core" className="space-y-3"><Skeleton className="mb-5 h-5 w-24" /><div className="core-card-grid">{coreIdSchema.options.map(id => <Skeleton key={id} className="h-56 w-full rounded-lg" />)}</div></div>;
   if (!snapshot) return <div role="alert" className="space-y-3"><p className="text-sm text-destructive">{error}</p><Button variant="outline" onClick={() => void refresh()}>Tentar novamente</Button></div>;
-  const essential = snapshot.items.filter(item => item.id !== "context7" && item.id !== "hyperframes");
+  const essential = snapshot.items.filter(item => !optionalCore(item.id));
   const missing = essential.filter(item => !item.installed).map(item => item.id);
   const reinstallTarget = snapshot.items.find(item => item.id === reinstall);
   return <TooltipProvider delay={150}><section aria-label="Core" className="space-y-4">
@@ -39,7 +39,7 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
     </div>
     <div className="core-card-grid">{snapshot.items.map(item => {
       const { icon: Icon, label, description, color, tint } = CORE_DETAILS[item.id];
-      const optional = item.id === "context7" || item.id === "hyperframes";
+      const optional = optionalCore(item.id);
       const action = item.installed ? "Atualizar" : "Instalar";
       const usable = item.installed && item.configured && !item.healthError;
       const canInstall = !item.installed && !item.installedVersion;
@@ -66,7 +66,7 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
             {canReinstall && <Button size="sm" variant="outline" disabled={busy} onClick={() => setReinstall(item.id)} aria-label={`Reinstalar ${item.name}`} className="w-full text-xs"><Wrench className="size-3" />Reinstalar</Button>}
             {item.id === "context7" && item.installed && <Button size="sm" variant={item.configured ? "ghost" : "outline"} disabled={busy} onClick={() => setConfiguring(true)} className="w-full text-xs"><KeyRound className="size-3" />{item.configured ? "Alterar chave" : "Configurar Context7"}</Button>}
           </div>
-          {item.stage && <CoreInstallProgress item={item} />}
+          {item.stage && <CoreInstallProgress item={item} onCancel={() => void core.cancel(item.id)} cancelling={core.cancellingId === item.id} />}
           {(item.healthError || item.error) && !item.stage && <p role="alert" className="mt-3 border-t border-border pt-3 text-xs text-destructive">{item.healthError ?? item.error}</p>}
         </CardContent>
       </Card>;

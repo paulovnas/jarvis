@@ -11,7 +11,223 @@ use std::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const NODE_VERSION: &str = "22.23.2";
+pub(super) const GRAFT_VERSION: &str = "0.21.1";
+const GRAFT_WASM_VERSION: &str = "1.1.8";
+const GRAFT_WEB_PARSER_VERSION: &str = "0.26.13";
+const GRAFT_WASM: &str = include_str!("graft/wasm.mjs");
+const GRAFT_EXTRACTOR: &str = "node_modules/@nanonets/graft/dist/graph/extract.js";
+const GRAFT_WASM_ENTRY: &str = "node_modules/@nanonets/graft/jarvis-tree-sitter.mjs";
+const GRAFT_RUNTIME_RECEIPT: &str = "jarvis-graft-runtime.json";
+const GRAFT_ORIGINAL_SHA: &str = "b3477cb83351965386d48d41fbe79093083c084299dcec2b384b16caa8ec3d60";
+const GRAFT_PATCHED_SHA: &str = "746862dcf057a075d1dc9cfb8f86308c88bc49e2686a08090708c61c45b8f43c";
+const GRAFT_NATIVE_IMPORTS: &str = concat!(
+    "import Parser from \"tree-sitter\";\n",
+    "import TypeScript from \"tree-sitter-typescript\";\n",
+    "import Python from \"tree-sitter-python\";\n",
+    "import Go from \"tree-sitter-go\";\n",
+    "import R from \"tree-sitter-r\";\n",
+    "import Java from \"tree-sitter-java\";\n",
+    "import Kotlin from \"tree-sitter-kotlin\";\n",
+    "import Swift from \"tree-sitter-swift\";\n",
+    "import PHP from \"tree-sitter-php\";\n",
+);
+const GRAFT_WASM_IMPORT: &str = "import { Parser, TypeScript, Python, Go, R, Java, Kotlin, Swift, PHP } from \"../../jarvis-tree-sitter.mjs\";\n";
 const DOWNLOAD_LIMIT: usize = 180 * 1024 * 1024;
+
+fn graft_patch(source: &str) -> Result<String, CoreError> {
+    let digest = format!("{:x}", Sha256::digest(source.as_bytes()));
+    if digest == GRAFT_PATCHED_SHA {
+        return Ok(source.into());
+    }
+    if digest != GRAFT_ORIGINAL_SHA || source.matches(GRAFT_NATIVE_IMPORTS).count() != 1 {
+        return Err(error(
+            "O extrator do Graft mudou. Esta versão exige uma integração validada antes de instalar.",
+        ));
+    }
+    let patched = source.replacen(GRAFT_NATIVE_IMPORTS, GRAFT_WASM_IMPORT, 1);
+    if format!("{:x}", Sha256::digest(patched.as_bytes())) != GRAFT_PATCHED_SHA {
+        return Err(error(
+            "A adaptação portátil do Graft não pôde ser validada.",
+        ));
+    }
+    Ok(patched)
+}
+
+fn graft_wasm_receipt() -> Value {
+    serde_json::json!({
+        "version":GRAFT_VERSION,
+        "adapterVersion":"1.0.0",
+        "originalSha256":GRAFT_ORIGINAL_SHA,
+        "patchedSha256":GRAFT_PATCHED_SHA,
+        "wasmAdapterSha256":format!("{:x}", Sha256::digest(GRAFT_WASM.as_bytes())),
+        "wasmGrammarVersion":GRAFT_WASM_VERSION,
+        "webParserVersion":GRAFT_WEB_PARSER_VERSION,
+    })
+}
+
+// Only the private managed package is patched; upstream extractors remain unchanged.
+pub(super) fn graft_wasm(package: &Path) -> Result<(), CoreError> {
+    let source = fs::read_to_string(package.join(GRAFT_EXTRACTOR))?;
+    let patched = graft_patch(&source)?;
+    fs::write(package.join(GRAFT_EXTRACTOR), patched)?;
+    fs::write(package.join(GRAFT_WASM_ENTRY), GRAFT_WASM)?;
+    fs::write(
+        package.join(GRAFT_RUNTIME_RECEIPT),
+        serde_json::to_vec(&graft_wasm_receipt())
+            .map_err(|_| error("Registro do runtime Graft inválido."))?,
+    )?;
+    validate_graft_wasm(package)
+}
+
+pub(super) fn validate_graft_wasm(package: &Path) -> Result<(), CoreError> {
+    let canonical = fs::canonicalize(package)?;
+    let mut assets = graft_required_files();
+    assets.extend(
+        [
+            GRAFT_RUNTIME_RECEIPT,
+            GRAFT_EXTRACTOR,
+            GRAFT_WASM_ENTRY,
+            "node_modules/@nanonets/graft/package.json",
+            "node_modules/tree-sitter-wasm/package.json",
+            "node_modules/web-tree-sitter/package.json",
+        ]
+        .map(String::from),
+    );
+    for asset in assets {
+        let path = package.join(&asset);
+        let metadata = fs::symlink_metadata(&path).map_err(|_| {
+            error(format!(
+                "Recurso do Graft ausente: {asset}. Reinstale o componente."
+            ))
+        })?;
+        if !metadata.is_file()
+            || metadata.len() == 0
+            || !fs::canonicalize(&path)?.starts_with(&canonical)
+        {
+            return Err(error(
+                "Um recurso obrigatório do Graft está vazio ou fora do pacote.",
+            ));
+        }
+    }
+    let receipt: Value = serde_json::from_slice(&fs::read(package.join(GRAFT_RUNTIME_RECEIPT))?)
+        .map_err(|_| error("Registro do runtime Graft inválido."))?;
+    if receipt != graft_wasm_receipt()
+        || format!(
+            "{:x}",
+            Sha256::digest(fs::read(package.join(GRAFT_EXTRACTOR))?)
+        ) != GRAFT_PATCHED_SHA
+        || fs::read(package.join(GRAFT_WASM_ENTRY))? != GRAFT_WASM.as_bytes()
+    {
+        return Err(error(
+            "O runtime portátil do Graft está incompleto ou foi alterado.",
+        ));
+    }
+    for (name, version) in [
+        ("@nanonets/graft", GRAFT_VERSION),
+        ("tree-sitter-wasm", GRAFT_WASM_VERSION),
+        ("web-tree-sitter", GRAFT_WEB_PARSER_VERSION),
+    ] {
+        let metadata: Value = serde_json::from_slice(&fs::read(
+            package.join("node_modules").join(name).join("package.json"),
+        )?)
+        .map_err(|_| error("Pacote do runtime Graft inválido."))?;
+        if metadata["name"] != name || metadata["version"] != version {
+            return Err(error(
+                "Uma dependência do Graft não corresponde à versão validada.",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn graft_required_files() -> Vec<String> {
+    // Missing breadth/container grammars or queries silently degrade upstream.
+    let mut files: Vec<String> = [
+        "typescript",
+        "tsx",
+        "python",
+        "go",
+        "r",
+        "java",
+        "kotlin",
+        "swift",
+        "php",
+        "rust",
+        "c",
+        "cpp",
+        "ruby",
+        "c_sharp",
+        "scala",
+        "elixir",
+        "solidity",
+        "ocaml",
+        "zig",
+        "dart",
+        "clojure",
+        "nix",
+        "lua",
+        "vue",
+    ]
+    .map(|language| {
+        format!("node_modules/tree-sitter-wasm/out/{language}/tree-sitter-{language}.wasm")
+    })
+    .into();
+    files.extend(
+        [
+            "rust", "java", "c", "cpp", "ruby", "c_sharp", "scala", "elixir", "solidity", "dart",
+            "clojure", "nix", "lua",
+        ]
+        .map(|language| format!("node_modules/@nanonets/graft/dist/graph/queries/{language}.scm")),
+    );
+    files
+}
+
+fn graft_package_json() -> Value {
+    serde_json::json!({
+        "name":"jarvis-core-graft", "private":true, "type":"module",
+        "dependencies":{
+            "@nanonets/graft":"file:graft.tgz",
+            "tree-sitter-wasm":GRAFT_WASM_VERSION,
+            "web-tree-sitter":GRAFT_WEB_PARSER_VERSION,
+        },
+        "overrides":{
+            "tree-sitter-wasm":GRAFT_WASM_VERSION,
+            "web-tree-sitter":GRAFT_WEB_PARSER_VERSION,
+        }
+    })
+}
+
+#[cfg(test)]
+pub(super) fn graft_fixture(package: &Path) {
+    let mut source = String::new();
+    flate2::read::GzDecoder::new(include_bytes!("graft/fixtures/extract-0.21.1.js.gz").as_slice())
+        .read_to_string(&mut source)
+        .unwrap();
+    fs::create_dir_all(package.join("node_modules/@nanonets/graft/dist/graph")).unwrap();
+    fs::write(package.join(GRAFT_EXTRACTOR), source).unwrap();
+    for (name, version) in [
+        ("@nanonets/graft", GRAFT_VERSION),
+        ("tree-sitter-wasm", GRAFT_WASM_VERSION),
+        ("web-tree-sitter", GRAFT_WEB_PARSER_VERSION),
+    ] {
+        let path = package.join("node_modules").join(name);
+        fs::create_dir_all(&path).unwrap();
+        fs::write(
+            path.join("package.json"),
+            serde_json::to_vec(&serde_json::json!({"name":name,"version":version})).unwrap(),
+        )
+        .unwrap();
+    }
+    for asset in graft_required_files() {
+        let path = package.join(asset);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "fixture parser asset; never executed").unwrap();
+    }
+    let node = node_path(package);
+    fs::create_dir_all(node.parent().unwrap()).unwrap();
+    fs::write(node, "test runtime").unwrap();
+    graft_wasm(package).unwrap();
+}
 #[derive(Deserialize)]
 pub(super) struct Release {
     tag_name: String,
@@ -305,6 +521,31 @@ fn context7_release(releases: Vec<Release>) -> Result<Release, CoreError> {
         .ok_or_else(|| error("Nenhuma release estável do Context7 MCP disponível."))
 }
 pub(super) async fn component_release(id: ComponentId) -> Result<Release, CoreError> {
+    if id == ComponentId::Graft {
+        // Upstream parser/runtime changes require a verified adapter before promotion.
+        return Ok(Release {
+            tag_name: GRAFT_VERSION.into(),
+            assets: Vec::new(),
+            draft: false,
+            prerelease: false,
+        });
+    }
+    if id == ComponentId::Comfyui {
+        return Ok(Release {
+            tag_name: super::comfyui::VERSION.into(),
+            assets: Vec::new(),
+            draft: false,
+            prerelease: false,
+        });
+    }
+    if id == ComponentId::Audiovisual {
+        return Ok(Release {
+            tag_name: super::audiovisual::VERSION.into(),
+            assets: Vec::new(),
+            draft: false,
+            prerelease: false,
+        });
+    }
     if id == ComponentId::Hyperframes {
         return Ok(Release {
             tag_name: latest_registry_version("hyperframes").await?,
@@ -385,7 +626,12 @@ pub(super) fn safe_entry(path: &Path, strip: bool) -> Result<PathBuf, CoreError>
     }
     Ok(parts.collect())
 }
-fn unpack(bytes: Vec<u8>, destination: &Path, zip: bool, strip: bool) -> Result<(), CoreError> {
+pub(super) fn unpack(
+    bytes: Vec<u8>,
+    destination: &Path,
+    zip: bool,
+    strip: bool,
+) -> Result<(), CoreError> {
     fs::create_dir_all(destination)?;
     let mut total: u64 = 0;
     if zip {
@@ -482,6 +728,18 @@ pub(super) async fn command_input(
     seconds: u64,
     input: Option<Vec<u8>>,
 ) -> Result<String, CoreError> {
+    command_policy(cmd, Some(seconds), input).await
+}
+pub(super) async fn command_unbounded(
+    mut cmd: tokio::process::Command,
+) -> Result<String, CoreError> {
+    command_policy(&mut cmd, None, None).await
+}
+async fn command_policy(
+    cmd: &mut tokio::process::Command,
+    seconds: Option<u64>,
+    input: Option<Vec<u8>>,
+) -> Result<String, CoreError> {
     crate::background::prepare_node(cmd)?;
     cmd.stdin(if input.is_some() {
         Stdio::piped()
@@ -549,15 +807,31 @@ pub(super) async fn command_input(
                 "Core diagnostic: {}",
                 String::from_utf8_lossy(_err.as_deref().unwrap_or_default())
             );
-            return Err(error(
-                "O runtime não passou na verificação. Tente reinstalar o componente.",
-            ));
+            let detail = if seconds.is_none() {
+                String::from_utf8_lossy(_err.as_deref().unwrap_or_default())
+                    .chars()
+                    .rev()
+                    .take(2400)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<String>()
+            } else {
+                String::new()
+            };
+            return Err(error(format!(
+                "O runtime não passou na verificação. Tente reinstalar o componente. {detail}"
+            )));
         }
         Ok(String::from_utf8_lossy(&out?).into_owned())
     };
-    tokio::time::timeout(Duration::from_secs(seconds), work)
-        .await
-        .map_err(|_| error("O Core excedeu o tempo limite. Tente novamente."))?
+    if let Some(seconds) = seconds {
+        tokio::time::timeout(Duration::from_secs(seconds), work)
+            .await
+            .map_err(|_| error("O Core excedeu o tempo limite. Tente novamente."))?
+    } else {
+        work.await
+    }
 }
 async fn install_node(
     destination: &Path,
@@ -723,10 +997,83 @@ pub(super) async fn install(
     let destination = staging.path();
     let mut required = Vec::<String>::new();
     match id {
+        ComponentId::Graft => {
+            stage("Baixando runtime Node");
+            install_node(destination, &stage, &progress).await?;
+            stage("Baixando Graft");
+            fs::write(
+                destination.join("graft.tgz"),
+                registry_package("@nanonets/graft", &version, &progress).await?,
+            )?;
+            fs::write(
+                destination.join("package.json"),
+                serde_json::to_vec(&graft_package_json())
+                    .map_err(|_| error("Configuração do Graft inválida."))?,
+            )?;
+            fs::write(destination.join("empty.npmrc"), b"")?;
+            stage("Preparando descoberta estrutural portátil");
+            let mut cmd = tokio::process::Command::new(node_path(destination));
+            cmd.arg(npm_path(destination))
+                .args([
+                    "install",
+                    "--ignore-scripts",
+                    "--omit=dev",
+                    "--no-audit",
+                    "--no-fund",
+                    "--package-lock=true",
+                    "--global=false",
+                    "--workspaces=false",
+                    "--registry=https://registry.npmjs.org",
+                ])
+                .arg("--prefix")
+                .arg(destination)
+                .current_dir(destination)
+                .env("NODE_OPTIONS", "")
+                .env("DO_NOT_TRACK", "1")
+                .env("CI", "1")
+                .env("npm_config_cache", root(home).join("cache/npm"))
+                .env("npm_config_userconfig", destination.join("empty.npmrc"));
+            command(cmd, 240).await?;
+            super::graft::install_assets(destination)?;
+            required.extend(
+                [
+                    "package-lock.json",
+                    "node_modules/@nanonets/graft/package.json",
+                    "node_modules/@nanonets/graft/dist/graph/build.js",
+                    GRAFT_EXTRACTOR,
+                    GRAFT_WASM_ENTRY,
+                    GRAFT_RUNTIME_RECEIPT,
+                    "node_modules/web-tree-sitter/web-tree-sitter.js",
+                    "node_modules/web-tree-sitter/web-tree-sitter.wasm",
+                    "node_modules/tree-sitter-wasm/package.json",
+                    super::graft::ENTRY,
+                ]
+                .map(String::from),
+            );
+            required.extend(graft_required_files());
+            required.push(
+                node_path(destination)
+                    .strip_prefix(destination)
+                    .map_err(|_| error("Runtime Graft fora do pacote."))?
+                    .to_string_lossy()
+                    .into(),
+            );
+            stage("Validando o mapa e a busca de código");
+            super::graft::verify(destination).await?;
+        }
+        ComponentId::Comfyui => {
+            required.extend(super::comfyui::install(home, destination, &stage, &progress).await?);
+        }
+        ComponentId::Audiovisual => {
+            required
+                .extend(super::audiovisual::install(home, destination, &stage, &progress).await?);
+        }
         ComponentId::Hyperframes => {
             let (os, arch) = platform()?;
             if arch == "arm64" && os != "darwin" {
-                return Err(error("A instalação automática de vídeo requer macOS, Linux x64 ou Windows x64. O restante do Jarvis continua disponível."));
+                return Err(error(
+                    "A instalação automática de vídeo requer macOS, Linux x64 ou Windows x64.",
+                ));
             }
             stage("Baixando runtime Node");
             install_node(destination, &stage, &progress).await?;
@@ -734,6 +1081,7 @@ pub(super) async fn install(
             let packages = [
                 ("hyperframes", version.as_str(), "hyperframes.tgz"),
                 ("@puppeteer/browsers", "3.2.2", "browsers.tgz"),
+                ("gsap", super::hyperframes::GSAP_VERSION, "gsap.tgz"),
             ];
             for (name, version, filename) in packages {
                 fs::write(
@@ -744,7 +1092,7 @@ pub(super) async fn install(
             fs::write(destination.join("package.json"), serde_json::to_vec(&serde_json::json!({
                 "name":"jarvis-core-hyperframes", "private":true,
                 "dependencies":{
-                    "hyperframes":"file:hyperframes.tgz", "@puppeteer/browsers":"file:browsers.tgz"
+                    "hyperframes":"file:hyperframes.tgz", "@puppeteer/browsers":"file:browsers.tgz", "gsap":"file:gsap.tgz"
                 }
             })).map_err(|_| error("Configuração do Hyperframes inválida."))?)?;
             fs::write(destination.join("empty.npmrc"), b"")?;
@@ -770,6 +1118,7 @@ pub(super) async fn install(
                 .env("npm_config_cache", root(home).join("cache/npm"))
                 .env("npm_config_userconfig", destination.join("empty.npmrc"));
             self::command(command, 300).await?;
+            hyperframes::install_documentation(destination)?;
             stage("Baixando FFmpeg e FFprobe");
             let encoders: Release = serde_json::from_value(
                 json("https://api.github.com/repos/eugeneware/ffmpeg-static/releases/tags/b6.1.1")
@@ -1135,6 +1484,20 @@ writeFileSync('jarvis-hyperframes.json',JSON.stringify({browser:relative(process
     // Previous generations stay usable by running conversations until a later maintenance pass.
     Ok(version)
 }
+
+pub(super) async fn install_cancellable(
+    home: &Path,
+    id: ComponentId,
+    stage: impl Fn(&str) + Sync,
+    progress: impl Fn(DownloadProgress) + Sync,
+    mut signal: tokio::sync::watch::Receiver<bool>,
+) -> Result<String, CoreError> {
+    tokio::select! {
+        biased;
+        _ = super::context::cancelled(&mut signal) => Err(super::cancelled_error()),
+        result = install(home, id, stage, progress) => result,
+    }
+}
 async fn release_for_dolt() -> Result<Release, CoreError> {
     release("dolthub/dolt").await
 }
@@ -1142,6 +1505,167 @@ async fn release_for_dolt() -> Result<Release, CoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn graft_release_is_pinned_without_network_discovery() {
+        assert_eq!(
+            component_release(ComponentId::Graft)
+                .await
+                .unwrap()
+                .version(),
+            GRAFT_VERSION
+        );
+    }
+
+    #[test]
+    fn graft_adapter_repairs_missing_assets_without_repatching_the_extractor() {
+        let package = tempfile::tempdir().unwrap();
+        graft_fixture(package.path());
+        let extractor = fs::read(package.path().join(GRAFT_EXTRACTOR)).unwrap();
+        fs::remove_file(package.path().join(GRAFT_WASM_ENTRY)).unwrap();
+        fs::remove_file(package.path().join(GRAFT_RUNTIME_RECEIPT)).unwrap();
+        graft_wasm(package.path()).unwrap();
+        validate_graft_wasm(package.path()).unwrap();
+        assert_eq!(
+            fs::read(package.path().join(GRAFT_EXTRACTOR)).unwrap(),
+            extractor
+        );
+    }
+
+    #[test]
+    fn graft_rejects_an_unknown_extractor_without_replacing_it() {
+        let package = tempfile::tempdir().unwrap();
+        graft_fixture(package.path());
+        let changed = format!(
+            "{}\n// Changed upstream artifact",
+            fs::read_to_string(package.path().join(GRAFT_EXTRACTOR)).unwrap()
+        );
+        fs::write(package.path().join(GRAFT_EXTRACTOR), &changed).unwrap();
+        assert!(graft_wasm(package.path()).is_err());
+        assert_eq!(
+            fs::read_to_string(package.path().join(GRAFT_EXTRACTOR)).unwrap(),
+            changed
+        );
+    }
+
+    #[test]
+    fn graft_health_detects_and_repairs_a_changed_wasm_adapter() {
+        let package = tempfile::tempdir().unwrap();
+        graft_fixture(package.path());
+        fs::write(package.path().join(GRAFT_WASM_ENTRY), "changed").unwrap();
+        assert!(validate_graft_wasm(package.path()).is_err());
+        graft_wasm(package.path()).unwrap();
+        assert!(validate_graft_wasm(package.path()).is_ok());
+    }
+
+    #[test]
+    fn graft_health_detects_changed_dependency_versions() {
+        let package = tempfile::tempdir().unwrap();
+        graft_fixture(package.path());
+        fs::write(
+            package
+                .path()
+                .join("node_modules/web-tree-sitter/package.json"),
+            r#"{"name":"web-tree-sitter","version":"999.0.0"}"#,
+        )
+        .unwrap();
+        assert!(validate_graft_wasm(package.path()).is_err());
+    }
+
+    fn graft_readiness_fixture(home: &Path) -> PathBuf {
+        let path = root(home).join("graft/test");
+        super::super::graft::fixture(&path);
+        let mut manifest = Manifest::default();
+        manifest.installations.insert(
+            ComponentId::Graft,
+            Installation {
+                version: GRAFT_VERSION.into(),
+                directory: "graft/test".into(),
+                files: vec![super::super::graft::ENTRY.into()],
+            },
+        );
+        save_manifest(home, &manifest).unwrap();
+        assert!(installed(home, ComponentId::Graft).is_ok());
+        path
+    }
+
+    #[test]
+    fn graft_readiness_rejects_a_missing_rust_grammar() {
+        let home = tempfile::tempdir().unwrap();
+        let path = graft_readiness_fixture(home.path());
+        fs::remove_file(path.join("node_modules/tree-sitter-wasm/out/rust/tree-sitter-rust.wasm"))
+            .unwrap();
+        assert!(installed(home.path(), ComponentId::Graft).is_err());
+    }
+
+    #[test]
+    fn graft_readiness_rejects_a_missing_rust_query() {
+        let home = tempfile::tempdir().unwrap();
+        let path = graft_readiness_fixture(home.path());
+        fs::remove_file(path.join("node_modules/@nanonets/graft/dist/graph/queries/rust.scm"))
+            .unwrap();
+        assert!(installed(home.path(), ComponentId::Graft).is_err());
+    }
+
+    #[test]
+    fn graft_health_rejects_an_empty_parser_asset() {
+        let package = tempfile::tempdir().unwrap();
+        graft_fixture(package.path());
+        fs::write(
+            package
+                .path()
+                .join("node_modules/tree-sitter-wasm/out/rust/tree-sitter-rust.wasm"),
+            "",
+        )
+        .unwrap();
+        assert!(validate_graft_wasm(package.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn graft_health_rejects_a_parser_redirected_outside_the_package() {
+        let package = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        graft_fixture(package.path());
+        let parser = package
+            .path()
+            .join("node_modules/tree-sitter-wasm/out/rust/tree-sitter-rust.wasm");
+        fs::remove_file(&parser).unwrap();
+        fs::write(outside.path().join("parser.wasm"), "external parser").unwrap();
+        std::os::unix::fs::symlink(outside.path().join("parser.wasm"), parser).unwrap();
+        assert!(validate_graft_wasm(package.path()).is_err());
+    }
+
+    #[test]
+    fn graft_required_files_cover_every_published_parser_and_query() {
+        let files = graft_required_files();
+        assert_eq!(
+            files.iter().filter(|file| file.ends_with(".wasm")).count(),
+            24
+        );
+        assert_eq!(
+            files.iter().filter(|file| file.ends_with(".scm")).count(),
+            13
+        );
+        assert_eq!(
+            files
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            files.len()
+        );
+    }
+
+    #[test]
+    fn graft_pins_portable_runtime_dependencies_and_disables_implicit_upgrades() {
+        let config = graft_package_json();
+        assert_eq!(
+            config["overrides"]["web-tree-sitter"],
+            GRAFT_WEB_PARSER_VERSION
+        );
+        assert_eq!(config["overrides"]["tree-sitter-wasm"], GRAFT_WASM_VERSION);
+        assert_eq!(config["dependencies"]["@nanonets/graft"], "file:graft.tgz");
+    }
 
     #[tokio::test]
     async fn stalled_metadata_times_out_and_a_new_request_can_recover() {

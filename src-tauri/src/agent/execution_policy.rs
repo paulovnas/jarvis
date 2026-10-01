@@ -199,9 +199,16 @@ pub(super) fn inspect_tool(
         ),
         "terminal_close" => ExecutionOperation::ProcessControl,
         "http_send" => ExecutionOperation::Network,
-        "video_run" => {
+        "video_run" | "video_audio" => {
             ExecutionOperation::Command(parse_or_dynamic("hyperframes native-video-task"))
         }
+        "image_process" => ExecutionOperation::Declared {
+            read_paths: vec![PathBuf::from(".")],
+            write_paths: vec![PathBuf::from(".")],
+            network: false,
+            persistent_process: false,
+            destructive: false,
+        },
         "jarvis_propose_publication" => publication_operation(&tool.args, project_root),
         _ => return Ok(None),
     };
@@ -211,6 +218,11 @@ pub(super) fn inspect_tool(
         scope: &scope,
         operation,
     });
+    if tool.name == "image_process" {
+        // This tool accepts only attachment IDs and closed processing options.
+        // Its argv is host-owned; do not infer opaque-shell network privileges.
+        outcome.command = Some(parse_or_dynamic("comfyui native-image-task"));
+    }
     let native_requested = tool.args["sandboxPermissions"] == "require_escalated";
     let external_command = outcome.command.is_some()
         && matches!(
@@ -1004,6 +1016,20 @@ mod tests {
         assert_eq!(plan.invocations[0].argv, ["rg", "two words", "src"]);
         assert_eq!(plan.invocations[1].argv, ["git", "status", "--short"]);
         assert!(!plan.dynamic);
+    }
+
+    #[test]
+    fn native_image_processing_has_a_command_sandbox_without_network() {
+        let policy = inspect_tool(
+            Path::new("/workspace/project"),
+            &tool("image_process", serde_json::json!({})),
+            capabilities(Effect::Stateful),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(policy.outcome.command.is_some());
+        assert!(!policy.outcome.effects.uses_network);
+        assert!(super::super::execution_sandbox::prepare(&policy).is_some());
     }
 
     #[test]

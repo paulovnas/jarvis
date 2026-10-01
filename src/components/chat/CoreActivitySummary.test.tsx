@@ -68,6 +68,48 @@ it("shows video tool calls under the managed Hyperframes resource", async () => 
   expect(screen.getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();
 });
 
+it("keeps structural Graft activity separate from Context-mode reductions and preserves fallback warnings", async () => {
+  const user = userEvent.setup();
+  const graph: CoreActivity = { component: "graft", action: "code_discovery", status: "reused", summary: "Mapa estrutural do projeto reutilizado.", sources: ["src/auth.ts"], durationMs: 4 };
+  const fallback: CoreActivity = { ...graph, action: "structural_fallback", status: "unavailable", summary: "Índice indisponível; leitura nativa utilizada.", sources: [] };
+  render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", coreActivities: [graph, fallback], tools: [
+    { id: "graft", name: "graft_find_code", status: "completed" },
+    { id: "ctx", name: "ctx_search", status: "completed" },
+  ] }]} />);
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  const graft = screen.getByText("Graft").closest("li")!;
+  expect(within(graft).getByText("Automático")).toBeVisible();
+  expect(within(graft).getByText(/Mapa estrutural do projeto reutilizado/)).toBeVisible();
+  expect(within(graft).getByText(/Índice indisponível; leitura nativa utilizada/)).toBeVisible();
+  expect(within(graft).getByText("src/auth.ts")).toBeVisible();
+  expect(within(graft).getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();
+  const context = screen.getByText("Context-mode").closest("li")!;
+  expect(within(context).queryByText("Automático")).not.toBeInTheDocument();
+  expect(within(context).getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();
+  expect(screen.getByLabelText("Há recursos com avisos")).toBeVisible();
+});
+
+it("separates audio generation from Hyperframes verification without claiming pending or failed calls succeeded", async () => {
+  const user = userEvent.setup();
+  const narration: CoreActivity = { ...prepared, component: "audiovisual", action: "narration", summary: "Narração PT-BR gerada localmente", sources: ["presentation/audio/narration.wav"] };
+  render(<CoreActivitySummary steps={[{ ...step, coreActivities: [narration], tools: [
+    { id: "narration", name: "video_audio", args: { action: "narrate" }, status: "completed" },
+    { id: "music", name: "video_audio", args: { action: "music" }, status: "running" },
+    { id: "failed", name: "video_audio", status: "error" },
+    { id: "verify", name: "video_presentation", status: "completed" },
+  ] }]} />);
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  const audio = screen.getByText("Audiovisual").closest("li")!;
+  expect(within(audio).getByText("Automático")).toBeVisible();
+  expect(within(audio).getByText(/Narração PT-BR gerada localmente/)).toBeVisible();
+  expect(within(audio).getByText("presentation/audio/narration.wav")).toBeVisible();
+  expect(within(audio).getByText("Solicitado pelo agente: 1 chamada concluída · 1 em andamento · 1 não concluída(s).")).toBeVisible();
+  const video = screen.getByText("Hyperframes").closest("li")!;
+  expect(within(video).getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();
+  expect(within(video).queryByText("Automático")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Há recursos com avisos")).toBeVisible();
+});
+
 function diagnostic(path: string, status: CoreActivity["status"], summary: string): CoreActivity {
   return { ...prepared, component: "lsp", action: "file_diagnostics", sources: [path], status, summary, fingerprint: "current" };
 }
@@ -108,4 +150,34 @@ it("resolves an old warning only after a fresh successful check of the same file
   await user.click(screen.getByRole("button", { name: /2 avisos resolvidos/ }));
   expect(screen.getByText(/Export ausente/)).toBeVisible();
   expect(screen.getByText(/Servidor encerrou/)).toBeVisible();
+});
+
+it("groups image processing under ComfyUI without mixing audiovisual resources", async () => {
+  const user = userEvent.setup();
+  render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [{ id: "image-process", name: "image_process", status: "completed" }] }]} />);
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  expect(screen.getByText("ComfyUI")).toBeVisible();
+  expect(screen.queryByText("Hyperframes")).not.toBeInTheDocument();
+  expect(screen.queryByText("Audiovisual")).not.toBeInTheDocument();
+  expect(screen.getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();
+});
+
+const generatedImageReceipt = { kind: "generated_image", accountAlias: "configured-images", model: "image-model", images: [{ id: "image-1", conversationId: "chat-1", name: "banner.png", mime: "image/png", kind: "image", size: 1200 }], text: "" };
+
+it("shows the mandatory internal ComfyUI workflow when a completed generation receipt proves it", async () => {
+  const user = userEvent.setup();
+  render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [{ id: "delegated-image", name: "generate_image", status: "completed", output: JSON.stringify({ ...generatedImageReceipt, processing: { engine: "comfyui" } }) }] }]} />);
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  expect(screen.getByText("ComfyUI")).toBeVisible();
+  expect(screen.getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();
+});
+
+it.each([
+  JSON.stringify(generatedImageReceipt),
+  JSON.stringify({ ...generatedImageReceipt, processing: { engine: "other-engine" } }),
+  JSON.stringify({ kind: "generated_image", processing: { engine: "comfyui" } }),
+  "invalid json",
+])("does not invent ComfyUI usage for a raw, legacy or invalid image receipt (%s)", output => {
+  render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [{ id: "raw-image", name: "generate_image", status: "completed", output }] }]} />);
+  expect(screen.queryByRole("button", { name: /Recursos do Core/ })).not.toBeInTheDocument();
 });

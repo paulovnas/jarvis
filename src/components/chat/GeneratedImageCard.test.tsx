@@ -44,3 +44,36 @@ it("replaces the skeleton with the failed generation message", () => {
   expect(screen.getByRole("alert")).toHaveTextContent("O limite de geração");
   expect(screen.queryByRole("status", { name: "Gerando imagem" })).not.toBeInTheDocument();
 });
+
+it("shows the delegated specialist result once and identifies the actual image model", async () => {
+  vi.mocked(invoke).mockResolvedValue("data:image/png;base64,aW1hZ2U=");
+  const output = JSON.stringify({ kind: "generated_image", accountAlias: "configured-images", model: "configured-image-model", images: [image], text: "", sourcePaths: ["output/images/banner.webp"], agentId: "image-worker", role: "image_generator", processing: { engine: "comfyui" } });
+  render(<AssistantMessageTurn message={message({ id: "image-facade", name: "generate_image", status: "completed", output })} />);
+  expect(await screen.findAllByRole("img", { name: image.name })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: `Ampliar ${image.name}` })).toHaveLength(1);
+  expect(screen.getByText("configured-image-model")).toHaveAttribute("title", "configured-images / configured-image-model");
+  expect(screen.queryByText("Gemini 3.1 Flash Image")).not.toBeInTheDocument();
+});
+
+it("renders a processed image returned by a direct specialist edit", async () => {
+  vi.mocked(invoke).mockResolvedValue("data:image/png;base64,aW1hZ2U=");
+  render(<AssistantMessageTurn message={message({ id: "processed-image", name: "image_process", status: "completed", output: result })} />);
+  expect(await screen.findByRole("img", { name: image.name })).toBeVisible();
+  expect(screen.getByRole("button", { name: `Ampliar ${image.name}` })).toBeVisible();
+});
+
+it("shows the verified source resolution while keeping the memory-bounded preview", async () => {
+  const user = userEvent.setup();
+  vi.mocked(invoke).mockResolvedValue("data:image/png;base64,aW1hZ2U=");
+  const output = JSON.stringify({ kind: "generated_image", accountAlias: "images", model: "image-model", images: [image], text: "", processing: { engine: "comfyui", images: [{ path: "image-01.png", width: 4096, height: 3072 }] } });
+  render(<AssistantMessageTurn message={message({ id: "large-output", name: "generate_image", status: "completed", output })} />);
+  await user.click(screen.getByRole("button", { name: `Ampliar ${image.name}` }));
+  const dialog = await screen.findByRole("dialog");
+  const preview = await within(dialog).findByRole("img", { name: image.name });
+  Object.defineProperties(preview, { naturalWidth: { value: 2048 }, naturalHeight: { value: 1536 } });
+  fireEvent.load(preview);
+  expect(within(dialog).getByText("4096 × 3072 px")).toBeVisible();
+  expect(within(dialog).queryByText("2048 × 1536 px")).not.toBeInTheDocument();
+  expect(within(dialog).getByText("1,2 KB")).toBeVisible();
+  expect(invoke).toHaveBeenCalledWith("get_chat_attachment_image", { conversationId: "chat1", id: "a1", full: true });
+});

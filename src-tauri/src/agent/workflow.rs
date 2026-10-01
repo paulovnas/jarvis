@@ -5,6 +5,7 @@ mod contracts;
 mod custom;
 mod dispatch;
 mod guidance;
+mod image;
 mod publishing;
 mod recovery;
 pub(crate) mod settings;
@@ -16,6 +17,8 @@ use super::*;
 pub use commands::*;
 pub use contracts::Flow;
 pub(super) use contracts::Role;
+pub(super) use image::definition as image_definition;
+pub(super) use image::specialist_tools as image_tools;
 use std::{collections::BTreeMap, path::Path};
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -542,7 +545,7 @@ impl Execution {
         &self.hub.root
     }
     pub(super) fn secondary_model(&self) -> Result<Option<settings::ModelChoice>, AgentError> {
-        if super::companion_chat::is_global_session(&self.hub.root.id) {
+        if super::companion_chat::is_global_session(&self.hub.root.id) && !self.image_generator() {
             return Ok(None);
         }
         let state = self
@@ -600,7 +603,7 @@ impl Execution {
             .ok_or_else(AgentError::internal)
     }
     pub(super) fn direct(&self) -> bool {
-        self.flow.direct()
+        (self.id == "main" && self.flow.direct())
             || (self.flow == Flow::Custom
                 && self.id == "main"
                 && self
@@ -624,6 +627,20 @@ impl Execution {
     }
     pub(super) fn designer(&self) -> bool {
         self.role == Role::Designer
+    }
+    pub(super) fn image_generator(&self) -> bool {
+        self.role == Role::ImageGenerator
+            || (self.flow == Flow::Custom
+                && self
+                    .custom_agent()
+                    .is_ok_and(|agent| agent.native_role == Some(Role::ImageGenerator)))
+    }
+    pub(super) fn video_specialist(&self) -> bool {
+        self.role == Role::Video
+            || (self.flow == Flow::Custom
+                && self
+                    .custom_agent()
+                    .is_ok_and(|agent| agent.native_role == Some(Role::Video)))
     }
     pub(super) fn native_app(&self) -> Option<&tauri::AppHandle> {
         self.hub.env.browser_app.as_ref()
@@ -795,7 +812,7 @@ impl Execution {
     }
 
     pub(super) fn filter(&self, definitions: &mut Vec<Value>) {
-        if super::companion_chat::is_global_session(&self.hub.root.id) {
+        if super::companion_chat::is_global_session(&self.hub.root.id) && !self.image_generator() {
             definitions.retain(|definition| {
                 definition["name"]
                     .as_str()
@@ -823,7 +840,19 @@ impl Execution {
     }
     pub(super) fn allowed(&self, name: &str) -> bool {
         if super::companion_chat::is_global_session(&self.hub.root.id) {
-            return super::companion_chat::allowed_tool(name);
+            if !self.image_generator() {
+                return super::companion_chat::allowed_tool(name);
+            }
+            return matches!(
+                name,
+                "generate_image"
+                    | "image_process"
+                    | "read_attachment"
+                    | "vision"
+                    | "inspect_image"
+                    | "ask_user"
+                    | "hub_complete"
+            ) || name == crate::agent::progress::TOOL_NAME;
         }
         if self.flow == Flow::Publication
             && self.role == Role::Builder
@@ -899,12 +928,36 @@ impl Execution {
         {
             return Some("Aguarde o Construtor concluir a resolução com hub_wait antes de editar ou continuar a publicação.".into());
         }
+        if self.image_generator()
+            && matches!(tool.name.as_str(), "generate_image" | "image_process")
+            && tool.args["processing"]["output_directory"]
+                .as_str()
+                .is_some_and(|path| {
+                    super::companion_chat::is_global_session(&self.hub.root.id)
+                        || !dispatch::path_allowed(
+                            &self.hub.root.root,
+                            &json!({"path":path}),
+                            &self.scope,
+                            self.role,
+                        )
+                })
+        {
+            return Some("A exportação de imagens deve permanecer no escopo atribuído. Na conversa geral, entregue os anexos sem uma pasta de projeto.".into());
+        }
         let screenshot_export =
             tool.name == "browser_screenshot" && tool.args["savePath"].is_string();
+        let audio_export = tool.name == "video_audio";
         let paths_allowed = if screenshot_export {
             dispatch::path_allowed(
                 &self.hub.root.root,
                 &json!({"path":tool.args["savePath"]}),
+                &self.scope,
+                self.role,
+            )
+        } else if audio_export {
+            dispatch::path_allowed(
+                &self.hub.root.root,
+                &json!({"path":tool.args["output"]}),
                 &self.scope,
                 self.role,
             )
@@ -925,7 +978,9 @@ impl Execution {
         } else {
             dispatch::path_allowed(&self.hub.root.root, &tool.args, &self.scope, self.role)
         };
-        if (screenshot_export || matches!(tool.name.as_str(), "write" | "edit" | "apply_patch"))
+        if (screenshot_export
+            || audio_export
+            || matches!(tool.name.as_str(), "write" | "edit" | "apply_patch"))
             && !paths_allowed
         {
             return Some("O arquivo está fora do escopo atribuído ao agente.".into());
@@ -1210,12 +1265,14 @@ fn recovery_inspection_tool(name: &str, mcp_mutating: bool) -> bool {
             | "design_search"
             | "design_read"
             | "video_docs"
+            | "video_presentation"
             | "ctx_search"
             | "ctx_stats"
             | "beads_show"
             | "beads_list"
             | "beads_ready"
     ) || name.starts_with("lsp_")
+        || name.starts_with("graft_")
         || name.starts_with("context7_")
         || matches!(
             name,

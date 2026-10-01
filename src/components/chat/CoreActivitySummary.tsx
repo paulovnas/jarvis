@@ -4,25 +4,31 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { CoreActivity } from "@/core/chat";
+import type { CoreId } from "@/core/core-components";
+import { readGeneratedImages } from "@/core/image-generation";
 import type { AssistantWorkData, ToolCallItem } from "./types";
 
-const names: Record<CoreActivity["component"], string> = {
+const names: Record<CoreId, string> = {
   "context-mode": "Context-mode", ponytail: "Ponytail", beads: "Beads",
-  "open-design": "Open Design", context7: "Context7", lsp: "LSP", hyperframes: "Hyperframes",
+  "open-design": "Open Design", context7: "Context7", lsp: "LSP", hyperframes: "Hyperframes", audiovisual: "Audiovisual", comfyui: "ComfyUI", graft: "Graft",
 };
 const statuses = { applied: "Aplicado", reused: "Reutilizado", unavailable: "Indisponível", pending: "Aguardando diagnóstico", issues: "Diagnósticos encontrados" };
 
-function componentFor(tool: ToolCallItem): CoreActivity["component"] | undefined {
+function componentFor(tool: ToolCallItem): CoreId | undefined {
   if (tool.name.startsWith("ctx_")) return "context-mode";
+  if (tool.name.startsWith("graft_")) return "graft";
   if (tool.name.startsWith("design_")) return "open-design";
   if (tool.name.startsWith("context7_")) return "context7";
   if (tool.name.startsWith("beads_")) return "beads";
   if (tool.name.startsWith("lsp_")) return "lsp";
+  if (tool.name === "video_audio") return "audiovisual";
+  if (tool.name === "image_process") return "comfyui";
+  if (tool.name === "generate_image" && tool.status === "completed" && readGeneratedImages(tool.output)?.processing?.engine === "comfyui") return "comfyui";
   if (tool.name.startsWith("video_")) return "hyperframes";
 }
 
 type DiagnosticState = { current: CoreActivity; warning?: CoreActivity; resolved?: CoreActivity };
-type Resource = { id: CoreActivity["component"]; receipts: CoreActivity[]; tools: ToolCallItem[]; diagnostics: Map<string, DiagnosticState> };
+type Resource = { id: CoreId; receipts: CoreActivity[]; tools: ToolCallItem[]; diagnostics: Map<string, DiagnosticState> };
 
 function hasWarning(status: CoreActivity["status"]) {
   return status === "unavailable" || status === "pending" || status === "issues";
@@ -30,8 +36,8 @@ function hasWarning(status: CoreActivity["status"]) {
 
 export function CoreActivitySummary({ steps }: { steps: AssistantWorkData["steps"] }) {
   const resources = useMemo(() => {
-    const grouped = new Map<CoreActivity["component"], Resource>();
-    const get = (id: CoreActivity["component"]) => {
+    const grouped = new Map<CoreId, Resource>();
+    const get = (id: CoreId) => {
       let resource = grouped.get(id);
       if (!resource) { resource = { id, receipts: [], tools: [], diagnostics: new Map() }; grouped.set(id, resource); }
       return resource;
