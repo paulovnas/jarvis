@@ -1,7 +1,12 @@
+use super::super::claude_executor::projection::mapped_call;
 use super::super::*;
+
+pub(super) type McpRoutes =
+    std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>;
 
 #[derive(Default)]
 pub(super) struct Projection {
+    pub routes: McpRoutes,
     native_session: Option<String>,
     last_response: Option<String>,
     calls: Vec<ToolCall>,
@@ -119,24 +124,16 @@ fn usage(value: &Value, previous: Option<&Usage>) -> Option<Usage> {
     })
 }
 
-fn mapped_call(name: &str, args: Value) -> (String, Value) {
-    let name = name.strip_prefix("mcp__jarvis__").unwrap_or(name);
-    if name == "call_mcp_tool" {
-        if let Some(external) = args["name"]
-            .as_str()
-            .filter(|name| name.starts_with("mcp_"))
-        {
-            return (external.into(), args["arguments"].clone());
-        }
-    }
-    (name.into(), args)
+pub(super) fn routed_name(routes: &McpRoutes, server: &str, name: &str) -> Option<String> {
+    routes.get(server)?.get(name).cloned()
 }
 
-fn native_tool(step: &Value, id: &str) -> Option<ToolCall> {
+fn native_tool(step: &Value, id: &str, routes: &McpRoutes) -> Option<ToolCall> {
     let parameters = &step["tool_info"]["parameters"];
-    if step["step_type"] != "tool" || parameters["ServerName"] != "jarvis" {
+    if step["step_type"] != "tool" {
         return None;
     }
+    let server = parameters["ServerName"].as_str()?;
     let name = parameters["ToolName"]
         .as_str()
         .filter(|name| !name.is_empty())?;
@@ -147,7 +144,11 @@ fn native_tool(step: &Value, id: &str) -> Option<ToolCall> {
     if !args.is_object() {
         return None;
     }
-    let (name, args) = mapped_call(name, args);
+    let (name, args) = if server == "jarvis" {
+        mapped_call(name, args)
+    } else {
+        (routed_name(routes, server, name)?, args)
+    };
     Some(ToolCall {
         id: id.into(),
         name,
@@ -207,7 +208,7 @@ impl Projection {
                 .entry(key.clone())
                 .or_insert_with(std::time::Instant::now);
             let duration_ms = started.elapsed().as_millis() as u64;
-            let tool = native_tool(native, &key);
+            let tool = native_tool(native, &key, &self.routes);
             let dispatched =
                 if let Some(tool) = &tool {
                     self.associated_calls.contains(&tool.id) || {
@@ -387,6 +388,57 @@ mod tests {
     }
     fn tool(session: &str, index: u64, args: Value) -> Value {
         json!({"event":"step_update","step_update":{"conversation_id":session,"step_index":index,"state":"ACTIVE","step_type":"tool","tool_name":"call_mcp_tool","tool_info":{"name":"call_mcp_tool","parameters":{"ServerName":"jarvis","ToolName":"read","Arguments":args}}}})
+    }
+
+    #[test]
+    fn original_mcp_names_correlate_to_scoped_jarvis_receipts_without_native_tool_access() {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve("List notebooks".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        let routes = McpRoutes::from([
+            (
+                "gemini-notebook-mcp".into(),
+                std::collections::BTreeMap::from([(
+                    "list_notebooks".into(),
+                    "mcp_notebook_list_hash".into(),
+                )]),
+            ),
+            (
+                "other".into(),
+                std::collections::BTreeMap::from([(
+                    "list_notebooks".into(),
+                    "mcp_other_list_hash".into(),
+                )]),
+            ),
+        ]);
+        let mut projection = Projection {
+            routes,
+            ..Projection::default()
+        };
+        projection.apply(&session, &init("native")).unwrap();
+        for (index, server, canonical) in [
+            (32, "gemini-notebook-mcp", "mcp_notebook_list_hash"),
+            (33, "other", "mcp_other_list_hash"),
+        ] {
+            let event = json!({"event":"step_update","step_update":{"conversation_id":"native","step_index":index,"state":"ACTIVE","step_type":"tool","tool_name":"call_mcp_tool","tool_info":{"parameters":{"ServerName":server,"ToolName":"list_notebooks","Arguments":{}}}}});
+            projection.apply(&session, &event).unwrap();
+            let receipt = projection.take_tool(canonical, json!({}), None).unwrap();
+            assert_eq!(receipt.id, format!("agy:native:{index}"));
+            assert!(projection.take_tool(canonical, json!({}), None).is_none());
+        }
+        assert!(routed_name(&projection.routes, "gemini-notebook-mcp", "bash").is_none());
+        assert!(routed_name(&projection.routes, "unknown", "list_notebooks").is_none());
+        let (name, args) = mapped_call(
+            "execute_mcp_tool",
+            json!({"name":"mcp_notebook_list_hash","arguments":{}}),
+        );
+        assert_eq!((name.as_str(), args), ("mcp_notebook_list_hash", json!({})));
+        assert_eq!(
+            mapped_call("execute_mcp_tool", json!({"name":"bash","arguments":{}})).0,
+            "execute_mcp_tool"
+        );
     }
 
     #[test]

@@ -7,7 +7,8 @@ mod usage;
 
 pub(crate) use metadata::{AgyState, RuntimeStatus};
 pub(crate) use transport::{
-    prepare_executor_workspace, private_directory as prepare_workspace, AgyProcess, RunOptions,
+    prepare_executor_workspace, private_directory as prepare_workspace, validate_mcp_aliases,
+    AgyProcess, RunOptions,
 };
 
 #[tauri::command]

@@ -101,9 +101,15 @@ pub(super) async fn run(
         let workspace = crate::data_dir::root(bridge.runtime.home)
             .join("executors").join("agy").join(&session.id);
         crate::agy::prepare_executor_workspace(&session.root, &workspace).map_err(runtime_error)?;
+        let routes = bridge.clients.native_routes();
+        let aliases: Vec<_> = routes.keys().cloned().collect();
+        let mut definitions = bridge.definitions().await?;
+        definitions.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
+        // Native AGY snapshots MCP namespaces and schemas. Reuse its conversation
+        // only when the tool contract matches, preserving receipts via handoff.
         let profile = format!("{:x}", Sha256::digest(format!("{}\n{}", bridge.prompt,
-            serde_json::to_string(&options).map_err(|_| AgentError::internal())?)));
-        let mut server = mcp_server::Server::open_for(&workspace, &profile).await.map_err(runtime_error)?;
+            serde_json::to_string(&(&options, &routes, &definitions)).map_err(|_| AgentError::internal())?)));
+        let mut server = mcp_server::Server::open_with_aliases(&workspace, &profile, &aliases).await.map_err(runtime_error)?;
         if native_id.is_some() && !server.resume_compatible {
             session.update_async(|data| {
                 if let Some(turn) = data.turns.last_mut() {
@@ -124,6 +130,7 @@ pub(super) async fn run(
             cwd: session.root.clone(), workspace_dir: workspace,
             session_id: native_id.clone(), model: options.model, effort: options.reasoning,
             prompt: bridge.prompt.clone(), mcp_url: server.url.clone(), mcp_token: server.token.clone(),
+            mcp_aliases: aliases,
         }).map_err(runtime_error)?;
         session.transition(turn_state::TurnPhase::Sampling)?;
         let mut run_signal = signal.clone();
@@ -266,11 +273,13 @@ async fn drive(
     let mut reminders = HashSet::new();
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     loop {
+        projection.routes = bridge.clients.native_routes();
         tokio::select! {
             biased;
             _ = cancelled(signal) => return Err(AgentError::cancelled()),
             request = server.requests.recv() => {
                 let request = request.ok_or_else(AgentError::internal)?;
+                let Some(request) = prepare_alias_request(bridge, request).await? else { continue; };
                 if pending.len() >= 64 { return Err(runtime_error("O Antigravity CLI excedeu a fila de ferramentas pendentes.".into())); }
                 pending.push_back((request, std::time::Instant::now()));
             }
@@ -307,7 +316,7 @@ async fn drive(
             let (request, received) = &pending[index];
             let replayed = claude_executor::replay_request(
                 session,
-                &format!("{}:{}", bridge.request_scope, request.message["id"]),
+                &format!("{}:{}", bridge.request_scope, request_id(request)),
             )?
             .is_some();
             let tool = if request.message["method"] == "tools/call" && !replayed {
@@ -342,6 +351,67 @@ async fn drive(
     }
 }
 
+fn request_id(request: &mcp_server::Request) -> String {
+    format!(
+        "{}:{}",
+        request.server.as_deref().unwrap_or("jarvis"),
+        request.message["id"],
+    )
+}
+
+fn alias_schemas(
+    definitions: &[Value],
+    routes: &projection::McpRoutes,
+    server: &str,
+) -> Vec<Value> {
+    let Some(tools) = routes.get(server) else {
+        return vec![];
+    };
+    definitions
+        .iter()
+        .filter_map(|definition| {
+            let name = definition["name"].as_str()?;
+            let original = tools
+                .iter()
+                .find_map(|(original, canonical)| (canonical == name).then_some(original.as_str()))?;
+            Some(json!({"name":original,"description":definition["description"],"inputSchema":definition["parameters"]}))
+        })
+        .collect()
+}
+
+async fn prepare_alias_request(
+    bridge: &mut Bridge<'_>,
+    mut request: mcp_server::Request,
+) -> Result<Option<mcp_server::Request>, AgentError> {
+    let Some(server) = request.server.as_deref() else {
+        return Ok(Some(request));
+    };
+    let result = match request.message["method"].as_str() {
+        Some("tools/list") => {
+            let definitions = bridge.definitions().await?;
+            let tools = alias_schemas(&definitions, &bridge.clients.native_routes(), server);
+            json!({"tools":tools})
+        }
+        Some("tools/call") => {
+            let name = request.message["params"]["name"]
+                .as_str()
+                .unwrap_or_default();
+            if let Some(name) =
+                projection::routed_name(&bridge.clients.native_routes(), server, name)
+            {
+                request.message["params"]["name"] = json!(name);
+                return Ok(Some(request));
+            }
+            json!({"isError":true,"content":[{"type":"text","text":json!({"executed":false,"recoverable":true,"error":{"code":"tool_unavailable","message":"This tool is not in the selected MCP catalog. Use its tools/list schema or Jarvis mcp_search_tools to discover a permitted tool; no action was executed."}}).to_string()}]})
+        }
+        _ => return Ok(Some(request)),
+    };
+    let _ = request
+        .response
+        .send(json!({"jsonrpc":"2.0","id":request.message["id"],"result":result}));
+    Ok(None)
+}
+
 async fn respond(
     bridge: &mut Bridge<'_>,
     process: &mut AgyProcess,
@@ -351,7 +421,7 @@ async fn respond(
     expected: Option<&str>,
     signal: &mut watch::Receiver<bool>,
 ) -> Result<(), AgentError> {
-    let id = request.message["id"].to_string();
+    let id = request_id(&request);
     let wrapped = json!({"subtype":"mcp_message","server_name":"jarvis","message":request.message});
     let session = bridge.session;
     let operation = claude_executor::control_request(bridge, &id, &wrapped, tool);
@@ -378,6 +448,79 @@ async fn respond(
 mod tests {
     use super::*;
     use crate::agent::tests::{options, session, Fixture};
+
+    #[test]
+    fn alias_catalog_preserves_original_schemas_without_expanding_permission_or_deferred_scope() {
+        let routes = std::collections::BTreeMap::from([
+            (
+                "gemini-notebook-mcp".into(),
+                std::collections::BTreeMap::from([
+                    ("list_notebooks".into(), "mcp_notebook_list_hash".into()),
+                    ("delete_notebook".into(), "mcp_notebook_delete_hash".into()),
+                ]),
+            ),
+            (
+                "other".into(),
+                std::collections::BTreeMap::from([(
+                    "list_notebooks".into(),
+                    "mcp_other_list_hash".into(),
+                )]),
+            ),
+        ]);
+        let input = json!({"type":"object","properties":{},"additionalProperties":false});
+        let definitions = vec![
+            json!({"name":"mcp_notebook_list_hash","description":"List notebooks","parameters":input}),
+            json!({"name":"mcp_other_list_hash","parameters":input}),
+            json!({"name":"bash","parameters":input}),
+            json!({"name":"mcp_search_tools","parameters":{"type":"object","required":["query"]}}),
+        ];
+        let tools = alias_schemas(&definitions, &routes, "gemini-notebook-mcp");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "list_notebooks");
+        assert_eq!(tools[0]["inputSchema"], input);
+        assert!(alias_schemas(&definitions, &routes, "unconfigured").is_empty());
+        // Deferred or forbidden tools are absent even if their origin is known.
+        assert_eq!(
+            alias_schemas(&definitions[1..], &routes, "gemini-notebook-mcp").len(),
+            0
+        );
+        let mut routes = routes;
+        routes
+            .get_mut("gemini-notebook-mcp")
+            .unwrap()
+            .insert("mcp_search_tools".into(), "mcp_notebook_search_hash".into());
+        let mut definitions = definitions;
+        definitions.push(json!({"name":"mcp_notebook_search_hash","parameters":input}));
+        let tools = alias_schemas(&definitions, &routes, "gemini-notebook-mcp");
+        assert_eq!(
+            tools
+                .iter()
+                .filter(|tool| tool["name"] == "mcp_search_tools")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn json_rpc_ids_from_different_mcp_connections_cannot_replay_each_others_receipts() {
+        let make = |server: Option<&str>, id: Value| {
+            let (response, _) = tokio::sync::oneshot::channel();
+            mcp_server::Request {
+                server: server.map(str::to_owned),
+                message: json!({"id":id}),
+                response,
+            }
+        };
+        let jarvis = make(None, json!(1));
+        let notebook = make(Some("gemini-notebook-mcp"), json!(1));
+        let other = make(Some("other"), json!(1));
+        assert_ne!(request_id(&jarvis), request_id(&notebook));
+        assert_ne!(request_id(&notebook), request_id(&other));
+        assert_ne!(
+            request_id(&notebook),
+            request_id(&make(Some("gemini-notebook-mcp"), json!("1")))
+        );
+    }
 
     #[tokio::test]
     async fn durable_resume_is_used_only_until_an_executor_switch_or_fallback() {

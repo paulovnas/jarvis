@@ -105,8 +105,16 @@ advertised effort variants do not expose an adjustable reasoning selector.
 A private durable workspace contains the generated custom agent. The real project
 is an additional directory; HOME, global MCP configuration and login credentials
 are unchanged. The custom agent excludes default components and inherited MCPs.
-Its only MCP server is the authenticated loopback Jarvis bridge, which reuses
-the existing role, project, autonomy, tool, Core and workflow contracts.
+Every configured MCP namespace points to the authenticated loopback Jarvis bridge,
+which reuses the existing role, project, autonomy, tool, Core and workflow contracts.
+Already connected integrations also expose their original server/tool names through
+scoped local aliases, so a native call to `gemini-notebook-mcp/list_notebooks` reaches
+the same validated canonical Jarvis tool. Alias catalogs retain current role and
+deferred-schema filtering; they never connect unrelated integrations eagerly.
+Discovery controls remain on `jarvis`, whose `execute_mcp_tool` gateway avoids
+confusion with AGY's native `call_mcp_tool` dispatcher. Discovery receipts describe
+the actual executor route, while each callback receipt includes its MCP namespace
+to prevent JSON-RPC ID collisions across connections.
 Native execution outside this bridge stops the process. The CLI's internal
 `manage_task(Action="list")` query is bookkeeping and can continue without a
 Jarvis tool effect. Mutating task actions still require the Jarvis execution path.
@@ -125,7 +133,8 @@ AGY also snapshots custom-agent instructions and MCP endpoints in a conversation
 Jarvis therefore persists a private loopback port, bearer token and static execution
 profile in the executor workspace, outside journals and exported backups. Restart
 rebinds that port and retains the token. If the port is occupied or the execution
-profile changes, a new native conversation receives the bounded handoff, including
+profile (including current MCP routes and exposed schemas) changes, a new native
+conversation receives the bounded handoff, including
 confirmed receipts from an interrupted current turn. Live workflow, task and memory
 context is sent with the current request, rather than frozen in the custom agent.
 Tool identity uses the native conversation and step index. Confirmed receipts are
@@ -149,6 +158,22 @@ custom-agent discovery and two real MCP dispatches across a native conversation
 restart. The smoke project remained empty and both processes were cleaned up.
 The installed Jarvis application and native Windows/Linux executors were not
 exercised by this validation.
+
+### Native MCP namespace regression (2026-09-30)
+
+The Salesforce conversation resumed successfully after an MCP startup timeout,
+but AGY then requested `gemini-notebook-mcp/list_notebooks` directly. The previous
+single-namespace bridge rejected that native route before any Jarvis tool receipt.
+The scoped loopback aliases above correct that routing mismatch without forwarding
+credentials, bypassing tool validation, or permitting native project effects.
+
+Validation: `bun run check` passed (1,075 tests, one existing skip), Clippy passed
+with warnings denied, and the complete Rust suite passed (1,236 tests, 26 existing
+ignored). The installed AGY smoke passed two real inference/tool rounds: a Jarvis
+tool followed by an original-name MCP alias after restarting the same native
+conversation. This smoke uses a controlled MCP fixture, not the user's Notebook
+service. Packaged Windows/Linux and application UI runtime validation remain
+outside this check.
 
 ## References
 

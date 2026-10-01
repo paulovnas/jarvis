@@ -442,6 +442,7 @@ async fn agy_text(
         prompt,
         mcp_url: String::new(),
         mcp_token: String::new(),
+        mcp_aliases: vec![],
     })
     .map_err(|e| error(&e))?;
     process.send_user(&input).await.map_err(|e| error(&e))?;

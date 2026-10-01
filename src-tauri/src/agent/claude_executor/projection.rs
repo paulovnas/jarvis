@@ -258,9 +258,9 @@ fn step_for<'a>(turn: &'a mut StoredTurn, message: &str) -> &'a mut Step {
     &mut turn.turn.steps[index]
 }
 
-pub(super) fn mapped_call(name: &str, args: Value) -> (String, Value) {
+pub(in crate::agent) fn mapped_call(name: &str, args: Value) -> (String, Value) {
     let name = name.strip_prefix("mcp__jarvis__").unwrap_or(name);
-    if name == "call_mcp_tool" {
+    if matches!(name, "call_mcp_tool" | "execute_mcp_tool") {
         if let Some(external) = args["name"]
             .as_str()
             .filter(|name| name.starts_with("mcp_"))

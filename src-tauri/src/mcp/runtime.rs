@@ -1118,6 +1118,30 @@ impl TurnClients {
         })
     }
 
+    /// Native CLI namespaces retain the original route; execution still uses
+    /// the validated Jarvis catalog and its current role/scope restrictions.
+    pub(crate) fn native_routes(
+        &self,
+    ) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>> {
+        self.clients
+            .iter()
+            .filter(|client| client.server.name != "jarvis")
+            .map(|client| {
+                (
+                    client.server.name.clone(),
+                    client
+                        .tools
+                        .iter()
+                        .filter_map(|tool| {
+                            registered_name(tool)
+                                .map(|name| (tool.original.clone(), name.to_owned()))
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
     async fn reconnect_client(
         &mut self,
         client_index: usize,

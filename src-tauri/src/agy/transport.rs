@@ -43,6 +43,8 @@ pub(crate) struct RunOptions {
     /// Both empty for tool-free generation; otherwise a local per-run MCP bridge.
     pub mcp_url: String,
     pub mcp_token: String,
+    /// External server names, all routed through the same authenticated Jarvis bridge.
+    pub mcp_aliases: Vec<String>,
 }
 
 pub(crate) struct AgyProcess {
@@ -73,12 +75,41 @@ pub(crate) fn private_directory(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn validate_mcp_aliases(aliases: &[String]) -> Result<(), String> {
+    let mut names = std::collections::HashSet::new();
+    for alias in aliases {
+        if alias.is_empty()
+            || alias.len() > 48
+            || alias == "jarvis"
+            || !alias
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            || !names.insert(alias)
+        {
+            return Err("Alias da ponte MCP AGY inválido ou repetido.".into());
+        }
+    }
+    Ok(())
+}
+
 fn agent_document(options: &RunOptions) -> Result<String, String> {
     let tool_free = options.mcp_url.is_empty() && options.mcp_token.is_empty();
     let servers = if tool_free {
         json!([])
     } else {
-        json!([{"name":"jarvis","serverUrl":options.mcp_url,"headers":{"Authorization":format!("Bearer {}",options.mcp_token)}}])
+        let mut servers = vec![
+            json!({"name":"jarvis","serverUrl":options.mcp_url,"headers":{"Authorization":format!("Bearer {}",options.mcp_token)}}),
+        ];
+        for alias in &options.mcp_aliases {
+            let mut url = url::Url::parse(&options.mcp_url)
+                .map_err(|_| "Endereço da ponte AGY inválido.".to_owned())?;
+            url.path_segments_mut()
+                .map_err(|_| "Endereço da ponte AGY inválido.".to_owned())?
+                .pop_if_empty()
+                .push(alias);
+            servers.push(json!({"name":alias,"serverUrl":url.as_str(),"headers":{"Authorization":format!("Bearer {}",options.mcp_token)}}));
+        }
+        json!(servers)
     };
     let mut header = json!({
         "name":AGENT_NAME,"description":"Jarvis-managed agent; only Jarvis executes tools",
@@ -144,6 +175,10 @@ pub(super) fn command_for(
     options: &RunOptions,
 ) -> Result<(Command, PathBuf), String> {
     super::validate_selection(&options.model, options.effort.as_deref())?;
+    validate_mcp_aliases(&options.mcp_aliases)?;
+    if options.mcp_url.is_empty() && !options.mcp_aliases.is_empty() {
+        return Err("Aliases MCP AGY exigem uma ponte local autenticada.".into());
+    }
     prepare_executor_workspace(&options.cwd, &options.workspace_dir)?;
     if options.session_id.as_deref().is_some_and(|id| {
         id.is_empty()
@@ -222,10 +257,14 @@ impl AgyProcess {
     pub(crate) fn spawn(options: RunOptions) -> Result<Self, String> {
         let executable = super::metadata::executable().ok_or("Antigravity CLI não encontrado. Instale o CLI oficial e execute agy para entrar na sua conta.")?;
         let (command, agent_file) = command_for(&executable, &options)?;
-        Self::spawn_command(command, agent_file)
+        Self::spawn_command(command, agent_file, options.mcp_aliases)
     }
 
-    pub(super) fn spawn_command(mut command: Command, agent_file: PathBuf) -> Result<Self, String> {
+    pub(super) fn spawn_command(
+        mut command: Command,
+        agent_file: PathBuf,
+        mcp_aliases: Vec<String>,
+    ) -> Result<Self, String> {
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -249,7 +288,7 @@ impl AgyProcess {
         let (send, events) = mpsc::channel(64);
         let reader_events = send.clone();
         let reader = tokio::spawn(async move {
-            let error = read_events(&mut BufReader::new(stdout), &reader_events)
+            let error = read_events(&mut BufReader::new(stdout), &reader_events, &mcp_aliases)
                 .await
                 .err()
                 .unwrap_or_else(|| "AGY encerrou a saída sem confirmar a continuidade da sessão. O histórico foi preservado.".into());
@@ -363,6 +402,7 @@ impl Drop for AgyProcess {
 async fn read_events<R: AsyncBufRead + Unpin>(
     reader: &mut R,
     events: &mpsc::Sender<Result<Value, String>>,
+    aliases: &[String],
 ) -> Result<(), String> {
     let mut approved_steps = std::collections::HashSet::new();
     let mut bookkeeping_steps = std::collections::HashSet::new();
@@ -389,6 +429,9 @@ async fn read_events<R: AsyncBufRead + Unpin>(
             let name = name_field.and_then(Value::as_str);
             let server_field = step["tool_info"]["parameters"].get("ServerName");
             let server = server_field.and_then(Value::as_str);
+            let allowed_server = server.is_some_and(|server| {
+                server == "jarvis" || aliases.iter().any(|alias| alias == server)
+            });
             let index = step["step_index"].as_u64();
             let approved = index.is_some_and(|index| approved_steps.contains(&index));
             let bookkeeping_observed =
@@ -411,12 +454,12 @@ async fn read_events<R: AsyncBufRead + Unpin>(
             if !bookkeeping
                 && !provisional
                 && (name_field.is_some_and(|name| name != "call_mcp_tool")
-                    || server_field.is_some_and(|server| server != "jarvis")
-                    || (!approved && (name != Some("call_mcp_tool") || server != Some("jarvis"))))
+                    || (server_field.is_some() && !allowed_server)
+                    || (!approved && (name != Some("call_mcp_tool") || !allowed_server)))
             {
                 return Err(format!("AGY tentou usar uma ferramenta fora do Jarvis (tipo: {}; servidor: {}; ferramenta MCP: {}; etapa: {}; estado: {}). A sessão foi interrompida com o histórico preservado.", diagnostic_label(name), diagnostic_label(server), diagnostic_label(step["tool_info"]["parameters"]["ToolName"].as_str()), index.map_or_else(|| "ausente".into(), |index| index.to_string()), diagnostic_label(step["state"].as_str())));
             }
-            if name == Some("call_mcp_tool") && server == Some("jarvis") {
+            if name == Some("call_mcp_tool") && allowed_server {
                 if let Some(index) = index {
                     approved_steps.insert(index);
                 }
@@ -484,9 +527,9 @@ mod tests {
         let (events, _) = mpsc::channel(4);
         let mut reader =
             std::io::Cursor::new(b"{\"event\":\"init\",\"init\":{\"agent\":\"default\"}}\n");
-        assert!(read_events(&mut reader, &events).await.is_err());
+        assert!(read_events(&mut reader, &events, &[]).await.is_err());
         let mut reader = std::io::Cursor::new(b"{\"event\":\"init\",\"init\":{}}\n");
-        assert!(read_events(&mut reader, &events).await.is_err());
+        assert!(read_events(&mut reader, &events, &[]).await.is_err());
     }
 
     #[tokio::test]
@@ -502,7 +545,7 @@ mod tests {
             let rejected = json!({"event":"step_update","step_update":step});
             let input = format!("{previous}\n{rejected}\n");
             let (events, mut received) = mpsc::channel(4);
-            let error = read_events(&mut std::io::Cursor::new(input.as_bytes()), &events)
+            let error = read_events(&mut std::io::Cursor::new(input.as_bytes()), &events, &[])
                 .await
                 .unwrap_err();
             assert!(!error.contains("private secret"));
@@ -518,12 +561,58 @@ mod tests {
         let done = json!({"event":"step_update","step_update":{"step_index":1,"step_type":"tool","state":"DONE"}});
         let input = format!("{preview}\n{active}\n{done}\n");
         let (events, mut received) = mpsc::channel(4);
-        read_events(&mut std::io::Cursor::new(input.as_bytes()), &events)
+        read_events(&mut std::io::Cursor::new(input.as_bytes()), &events, &[])
             .await
             .unwrap();
         assert_eq!(received.try_recv().unwrap().unwrap(), preview);
         assert_eq!(received.try_recv().unwrap().unwrap(), active);
         assert_eq!(received.try_recv().unwrap().unwrap(), done);
+    }
+
+    #[tokio::test]
+    async fn configured_mcp_aliases_accept_native_dispatch_without_authorizing_other_servers_or_tools(
+    ) {
+        let aliases = vec!["gemini-notebook-mcp".into()];
+        let active = json!({"event":"step_update","step_update":{"step_index":32,"step_type":"tool","tool_name":"call_mcp_tool","state":"ACTIVE","tool_info":{"parameters":{"ServerName":"gemini-notebook-mcp","ToolName":"list_notebooks","Arguments":{}}}}});
+        let done = json!({"event":"step_update","step_update":{"step_index":32,"step_type":"tool","state":"DONE"}});
+        let input = format!("{active}\n{done}\n");
+        let (events, mut received) = mpsc::channel(4);
+        read_events(
+            &mut std::io::Cursor::new(input.as_bytes()),
+            &events,
+            &aliases,
+        )
+        .await
+        .unwrap();
+        assert_eq!(received.try_recv().unwrap().unwrap(), active);
+        assert_eq!(received.try_recv().unwrap().unwrap(), done);
+
+        for step in [
+            json!({"step_index":32,"step_type":"tool","tool_name":"call_mcp_tool","state":"ACTIVE","tool_info":{"parameters":{"ServerName":"other","ToolName":"list_notebooks"}}}),
+            json!({"step_index":32,"step_type":"tool","tool_name":"call_mcp_tool","state":"ACTIVE","tool_info":{"parameters":{"ServerName":"GEMINI-NOTEBOOK-MCP"}}}),
+            json!({"step_index":32,"step_type":"tool","tool_name":"run_command","state":"ACTIVE","tool_info":{"parameters":{"ServerName":"gemini-notebook-mcp"}}}),
+        ] {
+            let rejected = json!({"event":"step_update","step_update":step});
+            let input = format!("{active}\n{rejected}\n");
+            let (events, mut received) = mpsc::channel(4);
+            assert!(read_events(
+                &mut std::io::Cursor::new(input.as_bytes()),
+                &events,
+                &aliases
+            )
+            .await
+            .is_err());
+            assert_eq!(received.try_recv().unwrap().unwrap(), active);
+            assert!(received.try_recv().is_err());
+        }
+        let (events, _) = mpsc::channel(1);
+        assert!(read_events(
+            &mut std::io::Cursor::new(format!("{active}\n").as_bytes()),
+            &events,
+            &[]
+        )
+        .await
+        .is_err());
     }
 
     #[tokio::test]
@@ -533,7 +622,7 @@ mod tests {
         let input = format!("{preview}\n{missing}\n");
         let (events, mut received) = mpsc::channel(4);
         assert!(
-            read_events(&mut std::io::Cursor::new(input.as_bytes()), &events)
+            read_events(&mut std::io::Cursor::new(input.as_bytes()), &events, &[])
                 .await
                 .is_err()
         );
@@ -549,7 +638,7 @@ mod tests {
         let mcp = json!({"event":"step_update","step_update":{"step_index":17,"step_type":"tool","tool_name":"call_mcp_tool","tool_info":{"parameters":{"ServerName":"jarvis","ToolName":"bash_wait"}}}});
         let input = format!("{preview}\n{listing}\n{done}\n{mcp}\n");
         let (events, mut received) = mpsc::channel(4);
-        read_events(&mut std::io::Cursor::new(input.as_bytes()), &events)
+        read_events(&mut std::io::Cursor::new(input.as_bytes()), &events, &[])
             .await
             .unwrap();
         for expected in [preview, listing, done, mcp] {
@@ -572,7 +661,7 @@ mod tests {
             let input = format!("{listing}\n{mutation}\n");
             let (events, mut received) = mpsc::channel(3);
             assert!(
-                read_events(&mut std::io::Cursor::new(input.as_bytes()), &events)
+                read_events(&mut std::io::Cursor::new(input.as_bytes()), &events, &[])
                     .await
                     .is_err()
             );
@@ -583,7 +672,8 @@ mod tests {
         let (events, _) = mpsc::channel(1);
         assert!(read_events(
             &mut std::io::Cursor::new(format!("{unverified}\n").as_bytes()),
-            &events
+            &events,
+            &[],
         )
         .await
         .is_err());
@@ -609,7 +699,7 @@ mod tests {
         let agent_file = root.path().join("agent.md");
         std::fs::write(&agent_file, "private token").unwrap();
         let command = crate::background::tokio_command(root.path().join("missing-agy"));
-        assert!(AgyProcess::spawn_command(command, agent_file.clone()).is_err());
+        assert!(AgyProcess::spawn_command(command, agent_file.clone(), vec![]).is_err());
         assert!(!agent_file.exists());
     }
 
@@ -624,7 +714,7 @@ mod tests {
             "-c",
             "IFS= read -r line; printf '%s\\n' \"$line\"; cat >/dev/null",
         ]);
-        let mut process = AgyProcess::spawn_command(command, agent_file.clone()).unwrap();
+        let mut process = AgyProcess::spawn_command(command, agent_file.clone(), vec![]).unwrap();
         process
             .send_user("literal \"quote\"\nnext line")
             .await
@@ -650,7 +740,7 @@ mod tests {
         std::fs::write(&agent_file, "private token").unwrap();
         let mut command = crate::background::tokio_command("/bin/sh");
         command.args(["-c", "exec 1>&-; sleep 10"]);
-        let mut process = AgyProcess::spawn_command(command, agent_file.clone()).unwrap();
+        let mut process = AgyProcess::spawn_command(command, agent_file.clone(), vec![]).unwrap();
         let result = tokio::time::timeout(Duration::from_secs(2), process.next_event())
             .await
             .expect("EOF must not depend on the native stderr pipe closing");

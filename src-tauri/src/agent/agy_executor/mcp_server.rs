@@ -1,6 +1,6 @@
 //! Authenticated loopback Streamable HTTP transport. The turn owns tool execution.
 use axum::{
-    extract::{DefaultBodyLimit, State},
+    extract::{DefaultBodyLimit, Path as RoutePath, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
@@ -8,6 +8,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::{
+    collections::HashSet,
     io::Read,
     path::{Path, PathBuf},
 };
@@ -79,6 +80,7 @@ fn connection(path: &Path) -> Result<Option<Connection>, String> {
 }
 
 pub(super) struct Request {
+    pub server: Option<String>,
     pub message: Value,
     pub response: oneshot::Sender<Value>,
 }
@@ -88,6 +90,7 @@ struct Endpoint {
     token: String,
     host: String,
     requests: mpsc::Sender<Request>,
+    aliases: HashSet<String>,
 }
 
 pub(super) struct Server {
@@ -107,7 +110,17 @@ impl Drop for Server {
 }
 
 impl Server {
+    #[cfg(test)]
     pub async fn open_for(workspace: &Path, profile: &str) -> Result<Self, String> {
+        Self::open_with_aliases(workspace, profile, &[]).await
+    }
+
+    pub async fn open_with_aliases(
+        workspace: &Path,
+        profile: &str,
+        aliases: &[String],
+    ) -> Result<Self, String> {
+        crate::agy::validate_mcp_aliases(aliases)?;
         crate::agy::prepare_workspace(workspace)?;
         let path = workspace.join(".bridge.json");
         let previous = connection(&path)?;
@@ -161,9 +174,11 @@ impl Server {
             token: token.clone(),
             host: host.clone(),
             requests: send,
+            aliases: aliases.iter().cloned().collect(),
         };
         let app = Router::new()
             .route("/mcp", post(handle))
+            .route("/mcp/{alias}", post(handle_alias))
             .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
             .with_state(endpoint);
         let task = tokio::spawn(async move {
@@ -209,6 +224,24 @@ async fn handle(
     headers: HeaderMap,
     Json(message): Json<Value>,
 ) -> Response {
+    handle_request(endpoint, None, headers, message).await
+}
+
+async fn handle_alias(
+    State(endpoint): State<Endpoint>,
+    RoutePath(alias): RoutePath<String>,
+    headers: HeaderMap,
+    Json(message): Json<Value>,
+) -> Response {
+    handle_request(endpoint, Some(alias), headers, message).await
+}
+
+async fn handle_request(
+    endpoint: Endpoint,
+    server: Option<String>,
+    headers: HeaderMap,
+    message: Value,
+) -> Response {
     if headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
@@ -220,6 +253,12 @@ async fn handle(
         || headers.get("host").and_then(|value| value.to_str().ok()) != Some(endpoint.host.as_str())
     {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    if server
+        .as_ref()
+        .is_some_and(|server| !endpoint.aliases.contains(server))
+    {
+        return StatusCode::NOT_FOUND.into_response();
     }
     let id = message.get("id").cloned();
     if message["jsonrpc"] != "2.0"
@@ -247,7 +286,7 @@ async fn handle(
             } else {
                 "2025-03-26"
             };
-            json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":version,"capabilities":{"tools":{}},"serverInfo":{"name":"jarvis","version":env!("CARGO_PKG_VERSION")}}})
+            json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":version,"capabilities":{"tools":{}},"serverInfo":{"name":server.as_deref().unwrap_or("jarvis"),"version":env!("CARGO_PKG_VERSION")}}})
         }
         "ping" => json!({"jsonrpc":"2.0","id":id,"result":{}}),
         "tools/list" | "tools/call" => {
@@ -255,6 +294,7 @@ async fn handle(
             if endpoint
                 .requests
                 .send(Request {
+                    server,
                     message,
                     response: send,
                 })
@@ -320,11 +360,110 @@ mod tests {
         let future = client.post(&server.url).bearer_auth(&server.token).json(&json!({"jsonrpc":"2.0","id":"tool-1","method":"tools/call","params":{"name":"tasks","arguments":{}}})).send();
         let (result, ()) = tokio::join!(future, async {
             let request = server.requests.recv().await.unwrap();
+            assert!(request.server.is_none());
             assert_eq!(request.message["params"]["name"], "tasks");
             request.response.send(json!({"jsonrpc":"2.0","id":"tool-1","result":{"content":[{"type":"text","text":"done"}]}})).unwrap();
         });
         let result: Value = result.unwrap().json().await.unwrap();
         assert_eq!(result["result"]["content"][0]["text"], "done");
+    }
+
+    #[tokio::test]
+    async fn authenticated_aliases_keep_the_server_identity_and_reject_unconfigured_routes() {
+        let workspace = tempfile::tempdir().unwrap();
+        let mut server = Server::open_with_aliases(
+            workspace.path(),
+            &"a".repeat(64),
+            &["gemini-notebook-mcp".into()],
+        )
+        .await
+        .unwrap();
+        let client = reqwest::Client::new();
+        let alias_url = format!("{}/gemini-notebook-mcp", server.url);
+        let initialize = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}});
+        assert_eq!(
+            client
+                .post(&alias_url)
+                .json(&initialize)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            client
+                .post(&alias_url)
+                .bearer_auth(&server.token)
+                .header("Origin", "https://example.com")
+                .json(&initialize)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        let initialized: Value = client
+            .post(&alias_url)
+            .bearer_auth(&server.token)
+            .json(&initialize)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            initialized["result"]["serverInfo"]["name"],
+            "gemini-notebook-mcp"
+        );
+        for path in [
+            "unknown",
+            "jarvis",
+            "gemini-notebook-mcp%2Fother",
+            "%2F",
+            "gemini-notebook-mcp/other",
+        ] {
+            assert_eq!(
+                client
+                    .post(format!("{}/{path}", server.url))
+                    .bearer_auth(&server.token)
+                    .json(&initialize)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::NOT_FOUND
+            );
+        }
+        assert!(server.requests.try_recv().is_err());
+        for message in [
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_notebooks","arguments":{}}}),
+        ] {
+            let future = client
+                .post(&alias_url)
+                .bearer_auth(&server.token)
+                .json(&message)
+                .send();
+            let (result, ()) = tokio::join!(future, async {
+                let request = server.requests.recv().await.unwrap();
+                assert_eq!(request.server.as_deref(), Some("gemini-notebook-mcp"));
+                assert_eq!(request.message, message);
+                request
+                    .response
+                    .send(json!({"jsonrpc":"2.0","id":1,"result":{}}))
+                    .unwrap();
+            });
+            assert!(result.unwrap().status().is_success());
+        }
+        assert!(Server::open_with_aliases(
+            workspace.path(),
+            &"a".repeat(64),
+            &["../outside".into()]
+        )
+        .await
+        .is_err());
     }
 
     #[tokio::test]
@@ -394,19 +533,31 @@ mod tests {
         std::fs::create_dir(&project).unwrap();
         let mut resume: Option<String> = None;
         let mut previous_tool_ids = std::collections::HashSet::new();
-        for value in ["agy-bridge-verified", "agy-resume-verified"] {
-            let mut server = Server::open_for(&root.path().join("workspace"), &"a".repeat(64))
-                .await
-                .unwrap();
+        let aliases = vec!["gemini-notebook-mcp".into()];
+        for (value, target, tool_name) in [
+            ("agy-bridge-verified", "jarvis", "jarvis_echo"),
+            (
+                "agy-resume-verified",
+                "gemini-notebook-mcp",
+                "list_notebooks",
+            ),
+        ] {
+            let mut server = Server::open_with_aliases(
+                &root.path().join("workspace"),
+                &"a".repeat(64),
+                &aliases,
+            )
+            .await
+            .unwrap();
             assert_eq!(server.resume_compatible, resume.is_some());
             server.commit_profile(&"a".repeat(64)).unwrap();
             let mut process = AgyProcess::spawn(RunOptions {
             cwd: project.clone(), workspace_dir: root.path().join("workspace"), session_id: resume.clone(),
             model: std::env::var("JARVIS_AGY_SMOKE_MODEL").expect("Set JARVIS_AGY_SMOKE_MODEL to a model in agy models"),
-            effort: Some("low".into()), prompt: "You are testing a Jarvis MCP bridge. Use only the configured Jarvis MCP tools. You must call jarvis_echo to obtain its result before answering. No project files should be read or changed.".into(),
-            mcp_url: server.url.clone(), mcp_token: server.token.clone(),
+            effort: Some("low".into()), prompt: "You are testing a Jarvis MCP bridge with an external-server alias that also routes to Jarvis. Use only the configured MCP tools. Call the exact requested server and tool and wait for the actual tool result before answering. No project files should be read or changed.".into(),
+            mcp_url: server.url.clone(), mcp_token: server.token.clone(), mcp_aliases: aliases.clone(),
         }).unwrap();
-            process.send_user(&format!("Call jarvis_echo with value {value} and then answer with the tool result. Do not answer without calling it.")).await.unwrap();
+            process.send_user(&format!("Call the {target} MCP server tool {tool_name} with value {value} and then answer with the tool result. Do not answer without calling it.")).await.unwrap();
             let mut calls = 0;
             let mut native_calls = 0;
             let mut initialized = false;
@@ -418,9 +569,13 @@ mod tests {
                     request = server.requests.recv() => {
                         let request = request.unwrap();
                         let result = match request.message["method"].as_str() {
-                            Some("tools/list") => json!({"tools":[{"name":"jarvis_echo","description":"Return the provided value to test the Jarvis bridge.","inputSchema":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false}}]}),
+                            Some("tools/list") => {
+                                let name = if request.server.is_some() { "list_notebooks" } else { "jarvis_echo" };
+                                json!({"tools":[{"name":name,"description":"Return the provided value to test the Jarvis bridge.","inputSchema":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false}}]})
+                            }
                             Some("tools/call") => {
-                                assert_eq!(request.message["params"]["name"], "jarvis_echo");
+                                assert_eq!(request.server.as_deref().unwrap_or("jarvis"), target);
+                                assert_eq!(request.message["params"]["name"], tool_name);
                                 assert_eq!(request.message["params"]["arguments"]["value"], value);
                                 calls += 1;
                                 json!({"content":[{"type":"text","text":value}],"isError":false})
@@ -440,10 +595,10 @@ mod tests {
                             assert!(tools.iter().any(|tool| tool == "call_mcp_tool"));
                             initialized = true;
                         }
-                        if event["step_update"]["step_type"] == "tool" {
+                        if event["step_update"]["step_type"] == "tool" && event["step_update"]["tool_info"]["parameters"]["ServerName"].is_string() {
                             assert!(super::super::projection::session_id(&event).is_some());
                             assert!(event["step_update"]["step_index"].is_u64());
-                            assert_eq!(event["step_update"]["tool_info"]["parameters"]["ServerName"], "jarvis");
+                            assert_eq!(event["step_update"]["tool_info"]["parameters"]["ServerName"], target);
                             let key = format!("{}:{}", super::super::projection::session_id(&event).unwrap(), event["step_update"]["step_index"]);
                             assert!(!previous_tool_ids.contains(&key), "Native step identity must remain unique after restart");
                             tool_ids.insert(key);

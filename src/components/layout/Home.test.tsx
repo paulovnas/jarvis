@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import * as tauriEvents from "@tauri-apps/api/event";
+import type { EventCallback } from "@tauri-apps/api/event";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -165,20 +167,48 @@ describe("Home shell", () => {
     render(<Home />);
     await screen.findByRole("textbox", { name: "Mensagem" });
     await user.click(screen.getByRole("button", { name: "Detalhes" }));
-    await user.click(await screen.findByRole("tab", { name: "Terminais" }));
+    await user.click(await screen.findByRole("tab", { name: /^Terminais/ }));
     expect(await screen.findByRole("tab", { name: /Shell compartilhado/ })).toBeVisible();
     expect(screen.getByRole("tab", { name: /Vite/ })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Outro chat" }));
     await screen.findByRole("textbox", { name: "Mensagem" });
     expect(screen.queryByRole("application", { name: "Terminal em execução" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Detalhes" }));
-    await user.click(await screen.findByRole("tab", { name: "Terminais" }));
+    await user.click(await screen.findByRole("tab", { name: /^Terminais/ }));
     expect(await screen.findByRole("tab", { name: /Shell compartilhado/ })).toBeVisible();
     expect(screen.getByRole("tab", { name: /Vite/ })).toBeVisible();
     expect(invokeMock).toHaveBeenCalledWith("list_project_terminals", { projectId: "p1" });
     expect(invokeMock).not.toHaveBeenCalledWith("create_project_terminal", expect.anything());
     expect(invokeMock).not.toHaveBeenCalledWith("close_project_terminal", expect.anything());
   }, 15_000);
+  it("updates the project terminal badge as terminal tabs open and close", async () => {
+    const library = populatedLibrary();
+    library.selection.conversationId = null;
+    let activity = [{ projectId: "p1", count: 2 }, { projectId: "p2", count: 4 }];
+    let changed: EventCallback<unknown> = () => {};
+    vi.spyOn(tauriEvents, "listen").mockImplementation(async (event, callback) => {
+      if (event === "terminals:changed") changed = callback;
+      return () => {};
+    });
+    const original = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation(async (command, args, options) => {
+      if (command === "get_library_snapshot") return library;
+      if (command === "get_project_metrics") return projectMetrics();
+      if (command === "get_core_status") return coreFixture();
+      if (command === "get_terminal_activity") return activity;
+      return original(command, args, options);
+    });
+    render(<Home />);
+    const tab = await screen.findByRole("tab", { name: /^Terminais/ });
+    await waitFor(() => expect(within(tab).getByText("2")).toBeVisible());
+    activity = [{ projectId: "p1", count: 3 }, { projectId: "p2", count: 4 }];
+    act(() => changed({ event: "terminals:changed", id: 1, payload: { projectId: "p1" } }));
+    await waitFor(() => expect(within(tab).getByText("3")).toBeVisible());
+    activity = [{ projectId: "p2", count: 4 }];
+    act(() => changed({ event: "terminals:changed", id: 2, payload: { projectId: "p1" } }));
+    await waitFor(() => expect(within(tab).getByText("0")).toBeVisible());
+    expect(invokeMock).not.toHaveBeenCalledWith("list_project_terminals", expect.anything());
+  });
   it("keeps workspace navigation and settings available while an empty workspace has no chat", async () => {
     const user = userEvent.setup();
     const snapshot = populatedLibrary(); snapshot.projects = []; snapshot.conversations = []; snapshot.selection.projectId = null; snapshot.selection.conversationId = null;

@@ -114,6 +114,7 @@ fn options(root: &std::path::Path) -> RunOptions {
         prompt: "Keep user instructions and use Jarvis tools.".into(),
         mcp_url: "http://127.0.0.1:43210/mcp".into(),
         mcp_token: "private-run-token".into(),
+        mcp_aliases: vec![],
     }
 }
 
@@ -167,6 +168,46 @@ fn transport_isolates_agent_mcp_and_keeps_native_login_and_project_untouched() {
             0o700
         );
     }
+}
+
+#[test]
+fn mcp_aliases_preserve_native_names_and_only_use_the_authenticated_loopback_bridge() {
+    let root = tempfile::tempdir().unwrap();
+    let mut options = options(root.path());
+    options.mcp_aliases = vec!["gemini-notebook-mcp".into(), "project_docs".into()];
+    let (_, path) = transport::command_for(std::path::Path::new("agy"), &options).unwrap();
+    let document = std::fs::read_to_string(path).unwrap();
+    let header: Value = serde_yaml_ng::from_str(document.split("---\n").nth(1).unwrap()).unwrap();
+    let servers = header["mcpServers"].as_array().unwrap();
+    assert_eq!(servers.len(), 3);
+    for (server, alias) in servers[1..].iter().zip(&options.mcp_aliases) {
+        assert_eq!(server["name"], *alias);
+        let url = url::Url::parse(server["serverUrl"].as_str().unwrap()).unwrap();
+        assert_eq!(url.host_str(), Some("127.0.0.1"));
+        assert_eq!(url.port(), Some(43210));
+        assert_eq!(url.path(), format!("/mcp/{alias}"));
+        assert!(url.query().is_none());
+        assert!(url.fragment().is_none());
+        assert_eq!(
+            server["headers"]["Authorization"],
+            "Bearer private-run-token"
+        );
+    }
+    for aliases in [
+        vec!["jarvis".into()],
+        vec!["../outside".into()],
+        vec!["https://example.com".into()],
+        vec!["alias?server=other".into()],
+        vec!["alias\nheader".into()],
+        vec!["same".into(), "same".into()],
+    ] {
+        options.mcp_aliases = aliases;
+        assert!(transport::command_for(std::path::Path::new("agy"), &options).is_err());
+    }
+    options.mcp_aliases = vec!["gemini-notebook-mcp".into()];
+    options.mcp_url.clear();
+    options.mcp_token.clear();
+    assert!(transport::command_for(std::path::Path::new("agy"), &options).is_err());
 }
 
 #[test]

@@ -99,9 +99,14 @@ impl<'a> Bridge<'a> {
         } else {
             "Claude Code"
         };
-        prompt.push_str(&format!("\nExecution backend: {backend}. Keep your native reasoning and conversation management. All project operations, commands, tasks, questions, workflow coordination, approvals and external integrations are exposed by the Jarvis MCP server. Use these tools rather than describing actions for the user to execute. Jarvis owns their permissions and durable results. Do not create a second task/agent system. MCP discovery results include availableTools with exact schemas. Execute newly available tools and discovery controls through call_mcp_tool using their exact name and arguments; no new user message or tools/list refresh is required. Search results marked loaded:true already include their schema; do not load them again. Native built-in tools are intentionally disabled to preserve the selected Jarvis role, project scope and approval contract.\n"));
+        let mcp_dispatcher = if is_agy {
+            "execute_mcp_tool"
+        } else {
+            "call_mcp_tool"
+        };
+        prompt.push_str(&format!("\nExecution backend: {backend}. Keep your native reasoning and conversation management. All project operations, commands, tasks, questions, workflow coordination, approvals and external integrations are exposed by the Jarvis MCP server. Use these tools rather than describing actions for the user to execute. Jarvis owns their permissions and durable results. Do not create a second task/agent system. MCP discovery results include availableTools with exact schemas. Execute newly available tools and discovery controls through {mcp_dispatcher} using their exact name and arguments; no new user message or tools/list refresh is required. Search results marked loaded:true already include their schema; do not load them again. Native built-in tools are intentionally disabled to preserve the selected Jarvis role, project scope and approval contract.\n"));
         if is_agy {
-            prompt.push_str("\nAntigravity tool routing: Jarvis owns every tool effect. Use only the native call_mcp_tool dispatcher for actions: ServerName must be exactly jarvis; ToolName must match a tool exposed by the Jarvis server; Arguments must be a JSON object matching that tool schema. Route filesystem, shell, browser, HTTP, skills, Core, memory, external MCP and delegation through these Jarvis tools. Never use native built-in tools, list_resources, read_resource or another MCP server. Continue using actual MCP results within this process; do not stop after a tool call. A prior response or remembered result does not prove that a newly requested action ran: wait for its current confirmed tool receipt before claiming completion.\n");
+            prompt.push_str("\nAntigravity tool routing: Jarvis owns every tool effect. Use the native call_mcp_tool dispatcher for actions. For Jarvis tools, ServerName is jarvis and ToolName is the exact exposed name. For an external MCP namespace configured by Jarvis, use its announced ServerName and original ToolName; these namespaces also route through Jarvis permissions and durable receipts. Arguments must match that tool schema. Deferred/discovered tools can always use ServerName=jarvis, ToolName=execute_mcp_tool, Arguments={name:<exact availableTools name>,arguments:<tool input>}. Never substitute a Claude-style mcp__jarvis__ name for ServerName or ToolName. Route filesystem, shell, browser, HTTP, skills, Core, memory and delegation through Jarvis tools. Never use native built-in tools, list_resources, read_resource or an unconfigured server. Continue using actual MCP results within this process; do not stop after a tool call. A prior response or remembered result does not prove that a newly requested action ran: wait for its current confirmed tool receipt before claiming completion.\n");
         }
         prompt.push_str(&crate::library::repositories::prompt(
             runtime.state,
@@ -519,11 +524,16 @@ impl<'a> Bridge<'a> {
         if schemas.is_empty() {
             return Ok(None);
         }
+        let call_with = if self.options.executor == crate::claude::Executor::Agy {
+            json!({"tool":"call_mcp_tool","ServerName":"jarvis","ToolName":"execute_mcp_tool","Arguments":{"name":"<availableTools.name>","arguments":{}}})
+        } else {
+            json!("mcp__jarvis__call_mcp_tool")
+        };
         Ok(Some(json!({
             "type":"text",
             "text":json!({
                 "availableTools":schemas,
-                "callWith":"mcp__jarvis__call_mcp_tool",
+                "callWith":call_with,
                 "catalogChanged":true,
             }).to_string(),
         })))

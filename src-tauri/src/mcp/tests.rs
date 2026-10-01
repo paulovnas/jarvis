@@ -133,6 +133,7 @@ async fn stable_gateway_receives_activated_schemas_without_relisting_its_initial
     let initial = clients.definitions(&f.mcp, &f.state, &f.home, true).await;
     assert_eq!(initial.len(), 1);
     assert_eq!(initial[0]["name"], "mcp_activate");
+    assert!(clients.native_routes().is_empty());
     let args = json!({"server":"database"});
     let output = clients
         .execute(
@@ -149,6 +150,9 @@ async fn stable_gateway_receives_activated_schemas_without_relisting_its_initial
     let available = clients.definitions(&f.mcp, &f.state, &f.home, true).await;
     let receipt = clients.discovery_schemas("mcp_activate", &args, &output, &available);
     let lookup = runtime::wire_name(&database, "lookup");
+    let routes = clients.native_routes();
+    assert_eq!(routes["database"]["lookup"], lookup);
+    assert!(!routes.contains_key("unrelated"));
     let schema = receipt.iter().find(|tool| tool["name"] == lookup).unwrap();
     assert_eq!(schema["inputSchema"]["required"], json!(["query"]));
     assert!(!receipt

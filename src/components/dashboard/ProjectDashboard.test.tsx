@@ -63,8 +63,8 @@ describe("Project Dashboard", () => {
     const user = userEvent.setup();
     render(<ProjectDashboard project={project} projectUpdater={projectUpdater} onSelectSession={vi.fn()} />);
     expect(screen.getByRole("main", { name: "Detalhes de Jarvis" })).toBeVisible();
-    expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Geral", "Kanban", "Terminais", "Opções"]);
-    await user.click(screen.getByRole("tab", { name: "Terminais" }));
+    expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Geral", "Kanban", "Terminais0", "Opções"]);
+    await user.click(screen.getByRole("tab", { name: /^Terminais/ }));
     expect(await screen.findByText("Nenhum terminal aberto")).toBeVisible();
     expect(call).toHaveBeenCalledWith("list_project_terminals", { projectId: "p1" });
     await user.click(screen.getByRole("tab", { name: "Opções" }));
