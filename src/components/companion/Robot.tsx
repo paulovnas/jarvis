@@ -11,13 +11,14 @@ export interface RobotProps {
   dragging?: boolean;
   expanded?: boolean;
   walking?: boolean;
-  gesture?: "none" | "wink" | "surprised" | "sleepy" | "poke" | "dizzy" | "sleep" | "stretch" | "curious";
+  gesture?: "none" | "wink" | "surprised" | "sleepy" | "poke" | "dizzy" | "sleep" | "stretch" | "curious" | "listen" | "speak";
+  voiceLevel?: number;
   lookX?: number;
   lookY?: number;
 }
 
 export function Robot(props: RobotProps) {
-  return <Suspense fallback={<RobotFallback status={props.status} gesture={props.gesture} renderer="loading" />}>
+  return <Suspense fallback={<RobotFallback status={props.status} gesture={props.gesture} voiceLevel={props.voiceLevel} renderer="loading" />}>
     <RiveRobot {...props} />
   </Suspense>;
 }

@@ -2,7 +2,7 @@ import { useId } from "react";
 import type { RobotProps } from "./Robot";
 
 /** Static original artwork remains visible if the local runtime cannot load. */
-export function RobotFallback({ status, gesture = "none", renderer = "fallback" }: Pick<RobotProps, "status" | "gesture"> & { renderer?: "loading" | "fallback" }) {
+export function RobotFallback({ status, gesture = "none", voiceLevel = 0, renderer = "fallback" }: Pick<RobotProps, "status" | "gesture" | "voiceLevel"> & { renderer?: "loading" | "fallback" }) {
   const id = useId().replace(/:/g, "");
   const sleeping = gesture === "sleep";
   return <svg aria-hidden="true" className="companion-robot" data-state={status} data-gesture={gesture} data-renderer={renderer} data-character="floating-robot" viewBox="0 0 120 120" fill="none">
@@ -24,7 +24,8 @@ export function RobotFallback({ status, gesture = "none", renderer = "fallback" 
     <g fill="var(--companion-light)">
       {sleeping || gesture === "poke" || gesture === "sleepy" ? <path data-expression="closed-eyes" d="M36 71h12M72 71h12" stroke="var(--companion-light)" strokeWidth="3" strokeLinecap="round" /> : gesture === "dizzy" ? <g data-expression="dizzy" stroke="var(--companion-light)" strokeWidth="2" strokeLinecap="round" fill="none"><path d="M42 70c-4-4-7 3-3 5s9-2 6-7-11-4-12 2" /><path d="M78 70c-4-4-7 3-3 5s9-2 6-7-11-4-12 2" /></g> : status === "completed" ? <path d="M36 71q6-9 12 0M72 71q6-9 12 0" stroke="var(--companion-light)" strokeWidth="4" strokeLinecap="round" fill="none" /> : <><rect x="36" y={status === "failed" ? "67" : "62"} width="12" height={status === "failed" ? "8" : "16"} rx="6" /><rect x="72" y={status === "failed" ? "67" : "62"} width="12" height={status === "failed" ? "8" : "16"} rx="6" /></>}
     </g>
-    {sleeping ? <g data-expression="sleep" stroke="var(--companion-light)" strokeWidth="2" strokeLinecap="round"><path d="M55 85q5 3 10 0" /><path d="M86 24h6l-6 7h6M98 10h9l-9 10h9" opacity=".65" /></g> : status === "waiting" || status === "reconnecting" ? <ellipse cx="60" cy="86" rx="3.5" ry="4.5" fill="var(--companion-light)" opacity=".85" /> : <path d={status === "failed" ? "M54 90q6-6 12 0" : status === "running" ? "M54 86q3-2 6 0t6 0" : "M53 85q7 7 14 0"} stroke="var(--companion-light)" strokeWidth="2.5" strokeLinecap="round" />}
+    {sleeping ? <g data-expression="sleep" stroke="var(--companion-light)" strokeWidth="2" strokeLinecap="round"><path d="M55 85q5 3 10 0" /><path d="M86 24h6l-6 7h6M98 10h9l-9 10h9" opacity=".65" /></g> : gesture === "speak" ? <ellipse data-expression="speaking" cx="60" cy="86" rx="5" ry={1 + Math.max(0, Math.min(1, voiceLevel)) * 5} fill="var(--companion-light)" /> : status === "waiting" || status === "reconnecting" ? <ellipse cx="60" cy="86" rx="3.5" ry="4.5" fill="var(--companion-light)" opacity=".85" /> : <path d={status === "failed" ? "M54 90q6-6 12 0" : status === "running" ? "M54 86q3-2 6 0t6 0" : "M53 85q7 7 14 0"} stroke="var(--companion-light)" strokeWidth="2.5" strokeLinecap="round" />}
+    {gesture === "listen" && <path data-expression="listening" d="M36 56l12-2M72 54l12 2" stroke="var(--companion-light)" strokeWidth="2" strokeLinecap="round" />}
     {gesture === "curious" && <path data-expression="curious" d="M35 55l13-3M72 56h12" stroke="var(--companion-light)" strokeWidth="2" strokeLinecap="round" />}
     {gesture === "stretch" && <g data-expression="stretch" stroke={`url(#${id}-shell)`} strokeWidth="7" strokeLinecap="round"><path d="M19 79L9 42M101 79l10-37" /></g>}
     <path d="M54 104h12" stroke="var(--companion-light)" strokeWidth="2.5" strokeLinecap="round" opacity=".7" />

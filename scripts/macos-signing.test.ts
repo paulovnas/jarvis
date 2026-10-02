@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
@@ -112,6 +112,17 @@ describe("macOS signing setup", () => {
     expect(projectIdentifier(process.cwd(), true)).toBe("com.foxtag.jarvis.dev");
   });
 
+  it.skipIf(process.platform !== "darwin")("compiles the voice filesystem APIs at the packaged macOS minimum", () => {
+    const config: { bundle: { macOS: { minimumSystemVersion?: string } } } = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
+    const minimum = config.bundle.macOS.minimumSystemVersion;
+    expect(minimum).toBeDefined();
+    const result = spawnSync("/usr/bin/clang++", ["-std=c++17", "-x", "c++", "-fsyntax-only", "-"], {
+      env: { ...process.env, MACOSX_DEPLOYMENT_TARGET: minimum }, encoding: "utf8",
+      input: '#include <filesystem>\nint main() { return std::filesystem::exists(std::filesystem::u8path(".")) ? 0 : 1; }\n',
+    });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it.skipIf(process.platform !== "darwin" || process.env.JARVIS_TEST_MACOS_BUNDLE !== "1")("runs signed development inside a native notification-capable bundle", () => {
     const temporary = mkdtempSync(path.join(tmpdir(), "Jarvis bundle probe "));
     try {
@@ -123,6 +134,9 @@ describe("macOS signing setup", () => {
       expect(result.stderr, "native runner failed").not.toMatch(/error:/i);
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout.trim().split("\n")).toEqual(["com.foxtag.jarvis.dev", "Jarvis", "argument with spaces"]);
+      const bundle = path.join(temporary, "jarvis-dev", "Jarvis.app");
+      expect(execFileSync("/usr/bin/plutil", ["-extract", "NSMicrophoneUsageDescription", "raw", "-o", "-", path.join(bundle, "Contents", "Info.plist")], { encoding: "utf8" })).toContain("microfone");
+      expect(execFileSync("/usr/bin/codesign", ["-d", "--entitlements", ":-", bundle], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })).toContain("com.apple.security.device.audio-input");
     } finally { rmSync(temporary, { recursive: true, force: true }); }
   });
 

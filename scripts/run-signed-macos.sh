@@ -8,16 +8,16 @@ fi
 
 jarvis_executable=$1
 shift
+jarvis_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 # Sign before exec, so the Keychain sees the same certificate and identifier after each rebuild.
 # exec preserves Cargo/Tauri's process lifecycle, signals, exit status and application arguments.
-/usr/bin/codesign --force --sign "$APPLE_SIGNING_IDENTITY" --identifier "$JARVIS_SIGNING_IDENTIFIER" --timestamp=none "$jarvis_executable"
+/usr/bin/codesign --force --sign "$APPLE_SIGNING_IDENTITY" --identifier "$JARVIS_SIGNING_IDENTIFIER" --entitlements "$jarvis_root/src-tauri/Entitlements.plist" --timestamp=none "$jarvis_executable"
 /usr/bin/codesign --verify --strict "$jarvis_executable"
 
 if [ "${JARVIS_DEV_APP_BUNDLE:-}" = "1" ]; then
   # UserNotifications requires an actual .app, even for a signed dev executable.
   # Keep Cargo's exec lifecycle and Vite HMR while providing the native identity.
-  jarvis_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
   jarvis_target=$(CDPATH= cd -- "$(dirname -- "$jarvis_executable")" && pwd)
   jarvis_bundle="$jarvis_target/jarvis-dev/Jarvis.app"
   /bin/mkdir -p "$jarvis_bundle/Contents/MacOS" "$jarvis_bundle/Contents/Resources"
@@ -27,7 +27,7 @@ if [ "${JARVIS_DEV_APP_BUNDLE:-}" = "1" ]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $JARVIS_SIGNING_IDENTIFIER" "$jarvis_bundle/Contents/Info.plist"
   jarvis_version=$(/usr/bin/plutil -extract version raw -o - "$jarvis_root/src-tauri/tauri.conf.json")
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $jarvis_version" "$jarvis_bundle/Contents/Info.plist"
-  /usr/bin/codesign --force --sign "$APPLE_SIGNING_IDENTITY" --identifier "$JARVIS_SIGNING_IDENTIFIER" --timestamp=none "$jarvis_bundle"
+  /usr/bin/codesign --force --sign "$APPLE_SIGNING_IDENTITY" --identifier "$JARVIS_SIGNING_IDENTIFIER" --entitlements "$jarvis_root/src-tauri/Entitlements.plist" --timestamp=none "$jarvis_bundle"
   /usr/bin/codesign --verify --strict "$jarvis_bundle"
   jarvis_executable="$jarvis_bundle/Contents/MacOS/Jarvis"
 fi

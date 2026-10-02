@@ -13,5 +13,6 @@
   <key>CFBundleIconFile</key><string>icon.icns</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSMicrophoneUsageDescription</key><string>Jarvis usa o microfone somente quando você inicia um ditado ou uma ligação por voz.</string>
 </dict>
 </plist>

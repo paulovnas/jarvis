@@ -86,11 +86,23 @@ describe("original Jarvito Rive choreography", () => {
     expect(execFileSync("bun", ["scripts/generate-jarvito-rive.mjs", "--check"], { encoding: "utf8" })).toContain("is reproducible");
     expect(file.artboardCount()).toBe(1);
     expect(artboard.bounds).toMatchObject({ minX: 0, minY: 0, maxX: 120, maxY: 120 });
-    expect(artboard.animationCount()).toBe(50);
+    expect(artboard.animationCount()).toBe(57);
     expect(Array.from({ length: machine.inputCount() }, (_, i) => machine.input(i).name)).toEqual([
-      "status", "hovered", "dragging", "reducedMotion", "lookX", "lookY", "expanded", "walking", "gesture",
+      "status", "hovered", "dragging", "reducedMotion", "lookX", "lookY", "expanded", "walking", "gesture", "voiceLevel",
     ]);
     for (const removed of ["Left leg", "Right leg", "Left step", "Right step", "Torso"]) expect(artboard.node(removed)).toBeNull();
+  });
+
+  it("listens expressively and moves the speaking mouth with actual audio amplitude", () => {
+    input("gesture", 9); advance(2);
+    expect(artboard.node("Head emote").rotation).toBeLessThan(-.05);
+    input("gesture", 10); input("voiceLevel", 0); advance(.5);
+    const closed = artboard.node("Voice amplitude").scaleY;
+    input("voiceLevel", 1); advance(.5);
+    expect(artboard.node("Voice amplitude").scaleY).toBeGreaterThan(closed);
+    expect(artboard.node("Voice mouth reveal").scaleX).toBeCloseTo(1);
+    input("gesture", 0); advance(.5);
+    expect(artboard.node("Voice mouth reveal").scaleX).toBeCloseTo(0);
   });
 
   it("renders curved smiles and happy eyes through the actual WASM drawing path", () => {

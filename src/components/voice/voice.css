@@ -1,0 +1,21 @@
+.voice-session-card { flex-basis: 100%; width: 100%; border-color: color-mix(in srgb, var(--primary) 25%, transparent); background: color-mix(in srgb, var(--primary) 4%, var(--card)); }
+.voice-session-card[data-phase="listening"] { border-color: color-mix(in srgb, var(--onedark-green) 40%, transparent); }
+.voice-session-card[data-phase="speaking"] { border-color: color-mix(in srgb, var(--onedark-cyan) 40%, transparent); }
+.voice-session-card[data-phase="paused"] { opacity: .75; }
+.voice-avatar { width: 56px; height: 54px; }
+.voice-avatar .companion-robot { width: 100%; height: 100%; }
+.voice-avatar { position: relative; }
+.voice-call-stage[data-phase="listening"] .voice-avatar::before { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: radial-gradient(ellipse, color-mix(in srgb, var(--onedark-green) 12%, transparent), transparent 70%); animation: voice-breathe 2s ease-in-out infinite; }
+.voice-call-stage[data-phase="speaking"] .voice-avatar::before { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: radial-gradient(ellipse, color-mix(in srgb, var(--onedark-cyan) 18%, transparent), transparent 70%); }
+@keyframes voice-breathe { 50% { transform: scale(1.18); opacity: .45; } }
+.voice-meter { display: inline-flex; align-items: center; height: 14px; gap: 2px; }
+.voice-meter > span { display: block; width: 2px; height: 14px; background: currentColor; border-radius: 2px; transition: transform 100ms ease-out; }
+.voice-compact .voice-avatar { width: 44px; height: 44px; }
+.voice-compact [data-slot="card-content"] { padding: 8px; gap: 8px; }
+.voice-call-stage { min-height: 185px; flex: 1; overflow: hidden; border-radius: 18px; background: transparent; }
+.voice-call-stage [data-slot="card-content"] { height: 100%; flex-direction: column; justify-content: center; gap: 6px; padding: 12px; text-align: center; }
+.voice-call-stage .voice-avatar { width: 112px; height: 98px; }
+.voice-call-stage [role="status"] { justify-content: center; }
+.voice-call-stage [data-slot="card-content"] > div:last-child { flex-direction: row; gap: 10px; }
+.voice-call-stage [data-slot="card-content"] > div:last-child button { width: 36px; height: 36px; }
+@media (prefers-reduced-motion: reduce) { .voice-meter > span { transition: none; } .voice-avatar::before { animation: none !important; } }

@@ -22,7 +22,9 @@ import { rootRole } from "@/core/workflow";
 import { resolveChatModel, type ModelBinding } from "@/core/provider-references";
 import { useModelProblemNotice } from "@/hooks/use-provider-references";
 import { libraryError } from "@/core/library";
-import { mergeDrafts, type ChatDraft, type MessagePart, type QueuedMessage, type TurnOptions } from "@/core/chat";
+import { mergeDrafts, type ChatDraft, type ChatSnapshot, type MessagePart, type QueuedMessage, type TurnOptions } from "@/core/chat";
+import type { PendingQuestion, QuestionResponse } from "@/core/questions";
+import { VoiceControls, VoiceSessionPanel } from "@/components/voice/VoiceControls";
 import type { WorkflowSnapshot } from "@/core/workflow";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
@@ -35,6 +37,9 @@ import { defaultReasoning } from "@/core/reasoning";
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
 interface ChatComposerProps {
+  voiceSnapshot?: ChatSnapshot;
+  onVoiceAnswer?: (question: PendingQuestion, response: QuestionResponse) => Promise<boolean>;
+  onVoicePause?: (question: PendingQuestion) => Promise<boolean>;
   draftInsertion?: { id: string; text: string };
   onOpenBrowser?: () => void;
   browserBusy?: boolean;
@@ -64,6 +69,9 @@ interface ChatComposerProps {
 }
 
 export function ChatComposer({
+  voiceSnapshot,
+  onVoiceAnswer,
+  onVoicePause,
   draftInsertion,
   onOpenBrowser,
   browserBusy = false,
@@ -170,17 +178,18 @@ export function ChatComposer({
     ? selectedFlow.customAgentId ? "Carregando o agente individual…" : "Carregando o fluxo customizado…"
     : selectedFlow.customAgentId ? "Este agente não está mais disponível para uso individual. Escolha outra opção." : "Este fluxo foi removido. Escolha outro fluxo para enviar.");
 
-  const handleSend = async () => {
-    const submitted = draftRef.current;
+  const handleSend = async (voiceText?: string): Promise<boolean> => {
+    const submitted: ChatDraft = voiceText ? { content: voiceText } : draftRef.current;
     const trimmed = submitted.content.trim() || (submitted.parts?.some(part => part.type === "attachment") ? "Analise os anexos." : "");
-    if (modelError) { toast.error("Revise o modelo antes de enviar", { description: modelError }); return; }
-    if (!trimmed || disabled || !selectionReady || customUnavailable || compacting || importing.current || agentModels?.saving || choosingModelLock.current || sendLock.current || !currentModelDef) return;
+    if (modelError) { toast.error("Revise o modelo antes de enviar", { description: modelError }); return false; }
+    if (!trimmed || disabled || !selectionReady || customUnavailable || compacting || importing.current || agentModels?.saving || choosingModelLock.current || sendLock.current || !currentModelDef) return false;
     const choice = executionChoice({ executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning });
-    if (choice.executor === "jarvis" && !choice.account) return;
+    if (choice.executor === "jarvis" && !choice.account) return false;
     sendLock.current = true;
     setSending(true);
-    setDraft({ content: "" });
+    if (!voiceText) setDraft({ content: "" });
     const restoreSubmitted = () => {
+      if (voiceText) return;
       const current = draftKey && drafts ? drafts.get(draftKey) ?? { content: "" } : draftRef.current;
       setDraft(current.content || current.parts?.length
         ? mergeDrafts(submitted, current)
@@ -194,9 +203,11 @@ export function ChatComposer({
       else delete options.automaticPublication;
       const accepted = submitted.parts?.length ? await onSendMessage(trimmed, options, submitted.parts) : await onSendMessage(trimmed, options);
       if (!accepted) restoreSubmitted();
+      return accepted;
     } catch (cause) {
       restoreSubmitted();
       toast.error(libraryError(cause, "Não foi possível enviar a mensagem. Seu texto foi mantido."));
+      return false;
     } finally { sendLock.current = false; setSending(false); }
   };
 
@@ -304,6 +315,7 @@ export function ChatComposer({
       />}
       <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} onFiles={files => { void addFiles(files); }} attachments={(attachments.length > 0 || uploading) && <div className="flex flex-wrap gap-1 px-5 pt-4" aria-label="Anexos da mensagem">{attachments.map(part => <AttachmentPreview key={part.attachment.id} attachment={part.attachment} disabled={disabled || compacting || sending} onRemove={() => { const current = draftRef.current; setDraft({ ...current, parts: current.parts?.filter(item => item.type !== "attachment" || item.attachment.id !== part.attachment.id) }); }} />)}{uploading && <Skeleton className="mb-2 size-20 rounded-lg" role="status" aria-label="Preparando anexos" />}</div>} onSend={() => { void handleSend(); }} disabled={disabled || compacting} compacting={compacting} working={running || compacting}>
 
+        {draftKey && <div className="px-3 pb-1"><VoiceSessionPanel target={`chat:${draftKey}`} /></div>}
         {/* Linha de controles inferior no padrão Metis */}
         <div className="composer-controls flex w-full items-center justify-between gap-1 px-3 pb-3 pt-1">
           <DropdownMenu>
@@ -325,6 +337,7 @@ export function ChatComposer({
           <Input ref={fileInput} type="file" multiple className="hidden" aria-label="Selecionar anexos" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.pdf,.docx,.odt,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.ts,.tsx,.js,.css,.html,.rs,.py" onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void addFiles(files); }} />
 
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}
+          {draftKey && <VoiceControls target={`chat:${draftKey}`} snapshot={voiceSnapshot} onAnswerQuestion={onVoiceAnswer} onPauseQuestion={onVoicePause} disabled={disabled || compacting || sending || !selectionReady} onDictation={text => { setDraft(mergeDrafts(draftRef.current, { content: text })); input.current?.focus(); }} onMessage={text => handleSend(text)} />}
           <div className="composer-options flex flex-1 items-center gap-0.5">
             <ChatBehaviorSettings manualAvailable={manualValidationAvailable} manualValidation={manualValidation} onManualChange={setManualValidation} publication={githubSelected ? null : automaticPublication} onPublicationChange={setAutomaticPublication} disabled={running || sending || compacting} githubSelected={githubSelected} />
             <FlowPicker customFlows={catalog.data?.flows} customAgents={catalog.data?.agents} builtinAgents={catalog.data?.builtinAgents} value={workflow} onChange={chooseWorkflow} disabled={running || sending || compacting} />

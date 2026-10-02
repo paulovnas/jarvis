@@ -153,6 +153,9 @@ const mouth = node("Mouth expression", mouthEmote, 0, 12, { 17: .55 });
 line("Smile", mouth, [[-8, 0, 0, 0, .75, 10], [8, 0, Math.PI - .75, 10]], palette.cyan, 2.8, { light: true, fixedStroke: true });
 const openMouth = node("Open mouth reveal", gestureGaze, 0, 13, { 18: 0 });
 shape("Surprised mouth", openMouth, 0, 0, 7, 8, 3.5, palette.cyan, { light: true });
+const voiceMouthReveal = node("Voice mouth reveal", gestureGaze, 0, 13, { 16: 0, 18: 0 });
+const voiceMouth = node("Voice amplitude", voiceMouthReveal, 0, 0, { 17: .15 });
+shape("Speaking mouth", voiceMouth, 0, 0, 11, 8, 4, palette.cyan, { light: true });
 const sleepingSmile = node("Sleeping smile reveal", gestureGaze, 0, 13, { 16: 0, 18: 0 });
 line("Relaxed smile", sleepingSmile, [[-4, 0, 0, 0, .5, 4], [4, 0, Math.PI - .5, 4]], palette.cyan, 2.5, { light: true, fixedStroke: true });
 const leftBrow = node("Left brow", gestureGaze, -16, -14, { 18: .32 });
@@ -328,6 +331,7 @@ const gazeYAnimations = [-1, 0, 1].map((v) => animation(`Gaze vertical ${v}`, 60
 const emoteRest = [
   fixed(leftEmote, 16, 1), fixed(rightEmote, 16, 1), fixed(leftEmote, 17, 1), fixed(rightEmote, 17, 1), fixed(leftEmote, 18, 1), fixed(rightEmote, 18, 1),
   fixed(mouthEmote, 18, 1), fixed(mouthEmote, 17, 1), fixed(openMouth, 18, 0), fixed(dizzyEyes, 18, 0),
+  fixed(voiceMouthReveal, 16, 0), fixed(voiceMouthReveal, 18, 0),
   fixed(playfulBody, 13, 0), fixed(playfulBody, 14, 0), fixed(playfulBody, 15, 0), fixed(playfulBody, 16, 1), fixed(playfulBody, 17, 1),
   fixed(headEmote, 15, 0), fixed(headEmote, 14, 0), fixed(gestureGaze, 13, 0), fixed(gestureGaze, 14, 0),
   fixed(leftBrowEmote, 14, 0), fixed(rightBrowEmote, 14, 0), fixed(leftBrowEmote, 15, 0), fixed(rightBrowEmote, 15, 0),
@@ -399,12 +403,31 @@ const emotes = [
     track(mouthEmote, 17, [[0, 1], [25, .7], [65, .7], [108, 1], [120, 1]]),
   ]),
 ];
-const emoteAnimations = emotes.map((tracks, i) => animation(["Expression rest", "Expression wink", "Expression surprise", "Expression sleepy", "Expression poke", "Expression dizzy", "Expression sleeping", "Expression stretch", "Expression curious"][i], [90, 90, 90, 90, 90, 180, 240, 120, 120][i], tracks, i === 6));
+emotes.push(
+  emotePose([
+    track(headEmote, 15, [[0, -.12], [80, -.08], [160, -.12]]),
+    track(playfulBody, 14, [[0, 0], [80, -.5], [160, 0]]),
+    fixed(leftBrowEmote, 14, -2), fixed(rightBrowEmote, 14, -1),
+    fixed(leftEmote, 17, 1.12), fixed(rightEmote, 17, 1.12), fixed(mouthEmote, 17, .7),
+  ]),
+  emotePose([
+    // The mouth follows real output RMS through the voiceLevel blend.
+    fixed(mouthEmote, 18, 0), fixed(voiceMouthReveal, 16, 1), fixed(voiceMouthReveal, 18, 1),
+    track(headEmote, 15, [[0, -.025], [32, .035], [74, -.018], [112, .025], [160, -.025]]),
+    track(playfulBody, 14, [[0, 0], [35, -.5], [80, .1], [120, -.35], [160, 0]]),
+    track(leftBrowEmote, 14, [[0, -1], [55, -2.5], [105, -1], [160, -1]]),
+    track(rightStretch, 16, [[0, 0], [35, 1], [115, 1], [150, 0], [160, 0]]),
+    track(rightStretch, 18, [[0, 0], [40, .9], [115, .9], [150, 0], [160, 0]]),
+    track(rightStretch, 15, [[0, 0], [40, -.65], [80, -.5], [115, -.8], [150, 0], [160, 0]]),
+  ]),
+);
+const emoteAnimations = emotes.map((tracks, i) => animation(["Expression rest", "Expression wink", "Expression surprise", "Expression sleepy", "Expression poke", "Expression dizzy", "Expression sleeping", "Expression stretch", "Expression curious", "Voice listening", "Voice speaking"][i], [90, 90, 90, 90, 90, 180, 240, 120, 120, 160, 160][i], tracks, i === 6 || i >= 9));
 const emoteStatic = emotes.map((tracks, i) => animation(`Reduced expression ${i}`, 60, tracks.map(t => ({ ...t, frames: [[0, i === 4 && [leftEmote, rightEmote].includes(t.id) && t.key === 17 ? .08 : t.frames.at(-1)[1]]] })), false));
+const voiceAnimations = [0, .5, 1].map(level => animation(`Voice amplitude ${level}`, 60, [fixed(voiceMouth, 17, .15 + level * 1.05), fixed(voiceMouth, 16, .8 + level * .2)], false));
 
 object(53, { 55: "Jarvito" });
-const inputNames = ["status", "hovered", "dragging", "reducedMotion", "lookX", "lookY", "expanded", "walking", "gesture"];
-inputNames.forEach((name) => object(["status", "lookX", "lookY", "gesture"].includes(name) ? 56 : 59, { 138: name }));
+const inputNames = ["status", "hovered", "dragging", "reducedMotion", "lookX", "lookY", "expanded", "walking", "gesture", "voiceLevel"];
+inputNames.forEach((name) => object(["status", "lookX", "lookY", "gesture", "voiceLevel"].includes(name) ? 56 : 59, { 138: name }));
 const condition = (input, value, op = 0) => {
   const id = inputNames.indexOf(input);
   object(typeof value === "boolean" ? 71 : 70, { 155: id, 156: typeof value === "boolean" ? (value ? 0 : 1) : op, ...(typeof value !== "boolean" ? { 157: value } : {}) });
@@ -446,6 +469,9 @@ function gazeLayer(name, input, ids) {
 }
 gazeLayer("Pointer X", "lookX", gazeXAnimations);
 gazeLayer("Pointer Y", "lookY", gazeYAnimations);
+object(57, { 138: "Speech amplitude" }); object(63); transition(3, [], 0); object(62); object(64);
+object(76, { 167: inputNames.indexOf("voiceLevel") });
+voiceAnimations.forEach((id, i) => object(75, { 165: id, 166: i / 2 }));
 layer("Playful expressions", [...emoteAnimations, ...emoteStatic], [
   ...emoteAnimations.map((_, i) => ({ index: i, conditions: [["gesture", i], ["reducedMotion", false]] })),
   ...emoteStatic.map((_, i) => ({ index: i + emoteAnimations.length, conditions: [["gesture", i], ["reducedMotion", true]], duration: 0 })),

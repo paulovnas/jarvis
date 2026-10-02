@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowUpRight, ChevronDown, Gauge, Home, MessageCircle, RefreshCw, Settings2, Volume2, VolumeX, Wifi } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Gauge, Home, MessageCircle, Phone, PhoneOff, RefreshCw, Settings2, Volume2, VolumeX, Wifi } from "lucide-react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +29,7 @@ import { CompanionNotifications } from "./CompanionNotifications";
 import { CompanionTaskProgress } from "./CompanionTaskProgress";
 import { useIslandMotion } from "./use-island-motion";
 import { useCompanionSounds } from "./use-companion-sounds";
+import { useVoice } from "@/hooks/use-voice";
 import { LazyChatMarkdown } from "@/components/chat/LazyChatMarkdown";
 import "./companion.css";
 
@@ -62,6 +63,9 @@ function Usage({ accounts, error, now }: { accounts: CompanionUsage[] | null; er
 }
 
 export function Companion() {
+  const voice = useVoice();
+  const companionVoice = voice.active && voice.session?.owner === "companion";
+  const calling = companionVoice && voice.session?.mode === "call";
   useEffect(() => {
     const preventNativeMenu = (event: MouseEvent) => event.preventDefault();
     document.addEventListener("contextmenu", preventNativeMenu);
@@ -120,7 +124,7 @@ export function Companion() {
   const focused = attentive.find(item => companionItemKey(item) === selectedKey) ?? current;
   const petCurrent = attentive.find(item => item.status === "waiting") ?? attentive.find(item => item.status === "reconnecting")
     ?? attentive.find(item => item.status === "running") ?? attentive.reduce<CompanionItem | undefined>((latest, item) => !latest || item.updatedAt > latest.updatedAt ? item : latest, undefined);
-  const status: CompanionStatus = error && !snapshot ? "failed" : petCurrent?.status ?? "idle";
+  const status: CompanionStatus = voice.active && ["thinking", "transcribing", "speaking", "synthesizing"].includes(voice.session?.phase ?? "") ? "running" : error && !snapshot ? "failed" : petCurrent?.status ?? "idle";
   const snapshotQuestion = focused?.status === "waiting" && (focused.pendingQuestion || focused.requiresConversation) ? focused : items.find(item => item.status === "waiting" && (item.pendingQuestion || item.requiresConversation));
   const question: CompanionQuestionContext | null = tab === "chat" ? chatQuestion : tab === "activity" && snapshotQuestion ? {
     conversationId: snapshotQuestion.conversationId, agentId: snapshotQuestion.agentId, title: snapshotQuestion.title,
@@ -128,7 +132,7 @@ export function Companion() {
   } : null;
   const hasQuestion = Boolean(question);
   const restActivity = items.map(item => `${companionItemKey(item)}/${item.attentionId ?? item.status}`).sort().join("|");
-  const rest = useRobotRest(working > 0 || waiting > 0 || hasQuestion || dragging || geometry.expanded, restActivity);
+  const rest = useRobotRest(working > 0 || waiting > 0 || hasQuestion || dragging || geometry.expanded || voice.active, restActivity);
   const bubbleWanted = Boolean(notice && !geometry.expanded);
   const bubbleVisible = (bubbleWanted || peekingClosing) && geometry.bubble && !geometry.expanded;
   const now = useRunningClock(geometry.expanded && items.some(item => (item.status === "running" || item.status === "reconnecting") && item.activeSince !== null));
@@ -347,7 +351,7 @@ export function Companion() {
       onPointerEnter={() => { rest.wake(); setHovered(true); sounds.play("hover"); }} onPointerLeave={() => setHovered(false)}
       onClick={() => { if (geometry.expanded) poke(); else { clearNotices(); void expand(true); } }}>
       <span className="companion-robot-facing">
-        <Robot status={status} gesture={gesture === "none" ? rest.gesture : gesture} visible={visible} hovered={hovered} dragging={dragging} expanded={geometry.expanded} lookX={gaze.x} lookY={gaze.y} />
+        <Robot status={status} gesture={gesture !== "none" ? gesture : voice.active && voice.session?.phase === "listening" ? "listen" : voice.active && voice.session?.phase === "speaking" ? "speak" : rest.gesture} voiceLevel={voice.session?.level ?? 0} visible={visible} hovered={hovered} dragging={dragging} expanded={geometry.expanded} lookX={gaze.x} lookY={gaze.y} />
       </span>
     </Button>
   </div>;
@@ -362,6 +366,7 @@ export function Companion() {
             <Hint content="Chat"><TabsTrigger value="chat" aria-label="Chat" className="companion-nav-button cursor-pointer"><MessageCircle className="size-3.5" /></TabsTrigger></Hint>
           </TabsList>
           <span className="flex-1" />
+          <Hint content={calling ? "Encerrar ligação" : "Ligar para Jarvito"}><Button aria-label={calling ? "Encerrar ligação" : "Ligar para Jarvito"} variant="ghost" size="icon-xs" disabled={voice.active && !calling} className={`companion-nav-button cursor-pointer ${calling ? "text-onedark-green" : ""}`} onClick={() => { if (calling && voice.session?.id) void voice.control(voice.session.id, "end").catch(cause => setError(companionError(cause, "Não foi possível encerrar a ligação."))); else { setTab("chat"); chatPane.current?.startCall(); } }}>{calling ? <PhoneOff className="size-3.5" /> : <Phone className="size-3.5" />}</Button></Hint>
           <TabsList aria-label="Informações e ajustes" className="companion-navigation">
             <Hint content="Limites dos provedores"><TabsTrigger value="usage" aria-label="Limites" className="companion-nav-button cursor-pointer"><Gauge className="size-3.5" /></TabsTrigger></Hint>
             <Hint content="Ajustes"><TabsTrigger value="settings" aria-label="Ajustes" className="companion-nav-button cursor-pointer"><Settings2 className="size-3.5" /></TabsTrigger></Hint>
@@ -390,7 +395,7 @@ export function Companion() {
           </Card>}
           {(notifications.length ? active.length > 0 : active.length > 1) && <Card className="companion-activity-card companion-other-card" aria-label="Outras atividades"><div className="flex h-full min-w-0 flex-col gap-2 p-3"><p className="text-[10px] text-muted-foreground">Também estou acompanhando</p><ScrollArea className="min-h-0 flex-1">{active.filter(item => notifications.length || companionItemKey(item) !== (focused && companionItemKey(focused))).map(item => <Button key={companionItemKey(item)} variant="ghost" className="mb-1 h-auto w-full cursor-pointer justify-start gap-2 px-1 py-1 text-left" aria-label={notifications.length ? `Ver atividade: ${item.title}` : undefined} onClick={() => { if (notifications.length) void openConversation(item); else setSelectedKey(companionItemKey(item)); }}><span aria-hidden="true" className={`companion-state-dot ${statusColor[item.status]}`} /><span className="min-w-0 flex-1"><span className="block truncate text-[11px]">{item.projectName}</span><span className="block truncate text-[10px] text-muted-foreground">{item.title}</span>{notifications.length > 0 && <span className="mt-1 flex items-center gap-1 text-[10px] text-primary">Ver atividade<ArrowUpRight className="size-3" /></span>}</span></Button>)}</ScrollArea></div></Card>}
         </TabsContent>
-        <TabsContent value="chat" keepMounted className="companion-detail-view min-h-0 overflow-hidden" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable=true], [data-slot=select-trigger], [aria-haspopup=menu]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }}><CompanionChatPane ref={chatPane} active={geometry.expanded && tab === "chat"} externalQuestions onQuestionChange={setChatQuestion} onView={viewedChat} onSend={() => sounds.play("send")} /></TabsContent>
+        <TabsContent value="chat" keepMounted className="companion-detail-view min-h-0 overflow-hidden" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable=true], [data-slot=select-trigger], [aria-haspopup=menu]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }}><CompanionChatPane ref={chatPane} active={geometry.expanded && tab === "chat" || companionVoice} externalQuestions onQuestionChange={setChatQuestion} onView={viewedChat} onSend={() => sounds.play("send")} /></TabsContent>
         <TabsContent value="usage" className="companion-detail-view min-h-0 overflow-hidden"><div className="mb-3 flex items-center justify-between gap-2"><h2 className="text-xs font-medium">Limites dos provedores</h2><Hint content="Atualizar limites"><Button aria-label="Atualizar limites" aria-busy={usageBusy} disabled={usageBusy} size="icon-xs" variant="ghost" className="cursor-pointer text-muted-foreground" onClick={() => { forceUsage.current = true; setUsageAttempt(value => value + 1); }}><RefreshCw className={`size-3 ${usageBusy ? "motion-safe:animate-spin" : ""}`} /></Button></Hint></div><ScrollArea className="h-[calc(100%-34px)] pr-2"><Usage accounts={usage} error={usageError} now={usageAt} /></ScrollArea></TabsContent>
         <TabsContent value="settings" className="companion-detail-view min-h-0"><h2 className="mb-3 text-xs font-medium">Ajustes do Jarvito</h2><Card className="companion-activity-card gap-0"><div className="flex items-center gap-4 p-4"><div className="min-w-0 flex-1"><label htmlFor="companion-sounds" className="cursor-pointer text-xs font-medium">Sons de interação</label><p className="mt-1 text-[11px] leading-4 text-muted-foreground">Abertura, perguntas, atividades e conclusões.</p></div><Switch id="companion-sounds" checked={sounds.enabled} disabled={!sounds.ready} onCheckedChange={toggleSound} className="cursor-pointer" /></div></Card><p className="mt-4 text-[11px] leading-5 text-muted-foreground">{geometry.dragAxis === "horizontal" ? "Arraste a área preta do cabeçalho para mover a ilha para os lados." : "A ilha fica junto à câmera, no topo da tela."} Ao usar outro aplicativo, ela recolhe sem interromper seu trabalho.</p></TabsContent>
       </div>
@@ -437,7 +442,7 @@ export function Companion() {
       {panel}{speech}{pet}
       {!geometry.expanded && !bubbleVisible && <>
         <Button variant="ghost" className="companion-compact-open cursor-pointer" aria-label="Abrir ilha do Jarvito" aria-description={working > 0 ? "Jarvis está trabalhando" : undefined} aria-expanded="false" onClick={event => { if (dragged.current && event.detail !== 0) { dragged.current = false; return; } clearNotices(); void expand(true); }} />
-        {attentive.length > 0 && <Badge variant="outline" data-working={visible && working > 0} data-status={status} className={`companion-compact-badge ${statusColor[status]}`} aria-label={`${attentive.length} atividades para acompanhar`} />}
+        {(attentive.length > 0 || companionVoice) && <Badge variant="outline" data-working={visible && (working > 0 || companionVoice)} data-status={companionVoice ? "running" : status} className={`companion-compact-badge ${statusColor[companionVoice ? "running" : status]}`} aria-label={companionVoice ? "Microfone ativo no Jarvito" : `${attentive.length} atividades para acompanhar`} />}
       </>}
     </div>
   </main>;

@@ -73,6 +73,7 @@ pub enum InspectorTab {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum SettingsTab {
+    Voice,
     Browser,
     Tools,
     #[default]

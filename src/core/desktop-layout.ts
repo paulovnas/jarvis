@@ -8,7 +8,7 @@ export const DEFAULT_FILE_TABS: FileTabsLayout = { paths: [], activePath: null }
 export type DesktopLayout = {
   panels: Record<string, number>;
   inspectorTab: "details" | "activities" | "github" | "explorer";
-  settingsTab: "general" | "terminal" | "browser" | "tools" | "providers" | "agents" | "skills" | "mcps" | "workspaces";
+  settingsTab: "general" | "terminal" | "browser" | "voice" | "tools" | "providers" | "agents" | "skills" | "mcps" | "workspaces";
   itemOrder: Record<string, string[]>;
   expandedProjects: Record<string, boolean>;
   activitySections: Record<string, boolean>;

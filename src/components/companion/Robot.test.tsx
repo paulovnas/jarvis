@@ -8,6 +8,7 @@ const mock = vi.hoisted(() => {
   const fields = [
     { name: "status", type: 56, value: 0 },
     { name: "gesture", type: 56, value: 0 },
+    { name: "voiceLevel", type: 56, value: 0 },
     { name: "lookX", type: 56, value: 0 },
     { name: "lookY", type: 56, value: 0 },
     ...["hovered", "dragging", "expanded", "walking", "reducedMotion"].map(name => ({ name, type: 59, value: false })),

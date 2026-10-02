@@ -24,6 +24,7 @@ mod secrets;
 mod skills;
 mod system;
 mod updater;
+mod voice;
 #[cfg(feature = "browser-probe")]
 pub fn run_browser_probe() {
     initialize_tls();
@@ -76,6 +77,13 @@ fn application_command_allowed(label: &str, command: &str) -> bool {
                     | "stop_companion_chat"
                     | "clear_companion_chat"
                     | "get_companion_models"
+                    | "get_voice_settings"
+                    | "save_voice_settings"
+                    | "get_voice_session"
+                    | "start_voice_session"
+                    | "control_voice_session"
+                    | "install_voice_model"
+                    | "cancel_voice_download"
             ))
 }
 
@@ -107,6 +115,13 @@ mod companion_policy_tests {
             "stop_companion_chat",
             "clear_companion_chat",
             "get_companion_models",
+            "get_voice_settings",
+            "save_voice_settings",
+            "get_voice_session",
+            "start_voice_session",
+            "control_voice_session",
+            "install_voice_model",
+            "cancel_voice_download",
         ] {
             assert!(application_command_allowed("companion", command));
             assert!(!application_command_allowed("browser-1", command));
@@ -146,6 +161,7 @@ pub fn run() {
     builder
         .manage(desktop::DesktopState::default())
         .manage(companion::CompanionState::default())
+        .manage(voice::VoiceState::default())
         .manage(core::CoreState::default())
         .manage(persistence::AppState::default())
         .manage(openai_codex::OpenAiCodexState::default())
@@ -215,6 +231,13 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            use tauri::Manager;
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                window
+                    .app_handle()
+                    .state::<voice::VoiceState>()
+                    .shutdown(window.app_handle(), Some(window.label()));
+            }
             desktop::on_window_event(window, event);
             companion::on_window_event(window, event);
         })
@@ -222,6 +245,13 @@ pub fn run() {
             // Remote child views must never call privileged application commands,
             // even if a site navigates to a local URL matching the development origin.
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                voice::get_voice_settings,
+                voice::save_voice_settings,
+                voice::get_voice_session,
+                voice::start_voice_session,
+                voice::control_voice_session,
+                voice::models::install_voice_model,
+                voice::models::cancel_voice_download,
                 remote::get_remote_status,
                 remote::set_remote_enabled,
                 remote::refresh_remote_pairing,
@@ -471,6 +501,7 @@ pub fn run() {
 pub(crate) fn prepare_exit_for_installer(app: &tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     desktop::flush(app);
+    app.state::<voice::VoiceState>().shutdown(app, None);
     app.state::<agent::AgentState>()
         .terminals
         .shutdown()
@@ -496,6 +527,7 @@ fn prepare_exit_with_reason(
         &app.state::<agent::AgentState>(),
     )?;
     app.state::<remote::RemoteState>().shutdown();
+    app.state::<voice::VoiceState>().shutdown(app, None);
     app_exit::allow(app);
     diagnostics::finish(reason);
     Ok(())
