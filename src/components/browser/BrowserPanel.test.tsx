@@ -23,7 +23,7 @@ function Workspace({ conversationId = "chat-1" }: { conversationId?: string }) {
   return <FileWorkspace browser={browser}><input aria-label="Rascunho" value={draft} onChange={event => setDraft(event.target.value)} /><Button onClick={() => void browser.open()}>Abrir navegador</Button></FileWorkspace>;
 }
 beforeEach(() => {
-  stored = { tabs: [], activeId: null };
+  stored = { tabs: [], activeId: null, backend: "embedded" };
   mocked.mockReset().mockImplementation(async (command, args) => {
     if (command === "get_browser_tabs") return structuredClone(stored);
     if (command === "set_browser_viewport") return;

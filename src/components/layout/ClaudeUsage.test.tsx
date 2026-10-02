@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ClaudeRuntime } from "@/core/executors";
 import type { AccountUsage } from "@/core/provider-usage";
 import { StatusBar } from "./StatusBar";
+vi.mock("../remote/RemoteAccess", () => ({ RemoteAccess: () => null }));
 
 const local = vi.hoisted(() => ({ runtime: null as ClaudeRuntime | null }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));

@@ -18,6 +18,7 @@ mod model_bindings;
 mod openai_codex;
 mod optional_tools;
 mod persistence;
+mod remote;
 #[cfg_attr(target_os = "linux", path = "secrets_linux.rs")]
 mod secrets;
 mod skills;
@@ -150,6 +151,8 @@ pub fn run() {
         .manage(openai_codex::OpenAiCodexState::default())
         .manage(claude::ClaudeState::default())
         .manage(agent::AgentState::default())
+        .manage(agent::remote::RuntimeState::default())
+        .manage(remote::RemoteState::default())
         .manage(agent::knowledge::generation::KnowledgeJobs::default())
         .manage(agent::learning::capture::LearningJobs::default())
         .manage(agent::browser::BrowserState::default())
@@ -208,6 +211,7 @@ pub fn run() {
                 );
             }
             agent::browser::extension::start_if_configured(app.handle());
+            remote::setup(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -218,6 +222,10 @@ pub fn run() {
             // Remote child views must never call privileged application commands,
             // even if a site navigates to a local URL matching the development origin.
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                remote::get_remote_status,
+                remote::set_remote_enabled,
+                remote::refresh_remote_pairing,
+                remote::revoke_remote_device,
                 companion::get_companion_snapshot,
                 companion::ack_companion_item,
                 companion::get_companion_usage,
@@ -487,6 +495,7 @@ fn prepare_exit_with_reason(
         &app.state::<system::SystemState>(),
         &app.state::<agent::AgentState>(),
     )?;
+    app.state::<remote::RemoteState>().shutdown();
     app_exit::allow(app);
     diagnostics::finish(reason);
     Ok(())

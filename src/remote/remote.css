@@ -1,0 +1,17 @@
+.remote-shell { height: var(--remote-height, 100dvh); max-width: 48rem; margin-inline: auto; padding-top: env(safe-area-inset-top); overflow: hidden; background: var(--background); color: var(--foreground); font-family: var(--font-sans); }
+.remote-shell :is(button, input, [data-slot="select-trigger"]) { min-height: 44px; }
+.remote-shell :is(input, textarea) { font-size: 16px; }
+.remote-shell [data-slot="button"]:is([aria-label="Voltar"], [aria-label="Desconectar celular"], [aria-label="Interromper execução"]) { min-width: 44px; }
+html[data-remote] [data-slot="select-item"] { min-height: 44px; cursor: pointer; }
+.remote-scroll { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.remote-footer { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+.remote-sheet { padding-bottom: env(safe-area-inset-bottom); }
+.remote-sheet [data-slot="button"] { min-height: 44px; }
+.remote-code { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--border); border-radius: 6px; background: var(--sidebar); padding: 12px; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; }
+.remote-prose :is(pre, table) { max-width: 100%; overflow-x: auto; }
+.remote-prose a { cursor: pointer; }
+.remote-pending { min-inline-size: 0; }
+.remote-question form > div:last-child { flex-wrap: wrap; }
+.remote-question form > div:last-child > [data-slot="field"] { min-width: calc(100% - 32px); }
+.remote-question form > div:last-child > [data-slot="button"] { width: 100%; }
+@media (prefers-reduced-motion: reduce) { .remote-shell *, .remote-sheet * { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }

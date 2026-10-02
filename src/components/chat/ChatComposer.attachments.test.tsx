@@ -30,6 +30,13 @@ describe("Composer attachments", () => {
     const user = userEvent.setup(); const drafts = new Map<string, ChatDraft>(); const send = vi.fn().mockResolvedValue(false);
     render(<ChatComposer modelGroups={modelGroups} onSendMessage={send} draftKey="conversation" drafts={drafts} />);
     await screen.findByRole("textbox", { name: "Mensagem" });
+    const picker = screen.getByLabelText("Selecionar anexos");
+    const click = vi.spyOn(picker, "click");
+    await user.click(screen.getByRole("button", { name: "Mais ações" }));
+    await user.click(screen.getByRole("menuitem", { name: "Anexar arquivos" }));
+    expect(click).toHaveBeenCalledOnce();
+    click.mockRestore();
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
     await user.upload(screen.getByLabelText("Selecionar anexos"), new File(["hello"], "notes.txt", { type: "text/plain" }));
     await screen.findByRole("button", { name: "Remover anexo notes.txt" });
     expect(drafts.get("conversation")?.parts).toContainEqual({ type: "attachment", attachment: doc });
@@ -50,6 +57,9 @@ describe("Composer attachments", () => {
     await user.upload(screen.getByLabelText("Selecionar anexos"), new File(["another"], "notes.txt", { type: "text/plain" }));
     await waitFor(() => expect(finish).toBeDefined());
     expect(screen.getByRole("button", { name: "Agendar mensagem" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Mais ações" }));
+    expect(screen.getByRole("menuitem", { name: "Anexar arquivos" })).toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{Escape}");
     await act(async () => finish([{ ...file, id: "doc", name: "notes.txt", kind: "document" }]));
     expect(screen.getByRole("button", { name: "Agendar mensagem" })).toBeEnabled();
   });

@@ -83,7 +83,7 @@ export function FileWorkspace({ files, browser, http, onAnalyzeHttp, terminalLau
             <Hint content={`Fechar ${path ?? title}`}><Button type="button" variant="ghost" size="icon" aria-label={path ? `Fechar arquivo ${path}` : httpTab ? `Fechar requisição ${title}` : `Fechar navegador ${title}`} data-path={path ?? undefined} onClick={event => { if (path) close(event); else if (httpTab) http?.requestClose(httpTab.draft.id); else if (tab) void browser?.command({ action: "close", id: tab.id }); }} className="absolute inset-y-0 right-0.5 my-auto size-5 cursor-pointer opacity-60 group-hover/workspace-tab:opacity-100 focus-visible:opacity-100 active:not-aria-[haspopup]:translate-y-0"><X className="size-3" /></Button></Hint>
           </div>}</SortableItem>;
         })}</SortableList>
-        {browser && browser.snapshot.tabs.length > 0 && <Hint content="Nova aba do navegador"><Button type="button" variant="ghost" size="icon" aria-label="Nova aba do navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-6 shrink-0 cursor-pointer"><Plus className="size-3.5" /></Button></Hint>}
+        {browser?.loaded && browser.snapshot.backend === "embedded" && browser.snapshot.tabs.length > 0 && <Hint content="Nova aba do navegador"><Button type="button" variant="ghost" size="icon" aria-label="Nova aba do navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-6 shrink-0 cursor-pointer"><Plus className="size-3.5" /></Button></Hint>}
       </TabsList></div>
       {terminalLauncher}
       {browser?.snapshot.backend === "extension" && <BrowserDiscovery browser={browser} />}

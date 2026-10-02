@@ -11,6 +11,7 @@ const ProviderUsage = lazy(() => import("./ProviderUsage").then(module => ({ def
 const ClaudeUsage = lazy(() => import("./ProviderUsage").then(module => ({ default: module.ClaudeUsage })));
 const AppUpdate = lazy(() => import("./AppUpdate").then(module => ({ default: module.AppUpdate })));
 const ResourceUpdates = lazy(() => import("./ResourceUpdates").then(module => ({ default: module.ResourceUpdates })));
+const RemoteAccess = lazy(() => import("../remote/RemoteAccess").then(module => ({ default: module.RemoteAccess })));
 
 function UsageAlertMonitor({ account }: { account: ProviderAccount }) {
   useProviderUsage(account.alias, { pollWhileHidden: true });
@@ -35,6 +36,7 @@ export function StatusBar({ accounts = [], onOpenSettings, passive = false }: { 
     <Separator />
     <div className="flex h-7 min-w-0 items-center gap-2 px-2">
       {onOpenSettings && <Hint content="Configurações"><Button variant="ghost" size="icon-sm" className="h-6 w-7 shrink-0 cursor-pointer rounded-sm text-muted-foreground" aria-label="Configurações" onClick={onOpenSettings}><Settings className="size-3.5" /></Button></Hint>}
+      {!passive && <Suspense fallback={null}><RemoteAccess /></Suspense>}
       {!passive && <Suspense fallback={null}><AppUpdate /></Suspense>}
       {!passive && <Suspense fallback={null}><ResourceUpdates /></Suspense>}
       <div aria-label="Limites dos provedores" className="ml-auto flex min-w-0 flex-row-reverse items-center overflow-x-auto">{accounts.filter(account => account.enabled && account.providerKind !== "custom" && account.showUsage !== false).map(account => <Suspense key={`${account.alias}/${account.createdAt}`} fallback={<Skeleton aria-label={`Carregando limites de ${account.alias}`} className="mx-2 h-3 w-44 shrink-0" />}><ProviderUsage account={account} now={now.getTime()} /></Suspense>)}{!passive && <Suspense fallback={null}><ClaudeUsage now={now.getTime()} /></Suspense>}</div>

@@ -28,6 +28,10 @@ export default defineConfig(async ({ command }) => ({
   build: {
     chunkSizeWarningLimit: 3000,
     rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        remote: path.resolve(__dirname, "remote.html"),
+      },
       output: {
         manualChunks(id: string) {
           if (
@@ -57,7 +61,7 @@ export default defineConfig(async ({ command }) => ({
   // state and resets onboarding to step 1. Pre-bundle every subpath so the optimizer
   // never re-runs mid-session.
   optimizeDeps: {
-    entries: ["index.html"],
+    entries: ["index.html", "remote.html"],
     include: [
       "@base-ui/react/alert-dialog",
       "@base-ui/react/avatar",

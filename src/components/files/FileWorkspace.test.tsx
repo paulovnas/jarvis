@@ -29,7 +29,7 @@ function Workspace({ projectId = "project-1" }: { projectId?: string }) {
 
 it("restores mixed file and browser tab order while keeping Chat first and fixed", async () => {
   const user = userEvent.setup();
-  const browser: BrowserController = { conversationId: "chat", snapshot: { activeId: null, tabs: [{ id: "web", conversationId: "chat", title: "Local", url: "http://localhost:5173", loading: false }] }, loaded: true, busy: false, command: vi.fn(), select: vi.fn(), open: vi.fn() };
+  const browser: BrowserController = { conversationId: "chat", snapshot: { activeId: null, backend: "embedded", tabs: [{ id: "web", conversationId: "chat", title: "Local", url: "http://localhost:5173", loading: false }] }, loaded: true, busy: false, command: vi.fn(), select: vi.fn(), open: vi.fn() };
   const layout = { ...DEFAULT_DESKTOP_LAYOUT, itemOrder: { "tabs:chat": ["browser:web", "file:README.md"] }, fileTabs: { "project-1": { paths: ["README.md"], activePath: null } } };
   function Mixed() { const files = useProjectFiles("project-1"); return <FileWorkspace files={files} browser={browser}><ChatDraft /></FileWorkspace>; }
   const update = vi.fn<(value: LayoutUpdate) => void>();
@@ -48,6 +48,19 @@ it("restores mixed file and browser tab order while keeping Chat first and fixed
     expect(update.mock.calls.map(([value]) => typeof value === "function" ? value(layout) : value)).toContainEqual({ itemOrder: { "tabs:chat": ["file:README.md", "browser:web"] } });
     expect(browser.select).not.toHaveBeenCalled();
   } finally { geometry.mockRestore(); }
+});
+
+it("only offers new browser tabs for the loaded embedded backend and preserves extension discovery", async () => {
+  const user = userEvent.setup();
+  const browser: BrowserController = { conversationId: "chat", snapshot: { activeId: null, backend: "embedded", tabs: [{ id: "web", conversationId: "chat", title: "Local", url: "http://localhost:5173", loading: false }] }, loaded: false, busy: false, command: vi.fn(), select: vi.fn(), open: vi.fn() };
+  const view = render(<FileWorkspace browser={browser}><ChatDraft /></FileWorkspace>);
+  expect(screen.queryByRole("button", { name: "Nova aba do navegador" })).not.toBeInTheDocument();
+  view.rerender(<FileWorkspace browser={{ ...browser, loaded: true }}><ChatDraft /></FileWorkspace>);
+  await user.click(screen.getByRole("button", { name: "Nova aba do navegador" }));
+  expect(browser.open).toHaveBeenCalledOnce();
+  view.rerender(<FileWorkspace browser={{ ...browser, loaded: true, snapshot: { ...browser.snapshot, backend: "extension" } }}><ChatDraft /></FileWorkspace>);
+  expect(screen.queryByRole("button", { name: "Nova aba do navegador" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Vincular aba externa" })).toBeVisible();
 });
 
 beforeEach(() => {

@@ -11,6 +11,7 @@ import { coreFixture } from "@/test/core-fixtures";
 import { StatusBar } from "./StatusBar";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("../remote/RemoteAccess", () => ({ RemoteAccess: () => null }));
 vi.mock("@/hooks/use-claude-runtime", () => ({ useClaudeRuntime: () => ({ data: null }) }));
 const call = vi.mocked(invoke);
 const account: ProviderAccount = { alias: "openai-codex-paulo", providerKind: "openai-codex", enabled: true, createdAt: 1, email: "paulo@example.test", accountType: "personal", models: [], modelsAvailable: true };

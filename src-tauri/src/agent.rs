@@ -42,6 +42,7 @@ pub(crate) mod publication;
 pub(crate) mod questions;
 pub(crate) mod queue;
 mod read_ahead;
+pub(crate) mod remote;
 pub(crate) mod response_export;
 mod session_writer;
 pub(crate) mod shell;

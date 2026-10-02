@@ -1,6 +1,7 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowUp, Plus, Square } from "lucide-react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { ArrowUp, Globe, Paperclip, Plus, Send, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/TextInput";
 import { Skeleton } from "@/components/ui/skeleton";
 import { invoke } from "@tauri-apps/api/core";
@@ -35,7 +36,10 @@ const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: 
 
 interface ChatComposerProps {
   draftInsertion?: { id: string; text: string };
-  terminalLauncher?: ReactNode;
+  onOpenBrowser?: () => void;
+  browserBusy?: boolean;
+  onOpenHttp?: () => void;
+  httpBusy?: boolean;
   agentModels?: AgentModelsController;
   onSendMessage: (content: string, options: TurnOptions, parts?: MessagePart[]) => Promise<boolean>;
   onStop?: () => Promise<void>;
@@ -61,7 +65,10 @@ interface ChatComposerProps {
 
 export function ChatComposer({
   draftInsertion,
-  terminalLauncher,
+  onOpenBrowser,
+  browserBusy = false,
+  onOpenHttp,
+  httpBusy = false,
   agentModels,
   onSendMessage,
   modelGroups,
@@ -299,19 +306,22 @@ export function ChatComposer({
 
         {/* Linha de controles inferior no padrão Metis */}
         <div className="composer-controls flex w-full items-center justify-between gap-1 px-3 pb-3 pt-1">
-          {/* Canto inferior esquerdo: botão de anexo com ícone plus */}
-          <Hint content="Anexar imagens ou documentos"><Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            disabled={disabled || compacting || uploading || !draftKey}
-            onClick={() => fileInput.current?.click()}
-            aria-label="Adicionar anexo"
-            className="size-7.5 cursor-pointer rounded-full bg-secondary text-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <Plus className="size-3.5 stroke-[2.2]" />
-          </Button></Hint>
-          {terminalLauncher}
+          <DropdownMenu>
+            <Hint content="Mais ações"><DropdownMenuTrigger render={<Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Mais ações"
+              className="size-7.5 cursor-pointer rounded-full bg-secondary text-foreground transition-colors hover:bg-accent hover:text-foreground"
+            />}><Plus className="stroke-[2.2]" /></DropdownMenuTrigger></Hint>
+            <DropdownMenuContent side="top" align="start" className="w-60">
+              <DropdownMenuGroup>
+                <DropdownMenuItem className="cursor-pointer" disabled={disabled || compacting || uploading || !draftKey} onClick={() => fileInput.current?.click()}><Paperclip />Anexar arquivos</DropdownMenuItem>
+                {onOpenBrowser && <DropdownMenuItem className="cursor-pointer" disabled={browserBusy} onClick={onOpenBrowser}><Globe />Nova aba de navegador</DropdownMenuItem>}
+                {onOpenHttp && <DropdownMenuItem className="cursor-pointer" disabled={httpBusy} onClick={onOpenHttp}><Send />Nova requisição HTTP</DropdownMenuItem>}
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Input ref={fileInput} type="file" multiple className="hidden" aria-label="Selecionar anexos" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.pdf,.docx,.odt,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.ts,.tsx,.js,.css,.html,.rs,.py" onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void addFiles(files); }} />
 
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}

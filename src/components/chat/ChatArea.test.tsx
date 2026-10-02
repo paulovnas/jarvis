@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyLibrary, populatedLibrary } from "@/test/library-fixtures";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
+import { httpDraft, httpSnapshot } from "@/test/http-fixtures";
 import type { LibrarySnapshot } from "@/core/library";
 import { readChat, type ChatSnapshot } from "@/core/chat";
 import { clearChatStore } from "@/core/chat-store";
@@ -238,14 +239,53 @@ describe("Persistent live conversation", () => {
     expect(await screen.findByRole("textbox")).toHaveAttribute("contenteditable", "true");
   });
 
-  it("keeps browser and HTTP actions in the composer without chat terminal controls", async () => {
+  it("opens browser and HTTP tabs from the composer action menu", async () => {
+    const user = userEvent.setup();
+    call.mockImplementation(async command => {
+      if (command === "get_browser_tabs" || command === "browser_command") return { tabs: [], activeId: null, backend: "embedded" };
+      if (command === "get_http_snapshot") return httpSnapshot({ drafts: [] });
+      if (command === "save_http_draft") return httpDraft();
+      return emptyChat();
+    });
     render(<TestChat />);
     expect(await screen.findByRole("textbox", { name: "Mensagem" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Abrir navegador" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Nova requisição HTTP" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Abrir navegador" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Nova requisição HTTP" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Mais ações" }));
+    expect(screen.getByRole("menuitem", { name: "Anexar arquivos" })).toBeEnabled();
+    expect(await screen.findByRole("menuitem", { name: "Nova aba de navegador" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Nova requisição HTTP" })).toBeVisible();
+    await user.click(screen.getByRole("menuitem", { name: "Nova aba de navegador" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("browser_command", { conversationId: "c1", request: { action: "open" } }));
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Mais ações" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Nova requisição HTTP" }));
+    expect(await screen.findByRole("tab", { name: /Consultar pedidos/ })).toHaveAttribute("aria-selected", "true");
+    expect(call).toHaveBeenCalledWith("save_http_draft", expect.objectContaining({ conversationId: "c1", id: null }));
     expect(screen.queryByRole("button", { name: "Abrir terminais" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Terminais do projeto" })).not.toBeInTheDocument();
     expect(call).not.toHaveBeenCalledWith("list_project_terminals", expect.anything());
+  });
+
+  it("hides the new browser action in extension mode and follows configuration changes", async () => {
+    const user = userEvent.setup();
+    let backend = "extension";
+    call.mockImplementation(async command => command === "get_browser_tabs"
+      ? { tabs: [], activeId: null, backend }
+      : emptyChat());
+    render(<TestChat />);
+    await user.click(await screen.findByRole("button", { name: "Mais ações" }));
+    expect(screen.getAllByRole("menuitem")).toHaveLength(2);
+    expect(screen.getByRole("menuitem", { name: "Anexar arquivos" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Nova requisição HTTP" })).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: "Nova aba de navegador" })).not.toBeInTheDocument();
+
+    backend = "embedded";
+    await act(async () => { for (const handler of listeners.get("system:changed") ?? []) handler({ event: "system:changed", id: 1, payload: {} }); });
+    expect(await screen.findByRole("menuitem", { name: "Nova aba de navegador" })).toBeVisible();
+    backend = "extension";
+    await act(async () => { for (const handler of listeners.get("system:changed") ?? []) handler({ event: "system:changed", id: 1, payload: {} }); });
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Nova aba de navegador" })).not.toBeInTheDocument());
   });
 
   it("starts without demo messages and opens a real selected conversation", async () => {
@@ -255,7 +295,7 @@ describe("Persistent live conversation", () => {
     rerender(<TestChat />);
     await screen.findByRole("heading", { name: "Primeira conversa" });
     expect(await screen.findByRole("textbox")).toHaveAttribute("contenteditable", "true");
-    expect(screen.getByRole("button", { name: "Adicionar anexo" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Mais ações" })).toBeEnabled();
     expect(call).toHaveBeenCalledWith("subscribe_chat", { conversationId: "c1" });
   });
   it("uses the vertical brand and moves the same composer into the transcript after the first turn", async () => {
