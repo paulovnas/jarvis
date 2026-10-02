@@ -32,6 +32,7 @@
 .companion-activity-card[data-state="failed"]::before { background: radial-gradient(ellipse at 22% 110%, color-mix(in oklab, var(--color-onedark-red) 25%, transparent), transparent 80%); opacity: 1; }
 .companion-activity-card[data-state="waiting"]::before { background: radial-gradient(ellipse at 22% 110%, color-mix(in oklab, var(--color-onedark-yellow) 24%, transparent), transparent 80%); opacity: 1; }
 .companion-activity-content { position: relative; display: flex; flex-direction: column; gap: 3px; height: 100%; padding: 8px 12px 6px 104px; }
+.companion-focused-card[data-tasks-open="true"] .companion-activity-content { padding-left: 12px; }
 .companion-activity-select { height: 20px; width: 24px; border: 0; background: transparent; padding: 0; box-shadow: none; }
 .companion-state-dot { display: inline-block; height: 6px; width: 6px; flex-shrink: 0; border-radius: 50%; background: currentColor; }
 .companion-jump { height: 18px; width: 18px; border-radius: 50%; color: var(--muted-foreground); background: color-mix(in oklab, var(--foreground) 5%, transparent); }

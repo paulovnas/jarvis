@@ -7,6 +7,7 @@ import { CompanionNotifications } from "./CompanionNotifications";
 const item = (index: number): CompanionItem => ({
   conversationId: `chat-${index}`, agentId: null, projectId: "project", projectName: "Portal", global: false,
   title: `Atividade ${index}`, role: "builder", status: "completed", activity: "Concluído", result: `Resultado ${index}`,
+  tasks: [],
   durationMs: 1000, activeSince: null, updatedAt: index, requiresConversation: false, attentionId: `chat-${index}/completed`, acknowledged: false,
 });
 

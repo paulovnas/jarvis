@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { pendingQuestionSchema } from "./questions";
-import { readChat, turnOptionsSchema } from "./chat";
+import { directTaskSchema, readChat, turnOptionsSchema } from "./chat";
 
 export const companionStatusSchema = z.enum(["running", "waiting", "reconnecting", "completed", "failed", "idle"]);
 export const companionItemSchema = z.object({
   conversationId: z.string(), agentId: z.string().nullable(), projectId: z.string(), projectName: z.string(),
   global: z.boolean().default(false),
   title: z.string(), role: z.string(), status: companionStatusSchema,
+  tasks: z.array(directTaskSchema).default([]),
   activity: z.string(), result: z.string().nullish(), durationMs: z.number().nonnegative(), activeSince: z.number().nullable(), updatedAt: z.number(),
   pendingQuestion: pendingQuestionSchema.nullish(), requiresConversation: z.boolean(),
   attentionId: z.string(), acknowledged: z.boolean(),

@@ -75,6 +75,8 @@ pub(crate) struct Item {
     #[serde(rename = "revision")]
     attention_generation: u64,
     activity: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tasks: Vec<tasks::Task>,
     #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<String>,
     duration_ms: u64,
@@ -347,6 +349,7 @@ fn project(snapshot: &ChatSnapshot) -> Option<Record> {
             acknowledged: false,
             attention_generation: snapshot.revision,
             activity,
+            tasks: turn.tasks.clone(),
             result: (status == Status::Completed)
                 .then(|| {
                     turn.steps
@@ -506,6 +509,7 @@ fn add_workflow(items: &mut Vec<Item>, value: WorkflowView) {
             acknowledged: false,
             attention_generation: card.updated_at,
             activity,
+            tasks: Vec::new(),
             result: (status == Status::Completed)
                 .then(|| format!("Tarefa concluída: {}", short(&card.title, 240))),
             duration_ms: card.duration_ms,
@@ -735,19 +739,54 @@ mod tests {
         let (_fixture, _session, mut snapshot) = running();
         snapshot.turns[0].duration_ms = 2_500;
         snapshot.turns[0].active_since = Some(10_000);
-        snapshot.turns[0].tasks = vec![tasks::Task {
-            id: "ui".into(),
-            title: "Ajustando a interface".into(),
-            status: tasks::Status::InProgress,
-        }];
+        snapshot.turns[0].tasks = vec![
+            tasks::Task {
+                id: "ui".into(),
+                title: "Ajustando a interface".into(),
+                status: tasks::Status::InProgress,
+            },
+            tasks::Task {
+                id: "tests".into(),
+                title: "Validar os testes".into(),
+                status: tasks::Status::Pending,
+            },
+            tasks::Task {
+                id: "api".into(),
+                title: "Atualizar a API".into(),
+                status: tasks::Status::Completed,
+            },
+            tasks::Task {
+                id: "network".into(),
+                title: "Verificar a conexão".into(),
+                status: tasks::Status::Blocked,
+            },
+        ];
         let item = project(&snapshot).unwrap().item;
         assert_eq!(item.status, Status::Running);
         assert_eq!(item.activity, "Ajustando a interface");
         assert_eq!(item.duration_ms, 2_500);
         assert_eq!(item.active_since, Some(10_000));
+        assert_eq!(item.tasks, snapshot.turns[0].tasks);
+        assert_eq!(
+            serde_json::to_value(&item).unwrap()["tasks"],
+            json!([
+                {"id":"ui","title":"Ajustando a interface","status":"in_progress"},
+                {"id":"tests","title":"Validar os testes","status":"pending"},
+                {"id":"api","title":"Atualizar a API","status":"completed"},
+                {"id":"network","title":"Verificar a conexão","status":"blocked"}
+            ])
+        );
         assert!(!serde_json::to_string(&item)
             .unwrap()
             .contains("Private prompt"));
+
+        snapshot.turns[0].tasks[0].status = tasks::Status::Completed;
+        assert_eq!(
+            project(&snapshot).unwrap().item.tasks[0].status,
+            tasks::Status::Completed
+        );
+        snapshot.turns[0].tasks.clear();
+        assert!(project(&snapshot).unwrap().item.tasks.is_empty());
     }
 
     #[test]

@@ -8,6 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const item = (status: CompanionItem["status"], id = "chat"): CompanionItem => ({
   conversationId: id, agentId: null, projectId: "project", projectName: "Portal", title: id, role: "builder", status,
   global: false, activity: "", durationMs: 1000, activeSince: null, updatedAt: 1, requiresConversation: false, attentionId: `${id}/${status}`, acknowledged: false,
+  tasks: [],
 });
 const start = vi.fn();
 const stop = vi.fn();

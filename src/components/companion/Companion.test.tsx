@@ -20,7 +20,7 @@ const base: CompanionItem = {
   conversationId: "conversation-1", agentId: null, projectId: "project-1", projectName: "Portal", global: false,
   title: "Melhorar o relatório", role: "builder", status: "running", activity: "Verificando o relatório",
   durationMs: 120_000, activeSince: 990_000, updatedAt: 1_000_000, requiresConversation: false, attentionId: "turn-1/running", acknowledged: false,
-  revision: 1,
+  revision: 1, tasks: [],
 };
 let snapshot: CompanionSnapshot;
 const account: AccountUsage & { providerKind: string } = {
@@ -82,6 +82,41 @@ describe("Desktop companion", () => {
     expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument();
     expect(call.mock.calls.map(([command]) => command)).toEqual(expect.arrayContaining(["get_companion_snapshot", "set_companion_expanded"]));
     expect(call.mock.calls.some(([command]) => /bootstrap|transcript|get_provider/.test(command))).toBe(false);
+  });
+
+  it("shows task counts and states in the activity card and updates them without opening the main app", async () => {
+    snapshot.items[0].tasks = [
+      { id: "sync", title: "Completar sincronização automática", status: "in_progress" },
+      { id: "screen", title: "Integrar a tela principal", status: "pending" },
+      { id: "errors", title: "Sinalizar falhas", status: "blocked" },
+      { id: "tests", title: "Validar os critérios", status: "completed" },
+    ];
+    const user = await expanded();
+    const card = screen.getByLabelText("Atividade selecionada");
+    const progress = within(card).getByRole("button", { name: "Tarefas: 1 de 4 tarefas concluídas, 1 em andamento, 1 pendente, 1 bloqueada" });
+    expect(progress).toHaveTextContent("1/4");
+    expect(progress).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("list", { name: "Tarefas do agente" })).not.toBeInTheDocument();
+    await user.click(progress);
+    expect(progress).toHaveAttribute("aria-expanded", "true");
+    const tasks = screen.getByRole("list", { name: "Tarefas do agente" });
+    expect(within(tasks).getAllByRole("listitem")).toHaveLength(4);
+    for (const text of ["Completar sincronização automática", "Integrar a tela principal", "Sinalizar falhas", "Validar os critérios", "Em andamento", "Pendente", "Bloqueada", "Concluída"]) expect(within(tasks).getByText(text)).toBeVisible();
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_companion_expanded", { expanded: true, height: 400 }));
+    snapshot.items[0] = { ...snapshot.items[0], tasks: snapshot.items[0].tasks.map(task => ({ ...task, status: "completed" })) };
+    act(() => events.get("companion:changed")?.({}));
+    await waitFor(() => expect(progress).toHaveTextContent("4/4"));
+    expect(within(tasks).getAllByText("Concluída")).toHaveLength(4);
+    await user.click(progress);
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_companion_expanded", { expanded: true, height: 160 }));
+    expect(screen.queryByRole("list", { name: "Tarefas do agente" })).not.toBeInTheDocument();
+    expect(call.mock.calls.some(([command]) => command === "companion_open_conversation")).toBe(false);
+  });
+
+  it("does not show a task counter when no plan exists", async () => {
+    await expanded();
+    expect(screen.queryByRole("button", { name: /^Tarefas:/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Trabalhando")).toBeVisible();
   });
 
   it("sleeps after two idle minutes despite snapshot refreshes and wakes on interaction and new work", async () => {

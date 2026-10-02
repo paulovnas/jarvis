@@ -1,5 +1,16 @@
 import { expect, it } from "vitest";
-import { companionGeometrySchema } from "./companion";
+import { companionGeometrySchema, companionSnapshotSchema } from "./companion";
+
+it("accepts snapshots without a task plan and validates actual task states", () => {
+  const item = {
+    conversationId: "chat", agentId: null, projectId: "project", projectName: "Portal", title: "Revisar a tela", role: "builder", status: "running",
+    activity: "Verificando", durationMs: 1000, activeSince: 10, updatedAt: 20, requiresConversation: false, attentionId: "chat/running", acknowledged: false,
+  };
+  expect(companionSnapshotSchema.parse({ items: [item], truncated: false }).items[0].tasks).toEqual([]);
+  const tasks = [{ id: "ui", title: "Revisar os componentes", status: "blocked" }];
+  expect(companionSnapshotSchema.parse({ items: [{ ...item, tasks }], truncated: false }).items[0].tasks).toEqual(tasks);
+  expect(companionSnapshotSchema.safeParse({ items: [{ ...item, tasks: [{ ...tasks[0], status: "failed" }] }], truncated: false }).success).toBe(false);
+});
 
 it("keeps the compact island origin in the larger native canvas for smooth closing", () => {
   const geometry = companionGeometrySchema.parse({

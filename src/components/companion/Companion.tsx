@@ -26,6 +26,7 @@ import { CompanionChatPane, type CompanionChatHandle } from "./CompanionChatPane
 import { CompanionQuestion, type CompanionQuestionContext } from "./CompanionQuestion";
 import { useCompanionNotices } from "./use-companion-notices";
 import { CompanionNotifications } from "./CompanionNotifications";
+import { CompanionTaskProgress } from "./CompanionTaskProgress";
 import { useIslandMotion } from "./use-island-motion";
 import { useCompanionSounds } from "./use-companion-sounds";
 import { LazyChatMarkdown } from "@/components/chat/LazyChatMarkdown";
@@ -73,6 +74,7 @@ export function Companion() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [tab, setTab] = useState("activity");
   const [activityPicker, setActivityPicker] = useState(false);
+  const [tasksKey, setTasksKey] = useState<string | null>(null);
   const [usage, setUsage] = useState<CompanionUsage[] | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [usageAt, setUsageAt] = useState(() => Date.now());
@@ -131,7 +133,8 @@ export function Companion() {
   const bubbleVisible = (bubbleWanted || peekingClosing) && geometry.bubble && !geometry.expanded;
   const now = useRunningClock(geometry.expanded && items.some(item => (item.status === "running" || item.status === "reconnecting") && item.activeSince !== null));
   const sounds = useCompanionSounds(items, Boolean(snapshot), visible);
-  const detail = Boolean(question) || tab !== "activity" || activityPicker;
+  const tasksOpen = Boolean(focused?.tasks.length && tasksKey === companionItemKey(focused) && !notifications.length);
+  const detail = Boolean(question) || tab !== "activity" || activityPicker || tasksOpen;
   const notchInset = geometry.notchWidth > 0 ? geometry.headerHeight : 0;
   const requestedHeight = (detail ? 400 : notifications.length ? 180 : 160) + notchInset;
   const visualGeometry = useMemo(() => geometry.expanded && !closing && requestedHeight < geometry.surfaceHeight ? {
@@ -369,7 +372,7 @@ export function Companion() {
       {geometry.expanded && question && <CompanionQuestion context={question} drafts={drafts} onAnswer={answerQuestion} onInteract={pauseQuestion} onOpenConversation={() => { void openConversation(question); }} error={error} />}
       <div hidden={Boolean(question)} className={`companion-views min-h-0 flex-1 ${question ? "hidden" : ""}`}>
         <TabsContent value="activity" className="companion-overview" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable=true], [data-slot=select-trigger]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }}>
-          {notifications.length ? <CompanionNotifications items={notifications} error={error} onDismiss={acknowledge} onOpen={openConversation} /> : <Card data-state={focused?.status ?? "idle"} className="companion-activity-card companion-focused-card" aria-label="Atividade selecionada">
+          {notifications.length ? <CompanionNotifications items={notifications} error={error} onDismiss={acknowledge} onOpen={openConversation} /> : <Card data-state={focused?.status ?? "idle"} data-tasks-open={tasksOpen} className="companion-activity-card companion-focused-card" aria-label="Atividade selecionada">
             <div className="companion-activity-content">
               {error && <div className="space-y-1"><p role="alert" className="line-clamp-2 text-[11px] text-onedark-yellow">{error}</p><Button size="sm" variant="ghost" className="h-6 cursor-pointer px-0 text-[10px]" onClick={() => setAttempt(value => value + 1)}>Tentar novamente</Button></div>}
               {!snapshot && !error && <div role="status" aria-label="Carregando atividades" className="space-y-2 py-3"><Skeleton className="h-3 w-28" /><Skeleton className="h-3 w-40" /><Skeleton className="h-3 w-32" /></div>}
@@ -381,7 +384,7 @@ export function Companion() {
                   {attentive.length > 1 && <Select value={companionItemKey(focused)} onOpenChange={setActivityPicker} onValueChange={value => { if (typeof value === "string") setSelectedKey(value); }}><SelectTrigger aria-label="Conversa ou agente" size="sm" className="companion-activity-select cursor-pointer"><SelectValue><span className="sr-only">{focused.title}</span></SelectValue></SelectTrigger><SelectContent className="max-h-[calc(100vh-100px)] max-w-[calc(100vw-24px)]">{attentive.map(item => <SelectItem key={companionItemKey(item)} value={companionItemKey(item)} className="cursor-pointer py-2 text-[11px]"><span className="flex min-w-0 flex-col gap-1"><span className="truncate font-medium">{item.title}</span><span className="truncate font-mono text-[9px] text-muted-foreground">{item.projectName} · {roleLabel(item.role)}{item.agentId ? " · subagente" : ""} · {companionStatusLabels[item.status]}</span></span></SelectItem>)}</SelectContent></Select>}
                 </div>
                 <p key={`${companionItemKey(focused)}/${focused.status}`} className="companion-live-detail line-clamp-1 text-[11px] leading-4 text-muted-foreground">{focused.activity || `${roleLabel(focused.role)}${focused.agentId ? " · subagente" : ""}`}</p>
-                <div className="mt-auto flex items-center gap-2"><span className={`flex items-center gap-1 text-[10px] ${statusColor[focused.status]}`}>{focused.status === "reconnecting" && <Wifi className="size-3" />}{companionStatusLabels[focused.status]}</span></div>
+                <CompanionTaskProgress tasks={focused.tasks} active={focused.status === "running" || focused.status === "reconnecting"} open={tasksOpen} onOpenChange={open => setTasksKey(open ? companionItemKey(focused) : null)}><span className={`flex shrink-0 items-center gap-1 text-[10px] ${statusColor[focused.status]}`}>{focused.status === "reconnecting" && <Wifi className="size-3" />}{companionStatusLabels[focused.status]}</span></CompanionTaskProgress>
               </>}
             </div>
           </Card>}
