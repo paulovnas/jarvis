@@ -181,6 +181,7 @@ struct WindowPreferences {
     normal: Option<Bounds>,
     maximized: bool,
     fullscreen: bool,
+    companion_sound_muted: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -252,6 +253,29 @@ pub struct DesktopState {
 }
 
 impl DesktopState {
+    pub(crate) fn companion_sound_enabled(&self) -> bool {
+        self.store.lock().ok().is_none_or(|guard| {
+            guard
+                .as_ref()
+                .is_none_or(|store| !store.preferences.window.companion_sound_muted)
+        })
+    }
+
+    pub(crate) fn save_companion_sound_enabled(&self, enabled: bool) -> Result<(), String> {
+        let mut guard = self.store.lock().map_err(|_| "Desktop lock poisoned")?;
+        let store = guard.as_mut().ok_or("Desktop preferences unavailable")?;
+        let previous = store.preferences.window.companion_sound_muted;
+        if previous != enabled {
+            return Ok(());
+        }
+        store.preferences.window.companion_sound_muted = !enabled;
+        if let Err(error) = store.save() {
+            store.preferences.window.companion_sound_muted = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub(crate) fn companion_position(&self) -> Option<CompanionPosition> {
         self.store
             .lock()
@@ -516,6 +540,35 @@ mod tests {
     }
 
     #[test]
+    fn companion_sound_survives_main_layout_edits_and_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("desktop.json");
+        let state = DesktopState::default();
+        *state.store.lock().unwrap() = Some(Store::open(path.clone()).unwrap());
+        assert!(state.companion_sound_enabled());
+        state.save_companion_sound_enabled(false).unwrap();
+        {
+            let mut guard = state.store.lock().unwrap();
+            let store = guard.as_mut().unwrap();
+            store.preferences.layout.sidebar_collapsed = true;
+            store.preferences.window.maximized = true;
+            store.save().unwrap();
+        }
+        let restored = Store::open(path.clone()).unwrap();
+        assert!(restored.preferences.window.companion_sound_muted);
+        *state.store.lock().unwrap() = Some(restored);
+        assert!(!state.companion_sound_enabled());
+        state.save_companion_sound_enabled(true).unwrap();
+        assert!(
+            !Store::open(path)
+                .unwrap()
+                .preferences
+                .window
+                .companion_sound_muted
+        );
+    }
+
+    #[test]
     fn layout_and_window_survive_atomic_round_trip() {
         let temp = tempfile::tempdir().unwrap();
         let path = crate::data_dir::root(temp.path()).join("desktop.json");
@@ -529,6 +582,7 @@ mod tests {
             }),
             maximized: true,
             fullscreen: false,
+            companion_sound_muted: false,
         };
         store.preferences.layout.inspector_tab = InspectorTab::Explorer;
         store.preferences.layout.settings_tab = SettingsTab::Tools;

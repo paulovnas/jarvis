@@ -56,9 +56,14 @@ fn application_command_allowed(label: &str, command: &str) -> bool {
                 "get_companion_snapshot"
                     | "ack_companion_item"
                     | "get_companion_usage"
+                    | "get_companion_sound"
+                    | "set_companion_sound"
+                    | "companion_set_hit_rect"
                     | "set_companion_expanded"
                     | "set_companion_bubble"
                     | "companion_start_drag"
+                    | "companion_move_horizontal"
+                    | "companion_finish_drag"
                     | "companion_set_interacting"
                     | "companion_open_conversation"
                     | "companion_answer_question"
@@ -86,6 +91,11 @@ mod companion_policy_tests {
             "get_companion_snapshot",
             "ack_companion_item",
             "get_companion_usage",
+            "get_companion_sound",
+            "set_companion_sound",
+            "companion_set_hit_rect",
+            "companion_move_horizontal",
+            "companion_finish_drag",
             "set_companion_bubble",
             "companion_answer_question",
             "companion_open_conversation",
@@ -211,9 +221,14 @@ pub fn run() {
                 companion::get_companion_snapshot,
                 companion::ack_companion_item,
                 companion::get_companion_usage,
+                companion::get_companion_sound,
+                companion::set_companion_sound,
+                companion::companion_set_hit_rect,
                 companion::set_companion_expanded,
                 companion::set_companion_bubble,
                 companion::companion_start_drag,
+                companion::companion_move_horizontal,
+                companion::companion_finish_drag,
                 companion::companion_set_interacting,
                 companion::companion_open_conversation,
                 companion::companion_answer_question,

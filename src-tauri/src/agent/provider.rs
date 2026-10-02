@@ -1700,6 +1700,8 @@ mod tests {
         let external = json!({"type":"function","name":"custom_example","description":"External optional contract","parameters":{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"}},"required":["query"]}});
         let mut catalog = tools.clone();
         catalog.extend([mcp.clone(), external.clone()]);
+        let companion = super::super::companion_chat::tools();
+        catalog.extend(companion.clone());
         let body = request_body(
             &options,
             &capabilities,
@@ -1733,6 +1735,26 @@ mod tests {
         assert_eq!(
             sent.iter().find(|tool| tool["name"] == "custom_example"),
             Some(&external)
+        );
+        for tool in companion {
+            let sent_tool = sent
+                .iter()
+                .find(|sent| sent["name"] == tool["name"])
+                .unwrap();
+            assert_eq!(sent_tool, &tool);
+            assert_eq!(sent_tool["strict"], false);
+        }
+        let proposal = sent
+            .iter()
+            .find(|tool| tool["name"] == "jarvito_propose_project")
+            .unwrap();
+        assert_eq!(
+            proposal["parameters"]["required"],
+            json!(["projectId", "reason", "message"])
+        );
+        assert_eq!(
+            proposal["parameters"]["properties"]["conversationId"]["type"],
+            json!(["string", "null"])
         );
     }
 

@@ -66,6 +66,7 @@ pub(crate) struct Item {
     agent_id: Option<String>,
     project_id: String,
     project_name: String,
+    global: bool,
     title: String,
     role: String,
     status: Status,
@@ -327,6 +328,7 @@ fn project(snapshot: &ChatSnapshot) -> Option<Record> {
             agent_id: None,
             project_id: String::new(),
             project_name: String::new(),
+            global: false,
             title: String::new(),
             role: turn
                 .options
@@ -403,8 +405,6 @@ pub(super) fn validation(app: &tauri::AppHandle, conversation_id: &str) {
 #[serde(rename_all = "camelCase")]
 struct WorkflowView {
     conversation_id: String,
-    #[serde(default)]
-    revision: u64,
     agents: Vec<WorkflowAgent>,
 }
 
@@ -498,12 +498,13 @@ fn add_workflow(items: &mut Vec<Item>, value: WorkflowView) {
             agent_id: Some(card.id),
             project_id: root.project_id.clone(),
             project_name: root.project_name.clone(),
+            global: root.global,
             title: root.title.clone(),
             role: short(role, 120),
             status,
             attention_id,
             acknowledged: false,
-            attention_generation: value.revision,
+            attention_generation: card.updated_at,
             activity,
             result: (status == Status::Completed)
                 .then(|| format!("Tarefa concluída: {}", short(&card.title, 240))),
@@ -566,7 +567,8 @@ pub(crate) async fn snapshot(app: tauri::AppHandle) -> Result<Snapshot, AgentErr
                 let metadata = names.query_row([&item.conversation_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))).optional().map_err(|_| AgentError::storage())?;
                 let Some((id, project, title)) = metadata else { continue; };
                 item.project_id = id;
-                item.project_name = if item.project_id == library::companion::GLOBAL_PROJECT_ID { "Chat geral".into() } else { short(&project, 120) };
+                item.global = item.project_id == library::companion::GLOBAL_PROJECT_ID;
+                item.project_name = if item.global { "Chat geral".into() } else { short(&project, 120) };
                 item.title = short(&title, 160);
                 present.push(item);
             }
@@ -607,19 +609,41 @@ pub(crate) async fn acknowledge_item(
     conversation_id: String,
     agent_id: Option<String>,
     attention_id: String,
+    revision: Option<u64>,
 ) -> Result<Snapshot, AgentError> {
     let current = snapshot(app.clone()).await?;
-    if let Some(item) = current.items.iter().find(|item| {
-        item.conversation_id == conversation_id
-            && item.agent_id == agent_id
-            && item.attention_id == attention_id
-    }) {
-        app.state::<AgentState>()
-            .companion_recent
-            .acknowledge(item)?;
+    if acknowledge_matching(
+        &app.state::<AgentState>().companion_recent,
+        &current.items,
+        &conversation_id,
+        agent_id.as_deref(),
+        &attention_id,
+        revision,
+    )? {
         changed(&app);
     }
     snapshot(app).await
+}
+
+fn acknowledge_matching(
+    recent: &Recent,
+    items: &[Item],
+    conversation_id: &str,
+    agent_id: Option<&str>,
+    attention_id: &str,
+    revision: Option<u64>,
+) -> Result<bool, AgentError> {
+    if let Some(item) = items.iter().find(|item| {
+        item.conversation_id == conversation_id
+            && item.agent_id.as_deref() == agent_id
+            && item.attention_id == attention_id
+            && revision.is_none_or(|revision| revision == item.attention_generation)
+            && matches!(item.status, Status::Completed | Status::Failed)
+    }) {
+        recent.acknowledge(item)?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 pub(crate) async fn answer_question(
@@ -936,18 +960,29 @@ mod tests {
         let (_fixture, _session, snapshot) = running();
         let root = project(&snapshot).unwrap().item;
         let recent = Recent::default();
-        let view = |updated_at| {
-            serde_json::from_value(json!({"conversationId":root.conversation_id,"revision":updated_at,"agents":[{
+        let view = |updated_at, revision| {
+            serde_json::from_value(json!({"conversationId":root.conversation_id,"revision":revision,"agents":[{
             "id":"designer","role":"designer","status":"failed","title":"Revise a tela","updatedAt":updated_at,"durationMs":3_000,"activeSince":null,"currentThought":null,"activeTurnId":null,"pendingQuestion":null,"pendingApproval":null,"pendingAuthoring":null,"identity":null,"error":"Offline"
         }]})).unwrap()
         };
         let mut items = vec![root.clone()];
-        add_workflow(&mut items, view(1));
-        recent.acknowledge(&items[1]).unwrap();
+        add_workflow(&mut items, view(1, 1));
+        let displayed = items[1].clone();
+        let mut refreshed = vec![root.clone()];
+        add_workflow(&mut refreshed, view(1, 2));
+        assert!(acknowledge_matching(
+            &recent,
+            &refreshed,
+            &displayed.conversation_id,
+            displayed.agent_id.as_deref(),
+            &displayed.attention_id,
+            Some(displayed.attention_generation)
+        )
+        .unwrap());
         recent.apply_acknowledgements(&mut items).unwrap();
         assert!(items[1].acknowledged);
         let mut next = vec![root.clone()];
-        add_workflow(&mut next, view(2));
+        add_workflow(&mut next, view(2, 3));
         recent.apply_acknowledgements(&mut next).unwrap();
         assert!(!next[1].acknowledged);
         recent.acknowledge(&next[1]).unwrap();
@@ -961,6 +996,72 @@ mod tests {
         let mut items = vec![waiting];
         recent.apply_acknowledgements(&mut items).unwrap();
         assert!(!items[0].acknowledged);
+    }
+
+    #[test]
+    fn opening_attention_only_acknowledges_the_displayed_outcome_and_revision() {
+        let (_fixture, session, _) = running();
+        finish(&session, Ok(()));
+        let item = project(&session.snapshot().unwrap()).unwrap().item;
+        let recent = Recent::default();
+        let mut items = vec![item.clone()];
+        assert!(!acknowledge_matching(
+            &recent,
+            &items,
+            &item.conversation_id,
+            None,
+            &item.attention_id,
+            Some(item.attention_generation + 1)
+        )
+        .unwrap());
+        assert!(!acknowledge_matching(
+            &recent,
+            &items,
+            &item.conversation_id,
+            Some("designer"),
+            &item.attention_id,
+            Some(item.attention_generation)
+        )
+        .unwrap());
+        assert!(!acknowledge_matching(
+            &recent,
+            &items,
+            &item.conversation_id,
+            None,
+            "older-outcome",
+            Some(item.attention_generation)
+        )
+        .unwrap());
+        recent.apply_acknowledgements(&mut items).unwrap();
+        assert!(!items[0].acknowledged);
+        assert!(acknowledge_matching(
+            &recent,
+            &items,
+            &item.conversation_id,
+            None,
+            &item.attention_id,
+            Some(item.attention_generation)
+        )
+        .unwrap());
+        recent.apply_acknowledgements(&mut items).unwrap();
+        assert!(items[0].acknowledged);
+        let mut next = item.clone();
+        next.attention_id = "new-outcome".into();
+        next.attention_generation += 1;
+        items.push(next);
+        recent.apply_acknowledgements(&mut items).unwrap();
+        assert!(!items[1].acknowledged);
+        let mut waiting = item;
+        waiting.status = Status::Waiting;
+        assert!(!acknowledge_matching(
+            &recent,
+            std::slice::from_ref(&waiting),
+            &waiting.conversation_id,
+            None,
+            &waiting.attention_id,
+            None
+        )
+        .unwrap());
     }
 
     #[test]

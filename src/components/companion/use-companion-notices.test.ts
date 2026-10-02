@@ -5,7 +5,7 @@ import { useCompanionNotices } from "./use-companion-notices";
 
 const item = (status: CompanionItem["status"], id: string, updatedAt = 1): CompanionItem => ({
   conversationId: id, agentId: null, projectId: "project", projectName: "Portal", title: id, role: "builder", status,
-  activity: "", durationMs: 1000, activeSince: null, updatedAt, requiresConversation: false, attentionId: `${id}/${status}`, acknowledged: false,
+  global: false, activity: "", durationMs: 1000, activeSince: null, updatedAt, requiresConversation: false, attentionId: `${id}/${status}`, acknowledged: false,
 });
 
 describe("Jarvito speech queue", () => {

@@ -7,6 +7,7 @@ const mock = vi.hoisted(() => {
   const listeners = new Map<string, Set<() => void>>();
   const fields = [
     { name: "status", type: 56, value: 0 },
+    { name: "gesture", type: 56, value: 0 },
     { name: "lookX", type: 56, value: 0 },
     { name: "lookY", type: 56, value: 0 },
     ...["hovered", "dragging", "expanded", "walking", "reducedMotion"].map(name => ({ name, type: 59, value: false })),
@@ -107,6 +108,73 @@ describe("Jarvito Rive character", () => {
     act(() => document.dispatchEvent(new Event("visibilitychange")));
     expect(mock.runtime.isPlaying).toBe(false);
     unmount(); expect(mock.runtime.cleanup).toHaveBeenCalledOnce(); expect(motionListeners.size).toBe(0);
+  });
+
+  it("changes playful expressions without losing the native activity state or canvas", async () => {
+    const { rerender } = render(<Robot status="running" gesture="wink" />);
+    const canvas = await screen.findByTestId("rive-canvas");
+    expect(field("gesture")).toBe(1); expect(field("status")).toBe(1);
+    rerender(<Robot status="waiting" gesture="surprised" />);
+    expect(field("gesture")).toBe(2); expect(field("status")).toBe(2);
+    rerender(<Robot status="idle" gesture="sleepy" />);
+    expect(field("gesture")).toBe(3);
+    rerender(<Robot status="completed" />);
+    expect(field("gesture")).toBe(0); expect(field("status")).toBe(4);
+    expect(screen.getByTestId("rive-canvas")).toBe(canvas);
+    expect(mock.runtime.cleanup).not.toHaveBeenCalled();
+  });
+
+  it("reacts to pokes and dizziness while retaining the activity and the same runtime", async () => {
+    const { rerender, container } = render(<Robot status="running" gesture="poke" />);
+    const canvas = await screen.findByTestId("rive-canvas");
+    expect(field("gesture")).toBe(4); expect(field("status")).toBe(1);
+    expect(container.querySelector("[data-renderer=rive]")).toHaveAttribute("data-gesture", "poke");
+    rerender(<Robot status="waiting" gesture="dizzy" />);
+    expect(field("gesture")).toBe(5); expect(field("status")).toBe(2);
+    rerender(<Robot status="waiting" />);
+    expect(field("gesture")).toBe(0); expect(field("status")).toBe(2);
+    expect(screen.getByTestId("rive-canvas")).toBe(canvas);
+    expect(mock.runtime.cleanup).not.toHaveBeenCalled();
+  });
+
+  it("sleeps without tracking the pointer or strolling, then changes rest gestures on the same canvas", async () => {
+    const { rerender, container } = render(<Robot status="completed" gesture="sleep" walking lookX={1} lookY={-1} />);
+    const canvas = await screen.findByTestId("rive-canvas");
+    expect(field("gesture")).toBe(6); expect(field("status")).toBe(4);
+    expect(field("lookX")).toBe(0); expect(field("lookY")).toBe(0); expect(field("walking")).toBe(false);
+    for (const [gesture, code] of [["stretch", 7], ["curious", 8]] as const) {
+      rerender(<Robot status="idle" gesture={gesture} />);
+      expect(field("gesture")).toBe(code); expect(container.querySelector("[data-renderer=rive]")).toHaveAttribute("data-gesture", gesture);
+      expect(screen.getByTestId("rive-canvas")).toBe(canvas);
+    }
+    Object.defineProperty(motion, "matches", { configurable: true, value: true });
+    act(() => { for (const listener of motionListeners) listener(); });
+    rerender(<Robot status="idle" gesture="sleep" />);
+    expect(field("gesture")).toBe(6); expect(mock.runtime.isPlaying).toBe(false);
+  });
+
+  it("retains recognizable sleeping and rest poses if the runtime cannot load", async () => {
+    mock.loaded = false;
+    const { rerender, container } = render(<Robot status="idle" gesture="sleep" />);
+    await screen.findByTestId("rive-canvas");
+    expect(container.querySelector("svg [data-expression=closed-eyes]")).toBeInTheDocument();
+    expect(container.querySelector("svg [data-expression=sleep]")).toBeInTheDocument();
+    for (const gesture of ["stretch", "curious"] as const) {
+      rerender(<Robot status="idle" gesture={gesture} />);
+      expect(container.querySelector(`svg [data-expression=${gesture}]`)).toBeInTheDocument();
+    }
+  });
+
+  it("keeps closed and dizzy eyes in the offline fallback and restores the native expression", async () => {
+    mock.loaded = false;
+    const { rerender, container } = render(<Robot status="completed" gesture="poke" />);
+    await screen.findByTestId("rive-canvas");
+    expect(container.querySelector("svg [data-expression=closed-eyes]")).toBeInTheDocument();
+    rerender(<Robot status="completed" gesture="dizzy" />);
+    expect(container.querySelector("svg [data-expression=dizzy]")).toBeInTheDocument();
+    rerender(<Robot status="completed" />);
+    expect(container.querySelector("svg [data-expression]")).not.toBeInTheDocument();
+    expect(container.querySelector("svg[data-renderer=loading]")).toHaveAttribute("data-state", "completed");
   });
 
   it("keeps the Rive character visible in reduced motion and applies only one pose per state change", async () => {

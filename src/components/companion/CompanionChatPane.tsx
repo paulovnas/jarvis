@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ArrowUp, Check, Eraser, MessageCircle, Square, X } from "lucide-react";
@@ -18,13 +18,19 @@ import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/qu
 import { libraryError } from "@/core/library";
 
 const errorMessage = (cause: unknown) => typeof cause === "string" ? cause : libraryError(cause, "Não foi possível conversar com o Jarvito.");
+export interface CompanionChatHandle {
+  startGeneral: () => void;
+  openGeneral: (conversationId: string, revision?: number) => Promise<boolean>;
+}
 
 /** A thin view of the same native conversations and agent runtime used by Jarvis. */
-export function CompanionChatPane({ active = true, externalQuestions = false, onQuestionChange, onView }: {
+export function CompanionChatPane({ active = true, externalQuestions = false, onQuestionChange, onView, onSend, ref }: {
   active?: boolean;
   externalQuestions?: boolean;
   onQuestionChange?: (context: CompanionQuestionContext | null) => void;
   onView?: (conversationId: string, revision: number) => void;
+  onSend?: () => void;
+  ref?: Ref<CompanionChatHandle>;
 }) {
   const [selected, setSelected] = useState("global");
   const [conversations, setConversations] = useState<CompanionConversation[]>([]);
@@ -97,6 +103,18 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
     if (value === selected || busy) return;
     setChat(null); selectConversation(value);
   };
+  useImperativeHandle(ref, () => ({
+    startGeneral: () => chooseConversation("global"),
+    openGeneral: async (conversationId, revision) => {
+      if (busy) return false;
+      const next = companionChatSchema.parse(await invoke("get_companion_chat"));
+      if (!next.global || next.conversationId !== conversationId || revision !== undefined && next.chat.revision < revision) throw new Error("A resposta desta conversa ainda não está disponível. Tente novamente.");
+      setSelected("global"); setLoading(false); setError(null); setActionError(null); setPreservedRequest(null);
+      setDraft(drafts.current.get(next.conversationId) ?? drafts.current.get("global") ?? "");
+      currentConversation.current = next.conversationId; applyChat(next); stickToBottom.current = true;
+      return true;
+    },
+  }));
 
   useEffect(() => {
     const viewport = scroll.current?.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]");
@@ -113,7 +131,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
         ...executionChoice(modelOverride.selection),
       } : undefined;
       const result = companionChatSchema.parse(await invoke("send_companion_message", { conversationId: selected === "global" ? null : selected, content, ...(selectedOptions ? { options: selectedOptions } : {}) }));
-      applyChat(result); setDraft(current => {
+      applyChat(result); onSend?.(); setDraft(current => {
         if (current.trim() !== content) return current;
         drafts.current.delete(draftKey); return "";
       }); stickToBottom.current = true;
@@ -199,8 +217,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
     request: chat.chat.pendingQuestion, requiresConversation: Boolean(chat.chat.pendingApproval || chat.chat.pendingAuthoring),
   }} drafts={questionDrafts} onAnswer={answer} onInteract={pause} onOpenConversation={() => { void invoke("companion_open_conversation", { conversationId: chat.conversationId }).catch(cause => setActionError(errorMessage(cause))); }} error={actionError || error} />;
 
-  return <ScrollArea role="region" aria-label="Conversa e controles do Jarvito" className="companion-chat h-full min-h-0 pr-2">
-    <div className="flex h-full min-h-[250px] flex-col gap-2">
+  return <div role="region" aria-label="Conversa e controles do Jarvito" className="companion-chat flex h-full min-h-0 flex-col gap-2">
     <div className="flex items-center gap-1">
     <Select value={selected} onValueChange={value => { if (typeof value === "string") chooseConversation(value); }}>
       <SelectTrigger aria-label="Conversa do Jarvito" size="sm" disabled={busy} className="min-w-0 flex-1 cursor-pointer text-[11px]"><SelectValue>{selectedTitle}</SelectValue></SelectTrigger>
@@ -211,7 +228,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
     </Select>
     {selected === "global" && <Hint content={running ? "Pare a resposta antes de limpar a conversa." : clearBlocked ? "Aguarde as operações da conversa terminarem para limpar." : "Limpar histórico e começar uma nova conversa."}><Button type="button" aria-label="Limpar conversa" aria-busy={busy} variant="ghost" size="icon-sm" disabled={busy || loading || !chat?.global || clearBlocked} className="shrink-0 cursor-pointer text-muted-foreground" onClick={() => { void clear(); }}><Eraser className="size-3.5" /></Button></Hint>}
     </div>
-    <p className="px-1 text-[9px] text-muted-foreground">{chat?.global === false ? `Projeto ${chat.projectName} · conversa compartilhada com o Jarvis` : "Ajuda sem projeto. Para trabalhar em arquivos, Jarvito pede sua confirmação."}</p>
+    {chat?.global === false && <p className="px-1 text-[9px] text-muted-foreground">Projeto {chat.projectName} · conversa compartilhada com o Jarvis</p>}
     <ScrollArea ref={scroll} className="min-h-0 flex-1 pr-2" onScrollCapture={event => {
       const target = event.target;
       if (target instanceof HTMLElement) stickToBottom.current = target.scrollHeight - target.scrollTop - target.clientHeight < 40;
@@ -248,6 +265,5 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
     <div className="-mx-1 flex shrink-0 items-center overflow-hidden">
       <ModelPicker modelGroups={models} selection={selectedModel} onSelect={selection => setModelOverride({ conversation: selected, selection })} disabled={busy || loading || running} showProviderIdentity ariaLabel="Modelo do Jarvito" />
     </div>
-    </div>
-  </ScrollArea>;
+  </div>;
 }

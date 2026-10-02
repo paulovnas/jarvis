@@ -14,8 +14,10 @@ RuntimeLoader.setWasmFallbackUrl(wasmFallbackUrl);
 const machine = "Jarvito";
 const layout = new Layout({ fit: Fit.Contain, alignment: Alignment.Center });
 const statuses: Record<CompanionStatus, number> = { idle: 0, running: 1, waiting: 2, reconnecting: 3, completed: 4, failed: 5 };
+const gestures = { none: 0, wink: 1, surprised: 2, sleepy: 3, poke: 4, dizzy: 5, sleep: 6, stretch: 7, curious: 8 };
 const inputTypes = {
   status: StateMachineInputType.Number,
+  gesture: StateMachineInputType.Number,
   hovered: StateMachineInputType.Boolean,
   dragging: StateMachineInputType.Boolean,
   expanded: StateMachineInputType.Boolean,
@@ -30,7 +32,7 @@ function applyInputs(inputs: Record<keyof typeof inputTypes, StateMachineInput>,
   for (const name of Object.keys(values) as (keyof typeof inputTypes)[]) inputs[name].value = values[name];
 }
 
-export default function RiveRobot({ status, visible = true, hovered = false, dragging = false, expanded = false, walking = false, lookX = 0, lookY = 0 }: RobotProps) {
+export default function RiveRobot({ status, visible = true, hovered = false, dragging = false, expanded = false, walking = false, gesture = "none", lookX = 0, lookY = 0 }: RobotProps) {
   const [failed, setFailed] = useState(false);
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
   const [motionQuery] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)"));
@@ -67,9 +69,9 @@ export default function RiveRobot({ status, visible = true, hovered = false, dra
       return;
     }
     applyInputs(inputs, {
-      status: statuses[status], hovered, dragging, expanded,
-      walking: walking && !hovered && !dragging && !reducedMotion,
-      lookX: gaze(lookX), lookY: gaze(lookY), reducedMotion,
+      status: statuses[status], gesture: gestures[gesture], hovered, dragging, expanded,
+      walking: walking && gesture !== "sleep" && !hovered && !dragging && !reducedMotion,
+      lookX: gesture === "sleep" ? 0 : gaze(lookX), lookY: gesture === "sleep" ? 0 : gaze(lookY), reducedMotion,
     });
     if (reducedMotion) {
       // Apply one current pose, then stop. Keep the same character and instance.
@@ -80,10 +82,10 @@ export default function RiveRobot({ status, visible = true, hovered = false, dra
     }
     if (!rive.isPlaying) rive.play(machine);
     else rive.startRendering();
-  }, [rive, inputs, failed, visible, pageHidden, status, hovered, dragging, expanded, walking, lookX, lookY, reducedMotion]);
+  }, [rive, inputs, failed, visible, pageHidden, status, hovered, dragging, expanded, walking, gesture, lookX, lookY, reducedMotion]);
 
-  return <div aria-hidden="true" className="companion-robot" data-state={status} data-renderer={ready ? "rive" : failed || (rive && !inputs) ? "fallback" : "loading"} data-motion={reducedMotion ? "reduced" : "full"} style={{ position: "relative", pointerEvents: "none" }}>
+  return <div aria-hidden="true" className="companion-robot" data-state={status} data-gesture={gesture} data-renderer={ready ? "rive" : failed || (rive && !inputs) ? "fallback" : "loading"} data-motion={reducedMotion ? "reduced" : "full"} style={{ position: "relative", pointerEvents: "none" }}>
     <div style={{ position: "absolute", inset: 0, visibility: ready ? "visible" : "hidden" }}><RiveComponent aria-hidden="true" tabIndex={-1} /></div>
-    {!ready && <RobotFallback status={status} renderer={failed || rive ? "fallback" : "loading"} />}
+    {!ready && <RobotFallback status={status} gesture={gesture} renderer={failed || rive ? "fallback" : "loading"} />}
   </div>;
 }

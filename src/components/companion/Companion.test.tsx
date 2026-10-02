@@ -10,14 +10,14 @@ import type { RobotProps } from "./Robot";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
-vi.mock("./Robot", () => ({ Robot: ({ status, visible, hovered, dragging, expanded, walking, lookX, lookY }: RobotProps) =>
-  <svg aria-hidden="true" data-state={status} data-visible={visible} data-hovered={hovered} data-dragging={dragging} data-expanded={expanded} data-walking={walking} data-look-x={lookX} data-look-y={lookY} />,
+vi.mock("./Robot", () => ({ Robot: ({ status, gesture, visible, hovered, dragging, expanded, walking, lookX, lookY }: RobotProps) =>
+  <svg aria-hidden="true" data-state={status} data-gesture={gesture} data-visible={visible} data-hovered={hovered} data-dragging={dragging} data-expanded={expanded} data-walking={walking} data-look-x={lookX} data-look-y={lookY} />,
 }));
 const call = vi.mocked(invoke);
 const events = new Map<string, (payload: unknown) => void>();
 const stop = vi.fn();
 const base: CompanionItem = {
-  conversationId: "conversation-1", agentId: null, projectId: "project-1", projectName: "Portal",
+  conversationId: "conversation-1", agentId: null, projectId: "project-1", projectName: "Portal", global: false,
   title: "Melhorar o relatório", role: "builder", status: "running", activity: "Verificando o relatório",
   durationMs: 120_000, activeSince: 990_000, updatedAt: 1_000_000, requiresConversation: false, attentionId: "turn-1/running", acknowledged: false,
   revision: 1,
@@ -28,6 +28,12 @@ const account: AccountUsage & { providerKind: string } = {
   windows: [{ id: "window-1", group: "Codex", thirdParty: false, label: "5h", durationSeconds: 18_000, remainingPercent: 72, resetsAt: 1_200_000 }],
 };
 let accounts: (typeof account)[];
+const geometryFor = (expanded: boolean, height = 160, bubble = false) => ({
+  expanded, bubble, robotSide: "left", robotVertical: "top", notchWidth: 0, notchHeight: 0, headerHeight: 32, dragAxis: "horizontal",
+  width: expanded || bubble ? 640 : 288, height: expanded || bubble ? height : 32,
+  compactX: expanded || bubble ? 176 : 0, compactY: 0, compactWidth: 288, compactHeight: 32,
+  surfaceX: 0, surfaceY: 0, surfaceWidth: expanded || bubble ? 640 : 288, surfaceHeight: expanded || bubble ? height : 32,
+});
 async function expanded() {
   const user = userEvent.setup();
   render(<Companion />);
@@ -49,17 +55,19 @@ describe("Desktop companion", () => {
       return stop;
     });
     let expandedState = false;
+    let expandedHeight = 160;
     call.mockReset().mockImplementation(async (command, args) => {
       if (command === "get_companion_snapshot") return snapshot;
       if (command === "get_companion_usage") return accounts;
       if (command === "set_companion_expanded") {
         const isExpanded = (args as { expanded: boolean }).expanded;
         expandedState = isExpanded;
-        return { expanded: isExpanded, bubble: false, robotSide: "right", robotVertical: "bottom", width: isExpanded ? 420 : 96, height: isExpanded ? 520 : 112 };
+        expandedHeight = (args as { height?: number }).height ?? 160;
+        return geometryFor(isExpanded, expandedHeight);
       }
       if (command === "set_companion_bubble") {
         const bubble = (args as { visible: boolean }).visible && !expandedState;
-        return { expanded: expandedState, bubble, robotSide: "right", robotVertical: "bottom", width: expandedState ? 420 : bubble ? 360 : 96, height: expandedState ? 520 : bubble ? 300 : 112 };
+        return geometryFor(expandedState, expandedHeight, bubble);
       }
       return true;
     });
@@ -76,6 +84,192 @@ describe("Desktop companion", () => {
     expect(call.mock.calls.some(([command]) => /bootstrap|transcript|get_provider/.test(command))).toBe(false);
   });
 
+  it("sleeps after two idle minutes despite snapshot refreshes and wakes on interaction and new work", async () => {
+    snapshot.items = [];
+    vi.useFakeTimers();
+    render(<Companion />);
+    await act(async () => {});
+    const pet = screen.getByRole("button", { name: "Abrir assistente Jarvis" });
+    expect(call).toHaveBeenCalledWith("get_companion_snapshot");
+    const robot = () => pet.querySelector("svg[data-state]");
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    snapshot = { items: [], truncated: false };
+    act(() => events.get("companion:changed")?.(null));
+    await act(async () => { await vi.advanceTimersByTimeAsync(59_999); });
+    expect(robot()).toHaveAttribute("data-gesture", "none");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(robot()).toHaveAttribute("data-gesture", "sleep");
+    fireEvent.pointerEnter(pet);
+    expect(robot()).toHaveAttribute("data-gesture", "none");
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(robot()).toHaveAttribute("data-gesture", "sleep");
+    fireEvent.wheel(pet);
+    expect(robot()).toHaveAttribute("data-gesture", "none");
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    fireEvent.keyDown(pet, { key: "ArrowRight" });
+    expect(robot()).toHaveAttribute("data-gesture", "none");
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    snapshot.items = [{ ...base }];
+    act(() => events.get("companion:changed")?.(null));
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(robot()).toHaveAttribute("data-state", "running");
+    expect(robot()).toHaveAttribute("data-gesture", "none");
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(robot()).toHaveAttribute("data-gesture", "none");
+  });
+
+  it.each(["running", "reconnecting", "waiting"] as const)("stays awake during %s activity", async status => {
+    snapshot.items = [{ ...base, status }];
+    render(<Companion />);
+    const pet = await screen.findByRole("button", { name: /Abrir assistente Jarvis/ });
+    await waitFor(() => expect(pet.querySelector("svg[data-state]")).toHaveAttribute("data-state", status));
+    vi.useFakeTimers();
+    await act(async () => { await vi.advanceTimersByTimeAsync(180_000); });
+    expect(pet.querySelector("svg[data-state]")).toHaveAttribute("data-gesture", "none");
+  });
+
+  it("stays awake while the island is open for conversation or questions", async () => {
+    snapshot.items = [];
+    render(<Companion />);
+    const pet = await screen.findByRole("button", { name: "Abrir assistente Jarvis" });
+    fireEvent.click(pet);
+    await screen.findByRole("button", { name: "Interagir com Jarvito" });
+    vi.useFakeTimers();
+    await act(async () => { await vi.advanceTimersByTimeAsync(180_000); });
+    expect(pet.querySelector("svg[data-state]")).toHaveAttribute("data-gesture", "none");
+  });
+
+  it("suppresses the native context menu across the island, document and portalled controls until unmounted", async () => {
+    snapshot.items.push({ ...base, agentId: "designer", role: "designer", title: "Revisar a interface" });
+    const user = userEvent.setup();
+    const { unmount } = render(<Companion />);
+    const rightClick = (element: Element) => {
+      const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      fireEvent(element, event);
+      return event.defaultPrevented;
+    };
+    const opener = await screen.findByRole("button", { name: "Abrir ilha do Jarvito" });
+    expect(rightClick(opener)).toBe(true);
+    expect(rightClick(document.body)).toBe(true);
+    await user.click(opener);
+    const panel = await screen.findByRole("region", { name: "Assistente Jarvis" });
+    expect(rightClick(panel)).toBe(true);
+    await user.click(screen.getByRole("combobox", { name: "Conversa ou agente" }));
+    const option = await screen.findByRole("option", { name: /Revisar a interface/ });
+    expect(panel).not.toContainElement(option);
+    expect(rightClick(option)).toBe(true);
+    unmount();
+    expect(rightClick(document.body)).toBe(false);
+  });
+
+  it("indicates ongoing work only while the island is compact and visible", async () => {
+    const user = userEvent.setup();
+    render(<Companion />);
+    const opener = await screen.findByRole("button", { name: "Abrir ilha do Jarvito" });
+    const island = opener.closest(".companion-island");
+    await waitFor(() => expect(opener).toHaveAccessibleDescription("Jarvis está trabalhando"));
+    const indicator = screen.getByLabelText("1 atividades para acompanhar");
+    expect(indicator).toHaveAttribute("data-working", "true");
+    expect(indicator).toHaveAttribute("data-status", "running");
+    expect(indicator).toHaveClass("companion-compact-badge");
+    expect(island).toHaveAttribute("data-working", "true");
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    fireEvent(document, new Event("visibilitychange"));
+    expect(island).toHaveAttribute("data-working", "false");
+    hidden.mockReturnValue(false);
+    fireEvent(document, new Event("visibilitychange"));
+    expect(island).toHaveAttribute("data-working", "true");
+    await user.click(opener);
+    await screen.findByRole("region", { name: "Assistente Jarvis" });
+    expect(island).toHaveAttribute("data-working", "false");
+    expect(screen.getByRole("heading", { name: base.title })).toBeVisible();
+  });
+
+  it("keeps the compact work indicator while another conversation waits and clears it when execution stops", async () => {
+    snapshot.items.push({ ...base, conversationId: "waiting-chat", status: "waiting", activeSince: null, attentionId: "waiting-chat/waiting" });
+    const user = userEvent.setup();
+    render(<Companion />);
+    const notice = await screen.findByRole("status", { name: "Aviso do Jarvito" });
+    const island = notice.closest(".companion-island");
+    expect(island).toHaveAttribute("data-working", "false");
+    await user.click(screen.getByRole("button", { name: "Dispensar aviso" }));
+    const opener = await screen.findByRole("button", { name: "Abrir ilha do Jarvito" });
+    expect(opener).toHaveAccessibleDescription("Jarvis está trabalhando");
+    expect(island).toHaveAttribute("data-working", "true");
+    expect(opener.closest("main")).toHaveAttribute("data-status", "waiting");
+    snapshot.items[0] = { ...snapshot.items[0], status: "completed", acknowledged: true, activeSince: null };
+    act(() => events.get("companion:changed")?.({}));
+    await waitFor(() => expect(island).toHaveAttribute("data-working", "false"));
+    expect(opener).not.toHaveAttribute("aria-description");
+  });
+
+  it("keeps one living character inside the compact strip and horizontal dashboard", async () => {
+    const user = userEvent.setup(); render(<Companion />);
+    const pet = await screen.findByRole("button", { name: /Abrir assistente Jarvis, 1 atividade/ });
+    const character = pet.querySelector("svg[data-state]");
+    expect(screen.getByRole("button", { name: "Abrir ilha do Jarvito" })).toHaveTextContent("");
+    expect(screen.getByLabelText("1 atividades para acompanhar")).toHaveTextContent("");
+    await user.click(pet);
+    await screen.findByRole("region", { name: "Assistente Jarvis" });
+    expect(pet.querySelector("svg[data-state]")).toBe(character);
+    expect(call).toHaveBeenCalledWith("set_companion_expanded", { expanded: true, height: 160 });
+    expect(screen.getByRole("tab", { name: "Atividade" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Chat" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Nova conversa com Jarvito" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Recolher painel" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Ajustes" })).toBeVisible();
+    expect(screen.queryByText("Seu Jarvis por perto")).not.toBeInTheDocument();
+  });
+
+  it("shows readable sound settings and lets the user toggle the saved preference through its label", async () => {
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => command === "set_companion_sound"
+      ? (args as { enabled: boolean }).enabled : original?.(command, args));
+    const user = await expanded();
+    await user.click(screen.getByRole("tab", { name: "Ajustes" }));
+    const panel = screen.getByRole("tabpanel", { name: "Ajustes" });
+    expect(within(panel).getByRole("heading", { name: "Ajustes do Jarvito" })).toBeVisible();
+    expect(within(panel).getByText("Abertura, perguntas, atividades e conclusões.")).toBeVisible();
+    expect(within(panel).getByRole("switch", { name: "Sons de interação" })).toBeChecked();
+    await user.click(within(panel).getByText("Sons de interação"));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_companion_sound", { enabled: false }));
+    expect(within(panel).getByRole("switch", { name: "Sons de interação" })).not.toBeChecked();
+  });
+
+  it("reacts to pet taps without resizing, dragging or toggling the expanded island", async () => {
+    await expanded();
+    vi.useFakeTimers(); call.mockClear();
+    const pet = screen.getByRole("button", { name: "Interagir com Jarvito" });
+    fireEvent.pointerDown(pet, { button: 0, screenX: 100 });
+    fireEvent.pointerMove(pet, { buttons: 1, screenX: 140 });
+    fireEvent.pointerUp(pet);
+    fireEvent.click(pet);
+    expect(pet.querySelector("svg[data-state]")).toHaveAttribute("data-gesture", "poke");
+    fireEvent.click(pet); fireEvent.click(pet);
+    expect(pet.querySelector("svg[data-state]")).toHaveAttribute("data-gesture", "dizzy");
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    fireEvent.click(pet); fireEvent.click(pet);
+    expect(pet.querySelector("svg[data-state]")).toHaveAttribute("data-gesture", "dizzy");
+    await act(async () => { await vi.advanceTimersByTimeAsync(999); });
+    expect(pet.querySelector("svg[data-state]")).toHaveAttribute("data-gesture", "dizzy");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(pet.querySelector("svg[data-state]")).toHaveAttribute("data-gesture", "none");
+    expect(screen.getByRole("region", { name: "Assistente Jarvis" })).toBeVisible();
+    expect(call.mock.calls.some(([command]) => /set_companion_expanded|companion_start_drag|companion_move_horizontal/.test(command))).toBe(false);
+  });
+
+  it("keeps the larger native canvas until the detail pane has folded back into the dashboard", async () => {
+    const user = await expanded();
+    await user.click(screen.getByRole("tab", { name: "Limites" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_companion_expanded", { expanded: true, height: 400 }));
+    vi.useFakeTimers(); call.mockClear();
+    fireEvent.click(screen.getByRole("tab", { name: "Atividade" }));
+    expect(screen.getByRole("heading", { name: base.title })).toBeVisible();
+    expect(call).not.toHaveBeenCalledWith("set_companion_expanded", { expanded: true, height: 160 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(360); });
+    expect(call).toHaveBeenCalledWith("set_companion_expanded", { expanded: true, height: 160 });
+  });
+
   it("shows current work and excludes waiting time from the execution clock", async () => {
     await expanded();
     expect(screen.getByRole("heading", { name: base.title })).toBeVisible();
@@ -85,7 +279,7 @@ describe("Desktop companion", () => {
     act(() => events.get("companion:changed")?.({}));
     await screen.findByText("Precisa de uma decisão");
     expect(screen.getByText("2m 00s")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Recolher assistente Jarvis" }).querySelector("svg[data-state=waiting]")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Interagir com Jarvito" }).querySelector("svg[data-state=waiting]")).toBeInTheDocument();
   });
 
   it("refreshes during a continuous event stream instead of waiting for the stream to end", async () => {
@@ -120,11 +314,11 @@ describe("Desktop companion", () => {
   });
 
   it("keeps the active detail visible with many archived activities and displays labels rather than IDs", async () => {
-    snapshot.items = Array.from({ length: 31 }, (_, index) => ({ ...base, conversationId: `archive-${index}`, status: "completed", activeSince: null, updatedAt: index, title: `Conversa anterior ${index}` }));
+    snapshot.items = Array.from({ length: 31 }, (_, index) => ({ ...base, conversationId: `archive-${index}`, status: "completed", acknowledged: true, activeSince: null, updatedAt: index, title: `Conversa anterior ${index}` }));
     snapshot.items.push({ ...base, conversationId: "current", title: "Implementação atual" });
     await expanded();
     expect(screen.getByRole("heading", { name: "Implementação atual" })).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Conversa ou agente" })).toHaveTextContent("Implementação atual");
+    expect(screen.queryByRole("combobox", { name: "Conversa ou agente" })).not.toBeInTheDocument();
     expect(screen.queryByText("current/root")).not.toBeInTheDocument();
     expect(screen.queryByText("Conversa anterior 30")).not.toBeInTheDocument();
   });
@@ -132,12 +326,28 @@ describe("Desktop companion", () => {
   it("prioritizes new work over old failures and keeps the most recent terminal result", async () => {
     snapshot.items = [{ ...base, status: "failed", activeSince: null, updatedAt: 100, title: "Falha antiga" }, { ...base, conversationId: "new-conversation", updatedAt: 1_000_000, title: "Trabalho novo" }];
     await expanded();
-    expect(screen.getByRole("heading", { name: "Trabalho novo" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Recolher assistente Jarvis" }).querySelector("svg[data-state=running]")).toBeInTheDocument();
+    expect(screen.getByText("Trabalho novo")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Interagir com Jarvito" }).querySelector("svg[data-state=running]")).toBeInTheDocument();
     snapshot.items[1] = { ...snapshot.items[1], status: "completed", activeSince: null, updatedAt: 1_010_000 };
     act(() => events.get("companion:changed")?.({}));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Recolher assistente Jarvis" }).querySelector("svg[data-state=completed]")).toBeInTheDocument());
-    expect(screen.getByRole("heading", { name: "Trabalho novo" })).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Interagir com Jarvito" }).querySelector("svg[data-state=completed]")).toBeInTheDocument());
+    expect(await screen.findByRole("heading", { name: "Trabalho novo" })).toBeVisible();
+  });
+
+  it("opens an active lateral entry without dismissing a pending terminal notification", async () => {
+    const done = { ...base, status: "completed" as const, activeSince: null, attentionId: "previous/completed", updatedAt: 100, title: "Resultado anterior" };
+    const running = { ...base, conversationId: "active-chat", title: "Implementação em andamento" };
+    snapshot.items = [done, running];
+    const user = await expanded();
+    expect(await screen.findByRole("heading", { name: done.title })).toBeVisible();
+    const activities = screen.getByLabelText("Outras atividades");
+    const action = within(activities).getByRole("button", { name: `Ver atividade: ${running.title}` });
+    expect(action).toHaveTextContent("Ver atividade");
+    await user.click(action);
+    await waitFor(() => expect(call).toHaveBeenCalledWith("companion_open_conversation", { conversationId: running.conversationId }));
+    expect(call.mock.calls.some(([command]) => command === "ack_companion_item")).toBe(false);
+    expect(snapshot.items.find(item => item.attentionId === done.attentionId)?.acknowledged).toBe(false);
+    expect(screen.getByRole("heading", { name: done.title })).toBeVisible();
   });
 
   it("reuses interactive questions with the real child ID and only takes focus after user interaction", async () => {
@@ -233,17 +443,18 @@ describe("Desktop companion", () => {
     });
     const user = userEvent.setup(); render(<Companion />);
     await user.click(await screen.findByRole("button", { name: /Abrir assistente Jarvis/ }));
-    await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: base.conversationId, agentId: null, attentionId: "first/completed" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Recolher assistente Jarvis" }).querySelector("svg[data-state=failed]")).toBeInTheDocument());
-    expect(screen.getByRole("heading", { name: base.title })).toBeVisible();
-    expect(screen.getByText("Concluído")).toBeVisible();
-    expect(call).not.toHaveBeenCalledWith("ack_companion_item", expect.objectContaining({ attentionId: "other/failed" }));
-    await user.click(screen.getByRole("combobox", { name: "Conversa ou agente" }));
-    await user.click(await screen.findByRole("option", { name: /Outro relatório/ }));
-    await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "other-chat", agentId: null, attentionId: "other/failed" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Recolher assistente Jarvis" }).querySelector("svg[data-state=idle]")).toBeInTheDocument());
+    expect(call.mock.calls.some(([command]) => command === "ack_companion_item")).toBe(false);
+    await user.click(await screen.findByRole("button", { name: "Ver atividade" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: base.conversationId, agentId: null, attentionId: "first/completed", revision: 1 }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Interagir com Jarvito" }).querySelector("svg[data-state=failed]")).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("heading", { name: base.title })).not.toBeInTheDocument());
     expect(screen.getByRole("heading", { name: "Outro relatório" })).toBeVisible();
-    expect(screen.getByText("Falhou")).toBeVisible();
+    expect(call).not.toHaveBeenCalledWith("ack_companion_item", expect.objectContaining({ attentionId: "other/failed", revision: 1 }));
+    await user.click(await screen.findByRole("button", { name: "Ver atividade" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "other-chat", agentId: null, attentionId: "other/failed", revision: 1 }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Interagir com Jarvito" }).querySelector("svg[data-state=idle]")).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Outro relatório" })).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Tudo tranquilo por aqui" })).toBeVisible();
   });
 
   it("communicates the actual response in a global chat instead of announcing the pet's name", async () => {
@@ -253,6 +464,121 @@ describe("Desktop companion", () => {
     expect(speech).toHaveTextContent("Sua resposta está pronta.");
     await waitFor(() => expect(speech).toHaveTextContent("O próximo feriado será em 12 de outubro."));
     expect(speech).not.toHaveTextContent("Concluí: Jarvito");
+  });
+
+  it.each(["speech", "home"])("OK in the %s dismisses only its result without opening a conversation", async surface => {
+    const first = { ...base, status: "completed" as const, activeSince: null, attentionId: "first/completed", updatedAt: 200 };
+    const second = { ...first, conversationId: "other-chat", title: "Outro relatório", attentionId: "other/completed", updatedAt: 100 };
+    snapshot.items = [first, second];
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => {
+      if (command === "ack_companion_item") {
+        const attentionId = (args as { attentionId: string }).attentionId;
+        snapshot = { ...snapshot, items: snapshot.items.map(item => item.attentionId === attentionId ? { ...item, acknowledged: true } : item) };
+        return snapshot;
+      }
+      return original?.(command, args);
+    });
+    const user = userEvent.setup(); render(<Companion />);
+    let expected = second;
+    if (surface === "home") {
+      await user.click(await screen.findByRole("button", { name: /Abrir assistente Jarvis/ }));
+      expected = first;
+    } else await screen.findByRole("status", { name: "Aviso do Jarvito" });
+    await user.click(await screen.findByRole("button", { name: "OK" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: expected.conversationId, agentId: null, attentionId: expected.attentionId, revision: 1 }));
+    expect(call.mock.calls.some(([command]) => command === "companion_open_conversation" || command === "get_companion_chat")).toBe(false);
+    expect(snapshot.items.filter(item => !item.acknowledged)).toHaveLength(1);
+    if (surface === "home") await waitFor(() => expect(screen.queryByRole("heading", { name: base.title })).not.toBeInTheDocument());
+    else expect(screen.getByRole("status", { name: "Aviso do Jarvito" })).toHaveTextContent(base.title);
+  });
+
+  it("opens a general result inside the island and only acknowledges after its transcript loads", async () => {
+    snapshot.items = [{ ...base, global: true, conversationId: "global-chat", title: "Jarvito", projectName: "Chat geral", status: "completed", activeSince: null }];
+    const chat = {
+      conversationId: "global-chat", projectId: null, projectName: null, global: true,
+      chat: { conversationId: "global-chat", revision: 1, activeTurnId: null, pendingApproval: null, turns: [{
+        id: "general-turn", createdAt: 1, durationMs: 10, user: "Qual o próximo feriado?", status: "completed", error: null,
+        options: { account: "codex", model: "gpt-6", reasoning: null, mode: "build", approvalMode: "yolo" },
+        steps: [{ durationMs: 10, text: "O próximo feriado será em 12 de outubro.", summary: "", tools: [], usage: null }],
+      }] },
+    };
+    let resolveChat: ((value: unknown) => void) | undefined;
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => {
+      if (command === "get_companion_chat") return new Promise(resolve => { resolveChat = resolve; });
+      if (command === "get_companion_conversations" || command === "get_companion_models") return [];
+      if (command === "ack_companion_item") {
+        snapshot = { ...snapshot, items: snapshot.items.map(item => ({ ...item, acknowledged: true })) };
+        return snapshot;
+      }
+      return original?.(command, args);
+    });
+    const user = userEvent.setup(); render(<Companion />);
+    await user.click(await screen.findByRole("button", { name: /Abrir assistente Jarvis/ }));
+    await user.click(await screen.findByRole("button", { name: "Ver atividade" }));
+    await waitFor(() => expect(resolveChat).toBeDefined());
+    expect(call.mock.calls.some(([command]) => command === "ack_companion_item")).toBe(false);
+    const pending = resolveChat;
+    call.mockImplementation(async (command, args) => {
+      if (command === "get_companion_chat") return chat;
+      if (command === "get_companion_conversations" || command === "get_companion_models") return [];
+      if (command === "ack_companion_item") {
+        snapshot = { ...snapshot, items: snapshot.items.map(item => ({ ...item, acknowledged: true })) };
+        return snapshot;
+      }
+      return original?.(command, args);
+    });
+    await act(async () => pending?.(chat));
+    expect(await screen.findByText("O próximo feriado será em 12 de outubro.")).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+    expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "global-chat", agentId: null, attentionId: base.attentionId, revision: 1 });
+    expect(call.mock.calls.some(([command]) => command === "companion_open_conversation")).toBe(false);
+    await user.click(screen.getByRole("tab", { name: "Atividade" }));
+    expect(screen.getByRole("heading", { name: "Tudo tranquilo por aqui" })).toBeVisible();
+  });
+
+  it("keeps an unseen result in the inbox when navigation fails", async () => {
+    snapshot.items = [{ ...base, status: "failed", activeSince: null }];
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => command === "companion_open_conversation" ? Promise.reject("Não foi possível acessar a conversa.") : original?.(command, args));
+    const user = userEvent.setup(); render(<Companion />);
+    await user.click(await screen.findByRole("button", { name: /Abrir assistente Jarvis/ }));
+    await user.click(await screen.findByRole("button", { name: "Ver atividade" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível acessar a conversa.");
+    expect(screen.getByRole("heading", { name: base.title })).toBeVisible();
+    expect(call.mock.calls.some(([command]) => command === "ack_companion_item")).toBe(false);
+  });
+
+  it.each(["invalid", "stale"])("preserves the inbox and permits retry after an %s acknowledgement", async kind => {
+    snapshot.items = [{ ...base, status: "completed", activeSince: null }];
+    let acknowledgements = 0;
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => {
+      if (command === "ack_companion_item") {
+        if (++acknowledgements === 1) {
+          if (kind === "invalid") return true;
+          snapshot = { ...snapshot, items: snapshot.items.map(item => ({ ...item, revision: 2, title: "Resultado atualizado" })) };
+          return snapshot;
+        }
+        snapshot = { ...snapshot, items: snapshot.items.map(item => ({ ...item, acknowledged: true })) };
+        return snapshot;
+      }
+      return original?.(command, args);
+    });
+    const user = userEvent.setup(); render(<Companion />);
+    await user.click(await screen.findByRole("button", { name: /Abrir assistente Jarvis/ }));
+    await user.click(await screen.findByRole("button", { name: "Ver atividade" }));
+    const title = kind === "invalid" ? base.title : "Resultado atualizado";
+    expect(await screen.findByRole("heading", { name: title })).toBeVisible();
+    if (kind === "invalid") expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível confirmar que a atividade foi vista.");
+    await user.click(await screen.findByRole("button", { name: "Ver atividade" }));
+    await waitFor(() => expect(acknowledgements).toBe(2));
+    expect(call.mock.calls.filter(([command]) => command === "ack_companion_item")).toEqual([
+      ["ack_companion_item", { conversationId: base.conversationId, agentId: null, attentionId: base.attentionId, revision: 1 }],
+      ["ack_companion_item", { conversationId: base.conversationId, agentId: null, attentionId: base.attentionId, revision: kind === "invalid" ? 1 : 2 }],
+    ]);
+    expect(await screen.findByRole("heading", { name: "Tudo tranquilo por aqui" })).toBeVisible();
   });
 
   it.each([true, false])("only announces a general chat response when it was not viewed in the island: viewed=%s", async viewed => {
@@ -267,7 +593,7 @@ describe("Desktop companion", () => {
       if (command === "get_companion_conversations" || command === "get_companion_models") return [];
       if (command === "ack_companion_item") {
         snapshot.items = snapshot.items.map(item => ({ ...item, acknowledged: true }));
-        return true;
+        return snapshot;
       }
       return original?.(command, args);
     });
@@ -275,7 +601,7 @@ describe("Desktop companion", () => {
     await user.click(screen.getByRole("tab", { name: "Chat" }));
     await screen.findByRole("textbox", { name: "Mensagem para Jarvito" });
     if (!viewed) {
-      await user.click(screen.getByRole("button", { name: "Recolher painel" }));
+      fireEvent.keyDown(screen.getByRole("region", { name: "Assistente Jarvis" }), { key: "Escape" });
       await waitFor(() => expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument());
     }
     snapshot.items = [{ ...snapshot.items[0], status: "completed", activeSince: null, attentionId: "general/completed", revision: 2, result: "A resposta da sua pergunta." }];
@@ -285,9 +611,9 @@ describe("Desktop companion", () => {
       events.get("companion:chat_changed")?.({ conversationId: "global-chat" });
     });
     if (viewed) {
-      await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "global-chat", agentId: null, attentionId: "general/completed" }));
-      await waitFor(() => expect(screen.getByRole("button", { name: "Recolher assistente Jarvis" }).querySelector("svg[data-state=idle]")).toBeInTheDocument());
-      await user.click(screen.getByRole("button", { name: "Recolher painel" }));
+      await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "global-chat", agentId: null, attentionId: "general/completed", revision: 2 }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Interagir com Jarvito" }).querySelector("svg[data-state=idle]")).toBeInTheDocument());
+      fireEvent.keyDown(screen.getByRole("region", { name: "Assistente Jarvis" }), { key: "Escape" });
       await waitFor(() => expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument());
       expect(screen.queryByRole("status", { name: "Aviso do Jarvito" })).not.toBeInTheDocument();
     } else {
@@ -326,37 +652,39 @@ describe("Desktop companion", () => {
       events.get("companion:chat_changed")?.({ conversationId: "global-chat" });
     });
     await waitFor(() => expect(completeRefresh).toBeDefined());
-    await waitFor(() => expect(screen.getByRole("button", { name: "Recolher assistente Jarvis" }).querySelector("svg[data-state=completed]")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Interagir com Jarvito" }).querySelector("svg[data-state=completed]")).toBeInTheDocument());
     expect(screen.getByText("Resposta anterior")).toBeVisible();
     expect(call.mock.calls.some(([command]) => command === "ack_companion_item")).toBe(false);
     chat = makeChat(2, "Nova resposta pronta");
     await act(async () => completeRefresh?.(chat));
     expect(await screen.findByText("Nova resposta pronta")).toBeVisible();
-    await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "global-chat", agentId: null, attentionId: "new-response/completed" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "global-chat", agentId: null, attentionId: "new-response/completed", revision: 2 }));
   });
 
-  it.each(["waiting", "completed", "failed"] as const)("restores a %s bubble only after dragging ends, without acknowledging or dismissing it", async status => {
+  it.each(["waiting", "completed", "failed"] as const)("preserves a %s notice while dragging the black header horizontally", async status => {
     snapshot.items = [{ ...base, status, activeSince: null, pendingQuestion: status === "waiting" ? { turnId: "turn-q", toolId: "ask-q", questions: [{ id: "scope", question: "Qual tela revisar?", options: [] }] } : null }];
     const original = call.getMockImplementation();
     call.mockImplementation(async (command, args) => {
-      if (command === "companion_start_drag") {
-        events.get("companion:geometry")?.({ expanded: false, bubble: false, robotSide: "left", robotVertical: "top", width: 96, height: 112 });
+      if (command === "companion_finish_drag") {
+        events.get("companion:drag-end")?.(null);
         return true;
       }
       return original?.(command, args);
     });
     render(<Companion />);
     await screen.findByRole("status", { name: "Aviso do Jarvito" });
-    const pet = screen.getByRole("button", { name: /Abrir assistente Jarvis/ });
-    fireEvent.pointerDown(pet, { button: 0, clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(pet, { clientX: 22, clientY: 10, buttons: 1 });
-    expect(screen.queryByRole("status", { name: "Aviso do Jarvito" })).not.toBeInTheDocument();
+    const header = screen.getByRole("status", { name: "Aviso do Jarvito" }).parentElement?.querySelector(".companion-header");
+    if (!header) throw new Error("Missing black header");
+    fireEvent.pointerDown(header, { button: 0, screenX: 100 });
+    fireEvent.pointerMove(header, { screenX: 140, buttons: 1 });
+    await waitFor(() => expect(call).toHaveBeenCalledWith("companion_start_drag"));
+    expect(screen.getByRole("status", { name: "Aviso do Jarvito" })).toBeVisible();
     const bubbleRequests = call.mock.calls.filter(([command]) => command === "set_companion_bubble").length;
-    fireEvent.pointerUp(pet);
+    fireEvent.pointerUp(header);
     expect(call.mock.calls.filter(([command]) => command === "set_companion_bubble")).toHaveLength(bubbleRequests);
-    act(() => events.get("companion:drag-end")?.(null));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("companion_finish_drag"));
     await screen.findByRole("status", { name: "Aviso do Jarvito" });
-    expect(call.mock.calls.filter(([command]) => command === "set_companion_bubble")).toHaveLength(bubbleRequests + 1);
+    expect(call.mock.calls.filter(([command]) => command === "set_companion_bubble")).toHaveLength(bubbleRequests);
     expect(call.mock.calls.some(([command]) => command === "ack_companion_item" || command === "companion_answer_question")).toBe(false);
   });
 
@@ -370,8 +698,8 @@ describe("Desktop companion", () => {
     });
     render(<Companion />);
     await waitFor(() => expect(resolveBubble).toBeDefined());
-    act(() => events.get("companion:geometry")?.({ expanded: false, bubble: false, robotSide: "left", robotVertical: "top", width: 96, height: 112 }));
-    await act(async () => resolveBubble?.({ expanded: false, bubble: true, robotSide: "right", robotVertical: "bottom", width: 360, height: 300 }));
+    act(() => events.get("companion:geometry")?.(geometryFor(false)));
+    await act(async () => resolveBubble?.({ ...geometryFor(false, 160, true), robotSide: "right", robotVertical: "bottom" }));
     const main = screen.getByRole("button", { name: /Abrir assistente Jarvis/ }).closest("main");
     expect(main).toHaveAttribute("data-robot-side", "left");
     expect(main).toHaveAttribute("data-robot-vertical", "top");
@@ -382,11 +710,11 @@ describe("Desktop companion", () => {
     await expanded();
     vi.useFakeTimers(); call.mockClear();
     act(() => events.get("companion:collapse-request")?.(null));
-    const main = screen.getByRole("button", { name: "Recolher assistente Jarvis" }).closest("main");
+    const main = screen.getByRole("button", { name: "Interagir com Jarvito" }).closest("main");
     expect(main).toHaveAttribute("data-closing", "true");
     expect(screen.getByRole("region", { name: "Assistente Jarvis" })).toBeVisible();
     expect(call).not.toHaveBeenCalledWith("set_companion_expanded", { expanded: false });
-    await act(async () => { await vi.advanceTimersByTimeAsync(220); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(360); });
     expect(call).toHaveBeenCalledWith("set_companion_expanded", { expanded: false });
     expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument();
     expect(main).toHaveAttribute("data-closing", "false");
@@ -403,14 +731,14 @@ describe("Desktop companion", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Abrir assistente Jarvis/ }));
     await waitFor(() => expect(finishOpen).toBeDefined());
     vi.useFakeTimers();
-    const geometry = { expanded: true, bubble: false, robotSide: "left", robotVertical: "top", width: 460, height: 600 };
+    const geometry = geometryFor(true);
     act(() => {
       events.get("companion:geometry")?.(geometry);
       events.get("companion:collapse-request")?.(null);
     });
     await act(async () => finishOpen?.(geometry));
-    expect(screen.getByRole("button", { name: "Recolher assistente Jarvis" }).closest("main")).toHaveAttribute("data-closing", "true");
-    await act(async () => { await vi.advanceTimersByTimeAsync(220); });
+    expect(screen.getByRole("button", { name: "Interagir com Jarvito" }).closest("main")).toHaveAttribute("data-closing", "true");
+    await act(async () => { await vi.advanceTimersByTimeAsync(360); });
     expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument();
     expect(vi.mocked(listen).mock.calls.filter(([name]) => name === "companion:collapse-request")).toHaveLength(1);
   });
@@ -434,10 +762,10 @@ describe("Desktop companion", () => {
     expect(count()).toBe(1);
     act(() => events.get("companion:usage")?.({}));
     await waitFor(() => expect(count()).toBe(2));
-    expect(call).toHaveBeenLastCalledWith("get_companion_usage", undefined);
+    expect(call.mock.calls.filter(([command]) => command === "get_companion_usage").slice(-1)[0]).toEqual(["get_companion_usage", undefined]);
     await user.click(screen.getByRole("button", { name: "Atualizar limites" }));
     await waitFor(() => expect(count()).toBe(3));
-    expect(call).toHaveBeenLastCalledWith("get_companion_usage", { refresh: true });
+    expect(call.mock.calls.filter(([command]) => command === "get_companion_usage").slice(-1)[0]).toEqual(["get_companion_usage", { refresh: true }]);
     const panel = screen.getByRole("tabpanel", { name: "Limites" });
     expect(within(panel).getByText("pessoal")).toBeVisible();
   });
@@ -457,6 +785,34 @@ describe("Desktop companion", () => {
       expect(within(section).getByRole("img", { name: provider.name })).toBeVisible();
       expect(within(section).getByText(provider.label)).toBeVisible();
     }
+  });
+
+  it("keeps both periods, resets and quota pace readable for multiple providers", async () => {
+    accounts = [
+      { ...account, windows: [
+        { ...account.windows[0], resetsAt: Date.now() + 9_000_000 },
+        { ...account.windows[0], id: "weekly", label: "7d", durationSeconds: 604_800, remainingPercent: 76, resetsAt: Date.now() + 6.5 * 86_400_000 },
+      ] },
+      { ...account, alias: "Claude Code", providerKind: "claude-code", windows: [
+        { ...account.windows[0], group: "Claude", remainingPercent: 7, resetsAt: Date.now() + 9_000_000 },
+        { ...account.windows[0], id: "weekly", group: "Claude", label: "7d", durationSeconds: 604_800, remainingPercent: 83, resetsAt: Date.now() + 3.5 * 86_400_000 },
+      ] },
+    ];
+    const user = await expanded();
+    await user.click(screen.getByRole("tab", { name: "Limites" }));
+    for (const provider of accounts) {
+      const section = await screen.findByRole("region", { name: `Limites de ${provider.alias}` });
+      expect(within(section).getAllByRole("progressbar")).toHaveLength(2);
+      expect(within(section).getByText("5h")).toBeVisible();
+      expect(within(section).getByText("7d")).toBeVisible();
+      expect(within(section).getAllByText(/Renova em/)).toHaveLength(2);
+      expect(within(section).getByLabelText(/Atualizado às/)).toBeVisible();
+    }
+    const claude = screen.getByRole("region", { name: "Limites de Claude Code" });
+    expect(within(claude).getByText("43% em déficit")).toBeVisible();
+    expect(within(claude).getByText("33% em reserva")).toBeVisible();
+    expect(within(claude).getByRole("progressbar", { name: "Claude 5h restante" })).toHaveAttribute("aria-valuenow", "7");
+    expect(within(claude).getByRole("img", { name: "Claude Code" })).toBeVisible();
   });
 
   it.each([
@@ -486,7 +842,8 @@ describe("Desktop companion", () => {
     await user.click(screen.getByRole("tab", { name: "Limites" }));
     await screen.findByText("72%");
     expect(screen.getByText("71% em reserva")).toBeVisible();
-    call.mockRejectedValueOnce("Sem conexão");
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => command === "get_companion_usage" && (args as { refresh?: boolean } | undefined)?.refresh ? Promise.reject("Sem conexão") : original?.(command, args));
     await user.click(screen.getByRole("button", { name: "Atualizar limites" }));
     await screen.findByText("Sem conexão");
     expect(screen.getByText("72%")).toBeVisible();
@@ -496,16 +853,17 @@ describe("Desktop companion", () => {
 
   it("distinguishes dragging from clicking and follows geometry without switching the app", async () => {
     render(<Companion />);
-    const pet = await screen.findByRole("button", { name: /Abrir assistente Jarvis, 1 atividade/ });
-    fireEvent.pointerDown(pet, { button: 0, clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(pet, { clientX: 22, clientY: 10, buttons: 1 });
-    fireEvent.pointerUp(pet, { clientX: 22, clientY: 10 });
-    fireEvent.click(pet, { detail: 1 });
-    expect(call).toHaveBeenCalledWith("companion_start_drag", { robotX: 0, robotY: 0 });
-    expect(call).not.toHaveBeenCalledWith("set_companion_expanded", { expanded: true });
+    const compact = await screen.findByRole("button", { name: "Abrir ilha do Jarvito" });
+    fireEvent.pointerDown(compact, { button: 0, screenX: 100 });
+    fireEvent.pointerMove(compact, { screenX: 140, buttons: 1 });
+    fireEvent.pointerUp(compact, { screenX: 140 });
+    fireEvent.click(compact, { detail: 1 });
+    await waitFor(() => expect(call).toHaveBeenCalledWith("companion_start_drag"));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("companion_move_horizontal"));
+    expect(call).not.toHaveBeenCalledWith("set_companion_expanded", { expanded: true, height: 160 });
     act(() => events.get("companion:geometry")?.({ expanded: true, bubble: false, robotSide: "left", robotVertical: "top", width: 420, height: 520 }));
     const panel = await screen.findByRole("region", { name: "Assistente Jarvis" });
-    const movedPet = screen.getByRole("button", { name: "Recolher assistente Jarvis" });
+    const movedPet = screen.getByRole("button", { name: "Interagir com Jarvito" });
     expect(movedPet.closest(".companion-island")).toContainElement(panel);
     expect(screen.getByRole("tab", { name: "Chat" })).toBeVisible();
     expect(call).not.toHaveBeenCalledWith("companion_open_conversation", expect.anything());
@@ -513,18 +871,61 @@ describe("Desktop companion", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Abrir assistente Jarvis/ })).toHaveAttribute("aria-expanded", "false"));
   });
 
+  it("finishes horizontal dragging only after the native start and move have completed", async () => {
+    let startDrag: ((value: unknown) => void) | undefined;
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => command === "companion_start_drag" ? new Promise(resolve => { startDrag = resolve; }) : original?.(command, args));
+    render(<Companion />);
+    const compact = await screen.findByRole("button", { name: "Abrir ilha do Jarvito" });
+    fireEvent.pointerDown(compact, { button: 0, screenX: 100 });
+    fireEvent.pointerMove(compact, { screenX: 140, buttons: 1 });
+    fireEvent.pointerUp(compact, { screenX: 140 });
+    await waitFor(() => expect(startDrag).toBeDefined());
+    expect(call.mock.calls.some(([command]) => command === "companion_finish_drag" || command === "companion_move_horizontal")).toBe(false);
+    await act(async () => startDrag?.(true));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("companion_finish_drag"));
+    expect(call.mock.calls.filter(([command]) => /^companion_(start_drag|move_horizontal|finish_drag)$/.test(command)).map(([command]) => command)).toEqual(["companion_start_drag", "companion_move_horizontal", "companion_finish_drag"]);
+  });
+
+  it("reserves the Mac camera header and keeps the island fixed when its header or pet is dragged", async () => {
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => {
+      const result = await original?.(command, args);
+      if (command !== "set_companion_expanded" && command !== "set_companion_bubble") return result;
+      if (!result || typeof result !== "object") throw new Error("Missing geometry");
+      return { ...result, compactWidth: 314, compactHeight: 38, notchWidth: 210, notchHeight: 38, headerHeight: 38, dragAxis: "none" };
+    });
+    const user = userEvent.setup(); render(<Companion />);
+    await user.click(await screen.findByRole("button", { name: "Abrir ilha do Jarvito" }));
+    await screen.findByRole("region", { name: "Assistente Jarvis" });
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_companion_expanded", { expanded: true, height: 198 }));
+    const pet = screen.getByRole("button", { name: "Interagir com Jarvito" });
+    const main = pet.closest("main");
+    expect(main?.style.getPropertyValue("--companion-notch-inset")).toBe("38px");
+    const header = main?.querySelector(".companion-header");
+    if (!header) throw new Error("Missing header");
+    for (const target of [pet, header]) {
+      fireEvent.pointerDown(target, { button: 0, screenX: 100 });
+      fireEvent.pointerMove(target, { screenX: 140, buttons: 1 });
+      fireEvent.pointerUp(target);
+    }
+    expect(call.mock.calls.some(([command]) => /^companion_(start_drag|move_horizontal|finish_drag)$/.test(command))).toBe(false);
+    await user.click(screen.getByRole("tab", { name: "Chat" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_companion_expanded", { expanded: true, height: 438 }));
+  });
+
   it("keeps controls usable when native placement provides a smaller panel", async () => {
-    const user = await expanded();
+    await expanded();
     act(() => events.get("companion:geometry")?.({ expanded: true, bubble: false, robotSide: "left", robotVertical: "bottom", width: 300, height: 320 }));
     expect(screen.getByRole("heading", { name: base.title })).toBeVisible();
     expect(screen.getByRole("button", { name: "Abrir conversa no Jarvis" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Recolher painel" }));
+    fireEvent.keyDown(screen.getByRole("region", { name: "Assistente Jarvis" }), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument());
   });
 
   it("keeps the robot inside the island and follows the pointer without requesting focus", async () => {
     await expanded();
-    const pet = screen.getByRole("button", { name: "Recolher assistente Jarvis" });
+    const pet = screen.getByRole("button", { name: "Interagir com Jarvito" });
     const main = pet.closest("main");
     if (!main) throw new Error("Missing companion surface");
     fireEvent.pointerMove(main, { clientX: 100, clientY: 70, buttons: 0 });

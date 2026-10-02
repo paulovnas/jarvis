@@ -55,6 +55,7 @@ describe("Jarvito chat", () => {
     render(<CompanionChatPane />);
     expect(await screen.findByText("Oi, eu sou o Jarvito.")).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Conversa do Jarvito" })).toHaveTextContent("Conversar com Jarvito");
+    expect(screen.queryByText(/Ajuda sem projeto|Para trabalhar em arquivos, Jarvito pede sua confirmação/)).not.toBeInTheDocument();
     expect(call).toHaveBeenCalledWith("get_companion_chat", undefined);
     expect(call.mock.calls.some(([name]) => name === "send_companion_message" || name === "companion_open_conversation")).toBe(false);
   });
@@ -170,15 +171,17 @@ describe("Jarvito chat", () => {
     expect(screen.queryByText("Minha resposta antiga")).not.toBeInTheDocument();
   });
 
-  it("keeps the composer and model control reachable by scrolling when the island is short", async () => {
+  it("keeps composer and model controls outside the independently scrolling transcript", async () => {
     const user = userEvent.setup();
     render(<div style={{ height: 138 }}><CompanionChatPane /></div>);
     await screen.findByText("Oi, eu sou o Jarvito.");
     const surface = screen.getByRole("region", { name: "Conversa e controles do Jarvito" });
     const viewport = surface.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]");
     if (!viewport) throw new Error("Missing chat scroll viewport");
-    expect(viewport).toContainElement(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }));
-    expect(viewport).toContainElement(screen.getByRole("button", { name: "Modelo do Jarvito" }));
+    expect(viewport).not.toContainElement(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }));
+    expect(viewport).not.toContainElement(screen.getByRole("button", { name: "Modelo do Jarvito" }));
+    expect(surface).toContainElement(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }));
+    expect(surface).toContainElement(screen.getByRole("button", { name: "Modelo do Jarvito" }));
     fireEvent.scroll(viewport, { target: { scrollTop: 112 } });
     await user.type(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }), "Minha mensagem");
     await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));

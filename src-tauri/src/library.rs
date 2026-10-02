@@ -285,10 +285,21 @@ fn snapshot(connection: &Connection) -> Result<LibrarySnapshot, LibraryError> {
         .query_map([companion::GLOBAL_WORKSPACE_ID], project_row)?.collect::<Result<Vec<_>, _>>()?;
     let conversations = connection.prepare("SELECT id, project_id, COALESCE(display_title, title), created_at, title, COALESCE(last_activity_at, created_at) FROM conversations WHERE project_id <> ?1 ORDER BY COALESCE(last_activity_at, created_at) DESC, rowid DESC")?
         .query_map([companion::GLOBAL_PROJECT_ID], conversation_row)?.collect::<Result<Vec<_>, _>>()?;
-    let selection = connection.query_row(
+    let mut selection = connection.query_row(
         "SELECT workspace_id, project_id, conversation_id FROM navigation_selection WHERE id = 1", [],
         |row| Ok(Selection { workspace_id: row.get(0)?, project_id: row.get(1)?, conversation_id: row.get(2)? }),
     ).optional()?.unwrap_or_default();
+    if selection.workspace_id.as_deref() == Some(companion::GLOBAL_WORKSPACE_ID)
+        || selection.project_id.as_deref() == Some(companion::GLOBAL_PROJECT_ID)
+        || selection.conversation_id.as_deref() == Some(companion::GLOBAL_CONVERSATION_ID)
+    {
+        // Older Jarvito links could select its hidden scope in the main window.
+        selection = Selection {
+            workspace_id: workspaces.first().map(|workspace| workspace.id.clone()),
+            ..Selection::default()
+        };
+        save_selection(connection, &selection)?;
+    }
     Ok(LibrarySnapshot {
         workspaces,
         projects,
@@ -929,6 +940,9 @@ fn select_item(
             }
         }
     };
+    if selection.workspace_id.as_deref() == Some(companion::GLOBAL_WORKSPACE_ID) {
+        return Err(LibraryError::missing());
+    }
     save_selection(&tx, &selection)?;
     let result = snapshot(&tx)?;
     tx.commit()?;

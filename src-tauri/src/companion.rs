@@ -11,8 +11,10 @@ use tauri::{Emitter, Listener, Manager, PhysicalPosition, PhysicalSize};
 
 pub(crate) const SUPPORTED: bool = cfg!(any(target_os = "macos", target_os = "windows"));
 const LABEL: &str = "companion";
-const PET_WIDTH: f64 = 96.0;
-const PET_HEIGHT: f64 = 112.0;
+const COMPACT_WIDTH: f64 = 288.0;
+const COMPACT_HEIGHT: f64 = 32.0;
+const ISLAND_WIDTH: f64 = 640.0;
+const ISLAND_HEIGHT: f64 = 160.0;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,22 +33,37 @@ pub(crate) struct Geometry {
     height: f64,
     robot_side: &'static str,
     robot_vertical: &'static str,
+    compact_x: f64,
+    compact_y: f64,
+    compact_width: f64,
+    compact_height: f64,
+    surface_x: f64,
+    surface_y: f64,
+    surface_width: f64,
+    surface_height: f64,
+    notch_width: f64,
+    notch_height: f64,
+    header_height: f64,
+    drag_axis: &'static str,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct Screen {
     x: i32,
     y: i32,
     width: u32,
     height: u32,
     scale: f64,
+    fixed: bool,
+    notch_width: f64,
+    notch_height: f64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Presentation {
     Compact,
     Bubble,
-    Island,
+    Island(u32),
 }
 
 struct Placement {
@@ -62,72 +79,71 @@ fn placement(
     mode: Presentation,
 ) -> Option<Placement> {
     let screen = screens
-        .iter()
-        .find(|s| {
-            anchor.is_some_and(|p| {
-                i64::from(p.x) >= i64::from(s.x)
-                    && i64::from(p.x) < i64::from(s.x) + i64::from(s.width)
-                    && i64::from(p.y) >= i64::from(s.y)
-                    && i64::from(p.y) < i64::from(s.y) + i64::from(s.height)
+        .first()
+        .filter(|screen| screen.fixed)
+        .or_else(|| {
+            screens.iter().find(|s| {
+                anchor.is_some_and(|p| {
+                    i64::from(p.x) >= i64::from(s.x)
+                        && i64::from(p.x) < i64::from(s.x) + i64::from(s.width)
+                        && i64::from(p.y) >= i64::from(s.y)
+                        && i64::from(p.y) < i64::from(s.y) + i64::from(s.height)
+                })
             })
         })
         .or_else(|| screens.first())?;
     let scale = screen.scale;
-    let pet_width = (PET_WIDTH * scale).round().max(1.0) as u32;
-    let pet_height = (PET_HEIGHT * scale).round().max(1.0) as u32;
-    let x_max = i64::from(screen.x) + i64::from(screen.width.saturating_sub(pet_width));
-    let y_max = i64::from(screen.y) + i64::from(screen.height.saturating_sub(pet_height));
+    let compact_width = ((COMPACT_WIDTH.max(screen.notch_width + 104.0) * scale)
+        .round()
+        .max(1.0) as u32)
+        .min(screen.width);
+    let compact_height = ((COMPACT_HEIGHT.max(screen.notch_height) * scale)
+        .round()
+        .max(1.0) as u32)
+        .min(screen.height);
+    let x_max = i64::from(screen.x) + i64::from(screen.width - compact_width);
     let default = CompanionPosition {
-        x: (x_max - (24.0 * scale) as i64).max(i64::from(screen.x)) as i32,
-        y: (y_max - (24.0 * scale) as i64).max(i64::from(screen.y)) as i32,
+        x: (i64::from(screen.x) + i64::from((screen.width - compact_width) / 2)) as i32,
+        y: screen.y,
     };
-    let anchor = anchor.unwrap_or(default);
+    let anchor = if screen.fixed {
+        default
+    } else {
+        anchor.unwrap_or(default)
+    };
     let x = i64::from(anchor.x).clamp(i64::from(screen.x), x_max);
-    let y = i64::from(anchor.y).clamp(i64::from(screen.y), y_max);
+    let y = i64::from(screen.y);
     let (width, height) = match mode {
-        Presentation::Compact => (pet_width, pet_height),
+        Presentation::Compact => (compact_width, compact_height),
         Presentation::Bubble => (
-            (360.0 * scale).round() as u32,
-            (300.0 * scale).round() as u32,
+            (ISLAND_WIDTH * scale).round() as u32,
+            ((ISLAND_HEIGHT
+                + if screen.notch_width > 0.0 {
+                    COMPACT_HEIGHT.max(screen.notch_height)
+                } else {
+                    0.0
+                })
+                * scale)
+                .round() as u32,
         ),
-        Presentation::Island => (
-            (460.0 * scale).round() as u32,
-            (600.0 * scale).round() as u32,
+        Presentation::Island(height) => (
+            (ISLAND_WIDTH * scale).round() as u32,
+            (f64::from(height) * scale).round() as u32,
         ),
     };
     let left = x - i64::from(screen.x);
     let right = x_max - x;
-    let above = y - i64::from(screen.y);
-    let below = y_max - y;
     let on_right = left >= right;
-    let on_bottom = above >= below;
-    // Every surface grows into the available space around the same robot origin.
-    // Near the screen center, reduce the surface rather than moving the pet.
-    let width = width
-        .min(screen.width)
-        .min(pet_width.saturating_add(left.max(right) as u32));
-    let height = height
-        .min(screen.height)
-        .min(pet_height.saturating_add(above.max(below) as u32));
+    // The compact island is the stable anchor. Larger views grow around its
+    // center, and closing returns to the same saved position on every display.
+    let width = width.min(screen.width).max(compact_width);
+    let height = height.min(screen.height).max(compact_height);
     let position = PhysicalPosition::new(
-        (x - if on_right {
-            i64::from(width.saturating_sub(pet_width))
-        } else {
-            0
-        })
-        .clamp(
+        (x - i64::from((width - compact_width) / 2)).clamp(
             i64::from(screen.x),
             i64::from(screen.x) + i64::from(screen.width - width),
         ) as i32,
-        (y - if on_bottom {
-            i64::from(height.saturating_sub(pet_height))
-        } else {
-            0
-        })
-        .clamp(
-            i64::from(screen.y),
-            i64::from(screen.y) + i64::from(screen.height - height),
-        ) as i32,
+        screen.y,
     );
     Some(Placement {
         anchor: CompanionPosition {
@@ -137,14 +153,55 @@ fn placement(
         position,
         size: PhysicalSize::new(width, height),
         geometry: Geometry {
-            expanded: mode == Presentation::Island,
+            expanded: matches!(mode, Presentation::Island(_)),
             bubble: mode == Presentation::Bubble,
             width: f64::from(width) / scale,
             height: f64::from(height) / scale,
-            robot_side: if on_right { "right" } else { "left" },
-            robot_vertical: if on_bottom { "bottom" } else { "top" },
+            robot_side: if on_right && !screen.fixed {
+                "right"
+            } else {
+                "left"
+            },
+            robot_vertical: "top",
+            compact_x: f64::from(x as i32 - position.x) / scale,
+            compact_y: f64::from(y as i32 - position.y) / scale,
+            compact_width: f64::from(compact_width) / scale,
+            compact_height: f64::from(compact_height) / scale,
+            surface_x: 0.0,
+            surface_y: 0.0,
+            surface_width: f64::from(width) / scale,
+            surface_height: f64::from(height) / scale,
+            notch_width: screen.notch_width,
+            notch_height: screen.notch_height,
+            header_height: f64::from(compact_height) / scale,
+            drag_axis: if screen.fixed { "none" } else { "horizontal" },
         },
     })
+}
+
+fn restore_anchor(
+    anchor: Option<CompanionPosition>,
+    screens: &[Screen],
+) -> Option<CompanionPosition> {
+    let anchor = anchor?;
+    // Migrate only the old automatically chosen corner. Deliberate user
+    // positions remain theirs, including secondary displays and negative origins.
+    let old_default = screens.iter().any(|screen| {
+        let x =
+            i64::from(screen.x) + i64::from(screen.width) - (120.0 * screen.scale).round() as i64;
+        let y =
+            i64::from(screen.y) + i64::from(screen.height) - (136.0 * screen.scale).round() as i64;
+        (i64::from(anchor.x) - x).abs() <= 2 && (i64::from(anchor.y) - y).abs() <= 2
+    });
+    (!old_default).then_some(anchor)
+}
+
+fn requested_height(height: Option<f64>) -> Result<u32, String> {
+    let height = height.unwrap_or(ISLAND_HEIGHT);
+    if !height.is_finite() || !(ISLAND_HEIGHT..=600.0).contains(&height) {
+        return Err("Altura da ilha inválida.".into());
+    }
+    Ok(height.round() as u32)
 }
 
 #[derive(Default)]
@@ -159,6 +216,10 @@ pub(crate) struct CompanionState {
     applying_geometry: AtomicBool,
     revision: AtomicU64,
     anchor: Mutex<Option<CompanionPosition>>,
+    island_height: Mutex<Option<u32>>,
+    hit_rect: Mutex<Option<[f64; 4]>>,
+    canvas_size: Mutex<Option<[f64; 2]>>,
+    drag_origin: Mutex<Option<(CompanionPosition, Screen, i32)>>,
     error: Mutex<Option<String>>,
     usage: Mutex<Vec<CompanionUsage>>,
     #[cfg(target_os = "windows")]
@@ -265,12 +326,17 @@ fn screens(window: &tauri::WebviewWindow) -> Result<Vec<Screen>, String> {
         .iter()
         .map(|monitor| {
             let area = monitor.work_area();
+            let position = monitor.position();
             Screen {
-                x: area.position.x,
-                y: area.position.y,
-                width: area.size.width,
-                height: area.size.height,
+                x: position.x,
+                y: position.y,
+                width: monitor.size().width,
+                height: (i64::from(area.position.y) + i64::from(area.size.height)
+                    - i64::from(position.y)) as u32,
                 scale: monitor.scale_factor(),
+                fixed: false,
+                notch_width: 0.0,
+                notch_height: 0.0,
             }
         })
         .collect())
@@ -292,7 +358,7 @@ fn create(app: &tauri::AppHandle) -> Result<(), String> {
         tauri::WebviewWindowBuilder::new(app, LABEL, tauri::WebviewUrl::App("index.html".into()))
             .on_navigation(move |url| local_navigation(url, development_origin.as_ref()))
             .title("Jarvis · Assistente flutuante")
-            .inner_size(PET_WIDTH, PET_HEIGHT)
+            .inner_size(COMPACT_WIDTH, COMPACT_HEIGHT)
             .transparent(true)
             .background_color(tauri::utils::config::Color(0, 0, 0, 0))
             .decorations(false)
@@ -308,6 +374,15 @@ fn create(app: &tauri::AppHandle) -> Result<(), String> {
         .visible_on_all_workspaces(true)
         .accept_first_mouse(true);
     let window = builder.build().map_err(|e| e.to_string())?;
+    let saved = *state
+        .anchor
+        .lock()
+        .map_err(|_| "Posição do assistente indisponível.")?;
+    *state
+        .anchor
+        .lock()
+        .map_err(|_| "Posição do assistente indisponível.")? =
+        restore_anchor(saved, &screens(&window)?);
     if let Err(error) = apply_geometry(app, false) {
         #[cfg(target_os = "macos")]
         macos::close(app, true);
@@ -344,7 +419,13 @@ fn apply_geometry(app: &tauri::AppHandle, expanded: bool) -> Result<Geometry, St
         .lock()
         .map_err(|_| "Posição do assistente indisponível.")?;
     let mode = if expanded {
-        Presentation::Island
+        Presentation::Island(
+            state
+                .island_height
+                .lock()
+                .map_err(|_| "Altura da ilha indisponível.")?
+                .unwrap_or(ISLAND_HEIGHT as u32),
+        )
     } else if state.bubble.load(Ordering::SeqCst) {
         Presentation::Bubble
     } else {
@@ -352,6 +433,20 @@ fn apply_geometry(app: &tauri::AppHandle, expanded: bool) -> Result<Geometry, St
     };
     let placement =
         placement(anchor, &screens(&window)?, mode).ok_or("Nenhuma tela disponível.")?;
+    *state
+        .canvas_size
+        .lock()
+        .map_err(|_| "Tamanho da ilha indisponível.")? =
+        Some([placement.geometry.width, placement.geometry.height]);
+    *state
+        .hit_rect
+        .lock()
+        .map_err(|_| "Área da ilha indisponível.")? = Some([
+        placement.geometry.surface_x,
+        placement.geometry.surface_y,
+        placement.geometry.surface_width,
+        placement.geometry.surface_height,
+    ]);
     *state
         .anchor
         .lock()
@@ -381,6 +476,16 @@ fn apply_geometry(app: &tauri::AppHandle, expanded: bool) -> Result<Geometry, St
         if !expanded {
             window.set_focusable(false).map_err(|e| e.to_string())?;
         }
+        #[cfg(target_os = "windows")]
+        windows::apply_hit_rect(
+            &window,
+            [
+                0.0,
+                0.0,
+                placement.geometry.width,
+                placement.geometry.height,
+            ],
+        )?;
     }
     window
         .emit("companion:geometry", &placement.geometry)
@@ -408,6 +513,9 @@ fn finish_drag(app: &tauri::AppHandle) {
         .dragging
         .swap(false, Ordering::SeqCst)
     {
+        if let Ok(mut origin) = app.state::<CompanionState>().drag_origin.lock() {
+            *origin = None;
+        }
         let _ = app.emit_to(LABEL, "companion:drag-end", ());
     }
 }
@@ -427,6 +535,11 @@ fn observe_position(app: &tauri::AppHandle, position: CompanionPosition) {
         }
         *anchor = Some(position);
     }
+    schedule_anchor_save(app);
+}
+
+fn schedule_anchor_save(app: &tauri::AppHandle) {
+    let state = app.state::<CompanionState>();
     let revision = state.revision.fetch_add(1, Ordering::SeqCst) + 1;
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -470,51 +583,6 @@ fn contains_point(rect: [f64; 4], point: [f64; 2]) -> bool {
         && point[0] < rect[0] + rect[2]
         && point[1] >= rect[1]
         && point[1] < rect[1] + rect[3]
-}
-
-fn visual_drag_anchor(
-    origin: CompanionPosition,
-    logical_size: [f64; 2],
-    scale: f64,
-    robot_x: Option<f64>,
-    robot_y: Option<f64>,
-) -> Result<Option<CompanionPosition>, String> {
-    let (x, y) = match (robot_x, robot_y) {
-        (None, None) => return Ok(None),
-        (Some(x), Some(y)) => (x, y),
-        _ => return Err("Posição visual do assistente inválida.".into()),
-    };
-    if !scale.is_finite()
-        || scale <= 0.0
-        || logical_size
-            .iter()
-            .any(|size| !size.is_finite() || *size <= 0.0)
-        || !x.is_finite()
-        || !y.is_finite()
-        || x < -1.0
-        || y < -1.0
-        || x > logical_size[0] + 1.0
-        || y > logical_size[1] + 1.0
-    {
-        return Err("Posição visual do assistente inválida.".into());
-    }
-    // CSS coordinates are logical pixels; Windows' global coordinates are
-    // physical pixels, while AppKit's coherent screen space uses scale 1.
-    // Validate the visual origin: rotation and short-screen scaling can change
-    // the pet's DOM bounds. The resulting compact frame is clamped to the screen.
-    let x = f64::from(origin.x) + x.max(0.0) * scale;
-    let y = f64::from(origin.y) + y.max(0.0) * scale;
-    if x < f64::from(i32::MIN)
-        || x > f64::from(i32::MAX)
-        || y < f64::from(i32::MIN)
-        || y > f64::from(i32::MAX)
-    {
-        return Err("Posição visual do assistente inválida.".into());
-    }
-    Ok(Some(CompanionPosition {
-        x: x.round() as i32,
-        y: y.round() as i32,
-    }))
 }
 
 pub(crate) fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
@@ -572,6 +640,7 @@ pub(crate) fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent
 pub(crate) fn set_companion_expanded(
     app: tauri::AppHandle,
     expanded: bool,
+    height: Option<f64>,
 ) -> Result<Geometry, String> {
     let state = app.state::<CompanionState>();
     if state.dragging.load(Ordering::SeqCst) {
@@ -579,6 +648,10 @@ pub(crate) fn set_companion_expanded(
     }
     state.collapse_requested.store(false, Ordering::SeqCst);
     if expanded {
+        *state
+            .island_height
+            .lock()
+            .map_err(|_| "Altura da ilha indisponível.")? = Some(requested_height(height)?);
         app.state::<CompanionState>()
             .bubble
             .store(false, Ordering::SeqCst);
@@ -596,59 +669,162 @@ pub(crate) fn set_companion_expanded(
     Ok(geometry)
 }
 
+fn validated_hit_rect(rect: [f64; 4], canvas: [f64; 2]) -> Result<[f64; 4], String> {
+    if rect.iter().any(|value| !value.is_finite())
+        || rect[0] < -1.0
+        || rect[1] < -1.0
+        || rect[2] <= 0.0
+        || rect[3] <= 0.0
+        || rect[0] + rect[2] > canvas[0] + 1.0
+        || rect[1] + rect[3] > canvas[1] + 1.0
+    {
+        return Err("Área visual da ilha inválida.".into());
+    }
+    Ok(rect)
+}
+
+#[tauri::command]
+pub(crate) fn companion_set_hit_rect(
+    app: tauri::AppHandle,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let state = app.state::<CompanionState>();
+    let canvas = state
+        .canvas_size
+        .lock()
+        .map_err(|_| "Tamanho da ilha indisponível.")?
+        .ok_or("Tamanho da ilha indisponível.")?;
+    let rect = validated_hit_rect([x, y, width, height], canvas)?;
+    #[cfg(target_os = "windows")]
+    {
+        let window = app
+            .get_webview_window(LABEL)
+            .ok_or("Assistente flutuante indisponível.")?;
+        windows::apply_hit_rect(&window, rect)?;
+        state.pointer_wake.notify_one();
+    }
+    *state
+        .hit_rect
+        .lock()
+        .map_err(|_| "Área da ilha indisponível.")? = Some(rect);
+    #[cfg(target_os = "macos")]
+    macos::refresh_pointer(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn get_companion_sound(app: tauri::AppHandle) -> bool {
+    app.state::<crate::desktop::DesktopState>()
+        .companion_sound_enabled()
+}
+
+#[tauri::command]
+pub(crate) fn set_companion_sound(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    app.state::<crate::desktop::DesktopState>()
+        .save_companion_sound_enabled(enabled)?;
+    Ok(enabled)
+}
+
 #[tauri::command]
 pub(crate) fn companion_start_drag(
     app: tauri::AppHandle,
     robot_x: Option<f64>,
     robot_y: Option<f64>,
 ) -> Result<(), String> {
-    #[cfg(not(target_os = "macos"))]
-    let window = app
-        .get_webview_window(LABEL)
-        .ok_or("Assistente flutuante indisponível.")?;
-    #[cfg(target_os = "macos")]
-    let anchor = macos::drag_anchor(&app, robot_x, robot_y)?;
-    #[cfg(not(target_os = "macos"))]
-    let anchor = {
-        let position = window.outer_position().map_err(|error| error.to_string())?;
-        let size = window.inner_size().map_err(|error| error.to_string())?;
-        let scale = window.scale_factor().map_err(|error| error.to_string())?;
-        visual_drag_anchor(
-            CompanionPosition {
-                x: position.x,
-                y: position.y,
-            },
-            [
-                f64::from(size.width) / scale,
-                f64::from(size.height) / scale,
-            ],
-            scale,
-            robot_x,
-            robot_y,
-        )?
-    };
-    let state = app.state::<CompanionState>();
-    if let Some(anchor) = anchor {
+    // Retain the optional arguments for old renderers; dragging is now owned by
+    // the black header and never uses the character's visual position.
+    let _ = (robot_x, robot_y);
+    #[cfg(target_os = "windows")]
+    {
+        let window = app
+            .get_webview_window(LABEL)
+            .ok_or("Assistente flutuante indisponível.")?;
+        let state = app.state::<CompanionState>();
+        let anchor = *state
+            .anchor
+            .lock()
+            .map_err(|_| "Posição do assistente indisponível.")?;
+        let screens = screens(&window)?;
+        let compact =
+            placement(anchor, &screens, Presentation::Compact).ok_or("Nenhuma tela disponível.")?;
+        let screen = screens
+            .iter()
+            .find(|screen| {
+                contains_point(
+                    [
+                        f64::from(screen.x),
+                        f64::from(screen.y),
+                        f64::from(screen.width),
+                        f64::from(screen.height),
+                    ],
+                    [f64::from(compact.anchor.x), f64::from(compact.anchor.y)],
+                )
+            })
+            .copied()
+            .ok_or("Nenhuma tela disponível.")?;
+        let cursor = windows::cursor_x()?;
+        *state
+            .drag_origin
+            .lock()
+            .map_err(|_| "Arraste da ilha indisponível.")? = Some((compact.anchor, screen, cursor));
+        state.dragging.store(true, Ordering::SeqCst);
+        state.pointer_wake.notify_one();
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = app;
+    Ok(())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn horizontal_anchor(origin: CompanionPosition, screen: Screen, delta: i64) -> CompanionPosition {
+    let width = ((COMPACT_WIDTH * screen.scale).round().max(1.0) as u32).min(screen.width);
+    let x = (i64::from(origin.x) + delta).clamp(
+        i64::from(screen.x),
+        i64::from(screen.x) + i64::from(screen.width - width),
+    );
+    CompanionPosition {
+        x: x as i32,
+        y: screen.y,
+    }
+}
+
+#[tauri::command]
+pub(crate) fn companion_move_horizontal(app: tauri::AppHandle) -> Result<Geometry, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let state = app.state::<CompanionState>();
+        let origin = *state
+            .drag_origin
+            .lock()
+            .map_err(|_| "Arraste da ilha indisponível.")?;
+        let Some((origin, screen, start)) = origin else {
+            return apply_geometry(&app, state.expanded.load(Ordering::SeqCst));
+        };
+        let current = windows::cursor_x()?;
+        let anchor = horizontal_anchor(origin, screen, i64::from(current) - i64::from(start));
         *state
             .anchor
             .lock()
             .map_err(|_| "Posição do assistente indisponível.")? = Some(anchor);
+        let geometry = apply_geometry(&app, state.expanded.load(Ordering::SeqCst))?;
+        schedule_anchor_save(&app);
+        Ok(geometry)
     }
-    state.bubble.store(false, Ordering::SeqCst);
-    state.dragging.store(true, Ordering::SeqCst);
-    let result = (|| {
-        apply_geometry(&app, false)?;
-        #[cfg(target_os = "macos")]
-        {
-            macos::drag(&app)
-        }
-        #[cfg(not(target_os = "macos"))]
-        window.start_dragging().map_err(|e| e.to_string())
-    })();
-    if result.is_err() {
-        finish_drag(&app);
-    }
-    result
+    #[cfg(not(target_os = "windows"))]
+    apply_geometry(
+        &app,
+        app.state::<CompanionState>()
+            .expanded
+            .load(Ordering::SeqCst),
+    )
+}
+
+#[tauri::command]
+pub(crate) fn companion_finish_drag(app: tauri::AppHandle) {
+    finish_drag(&app);
 }
 
 #[tauri::command]
@@ -671,17 +847,30 @@ pub(crate) fn set_companion_bubble(
 
 #[tauri::command]
 pub(crate) fn companion_set_interacting(app: tauri::AppHandle, active: bool) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    return macos::set_interacting(&app, active);
-    #[cfg(not(target_os = "macos"))]
-    {
-        let window = app
-            .get_webview_window(LABEL)
-            .ok_or("Assistente flutuante indisponível.")?;
-        window.set_focusable(active).map_err(|e| e.to_string())?;
-        if active {
+    interaction_focus(active, || {
+        #[cfg(target_os = "macos")]
+        return macos::set_interacting(&app, true);
+        #[cfg(not(target_os = "macos"))]
+        {
+            let window = app
+                .get_webview_window(LABEL)
+                .ok_or("Assistente flutuante indisponível.")?;
+            window.set_focusable(true).map_err(|e| e.to_string())?;
             window.set_focus().map_err(|e| e.to_string())?;
+            Ok(())
         }
+    })
+}
+
+fn interaction_focus(
+    active: bool,
+    request_focus: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    // DOM blur also fires when focus enters a portal. Native Focused(false)
+    // and compact geometry alone restore the nonactivating window behavior.
+    if active {
+        request_focus()
+    } else {
         Ok(())
     }
 }
@@ -693,13 +882,14 @@ mod macos {
     use dispatch2::{run_on_main, MainThreadBound};
     use objc2::runtime::AnyObject;
     use objc2::{
-        define_class, msg_send, rc::Retained, runtime::ProtocolObject, MainThreadMarker,
+        define_class, msg_send, rc::Retained, runtime::ProtocolObject, sel, MainThreadMarker,
         MainThreadOnly,
     };
     use objc2_app_kit::{
-        NSApplication, NSAutoresizingMaskOptions, NSBackingStoreType, NSColor, NSEvent,
-        NSEventMask, NSEventType, NSPanel, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior,
-        NSWindowDidMoveNotification, NSWindowDidResignKeyNotification, NSWindowStyleMask,
+        NSApplicationDidChangeScreenParametersNotification, NSAutoresizingMaskOptions,
+        NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSEventType, NSPanel, NSScreen, NSView,
+        NSWindow, NSWindowCollectionBehavior, NSWindowDidMoveNotification,
+        NSWindowDidResignKeyNotification, NSWindowStyleMask,
     };
     use objc2_foundation::{
         ns_string, NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
@@ -798,7 +988,8 @@ mod macos {
             panel.setFloatingPanel(true);
             panel.setBecomesKeyOnlyIfNeeded(true);
             panel.setHidesOnDeactivate(false);
-            panel.setLevel(25); // NSMainMenuWindowLevel: visible over full-screen application windows.
+            panel.setAcceptsMouseMovedEvents(true);
+            panel.setLevel(28); // Main menu level + 3 keeps the notch island above the menu bar.
             panel.setCollectionBehavior(
                 NSWindowCollectionBehavior::CanJoinAllSpaces
                     | NSWindowCollectionBehavior::Stationary
@@ -842,10 +1033,12 @@ mod macos {
     }
 
     pub(super) fn show(app: &tauri::AppHandle) -> Result<(), String> {
-        run_on_main(|mtm| {
+        let result = run_on_main(|mtm| {
             panel(app, mtm)?.orderFrontRegardless();
             Ok(())
-        })
+        });
+        refresh_pointer(app);
+        result
     }
 
     pub(super) fn close(app: &tauri::AppHandle, restore_owner: bool) {
@@ -886,21 +1079,52 @@ mod macos {
     pub(super) fn screens() -> Vec<Screen> {
         run_on_main(|mtm| {
             let primary_height = primary_height(mtm);
-            NSScreen::screens(mtm)
+            let mut screens: Vec<_> = NSScreen::screens(mtm)
                 .iter()
                 .map(|screen| {
-                    let frame = screen.visibleFrame();
+                    let frame = screen.frame();
+                    let visible = screen.visibleFrame();
+                    // Notch APIs arrived in macOS 12. Query support rather than
+                    // sending unavailable selectors on older supported machines.
+                    let notch_height = if screen.respondsToSelector(sel!(safeAreaInsets)) {
+                        screen.safeAreaInsets().top
+                    } else {
+                        0.0
+                    };
+                    let notch_width = if notch_height > 0.0
+                        && screen.respondsToSelector(sel!(auxiliaryTopLeftArea))
+                        && screen.respondsToSelector(sel!(auxiliaryTopRightArea))
+                    {
+                        let left = screen.auxiliaryTopLeftArea();
+                        let right = screen.auxiliaryTopRightArea();
+                        let gap = frame.size.width - left.size.width - right.size.width;
+                        if left.size.width > 0.0 && right.size.width > 0.0 && gap > 0.0 {
+                            gap
+                        } else {
+                            184.0
+                        }
+                    } else if notch_height > 0.0 {
+                        184.0
+                    } else {
+                        0.0
+                    };
                     // AppKit's global logical space stays coherent across displays
                     // with different backing scales; native views handle Retina pixels.
                     Screen {
                         x: frame.origin.x.round() as i32,
                         y: (primary_height - frame.origin.y - frame.size.height).round() as i32,
                         width: frame.size.width.round() as u32,
-                        height: frame.size.height.round() as u32,
+                        height: (frame.origin.y + frame.size.height - visible.origin.y).round()
+                            as u32,
                         scale: 1.0,
+                        fixed: true,
+                        notch_width,
+                        notch_height,
                     }
                 })
-                .collect()
+                .collect();
+            screens.sort_by_key(|screen| screen.notch_height <= 0.0);
+            screens
         })
     }
 
@@ -953,55 +1177,6 @@ mod macos {
         })
     }
 
-    pub(super) fn drag(app: &tauri::AppHandle) -> Result<(), String> {
-        run_on_main(|mtm| {
-            let panel = panel(app, mtm)?;
-            let event = NSApplication::sharedApplication(mtm)
-                .currentEvent()
-                .ok_or("Arraste o assistente mantendo o botão do mouse pressionado.")?;
-            panel.performWindowDragWithEvent(&event);
-            // AppKit may finish dragging after this call returns. DidMove, not
-            // this initial frame, is the authority for the persisted anchor.
-            let app = app.clone();
-            tauri::async_runtime::spawn(async move {
-                // AppKit's tracking loop can consume mouse-up before local
-                // monitors see it. The read-only button state covers that case.
-                while app
-                    .state::<CompanionState>()
-                    .dragging
-                    .load(Ordering::SeqCst)
-                {
-                    if NSEvent::pressedMouseButtons() & 1 == 0 {
-                        finish_drag(&app);
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(25)).await;
-                }
-            });
-            Ok(())
-        })
-    }
-
-    pub(super) fn drag_anchor(
-        app: &tauri::AppHandle,
-        robot_x: Option<f64>,
-        robot_y: Option<f64>,
-    ) -> Result<Option<CompanionPosition>, String> {
-        run_on_main(|mtm| {
-            let frame = panel(app, mtm)?.frame();
-            visual_drag_anchor(
-                CompanionPosition {
-                    x: frame.origin.x.round() as i32,
-                    y: (primary_height(mtm) - frame.origin.y - frame.size.height).round() as i32,
-                },
-                [frame.size.width, frame.size.height],
-                1.0,
-                robot_x,
-                robot_y,
-            )
-        })
-    }
-
     fn moved(app: &tauri::AppHandle) {
         let Some(mtm) = MainThreadMarker::new() else {
             return;
@@ -1018,12 +1193,31 @@ mod macos {
         }
     }
 
+    pub(super) fn refresh_pointer(app: &tauri::AppHandle) {
+        run_on_main(|mtm| {
+            let state = app.state::<CompanionState>();
+            let Ok(panel) = panel(app, mtm) else {
+                return;
+            };
+            let frame = panel.frame();
+            let cursor = NSEvent::mouseLocation();
+            let hit = state.hit_rect.lock().ok().and_then(|rect| *rect);
+            let inside = hit.is_some_and(|rect| {
+                contains_point(
+                    rect,
+                    [
+                        cursor.x - frame.origin.x,
+                        frame.origin.y + frame.size.height - cursor.y,
+                    ],
+                )
+            });
+            panel.setIgnoresMouseEvents(!inside && !state.dragging.load(Ordering::SeqCst));
+        });
+    }
+
     fn outside_pointer(app: &tauri::AppHandle) {
-        if !app
-            .state::<CompanionState>()
-            .expanded
-            .load(Ordering::SeqCst)
-        {
+        let state = app.state::<CompanionState>();
+        if !state.expanded.load(Ordering::SeqCst) {
             return;
         }
         let Some(mtm) = MainThreadMarker::new() else {
@@ -1032,15 +1226,16 @@ mod macos {
         if let Ok(panel) = panel(app, mtm) {
             let frame = panel.frame();
             let cursor = NSEvent::mouseLocation();
-            if !contains_point(
-                [
-                    frame.origin.x,
-                    frame.origin.y,
-                    frame.size.width,
-                    frame.size.height,
-                ],
-                [cursor.x, cursor.y],
-            ) {
+            let hit = state.hit_rect.lock().ok().and_then(|rect| *rect);
+            if !hit.is_some_and(|rect| {
+                contains_point(
+                    rect,
+                    [
+                        cursor.x - frame.origin.x,
+                        frame.origin.y + frame.size.height - cursor.y,
+                    ],
+                )
+            }) {
                 collapse_on_external_interaction(app);
             }
         }
@@ -1049,9 +1244,13 @@ mod macos {
     fn pointer_event(app: &tauri::AppHandle, event: NonNull<NSEvent>) {
         // SAFETY: AppKit owns this live event for the duration of the monitor callback.
         let kind = unsafe { event.as_ref() }.r#type();
+        refresh_pointer(app);
         if kind == NSEventType::LeftMouseUp {
             finish_drag(app);
-        } else {
+        } else if matches!(
+            kind,
+            NSEventType::LeftMouseDown | NSEventType::RightMouseDown | NSEventType::OtherMouseDown
+        ) {
             outside_pointer(app);
         }
     }
@@ -1085,10 +1284,36 @@ mod macos {
                 )
             });
         }
+        let screens_app = app.clone();
+        let screens_changed = RcBlock::new(move |_: NonNull<NSNotification>| {
+            let state = screens_app.state::<CompanionState>();
+            if state.enabled.load(Ordering::SeqCst) {
+                if let Err(error) =
+                    apply_geometry(&screens_app, state.expanded.load(Ordering::SeqCst))
+                {
+                    if let Ok(mut stored) = state.error.lock() {
+                        *stored = Some(error);
+                    }
+                }
+            }
+        });
+        // SAFETY: AppKit supplies this notification on its main thread. Observe
+        // all objects: display changes belong to the application, not the panel.
+        // PanelHost removes the copied callback before dropping its native view.
+        notifications.push(unsafe {
+            center.addObserverForName_object_queue_usingBlock(
+                Some(NSApplicationDidChangeScreenParametersNotification),
+                None,
+                None,
+                &screens_changed,
+            )
+        });
         let mask = NSEventMask::LeftMouseDown
             | NSEventMask::RightMouseDown
             | NSEventMask::OtherMouseDown
-            | NSEventMask::LeftMouseUp;
+            | NSEventMask::LeftMouseUp
+            | NSEventMask::MouseMoved
+            | NSEventMask::LeftMouseDragged;
         let global_app = app.clone();
         let global = RcBlock::new(move |event: NonNull<NSEvent>| pointer_event(&global_app, event));
         let mut monitors: Vec<_> =
@@ -1128,11 +1353,52 @@ mod windows {
     use super::*;
     use windows_sys::Win32::{
         Foundation::{POINT, RECT},
+        Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn},
         UI::{
             Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON},
             WindowsAndMessaging::{GetCursorPos, GetForegroundWindow, GetWindowRect},
         },
     };
+
+    pub(super) fn cursor_x() -> Result<i32, String> {
+        let mut cursor = POINT { x: 0, y: 0 };
+        // SAFETY: GetCursorPos writes physical coordinates into this live stack
+        // value, independent of the webview's current per-monitor DPI scale.
+        if unsafe { GetCursorPos(&mut cursor) } == 0 {
+            return Err("Posição do cursor indisponível.".into());
+        }
+        Ok(cursor.x)
+    }
+
+    pub(super) fn apply_hit_rect(
+        window: &tauri::WebviewWindow,
+        rect: [f64; 4],
+    ) -> Result<(), String> {
+        let scale = window.scale_factor().map_err(|error| error.to_string())?;
+        let handle = window.hwnd().map_err(|error| error.to_string())?;
+        // SAFETY: GDI allocates an independent region. Windows takes ownership
+        // only after SetWindowRgn succeeds; failures release it here and keep the
+        // prior region so the island remains interactive.
+        unsafe {
+            let corner = (rect[3].min(56.0) * scale).round() as i32;
+            let region = CreateRoundRectRgn(
+                (rect[0] * scale).floor() as i32,
+                (rect[1] * scale).floor() as i32,
+                ((rect[0] + rect[2]) * scale).ceil() as i32 + 1,
+                ((rect[1] + rect[3]) * scale).ceil() as i32 + 1,
+                corner,
+                corner,
+            );
+            if region.is_null() {
+                return Err("Não foi possível atualizar a área visual da ilha.".into());
+            }
+            if SetWindowRgn(handle.0 as _, region, 1) == 0 {
+                DeleteObject(region);
+                return Err("Não foi possível atualizar a área visual da ilha.".into());
+            }
+        }
+        Ok(())
+    }
 
     fn mouse_pressed() -> bool {
         // SAFETY: Virtual-key values are defined by Win32; the API has no borrowed pointers.
@@ -1195,15 +1461,17 @@ mod windows {
                                 GetCursorPos(&mut cursor) != 0
                                     && GetWindowRect(handle as _, &mut rect) != 0
                             } {
-                                outside = !contains_point(
-                                    [
-                                        f64::from(rect.left),
-                                        f64::from(rect.top),
-                                        f64::from(rect.right - rect.left),
-                                        f64::from(rect.bottom - rect.top),
-                                    ],
-                                    [f64::from(cursor.x), f64::from(cursor.y)],
-                                );
+                                let scale = window.scale_factor().unwrap_or(1.0);
+                                let hit = state.hit_rect.lock().ok().and_then(|hit| *hit);
+                                outside = !hit.is_some_and(|hit| {
+                                    contains_point(
+                                        hit,
+                                        [
+                                            f64::from(cursor.x - rect.left) / scale,
+                                            f64::from(cursor.y - rect.top) / scale,
+                                        ],
+                                    )
+                                });
                             }
                         }
                         if changed_app || outside {
@@ -1317,8 +1585,16 @@ pub(crate) async fn ack_companion_item(
     conversation_id: String,
     agent_id: Option<String>,
     attention_id: String,
+    revision: Option<u64>,
 ) -> Result<crate::agent::companion::Snapshot, crate::agent::AgentError> {
-    crate::agent::companion::acknowledge_item(app, conversation_id, agent_id, attention_id).await
+    crate::agent::companion::acknowledge_item(
+        app,
+        conversation_id,
+        agent_id,
+        attention_id,
+        revision,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1372,6 +1648,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dom_blur_does_not_change_native_focus_and_interaction_errors_are_reported() {
+        interaction_focus(false, || panic!("Portal blur must not change native focus")).unwrap();
+        let mut focused = false;
+        interaction_focus(true, || {
+            focused = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(focused);
+        assert_eq!(
+            interaction_focus(true, || Err("Focus unavailable".into())),
+            Err("Focus unavailable".into())
+        );
+    }
+
+    #[test]
     fn companion_usage_preserves_provider_identity_and_the_flat_report() {
         for provider_kind in ["openai-codex", "antigravity", "claude-code"] {
             let mut usage = unavailable("personal".into(), "offline".into());
@@ -1397,22 +1689,10 @@ mod tests {
         }
     }
 
-    fn robot_origin(placement: &Placement, scale: f64) -> CompanionPosition {
-        let width = (PET_WIDTH * scale).round() as u32;
-        let height = (PET_HEIGHT * scale).round() as u32;
+    fn compact_origin(placement: &Placement, scale: f64) -> CompanionPosition {
         CompanionPosition {
-            x: placement.position.x
-                + if placement.geometry.robot_side == "right" {
-                    placement.size.width.saturating_sub(width) as i32
-                } else {
-                    0
-                },
-            y: placement.position.y
-                + if placement.geometry.robot_vertical == "bottom" {
-                    placement.size.height.saturating_sub(height) as i32
-                } else {
-                    0
-                },
+            x: placement.position.x + (placement.geometry.compact_x * scale).round() as i32,
+            y: placement.position.y + (placement.geometry.compact_y * scale).round() as i32,
         }
     }
 
@@ -1432,6 +1712,77 @@ mod tests {
             assert!(!local_navigation(&tauri::Url::parse(url).unwrap(), None));
         }
     }
+
+    #[test]
+    fn new_islands_start_at_the_top_center_and_expand_around_the_same_anchor() {
+        for scale in [1.0, 1.5, 2.0] {
+            let screen = Screen {
+                x: -1920,
+                y: 0,
+                width: 1920,
+                height: 1080,
+                scale,
+                ..Screen::default()
+            };
+            let compact = placement(None, &[screen], Presentation::Compact).unwrap();
+            assert_eq!(compact.position.y, 0);
+            assert_eq!(compact.geometry.width, COMPACT_WIDTH);
+            assert_eq!(compact.geometry.height, COMPACT_HEIGHT);
+            let expanded =
+                placement(Some(compact.anchor), &[screen], Presentation::Island(160)).unwrap();
+            assert_eq!(expanded.position.y, 0);
+            assert_eq!(expanded.geometry.surface_width, ISLAND_WIDTH);
+            assert_eq!(expanded.geometry.surface_height, ISLAND_HEIGHT);
+            assert_eq!(expanded.geometry.compact_x, 176.0);
+            assert_eq!(expanded.geometry.compact_y, 0.0);
+            assert_eq!(compact_origin(&expanded, scale), compact.anchor);
+            let closed =
+                placement(Some(expanded.anchor), &[screen], Presentation::Compact).unwrap();
+            assert_eq!(closed.position, compact.position);
+        }
+    }
+
+    #[test]
+    fn migration_moves_only_the_previous_default_corner() {
+        let screen = Screen {
+            x: -1920,
+            y: 24,
+            width: 1920,
+            height: 1080,
+            scale: 2.0,
+            ..Screen::default()
+        };
+        assert_eq!(
+            restore_anchor(Some(CompanionPosition { x: -240, y: 832 }), &[screen]),
+            None
+        );
+        let custom = CompanionPosition { x: -810, y: 301 };
+        assert_eq!(restore_anchor(Some(custom), &[screen]), Some(custom));
+    }
+
+    #[test]
+    fn taller_views_are_explicit_and_visual_hit_bounds_follow_the_animated_island() {
+        assert_eq!(requested_height(None).unwrap(), 160);
+        assert_eq!(requested_height(Some(400.0)).unwrap(), 400);
+        for height in [0.0, 159.0, 601.0, f64::NAN, f64::INFINITY] {
+            assert!(requested_height(Some(height)).is_err());
+        }
+        let compact = [176.0, 0.0, 288.0, 32.0];
+        assert_eq!(
+            validated_hit_rect(compact, [640.0, 400.0]).unwrap(),
+            compact
+        );
+        assert!(contains_point(compact, [200.0, 20.0]));
+        assert!(!contains_point(compact, [50.0, 200.0]));
+        for rect in [
+            [0.0, 0.0, 0.0, 32.0],
+            [0.0, -2.0, 640.0, 400.0],
+            [176.0, 0.0, 500.0, 32.0],
+            [f64::NAN, 0.0, 288.0, 32.0],
+        ] {
+            assert!(validated_hit_rect(rect, [640.0, 400.0]).is_err());
+        }
+    }
     #[test]
     fn expansion_preserves_anchor_and_stays_inside_work_area() {
         for scale in [1.0, 1.5, 2.0] {
@@ -1441,6 +1792,7 @@ mod tests {
                 width: 1600,
                 height: 900,
                 scale,
+                ..Screen::default()
             };
             for x in [-1600, -1000, -150] {
                 for y in [24, 400, 750] {
@@ -1451,9 +1803,10 @@ mod tests {
                     )
                     .unwrap();
                     let expanded =
-                        placement(Some(compact.anchor), &[screen], Presentation::Island).unwrap();
+                        placement(Some(compact.anchor), &[screen], Presentation::Island(160))
+                            .unwrap();
                     assert_eq!(compact.anchor, expanded.anchor);
-                    assert_eq!(robot_origin(&expanded, scale), compact.anchor);
+                    assert_eq!(compact_origin(&expanded, scale), compact.anchor);
                     let collapsed =
                         placement(Some(expanded.anchor), &[screen], Presentation::Compact).unwrap();
                     assert_eq!(collapsed.position, compact.position);
@@ -1467,18 +1820,19 @@ mod tests {
         }
     }
     #[test]
-    fn island_fits_short_work_areas_without_moving_the_top_left_robot() {
+    fn island_fits_short_work_areas_and_preserves_the_compact_anchor() {
         let screen = Screen {
             x: 0,
             y: 40,
             width: 320,
             height: 440,
             scale: 1.0,
+            ..Screen::default()
         };
         let expanded = placement(
             Some(CompanionPosition { x: 0, y: 40 }),
             &[screen],
-            Presentation::Island,
+            Presentation::Island(600),
         )
         .unwrap();
         assert_eq!(expanded.position, PhysicalPosition::new(0, 40));
@@ -1495,6 +1849,7 @@ mod tests {
             width: 1920,
             height: 1040,
             scale: 2.0,
+            ..Screen::default()
         };
         let restored = placement(
             Some(CompanionPosition { x: -3000, y: 8000 }),
@@ -1502,8 +1857,8 @@ mod tests {
             Presentation::Compact,
         )
         .unwrap();
-        assert_eq!(restored.anchor, CompanionPosition { x: 0, y: 856 });
-        assert_eq!(restored.geometry.width, PET_WIDTH);
+        assert_eq!(restored.anchor, CompanionPosition { x: 0, y: 40 });
+        assert_eq!(restored.geometry.width, COMPACT_WIDTH);
         assert!(placement(None, &[], Presentation::Compact).is_none());
     }
 
@@ -1516,6 +1871,7 @@ mod tests {
                 width: 1800,
                 height: 1100,
                 scale,
+                ..Screen::default()
             };
             for point in [
                 CompanionPosition { x: -1800, y: 24 },
@@ -1526,11 +1882,11 @@ mod tests {
                 let compact = placement(Some(point), &[screen], Presentation::Compact).unwrap();
                 let bubble =
                     placement(Some(compact.anchor), &[screen], Presentation::Bubble).unwrap();
-                assert_eq!(robot_origin(&bubble, scale), compact.anchor);
+                assert_eq!(compact_origin(&bubble, scale), compact.anchor);
                 assert!(bubble.geometry.bubble && !bubble.geometry.expanded);
                 let island =
-                    placement(Some(bubble.anchor), &[screen], Presentation::Island).unwrap();
-                assert_eq!(robot_origin(&island, scale), compact.anchor);
+                    placement(Some(bubble.anchor), &[screen], Presentation::Island(400)).unwrap();
+                assert_eq!(compact_origin(&island, scale), compact.anchor);
                 let collapsed =
                     placement(Some(island.anchor), &[screen], Presentation::Compact).unwrap();
                 assert_eq!(collapsed.position, compact.position);
@@ -1549,7 +1905,7 @@ mod tests {
     }
 
     #[test]
-    fn bubbles_and_islands_follow_all_four_screen_corners_without_teleporting() {
+    fn legacy_vertical_positions_pin_to_the_top_and_keep_the_horizontal_anchor() {
         for scale in [1.0, 1.5, 2.0] {
             let screen = Screen {
                 x: -1600,
@@ -1557,25 +1913,30 @@ mod tests {
                 width: 1600,
                 height: 900,
                 scale,
+                ..Screen::default()
             };
-            let right = screen.x + (screen.width - (PET_WIDTH * scale).round() as u32) as i32;
-            let bottom = screen.y + (screen.height - (PET_HEIGHT * scale).round() as u32) as i32;
-            for (x, y, side, vertical) in [
-                (screen.x, screen.y, "left", "top"),
-                (right, screen.y, "right", "top"),
-                (screen.x, bottom, "left", "bottom"),
-                (right, bottom, "right", "bottom"),
+            let right = screen.x + (screen.width - (COMPACT_WIDTH * scale).round() as u32) as i32;
+            let bottom =
+                screen.y + (screen.height - (COMPACT_HEIGHT * scale).round() as u32) as i32;
+            for (x, y, side) in [
+                (screen.x, screen.y, "left"),
+                (right, screen.y, "right"),
+                (screen.x, bottom, "left"),
+                (right, bottom, "right"),
             ] {
                 let anchor = CompanionPosition { x, y };
                 for mode in [
                     Presentation::Compact,
                     Presentation::Bubble,
-                    Presentation::Island,
+                    Presentation::Island(400),
                 ] {
                     let surface = placement(Some(anchor), &[screen], mode).unwrap();
-                    assert_eq!(robot_origin(&surface, scale), anchor);
+                    assert_eq!(
+                        compact_origin(&surface, scale),
+                        CompanionPosition { x, y: screen.y }
+                    );
                     assert_eq!(surface.geometry.robot_side, side);
-                    assert_eq!(surface.geometry.robot_vertical, vertical);
+                    assert_eq!(surface.geometry.robot_vertical, "top");
                     assert!(surface.position.x >= screen.x && surface.position.y >= screen.y);
                     assert!(
                         surface.position.x + surface.size.width as i32
@@ -1591,21 +1952,23 @@ mod tests {
     }
 
     #[test]
-    fn island_shrinks_at_interior_anchors_before_moving_the_robot() {
+    fn island_expands_symmetrically_at_interior_anchors_without_losing_the_compact_position() {
         let screen = Screen {
             x: 0,
             y: 40,
             width: 800,
             height: 800,
             scale: 1.0,
+            ..Screen::default()
         };
-        let anchor = CompanionPosition { x: 352, y: 384 };
-        let island = placement(Some(anchor), &[screen], Presentation::Island).unwrap();
-        assert_eq!(island.geometry.width, 448.0);
-        assert_eq!(island.geometry.height, 456.0);
-        assert_eq!(robot_origin(&island, 1.0), anchor);
+        let anchor = CompanionPosition { x: 256, y: 40 };
+        let island = placement(Some(anchor), &[screen], Presentation::Island(400)).unwrap();
+        assert_eq!(island.geometry.width, 640.0);
+        assert_eq!(island.geometry.height, 400.0);
+        assert_eq!(island.position, PhysicalPosition::new(80, 40));
+        assert_eq!(compact_origin(&island, 1.0), anchor);
         let compact = placement(Some(island.anchor), &[screen], Presentation::Compact).unwrap();
-        assert_eq!(robot_origin(&compact, 1.0), anchor);
+        assert_eq!(compact_origin(&compact, 1.0), anchor);
     }
 
     #[test]
@@ -1628,7 +1991,7 @@ mod tests {
     }
 
     #[test]
-    fn dragging_a_walking_robot_preserves_its_visible_position_across_scales() {
+    fn horizontal_drag_uses_physical_delta_and_never_changes_the_top_edge() {
         for scale in [1.0, 1.5, 2.0] {
             let screen = Screen {
                 x: -1800,
@@ -1636,60 +1999,73 @@ mod tests {
                 width: 1800,
                 height: 1200,
                 scale,
+                ..Screen::default()
             };
-            let island = placement(
-                Some(CompanionPosition { x: -400, y: 900 }),
-                &[screen],
-                Presentation::Island,
-            )
-            .unwrap();
-            for robot_x in [0.0, 120.25, island.geometry.width - PET_WIDTH - 4.0] {
-                let robot_y = island.geometry.height - PET_HEIGHT;
-                let visible = visual_drag_anchor(
-                    CompanionPosition {
-                        x: island.position.x,
-                        y: island.position.y,
-                    },
-                    [island.geometry.width, island.geometry.height],
-                    scale,
-                    Some(robot_x),
-                    Some(robot_y),
-                )
-                .unwrap()
-                .unwrap();
-                let compact = placement(Some(visible), &[screen], Presentation::Compact).unwrap();
-                assert_eq!(
-                    compact.position,
-                    PhysicalPosition::new(
-                        (f64::from(island.position.x) + robot_x * scale).round() as i32,
-                        (f64::from(island.position.y) + robot_y * scale).round() as i32,
-                    )
-                );
+            let origin = CompanionPosition { x: -1000, y: 800 };
+            for delta in [0, 140, -200, i64::from(i32::MAX), i64::from(i32::MIN)] {
+                let anchor = horizontal_anchor(origin, screen, delta);
+                assert_eq!(anchor.y, screen.y);
+                assert!(anchor.x >= screen.x);
+                assert!(anchor.x + (COMPACT_WIDTH * scale).round() as i32 <= 0);
+                if (-200..=140).contains(&delta) {
+                    assert_eq!(i64::from(anchor.x), i64::from(origin.x) + delta);
+                }
+                let island = placement(Some(anchor), &[screen], Presentation::Island(400)).unwrap();
+                assert_eq!(compact_origin(&island, scale), anchor);
+                assert_eq!(island.geometry.drag_axis, "horizontal");
             }
         }
     }
 
     #[test]
-    fn visual_drag_coordinates_require_a_complete_finite_point_inside_the_window() {
-        let origin = CompanionPosition { x: -400, y: 24 };
-        for (x, y) in [
-            (Some(0.0), None),
-            (None, Some(0.0)),
-            (Some(f64::NAN), Some(0.0)),
-            (Some(0.0), Some(f64::INFINITY)),
-            (Some(-2.0), Some(0.0)),
-            (Some(462.0), Some(0.0)),
-            (Some(0.0), Some(602.0)),
+    fn fixed_mac_island_reserves_the_real_camera_and_ignores_legacy_positions() {
+        let screen = Screen {
+            x: -1512,
+            y: -982,
+            width: 1512,
+            height: 982,
+            scale: 1.0,
+            fixed: true,
+            notch_width: 210.0,
+            notch_height: 38.0,
+        };
+        for anchor in [
+            None,
+            Some(CompanionPosition { x: -800, y: -100 }),
+            Some(CompanionPosition { x: 3000, y: 9000 }),
         ] {
-            assert!(visual_drag_anchor(origin, [460.0, 600.0], 1.0, x, y).is_err());
+            let compact = placement(anchor, &[screen], Presentation::Compact).unwrap();
+            assert_eq!(compact.position, PhysicalPosition::new(-913, -982));
+            assert_eq!(compact.geometry.compact_width, 314.0);
+            assert_eq!(compact.geometry.compact_height, 38.0);
+            assert_eq!(compact.geometry.notch_width, 210.0);
+            assert_eq!(compact.geometry.header_height, 38.0);
+            assert_eq!(compact.geometry.drag_axis, "none");
+            let expanded =
+                placement(Some(compact.anchor), &[screen], Presentation::Island(198)).unwrap();
+            assert_eq!(expanded.position.y, screen.y);
+            assert_eq!(compact_origin(&expanded, 1.0), compact.anchor);
+            assert_eq!(expanded.geometry.notch_height, 38.0);
         }
-        assert_eq!(
-            visual_drag_anchor(origin, [460.0, 600.0], 1.0, None, None).unwrap(),
-            None
-        );
-        assert!(visual_drag_anchor(origin, [460.0, 600.0], 0.0, Some(0.0), Some(0.0)).is_err());
-        // A rotated or scaled pet need not have the canonical 96x112 DOM bounds.
-        assert!(visual_drag_anchor(origin, [460.0, 600.0], 1.0, Some(220.0), Some(511.0)).is_ok());
-        assert!(visual_drag_anchor(origin, [320.0, 360.0], 1.0, Some(240.0), Some(276.0)).is_ok());
+        let external = Screen {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            scale: 1.0,
+            fixed: true,
+            notch_width: 0.0,
+            notch_height: 0.0,
+        };
+        let restored = placement(
+            Some(CompanionPosition { x: -913, y: -982 }),
+            &[external],
+            Presentation::Island(192),
+        )
+        .unwrap();
+        assert_eq!(restored.position, PhysicalPosition::new(640, 0));
+        assert_eq!(restored.geometry.header_height, 32.0);
+        assert_eq!(restored.geometry.notch_width, 0.0);
+        assert_eq!(restored.geometry.drag_axis, "none");
     }
 }

@@ -184,16 +184,18 @@ pub(crate) fn global_prompt() -> &'static str {
 }
 
 pub(crate) fn tools() -> Vec<Value> {
-    let schema = |name: &str, description: &str, properties: Value, required: &[&str]| json!({"type":"function","name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}});
-    let query = json!({"type":"string","maxLength":200,"description":"Optional project, workspace or chat name fragment."});
+    let schema = super::tools::definition;
+    let query = json!({"type":["string","null"],"maxLength":200,"description":"Optional project, workspace or chat name fragment; omit or use null to list all."});
     let id = json!({"type":"string","pattern":"^[a-f0-9]{32}$"});
-    let execution = json!({"type":"object","properties":{"kind":{"type":"string","enum":["flow","agent"]},"id":{"type":"string","minLength":1,"maxLength":100}},"required":["kind","id"],"additionalProperties":false});
+    let optional_id = json!({"type":["string","null"],"pattern":"^[a-f0-9]{32}$","description":"An exact existing ID returned by Jarvito discovery. Omit or use null when not selecting an existing item; never invent an ID."});
+    let conversation_id = json!({"type":["string","null"],"pattern":"^[a-f0-9]{32}$","description":"Only an exact existing chat ID returned by jarvito_list_conversations when the user wants to resume that chat. For a new task/chat, omit this field or use null. Never generate or invent a chat ID."});
+    let execution = json!({"type":["object","null"],"description":"An exact agent or flow returned by jarvito_list_executors. Omit or use null to preserve a resumed chat's execution, or default to Builder for a new chat.","properties":{"kind":{"type":"string","enum":["flow","agent"]},"id":{"type":"string","minLength":1,"maxLength":100}},"required":["kind","id"],"additionalProperties":false});
     vec![
         schema("jarvito_list_projects", "Discover configured project and workspace metadata. Never reads project files or changes the active project.", json!({"query":query}), &[]),
         schema("jarvito_list_executors", "Discover available native and configured agents/workflows by name and purpose. Metadata only: no instructions, model secrets, project access or execution. Call before choosing project execution; omit query to compare all available choices.", json!({"query":query}), &[]),
-        schema("jarvito_list_conversations", "List up to 50 recent project chats by metadata without resuming them.", json!({"projectId":id,"query":query}), &[]),
+        schema("jarvito_list_conversations", "List up to 50 recent project chats by metadata without resuming them.", json!({"projectId":optional_id,"query":query}), &[]),
         schema("jarvito_read_conversation", "Read a bounded recent chat history and execution status as reference. Does not resume, execute tools, grant project scope or navigate the main window.", json!({"conversationId":id}), &["conversationId"]),
-        schema("jarvito_propose_project", "Propose explicit user confirmation before entering a project. Select execution from jarvito_list_executors; configured models are applied at confirmation. Set conversationId only when the user intends to continue an existing chat; omitting execution preserves its existing configuration. Active/recoverable chats keep their execution: omit conversationId to start a new chat for a different agent or workflow. A new chat defaults to the configured Builder if execution is omitted. Confirmation silently sends message to the project chat. This tool never starts work or grants scope.", json!({"projectId":id,"conversationId":id,"execution":execution,"reason":{"type":"string","minLength":1,"maxLength":MAX_REASON},"message":{"type":"string","minLength":1,"maxLength":MAX_TASK}}), &["projectId","reason","message"]),
+        schema("jarvito_propose_project", "Propose explicit user confirmation before entering a project. Select execution from jarvito_list_executors; configured models are applied at confirmation. Set conversationId only when the user intends to continue an existing chat; omit it or use null for a new task. Never invent a conversation ID. Omitting execution preserves an existing chat's configuration. Active/recoverable chats keep their execution: omit conversationId to start a new chat for a different agent or workflow. A new chat defaults to the configured Builder if execution is omitted. Confirmation silently sends message to the project chat. This tool never starts work or grants scope.", json!({"projectId":id,"conversationId":conversation_id,"execution":execution,"reason":{"type":"string","minLength":1,"maxLength":MAX_REASON},"message":{"type":"string","minLength":1,"maxLength":MAX_TASK}}), &["projectId","reason","message"]),
     ]
 }
 
@@ -881,15 +883,12 @@ pub(crate) async fn confirm_companion_project(
     let proposal = pending.proposal.clone();
     let options = tauri::async_runtime::spawn_blocking(move || {
         let catalog = validation_state.with_connection(&validation_home, |db| {
-            library::companion::scope(db, &proposal.project_id)?;
-            if let Some(id) = proposal.conversation_id.as_deref() {
-                library::companion::validate_conversation_scope(
-                    db,
-                    &validation_home,
-                    id,
-                    &proposal.project_id,
-                )?;
-            }
+            handoff_scope(
+                db,
+                &validation_home,
+                &proposal.project_id,
+                proposal.conversation_id.as_deref(),
+            )?;
             workflow::catalog::read_configured(db, &validation_home)
         })?;
         let existing = proposal
@@ -948,14 +947,13 @@ pub(crate) async fn confirm_companion_project(
     let message = proposal.message.clone();
     let id = tauri::async_runtime::spawn_blocking(move || {
         persistence.with_connection(&home, |db| {
-            library::companion::scope(db, &proposal.project_id)?;
+            handoff_scope(
+                db,
+                &home,
+                &proposal.project_id,
+                proposal.conversation_id.as_deref(),
+            )?;
             if let Some(id) = proposal.conversation_id {
-                library::companion::validate_conversation_scope(
-                    db,
-                    &home,
-                    &id,
-                    &proposal.project_id,
-                )?;
                 Ok::<_, AgentError>(id)
             } else {
                 Ok(library::companion::create_conversation_silently(
@@ -995,6 +993,53 @@ struct ProposalArgs {
     execution: Option<ExecutionTarget>,
     reason: String,
     message: String,
+}
+
+fn handoff_scope(
+    db: &rusqlite::Connection,
+    home: &Path,
+    project_id: &str,
+    conversation_id: Option<&str>,
+) -> Result<library::companion::Scope, AgentError> {
+    validate_id(project_id)?;
+    let scope = library::companion::scope(db, project_id)?;
+    if let Some(id) = conversation_id {
+        validate_id(id)?;
+        let conversation = library::companion::conversation_scope(db, id).map_err(|error| {
+            if error.code() == "not_found" {
+                super::tool_contract::recoverable(
+                    "companion_conversation_not_found",
+                    "jarvito_propose_project",
+                    "A conversa informada não foi encontrada. Para uma nova tarefa, omita conversationId ou envie null; o Jarvis criará a conversa após a confirmação. Para retomar uma conversa, consulte jarvito_list_conversations e use o ID exato retornado. Não invente um ID nem repita esta chamada sem corrigir o argumento.",
+                    vec![json!({"path":"/conversationId","rule":"existing_conversation"})],
+                )
+            } else {
+                error.into()
+            }
+        })?;
+        if conversation.project_id != scope.project_id {
+            return Err(super::tool_contract::recoverable(
+                "companion_conversation_scope_mismatch",
+                "jarvito_propose_project",
+                "A conversa informada pertence a outro projeto. Consulte jarvito_list_conversations com o projectId escolhido e use um ID retornado. Para uma nova tarefa, omita conversationId ou envie null. Não altere o projeto ou a intenção de retomar uma conversa sem autorização.",
+                vec![json!({"path":"/conversationId","rule":"same_project"})],
+            ));
+        }
+        library::companion::validate_conversation_scope(db, home, id, project_id).map_err(
+            |error| match error.code() {
+                "invalid_session" => AgentError::new(
+                    "companion_conversation_history_unavailable",
+                    "O histórico da conversa informada está ausente ou inválido. Os arquivos existentes foram preservados. Não substitua a conversa nem descarte o histórico; confirme com o usuário se ele deseja iniciar uma nova conversa.",
+                ),
+                "project_unavailable" => AgentError::new(
+                    "companion_project_unavailable",
+                    "A pasta do projeto não está disponível no caminho original. Verifique o caminho nas opções do projeto antes de continuar.",
+                ),
+                _ => error.into(),
+            },
+        )?;
+    }
+    Ok(scope)
 }
 
 fn tool_args<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, AgentError> {
@@ -1095,8 +1140,7 @@ pub(super) async fn execute(
                 return Err(invalid("Informe o motivo e uma tarefa clara para continuar no projeto."));
             }
             let (scope,execution)=state.with_connection(&home,|db| {
-                let scope=library::companion::scope(db,&args.project_id)?;
-                if let Some(id)=args.conversation_id.as_deref(){validate_id(id)?;library::companion::validate_conversation_scope(db,&home,id,&args.project_id)?;}
+                let scope=handoff_scope(db,&home,&args.project_id,args.conversation_id.as_deref())?;
                 let target=args.execution.or_else(||args.conversation_id.is_none().then(||ExecutionTarget{kind:ExecutionKind::Agent,id:"builtin:builder".into()}));
                 let execution=target.map(|target|resolve_execution(&workflow::catalog::read_configured(db,&home)?,&target)).transpose()?;
                 Ok::<_,AgentError>((scope,execution))
@@ -1623,6 +1667,108 @@ mod tests {
         assert!(state.take(&"c".repeat(32), Some("turn")).is_err());
         assert!(state.take(&id, Some("turn")).is_ok());
         assert!(state.take(&id, Some("turn")).is_err());
+    }
+
+    #[test]
+    fn new_project_tasks_accept_omitted_or_null_conversation_without_inventing_an_id() {
+        let definitions = tools();
+        let proposal = definitions
+            .iter()
+            .find(|tool| tool["name"] == "jarvito_propose_project")
+            .unwrap();
+        let validator = jsonschema::validator_for(&proposal["parameters"]).unwrap();
+        for optional in [json!({}), json!({"conversationId":null,"execution":null})] {
+            let mut arguments = json!({
+                "projectId":"2aae222dec071a18be5d55f965213307",
+                "reason":"Executar no Movarte",
+                "message":"Abrir um terminal, executar ping para 8.8.8.8 e deixá-lo aberto."
+            });
+            arguments
+                .as_object_mut()
+                .unwrap()
+                .extend(optional.as_object().unwrap().clone());
+            assert!(validator.is_valid(&arguments));
+            let parsed: ProposalArgs = tool_args(&arguments).unwrap();
+            assert!(parsed.conversation_id.is_none());
+            assert!(parsed.execution.is_none());
+        }
+    }
+
+    #[test]
+    fn invented_conversation_id_returns_actionable_recovery_without_changing_scope() {
+        let home = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let project_id = "2aae222dec071a18be5d55f965213307";
+        let other_project_id = "b".repeat(32);
+        let mut db = rusqlite::Connection::open_in_memory().unwrap();
+        crate::persistence::initialize_database(&mut db).unwrap();
+        db.execute(
+            "INSERT INTO workspaces(id,name) VALUES(?1,'Trabalho')",
+            ["a".repeat(32)],
+        )
+        .unwrap();
+        for (id, name) in [
+            (project_id, "Movarte"),
+            (other_project_id.as_str(), "Outro"),
+        ] {
+            db.execute(
+                "INSERT INTO projects(id,workspace_id,name,path) VALUES(?1,?2,?3,?4)",
+                params![
+                    id,
+                    "a".repeat(32),
+                    name,
+                    if name == "Movarte" {
+                        std::fs::canonicalize(root.path()).unwrap()
+                    } else {
+                        std::fs::canonicalize(home.path()).unwrap()
+                    }
+                    .to_string_lossy()
+                ],
+            )
+            .unwrap();
+        }
+        let error = handoff_scope(
+            &db,
+            home.path(),
+            project_id,
+            Some("e4f29ba1f15344d388f61c4896da0912"),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "companion_conversation_not_found");
+        let result: Value = serde_json::from_str(error.tool_result.as_deref().unwrap()).unwrap();
+        assert_eq!(result["recoverable"], true);
+        assert_eq!(result["executed"], false);
+        assert!(result["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("null"));
+        assert!(result["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("jarvito_list_conversations"));
+        assert_eq!(
+            handoff_scope(&db, home.path(), project_id, None)
+                .unwrap()
+                .project_id,
+            project_id
+        );
+        assert_eq!(
+            db.query_row("SELECT COUNT(*) FROM conversations", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "validation must never create or start a chat"
+        );
+        let conversation =
+            library::companion::create_conversation_silently(&mut db, home.path(), project_id)
+                .unwrap();
+        assert!(handoff_scope(&db, home.path(), project_id, Some(&conversation)).is_ok());
+        assert_eq!(
+            handoff_scope(&db, home.path(), &other_project_id, Some(&conversation))
+                .unwrap_err()
+                .code,
+            "companion_conversation_scope_mismatch"
+        );
     }
 
     #[test]

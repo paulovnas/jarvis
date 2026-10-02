@@ -85,11 +85,12 @@ describe("original Jarvito Rive choreography", () => {
   it("ships a reproducible offline file with the complete interaction contract", () => {
     expect(execFileSync("bun", ["scripts/generate-jarvito-rive.mjs", "--check"], { encoding: "utf8" })).toContain("is reproducible");
     expect(file.artboardCount()).toBe(1);
-    expect(artboard.bounds).toMatchObject({ minX: 0, minY: 0, maxX: 120, maxY: 140 });
-    expect(artboard.animationCount()).toBe(32);
+    expect(artboard.bounds).toMatchObject({ minX: 0, minY: 0, maxX: 120, maxY: 120 });
+    expect(artboard.animationCount()).toBe(50);
     expect(Array.from({ length: machine.inputCount() }, (_, i) => machine.input(i).name)).toEqual([
-      "status", "hovered", "dragging", "reducedMotion", "lookX", "lookY", "expanded", "walking",
+      "status", "hovered", "dragging", "reducedMotion", "lookX", "lookY", "expanded", "walking", "gesture",
     ]);
+    for (const removed of ["Left leg", "Right leg", "Left step", "Right step", "Torso"]) expect(artboard.node(removed)).toBeNull();
   });
 
   it("renders curved smiles and happy eyes through the actual WASM drawing path", () => {
@@ -102,7 +103,7 @@ describe("original Jarvito Rive choreography", () => {
     };
     // Record native Canvas2D drawing commands; rasterization is unnecessary here.
     const canvas = document.createElement("canvas");
-    canvas.width = 120; canvas.height = 140;
+    canvas.width = 120; canvas.height = 120;
     const context = {
       canvas,
       save() {}, restore() {}, transform() {}, clip() {}, fill() {}, clearRect() {}, stroke,
@@ -138,7 +139,7 @@ describe("original Jarvito Rive choreography", () => {
     input("status", 1);
     advance(2);
     expect(artboard.node("Right shoulder").rotation).toBeGreaterThan(1);
-    expect(artboard.node("Head").y).toBeLessThan(-44);
+    expect(artboard.node("Head").y).toBeLessThan(0);
     expect(artboard.node("Mouth expression").scaleY).toBeCloseTo(.06);
     expect(artboard.node("Left brow").y).toBeLessThan(artboard.node("Right brow").y - 5);
     expect(artboard.node("Left eye").scaleY).toBeLessThan(artboard.node("Right eye").scaleY);
@@ -157,7 +158,7 @@ describe("original Jarvito Rive choreography", () => {
   it("settles celebration and failure instead of repeating alarms forever", () => {
     input("status", 4);
     advance(4);
-    expect(artboard.node("Rig").y).toBeCloseTo(112);
+    expect(artboard.node("Rig").y).toBeCloseTo(70);
     expect(artboard.node("Mouth expression").scaleY).toBeCloseTo(1.35);
     expect(artboard.node("Left eye open").scaleX).toBe(0);
     expect(artboard.node("Left eye happy").scaleX).toBe(1);
@@ -168,7 +169,7 @@ describe("original Jarvito Rive choreography", () => {
     expect(artboard.node("Mouth expression").scaleY).toBeCloseTo(1.35);
     input("status", 5);
     advance(4);
-    expect(artboard.node("Head").y).toBeCloseTo(-41);
+    expect(artboard.node("Head").y).toBeCloseTo(3);
     expect(artboard.node("Head").rotation).toBeCloseTo(.035);
     expect(artboard.node("Mouth expression").scaleY).toBeCloseTo(-.95);
     expect(artboard.node("Left eye open").scaleX).toBe(1);
@@ -189,22 +190,22 @@ describe("original Jarvito Rive choreography", () => {
     input("walking", true);
     input("dragging", false);
     advance(.55);
-    expect(artboard.node("Left step").rotation).not.toBeCloseTo(artboard.node("Right step").rotation);
+    expect(artboard.node("Glide").y).toBeLessThan(0);
     input("reducedMotion", true);
     advance(1 / 60);
     expect(artboard.node("Breathing").y).toBe(0);
     expect(artboard.node("Blink").scaleY).toBe(1);
-    expect(artboard.node("Left step").rotation).toBe(0);
+    expect(artboard.node("Glide").rotation).toBe(0);
     input("status", 1);
     advance(1 / 60);
-    expect(artboard.node("Head").y).toBeCloseTo(-44);
+    expect(artboard.node("Head").y).toBeCloseTo(0);
     expect(artboard.node("Left eye").scaleY).toBeCloseTo(.74);
     advance(5);
     expect(artboard.node("Breathing").y).toBe(0);
     expect(artboard.node("Blink").scaleY).toBe(1);
   });
 
-  it("keeps emotional faces readable while the island, greeting and walking run", () => {
+  it("keeps emotional faces readable while the island, greeting and floating run", () => {
     input("expanded", true);
     input("hovered", true);
     input("walking", true);
@@ -220,6 +221,206 @@ describe("original Jarvito Rive choreography", () => {
     advance(5);
     expect(artboard.node("Mouth expression").scaleY).toBeCloseTo(.06);
     expect(artboard.node("Left brow").y).toBeLessThan(artboard.node("Right brow").y - 5);
+  });
+
+  it("uses squash and stretch for celebration, then settles in the same silhouette", () => {
+    input("status", 4);
+    advance(.25);
+    const early = [artboard.node("Rig").scaleX, artboard.node("Rig").scaleY];
+    advance(.4);
+    expect([artboard.node("Rig").scaleX, artboard.node("Rig").scaleY]).not.toEqual(early);
+    advance(4);
+    expect(artboard.node("Rig").scaleX).toBeCloseTo(1);
+    expect(artboard.node("Rig").scaleY).toBeCloseTo(1);
+  });
+
+  it("keeps arms hidden at rest, reveals them for thinking and a greeting, then tucks them away", () => {
+    let handDetailStrokes = 0;
+    const canvas = document.createElement("canvas");
+    const context = {
+      canvas,
+      save() {}, restore() {}, transform() {}, clip() {}, fill() {}, clearRect() {},
+      stroke() { if (Math.abs(context.lineWidth - 1.2) < .01) handDetailStrokes++; },
+      createLinearGradient: () => ({ addColorStop() {} }),
+      createRadialGradient: () => ({ addColorStop() {} }),
+    } as unknown as CanvasRenderingContext2D;
+    const getContext = vi.spyOn(canvas, "getContext").mockReturnValue(context);
+    const renderer = runtime.makeRenderer(canvas, false);
+    const visibleDetails = () => {
+      handDetailStrokes = 0;
+      renderer.clear(); artboard.draw(renderer); renderer.flush(); runtime.resolveAnimationFrame();
+      return handDetailStrokes;
+    };
+    try {
+      advance(2);
+      const resting = visibleDetails();
+      input("status", 1); advance(2);
+      expect(visibleDetails()).toBeGreaterThan(resting);
+      input("status", 0); advance(1);
+      expect(visibleDetails()).toBe(resting);
+      input("hovered", true); advance(.75);
+      expect(visibleDetails()).toBeGreaterThan(resting);
+      advance(3);
+      expect(visibleDetails()).toBe(resting);
+    } finally { renderer.delete(); getContext.mockRestore(); }
+  });
+
+  it("adds sparse spontaneous facial gestures without a JavaScript animation timer", () => {
+    advance(11.6);
+    expect(artboard.node("Left eye").scaleY).toBeLessThan(.2);
+    expect(artboard.node("Right eye").scaleY).toBeCloseTo(1);
+    advance(10.4);
+    expect(artboard.node("Left eye").scaleY).toBeLessThan(.5);
+    expect(artboard.node("Right eye").scaleY).toBeLessThan(.5);
+    advance(5);
+    expect(artboard.node("Left eye").scaleY).toBeCloseTo(1);
+    expect(artboard.node("Right eye").scaleY).toBeCloseTo(1);
+  });
+
+  it("winks, opens a surprised mouth and sleeps without corrupting native expressions", () => {
+    input("gesture", 1);
+    advance(.5);
+    expect(artboard.node("Left eye emote").scaleY).toBeLessThan(.2);
+    expect(artboard.node("Right eye emote").scaleY).toBe(1);
+    input("gesture", 2);
+    advance(.5);
+    expect(artboard.node("Left eye emote").scaleY).toBeCloseTo(1.3);
+    expect(artboard.node("Right eye emote").scaleY).toBeCloseTo(1.3);
+    input("gesture", 3);
+    advance(.5);
+    expect(artboard.node("Left eye emote").scaleY).toBeCloseTo(.1);
+    input("gesture", 0);
+    input("status", 4);
+    advance(5);
+    expect(artboard.node("Left eye emote").scaleY).toBe(1);
+    expect(artboard.node("Left eye happy").scaleX).toBe(1);
+    expect(artboard.node("Mouth expression").scaleY).toBeCloseTo(1.35);
+  });
+
+  it("closes both eyes when poked, rebounds and returns to the ongoing native face", () => {
+    input("status", 1);
+    advance(2);
+    input("gesture", 4);
+    advance(.25);
+    expect(artboard.node("Left eye emote").scaleY).toBeLessThan(.2);
+    expect(artboard.node("Right eye emote").scaleY).toBeLessThan(.2);
+    expect(artboard.node("Playful body").scaleY).not.toBeCloseTo(1);
+    advance(1.25);
+    expect(artboard.node("Left eye emote").scaleY).toBe(1);
+    expect(artboard.node("Playful body").scaleY).toBe(1);
+    input("gesture", 0);
+    advance(.3);
+    expect(artboard.node("Mouth expression").scaleY).toBeCloseTo(.06);
+  });
+
+  it("wobbles for three seconds with original spiral eyes, then settles without changing the native result", () => {
+    input("status", 4);
+    advance(5);
+    input("gesture", 5);
+    advance(.5);
+    const early = artboard.node("Playful body").rotation;
+    expect(Math.abs(early)).toBeGreaterThan(.1);
+    expect(artboard.node("Left spiral eye")).not.toBeNull();
+    advance(.5);
+    expect(artboard.node("Playful body").rotation).not.toBeCloseTo(early);
+    advance(2.2);
+    expect(artboard.node("Playful body").rotation).toBe(0);
+    expect(artboard.node("Playful body").x).toBe(0);
+    input("gesture", 0);
+    advance(.3);
+    expect(artboard.node("Left eye happy").scaleX).toBe(1);
+    expect(artboard.node("Mouth expression").scaleY).toBeCloseTo(1.35);
+  });
+
+  it("uses static closed or dizzy eyes in reduced motion without bouncing or rotating", () => {
+    input("reducedMotion", true);
+    input("gesture", 4);
+    machine.advanceAndApply(0); artboard.advance(0);
+    expect(artboard.node("Left eye emote").scaleY).toBeCloseTo(.08);
+    expect(artboard.node("Right eye emote").scaleY).toBeCloseTo(.08);
+    expect(artboard.node("Playful body").scaleY).toBe(1);
+    input("gesture", 5);
+    machine.advanceAndApply(0); artboard.advance(0);
+    expect(artboard.node("Playful body").rotation).toBe(0);
+    advance(4);
+    expect(artboard.node("Playful body").rotation).toBe(0);
+    expect(artboard.node("Playful body").x).toBe(0);
+    input("gesture", 0);
+    machine.advanceAndApply(0); artboard.advance(0);
+    expect(artboard.node("Left eye emote").scaleY).toBe(1);
+  });
+
+  it("sleeps with readable closed lids, soft breathing and floating Zs until woken", () => {
+    input("gesture", 6);
+    advance(1);
+    expect(artboard.node("Left eye emote").scaleX).toBe(0);
+    expect(artboard.node("Right eye emote").scaleX).toBe(0);
+    expect(artboard.node("Sleeping eyes reveal").scaleX).toBe(1);
+    expect(artboard.node("Sleeping smile reveal").scaleX).toBe(1);
+    expect(artboard.node("Sleep particles").scaleX).toBe(1);
+    const earlyPose = [artboard.node("Head emote").rotation, artboard.node("Playful body").scaleY, artboard.node("Sleep particles").y];
+    advance(1);
+    expect([artboard.node("Head emote").rotation, artboard.node("Playful body").scaleY, artboard.node("Sleep particles").y]).not.toEqual(earlyPose);
+    expect(artboard.node("Head emote").rotation).toBeGreaterThan(.12);
+    const sleepingPose = [artboard.node("Head emote").rotation, artboard.node("Playful body").scaleY, artboard.node("Sleep particles").y];
+    advance(4);
+    expect([artboard.node("Head emote").rotation, artboard.node("Playful body").scaleY, artboard.node("Sleep particles").y]).toEqual(sleepingPose);
+    input("gesture", 0);
+    input("status", 1);
+    advance(1);
+    expect(artboard.node("Sleep particles").scaleX).toBe(0);
+    expect(artboard.node("Sleeping eyes reveal").scaleX).toBe(0);
+    expect(artboard.node("Left eye emote").scaleX).toBe(1);
+    expect(artboard.node("Mouth expression").scaleY).toBeCloseTo(.06);
+  });
+
+  it("unfolds its arms for a wake-up stretch, then tucks them away in two seconds", () => {
+    advance(1);
+    expect(artboard.node("Left stretch reveal").scaleX).toBe(0);
+    input("gesture", 7);
+    advance(.65);
+    expect(artboard.node("Left stretch reveal").scaleX).toBe(1);
+    expect(artboard.node("Right stretch reveal").scaleX).toBe(1);
+    expect(artboard.node("Left stretch reveal").rotation).toBeGreaterThan(2);
+    expect(artboard.node("Right stretch reveal").rotation).toBeLessThan(-2);
+    expect(artboard.node("Playful body").scaleY).toBeGreaterThan(1.01);
+    advance(1.7);
+    expect(artboard.node("Left stretch reveal").scaleX).toBe(0);
+    expect(artboard.node("Right stretch reveal").scaleX).toBe(0);
+    expect(artboard.node("Playful body").scaleY).toBe(1);
+    expect(artboard.node("Head emote").y).toBe(0);
+  });
+
+  it("tilts and glances curiously with asymmetric eyebrows, then restores its native face", () => {
+    input("status", 1);
+    input("gesture", 8);
+    advance(.75);
+    expect(artboard.node("Head emote").rotation).toBeLessThan(-.1);
+    expect(artboard.node("Gesture gaze").x).toBeLessThan(-1);
+    expect(artboard.node("Left brow emote").y).toBeLessThan(-2);
+    expect(artboard.node("Right brow emote").y).toBeGreaterThan(.5);
+    advance(1.6);
+    expect(artboard.node("Head emote").rotation).toBe(0);
+    expect(artboard.node("Gesture gaze").x).toBe(0);
+    expect(artboard.node("Left brow emote").y).toBe(0);
+    expect(artboard.node("Right eye emote").scaleY).toBe(1);
+    expect(artboard.node("Mouth expression").scaleY).toBeCloseTo(.06);
+  });
+
+  it("keeps the sleeping face static for reduced motion without nodding or moving Zs", () => {
+    input("reducedMotion", true);
+    input("gesture", 6);
+    machine.advanceAndApply(0); artboard.advance(0);
+    expect(artboard.node("Sleeping eyes reveal").scaleX).toBe(1);
+    expect(artboard.node("Left eye emote").scaleX).toBe(0);
+    const restingPose = [artboard.node("Head emote").rotation, artboard.node("Playful body").scaleY, artboard.node("Sleep particles").y];
+    advance(10);
+    expect([artboard.node("Head emote").rotation, artboard.node("Playful body").scaleY, artboard.node("Sleep particles").y]).toEqual(restingPose);
+    expect(artboard.node("Breathing").y).toBe(0);
+    input("gesture", 0);
+    machine.advanceAndApply(0); artboard.advance(0);
+    expect(artboard.node("Sleeping eyes reveal").scaleX).toBe(0);
+    expect(artboard.node("Sleep particles").scaleX).toBe(0);
   });
 
   it("changes the full facial expression immediately with reduced motion", () => {

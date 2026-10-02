@@ -5,6 +5,7 @@ import { readChat, turnOptionsSchema } from "./chat";
 export const companionStatusSchema = z.enum(["running", "waiting", "reconnecting", "completed", "failed", "idle"]);
 export const companionItemSchema = z.object({
   conversationId: z.string(), agentId: z.string().nullable(), projectId: z.string(), projectName: z.string(),
+  global: z.boolean().default(false),
   title: z.string(), role: z.string(), status: companionStatusSchema,
   activity: z.string(), result: z.string().nullish(), durationMs: z.number().nonnegative(), activeSince: z.number().nullable(), updatedAt: z.number(),
   pendingQuestion: pendingQuestionSchema.nullish(), requiresConversation: z.boolean(),
@@ -15,7 +16,21 @@ export const companionSnapshotSchema = z.object({ items: z.array(companionItemSc
 export const companionGeometrySchema = z.object({
   expanded: z.boolean(), bubble: z.boolean(), robotSide: z.enum(["left", "right"]), robotVertical: z.enum(["top", "bottom"]),
   width: z.number().positive(), height: z.number().positive(),
-});
+  compactX: z.number().nonnegative().optional(), compactY: z.number().nonnegative().optional(),
+  compactWidth: z.number().positive().optional(), compactHeight: z.number().positive().optional(),
+  surfaceX: z.number().nonnegative().optional(), surfaceY: z.number().nonnegative().optional(),
+  surfaceWidth: z.number().positive().optional(), surfaceHeight: z.number().positive().optional(),
+  notchWidth: z.number().nonnegative().default(0), notchHeight: z.number().nonnegative().default(0),
+  headerHeight: z.number().positive().default(32), dragAxis: z.enum(["none", "horizontal"]).default("none"),
+}).transform(value => ({
+  ...value,
+  compactX: value.compactX ?? Math.max(0, (value.width - 288) / 2),
+  compactY: value.compactY ?? (value.robotVertical === "bottom" ? Math.max(0, value.height - 32) : 0),
+  compactWidth: value.compactWidth ?? Math.min(288, value.width),
+  compactHeight: value.compactHeight ?? Math.min(32, value.height),
+  surfaceX: value.surfaceX ?? 0, surfaceY: value.surfaceY ?? 0,
+  surfaceWidth: value.surfaceWidth ?? value.width, surfaceHeight: value.surfaceHeight ?? value.height,
+}));
 export const companionProjectProposalSchema = z.object({
   id: z.string(), projectId: z.string(), projectName: z.string(), workspaceName: z.string(),
   conversationId: z.string().nullable(), reason: z.string(), message: z.string(),

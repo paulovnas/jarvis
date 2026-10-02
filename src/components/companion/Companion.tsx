@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Activity, ArrowUpRight, CheckCheck, ChevronDown, Clock3, Gauge, MessageCircle, RefreshCw, Wifi } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Gauge, Home, MessageCircle, RefreshCw, Settings2, Volume2, VolumeX, Wifi } from "lucide-react";
 import { z } from "zod";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Hint } from "@/components/ui/hint";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -12,6 +12,7 @@ import { WindowBar } from "@/components/layout/ProviderUsage";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { companionGeometrySchema, companionItemKey, companionSnapshotSchema, companionStatusLabels, type CompanionGeometry, type CompanionItem, type CompanionSnapshot, type CompanionStatus } from "@/core/companion";
 import { accountUsageSchema, aliasSuffix } from "@/core/provider-usage";
@@ -19,15 +20,18 @@ import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/qu
 import { ROLE_LABELS } from "@/core/workflow";
 import { libraryError } from "@/core/library";
 import { executionDuration, formatExecutionDuration, useRunningClock } from "@/hooks/use-running-clock";
-import { Robot } from "./Robot";
-import { CompanionChatPane } from "./CompanionChatPane";
+import { Robot, type RobotProps } from "./Robot";
+import { useRobotRest } from "./use-robot-rest";
+import { CompanionChatPane, type CompanionChatHandle } from "./CompanionChatPane";
 import { CompanionQuestion, type CompanionQuestionContext } from "./CompanionQuestion";
 import { useCompanionNotices } from "./use-companion-notices";
-import { useCompanionStroll } from "./use-companion-stroll";
+import { CompanionNotifications } from "./CompanionNotifications";
+import { useIslandMotion } from "./use-island-motion";
+import { useCompanionSounds } from "./use-companion-sounds";
 import { LazyChatMarkdown } from "@/components/chat/LazyChatMarkdown";
 import "./companion.css";
 
-const compactGeometry: CompanionGeometry = { expanded: false, bubble: false, robotSide: "right", robotVertical: "bottom", width: 96, height: 112 };
+const compactGeometry: CompanionGeometry = companionGeometrySchema.parse({ expanded: false, bubble: false, robotSide: "left", robotVertical: "top", width: 288, height: 32 });
 const companionError = (cause: unknown, fallback: string) => typeof cause === "string" ? cause : libraryError(cause, fallback);
 const roleLabel = (role: string) => ROLE_LABELS[role as keyof typeof ROLE_LABELS] ?? role;
 const statusColor: Record<CompanionStatus, string> = {
@@ -40,30 +44,35 @@ const usageProviderLabels = { "openai-codex": "OpenAI Codex", antigravity: "Anti
 
 function Usage({ accounts, error, now }: { accounts: CompanionUsage[] | null; error: string | null; now: number }) {
   if (error && !accounts) return <p role="alert" className="text-xs text-onedark-yellow">{error}</p>;
-  if (!accounts) return <div role="status" aria-label="Carregando limites" className="space-y-4"><Skeleton className="h-4 w-36" /><Skeleton className="h-2" /><Skeleton className="h-4 w-32" /><Skeleton className="h-2" /></div>;
-  return <div className="space-y-4">
-    {error && <p role="status" className="text-xs text-onedark-yellow">{error}</p>}
-    {!accounts.length && <p className="py-8 text-center text-xs text-muted-foreground">Nenhum limite disponível nos provedores conectados.</p>}
-    {accounts.map(account => <section key={account.alias} aria-label={`Limites de ${account.alias}`} className="space-y-3 rounded-md border border-border bg-sidebar/40 p-3">
-      <div className="flex min-w-0 items-center gap-2 text-xs font-medium"><span role="img" aria-label={usageProviderLabels[account.providerKind]} className="flex shrink-0"><ProviderIcon kind={account.providerKind} /></span><p className="truncate">{aliasSuffix(account.alias)}</p></div>
+  if (!accounts) return <div role="status" aria-label="Carregando limites" className="companion-usage-grid">{[0, 1].map(index => <div key={index} className="space-y-3 rounded-md border border-border p-3"><Skeleton className="h-4 w-28" /><Skeleton className="h-2" /><Skeleton className="h-4 w-24" /></div>)}</div>;
+  return <div className="companion-usage-grid">
+    {error && <p role="status" className="col-span-full text-xs text-onedark-yellow">{error}</p>}
+    {!accounts.length && <p className="col-span-full py-8 text-center text-xs text-muted-foreground">Nenhum limite disponível nos provedores conectados.</p>}
+    {accounts.map(account => <section key={account.alias} aria-label={`Limites de ${account.alias}`} className="min-w-0 space-y-2 rounded-md border border-border bg-sidebar/40 p-2.5">
+      <div className="flex min-w-0 items-center gap-1.5 text-xs font-medium"><span role="img" aria-label={usageProviderLabels[account.providerKind]} className="flex shrink-0"><ProviderIcon kind={account.providerKind} /></span><Hint content={account.alias} whenTruncated><p className="min-w-0 flex-1 truncate">{aliasSuffix(account.alias)}</p></Hint>{account.fetchedAt && <time dateTime={new Date(account.fetchedAt).toISOString()} aria-label={`Atualizado às ${new Date(account.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`} className="shrink-0 font-mono text-[9px] text-muted-foreground/70">{new Date(account.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</time>}</div>
       {account.error && <p role="status" className="text-[11px] text-onedark-yellow">{account.fetchedAt ? "Limites desatualizados" : "Limites indisponíveis"}</p>}
       {!account.error && !account.windows.length && <p className="text-[11px] text-muted-foreground">Nenhuma janela informada.</p>}
-      {account.windows.map(window => <div key={window.id} className="space-y-1.5">
-        <p className="truncate font-mono text-[10px] text-muted-foreground">{window.group}</p>
+      <div className="companion-usage-windows">{account.windows.map(window => <div key={window.id} className="companion-usage-window min-w-0 space-y-1.5">
+        <Hint content={window.group} whenTruncated><p className="truncate font-mono text-[10px] text-muted-foreground">{window.group}</p></Hint>
         <WindowBar window={window} now={now} stale={Boolean(error || account.error) || !account.fetchedAt || now - account.fetchedAt > 5 * 60_000} />
-      </div>)}
-      {account.fetchedAt && <p className="font-mono text-[9px] text-muted-foreground/70">Atualizado às {new Date(account.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>}
+      </div>)}</div>
     </section>)}
   </div>;
 }
 
 export function Companion() {
+  useEffect(() => {
+    const preventNativeMenu = (event: MouseEvent) => event.preventDefault();
+    document.addEventListener("contextmenu", preventNativeMenu);
+    return () => document.removeEventListener("contextmenu", preventNativeMenu);
+  }, []);
   const [geometry, setGeometry] = useState<CompanionGeometry>(compactGeometry);
   const [snapshot, setSnapshot] = useState<CompanionSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [tab, setTab] = useState("activity");
+  const [activityPicker, setActivityPicker] = useState(false);
   const [usage, setUsage] = useState<CompanionUsage[] | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [usageAt, setUsageAt] = useState(() => Date.now());
@@ -72,43 +81,65 @@ export function Companion() {
   const forceUsage = useRef(false);
   const [resizing, setResizing] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [peekingClosing, setPeekingClosing] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const [gesture, setGesture] = useState<RobotProps["gesture"]>("none");
+  const gestureTimer = useRef<number | undefined>(undefined);
+  const gestureFrame = useRef<number | undefined>(undefined);
+  const taps = useRef<number[]>([]);
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
   const [visible, setVisible] = useState(() => !document.hidden);
   const robotElement = useRef<HTMLButtonElement>(null);
-  const resizeLock = useRef(false);
-  const pendingCollapse = useRef(false);
+  const robotPlacement = useRef<HTMLDivElement>(null);
+  const islandElement = useRef<HTMLDivElement>(null);
+  const chatPane = useRef<CompanionChatHandle>(null);
+  const expansionVersion = useRef(0);
+  const nativeExpanded = useRef(false);
   const collapseHandler = useRef<() => void>(() => {});
   const geometryRevision = useRef(0);
-  const pointer = useRef<{ x: number; y: number; dragging: boolean } | null>(null);
+  const pointer = useRef<{ x: number; dragging: boolean } | null>(null);
+  const moveInFlight = useRef(false);
+  const dragOperation = useRef<Promise<unknown>>(Promise.resolve());
   const dragged = useRef(false);
   const [drafts] = useState(() => new Map<string, QuestionDraft>());
   const [chatQuestion, setChatQuestion] = useState<CompanionQuestionContext | null>(null);
   const { notice, sync: syncNotices, clear: clearNotices } = useCompanionNotices();
   const refreshSnapshot = useRef<() => void>(() => {});
   const acknowledgements = useRef(new Set<string>());
-  const items = snapshot?.items ?? [];
+  const items = useMemo(() => snapshot?.items ?? [], [snapshot]);
   const waiting = items.filter(item => item.status === "waiting").length;
   const working = items.filter(item => item.status === "running" || item.status === "reconnecting").length;
-  const current = items.find(item => item.status === "waiting") ?? items.find(item => item.status === "reconnecting")
-    ?? items.find(item => item.status === "running") ?? items.reduce<CompanionItem | undefined>((latest, item) => !latest || item.updatedAt > latest.updatedAt ? item : latest, undefined);
-  const focused = items.find(item => companionItemKey(item) === selectedKey) ?? current;
   const attentive = items.filter(item => item.status !== "idle" && (!(item.status === "completed" || item.status === "failed") || !item.acknowledged));
+  const notifications = useMemo(() => items.filter(item => !item.acknowledged && (item.status === "completed" || item.status === "failed")), [items]);
+  const active = attentive.filter(item => item.status !== "completed" && item.status !== "failed");
+  const current = attentive.find(item => item.status === "waiting") ?? attentive.find(item => item.status === "reconnecting")
+    ?? attentive.find(item => item.status === "running") ?? attentive.reduce<CompanionItem | undefined>((latest, item) => !latest || item.updatedAt > latest.updatedAt ? item : latest, undefined);
+  const focused = attentive.find(item => companionItemKey(item) === selectedKey) ?? current;
   const petCurrent = attentive.find(item => item.status === "waiting") ?? attentive.find(item => item.status === "reconnecting")
     ?? attentive.find(item => item.status === "running") ?? attentive.reduce<CompanionItem | undefined>((latest, item) => !latest || item.updatedAt > latest.updatedAt ? item : latest, undefined);
   const status: CompanionStatus = error && !snapshot ? "failed" : petCurrent?.status ?? "idle";
   const snapshotQuestion = focused?.status === "waiting" && (focused.pendingQuestion || focused.requiresConversation) ? focused : items.find(item => item.status === "waiting" && (item.pendingQuestion || item.requiresConversation));
-  const question = useMemo<CompanionQuestionContext | null>(() => tab === "chat" && chatQuestion ? chatQuestion : snapshotQuestion ? {
+  const question: CompanionQuestionContext | null = tab === "chat" ? chatQuestion : tab === "activity" && snapshotQuestion ? {
     conversationId: snapshotQuestion.conversationId, agentId: snapshotQuestion.agentId, title: snapshotQuestion.title,
     projectName: snapshotQuestion.projectName, request: snapshotQuestion.pendingQuestion, requiresConversation: snapshotQuestion.requiresConversation,
-  } : null, [tab, chatQuestion, snapshotQuestion]);
+  } : null;
+  const hasQuestion = Boolean(question);
+  const restActivity = items.map(item => `${companionItemKey(item)}/${item.attentionId ?? item.status}`).sort().join("|");
+  const rest = useRobotRest(working > 0 || waiting > 0 || hasQuestion || dragging || geometry.expanded, restActivity);
   const bubbleWanted = Boolean(notice && !geometry.expanded);
-  const bubbleVisible = bubbleWanted && geometry.bubble && !dragging;
+  const bubbleVisible = (bubbleWanted || peekingClosing) && geometry.bubble && !geometry.expanded;
   const now = useRunningClock(geometry.expanded && items.some(item => (item.status === "running" || item.status === "reconnecting") && item.activeSince !== null));
-  const strolling = geometry.expanded && visible && !closing && !dragging && (status === "running" || status === "idle");
-  const stroll = useCompanionStroll(robotElement, strolling);
-  const facing = geometry.robotSide === "left" ? -stroll.facing : stroll.facing;
+  const sounds = useCompanionSounds(items, Boolean(snapshot), visible);
+  const detail = Boolean(question) || tab !== "activity" || activityPicker;
+  const notchInset = geometry.notchWidth > 0 ? geometry.headerHeight : 0;
+  const requestedHeight = (detail ? 400 : notifications.length ? 180 : 160) + notchInset;
+  const visualGeometry = useMemo(() => geometry.expanded && !closing && requestedHeight < geometry.surfaceHeight ? {
+    ...geometry, surfaceHeight: requestedHeight,
+    surfaceY: geometry.surfaceY + (geometry.robotVertical === "bottom" ? geometry.surfaceHeight - requestedHeight : 0),
+  } : geometry, [geometry, closing, requestedHeight]);
+  useIslandMotion(islandElement, robotPlacement, visualGeometry, geometry.expanded && !closing || geometry.bubble && !peekingClosing, geometry.expanded && detail, visible);
+  useEffect(() => () => { window.clearTimeout(gestureTimer.current); if (gestureFrame.current !== undefined) window.cancelAnimationFrame(gestureFrame.current); }, []);
 
   useEffect(() => {
     const changed = () => setVisible(!document.hidden);
@@ -142,7 +173,7 @@ export function Companion() {
       listen("companion:changed", schedule),
       listen("companion:geometry", event => {
         const next = companionGeometrySchema.safeParse(event.payload);
-        if (alive && next.success) { geometryRevision.current++; setGeometry(next.data); }
+        if (alive && next.success) { geometryRevision.current++; nativeExpanded.current = next.data.expanded; setGeometry(next.data); }
       }),
       listen("companion:drag-end", () => { pointer.current = null; if (alive) setDragging(false); }),
       listen("companion:collapse-request", () => { if (alive) collapseHandler.current(); }),
@@ -156,7 +187,7 @@ export function Companion() {
     const revision = ++geometryRevision.current;
     void invoke("set_companion_expanded", { expanded: false }).then(value => {
       const next = companionGeometrySchema.safeParse(value);
-      if (alive && revision === geometryRevision.current && next.success) setGeometry(next.data);
+      if (alive && revision === geometryRevision.current && next.success) { nativeExpanded.current = next.data.expanded; setGeometry(next.data); }
     }).catch(cause => { if (alive) setError(companionError(cause, "Não foi possível posicionar o assistente.")); });
     return () => { alive = false; void invoke("companion_set_interacting", { active: false }).catch(() => {}); };
   }, []);
@@ -165,34 +196,41 @@ export function Companion() {
     if (dragging || resizing || bubbleWanted === geometry.bubble) return;
     let alive = true;
     const revision = ++geometryRevision.current;
-    void invoke("set_companion_bubble", { visible: bubbleWanted }).then(value => {
-      const next = companionGeometrySchema.safeParse(value);
-      if (alive && revision === geometryRevision.current && next.success) setGeometry(next.data);
-    }).catch(cause => { if (alive) setError(companionError(cause, "Não foi possível mostrar o aviso.")); });
+    const update = async () => {
+      setPeekingClosing(!bubbleWanted && geometry.bubble);
+      if (!bubbleWanted && geometry.bubble && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) await new Promise(resolve => window.setTimeout(resolve, 360));
+      if (!alive) return;
+      const next = companionGeometrySchema.safeParse(await invoke("set_companion_bubble", { visible: bubbleWanted }));
+      if (alive && revision === geometryRevision.current && next.success) { setGeometry(next.data); setPeekingClosing(false); }
+    };
+    void update().catch(cause => { if (alive) setError(companionError(cause, "Não foi possível mostrar o aviso.")); });
     return () => { alive = false; };
   }, [bubbleWanted, geometry.bubble, dragging, resizing]);
 
   const acknowledge = useCallback(async (item: CompanionItem) => {
-    if (item.acknowledged || item.status !== "completed" && item.status !== "failed" || acknowledgements.current.has(item.attentionId)) return;
-    acknowledgements.current.add(item.attentionId);
+    const key = `${item.attentionId}/${item.revision ?? "legacy"}`;
+    if (item.acknowledged || item.status !== "completed" && item.status !== "failed") return true;
+    if (acknowledgements.current.has(key)) return false;
+    acknowledgements.current.add(key);
     try {
-      await invoke("ack_companion_item", { conversationId: item.conversationId, agentId: item.agentId, attentionId: item.attentionId });
+      const result = companionSnapshotSchema.safeParse(await invoke("ack_companion_item", { conversationId: item.conversationId, agentId: item.agentId, attentionId: item.attentionId, revision: item.revision }));
+      if (!result.success) throw new Error("Não foi possível confirmar que a atividade foi vista. Tente novamente.");
+      syncNotices(result.data.items); setSnapshot(result.data);
+      const current = result.data.items.find(current => current.conversationId === item.conversationId && current.agentId === item.agentId && current.attentionId === item.attentionId);
+      if (current && !current.acknowledged) acknowledgements.current.delete(key);
       refreshSnapshot.current();
+      return !current || current.acknowledged;
     } catch (cause) {
-      acknowledgements.current.delete(item.attentionId);
+      acknowledgements.current.delete(key);
       setError(companionError(cause, "Não foi possível marcar a atividade como vista."));
+      return false;
     }
-  }, []);
-  useEffect(() => {
-    if (!geometry.expanded || !visible || tab !== "activity" || question || !focused) return;
-    const afterPaint = window.setTimeout(() => { void acknowledge(focused); }, 0);
-    return () => window.clearTimeout(afterPaint);
-  }, [geometry.expanded, visible, tab, question, focused, acknowledge]);
+  }, [syncNotices]);
   const viewedChat = useCallback((conversationId: string, revision: number) => {
-    if (!visible || question) return;
+    if (!visible || hasQuestion) return;
     const item = snapshot?.items.find(item => item.conversationId === conversationId && item.agentId === null);
     if (item?.revision !== undefined && item.revision <= revision) void acknowledge(item);
-  }, [visible, question, snapshot, acknowledge]);
+  }, [visible, hasQuestion, snapshot, acknowledge]);
 
   useEffect(() => {
     if (!geometry.expanded || tab !== "usage") return;
@@ -214,38 +252,53 @@ export function Companion() {
   }, [geometry.expanded, tab, usageAttempt]);
 
   const expand = useCallback(async (expanded: boolean) => {
-    if (resizeLock.current) { if (!expanded) pendingCollapse.current = true; return; }
-    resizeLock.current = true; setResizing(true);
+    const request = ++expansionVersion.current;
+    setResizing(true);
     geometryRevision.current++;
     try {
-      if (!expanded && geometry.expanded && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-        const placement = robotElement.current?.parentElement;
-        if (placement) placement.style.setProperty("--robot-return-transform", window.getComputedStyle(placement).transform);
+      if (!expanded && nativeExpanded.current && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
         setClosing(true);
-        await new Promise(resolve => window.setTimeout(resolve, 220));
+        sounds.play("close");
+        await new Promise(resolve => window.setTimeout(resolve, 360));
       }
+      if (request !== expansionVersion.current) return;
+      if (expanded) { setClosing(false); setPeekingClosing(false); sounds.play("open"); }
       const revision = ++geometryRevision.current;
-      const next = companionGeometrySchema.parse(await invoke("set_companion_expanded", { expanded }));
-      if (revision === geometryRevision.current) setGeometry(next);
+      const next = companionGeometrySchema.parse(await invoke("set_companion_expanded", { expanded, ...(expanded ? { height: requestedHeight } : {}) }));
+      if (request === expansionVersion.current && revision === geometryRevision.current) { nativeExpanded.current = next.expanded; setGeometry(next); }
     }
     catch (cause) { setError(companionError(cause, "Não foi possível abrir o assistente.")); }
-    finally { resizeLock.current = false; setResizing(false); setClosing(false); }
-  }, [geometry.expanded]);
+    finally { if (request === expansionVersion.current) { setResizing(false); setClosing(false); } }
+  }, [requestedHeight, sounds]);
   useEffect(() => {
     collapseHandler.current = () => { void expand(false); };
   }, [expand]);
   useEffect(() => {
-    if (!resizing && pendingCollapse.current) { pendingCollapse.current = false; void expand(false); }
-  }, [resizing, expand]);
-  const openConversation = async (target: { conversationId: string; agentId?: string | null }) => {
+    if (!geometry.expanded || closing || resizing || geometry.surfaceHeight === requestedHeight) return;
+    const revision = ++geometryRevision.current;
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      void invoke("set_companion_expanded", { expanded: true, height: requestedHeight }).then(value => {
+        const next = companionGeometrySchema.safeParse(value);
+        if (alive && revision === geometryRevision.current && next.success) setGeometry(next.data);
+      }).catch(cause => { if (alive) setError(companionError(cause, "Não foi possível ajustar a ilha.")); });
+    }, requestedHeight < geometry.surfaceHeight && !window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 360 : 0);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [geometry.expanded, geometry.surfaceHeight, requestedHeight, closing, resizing]);
+  const toggleSound = () => { void sounds.toggle().catch(cause => setError(companionError(cause, "Não foi possível salvar os sons do Jarvito."))); };
+  const openConversation = useCallback(async (target: { conversationId: string; agentId?: string | null }) => {
     const accessed = items.find(item => item.conversationId === target.conversationId && item.agentId === (target.agentId ?? null));
     try {
-      await invoke("companion_open_conversation", { conversationId: target.conversationId });
-      if (accessed) await acknowledge(accessed);
+      if (accessed?.global) {
+        if (!await chatPane.current?.openGeneral(accessed.conversationId, accessed.revision)) return;
+        setTab("chat");
+        if (!geometry.expanded) await expand(true);
+      } else await invoke("companion_open_conversation", { conversationId: target.conversationId });
+      if (accessed && !await acknowledge(accessed)) return;
       refreshSnapshot.current();
     }
     catch (cause) { setError(companionError(cause, "Não foi possível abrir a conversa.")); }
-  };
+  }, [items, acknowledge, geometry.expanded, expand]);
   const answerQuestion = async (request: PendingQuestion, response: QuestionResponse) => {
     if (!question) return false;
     try {
@@ -261,77 +314,97 @@ export function Companion() {
   };
   const activeDuration = (item: CompanionItem) => formatExecutionDuration(executionDuration(item.updatedAt, item.durationMs, item.status === "running" || item.status === "reconnecting", now, item.activeSince));
 
-  const pet = <div className="companion-robot-placement">
-    <Button ref={robotElement} variant="ghost" className="companion-pet relative h-28 w-24 cursor-pointer p-0 focus-visible:ring-2 focus-visible:ring-onedark-cyan/60" aria-label={geometry.expanded ? "Recolher assistente Jarvis" : `Abrir assistente Jarvis${waiting ? `, ${waiting} interações pendentes` : working ? `, ${working} atividades em andamento` : ""}`} aria-expanded={geometry.expanded} aria-controls="companion-panel" disabled={resizing}
-      onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
-      onPointerDown={event => { if (event.button !== 0) return; event.currentTarget.setPointerCapture?.(event.pointerId); pointer.current = { x: event.clientX, y: event.clientY, dragging: false }; dragged.current = false; }}
-      onPointerMove={event => {
-        if (!(event.buttons & 1)) { pointer.current = null; return; }
-        const start = pointer.current;
-        if (!start || start.dragging || Math.hypot(event.clientX - start.x, event.clientY - start.y) < 5) return;
-        start.dragging = true; dragged.current = true;
-        geometryRevision.current++; setDragging(true);
-        const rect = robotElement.current?.getBoundingClientRect();
-        void invoke("companion_start_drag", rect ? { robotX: rect.x, robotY: rect.y } : undefined).catch(cause => { setDragging(false); setError(companionError(cause, "Não foi possível mover o assistente.")); });
-      }}
-      onPointerUp={event => { pointer.current = null; if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }} onPointerCancel={() => { pointer.current = null; }} onLostPointerCapture={() => { pointer.current = null; }}
-      onClick={event => { if (dragged.current && event.detail !== 0) { dragged.current = false; return; } clearNotices(); void expand(!geometry.expanded); }}>
-      <span className="companion-robot-facing" data-facing={strolling ? facing : 1}>
-        <Robot status={status} visible={visible} hovered={hovered} dragging={dragging} expanded={geometry.expanded} walking={stroll.walking && !hovered} lookX={gaze.x * (strolling ? facing : 1)} lookY={gaze.y} />
+  const poke = () => {
+    if (gesture === "dizzy") return;
+    const now = performance.now();
+    taps.current = [...taps.current.filter(at => now - at < 800), now];
+    const dizzy = taps.current.length >= 3;
+    if (dizzy) taps.current = [];
+    if (gestureFrame.current !== undefined) window.cancelAnimationFrame(gestureFrame.current);
+    if (!dizzy && gesture === "poke") {
+      setGesture("none"); gestureFrame.current = window.requestAnimationFrame(() => setGesture("poke"));
+    } else setGesture(dizzy ? "dizzy" : "poke");
+    sounds.play(dizzy ? "dizzy" : "poke");
+    window.clearTimeout(gestureTimer.current);
+    gestureTimer.current = window.setTimeout(() => setGesture("none"), dizzy ? 3000 : 500);
+  };
+  const move = () => {
+    if (moveInFlight.current) return;
+    moveInFlight.current = true;
+    dragOperation.current = dragOperation.current.then(() => invoke("companion_move_horizontal")).catch(cause => setError(companionError(cause, "Não foi possível mover a ilha."))).finally(() => { moveInFlight.current = false; });
+  };
+  const finishDrag = () => {
+    const moving = pointer.current?.dragging;
+    pointer.current = null;
+    if (moving) dragOperation.current = dragOperation.current.then(() => invoke("companion_finish_drag")).catch(cause => { setDragging(false); setError(companionError(cause, "Não foi possível posicionar a ilha.")); });
+  };
+
+  const pet = <div ref={robotPlacement} className="companion-robot-placement">
+    <Button ref={robotElement} variant="ghost" className="companion-pet relative size-full cursor-pointer p-0 focus-visible:ring-2 focus-visible:ring-onedark-cyan/60" aria-label={geometry.expanded ? "Interagir com Jarvito" : `Abrir assistente Jarvis${waiting ? `, ${waiting} interações pendentes` : working ? `, ${working} atividades em andamento` : ""}`} aria-expanded={geometry.expanded && !closing} aria-controls="companion-panel"
+      onPointerEnter={() => { rest.wake(); setHovered(true); sounds.play("hover"); }} onPointerLeave={() => setHovered(false)}
+      onClick={() => { if (geometry.expanded) poke(); else { clearNotices(); void expand(true); } }}>
+      <span className="companion-robot-facing">
+        <Robot status={status} gesture={gesture === "none" ? rest.gesture : gesture} visible={visible} hovered={hovered} dragging={dragging} expanded={geometry.expanded} lookX={gaze.x} lookY={gaze.y} />
       </span>
-      {(waiting > 0 || working > 0 || status === "failed") && <Badge aria-hidden="true" className={`absolute right-1 bottom-4 min-w-5 justify-center rounded-full border border-sidebar px-1.5 py-0.5 font-mono text-[9px] ${waiting || status === "failed" ? "bg-onedark-yellow text-sidebar" : "bg-onedark-cyan text-sidebar"}`}>{waiting || working || "!"}</Badge>}
     </Button>
   </div>;
 
-  const panel = <Card id="companion-panel" role="region" aria-label="Assistente Jarvis" hidden={!geometry.expanded} className={`companion-panel min-h-0 flex-1 gap-0 rounded-none border-0 bg-transparent p-0 text-foreground shadow-none ring-0 ${geometry.expanded ? "" : "hidden"}`} onPointerDownCapture={event => { if (question && event.target instanceof Element && event.target.closest("input, textarea, button, [contenteditable=true]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }} onBlurCapture={event => { if (!(event.relatedTarget instanceof HTMLElement && event.currentTarget.contains(event.relatedTarget))) void invoke("companion_set_interacting", { active: false }).catch(() => {}); }}>
-    <header className="flex shrink-0 items-center gap-2 px-5 pb-2 pt-5">
-      <span aria-hidden="true" className="size-1.5 rounded-full bg-onedark-cyan" />
-      <h1 className="text-sm font-semibold tracking-tight text-foreground">Jarvito</h1>
-      <span role="status" className={`ml-1 min-w-0 flex-1 truncate text-[11px] ${statusColor[status]}`}>{snapshot ? companionStatusLabels[status] : "Carregando…"}</span>
-      <Hint content="Recolher assistente"><Button size="icon-xs" variant="ghost" className="cursor-pointer text-muted-foreground" aria-label="Recolher painel" disabled={resizing} onClick={() => { void expand(false); }}><ChevronDown className="size-3.5" /></Button></Hint>
-    </header>
-    {geometry.expanded && question && <CompanionQuestion context={question} drafts={drafts} onAnswer={answerQuestion} onInteract={pauseQuestion} onOpenConversation={() => { void openConversation(question); }} error={error} />}
-    <Tabs hidden={Boolean(geometry.expanded && question)} value={tab} onValueChange={value => { if (typeof value === "string") setTab(value); }} className={`min-h-0 flex-1 gap-0 ${geometry.expanded && question ? "hidden" : ""}`}>
-      <TabsList aria-label="Recursos do assistente" variant="line" className="mx-4 mt-1 h-9 w-auto shrink-0 justify-start gap-3">
-        <TabsTrigger value="chat" className="flex-none cursor-pointer text-[11px]"><MessageCircle className="size-3.5" />Chat</TabsTrigger>
-        <TabsTrigger value="activity" className="flex-none cursor-pointer text-[11px]"><Activity className="size-3.5" />Atividade{working > 0 && <Badge variant="outline" className="ml-1 px-1 py-0 font-mono text-[9px]">{working}</Badge>}</TabsTrigger>
-        <TabsTrigger value="usage" className="flex-none cursor-pointer text-[11px]"><Gauge className="size-3.5" />Limites</TabsTrigger>
-      </TabsList>
-      <TabsContent value="activity" className="min-h-0 overflow-hidden px-3 pb-3 pt-2" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable=true], [data-slot=select-trigger]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }} onBlurCapture={event => { if (!(event.relatedTarget instanceof HTMLElement && event.currentTarget.contains(event.relatedTarget))) void invoke("companion_set_interacting", { active: false }).catch(() => {}); }}>
-        <ScrollArea className="h-full min-h-0 pr-2">
-          {error && <div className="mb-3 space-y-2"><p role="alert" className="text-xs text-onedark-yellow">{error}</p><Button size="sm" variant="outline" className="h-7 cursor-pointer text-[11px]" onClick={() => setAttempt(value => value + 1)}>Tentar novamente</Button></div>}
-          {!snapshot && !error && <div role="status" aria-label="Carregando atividades" className="space-y-3"><Skeleton className="h-4 w-28" /><Skeleton className="h-12" /><Skeleton className="h-16" /></div>}
-          {snapshot && !items.length && <div className="flex flex-col items-center gap-3 py-10 text-center"><CheckCheck className="size-5 text-onedark-cyan/70" /><p className="text-xs font-medium">Tudo tranquilo por aqui</p><p className="max-w-64 text-[11px] leading-5 text-muted-foreground">Atividades, perguntas e conclusões aparecem aqui enquanto você usa outros aplicativos.</p></div>}
-          {items.length > 1 && <Select value={focused ? companionItemKey(focused) : undefined} onValueChange={value => { if (typeof value === "string") setSelectedKey(value); }}>
-            <SelectTrigger aria-label="Conversa ou agente" size="sm" className="mb-3 w-full cursor-pointer text-[11px]"><SelectValue><span className="truncate">{focused?.title}</span></SelectValue></SelectTrigger>
-            <SelectContent className="max-h-64 max-w-[calc(100vw-24px)]">{items.map(item => <SelectItem key={companionItemKey(item)} value={companionItemKey(item)} className="cursor-pointer py-2 text-[11px]">
-              <span className="flex min-w-0 flex-col gap-1"><span className="truncate font-medium">{item.title}</span><span className="truncate font-mono text-[9px] text-muted-foreground">{item.projectName} · {roleLabel(item.role)}{item.agentId ? " · subagente" : ""} · {companionStatusLabels[item.status]}</span></span>
-            </SelectItem>)}</SelectContent>
-          </Select>}
-          {focused && <section aria-label="Atividade selecionada" className="space-y-3">
-            <div className="flex items-start gap-2"><div className="min-w-0 flex-1"><p className="truncate font-mono text-[9px] text-muted-foreground">{focused.projectName} · {roleLabel(focused.role)}{focused.agentId ? " · subagente" : ""}</p><h2 className="mt-1 break-words text-sm leading-5 font-medium">{focused.title}</h2></div><Hint content="Abrir conversa no Jarvis"><Button size="icon-xs" variant="ghost" aria-label="Abrir conversa no Jarvis" className="shrink-0 cursor-pointer text-muted-foreground" onClick={() => { void openConversation(focused); }}><ArrowUpRight className="size-3.5" /></Button></Hint></div>
-            <div className="flex items-center gap-2"><Badge variant="outline" className={`text-[10px] ${statusColor[focused.status]}`}>{focused.status === "reconnecting" && <Wifi className="mr-1 size-3" />}{companionStatusLabels[focused.status]}</Badge><span className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground"><Clock3 aria-hidden="true" className="size-3" />{activeDuration(focused)}</span></div>
-            {focused.activity && <p className="break-words rounded-md border border-border bg-sidebar/50 px-3 py-2 text-[11px] leading-5 text-muted-foreground">{focused.activity}</p>}
-            {focused.requiresConversation && !focused.pendingQuestion && <Button size="sm" variant="secondary" className="w-full cursor-pointer text-xs" onClick={() => { void openConversation(focused); }}><MessageCircle className="size-3.5" />Continuar no Jarvis</Button>}
-          </section>}
-          {snapshot?.truncated && <p className="mt-3 text-[10px] text-muted-foreground">As atividades mais recentes estão aqui. Veja as demais no Jarvis.</p>}
-        </ScrollArea>
-      </TabsContent>
-      <TabsContent value="chat" keepMounted className="min-h-0 flex-1 overflow-hidden px-4 pb-1 pt-2" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable=true], [data-slot=select-trigger], [aria-haspopup=menu]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }}>
-        <CompanionChatPane active={geometry.expanded && tab === "chat"} externalQuestions onQuestionChange={setChatQuestion} onView={viewedChat} />
-      </TabsContent>
-      <TabsContent value="usage" className="min-h-0 overflow-hidden px-3 pb-3 pt-2"><div className="mb-3 flex items-center justify-between gap-2"><p className="text-[10px] text-muted-foreground">Cotas disponíveis dos provedores</p><Hint content="Atualizar limites"><Button aria-label="Atualizar limites" aria-busy={usageBusy} disabled={usageBusy} size="icon-xs" variant="ghost" className="cursor-pointer text-muted-foreground" onClick={() => { forceUsage.current = true; setUsageAttempt(value => value + 1); }}><RefreshCw className={`size-3 ${usageBusy ? "motion-safe:animate-spin" : ""}`} /></Button></Hint></div><ScrollArea className="h-[calc(100%-34px)] pr-2"><Usage accounts={usage} error={usageError} now={usageAt} /></ScrollArea></TabsContent>
+  const panel = <Card id="companion-panel" role="region" aria-label="Assistente Jarvis" hidden={!geometry.expanded} className={`companion-panel min-h-0 gap-0 border-0 bg-transparent p-0 shadow-none ring-0 ${geometry.expanded ? "" : "hidden"}`} onPointerDownCapture={event => { if (question && event.target instanceof Element && event.target.closest("input, textarea, button, [contenteditable=true]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }} onBlurCapture={event => { if (!(event.relatedTarget instanceof HTMLElement && event.currentTarget.contains(event.relatedTarget))) void invoke("companion_set_interacting", { active: false }).catch(() => {}); }}>
+    <h1 className="sr-only">Jarvito</h1>
+    <Tabs value={tab} onValueChange={value => { if (typeof value === "string") setTab(value); }} className="min-h-0 flex-1 gap-0">
+      <header className="companion-header">
+        {question ? <p className="ml-9 flex-1 truncate text-[11px] text-muted-foreground">{question.projectName} · Preciso de você</p> : <>
+          <TabsList aria-label="Recursos do assistente" className="companion-navigation">
+            <Hint content="Atividade"><TabsTrigger value="activity" aria-label="Atividade" className="companion-nav-button cursor-pointer"><Home className="size-3.5" /></TabsTrigger></Hint>
+            <Hint content="Chat"><TabsTrigger value="chat" aria-label="Chat" className="companion-nav-button cursor-pointer"><MessageCircle className="size-3.5" /></TabsTrigger></Hint>
+          </TabsList>
+          <span className="flex-1" />
+          <TabsList aria-label="Informações e ajustes" className="companion-navigation">
+            <Hint content="Limites dos provedores"><TabsTrigger value="usage" aria-label="Limites" className="companion-nav-button cursor-pointer"><Gauge className="size-3.5" /></TabsTrigger></Hint>
+            <Hint content="Ajustes"><TabsTrigger value="settings" aria-label="Ajustes" className="companion-nav-button cursor-pointer"><Settings2 className="size-3.5" /></TabsTrigger></Hint>
+          </TabsList>
+          <Hint content={sounds.enabled ? "Silenciar sons" : "Ativar sons"}><Button aria-label={sounds.enabled ? "Silenciar sons do Jarvito" : "Ativar sons do Jarvito"} disabled={!sounds.ready} variant="ghost" size="icon-xs" className="companion-nav-button cursor-pointer" onClick={toggleSound}>{sounds.enabled ? <Volume2 className="size-3.5" /> : <VolumeX className="size-3.5" />}</Button></Hint>
+        </>}
+      </header>
+      {geometry.expanded && question && <CompanionQuestion context={question} drafts={drafts} onAnswer={answerQuestion} onInteract={pauseQuestion} onOpenConversation={() => { void openConversation(question); }} error={error} />}
+      <div hidden={Boolean(question)} className={`companion-views min-h-0 flex-1 ${question ? "hidden" : ""}`}>
+        <TabsContent value="activity" className="companion-overview" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable=true], [data-slot=select-trigger]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }}>
+          {notifications.length ? <CompanionNotifications items={notifications} error={error} onDismiss={acknowledge} onOpen={openConversation} /> : <Card data-state={focused?.status ?? "idle"} className="companion-activity-card companion-focused-card" aria-label="Atividade selecionada">
+            <div className="companion-activity-content">
+              {error && <div className="space-y-1"><p role="alert" className="line-clamp-2 text-[11px] text-onedark-yellow">{error}</p><Button size="sm" variant="ghost" className="h-6 cursor-pointer px-0 text-[10px]" onClick={() => setAttempt(value => value + 1)}>Tentar novamente</Button></div>}
+              {!snapshot && !error && <div role="status" aria-label="Carregando atividades" className="space-y-2 py-3"><Skeleton className="h-3 w-28" /><Skeleton className="h-3 w-40" /><Skeleton className="h-3 w-32" /></div>}
+              {snapshot && !attentive.length && <div className="flex h-full flex-col justify-center gap-1"><h2 className="text-xs font-medium">Tudo tranquilo por aqui</h2><p className="text-[11px] leading-4 text-muted-foreground">Posso acompanhar seus projetos e conversar com você.</p><Button variant="ghost" size="sm" className="mt-1 h-6 w-fit cursor-pointer px-0 text-[10px] text-primary" onClick={() => { chatPane.current?.startGeneral(); setTab("chat"); }}>Vamos conversar<MessageCircle className="size-3" /></Button></div>}
+              {focused && <>
+                <div className="flex items-center gap-1.5"><span aria-hidden="true" className={`companion-state-dot ${statusColor[focused.status]}`} /><p className="min-w-0 flex-1 truncate text-[11px] font-medium">{focused.projectName}</p><span className="shrink-0 font-mono text-[9px] text-muted-foreground">{activeDuration(focused)}</span><Hint content={focused.global ? "Ver conversa com Jarvito" : "Abrir conversa no Jarvis"}><Button size="icon-xs" variant="ghost" aria-label={focused.global ? "Ver conversa com Jarvito" : "Abrir conversa no Jarvis"} className="companion-jump shrink-0 cursor-pointer" onClick={() => { void openConversation(focused); }}><ArrowUpRight className="size-3" /></Button></Hint></div>
+                <div className="flex min-w-0 items-center gap-1">
+                  <h2 className="min-w-0 flex-1 truncate text-[12px] font-semibold">{focused.title}</h2>
+                  {attentive.length > 1 && <Select value={companionItemKey(focused)} onOpenChange={setActivityPicker} onValueChange={value => { if (typeof value === "string") setSelectedKey(value); }}><SelectTrigger aria-label="Conversa ou agente" size="sm" className="companion-activity-select cursor-pointer"><SelectValue><span className="sr-only">{focused.title}</span></SelectValue></SelectTrigger><SelectContent className="max-h-[calc(100vh-100px)] max-w-[calc(100vw-24px)]">{attentive.map(item => <SelectItem key={companionItemKey(item)} value={companionItemKey(item)} className="cursor-pointer py-2 text-[11px]"><span className="flex min-w-0 flex-col gap-1"><span className="truncate font-medium">{item.title}</span><span className="truncate font-mono text-[9px] text-muted-foreground">{item.projectName} · {roleLabel(item.role)}{item.agentId ? " · subagente" : ""} · {companionStatusLabels[item.status]}</span></span></SelectItem>)}</SelectContent></Select>}
+                </div>
+                <p key={`${companionItemKey(focused)}/${focused.status}`} className="companion-live-detail line-clamp-1 text-[11px] leading-4 text-muted-foreground">{focused.activity || `${roleLabel(focused.role)}${focused.agentId ? " · subagente" : ""}`}</p>
+                <div className="mt-auto flex items-center gap-2"><span className={`flex items-center gap-1 text-[10px] ${statusColor[focused.status]}`}>{focused.status === "reconnecting" && <Wifi className="size-3" />}{companionStatusLabels[focused.status]}</span></div>
+              </>}
+            </div>
+          </Card>}
+          {(notifications.length ? active.length > 0 : active.length > 1) && <Card className="companion-activity-card companion-other-card" aria-label="Outras atividades"><div className="flex h-full min-w-0 flex-col gap-2 p-3"><p className="text-[10px] text-muted-foreground">Também estou acompanhando</p><ScrollArea className="min-h-0 flex-1">{active.filter(item => notifications.length || companionItemKey(item) !== (focused && companionItemKey(focused))).map(item => <Button key={companionItemKey(item)} variant="ghost" className="mb-1 h-auto w-full cursor-pointer justify-start gap-2 px-1 py-1 text-left" aria-label={notifications.length ? `Ver atividade: ${item.title}` : undefined} onClick={() => { if (notifications.length) void openConversation(item); else setSelectedKey(companionItemKey(item)); }}><span aria-hidden="true" className={`companion-state-dot ${statusColor[item.status]}`} /><span className="min-w-0 flex-1"><span className="block truncate text-[11px]">{item.projectName}</span><span className="block truncate text-[10px] text-muted-foreground">{item.title}</span>{notifications.length > 0 && <span className="mt-1 flex items-center gap-1 text-[10px] text-primary">Ver atividade<ArrowUpRight className="size-3" /></span>}</span></Button>)}</ScrollArea></div></Card>}
+        </TabsContent>
+        <TabsContent value="chat" keepMounted className="companion-detail-view min-h-0 overflow-hidden" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable=true], [data-slot=select-trigger], [aria-haspopup=menu]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }}><CompanionChatPane ref={chatPane} active={geometry.expanded && tab === "chat"} externalQuestions onQuestionChange={setChatQuestion} onView={viewedChat} onSend={() => sounds.play("send")} /></TabsContent>
+        <TabsContent value="usage" className="companion-detail-view min-h-0 overflow-hidden"><div className="mb-3 flex items-center justify-between gap-2"><h2 className="text-xs font-medium">Limites dos provedores</h2><Hint content="Atualizar limites"><Button aria-label="Atualizar limites" aria-busy={usageBusy} disabled={usageBusy} size="icon-xs" variant="ghost" className="cursor-pointer text-muted-foreground" onClick={() => { forceUsage.current = true; setUsageAttempt(value => value + 1); }}><RefreshCw className={`size-3 ${usageBusy ? "motion-safe:animate-spin" : ""}`} /></Button></Hint></div><ScrollArea className="h-[calc(100%-34px)] pr-2"><Usage accounts={usage} error={usageError} now={usageAt} /></ScrollArea></TabsContent>
+        <TabsContent value="settings" className="companion-detail-view min-h-0"><h2 className="mb-3 text-xs font-medium">Ajustes do Jarvito</h2><Card className="companion-activity-card gap-0"><div className="flex items-center gap-4 p-4"><div className="min-w-0 flex-1"><label htmlFor="companion-sounds" className="cursor-pointer text-xs font-medium">Sons de interação</label><p className="mt-1 text-[11px] leading-4 text-muted-foreground">Abertura, perguntas, atividades e conclusões.</p></div><Switch id="companion-sounds" checked={sounds.enabled} disabled={!sounds.ready} onCheckedChange={toggleSound} className="cursor-pointer" /></div></Card><p className="mt-4 text-[11px] leading-5 text-muted-foreground">{geometry.dragAxis === "horizontal" ? "Arraste a área preta do cabeçalho para mover a ilha para os lados." : "A ilha fica junto à câmera, no topo da tela."} Ao usar outro aplicativo, ela recolhe sem interromper seu trabalho.</p></TabsContent>
+      </div>
     </Tabs>
   </Card>;
 
-  const speech = bubbleVisible && notice && <Card role="status" aria-label="Aviso do Jarvito" className="companion-speech min-h-0 gap-2 overflow-hidden rounded-xl border-border bg-card p-3 shadow-lg">
-    <p className="truncate font-mono text-[9px] text-muted-foreground">{notice.item.projectName} · {roleLabel(notice.item.role)}</p>
-    <p className="line-clamp-2 break-words text-xs leading-4 font-medium">{notice.item.status === "waiting" ? notice.item.pendingQuestion?.questions[0]?.question ?? "Preciso de uma decisão sua para continuar." : notice.item.status === "completed" ? "Sua resposta está pronta." : "Não consegui concluir esta solicitação."}</p>
-    {notice.item.status !== "waiting" && <div className="companion-speech-result line-clamp-3 text-[11px] leading-4 text-muted-foreground"><LazyChatMarkdown content={notice.item.status === "completed" ? notice.item.result || (notice.item.title === "Jarvito" ? "Abra o chat para ver a resposta." : notice.item.title) : notice.item.activity || "Abra o chat para ver o que aconteceu."} /></div>}
-    <Button size="sm" variant="ghost" className="h-7 shrink-0 cursor-pointer justify-start px-1 text-[10px] text-primary" onClick={() => { setSelectedKey(companionItemKey(notice.item)); setTab("activity"); clearNotices(); void expand(true); }}>{notice.item.status === "waiting" ? notice.item.pendingQuestion && !notice.item.requiresConversation ? "Responder pergunta" : "Ver solicitação" : "Ver atividade"}<ArrowUpRight className="size-3" /></Button>
-  </Card>;
+  const speech = bubbleVisible && notice && <div className="companion-peek">
+    <header className="companion-header"><span className="ml-2 flex-1 text-[10px] text-muted-foreground">Jarvito · {companionStatusLabels[notice.item.status]}</span><Hint content="Dispensar aviso"><Button variant="ghost" size="icon-xs" aria-label="Dispensar aviso" className="companion-nav-button cursor-pointer" onClick={clearNotices}><ChevronDown className="size-3.5" /></Button></Hint></header>
+    <Card role="status" aria-label="Aviso do Jarvito" data-state={notice.item.status} className="companion-activity-card companion-speech gap-1">
+      <p className="truncate text-[10px] text-muted-foreground">{notice.item.projectName} · {roleLabel(notice.item.role)}</p>
+      <p className="line-clamp-1 break-words text-xs leading-4 font-medium">{notice.item.status === "waiting" ? notice.item.pendingQuestion?.questions[0]?.question ?? "Preciso de uma decisão sua para continuar." : notice.item.status === "completed" ? "Sua resposta está pronta." : "Não consegui concluir esta solicitação."}</p>
+      {notice.item.status !== "waiting" && <div className="companion-speech-result line-clamp-2 text-[11px] leading-4 text-muted-foreground"><LazyChatMarkdown content={notice.item.status === "completed" ? notice.item.result || (notice.item.title === "Jarvito" ? "Abra o chat para ver a resposta." : notice.item.title) : notice.item.activity || "Abra o chat para ver o que aconteceu."} /></div>}
+      <div className="mt-auto flex items-center gap-2"><Button size="sm" variant="secondary" className="companion-small-action cursor-pointer" onClick={() => { if (notice.item.status === "waiting") { setSelectedKey(companionItemKey(notice.item)); setTab("activity"); clearNotices(); void expand(true); } else void openConversation(notice.item); }}>{notice.item.status === "waiting" ? notice.item.pendingQuestion && !notice.item.requiresConversation ? "Responder pergunta" : "Ver solicitação" : "Ver atividade"}<ArrowUpRight className="size-3" /></Button>{notice.item.status !== "waiting" && <Button size="sm" variant="ghost" className="companion-small-action cursor-pointer" onClick={() => { void acknowledge(notice.item); }}>OK</Button>}</div>
+    </Card>
+  </div>;
 
-  return <main className="companion dark h-full min-h-0 w-full text-foreground" data-status={status} data-expanded={geometry.expanded} data-bubble={bubbleVisible} data-robot-side={geometry.robotSide} data-robot-vertical={geometry.robotVertical} data-closing={closing} data-visible={visible} onPointerMove={event => {
+  return <main className="companion dark h-full min-h-0 w-full text-foreground" style={{ "--companion-notch-inset": `${notchInset}px` } as CSSProperties} data-status={status} data-expanded={geometry.expanded} data-detail={detail} data-drag-axis={geometry.dragAxis} data-bubble={bubbleVisible} data-robot-side={geometry.robotSide} data-robot-vertical={geometry.robotVertical} data-closing={closing || peekingClosing} data-visible={visible} onPointerMove={event => {
     const rect = robotElement.current?.getBoundingClientRect();
     if (rect && event.buttons === 0) {
       const x = Math.round(Math.tanh((event.clientX - rect.x - rect.width / 2) / 100) * 10) / 10;
@@ -340,7 +413,29 @@ export function Companion() {
       robotElement.current?.style.setProperty("--robot-look-x", `${x * 4}px`);
       robotElement.current?.style.setProperty("--robot-look-y", `${y * 3}px`);
     }
-  }} onPointerLeave={() => { setHovered(false); setGaze(previous => previous.x === 0 && previous.y === 0 ? previous : { x: 0, y: 0 }); robotElement.current?.style.setProperty("--robot-look-x", "0px"); robotElement.current?.style.setProperty("--robot-look-y", "0px"); }} onKeyDown={event => { if (event.key === "Escape" && geometry.expanded) { event.preventDefault(); void expand(false); } }}>
-    <div className="companion-island">{panel}{speech}{pet}</div>
+  }} onPointerDownCapture={rest.wake} onClickCapture={rest.wake} onKeyDownCapture={rest.wake} onWheelCapture={rest.wake} onPointerLeave={() => { setHovered(false); setGaze(previous => previous.x === 0 && previous.y === 0 ? previous : { x: 0, y: 0 }); robotElement.current?.style.setProperty("--robot-look-x", "0px"); robotElement.current?.style.setProperty("--robot-look-y", "0px"); }} onKeyDown={event => { if (event.key === "Escape" && geometry.expanded) { event.preventDefault(); void expand(false); } }}>
+    <div ref={islandElement} className="companion-island" data-working={visible && working > 0 && !geometry.expanded && !bubbleVisible} onPointerDown={event => {
+      const target = event.target;
+      if (geometry.dragAxis !== "horizontal" || event.button !== 0 || !(target instanceof Element) || !target.closest(".companion-header, .companion-compact-open")) return;
+      if (target.closest("button, input, textarea, [role=tab], [data-slot=select-trigger]") && !target.closest(".companion-compact-open")) return;
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      pointer.current = { x: event.screenX, dragging: false }; dragged.current = false;
+    }} onPointerMove={event => {
+      if (!(event.buttons & 1)) { finishDrag(); return; }
+      const start = pointer.current;
+      if (!start) return;
+      if (!start.dragging) {
+        if (Math.abs(event.screenX - start.x) < 5) return;
+        start.dragging = true; dragged.current = true; setDragging(true); geometryRevision.current++;
+        moveInFlight.current = true;
+        dragOperation.current = dragOperation.current.then(() => invoke("companion_start_drag")).then(() => invoke("companion_move_horizontal")).catch(cause => { setDragging(false); setError(companionError(cause, "Não foi possível mover a ilha.")); }).finally(() => { moveInFlight.current = false; });
+      } else move();
+    }} onPointerUp={event => { finishDrag(); if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }} onPointerCancel={finishDrag} onLostPointerCapture={finishDrag}>
+      {panel}{speech}{pet}
+      {!geometry.expanded && !bubbleVisible && <>
+        <Button variant="ghost" className="companion-compact-open cursor-pointer" aria-label="Abrir ilha do Jarvito" aria-description={working > 0 ? "Jarvis está trabalhando" : undefined} aria-expanded="false" onClick={event => { if (dragged.current && event.detail !== 0) { dragged.current = false; return; } clearNotices(); void expand(true); }} />
+        {attentive.length > 0 && <Badge variant="outline" data-working={visible && working > 0} data-status={status} className={`companion-compact-badge ${statusColor[status]}`} aria-label={`${attentive.length} atividades para acompanhar`} />}
+      </>}
+    </div>
   </main>;
 }

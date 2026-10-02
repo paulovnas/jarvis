@@ -374,7 +374,7 @@ impl Orchestrator {
     }
 }
 
-fn recoverable(code: &str, tool: &str, message: &str, issues: Vec<Value>) -> AgentError {
+pub(super) fn recoverable(code: &str, tool: &str, message: &str, issues: Vec<Value>) -> AgentError {
     let mut error = AgentError::new(code, message);
     error.tool_result = Some(
         json!({

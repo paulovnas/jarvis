@@ -208,6 +208,125 @@ mod tests {
     }
 
     #[test]
+    fn historical_hidden_selections_recover_to_the_first_visible_workspace_without_changing_history(
+    ) {
+        let home = tempfile::tempdir().unwrap();
+        let mut db = Connection::open_in_memory().unwrap();
+        crate::persistence::initialize_database(&mut db).unwrap();
+        ensure_global(&mut db, home.path()).unwrap();
+        let first = insert_workspace(&mut db, "Primeiro workspace")
+            .unwrap()
+            .selection;
+        insert_workspace(&mut db, "Segundo workspace").unwrap();
+        let history = session_path(
+            home.path(),
+            GLOBAL_PROJECT_ID,
+            GLOBAL_CONVERSATION_ID,
+            false,
+        )
+        .unwrap();
+        let original = fs::read(&history).unwrap();
+        for hidden in [
+            Selection {
+                workspace_id: Some(GLOBAL_WORKSPACE_ID.into()),
+                ..Selection::default()
+            },
+            Selection {
+                workspace_id: Some(GLOBAL_WORKSPACE_ID.into()),
+                project_id: Some(GLOBAL_PROJECT_ID.into()),
+                ..Selection::default()
+            },
+            Selection {
+                workspace_id: Some(GLOBAL_WORKSPACE_ID.into()),
+                project_id: Some(GLOBAL_PROJECT_ID.into()),
+                conversation_id: Some(GLOBAL_CONVERSATION_ID.into()),
+            },
+        ] {
+            save_selection(&db, &hidden).unwrap();
+            let visible = snapshot(&db).unwrap();
+            assert_eq!(visible.selection, first);
+            assert_eq!(visible.workspaces.len(), 2);
+            assert!(visible.projects.is_empty());
+            assert!(visible.conversations.is_empty());
+            let stored: (Option<String>, Option<String>, Option<String>) = db
+                .query_row(
+                    "SELECT workspace_id, project_id, conversation_id FROM navigation_selection WHERE id=1",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(stored, (first.workspace_id.clone(), None, None));
+        }
+        assert_eq!(fs::read(&history).unwrap(), original);
+        assert_eq!(
+            read_conversation(&db, home.path(), GLOBAL_CONVERSATION_ID)
+                .unwrap()
+                .project
+                .id,
+            GLOBAL_PROJECT_ID
+        );
+    }
+
+    #[test]
+    fn hidden_selection_recovers_to_an_empty_selection_when_no_workspace_is_visible() {
+        let home = tempfile::tempdir().unwrap();
+        let mut db = Connection::open_in_memory().unwrap();
+        crate::persistence::initialize_database(&mut db).unwrap();
+        ensure_global(&mut db, home.path()).unwrap();
+        save_selection(
+            &db,
+            &Selection {
+                workspace_id: Some(GLOBAL_WORKSPACE_ID.into()),
+                project_id: Some(GLOBAL_PROJECT_ID.into()),
+                conversation_id: Some(GLOBAL_CONVERSATION_ID.into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot(&db).unwrap(),
+            LibrarySnapshot {
+                workspaces: vec![],
+                projects: vec![],
+                conversations: vec![],
+                selection: Selection::default(),
+            }
+        );
+        let stored: (Option<String>, Option<String>, Option<String>) = db
+            .query_row(
+                "SELECT workspace_id, project_id, conversation_id FROM navigation_selection WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(stored, (None, None, None));
+    }
+
+    #[test]
+    fn hidden_targets_cannot_replace_a_visible_conversation_selection() {
+        let home = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let mut db = Connection::open_in_memory().unwrap();
+        crate::persistence::initialize_database(&mut db).unwrap();
+        let workspace = insert_workspace(&mut db, "Workspace").unwrap();
+        let library = insert_project(&mut db, &workspace.workspaces[0].id, root.path()).unwrap();
+        let expected =
+            insert_conversation(&mut db, home.path(), &library.projects[0].id, "Trabalho").unwrap();
+        ensure_global(&mut db, home.path()).unwrap();
+        assert_eq!(snapshot(&db).unwrap(), expected);
+        for target in [
+            LibraryTarget::Workspace(GLOBAL_WORKSPACE_ID.into()),
+            LibraryTarget::Project(GLOBAL_PROJECT_ID.into()),
+            LibraryTarget::Conversation(GLOBAL_CONVERSATION_ID.into()),
+        ] {
+            assert_eq!(
+                select_item(&mut db, home.path(), target).unwrap_err().code,
+                "not_found"
+            );
+            assert_eq!(snapshot(&db).unwrap(), expected);
+        }
+    }
+
+    #[test]
     fn interrupted_global_indexing_recovers_the_same_journal_without_overwriting() {
         let home = tempfile::tempdir().unwrap();
         let mut db = Connection::open_in_memory().unwrap();
