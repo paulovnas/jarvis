@@ -79,8 +79,10 @@ jobs:
           cache-on-failure: true
       - name: Testar integrações nativas
         # libtest accepts several OR filters after --; generic agent/provider suites stay local.
+        # Offline Core and background-process regressions run here; live-download fixtures remain ignored.
         run: >-
           cargo test --locked --manifest-path src-tauri/Cargo.toml --lib -- system:: secrets:: secrets_linux:: updater::
+          core::install:: core::audiovisual:: background::
           agent::execution_sandbox:: agent::shell:: agent::command_sessions:: agent::processes:: agent::terminals::
           mcp::executable:: mcp::stdio:: claude:: companion:: --test-threads=1
       - name: Validar cofre Linux isolado

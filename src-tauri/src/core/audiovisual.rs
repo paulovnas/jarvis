@@ -349,7 +349,9 @@ pub(super) async fn matches_file(path: &Path, size: u64, digest: &str) -> Result
         return Ok(false);
     }
     let mut file = tokio::fs::File::open(path).await?;
-    let mut buffer = [0u8; 64 * 1024];
+    // This buffer survives an await and is embedded in every core's installer
+    // future. Heap storage leaves room for Tauri's command frames on Windows.
+    let mut buffer = vec![0u8; 64 * 1024];
     let mut hash = Sha256::new();
     loop {
         let size = file.read(&mut buffer).await?;

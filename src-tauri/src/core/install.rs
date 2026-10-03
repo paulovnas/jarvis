@@ -1503,6 +1503,10 @@ async fn release_for_dolt() -> Result<Release, CoreError> {
 }
 
 #[cfg(test)]
+#[path = "install_stack_tests.rs"]
+mod stack_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
