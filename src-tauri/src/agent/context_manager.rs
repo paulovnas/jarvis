@@ -91,10 +91,11 @@ impl StepContext {
             .filter(|value| value["role"] == "user" && value["_jarvis_runtime"] != true)
             .cloned()
             .collect();
-        let typed: Vec<ContextItem> = compaction::input(data)
-            .into_iter()
-            .map(ContextItem::classify)
-            .collect();
+        let typed: Vec<ContextItem> =
+            super::provider::project_tool_history(compaction::input(data))
+                .into_iter()
+                .map(ContextItem::classify)
+                .collect();
         let mut digest = Sha256::new();
         for item in &typed {
             digest.update(item.kind.label().as_bytes());
@@ -265,6 +266,48 @@ mod tests {
             .unwrap();
         let after = StepContext::capture(&session, &options, "stable", &[], &capabilities).unwrap();
         assert_ne!(before.id(), after.id());
+    }
+
+    #[test]
+    fn native_decision_capture_preserves_authorization_and_settled_tool_order() {
+        for status in ["published", "rejected", "revision_requested"] {
+            let fixture = Fixture::new();
+            let session = session(&fixture);
+            let options = options(ApprovalMode::Yolo);
+            session
+                .reserve("Publish the change".into(), options.clone())
+                .unwrap();
+            session.update(true, |data| {
+                data.turns.last_mut().unwrap().wire.extend([
+                    json!({"type":"function_call","call_id":"publish","name":"jarvis_propose_publication","arguments":"{}"}),
+                    json!({"role":"user","_jarvis_runtime":true,"_jarvis_authoring_decision":true,"content":format!("Native decision: {status}")}),
+                    json!({"type":"function_call_output","call_id":"publish","output":json!({"status":status}).to_string()}),
+                ]);
+            }).unwrap();
+            let saved = journal_input(&session);
+            let step =
+                StepContext::capture(&session, &options, "stable", &[], &capabilities()).unwrap();
+            let call = step
+                .input()
+                .iter()
+                .position(|item| item["type"] == "function_call")
+                .unwrap();
+            assert_eq!(step.input()[call + 1]["type"], "function_call_output");
+            assert_eq!(step.input()[call + 1]["call_id"], "publish");
+            assert_eq!(
+                step.input()[call + 2]["content"],
+                format!("Native decision: {status}")
+            );
+            assert_eq!(step.authorization().values.len(), 1);
+            assert_eq!(
+                step.authorization().values[0]["content"],
+                "Publish the change"
+            );
+            assert!(step.input().iter().all(|item| item
+                .as_object()
+                .is_none_or(|map| map.keys().all(|key| !key.starts_with("_jarvis_")))));
+            assert_eq!(journal_input(&session), saved);
+        }
     }
 
     #[test]

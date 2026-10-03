@@ -906,6 +906,48 @@ fn go_completions_replays_scoped_reasoning_and_adds_empty_fields_to_other_assist
 }
 
 #[test]
+fn go_deepseek_native_decision_keeps_published_result_and_reasoning_in_order() {
+    let (config, mut options) = go_deepseek_fixture(Protocol::OpenaiCompletions);
+    options.reasoning = Some("max".into());
+    let scope = request::scope(&config, &options);
+    let mut stream = completions::Stream::default();
+    stream.event(&json!({"choices":[{"index":0,"delta":{"reasoning_content":"Publish the approved change.","tool_calls":[{"index":0,"id":"publish","function":{"name":"jarvis_propose_publication","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}), &mut |_| Ok(())).unwrap();
+    let mut input = vec![json!({"role":"user","content":"Try again"})];
+    input.extend(stream.finish(&scope).unwrap().output);
+    input.push(json!({"role":"user","_jarvis_runtime":true,"_jarvis_authoring_decision":true,"content":"Native approval recorded"}));
+    let output =
+        json!({"status":"published","repositories":[{"commit":"fixture-commit","push":"normal"}]})
+            .to_string();
+    input.push(json!({"type":"function_call_output","call_id":"publish","output":output}));
+    let body = request::body(
+        &config,
+        &config.models[0],
+        &options,
+        "System",
+        super::super::provider_input(input),
+        vec![json!({"type":"function","name":"jarvis_propose_publication","parameters":{"type":"object","properties":{}}})],
+    ).unwrap();
+    let messages = body["messages"].as_array().unwrap();
+    assert_eq!(
+        messages
+            .iter()
+            .map(|item| item["role"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["system", "user", "assistant", "tool", "user"]
+    );
+    assert_eq!(
+        messages[2]["reasoning_content"],
+        "Publish the approved change."
+    );
+    assert_eq!(messages[2]["tool_calls"][0]["id"], "publish");
+    assert_eq!(messages[3]["tool_call_id"], "publish");
+    assert_eq!(messages[3]["content"], output);
+    assert_eq!(messages[4]["content"], "Native approval recorded");
+    assert_eq!(body["reasoning_effort"], "max");
+    assert!(!body.to_string().contains("_jarvis_"));
+}
+
+#[test]
 fn go_completions_never_replays_foreign_reasoning_or_ciphertext() {
     let (config, options) = go_deepseek_fixture(Protocol::OpenaiCompletions);
     for (field, foreign) in [

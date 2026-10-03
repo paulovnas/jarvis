@@ -807,9 +807,9 @@ pub(super) async fn stream(
 }
 
 fn provider_input(input: Vec<Value>) -> Vec<Value> {
-    repair_tool_outputs(input)
+    project_tool_history(input)
         .into_iter()
-        .map(|(_, mut item)| {
+        .map(|mut item| {
             if let Some(map) = item.as_object_mut() {
                 // Recovery and deduplication metadata is private to the journal.
                 map.retain(|key, _| !key.starts_with("_jarvis_"));
@@ -817,6 +817,45 @@ fn provider_input(input: Vec<Value>) -> Vec<Value> {
             item
         })
         .collect()
+}
+
+pub(super) fn project_tool_history(input: Vec<Value>) -> Vec<Value> {
+    let mut replay = Vec::with_capacity(input.len());
+    let mut pending = HashSet::new();
+    let mut decisions = Vec::new();
+    for (_, item) in repair_tool_outputs(input) {
+        // Approval receipts are durable before external effects, but a provider
+        // must receive every tool result before the next user message.
+        if item["role"] == "user"
+            && item["_jarvis_runtime"] == true
+            && item["_jarvis_authoring_decision"] == true
+            && !pending.is_empty()
+        {
+            decisions.push(item);
+            continue;
+        }
+        if let Some(id) = item["call_id"].as_str() {
+            match item["type"].as_str() {
+                Some("function_call") => {
+                    pending.insert(id.to_owned());
+                }
+                Some("function_call_output") => {
+                    pending.remove(id);
+                }
+                _ => {}
+            }
+        }
+        // Never move a native receipt past an ordinary user instruction.
+        if item["role"] == "user" {
+            replay.append(&mut decisions);
+        }
+        replay.push(item);
+        if pending.is_empty() {
+            replay.append(&mut decisions);
+        }
+    }
+    replay.append(&mut decisions);
+    replay
 }
 
 /// Project history only after tools have settled. Each item retains its exclusive
@@ -1417,6 +1456,47 @@ mod tests {
             replay[3],
             json!({"type":"function_call_output", "call_id":"missing", "output":super::super::journal::UNKNOWN_TOOL_OUTPUT})
         );
+        assert_eq!(provider_input(replay.clone()), replay);
+    }
+
+    #[test]
+    fn native_decisions_follow_all_parallel_results_without_crossing_user_turns() {
+        let first = json!({"role":"user","content":"Continue after interruption"});
+        let latest = json!({"role":"user","content":"Now inspect the result"});
+        let decisions = [
+            json!({"role":"user","_jarvis_runtime":true,"_jarvis_authoring_decision":true,"content":"Approved first"}),
+            json!({"role":"user","_jarvis_runtime":true,"_jarvis_authoring_decision":true,"content":"Approved second"}),
+        ];
+        let results = [
+            json!({"type":"function_call_output","call_id":"second","output":"Confirmed second"}),
+            json!({"type":"function_call_output","call_id":"first","output":"Confirmed first"}),
+        ];
+        let input = vec![
+            json!({"type":"function_call","call_id":"interrupted","name":"read","arguments":"{}"}),
+            first.clone(),
+            json!({"type":"function_call","call_id":"first","name":"write","arguments":"{}"}),
+            json!({"type":"function_call","call_id":"second","name":"write","arguments":"{}"}),
+            decisions[0].clone(),
+            results[0].clone(),
+            decisions[1].clone(),
+            results[1].clone(),
+            latest.clone(),
+        ];
+        let replay = provider_input(input);
+        assert_eq!(replay.len(), 10);
+        assert_eq!(replay[1]["call_id"], "interrupted");
+        assert_eq!(
+            replay[1]["output"],
+            super::super::journal::UNKNOWN_TOOL_OUTPUT
+        );
+        assert_eq!(replay[2], first);
+        assert_eq!(&replay[5..7], &results);
+        assert_eq!(replay[7], json!({"role":"user","content":"Approved first"}));
+        assert_eq!(
+            replay[8],
+            json!({"role":"user","content":"Approved second"})
+        );
+        assert_eq!(replay[9], latest);
         assert_eq!(provider_input(replay.clone()), replay);
     }
 
