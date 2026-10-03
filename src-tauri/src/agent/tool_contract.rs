@@ -146,6 +146,8 @@ impl Capabilities {
                 | "jarvito_list_executors"
                 | "jarvito_list_conversations"
                 | "jarvito_read_conversation"
+                | "jarvito_catalog"
+                | "jarvito_read_knowledge"
         ) || (name.starts_with("ctx_")
             && !crate::core::context::needs_approval(name))
             || name.starts_with("context7_")

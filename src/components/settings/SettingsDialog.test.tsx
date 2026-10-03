@@ -62,6 +62,81 @@ function renderSettings(onOpenChange = vi.fn()) {
 }
 
 describe("SettingsDialog provider accounts", () => {
+  it.each(["openai-codex", "opencode-go"] as const)("persists independent %s quota windows and keeps choices across the master switch", async providerKind => {
+    const user = userEvent.setup();
+    const errorToast = vi.spyOn(toast, "error");
+    const provider = account(`${providerKind}-pessoal`, { providerKind });
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_provider_accounts") return Promise.resolve([provider]);
+      if (command === "get_provider_model_references") return Promise.resolve({ references: [], bindings: [] });
+      return Promise.resolve(undefined);
+    });
+    const changed = vi.fn();
+    render(<SettingsDialog open onOpenChange={vi.fn()} onAccountsChange={changed} />);
+    await user.click(screen.getByRole("tab", { name: /Provedores/ }));
+    await user.click(await screen.findByRole("button", { name: `Detalhes de ${provider.alias}` }));
+    const fiveHour = screen.getByRole("checkbox", { name: "5 horas" });
+    const weekly = screen.getByRole("checkbox", { name: "Semanal" });
+    expect(fiveHour).toBeChecked();
+    expect(weekly).toBeChecked();
+    await user.click(fiveHour);
+    await waitFor(() => expect(fiveHour).not.toBeChecked());
+    expect(invokeMock).toHaveBeenCalledWith("set_provider_usage_visibility", { alias: provider.alias, showUsage: true, showThirdPartyUsage: false, showFiveHourUsage: false, showWeeklyUsage: true });
+    await user.click(weekly);
+    await waitFor(() => expect(weekly).not.toBeChecked());
+    expect(invokeMock).toHaveBeenCalledWith("set_provider_usage_visibility", { alias: provider.alias, showUsage: true, showThirdPartyUsage: false, showFiveHourUsage: false, showWeeklyUsage: false });
+    await user.click(screen.getByRole("switch", { name: `Limites de ${provider.alias} na statusbar` }));
+    await waitFor(() => expect(fiveHour).toHaveAttribute("aria-disabled", "true"));
+    expect(changed).toHaveBeenLastCalledWith([expect.objectContaining({ enabled: true, showUsage: false, showFiveHourUsage: false, showWeeklyUsage: false })]);
+    expect(invokeMock).toHaveBeenLastCalledWith("set_provider_usage_visibility", { alias: provider.alias, showUsage: false, showThirdPartyUsage: false });
+    await user.click(screen.getByRole("switch", { name: `Limites de ${provider.alias} na statusbar` }));
+    await waitFor(() => expect(fiveHour).not.toHaveAttribute("aria-disabled", "true"));
+    expect(fiveHour).not.toBeChecked();
+    expect(weekly).not.toBeChecked();
+    invokeMock.mockRejectedValueOnce(new Error("storage unavailable"));
+    await user.click(weekly);
+    await waitFor(() => expect(errorToast).toHaveBeenCalledWith("Não foi possível salvar a visualização dos limites."));
+    expect(weekly).not.toBeChecked();
+  }, 15_000);
+
+  it("adds Go by subscription key, refreshes its models and replaces its key without OAuth", async () => {
+    const user = userEvent.setup();
+    const go = account("opencode-go-pessoal", { providerKind: "opencode-go", models: [{ id: "glm", name: "GLM", reasoningLevels: [], defaultReasoningLevel: null }] });
+    const refreshed = { ...go, models: [{ id: "kimi", name: "Kimi", reasoningLevels: [], defaultReasoningLevel: null }] };
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_provider_accounts") return Promise.resolve([]);
+      if (command === "get_provider_model_references") return Promise.resolve({ references: [], bindings: [] });
+      if (command === "save_opencode_go_provider") return Promise.resolve(go);
+      if (command === "refresh_provider_models") return Promise.resolve([refreshed]);
+      return Promise.resolve(undefined);
+    });
+    const changed = vi.fn();
+    render(<SettingsDialog open onOpenChange={vi.fn()} onAccountsChange={changed} />);
+    await user.click(screen.getByRole("tab", { name: /Provedores/ }));
+    await user.click(screen.getByRole("button", { name: "Adicionar conta" }));
+    screen.getByRole("combobox", { name: "Provedor" }).focus();
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("option", { name: "OpenCode Go" }));
+    fireEvent.change(screen.getByLabelText("Sufixo do alias"), { target: { value: "pessoal" } });
+    fireEvent.change(screen.getByLabelText("Chave de API"), { target: { value: "private-test-key" } });
+    await user.click(screen.getByRole("button", { name: "Conectar OpenCode Go" }));
+    const detailsButton = await screen.findByRole("button", { name: `Detalhes de ${go.alias}` });
+    expect(invokeMock).toHaveBeenCalledWith("save_opencode_go_provider", { alias: go.alias, apiKey: "private-test-key", editing: false });
+    await user.click(detailsButton);
+    expect(screen.getByRole("switch", { name: `Limites de ${go.alias} na statusbar` })).toBeChecked();
+    expect(screen.queryByRole("button", { name: "Re-autorizar" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Atualizar modelos" }));
+    expect(await screen.findByText("Kimi")).toBeVisible();
+    expect(changed).toHaveBeenLastCalledWith([refreshed]);
+    await user.click(screen.getByRole("button", { name: "Atualizar chave" }));
+    expect(await screen.findByRole("dialog", { name: "Editar OpenCode Go" })).toBeVisible();
+    expect(screen.getByLabelText("Sufixo do alias")).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Chave de API"), { target: { value: "replacement-test-key" } });
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("save_opencode_go_provider", { alias: go.alias, apiKey: "replacement-test-key", editing: true }));
+    expect(invokeMock).not.toHaveBeenCalledWith("connect_provider_account", expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith("reauthorize_provider_account", expect.anything());
+  });
   it("persists model availability and replaces the catalog from the provider without reauthentication", async () => {
     const user = userEvent.setup();
     const oldModel = { id: "old", name: "Antigo", reasoningLevels: [], defaultReasoningLevel: null };
@@ -111,8 +186,8 @@ describe("SettingsDialog provider accounts", () => {
     render(<TooltipProvider delay={0}><SettingsDialog open onOpenChange={vi.fn()} /></TooltipProvider>);
     const providers = screen.getByRole("tab", { name: /Provedores/ });
     await user.hover(providers);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Provedores");
-  });
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent("Provedores"));
+  }, 15_000);
   it("identifica a aba ativa e mantém a navegação disponível ao trocar o conteúdo", async () => {
     const user = userEvent.setup();
     invokeMock.mockResolvedValue([]);

@@ -139,7 +139,9 @@ impl<'a> Bridge<'a> {
                 },
             )?;
             prompt.push_str(&exec.instructions()?);
-            prompt.push_str(&exec.context()?);
+            if !global_companion || image_specialist {
+                prompt.push_str(&exec.context()?);
+            }
         }
         prompt.push_str(context.instructions());
         prompt.push_str(graft.instructions());
@@ -325,6 +327,11 @@ impl<'a> Bridge<'a> {
                 companion_chat::tools()
             };
             definitions.push(questions::definition());
+            if !image_specialist
+                && web_search::enabled(self.runtime.state, self.runtime.home, &self.options)
+            {
+                definitions.push(web_search::definition());
+            }
             if image_generation::enabled(self.runtime.state, self.runtime.home) {
                 definitions.push(workflow::image_definition(image_specialist));
             }
@@ -928,6 +935,9 @@ impl<'a> Bridge<'a> {
             return Ok(Some("Update the Jarvis task list before finishing. Mark verified outcomes completed and real unresolved dependencies blocked.".into()));
         }
         if let Some(exec) = &self.execution {
+            if companion_chat::is_global_session(&self.owner().id) && !exec.image_generator() {
+                return Ok(None);
+            }
             if exec.barrier(self.session, self.signal.clone()).await? {
                 return Ok(Some(exec.context()?));
             }

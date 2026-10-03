@@ -1,9 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
-import { readChat, retryStatusSchema } from "./chat";
+import { readChat, retryStatusSchema, turnOptionsSchema } from "./chat";
 import { IPC_PROTOCOL_VERSION } from "@/generated/ipc";
 
 describe("Chat IPC contract", () => {
+  it("preserves model generation measurements while retaining compatibility with older histories", () => {
+    const turn = savedTurn();
+    const generation = { outputTokens: 300, durationMs: 5_000, estimated: false };
+    const payload = { ...emptyChat(), turns: [{ ...turn, steps: [{ ...turn.steps[0], generation }] }] };
+    expect(readChat(payload, "c1").turns[0].steps[0].generation).toEqual(generation);
+    expect(readChat({ ...emptyChat(), turns: [turn] }, "c1").turns[0].steps[0].generation).toBeUndefined();
+    expect(() => readChat({ ...emptyChat(), turns: [{ ...turn, steps: [{ ...turn.steps[0], generation: { ...generation, durationMs: -1 } }] }] }, "c1")).toThrow();
+  });
+  it("preserves accepted primary and fallback choices through queue and history hydration", () => {
+    const options = savedTurn().options;
+    const modelSelection = { executor: "claude", account: "", model: "sonnet", reasoning: null, fallback: { executor: "jarvis", account: "sol", model: "gpt-6.1-sol", reasoning: "high" } };
+    expect(turnOptionsSchema.parse({ ...options, modelSelection }).modelSelection).toEqual(modelSelection);
+    expect(turnOptionsSchema.parse(options).modelSelection).toBeUndefined();
+  });
   it.each(["pending", "issues"])("preserves the LSP %s state when reloading a conversation", (status) => {
     const turn = savedTurn();
     const receipt = { component: "lsp", action: "file_diagnostics", status, summary: "Diagnóstico por arquivo", sources: ["app.ts"], fingerprint: "current", durationMs: 1 };

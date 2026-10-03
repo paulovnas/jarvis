@@ -2,6 +2,10 @@ import { z } from "zod";
 import { historyPageSchema, readChat, turnOptionsSchema, type ChatSnapshot, type HistoryPage } from "@/core/chat";
 import { readLibrarySnapshot, type LibrarySnapshot } from "@/core/library";
 import { workflowSchema, type WorkflowSnapshot } from "@/core/workflow";
+import { companionModelsSchema } from "@/core/companion";
+import { accountUsageSchema } from "@/core/provider-usage";
+import { modelChoiceSchema, workflowCatalogSchema } from "@/core/workflow-catalog";
+import type { ModelChoice } from "@/core/provider-references";
 
 const sessionSchema = z.object({ deviceId: z.string().min(1), name: z.string().min(1) });
 const envelopeSchema = z.discriminatedUnion("ok", [
@@ -15,11 +19,20 @@ export const runtimeSchema = z.object({
 });
 const libraryResultSchema = z.object({ library: z.unknown(), runtime: z.array(runtimeSchema), discoveringAttention: z.boolean().optional(), attentionDiscoveryFailed: z.boolean().optional() });
 const chatResultSchema = z.object({ chat: z.unknown(), workflow: workflowSchema.nullable(), options: turnOptionsSchema.nullable() });
+const beadsResultSchema = z.object({ issues: z.array(z.object({
+  id: z.string().min(1), title: z.string(), status: z.string(), issueType: z.string(), parentId: z.string().nullable(),
+})) });
+const modelSettingsSchema = z.record(z.string(), modelChoiceSchema);
+export const remoteChoicesSchema = z.object({ models: companionModelsSchema, catalog: workflowCatalogSchema, defaults: modelSettingsSchema, overrides: modelSettingsSchema });
+export const remoteUsageSchema = z.array(accountUsageSchema.extend({ providerKind: z.enum(["openai-codex", "antigravity", "claude-code", "opencode-go"]) }));
 export type RemoteSession = z.infer<typeof sessionSchema>;
 export type RemoteRuntime = z.infer<typeof runtimeSchema>;
 export interface RemoteLibrary { library: LibrarySnapshot; runtime: RemoteRuntime[]; discoveringAttention?: boolean; attentionDiscoveryFailed?: boolean }
 export interface RemoteChat { chat: ChatSnapshot; workflow: WorkflowSnapshot | null; options: z.infer<typeof turnOptionsSchema> | null }
-export type Mutation = "message" | "question" | "approval" | "validation" | "authoring" | "cancel";
+export type RemoteBeads = z.infer<typeof beadsResultSchema>;
+export type RemoteChoices = z.infer<typeof remoteChoicesSchema>;
+export type RemoteUsageAccount = z.infer<typeof remoteUsageSchema>[number];
+export type Mutation = "message" | "question" | "approval" | "validation" | "authoring" | "cancel" | "queue_edit" | "queue_delete" | "queue_send_now" | "chat_model";
 
 export class RemoteError extends Error {
   constructor(public code: string, message: string, public status = 0) { super(message); this.name = "RemoteError"; }
@@ -84,6 +97,18 @@ export class RemoteClient {
   async chat(conversationId: string, signal?: AbortSignal): Promise<RemoteChat> {
     const result = chatResultSchema.parse(await this.request("/api/rpc", { method: "chat", params: { conversationId } }, signal));
     return { ...result, chat: readChat(result.chat, conversationId) };
+  }
+  async beads(conversationId: string, signal?: AbortSignal): Promise<RemoteBeads> {
+    return beadsResultSchema.parse(await this.request("/api/rpc", { method: "beads", params: { conversationId } }, signal));
+  }
+  async choices(conversationId: string, signal?: AbortSignal): Promise<RemoteChoices> {
+    return remoteChoicesSchema.parse(await this.request("/api/rpc", { method: "choices", params: { conversationId } }, signal));
+  }
+  async usage(refresh = true, signal?: AbortSignal): Promise<RemoteUsageAccount[]> {
+    return remoteUsageSchema.parse(await this.request("/api/rpc", { method: "usage", params: { refresh } }, signal));
+  }
+  async setChatModel(conversationId: string, key: string, choice: ModelChoice) {
+    return modelSettingsSchema.parse(await this.mutate("chat_model", { conversationId, key, choice }));
   }
   async history(conversationId: string, before: number): Promise<HistoryPage> {
     const result = historyPageSchema.parse(await this.request("/api/rpc", { method: "history", params: { conversationId, before } }));

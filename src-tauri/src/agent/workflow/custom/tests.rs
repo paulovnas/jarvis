@@ -115,11 +115,13 @@ fn standalone_native_agents_keep_the_configured_secondary_and_resumed_effective_
         let mut options = crate::agent::tests::options(ApprovalMode::Yolo);
         options.workflow = Some(Flow::Custom);
         options.custom_agent_id = Some(id.into());
+        choice.apply(&mut options);
         let agent = resolve_agent(
             &state,
             &OpenAiCodexState::default(),
             &fixture.root,
             &options,
+            "direct-chat",
             false,
         )
         .unwrap();
@@ -130,6 +132,7 @@ fn standalone_native_agents_keep_the_configured_secondary_and_resumed_effective_
             &OpenAiCodexState::default(),
             &fixture.root,
             &options,
+            "direct-chat",
             true,
         )
         .unwrap();

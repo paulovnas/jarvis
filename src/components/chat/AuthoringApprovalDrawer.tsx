@@ -166,7 +166,7 @@ export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request:
     const accepted = await onAnswer(approved, note.trim() || null);
     if (!accepted) setPending(false);
   };
-  return <Sheet open onOpenChange={open => { if (!open && !pending) void answer(false); }}>
+  return <Sheet open disablePointerDismissal onOpenChange={(_, details) => details.cancel()}>
     <SheetContent showCloseButton={false} className="dark gap-0 border-border bg-background data-[side=right]:w-[min(720px,94vw)] data-[side=right]:sm:max-w-[720px]">
       <SheetHeader className="shrink-0 border-b border-border bg-card/55 p-5 pr-6">
         <div className="mb-3 flex items-center gap-2"><Badge variant="outline" className="gap-1.5 border-primary/30 text-primary">{isPublication ? <Sparkles className="size-3" /> : isAgent ? <Bot className="size-3" /> : <Route className="size-3" />}{action} {target}</Badge>{request.catalogRevision !== null && <Badge variant="secondary" className="font-mono text-[9px]">revisão {request.catalogRevision}</Badge>}{owner && <span className="ml-auto truncate text-xs text-muted-foreground">Solicitado por {owner}</span>}</div>

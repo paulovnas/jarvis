@@ -332,6 +332,7 @@ mod tests {
                 approval_mode: ApprovalMode::Manual,
                 manual_validation: false,
                 automatic_publication: None,
+                model_selection: None,
             },
             parts: vec![],
             auxiliary_for: None,

@@ -76,6 +76,7 @@ fn options() -> TurnOptions {
         approval_mode: ApprovalMode::Yolo,
         manual_validation: false,
         automatic_publication: None,
+        model_selection: None,
     }
 }
 
@@ -195,6 +196,39 @@ fn request<'a>(credential: &'a CodexCredential, options: &'a TurnOptions) -> Req
         input: vec![json!({"role":"user","content":"Continue"})],
         tools: vec![],
         telemetry: super::super::super::telemetry::trace("session", "retry-test"),
+    }
+}
+
+#[tokio::test]
+async fn generation_deltas_reconcile_usage_across_wire_protocols() {
+    for protocol in [
+        Protocol::OpenaiCompletions,
+        Protocol::OpenaiResponses,
+        Protocol::AnthropicMessages,
+    ] {
+        let (url, server) = server(vec![(200, complete(protocol))]);
+        let auth = credential(url, protocol);
+        let options = options();
+        let (_stop, signal) = watch::channel(false);
+        let mut metrics = vec![];
+        request(&auth, &options)
+            .run(
+                signal,
+                |delta| {
+                    if let Delta::Generation(sample) = delta {
+                        metrics.push(sample);
+                    }
+                    Ok(())
+                },
+                Duration::ZERO,
+            )
+            .await
+            .unwrap();
+        assert!(metrics.iter().any(|sample| sample.estimated));
+        let final_sample = metrics.last().unwrap();
+        assert_eq!(final_sample.output_tokens, 4);
+        assert!(!final_sample.estimated);
+        assert_eq!(server.join().unwrap().len(), 1);
     }
 }
 

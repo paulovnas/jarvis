@@ -18,6 +18,7 @@ import {
   type ChatSnapshot,
 } from "./chat";
 import { pendingQuestionSchema } from "./questions";
+import { generationSchema } from "./generation";
 import { hasValidHistoryWindow, historyWindow, mergeChat } from "./chat-history";
 import {
   IPC_PROTOCOL_VERSION,
@@ -43,6 +44,7 @@ const agentEventSchema = z.discriminatedUnion("type", [
     type: z.literal("itemDelta"), stepIndex: z.number().int().nonnegative(),
     textAppend: z.string(), summaryAppend: z.string(), textReplace: z.string().optional(), summaryReplace: z.string().optional(),
     durationMs: z.number().nonnegative(), retry: retryStatusSchema.nullable(), usage: usageSchema.nullable(),
+    generation: generationSchema.nullable().optional(),
     coreActivities: agentStepSchema.shape.coreActivities,
   }),
   z.object({ type: z.literal("itemCompleted"), stepIndex: z.number().int().nonnegative(), tool: agentToolSchema }),
@@ -118,6 +120,7 @@ function applyEvent(snapshot: ChatSnapshot, event: z.infer<typeof agentEventSche
         summary: event.summaryReplace ?? `${step.summary}${event.summaryAppend}`,
         coreActivities: event.coreActivities ?? step.coreActivities,
         durationMs: event.durationMs, retry: event.retry, usage: event.usage,
+        ...(event.generation !== undefined ? { generation: event.generation ?? undefined } : {}),
       })));
     case "itemCompleted":
       return replaceLatestTurn(snapshot, turn => replaceStep(turn, event.stepIndex, step => ({

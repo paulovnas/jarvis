@@ -101,6 +101,9 @@ fn reference(
 }
 
 fn from_options(options: &TurnOptions) -> ModelChoice {
+    if let Some(choice) = &options.model_selection {
+        return choice.clone();
+    }
     ModelChoice {
         executor: options.executor,
         account: options.account.clone(),
@@ -270,6 +273,33 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
             )?);
         }
     }
+    // Unsent choices belong to the conversation even when the agent has a global default.
+    let mut overrides = db.prepare("SELECT m.conversation_id,m.agent_key,m.choice,COALESCE(c.display_title,c.title),p.name FROM conversation_agent_models m JOIN conversations c ON c.id=m.conversation_id JOIN projects p ON p.id=c.project_id ORDER BY m.conversation_id,m.agent_key").map_err(storage)?;
+    let choices = overrides
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(storage)?;
+    for row in choices {
+        let (conversation, selected, encoded, title, project) = row.map_err(storage)?;
+        references.push(reference(
+            db,
+            workflow::settings::chat::binding_key(&conversation, &selected),
+            Kind::Conversation,
+            title,
+            vec![
+                format!("Projeto: {project}"),
+                format!("Modelo do chat: {selected}"),
+            ],
+            serde_json::from_str(&encoded).map_err(storage)?,
+        )?);
+    }
     let mut statement = db.prepare("SELECT c.id,c.project_id,COALESCE(c.display_title,c.title),p.name FROM conversations c JOIN projects p ON p.id=c.project_id WHERE c.project_id<>?1 ORDER BY c.id").map_err(storage)?;
     let rows = statement
         .query_map([library::companion::GLOBAL_PROJECT_ID], |row| {
@@ -293,22 +323,32 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
         }
         let path = library::session_path(home, &project, &id, false).map_err(storage)?;
         for (options, queued) in chat_choices(&path)? {
+            if workflow::settings::chat::read(db, &id)
+                .map_err(storage)?
+                .contains_key(&workflow::settings::chat::selection_key(&options).map_err(storage)?)
+                && !queued
+            {
+                continue;
+            }
             let mut flow = options.workflow.unwrap_or_default();
             if flow == workflow::Flow::Custom && options.custom_workflow_id.is_none() {
                 // The composer applies GitHub's profile on the next send; queued turns
                 // retain their submitted choice. Custom agents override both at runtime.
                 if !queued && options.custom_agent_id.as_deref() == Some("builtin:github") {
                     flow = workflow::Flow::Publication;
-                } else if catalog.agents.iter().any(|agent| {
-                    Some(agent.id.as_str()) == options.custom_agent_id.as_deref()
-                        && agent.usage != workflow::catalog::AgentUsage::FlowOnly
-                        && agent.model.is_some()
-                }) {
+                } else if !queued
+                    && catalog.agents.iter().any(|agent| {
+                        Some(agent.id.as_str()) == options.custom_agent_id.as_deref()
+                            && agent.usage != workflow::catalog::AgentUsage::FlowOnly
+                            && agent.model.is_some()
+                    })
+                {
                     continue;
                 }
             }
             // Configured assignments are already listed above.
-            if flow != workflow::Flow::Custom
+            if !queued
+                && flow != workflow::Flow::Custom
                 && profiles.contains_key(&workflow::settings::key(flow, flow.root()))
             {
                 continue;
@@ -500,8 +540,14 @@ pub(crate) fn resolve_chat(
     id: &str,
     options: &mut TurnOptions,
 ) -> Result<(), AgentError> {
+    if workflow::settings::chat::resolve_options(db, id, options)? {
+        return Ok(());
+    }
     let choice = model_bindings::resolve(db, &format!("chat:{id}"), &from_options(options))?;
     choice.apply(options);
+    if options.model_selection.is_some() {
+        options.model_selection = Some(choice);
+    }
     Ok(())
 }
 

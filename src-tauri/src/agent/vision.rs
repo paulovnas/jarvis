@@ -24,7 +24,15 @@ fn supports_account(state: &AppState, home: &Path, alias: &str, model: &str) -> 
         accounts.iter().any(|account| {
             account.alias == alias
                 && account.enabled
-                && if account.provider_kind == "custom" {
+                && if account.provider_kind == "opencode-go" {
+                    crate::openai_codex::opencode_go::model_config(state, home, alias, model)
+                        .is_ok_and(|config| {
+                            config
+                                .models
+                                .iter()
+                                .any(|item| item.id == model && item.supports_images)
+                        })
+                } else if account.provider_kind == "custom" {
                     crate::openai_codex::custom::load(state, home, alias).is_ok_and(|config| {
                         config
                             .models
@@ -75,7 +83,7 @@ pub(super) fn enabled(state: &AppState, home: &Path, options: &TurnOptions) -> b
 fn save(state: &AppState, home: &Path, config: Config) -> Result<Config, AgentError> {
     state.with_connection(home, |connection| {
         if let Some(alias) = &config.account_alias {
-            let enabled: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1 AND enabled = 1 AND provider_kind IN ('openai-codex', 'antigravity', 'custom'))", [alias], |row| row.get(0)).map_err(|_| AgentError::storage())?;
+            let enabled: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1 AND enabled = 1 AND provider_kind IN ('openai-codex', 'antigravity', 'custom', 'opencode-go'))", [alias], |row| row.get(0)).map_err(|_| AgentError::storage())?;
             if !enabled { return Err(invalid("Selecione uma conta ativa compatível com Vision.")); }
         }
         connection.execute("INSERT INTO vision_config (id, account_alias, model, inherit_chat) VALUES (1, ?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET account_alias = excluded.account_alias, model = excluded.model, inherit_chat = excluded.inherit_chat", params![config.account_alias, config.model, config.inherit_chat]).map_err(|_| AgentError::storage())?;
@@ -219,6 +227,7 @@ pub(super) async fn execute(
             approval_mode: ApprovalMode::Yolo,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         };
         let vision_session = format!("{conversation}-vision");
         let vision_trace = super::telemetry::trace(conversation, &vision_session);
@@ -237,6 +246,47 @@ pub(super) async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn go_vision_uses_confirmed_catalog_capability_instead_of_model_name() {
+        let home = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        let config = json!({"baseUrl":crate::openai_codex::opencode_go::BASE_URL,"protocol":"anthropic-messages","authMode":"x-api-key","tokenField":"max_tokens","replayUnsignedThinking":true,"models":[{"id":"qwen3.8-max","name":"Qwen","contextWindow":200000,"maxOutputTokens":32000,"supportsImages":true,"supportsTools":true,"reasoning":"none","reasoningLevels":[],"defaultReasoningLevel":null,"thinkingBudget":null}]});
+        state.with_connection(home.path(), |db| {
+            db.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('opencode-go-vision','opencode-go','opencode-go:fixture')",[]).map_err(|_| AgentError::storage())?;
+            db.execute("INSERT INTO opencode_go_catalogs(alias,catalog) VALUES ('opencode-go-vision',?1)",[json!([config.clone()]).to_string()]).map_err(|_| AgentError::storage())?;
+            Ok::<_,AgentError>(())
+        }).unwrap();
+        assert!(supports_account(
+            &state,
+            home.path(),
+            "opencode-go-vision",
+            "qwen3.8-max"
+        ));
+        assert!(!supports_account(
+            &state,
+            home.path(),
+            "opencode-go-vision",
+            "gpt-unknown"
+        ));
+        let mut text_only = config;
+        text_only["models"][0]["supportsImages"] = json!(false);
+        state
+            .with_connection(home.path(), |db| {
+                db.execute(
+                    "UPDATE opencode_go_catalogs SET catalog=?1",
+                    [json!([text_only]).to_string()],
+                )
+                .map_err(|_| AgentError::storage())
+            })
+            .unwrap();
+        assert!(!supports_account(
+            &state,
+            home.path(),
+            "opencode-go-vision",
+            "qwen3.8-max"
+        ));
+    }
     #[test]
     fn custom_vision_uses_declared_capability_not_model_name() {
         let home = tempfile::tempdir().unwrap();
@@ -302,6 +352,7 @@ mod tests {
             approval_mode: ApprovalMode::Yolo,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         };
         let (_send, signal) = watch::channel(false);
         assert_eq!(
@@ -379,6 +430,7 @@ mod tests {
             approval_mode: ApprovalMode::Yolo,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         };
         let result = execute(
             &state,

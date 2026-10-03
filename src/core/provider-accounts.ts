@@ -18,12 +18,15 @@ export type ProviderAccount = {
   providerKind: string;
   enabled: boolean;
   showUsage?: boolean;
+  showFiveHourUsage?: boolean;
+  showWeeklyUsage?: boolean;
   showThirdPartyUsage?: boolean;
   usageAlert?: ProviderUsageAlert | null;
   createdAt: number;
   email: string | null;
   accountType: "personal" | "enterprise" | "unknown";
   models: ProviderModel[];
+  visionModels?: string[];
   modelsAvailable: boolean;
   modelsStale?: boolean;
   disabledModels?: string[];
@@ -66,6 +69,8 @@ function isProviderAccount(value: unknown): value is ProviderAccount {
     (account.custom === undefined || customConfigSchema.safeParse(account.custom).success) &&
     typeof account.enabled === "boolean" &&
     (account.showUsage === undefined || typeof account.showUsage === "boolean") &&
+    (account.showFiveHourUsage === undefined || typeof account.showFiveHourUsage === "boolean") &&
+    (account.showWeeklyUsage === undefined || typeof account.showWeeklyUsage === "boolean") &&
     (account.showThirdPartyUsage === undefined || typeof account.showThirdPartyUsage === "boolean") &&
     (account.usageAlert == null || isUsageAlert(account.usageAlert)) &&
     typeof account.createdAt === "number" &&
@@ -76,6 +81,7 @@ function isProviderAccount(value: unknown): value is ProviderAccount {
     Array.isArray(account.models) &&
     account.models.every(isProviderModel) &&
     (account.disabledModels === undefined || (Array.isArray(account.disabledModels) && account.disabledModels.every((id: unknown) => typeof id === "string" && id.length > 0))) &&
+    (account.visionModels === undefined || (Array.isArray(account.visionModels) && account.visionModels.every((id: unknown) => typeof id === "string" && id.length > 0))) &&
     typeof account.modelsAvailable === "boolean"
     && (account.modelsStale === undefined || typeof account.modelsStale === "boolean")
   );
@@ -101,14 +107,14 @@ export function mergeModelCatalogRefresh(current: ProviderAccount[], fetched: Pr
   const refreshed: string[] = [];
   const failed: string[] = [];
   const accounts = current.map(account => {
-    if (!account.enabled || !["openai-codex", "antigravity"].includes(account.providerKind)) return account;
+    if (!account.enabled || !["openai-codex", "antigravity", "opencode-go"].includes(account.providerKind)) return account;
     const next = byAlias.get(account.alias);
     if (!next || next.providerKind !== account.providerKind || !next.modelsAvailable || next.modelsStale) {
       failed.push(account.alias);
       return account;
     }
     refreshed.push(account.alias);
-    return { ...account, models: next.models, modelsAvailable: true, modelsStale: false, disabledModels: next.disabledModels ?? account.disabledModels ?? [] };
+    return { ...account, models: next.models, visionModels: next.visionModels, modelsAvailable: true, modelsStale: false, disabledModels: next.disabledModels ?? account.disabledModels ?? [] };
   });
   return { accounts, refreshed, failed };
 }

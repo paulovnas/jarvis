@@ -81,6 +81,36 @@ it("loads a read-only transcript only after clicking an agent card", async () =>
   expect(screen.queryByRole("button",{name:/Enviar|Autorizar/})).not.toBeInTheDocument();
 });
 
+it("keeps each worker rate isolated and shows its current measurement inside the opened agent", async () => {
+  const user = userEvent.setup();
+  vi.mocked(invoke).mockResolvedValue({ ...emptyChat(), conversationId: "worker1", turns: [] });
+  const first = { ...agent, generation: { outputTokens: 500, durationMs: 5_000, estimated: false } };
+  const second = { ...agent, id: "worker2", role: "reviewer" as const, title: "Revisar busca", generation: { outputTokens: 100, durationMs: 4_000, estimated: true } };
+  const workflow = { data: { conversationId: "c1", revision: 1, flow: "planned" as const, agents: [first, second] }, error: null, loading: false, retry: vi.fn() };
+  const { rerender } = render(<WorkflowAgents conversationId="c1" workflow={workflow} />);
+  const firstCard = screen.getByRole("button", { name: "Abrir agente Construtor: Implementar busca" });
+  const secondCard = screen.getByRole("button", { name: "Abrir agente Revisor: Revisar busca" });
+  expect(within(firstCard).getByLabelText("Velocidade média medida: 100,0 tokens por segundo")).toHaveTextContent("100,0 tok/s");
+  expect(within(secondCard).getByLabelText("Velocidade média estimada: 25,0 tokens por segundo")).toHaveTextContent("≈ 25,0 tok/s");
+  expect(invoke).not.toHaveBeenCalled();
+  await user.click(firstCard);
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByLabelText("Velocidade média medida: 100,0 tokens por segundo")).toBeInTheDocument();
+  rerender(<WorkflowAgents conversationId="c1" workflow={{ ...workflow, data: { ...workflow.data, agents: [{ ...first, generation: { outputTokens: 750, durationMs: 5_000, estimated: false } }, second] } }} />);
+  expect(within(dialog).getByLabelText("Velocidade média medida: 150,0 tokens por segundo")).toHaveTextContent("150,0 tok/s");
+  expect(within(secondCard).getByLabelText("Velocidade média estimada: 25,0 tokens por segundo")).toHaveTextContent("≈ 25,0 tok/s");
+});
+
+it("retains worker throughput while waiting instead of diluting it with tool time", () => {
+  vi.useFakeTimers();
+  try {
+    const current = { ...agent, status: "waiting" as const, activeSince: null, generation: { outputTokens: 500, durationMs: 10_000, estimated: false } };
+    render(<WorkflowAgents conversationId="c1" workflow={{ data: { conversationId: "c1", revision: 1, flow: "planned", agents: [current] }, error: null, loading: false, retry: vi.fn() }} />);
+    act(() => { vi.advanceTimersByTime(3_600_000); });
+    expect(screen.getByLabelText("Velocidade média medida: 50,0 tokens por segundo")).toHaveTextContent("50,0 tok/s");
+  } finally { vi.useRealTimers(); }
+});
+
 it("shows only the GitHub worker for publication and marks a closed request with attention", () => {
   const root = { ...agent, id: "main", parentId: null, role: "github" as const, title: "GitHub", options: { ...agent.options, workflow: "publication" as const } };
   const github = { ...agent, id: "github-worker", role: "github" as const, title: "Publicar alterações", status: "waiting" as const, options: { ...agent.options, workflow: "publication" as const }, pendingApproval: { tool: { id: "approval", name: "bash", args: { command: "git status" }, status: "pending" as const, output: "", durationMs: 0 }, policy: null } };

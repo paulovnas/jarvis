@@ -99,6 +99,7 @@ impl Request<'_> {
                 },
             );
             let request_started = std::time::Instant::now();
+            let mut generation = super::super::generation::Clock::new(request_started);
             let mut first_event_ms = None;
             let mut reconnecting = retries > 0 || auth_retried;
             let result = stream_once(
@@ -113,6 +114,7 @@ impl Request<'_> {
                 signal.clone(),
                 &self.telemetry,
                 |delta| {
+                    let changed = generation.observe(&delta);
                     if first_event_ms.is_none()
                         && matches!(delta, Delta::Text(_) | Delta::Summary(_))
                     {
@@ -127,7 +129,13 @@ impl Request<'_> {
                         emit(Delta::Retry(None))?;
                         reconnecting = false;
                     }
-                    emit(delta)
+                    emit(delta)?;
+                    if changed {
+                        if let Some(metrics) = generation.snapshot(std::time::Instant::now()) {
+                            emit(Delta::Generation(metrics))?;
+                        }
+                    }
+                    Ok(())
                 },
             )
             .await;
@@ -164,6 +172,10 @@ impl Request<'_> {
             );
             match result {
                 Ok(response) => {
+                    generation.complete_response(&response);
+                    if let Some(metrics) = generation.snapshot(std::time::Instant::now()) {
+                        emit(Delta::Generation(metrics))?;
+                    }
                     if reconnecting { emit(Delta::Retry(None))?; }
                     return Ok(response);
                 }

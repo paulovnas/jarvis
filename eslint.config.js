@@ -10,6 +10,7 @@ export default tseslint.config(
     ignores: [
       "dist",
       "browser-extension/dist",
+      "browser-extension/dist-firefox",
       "src-tauri",
       "docs",
       "src/components/ui",

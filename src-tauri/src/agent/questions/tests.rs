@@ -37,6 +37,7 @@ fn prepare(fixture: &Fixture) -> (Arc<Session>, ToolCall, watch::Receiver<bool>)
                 approval_mode: ApprovalMode::Manual,
                 manual_validation: false,
                 automatic_publication: None,
+                model_selection: None,
             },
         )
         .unwrap();
@@ -393,6 +394,7 @@ async fn available_in_plan_build_manual_yolo_without_an_approval_prompt() {
                 approval_mode,
                 manual_validation: false,
                 automatic_publication: None,
+                model_selection: None,
             };
             assert!(authorize(&session, &tool, &options, false, signal.clone())
                 .await

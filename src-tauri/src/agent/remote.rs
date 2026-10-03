@@ -140,6 +140,22 @@ struct Conversation {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Usage {
+    refresh: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ChatModel {
+    #[serde(deserialize_with = "identifier")]
+    conversation_id: String,
+    #[serde(deserialize_with = "identifier")]
+    key: String,
+    choice: workflow::settings::ModelChoice,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct History {
     #[serde(deserialize_with = "identifier")]
@@ -156,6 +172,25 @@ struct Message {
     conversation_id: String,
     content: String,
     options: Option<TurnOptions>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Queued {
+    #[serde(deserialize_with = "identifier")]
+    conversation_id: String,
+    #[serde(deserialize_with = "identifier")]
+    message_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct QueueEdit {
+    #[serde(deserialize_with = "identifier")]
+    conversation_id: String,
+    #[serde(deserialize_with = "identifier")]
+    message_id: String,
+    content: String,
 }
 
 #[derive(Deserialize)]
@@ -285,7 +320,9 @@ async fn chat_result(app: &tauri::AppHandle, chat: ChatSnapshot) -> Result<Value
     .await?;
     app.state::<RuntimeState>()
         .observe(&chat.conversation_id, &encode(&workflow)?)?;
-    let options = inherited_options(&chat);
+    let mut options = inherited_options(&chat);
+    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    workflow::settings::chat::hydrate_idle(&app.state::<AppState>(), &home, &chat, &mut options)?;
     Ok(json!({"chat":chat,"workflow":workflow,"options":options}))
 }
 
@@ -299,6 +336,146 @@ async fn workflow_view(app: &tauri::AppHandle, id: String) -> Result<Value, Agen
         )
         .await?,
     )
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BeadSummary {
+    id: String,
+    title: String,
+    status: String,
+    issue_type: String,
+    parent_id: Option<String>,
+}
+
+fn conversation_beads(
+    issues: Vec<crate::core::beads::dashboard::Issue>,
+    conversation_id: &str,
+    workflow: &Value,
+) -> Vec<BeadSummary> {
+    let allowed: HashSet<_> = issues
+        .iter()
+        .filter(|issue| {
+            issue.metadata["jarvis_conversation"]
+                .as_str()
+                .is_none_or(|owner| owner == conversation_id)
+        })
+        .map(|issue| issue.id.clone())
+        .collect();
+    let mut parents = HashMap::new();
+    for issue in &issues {
+        if let Some(parent) = issue.parent.as_ref().or_else(|| {
+            issue
+                .dependencies
+                .iter()
+                .find(|link| link.dependency_type == "parent-child")
+                .map(|link| &link.id)
+        }) {
+            parents.insert(issue.id.clone(), parent.clone());
+        }
+    }
+    for issue in &issues {
+        for link in issue
+            .dependents
+            .iter()
+            .filter(|link| link.dependency_type == "parent-child")
+        {
+            parents
+                .entry(link.id.clone())
+                .or_insert_with(|| issue.id.clone());
+        }
+    }
+    let mut scoped: HashSet<_> = issues
+        .iter()
+        .filter(|issue| issue.metadata["jarvis_conversation"] == conversation_id)
+        .map(|issue| issue.id.clone())
+        .collect();
+    if workflow["conversationId"] == conversation_id {
+        scoped.extend(
+            workflow["agents"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|agent| agent["beadId"].as_str())
+                .map(str::to_owned),
+        );
+        scoped.extend(
+            workflow["validation"]["epicIds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned),
+        );
+    }
+    scoped.retain(|id| allowed.contains(id));
+    loop {
+        let before = scoped.len();
+        let ancestors: Vec<_> = scoped
+            .iter()
+            .filter_map(|id| parents.get(id))
+            .filter(|id| allowed.contains(*id))
+            .cloned()
+            .collect();
+        scoped.extend(ancestors);
+        if scoped.len() == before {
+            break;
+        }
+    }
+    loop {
+        let before = scoped.len();
+        for issue in &issues {
+            if allowed.contains(&issue.id)
+                && parents.get(&issue.id).is_some_and(|id| scoped.contains(id))
+            {
+                scoped.insert(issue.id.clone());
+            }
+        }
+        if scoped.len() == before {
+            break;
+        }
+    }
+    issues
+        .iter()
+        .filter(|issue| scoped.contains(&issue.id))
+        .map(|issue| BeadSummary {
+            id: issue.id.clone(),
+            title: issue.title.clone(),
+            status: issue.status.clone(),
+            issue_type: issue.issue_type.clone(),
+            parent_id: parents
+                .get(&issue.id)
+                .filter(|id| scoped.contains(*id))
+                .cloned(),
+        })
+        .collect()
+}
+
+async fn beads_result(
+    app: &tauri::AppHandle,
+    conversation_id: String,
+) -> Result<Value, AgentError> {
+    let details = encode(
+        library::get_conversation(
+            app.clone(),
+            app.state::<AppState>(),
+            conversation_id.clone(),
+        )
+        .await?,
+    )?;
+    let project_id = details["project"]["id"]
+        .as_str()
+        .ok_or_else(AgentError::internal)?
+        .to_owned();
+    let workflow = workflow_view(app, conversation_id.clone()).await?;
+    let issues = crate::core::beads::dashboard::get_project_beads(
+        app.clone(),
+        app.state::<AppState>(),
+        project_id,
+    )
+    .await
+    .map_err(|cause| AgentError::new("beads_unavailable", &cause.message))?;
+    Ok(json!({"issues":conversation_beads(issues, &conversation_id, &workflow)}))
 }
 
 fn pending_validation(workflow: &Value) -> bool {
@@ -366,15 +543,47 @@ fn summary(id: &str, chat: Option<&Value>, workflow: Option<&Value>) -> Value {
         }
     }
     let active_turn_id = chat
-        .and_then(|chat| chat.get("activeTurnId"))
+        .and_then(|chat| chat.get("activeTurnId").filter(|id| id.is_string()))
         .or_else(|| root.and_then(|root| root.get("activeTurnId")));
     let compacting = chat
         .and_then(|chat| chat["compacting"].as_bool())
         .unwrap_or(false);
+    let latest_turn_at = chat
+        .and_then(|chat| chat["turns"].as_array()?.last()?["createdAt"].as_u64())
+        .unwrap_or(0);
+    let terminal_worker = workflow
+        .and_then(|view| view["agents"].as_array())
+        .into_iter()
+        .flatten()
+        .filter(|agent| agent["id"] != "main")
+        .filter(|agent| {
+            agent["updatedAt"]
+                .as_u64()
+                .unwrap_or(0)
+                .max(agent["startedAt"].as_u64().unwrap_or(0))
+                >= latest_turn_at
+        })
+        .filter_map(|agent| agent["status"].as_str())
+        .filter(|status| matches!(*status, "failed" | "blocked"))
+        .max_by_key(|status| *status == "failed");
     let status = if !attention_items.is_empty() {
         "waiting"
-    } else if compacting || active_turn_id.is_some_and(|id| id.is_string()) {
+    } else if compacting
+        || active_turn_id.is_some_and(|id| id.is_string())
+        || workflow.is_some_and(|view| {
+            view["agents"].as_array().is_some_and(|agents| {
+                agents.iter().any(|agent| {
+                    matches!(
+                        agent["status"].as_str(),
+                        Some("queued" | "running" | "waiting")
+                    )
+                })
+            })
+        })
+    {
         "running"
+    } else if let Some(status) = terminal_worker {
+        status
     } else {
         chat.and_then(|chat| chat["turns"].as_array()?.last()?["status"].as_str())
             .or_else(|| root.and_then(|root| root["status"].as_str()))
@@ -572,9 +781,53 @@ pub(crate) async fn dispatch(
             let _: Empty = decode(params)?;
             return library_result(&app).await;
         }
+        "usage" => {
+            let params: Usage = decode(params)?;
+            return encode(
+                crate::companion::get_companion_usage(app, Some(params.refresh.unwrap_or(true)))
+                    .await
+                    .map_err(|message| AgentError::new("remote_usage", &message))?,
+            );
+        }
+        "choices" => {
+            let params: Conversation = decode(params)?;
+            // Validate the conversation before probing any provider runtimes.
+            let overrides = workflow::settings::chat::get_chat_agent_models(
+                app.clone(),
+                app.state::<AppState>(),
+                params.conversation_id,
+            )
+            .await?;
+            let (models, catalog, defaults) = tokio::try_join!(
+                companion_chat::get_companion_models(app.clone()),
+                workflow::catalog::get_workflow_catalog(app.clone(), app.state::<AppState>()),
+                workflow::settings::get_agent_models(app.clone(), app.state::<AppState>()),
+            )?;
+            return Ok(
+                json!({"models":models,"catalog":catalog,"defaults":defaults,"overrides":overrides}),
+            );
+        }
+        "chat_model" => {
+            let params: ChatModel = decode(params)?;
+            return encode(
+                workflow::settings::chat::set_chat_agent_model(
+                    app.clone(),
+                    app.state::<AppState>(),
+                    app.state::<OpenAiCodexState>(),
+                    params.conversation_id,
+                    params.key,
+                    params.choice,
+                )
+                .await?,
+            );
+        }
         "chat" => {
             let params: Conversation = decode(params)?;
             return chat_result(&app, chat(&app, params.conversation_id).await?).await;
+        }
+        "beads" => {
+            let params: Conversation = decode(params)?;
+            return beads_result(&app, params.conversation_id).await;
         }
         "history" => {
             let params: History = decode(params)?;
@@ -598,6 +851,48 @@ pub(crate) async fn dispatch(
                 )
                 .await?,
             );
+        }
+        "queue_edit" => {
+            let params: QueueEdit = decode(params)?;
+            let agent = app.state::<AgentState>();
+            let session = agent
+                .runtime_session(&app, &app.state::<AppState>(), &params.conversation_id)
+                .await?;
+            session.edit_queued(&params.message_id, params.content)?;
+            let snapshot = session.snapshot()?;
+            (session.emit)(snapshot.clone());
+            agent.release_idle(&session);
+            return encode(snapshot);
+        }
+        "queue_delete" => {
+            let params: Queued = decode(params)?;
+            return encode(
+                queue::delete_queued_message(
+                    app.clone(),
+                    app.state::<AppState>(),
+                    app.state::<AgentState>(),
+                    params.conversation_id,
+                    params.message_id,
+                )
+                .await?,
+            );
+        }
+        "queue_send_now" => {
+            let params: Queued = decode(params)?;
+            let delivery = encode(
+                queue::send_queued_message_now(
+                    app.clone(),
+                    app.state::<AppState>(),
+                    app.state::<AgentState>(),
+                    params.conversation_id,
+                    params.message_id,
+                )
+                .await?,
+            )?;
+            if delivery["delivered"] != true {
+                return Err(AgentError::new("queue_not_delivered", "A execução não pode receber esta mensagem agora. Sua mensagem foi preservada na fila."));
+            }
+            return Ok(delivery);
         }
         "message" => {
             let params: Message = decode(params)?;
@@ -835,6 +1130,234 @@ mod tests {
             json!({"kind":"submit","conversationId":"chat","batchId":"batch","approved":true})
         )
         .is_err());
+        assert!(decode::<QueueEdit>(
+            json!({"conversationId":"chat","messageId":"queue","content":"Hi","options":{}})
+        )
+        .is_err());
+        assert!(decode::<Queued>(json!({"conversationId":"chat","messageId":""})).is_err());
+        let edit: QueueEdit = decode(
+            json!({"conversationId":"chat","messageId":"exact-queue-id","content":"Revised"}),
+        )
+        .unwrap();
+        assert_eq!(edit.message_id, "exact-queue-id");
+    }
+
+    #[test]
+    fn remote_model_edit_is_scoped_to_a_conversation_and_preserves_the_secondary_choice() {
+        let payload = json!({
+            "conversationId":"chat-a", "key":"standard/builder",
+            "choice":{"account":"personal","model":"sol","reasoning":"high",
+                "fallback":{"executor":"claude","account":"","model":"sonnet","reasoning":"high"}}
+        });
+        let edit: ChatModel = decode(payload.clone()).unwrap();
+        edit.choice.validate_shape().unwrap();
+        assert_eq!(edit.conversation_id, "chat-a");
+        assert_eq!(edit.key, "standard/builder");
+        assert_eq!(edit.choice.account, "personal");
+        let fallback = edit.choice.fallback.unwrap();
+        assert_eq!(fallback.executor, crate::claude::Executor::Claude);
+        assert_eq!(fallback.model, "sonnet");
+
+        let mut invalid = payload.clone();
+        invalid["applyToAgent"] = json!(true);
+        assert!(decode::<ChatModel>(invalid).is_err());
+        let mut invalid = payload.clone();
+        invalid["key"] = json!("");
+        assert!(decode::<ChatModel>(invalid).is_err());
+        let mut invalid = payload;
+        invalid["choice"]["credential"] = json!("not-accepted");
+        assert!(decode::<ChatModel>(invalid).is_err());
+        assert!(decode::<Usage>(json!({"account":"personal"})).is_err());
+        assert_eq!(
+            decode::<Usage>(json!({"refresh":true})).unwrap().refresh,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn remote_queue_uses_admitted_model_choices_and_keeps_the_active_workflow_scope() {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        let mut original = options(ApprovalMode::Yolo);
+        original.workflow = Some(workflow::Flow::Standard);
+        session
+            .reserve("Current task".into(), original.clone())
+            .unwrap();
+        let before = session.snapshot().unwrap();
+        let mut selected = original.clone();
+        selected.model = "phone-model".into();
+        selected.reasoning = Some("high".into());
+        let request: Message = decode(json!({
+            "conversationId":before.conversation_id,
+            "content":"Continue with the selected model", "options":selected,
+        }))
+        .unwrap();
+        let mut admitted = request.options.unwrap();
+        // start_agent_turn discards renderer snapshots, then captures this choice
+        // before handing the accepted options to the native queue.
+        admitted.model_selection =
+            Some(workflow::settings::chat::effective_choice(&admitted, None));
+        session
+            .submit_message(request.content, admitted.clone(), vec![])
+            .unwrap();
+        admitted.workflow = Some(workflow::Flow::Designer);
+        session
+            .submit_message("Different flow".into(), admitted, vec![])
+            .unwrap();
+        let after = session.snapshot().unwrap();
+        assert_eq!(after.active_turn_id, before.active_turn_id);
+        assert_eq!(
+            encode(&after.turns[0].options).unwrap(),
+            encode(&before.turns[0].options).unwrap()
+        );
+        assert_eq!(after.queued_messages.len(), 2);
+        assert_eq!(
+            after.queued_messages[0].options.workflow,
+            Some(workflow::Flow::Standard)
+        );
+        assert_eq!(after.queued_messages[0].options.model, "phone-model");
+        assert_eq!(
+            after.queued_messages[0].options.reasoning.as_deref(),
+            Some("high")
+        );
+        // A queued continuation never changes the scope of the in-flight task.
+        assert_eq!(after.queued_messages[1].options.workflow, original.workflow);
+        assert_eq!(after.queued_messages[1].options.model, original.model);
+    }
+
+    #[test]
+    fn remote_summary_detects_live_workers_when_root_is_finished() {
+        let chat = json!({"revision":20,"activeTurnId":null,"turns":[{"status":"completed"}]});
+        let mut workflow = json!({"revision":5,"agents":[{"id":"main","status":"completed"},{"id":"worker","status":"running"}]});
+        assert_eq!(
+            summary("chat", Some(&chat), Some(&workflow))["status"],
+            "running"
+        );
+        workflow["agents"][1]["status"] = json!("queued");
+        assert_eq!(
+            summary("chat", Some(&chat), Some(&workflow))["status"],
+            "running"
+        );
+        workflow["agents"][1]["status"] = json!("completed");
+        workflow["agents"][0]["activeTurnId"] = json!("new-root");
+        assert_eq!(
+            summary("chat", Some(&chat), Some(&workflow))["activeTurnId"],
+            "new-root"
+        );
+    }
+
+    #[test]
+    fn remote_summary_reports_current_terminal_worker_failure_without_poisoning_a_newer_turn() {
+        let mut chat =
+            json!({"activeTurnId":null,"turns":[{"status":"completed","createdAt":1_000}]});
+        let mut workflow = json!({"agents":[
+            {"id":"main","status":"completed"},
+            {"id":"worker","status":"failed","startedAt":1_100,"updatedAt":1_200}
+        ]});
+        assert_eq!(
+            summary("chat", Some(&chat), Some(&workflow))["status"],
+            "failed"
+        );
+        workflow["agents"][1]["status"] = json!("blocked");
+        assert_eq!(
+            summary("chat", Some(&chat), Some(&workflow))["status"],
+            "blocked"
+        );
+        workflow["agents"][1]["status"] = json!("failed");
+        chat["turns"][0]["createdAt"] = json!(2_000);
+        assert_eq!(
+            summary("chat", Some(&chat), Some(&workflow))["status"],
+            "completed"
+        );
+    }
+
+    #[test]
+    fn remote_beads_view_keeps_owned_epics_and_nested_tasks_without_other_conversations() {
+        use crate::core::beads::dashboard::{Issue, Relation};
+        let issues = vec![
+            Issue {
+                id: "epic".into(),
+                title: "Current plan".into(),
+                issue_type: "epic".into(),
+                status: "in_progress".into(),
+                metadata: json!({"jarvis_conversation":"chat"}),
+                ..Issue::default()
+            },
+            Issue {
+                id: "task".into(),
+                title: "Work".into(),
+                parent: Some("epic".into()),
+                status: "open".into(),
+                ..Issue::default()
+            },
+            Issue {
+                id: "nested".into(),
+                dependencies: vec![Relation {
+                    id: "task".into(),
+                    dependency_type: "parent-child".into(),
+                    ..Relation::default()
+                }],
+                ..Issue::default()
+            },
+            Issue {
+                id: "other".into(),
+                metadata: json!({"jarvis_conversation":"other-chat"}),
+                ..Issue::default()
+            },
+        ];
+        let view = encode(conversation_beads(issues, "chat", &Value::Null)).unwrap();
+        assert_eq!(view.as_array().unwrap().len(), 3);
+        assert_eq!(view[0]["issueType"], "epic");
+        assert_eq!(view[1]["parentId"], "epic");
+        assert_eq!(view[2]["parentId"], "task");
+        assert!(view[0].get("description").is_none());
+        assert!(view[0].get("metadata").is_none());
+    }
+
+    #[test]
+    fn remote_beads_links_imported_worker_tasks_to_their_epic_without_guessing_ownership() {
+        use crate::core::beads::dashboard::Issue;
+        let issues = vec![
+            Issue {
+                id: "imported-epic".into(),
+                issue_type: "epic".into(),
+                ..Issue::default()
+            },
+            Issue {
+                id: "worker-task".into(),
+                parent: Some("imported-epic".into()),
+                ..Issue::default()
+            },
+            Issue {
+                id: "unrelated-epic".into(),
+                ..Issue::default()
+            },
+            Issue {
+                id: "other-chat-task".into(),
+                parent: Some("imported-epic".into()),
+                metadata: json!({"jarvis_conversation":"other-chat"}),
+                ..Issue::default()
+            },
+        ];
+        let workflow = json!({"conversationId":"chat","agents":[{"beadId":"worker-task"}]});
+        let view = encode(conversation_beads(issues.clone(), "chat", &workflow)).unwrap();
+        assert_eq!(view.as_array().unwrap().len(), 2);
+        assert_eq!(view[1]["parentId"], "imported-epic");
+        assert!(conversation_beads(
+            issues.clone(),
+            "chat",
+            &json!({"conversationId":"other-chat","agents":[{"beadId":"worker-task"}]})
+        )
+        .is_empty());
+        assert_eq!(
+            conversation_beads(
+                issues,
+                "chat",
+                &json!({"conversationId":"chat","validation":{"epicIds":["imported-epic"]}})
+            )
+            .len(),
+            2
+        );
     }
 
     #[test]

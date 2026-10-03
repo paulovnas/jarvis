@@ -41,6 +41,7 @@ pub(super) fn resolve_agent(
     oauth: &OpenAiCodexState,
     home: &Path,
     options: &TurnOptions,
+    conversation_id: &str,
     preserve_model: bool,
 ) -> Result<catalog::AgentDefinition, AgentError> {
     let id = options
@@ -60,6 +61,16 @@ pub(super) fn resolve_agent(
     } {
         agent.model = settings::load(state, home)?.remove(&settings::key(flow, role));
     }
+    let saved = settings::chat::selected(state, home, conversation_id, options)?;
+    agent.model = if preserve_model {
+        options.model_selection.clone().or(saved).or(agent.model)
+    } else {
+        // The requested primary belongs to this turn; the definition only supplies its fallback.
+        Some(settings::chat::effective_choice(
+            options,
+            saved.as_ref().or(agent.model.as_ref()),
+        ))
+    };
     let mut choice = options.clone();
     if !preserve_model {
         apply_model(&mut choice, &agent);
@@ -338,6 +349,7 @@ fn prepare(
         job.attempts = job.attempts.saturating_add(1);
         job.updated_at = now();
         job.duration_ms = 0;
+        job.generation = None;
         job.handoff = None;
         job.error = None;
         job.recovery = None;
@@ -389,6 +401,7 @@ fn prepare(
         created_at: now(),
         updated_at: now(),
         duration_ms: 0,
+        generation: None,
         attempts: 1,
         recovery_attempts: 0,
         recovery_attempt_pending: false,

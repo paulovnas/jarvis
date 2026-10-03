@@ -368,8 +368,7 @@ fn prepare_spawn(exec: &Execution, input: Dispatch) -> Result<(Job, bool), Agent
         .options
         .clone();
     let image_profile = if input.role == Role::ImageGenerator {
-        settings::load(&exec.hub.env.state, &exec.hub.env.home)?
-            .remove(&settings::key(Flow::ImageGenerator, Role::ImageGenerator))
+        settings::chat::worker_choice(&exec.hub, Flow::ImageGenerator, Role::ImageGenerator)?
     } else {
         None
     };
@@ -443,6 +442,7 @@ fn prepare_spawn(exec: &Execution, input: Dispatch) -> Result<(Job, bool), Agent
             created_at: now(),
             updated_at: now(),
             duration_ms: 0,
+            generation: None,
             attempts: 1,
             recovery_attempts: 0,
             recovery_attempt_pending: false,
@@ -697,6 +697,7 @@ fn prepare_retry(
     };
     job.updated_at = now();
     job.duration_ms = 0;
+    job.generation = None;
     if job.run_id != state.run_id {
         job.options = state.options.clone();
         settings::apply(&mut job.options, &state.profiles, flow, job.role);
@@ -1300,15 +1301,21 @@ fn launch_inner(
         bridge.abort();
         session.drain_interactions(result.is_err()).await;
         finish(&session, result.clone());
-        let duration_ms = session
-            .data
-            .lock()
-            .ok()
-            .and_then(|data| data.turns.last().map(|turn| turn.turn.duration_ms));
+        let timing = session.data.lock().ok().and_then(|data| {
+            data.turns.last().map(|turn| {
+                (
+                    turn.turn.duration_ms,
+                    super::super::generation::aggregate(&turn.turn.steps),
+                )
+            })
+        });
         if let Ok(mut live) = hub.live.lock() {
             live.remove(&job.id);
         }
-        if let Err(error) = settle(&hub, &job, &result, duration_ms) {
+        let (duration_ms, generation) = timing.map_or((None, None), |(duration, metrics)| {
+            (Some(duration), metrics)
+        });
+        if let Err(error) = settle_generation(&hub, &job, &result, duration_ms, generation) {
             if let Ok(data) = hub.root.data.lock() {
                 if let Some(active) = &data.active {
                     active.cancel.send_replace(true);
@@ -1442,6 +1449,16 @@ fn settle(
     result: &Result<(), AgentError>,
     duration_ms: Option<u64>,
 ) -> Result<(), AgentError> {
+    settle_generation(hub, original, result, duration_ms, None)
+}
+
+fn settle_generation(
+    hub: &Hub,
+    original: &Job,
+    result: &Result<(), AgentError>,
+    duration_ms: Option<u64>,
+    generation: Option<super::super::generation::Metrics>,
+) -> Result<(), AgentError> {
     hub.mutate(|state| {
         let job = state.jobs.get_mut(&original.id).ok_or_else(AgentError::internal)?;
         job.status = match result {
@@ -1452,6 +1469,7 @@ fn settle(
             Err(_) => Status::Failed,
         };
         job.updated_at = now(); job.duration_ms = duration_ms.unwrap_or(0); job.error = result.as_ref().err().map(|error| error.message.clone());
+        job.generation = generation;
         job.recovery = result
             .as_ref()
             .err()

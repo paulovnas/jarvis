@@ -8,8 +8,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { object, pairingSchema } from "./protocol";
+import { extensionApi, isFirefox } from "./platform";
 
 export function Options() {
+  const api = extensionApi();
   const [code, setCode] = useState("");
   const [status, setStatus] = useState({ state: "disconnected", message: "Cole o código de conexão fornecido pelo Jarvis." });
   const [busy, setBusy] = useState(false);
@@ -18,13 +20,13 @@ export function Options() {
       const data = object(value);
       if (typeof data.state === "string" && typeof data.message === "string") setStatus({ state: data.state, message: data.message });
     };
-    void chrome.runtime.sendMessage({ type: "status" }).then(result => update(object(result).status)).catch(() => {});
+    void api.runtime.sendMessage({ type: "status" }).then(result => update(object(result).status)).catch(() => {});
     const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area === "session" && changes.connectionStatus) update(changes.connectionStatus.newValue);
     };
-    chrome.storage.onChanged.addListener(listener);
-    return () => chrome.storage.onChanged.removeListener(listener);
-  }, []);
+    api.storage.onChanged.addListener(listener);
+    return () => api.storage.onChanged.removeListener(listener);
+  }, [api]);
 
   async function configure(type: "connect" | "disconnect") {
     setBusy(true);
@@ -34,7 +36,7 @@ export function Options() {
         try { pairing = pairingSchema.parse(JSON.parse(code)); }
         catch { throw new Error("Código inválido. Copie o código completo nas configurações do Jarvis."); }
       }
-      const result = object(await chrome.runtime.sendMessage({ type, ...(pairing ? { pairing } : {}) }));
+      const result = object(await api.runtime.sendMessage({ type, ...(pairing ? { pairing } : {}) }));
       if (!result.ok) throw new Error(String(result.error || "Não foi possível atualizar a conexão."));
       setCode("");
       toast.success(type === "connect" ? "Conexão configurada" : "Navegador desconectado");
@@ -51,6 +53,7 @@ export function Options() {
       <CardHeader>
         <CardTitle>Conexão local</CardTitle>
         <CardDescription>No aplicativo, abra Configurações → Navegador e copie o código de conexão.</CardDescription>
+        {isFirefox() && <CardDescription>Ao conectar, o Jarvis recebe URLs das abas disponíveis e conteúdo, interações e diagnósticos das páginas conectadas. Esses dados podem ser processados pelos provedores de IA configurados no Jarvis.</CardDescription>}
         <CardAction><Badge variant={status.state === "connected" ? "default" : "secondary"}>{status.state === "connected" ? "Conectado" : status.state === "connecting" ? "Conectando" : status.state === "error" ? "Aguardando Jarvis" : "Desconectado"}</Badge></CardAction>
       </CardHeader>
       <CardContent>
@@ -69,7 +72,7 @@ export function Options() {
       </CardContent>
       <CardFooter><Alert role="status" aria-live="polite"><Globe /><AlertDescription>{status.message}</AlertDescription></Alert></CardFooter>
     </Card>
-    <p className="text-xs leading-relaxed text-muted-foreground">O Jarvis controla as abas que você conectar e pode abrir novas páginas. Durante o uso, o navegador exibe seu aviso de depuração. Desconectar preserva suas abas.</p>
+    <p className="text-xs leading-relaxed text-muted-foreground">O Jarvis controla as abas que você conectar e pode abrir novas páginas. {isFirefox() ? "No Firefox, permita acesso aos sites para usar a extensão. Comandos CDP não estão disponíveis." : "Durante o uso, o navegador exibe seu aviso de depuração."} Desconectar preserva suas abas.</p>
     <Toaster theme="dark" richColors />
   </main>;
 }

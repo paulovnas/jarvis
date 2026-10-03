@@ -18,7 +18,7 @@ pub struct WorkspaceStorage {
     bytes: u64,
 }
 
-pub(super) fn move_project(
+pub(crate) fn move_project(
     connection: &mut Connection,
     id: &str,
     workspace_id: &str,

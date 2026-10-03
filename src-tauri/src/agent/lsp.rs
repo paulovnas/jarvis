@@ -19,8 +19,9 @@ const MAX_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 32_000;
 const MAX_RESULTS: usize = 200;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
-const DIAGNOSTIC_WAIT: Duration = Duration::from_secs(2);
-const DIAGNOSTIC_SETTLE: Duration = Duration::from_millis(250);
+const DIAGNOSTIC_WAIT: Duration = Duration::from_secs(12);
+const DIAGNOSTIC_SETTLE: Duration = Duration::from_millis(500);
+const MAX_AUTOMATIC_FILES: usize = 20;
 
 fn error(message: impl Into<String>) -> AgentError {
     AgentError::new("lsp_error", &message.into())
@@ -448,35 +449,77 @@ impl Server {
         Ok(())
     }
 
-    async fn wait_for_diagnostics(&mut self, uri: &str) -> Result<bool, AgentError> {
-        let deadline = tokio::time::Instant::now() + DIAGNOSTIC_WAIT;
+    async fn wait_for_diagnostics(
+        &mut self,
+        uris: &[String],
+        deadline: tokio::time::Instant,
+    ) -> Result<(), AgentError> {
         loop {
+            // A delayed caller can resume after the debounce while semantic
+            // publications are already queued. Consume those before deciding.
+            for _ in 0..MAX_RESULTS {
+                let Ok(message) = self.stdout.try_recv() else {
+                    break;
+                };
+                self.handle_message(message?).await?;
+            }
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             // A server can publish syntax and semantic results separately, even
-            // for the same version. Wait for this document's stream to settle;
-            // unrelated notifications must never satisfy the wait.
-            let settle = self
-                .diagnostics
-                .get(uri)
-                .map(|report| DIAGNOSTIC_SETTLE.saturating_sub(report.received_at.elapsed()));
-            if settle == Some(Duration::ZERO) {
-                return Ok(true);
+            // for the same version. Collect the entire synchronized batch in
+            // one wait; unrelated notifications cannot complete any document.
+            let settled = |uri: &String| {
+                self.diagnostics
+                    .get(uri)
+                    .is_some_and(|report| report.received_at.elapsed() >= DIAGNOSTIC_SETTLE)
+            };
+            if uris.iter().all(settled) || remaining.is_zero() {
+                return Ok(());
             }
-            if remaining.is_zero() {
-                return Ok(false);
-            }
-            match tokio::time::timeout(
-                settle.unwrap_or(remaining).min(remaining),
-                self.stdout.recv(),
-            )
-            .await
-            {
+            let settle = uris
+                .iter()
+                .filter_map(|uri| self.diagnostics.get(uri))
+                .map(|report| DIAGNOSTIC_SETTLE.saturating_sub(report.received_at.elapsed()))
+                .filter(|duration| !duration.is_zero())
+                .min()
+                .unwrap_or(remaining);
+            match tokio::time::timeout(settle.min(remaining), self.stdout.recv()).await {
                 Ok(Some(Ok(message))) => self.handle_message(message).await?,
                 Ok(Some(Err(cause))) => return Err(cause),
                 Ok(None) => return Err(error("O servidor LSP encerrou a conexão.")),
                 Err(_) => {}
             }
         }
+    }
+
+    async fn request_diagnostics(&mut self, uri: &str) -> Result<(), AgentError> {
+        let result = self
+            .request(
+                "textDocument/diagnostic",
+                json!({"textDocument":{"uri":uri}}),
+            )
+            .await?;
+        if let Some(items) = result["items"].as_array() {
+            self.diagnostics.insert(
+                uri.to_owned(),
+                PublishedDiagnostics {
+                    items: items.clone(),
+                    received_at: tokio::time::Instant::now(),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn diagnostic_output(&self, relative: &str, uri: &str) -> Result<String, AgentError> {
+        let report = self.diagnostics.get(uri).filter(|report| {
+            self.pull_diagnostics || report.received_at.elapsed() >= DIAGNOSTIC_SETTLE
+        });
+        let Some(report) = report else {
+            return bounded_json(
+                &json!({"path":relative,"pending":true,"count":0,"diagnostics":[],"message":"O servidor ainda não publicou diagnósticos desta versão; isso não confirma ausência de erros."}),
+            );
+        };
+        format_diagnostics(relative, report.items.clone())
     }
 }
 
@@ -611,7 +654,7 @@ impl Registry {
         }
     }
 
-    pub(super) async fn refresh(&mut self, relative: &str) -> Result<(), AgentError> {
+    async fn refresh_document(&mut self, relative: &str, force: bool) -> Result<(), AgentError> {
         let candidate = self.root.join(relative);
         let Ok(kind) = ServerKind::for_path(&candidate) else {
             return Ok(());
@@ -624,7 +667,7 @@ impl Registry {
             .and_then(|path| tools::read_text(&path).map(|text| (path, text)))
         {
             Ok((path, text)) => {
-                server.sync_document(&path, text, false).await?;
+                server.sync_document(&path, text, force).await?;
             }
             Err(_) => {
                 server.close_document(&candidate).await?;
@@ -646,7 +689,7 @@ impl Registry {
             return Err(AgentError::cancelled());
         }
         let started = std::time::Instant::now();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let deadline = tokio::time::Instant::now() + DIAGNOSTIC_WAIT;
         // A diagnostic can depend on another changed file (including tsconfig,
         // manifests and deleted imports). Preserve the report for deduplication,
         // but invalidate cached validity across every native mutation batch.
@@ -674,7 +717,7 @@ impl Registry {
         let mut ready = HashSet::new();
         let mut failures = HashMap::new();
         // Synchronize the whole batch before querying any file. An import can
-        // depend on an already-open document outside the four-file check limit.
+        // depend on an already-open document outside the bounded check limit.
         for path in &candidates {
             let kind = ServerKind::for_path(Path::new(path))?;
             if previously_unavailable.contains(&kind) {
@@ -700,9 +743,14 @@ impl Registry {
                         self.ensure_server(kind, signal.clone()).await?;
                     }
                     let mut synchronization_signal = signal.clone();
+                    let force = changed
+                        || self
+                            .automatic_seen
+                            .get(path)
+                            .is_some_and(|(digest, _)| digest != &file_digest(&self.root, path));
                     tokio::select! {
                         _ = cancelled(&mut synchronization_signal) => Err(AgentError::cancelled()),
-                        result = self.refresh(path) => result,
+                        result = self.refresh_document(path, force) => result,
                     }
                 })
                 .await;
@@ -719,13 +767,50 @@ impl Registry {
                         failures.insert(kind, activity.summary.clone());
                     }
                     Err(_) => {
-                        self.servers.remove(&kind);
                         activity.summary =
                             "Sincronização pendente: limite de tempo do lote atingido.".into();
                     }
                 }
             }
             activities.push(activity);
+        }
+        // Push servers analyze all opened documents together. Waiting once per
+        // file and forcing another didChange would discard this batch's reports
+        // and repeatedly restart TypeScript's project analysis.
+        let mut push_batches: HashMap<ServerKind, Vec<String>> = HashMap::new();
+        for activity in activities.iter().take(MAX_AUTOMATIC_FILES) {
+            let path = &activity.sources[0];
+            if !ready.contains(path) {
+                continue;
+            }
+            let kind = ServerKind::for_path(Path::new(path))?;
+            let Some(server) = self.servers.get(&kind) else {
+                continue;
+            };
+            if server.lock().await.pull_diagnostics {
+                continue;
+            }
+            let Ok(file) = tools::scoped(&self.root, path, false) else {
+                continue;
+            };
+            push_batches.entry(kind).or_default().push(file_uri(&file)?);
+        }
+        for (kind, uris) in push_batches {
+            let Some(server) = self.servers.get(&kind) else {
+                continue;
+            };
+            let mut collection_signal = signal.clone();
+            let result = tokio::select! {
+                _ = cancelled(&mut collection_signal) => return Err(AgentError::cancelled()),
+                result = async {
+                    server.lock().await.wait_for_diagnostics(&uris, deadline).await
+                } => result,
+            };
+            if let Err(cause) = result {
+                self.servers.remove(&kind);
+                self.automatic_unavailable.insert(kind);
+                failures.insert(kind, cause.message);
+            }
         }
         let mut reports = Vec::new();
         let mut checked = 0;
@@ -739,15 +824,18 @@ impl Registry {
             if !ready.contains(path) {
                 continue;
             }
-            if index >= 4 {
-                activity.summary =
-                    "Não verificado: limite de quatro arquivos por lote atingido.".into();
+            if index >= MAX_AUTOMATIC_FILES {
+                activity.summary = format!(
+                    "Não verificado: limite de {MAX_AUTOMATIC_FILES} arquivos por lote atingido."
+                );
                 continue;
             }
             let kind = ServerKind::for_path(Path::new(path))?;
             if self.automatic_unavailable.contains(&kind) {
                 activity.status = Status::Unavailable;
-                activity.summary = "O servidor LSP ficou indisponível durante este lote.".into();
+                activity.summary = failures.get(&kind).cloned().unwrap_or_else(|| {
+                    "O servidor LSP ficou indisponível durante este lote.".into()
+                });
                 continue;
             }
             let digest = file_digest(&self.root, path);
@@ -763,15 +851,28 @@ impl Registry {
             let output = if let Some((_, output)) = cached {
                 output.clone()
             } else {
-                let tool = ToolCall {
-                    id: format!("core-diagnostics-{path}"),
-                    name: "lsp_diagnostics".into(),
-                    args: json!({"path":path}),
-                    status: "pending".into(),
-                    output: String::new(),
-                    duration_ms: 0,
+                let server = self.servers.get(&kind).ok_or_else(AgentError::internal)?;
+                let result = async {
+                    let mut server = server.lock().await;
+                    let uri = file_uri(&tools::scoped(&self.root, path, false)?)?;
+                    if server.pull_diagnostics {
+                        server.request_diagnostics(&uri).await?;
+                    }
+                    server.diagnostic_output(path, &uri)
                 };
-                match tokio::time::timeout_at(deadline, self.execute(&tool, signal.clone())).await {
+                // A push publication that arrived within the batch budget can
+                // be read even when another document never published. A timeout
+                // does not kill a healthy server or erase its late results.
+                let result = if server.lock().await.pull_diagnostics {
+                    let mut query_signal = signal.clone();
+                    tokio::select! {
+                        _ = cancelled(&mut query_signal) => return Err(AgentError::cancelled()),
+                        result = tokio::time::timeout_at(deadline, result) => result,
+                    }
+                } else {
+                    Ok(result.await)
+                };
+                match result {
                     Ok(Ok(output)) => output,
                     Ok(Err(cause)) if cause.code == "cancelled" => return Err(cause),
                     Ok(Err(cause)) => {
@@ -782,7 +883,6 @@ impl Registry {
                         continue;
                     }
                     Err(_) => {
-                        self.servers.remove(&kind);
                         activity.summary =
                             "Diagnóstico pendente: limite de tempo do lote atingido.".into();
                         continue;
@@ -794,6 +894,9 @@ impl Registry {
                 activity.summary = "O servidor retornou um diagnóstico inválido.".into();
                 continue;
             };
+            if *signal.borrow() {
+                return Err(AgentError::cancelled());
+            }
             let still_current = paths.iter().all(|path| {
                 self.automatic_mutations.get(path) == Some(&file_digest(&self.root, path))
             });
@@ -914,39 +1017,16 @@ async fn execute_tool(
         }
         "lsp_diagnostics" => {
             if server.pull_diagnostics {
-                let result = server
-                    .request(
-                        "textDocument/diagnostic",
-                        json!({"textDocument":{"uri":uri}}),
+                server.request_diagnostics(&uri).await?;
+            } else {
+                server
+                    .wait_for_diagnostics(
+                        std::slice::from_ref(&uri),
+                        tokio::time::Instant::now() + DIAGNOSTIC_WAIT,
                     )
                     .await?;
-                if let Some(items) = result["items"].as_array() {
-                    server.diagnostics.insert(
-                        uri.clone(),
-                        PublishedDiagnostics {
-                            items: items.clone(),
-                            received_at: tokio::time::Instant::now(),
-                        },
-                    );
-                }
-            } else {
-                if !server.wait_for_diagnostics(&uri).await? {
-                    server.diagnostics.remove(&uri);
-                }
             }
-            if !server.diagnostics.contains_key(&uri) {
-                return bounded_json(
-                    &json!({"path":relative,"pending":true,"count":0,"diagnostics":[],"message":"O servidor ainda não publicou diagnósticos desta versão; isso não confirma ausência de erros."}),
-                );
-            }
-            format_diagnostics(
-                relative,
-                server
-                    .diagnostics
-                    .get(&uri)
-                    .map(|report| report.items.clone())
-                    .unwrap_or_default(),
-            )
+            server.diagnostic_output(relative, &uri)
         }
         _ => Err(error("Ferramenta LSP desconhecida.")),
     }
@@ -1243,7 +1323,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn automatic_checks_sync_dependencies_outside_the_diagnostic_limit_first() {
+    async fn automatic_checks_sync_dependencies_before_querying_the_batch() {
         let fixture = Fixture::new();
         fake_server(&fixture);
         std::fs::write(fixture.root.join("z-dependency.ts"), "BROKEN").unwrap();
@@ -1296,6 +1376,123 @@ mod tests {
             serde_json::from_str(&registry.execute(&tool, signal).await.unwrap()).unwrap();
         assert_eq!(value["count"], 1, "{value}");
         assert_ne!(value["pending"], true);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn automatic_checks_collect_cold_project_semantics_for_the_entire_batch() {
+        let fixture = Fixture::new();
+        fake_server(&fixture);
+        std::fs::write(fixture.root.join("slow-project-push"), "").unwrap();
+        let paths: Vec<_> = (0..6).map(|index| format!("file{index}.tsx")).collect();
+        for path in &paths {
+            std::fs::write(fixture.root.join(path), "BROKEN").unwrap();
+        }
+        let mut registry = Registry::new(&fixture.root, &fixture.root).unwrap();
+        let (_sender, signal) = watch::channel(false);
+        let report = registry
+            .diagnostics_after_changes(&paths, signal.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(report.new_errors, "{}", report.observation);
+        assert!(report
+            .activities
+            .iter()
+            .all(|item| item.status == crate::core::activity::Status::Issues));
+        let log = std::fs::read_to_string(fixture.root.join("lsp-test.log")).unwrap();
+        assert_eq!(log.matches("textDocument/didOpen\n").count(), paths.len());
+        assert_eq!(log.matches("textDocument/didChange\n").count(), 0);
+
+        let reused = registry
+            .diagnostics_after_changes(&paths, signal)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!reused.new_errors);
+        assert!(reused
+            .activities
+            .iter()
+            .all(|item| item.status == crate::core::activity::Status::Issues));
+        assert_eq!(
+            std::fs::read_to_string(fixture.root.join("lsp-test.log")).unwrap(),
+            log,
+            "a confirmed unchanged batch must not restart project analysis"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unconfirmed_push_wait_preserves_the_server_and_late_current_report() {
+        let fixture = Fixture::new();
+        fake_server(&fixture);
+        std::fs::write(fixture.root.join("delayed-push"), "").unwrap();
+        let file = fixture.root.join("app.ts");
+        std::fs::write(&file, "BROKEN").unwrap();
+        let mut server = Server::start(&fixture.root, &fixture.root, ServerKind::TypeScript)
+            .await
+            .unwrap();
+        let uri = server
+            .sync_document(&file, "BROKEN".into(), false)
+            .await
+            .unwrap();
+        server
+            .wait_for_diagnostics(
+                std::slice::from_ref(&uri),
+                tokio::time::Instant::now() + Duration::from_millis(50),
+            )
+            .await
+            .unwrap();
+        let pending: Value =
+            serde_json::from_str(&server.diagnostic_output("app.ts", &uri).unwrap()).unwrap();
+        assert_eq!(pending["pending"], true);
+        assert!(server.child.try_wait().unwrap().is_none());
+        server
+            .wait_for_diagnostics(
+                std::slice::from_ref(&uri),
+                tokio::time::Instant::now() + DIAGNOSTIC_WAIT,
+            )
+            .await
+            .unwrap();
+        let current: Value =
+            serde_json::from_str(&server.diagnostic_output("app.ts", &uri).unwrap()).unwrap();
+        assert_eq!(current["count"], 1);
+        assert_ne!(current["pending"], true);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelling_a_slow_automatic_pull_does_not_apply_or_discard_the_server() {
+        let fixture = Fixture::new();
+        fake_server(&fixture);
+        std::fs::write(fixture.root.join("slow-pull"), "").unwrap();
+        std::fs::write(fixture.root.join("app.ts"), "BROKEN").unwrap();
+        let mut registry = Registry::new(&fixture.root, &fixture.root).unwrap();
+        let (sender, signal) = watch::channel(false);
+        let log = fixture.root.join("lsp-test.log");
+        let cancellation = tokio::spawn(async move {
+            while !std::fs::read_to_string(&log)
+                .unwrap_or_default()
+                .contains("textDocument/diagnostic\n")
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            let started = std::time::Instant::now();
+            sender.send(true).unwrap();
+            started
+        });
+        let result = tokio::time::timeout(
+            Duration::from_secs(8),
+            registry.diagnostics_after_changes(&["app.ts".into()], signal),
+        )
+        .await
+        .unwrap();
+        let cancelled_at = cancellation.await.unwrap();
+        assert!(matches!(result, Err(cause) if cause.code == "cancelled"));
+        assert!(cancelled_at.elapsed() < Duration::from_secs(1));
+        assert!(registry.automatic_seen.is_empty());
+        let mut server = registry.servers[&ServerKind::TypeScript].lock().await;
+        assert!(server.child.try_wait().unwrap().is_none());
     }
 
     #[cfg(unix)]
@@ -1465,9 +1662,28 @@ mod tests {
                 .iter()
                 .filter(|item| item.status == crate::core::activity::Status::Applied)
                 .count(),
-            4
+            7
         );
-        assert!(report.activities[4..]
+        let bounded_paths: Vec<_> = (0..MAX_AUTOMATIC_FILES + 1)
+            .map(|index| format!("bounded{index}.ts"))
+            .collect();
+        for path in &bounded_paths {
+            std::fs::write(fixture.root.join(path), "valid").unwrap();
+        }
+        let bounded = registry
+            .diagnostics_after_changes(&bounded_paths, signal.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            bounded
+                .activities
+                .iter()
+                .filter(|item| item.status == crate::core::activity::Status::Applied)
+                .count(),
+            MAX_AUTOMATIC_FILES
+        );
+        assert!(bounded.activities[MAX_AUTOMATIC_FILES..]
             .iter()
             .all(|item| item.status == crate::core::activity::Status::Pending));
         std::fs::write(

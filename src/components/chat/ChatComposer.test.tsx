@@ -114,8 +114,8 @@ describe("ChatComposer model reasoning", () => {
     expect(send).toHaveBeenCalledWith("Continuar", expect.objectContaining({ account: "pessoal", model: "compact", reasoning: "xhigh" }));
   });
   it("selects Designer with its own model profile and sends the direct design flow", async () => {
-    const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true); const save = vi.fn();
-    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "designer/designer": { account: "pessoal", model: "flexible", reasoning: "high" }, "planned/planner": { account: "pessoal", model: "compact", reasoning: "medium" } }, error: null, saving: false, save, refresh: vi.fn() }} />);
+    const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true); const save = vi.fn(); const saveChat = vi.fn().mockResolvedValue(true);
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "designer/designer": { account: "pessoal", model: "flexible", reasoning: "high" }, "planned/planner": { account: "pessoal", model: "compact", reasoning: "medium" } }, error: null, saving: false, save, refresh: vi.fn() }} chatModels={{ data: {}, error: null, saving: false, save: saveChat, refresh: vi.fn() }} />);
     await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
     await user.click(await screen.findByRole("option", { name: "Designer" }));
     expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Flexible · Alto");
@@ -123,12 +123,13 @@ describe("ChatComposer model reasoning", () => {
     expect(send).toHaveBeenCalledWith("Desenhe o painel", { executor: "jarvis", account: "pessoal", model: "flexible", reasoning: "high", mode: "build", workflow: "designer", approvalMode: "yolo" });
     const reasoning = await openModel(user, /Compact/);
     await user.click(within(reasoning).getByRole("menuitem", { name: "Extra alto" }));
-    expect(save).toHaveBeenCalledWith("designer", "designer", { executor: "jarvis", account: "pessoal", model: "compact", reasoning: "xhigh" });
+    expect(saveChat).toHaveBeenCalledWith("designer/designer", { executor: "jarvis", account: "pessoal", model: "compact", reasoning: "xhigh" });
+    expect(save).not.toHaveBeenCalled();
   });
   it("selects Video with its own model and preserves its secondary when changing the primary", async () => {
-    const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true); const save = vi.fn();
+    const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true); const save = vi.fn(); const saveChat = vi.fn().mockResolvedValue(true);
     const fallback = { account: "pessoal", model: "plain", reasoning: null };
-    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "video/video": { account: "pessoal", model: "flexible", reasoning: "high", fallback } }, error: null, saving: false, save, refresh: vi.fn() }} />);
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "video/video": { account: "pessoal", model: "flexible", reasoning: "high", fallback } }, error: null, saving: false, save, refresh: vi.fn() }} chatModels={{ data: {}, error: null, saving: false, save: saveChat, refresh: vi.fn() }} />);
     await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
     await user.click(await screen.findByRole("option", { name: "Vídeo" }));
     expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Flexible · Alto");
@@ -137,7 +138,8 @@ describe("ChatComposer model reasoning", () => {
     expect(send.mock.calls[0][1]).not.toHaveProperty("manualValidation");
     const reasoning = await openModel(user, /Compact/);
     await user.click(within(reasoning).getByRole("menuitem", { name: "Extra alto" }));
-    expect(save).toHaveBeenCalledWith("video", "video", { executor: "jarvis", account: "pessoal", model: "compact", reasoning: "xhigh", fallback });
+    expect(saveChat).toHaveBeenCalledWith("video/video", { executor: "jarvis", account: "pessoal", model: "compact", reasoning: "xhigh", fallback });
+    expect(save).not.toHaveBeenCalled();
   });
   it("offers final manual validation only for coordinated flows and sends the enabled choice", async () => {
     const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
@@ -372,7 +374,8 @@ describe("ChatComposer model reasoning", () => {
       ...models[0].models[0], value: "trabalho/compact", defaultReasoningLevel: "medium",
     }] }]} onSendMessage={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("compact · Indisponível");
-    expect(screen.getByRole("alert")).toHaveTextContent("pessoal/compact");
+    expect(screen.getByRole("alert")).toHaveTextContent("modelo indisponível");
+    expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveAttribute("aria-invalid", "true");
 
     rerender(<ChatComposer modelGroups={[]} onSendMessage={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("compact · Indisponível");

@@ -143,6 +143,7 @@ mod tests {
             approval_mode: ApprovalMode::Yolo,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         };
         a.submit_message("hello".into(), options, vec![]).unwrap();
         b.data.lock().unwrap().manual_compaction = true;
@@ -170,6 +171,7 @@ mod tests {
                 approval_mode: ApprovalMode::Yolo,
                 manual_validation: false,
                 automatic_publication: None,
+                model_selection: None,
             };
             let _signal = session.reserve("Continue".into(), options).unwrap();
             session

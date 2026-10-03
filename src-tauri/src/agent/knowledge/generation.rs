@@ -520,6 +520,7 @@ pub(crate) async fn generate_project_knowledge(
                 approval_mode: ApprovalMode::Yolo,
                 manual_validation: false,
                 automatic_publication: None,
+                model_selection: None,
             };
             let auth_state = state.inner().clone();
             let auth_oauth = oauth.inner().clone();

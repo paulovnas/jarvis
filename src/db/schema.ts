@@ -22,6 +22,8 @@ export const providerAccounts = sqliteTable(
     accountId: text("account_id").notNull().unique(),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     showUsage: integer("show_usage", { mode: "boolean" }).notNull().default(true),
+    showFiveHourUsage: integer("show_five_hour_usage", { mode: "boolean" }).notNull().default(true),
+    showWeeklyUsage: integer("show_weekly_usage", { mode: "boolean" }).notNull().default(true),
     showThirdPartyUsage: integer("show_third_party_usage", { mode: "boolean" }).notNull().default(false),
     usageAlertWindow: text("usage_alert_window"),
     usageAlertThreshold: integer("usage_alert_threshold"),
@@ -30,7 +32,7 @@ export const providerAccounts = sqliteTable(
   (table) => [
     check(
       "provider_accounts_provider_kind_check",
-      sql`${table.providerKind} IN ('openai-codex', 'antigravity', 'custom')`,
+      sql`${table.providerKind} IN ('openai-codex', 'antigravity', 'custom', 'opencode-go')`,
     ),
     check(
       "provider_accounts_usage_alert_window_check",
@@ -46,6 +48,11 @@ export const providerAccounts = sqliteTable(
 export const customProviderConfigs = sqliteTable("custom_provider_configs", {
   alias: text("alias").primaryKey().references(() => providerAccounts.alias, { onDelete: "cascade" }),
   config: text("config").notNull(),
+});
+
+export const opencodeGoCatalogs = sqliteTable("opencode_go_catalogs", {
+  alias: text("alias").primaryKey().references(() => providerAccounts.alias, { onDelete: "cascade" }),
+  catalog: text("catalog").notNull(),
 });
 
 // Legacy storage retained for migration compatibility; transport now follows the protocol.

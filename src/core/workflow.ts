@@ -3,6 +3,7 @@ import { pendingApprovalSchema, turnOptionsSchema } from "./chat";
 import { pendingQuestionSchema } from "./questions";
 import { workflowAppearanceSchema } from "./workflow-appearance";
 import { pendingAuthoringSchema } from "./authoring";
+import { generationSchema } from "./generation";
 
 export type Workflow = "standard" | "designer" | "video" | "image_generator" | "planned" | "complete" | "publication" | "custom";
 export const FLOW_LABELS: Record<Workflow, string> = { standard: "Padrão", designer: "Designer", video: "Vídeo", image_generator: "Imagens", planned: "Planejado", complete: "Completo", publication: "GitHub", custom: "Customizado" };
@@ -16,6 +17,7 @@ export const agentCardSchema = z.object({
   createdAt: z.number(), updatedAt: z.number(), startedAt: z.number(), durationMs: z.number().nonnegative(), activeSince: z.number().nullable().optional(), currentThought: z.string().nullable(), attempts: z.number(), options: turnOptionsSchema, beadId: z.string().nullable(),
   handoff: z.object({ verdict: z.enum(["completed", "approved", "rework", "blocked"]), summary: z.string() }).nullable(),
   error: z.string().nullable(), activeTurnId: z.string().nullable(),
+  generation: generationSchema.nullable().optional(),
   pendingApproval: pendingApprovalSchema.nullable(),
   pendingQuestion: pendingQuestionSchema.nullable(),
   pendingAuthoring: pendingAuthoringSchema.nullable().optional(),

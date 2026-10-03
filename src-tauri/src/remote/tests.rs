@@ -221,11 +221,20 @@ fn cookies_and_rpc_catalog_cannot_authorize_arbitrary_tauri_calls() {
         "save_system_preferences",
         "revoke_remote_device",
         "browser_command",
+        "set_agent_model",
+        "get_claude_runtime",
+        "get_provider_usage",
     ] {
         assert_eq!(mutation(method), None);
     }
     assert_eq!(mutation("message"), Some(true));
     assert_eq!(mutation("history"), Some(false));
+    assert_eq!(mutation("beads"), Some(false));
+    assert_eq!(mutation("choices"), Some(false));
+    assert_eq!(mutation("usage"), Some(false));
+    for method in ["queue_edit", "queue_delete", "queue_send_now", "chat_model"] {
+        assert_eq!(mutation(method), Some(true));
+    }
 }
 #[test]
 fn configuration_is_opt_in_and_validated_before_loading() {

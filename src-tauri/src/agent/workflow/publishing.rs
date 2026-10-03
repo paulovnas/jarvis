@@ -106,6 +106,7 @@ fn prepare(hub: &Hub) -> Result<Job, AgentError> {
         created_at: now(),
         updated_at: now(),
         duration_ms: 0,
+        generation: None,
         attempts: 1,
         recovery_attempts: 0,
         recovery_attempt_pending: false,
@@ -341,9 +342,8 @@ pub(super) async fn automatic(
                 return Ok(());
             }
         }
-        let profiles = settings::load(&hub.env.state, &hub.env.home)?;
-        let choice = profiles
-            .get(&settings::key(Flow::Publication, Role::Github))
+        let github_key = settings::key(Flow::Publication, Role::Github);
+        let choice = settings::chat::worker_choice(&hub, Flow::Publication, Role::Github)?
             .ok_or_else(|| {
                 invalid("Configure o modelo do agente Github para publicar automaticamente.")
             })?;
@@ -374,7 +374,7 @@ pub(super) async fn automatic(
         job.options.manual_validation = false;
         choice.apply(&mut job.options);
         hub.mutate(|state| {
-            state.profiles.extend(profiles);
+            state.profiles.insert(github_key, choice);
             Ok(())
         })?;
         job

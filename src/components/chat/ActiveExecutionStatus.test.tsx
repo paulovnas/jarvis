@@ -67,3 +67,34 @@ it("freezes the visible work time while waiting and resumes without adding absen
     vi.useRealTimers();
   }
 });
+
+it("updates the weighted generation rate live and replaces the approximation with provider usage", () => {
+  const turn = { ...savedTurn(), status: "running" as const, steps: [
+    { ...savedTurn().steps[0], generation: { outputTokens: 100, durationMs: 1_000, estimated: false } },
+    { ...savedTurn().steps[0], generation: { outputTokens: 100, durationMs: 9_000, estimated: true } },
+  ] };
+  const { rerender } = render(<ActiveExecutionStatus turn={turn} />);
+  expect(screen.getByLabelText("Velocidade média estimada: 20,0 tokens por segundo")).toHaveTextContent("≈ 20,0 tok/s");
+  rerender(<ActiveExecutionStatus turn={{ ...turn, steps: [turn.steps[0], { ...turn.steps[1], generation: { outputTokens: 300, durationMs: 9_000, estimated: false } }] }} />);
+  expect(screen.getByLabelText("Velocidade média medida: 40,0 tokens por segundo")).toHaveTextContent("40,0 tok/s");
+  expect(screen.queryByText(/≈/)).not.toBeInTheDocument();
+});
+
+it("retains the model average while tools and pending answers take time", () => {
+  vi.useFakeTimers();
+  try {
+    const turn = { ...savedTurn(), status: "running" as const, activeSince: null, steps: [{ ...savedTurn().steps[0], generation: { outputTokens: 125, durationMs: 5_000, estimated: false }, tools: [{ id: "wait", name: "hub_wait", args: {}, status: "running" as const, output: "", durationMs: 0 }] }] };
+    const { rerender } = render(<ActiveExecutionStatus turn={turn} />);
+    act(() => { vi.advanceTimersByTime(60_000); });
+    expect(screen.getByLabelText("Velocidade média medida: 25,0 tokens por segundo")).toHaveTextContent("25,0 tok/s");
+    rerender(<ActiveExecutionStatus turn={turn} waitingForUser />);
+    act(() => { vi.advanceTimersByTime(3_600_000); });
+    expect(screen.getByLabelText("Velocidade média medida: 25,0 tokens por segundo")).toHaveTextContent("25,0 tok/s");
+  } finally { vi.useRealTimers(); }
+});
+
+it("does not display a fabricated rate when the provider has no generation measurement", () => {
+  render(<ActiveExecutionStatus turn={{ ...savedTurn(), status: "running" }} />);
+  expect(screen.queryByLabelText(/Velocidade média/)).not.toBeInTheDocument();
+  expect(screen.getByTestId("active-execution-status")).not.toHaveTextContent("tok/s");
+});

@@ -15,6 +15,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { ProviderUsageWindowSettings } from "./ProviderUsageWindowSettings";
 
 function ClaudeProviderDetails() {
   const runtime = useClaudeRuntime();
@@ -48,6 +49,13 @@ function ClaudeProviderDetails() {
       <Separator />
       <label className="flex cursor-pointer items-center justify-between gap-3 text-xs"><span aria-hidden="true">Disponibilizar Claude Code no Jarvis</span><Switch aria-label="Ativar Claude Code" checked={preferences.enabled} disabled={busy || !runtime.data} onCheckedChange={enabled => { void save({ ...preferences, enabled }); }} /></label>
       <label className="flex cursor-pointer items-center justify-between gap-3 text-xs"><span aria-hidden="true"><span className="block">Limites na barra de status</span><span className="mt-1 block text-muted-foreground">Exibe as cotas da assinatura quando a conta as disponibiliza.</span></span><Switch aria-label="Mostrar limites do Claude Code" checked={preferences.showUsage !== false} disabled={busy || !runtime.data || !preferences.enabled} onCheckedChange={showUsage => { void save({ ...preferences, showUsage }); }} /></label>
+      <ProviderUsageWindowSettings
+        providerName="Claude Code"
+        showFiveHourUsage={preferences.showFiveHourUsage}
+        showWeeklyUsage={preferences.showWeeklyUsage}
+        disabled={busy || !runtime.data || !preferences.enabled || preferences.showUsage === false}
+        onChange={(showFiveHourUsage, showWeeklyUsage) => { void save({ ...preferences, showFiveHourUsage, showWeeklyUsage }); }}
+      />
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2"><span className="micro-label text-muted-foreground">Modelos para seleção</span><Badge variant="secondary">{claudeModels(runtime.data).length}/{runtime.data?.models.length ?? 0}</Badge></div>
         <p className="text-xs leading-5 text-muted-foreground">Modelos novos ficam disponíveis automaticamente. Ao ocultar um modelo, revise os agentes e fluxos que o utilizam. Conversas em execução continuam normalmente.</p>

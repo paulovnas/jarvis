@@ -996,6 +996,79 @@ async fn deferred_catalog_controls_fail_closed_and_preserve_plan_read_only_scope
 }
 
 #[tokio::test]
+async fn each_user_turn_has_a_fresh_mcp_catalog_and_explicit_activation_guidance() {
+    let f = Fixture::new();
+    let server = f.local("documents");
+    let (_sender, signal) = watch::channel(false);
+    let mut first = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Consulte uma integração se precisar.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    let initial = first.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(initial.len(), 1);
+    assert_eq!(initial[0]["name"], "mcp_activate");
+    first
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &json!({"server":"documents"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    let lookup = runtime::wire_name(&server, "lookup");
+    assert!(first
+        .definitions(&f.mcp, &f.state, &f.home, false)
+        .await
+        .iter()
+        .any(|definition| definition["name"] == lookup));
+    drop(first);
+
+    let mut next = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Continue a análise anterior.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    let definitions = next.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(definitions[0]["name"], "mcp_activate");
+    let guidance = next.instructions();
+    assert!(guidance.contains("current user turn"));
+    assert!(guidance.contains("current tool catalog is authoritative"));
+    assert!(guidance.contains("historical tool name does not mean its server is active"));
+    assert!(guidance.contains("mcp_search_tools and mcp_load_tool only when offered"));
+    let stale = next
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":"old task"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(stale.code, "mcp_scope_violation");
+    assert!(!f.home.join("calls").exists());
+    drop(next);
+}
+
+#[tokio::test]
 async fn activated_large_catalog_waits_for_the_next_provider_step() {
     let f = Fixture::new();
     let server = f.local_with_tools("large-catalog", 2000, 48);
@@ -1353,6 +1426,48 @@ async fn harness_evaluation_mcp_intent_survives_continuations_and_accepts_user_c
             [("intentChanges", 4), ("intentResolutions", 8), ("steps", 8)],
         ),
     );
+}
+
+#[tokio::test]
+async fn long_mirrored_mcp_descriptions_remain_complete_and_redacted_for_indexing() {
+    let f = Fixture::new();
+    let server = f.local("monday-fixture");
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Use o MCP monday fixture para consultar a descrição.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &runtime::wire_name(&server, "lookup"),
+            &json!({"query":"mirrored-long-description"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    assert!(output.len() > 48_000);
+    let result: Value = serde_json::from_str(&output).unwrap();
+    let description = result["items"][0]["description"].as_str().unwrap();
+    assert!(description.contains("Middle acceptance criterion: copper lighthouse."));
+    assert!(description.ends_with("Final acceptance criterion: amber harbor."));
+    assert!(description.contains("[redigido]"));
+    assert!(!output.contains("fixture-sensitive-value"));
+    assert_eq!(output.matches("fixture-task").count(), 1);
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\n"
+    );
+    drop(clients);
 }
 
 #[tokio::test]

@@ -7,6 +7,7 @@ import type { CompanionItem, CompanionSnapshot } from "@/core/companion";
 import type { AccountUsage } from "@/core/provider-usage";
 import { Companion } from "./Companion";
 import type { RobotProps } from "./Robot";
+import { voiceSession, voiceSettings } from "@/test/voice-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -82,6 +83,35 @@ describe("Desktop companion", () => {
     expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument();
     expect(call.mock.calls.map(([command]) => command)).toEqual(expect.arrayContaining(["get_companion_snapshot", "set_companion_expanded"]));
     expect(call.mock.calls.some(([command]) => /bootstrap|transcript|get_provider/.test(command))).toBe(false);
+  });
+
+  it("opens an announcement only after audio is ready and keeps it visible throughout speech", async () => {
+    const original = call.getMockImplementation();
+    const preparing = voiceSession({ id: "notice-audio", target: "companion-notice", owner: "companion", mode: "announcement", phase: "preparing", revision: 100 });
+    call.mockImplementation(async (command, args) => {
+      if (command === "get_voice_settings") return voiceSettings();
+      if (command === "start_voice_session") return preparing;
+      return original?.(command, args);
+    });
+    render(<Companion />);
+    await screen.findByRole("button", { name: /Abrir assistente Jarvis, 1 atividade/ });
+    await waitFor(() => expect(events.has("voice:state")).toBe(true));
+    await act(async () => {});
+    snapshot = { ...snapshot, items: [{ ...base, status: "completed", activeSince: null, attentionId: "turn-1/completed" }] };
+    act(() => events.get("companion:changed")?.({}));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("start_voice_session", expect.objectContaining({ mode: "announcement" })));
+    expect(screen.queryByRole("status", { name: "Aviso do Jarvito" })).not.toBeInTheDocument();
+    expect(call).not.toHaveBeenCalledWith("set_companion_bubble", { visible: true });
+    vi.useFakeTimers();
+    await act(async () => { await vi.advanceTimersByTimeAsync(45_000); });
+    expect(screen.queryByRole("status", { name: "Aviso do Jarvito" })).not.toBeInTheDocument();
+    await act(async () => { events.get("voice:state")?.({ ...preparing, phase: "speaking", revision: 101 }); });
+    expect(screen.getByRole("status", { name: "Aviso do Jarvito" })).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(35_000); });
+    expect(screen.getByRole("status", { name: "Aviso do Jarvito" })).toBeInTheDocument();
+    await act(async () => { events.get("voice:state")?.({ ...preparing, phase: "idle", revision: 102 }); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_400); });
+    expect(screen.queryByRole("status", { name: "Aviso do Jarvito" })).not.toBeInTheDocument();
   });
 
   it("shows task counts and states in the activity card and updates them without opening the main app", async () => {
@@ -269,6 +299,25 @@ describe("Desktop companion", () => {
     await user.click(within(panel).getByText("Sons de interação"));
     await waitFor(() => expect(call).toHaveBeenCalledWith("set_companion_sound", { enabled: false }));
     expect(within(panel).getByRole("switch", { name: "Sons de interação" })).not.toBeChecked();
+  });
+
+  it("offers independent sound and speech mute controls in the header popover", async () => {
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => command === "set_companion_sound" || command === "set_companion_speech"
+      ? (args as { enabled: boolean }).enabled : original?.(command, args));
+    const user = await expanded();
+    await user.click(screen.getByRole("button", { name: "Sons e fala do Jarvito" }));
+    const sound = await screen.findByRole("switch", { name: "Silenciar sons" });
+    const speech = screen.getByRole("switch", { name: "Silenciar Jarvito" });
+    expect(sound).not.toBeChecked(); expect(speech).not.toBeChecked();
+    await user.click(speech);
+    await waitFor(() => expect(speech).toBeChecked());
+    expect(sound).not.toBeChecked();
+    expect(call).toHaveBeenCalledWith("set_companion_speech", { enabled: false });
+    expect(call).not.toHaveBeenCalledWith("set_companion_sound", { enabled: false });
+    await user.click(sound);
+    await waitFor(() => expect(sound).toBeChecked());
+    expect(speech).toBeChecked();
   });
 
   it("reacts to pet taps without resizing, dragging or toggling the expanded island", async () => {
@@ -809,6 +858,7 @@ describe("Desktop companion", () => {
     const providers = [
       { alias: "openai-codex-pessoal", providerKind: "openai-codex", label: "pessoal", name: "OpenAI Codex" },
       { alias: "antigravity-pessoal", providerKind: "antigravity", label: "pessoal", name: "Antigravity" },
+      { alias: "opencode-go-pessoal", providerKind: "opencode-go", label: "pessoal", name: "OpenCode Go" },
       { alias: "Claude Code", providerKind: "claude-code", label: "Claude Code", name: "Claude Code" },
       { alias: "conta do trabalho", providerKind: "antigravity", label: "conta do trabalho", name: "Antigravity" },
     ];

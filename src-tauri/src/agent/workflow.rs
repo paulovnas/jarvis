@@ -138,6 +138,8 @@ struct Job {
     updated_at: u64,
     #[serde(default)]
     duration_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    generation: Option<super::generation::Metrics>,
     attempts: u8,
     #[serde(default)]
     recovery_attempts: u8,
@@ -1383,7 +1385,7 @@ pub(super) fn validate_options(
                 "Selecione ao menos uma ação de publicação. PR também exige Push.",
             ));
         }
-        let profiles = settings::load(state, home)?;
+        let profiles = settings::chat::defaults(state, home, conversation_id)?;
         let choice = profiles
             .get(&settings::key(Flow::Publication, Role::Github))
             .ok_or_else(|| {
@@ -1412,7 +1414,7 @@ pub(super) fn validate_options(
                 custom::resolve(state, oauth, home, options)?;
             }
             (None, Some(_)) => {
-                custom::resolve_agent(state, oauth, home, options, false)?;
+                custom::resolve_agent(state, oauth, home, options, conversation_id, false)?;
             }
             _ => return Err(invalid("Escolha um agente ou fluxo customizado válido.")),
         }
@@ -1421,7 +1423,7 @@ pub(super) fn validate_options(
             return Err(invalid("Seleção de fluxo inconsistente."));
         }
         if let Some(flow) = options.workflow {
-            let profiles = settings::load(state, home)?;
+            let profiles = settings::chat::profiles(state, home, conversation_id, options)?;
             settings::validate(flow, &profiles)?;
             for role in settings::roster(flow) {
                 if let Some(choice) = profiles.get(&settings::key(flow, *role)) {
@@ -1429,6 +1431,15 @@ pub(super) fn validate_options(
                 }
             }
         }
+    }
+    if options.workflow.is_none() || options.custom_workflow_id.is_some() {
+        let saved = settings::chat::selected(state, home, conversation_id, options)?;
+        settings::validate_choice(
+            state,
+            oauth,
+            home,
+            &settings::chat::effective_choice(options, saved.as_ref()),
+        )?;
     }
     Ok(())
 }
@@ -1626,8 +1637,14 @@ pub(super) async fn run(
                 None,
             ),
             (None, Some(_)) => {
-                let agent =
-                    custom::resolve_agent(&env.0, &env.1, &env.3, &options, using_secondary)?;
+                let agent = custom::resolve_agent(
+                    &env.0,
+                    &env.1,
+                    &env.3,
+                    &options,
+                    &session.id,
+                    using_secondary,
+                )?;
                 if !using_secondary {
                     custom::apply_model(&mut options, &agent);
                 }
@@ -1641,11 +1658,12 @@ pub(super) async fn run(
     session.update(true, |data| {
         data.turns.last_mut().unwrap().turn.options = options.clone();
     })?;
-    let profiles = if flow == Flow::Custom || super::companion_chat::is_global_session(&session.id)
-    {
+    let profiles = if super::companion_chat::is_global_session(&session.id) {
         BTreeMap::new()
+    } else if flow == Flow::Custom {
+        settings::chat::defaults(&env.0, &env.3, &session.id)?
     } else {
-        settings::load(&env.0, &env.3)?
+        settings::chat::profiles(&env.0, &env.3, &session.id, &options)?
     };
     settings::validate(flow, &profiles)?;
     session.update(true, |data| {

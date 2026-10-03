@@ -1,10 +1,19 @@
 import { BrowserController } from "./browser";
+import { FirefoxBrowserController, type FirefoxApi } from "./firefox";
 import { errorResult, object, pairingSchema, requestSchema, type Pairing } from "./protocol";
+import { extensionApi, isFirefox, restrictStorageAccess } from "./platform";
+
+const api = extensionApi();
+declare const __JARVIS_FIREFOX__: boolean;
+// Separate bundles remove the incompatible debugger adapter from Firefox.
+// Tests detect the injected runtime without requiring a bundler constant.
+const firefox = typeof __JARVIS_FIREFOX__ === "boolean" ? __JARVIS_FIREFOX__ : isFirefox();
+type Controller = Pick<BrowserController, "epoch" | "execute" | "restore" | "releaseAll" | "removed" | "updated">;
 
 type Status = { state: "disconnected" | "connecting" | "connected" | "error"; message: string };
 let pairing: Pairing | undefined;
 let socket: WebSocket | undefined;
-let controller: BrowserController;
+let controller: Controller;
 let instanceId = "";
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -17,9 +26,9 @@ const pending = new Map<string, { cancelled: boolean }>();
 
 function setStatus(value: Status) {
   status = value;
-  void chrome.storage.session.set({ connectionStatus: value });
-  void chrome.action.setBadgeText({ text: value.state === "connected" ? "ON" : "" });
-  void chrome.action.setBadgeBackgroundColor({ color: "#397650" });
+  void api.storage.session.set({ connectionStatus: value });
+  void api.action.setBadgeText({ text: value.state === "connected" ? "ON" : "" });
+  void api.action.setBadgeBackgroundColor({ color: "#397650" });
 }
 
 function send(value: unknown, connection = socket) {
@@ -51,7 +60,7 @@ function connect() {
   handshakeTimer = setTimeout(() => connection.close(), 8000);
   connection.onopen = () => {
     send({ type: "hello", version: 1, token: config.token, instanceId, epoch: controller.epoch,
-      label: "Navegador Chromium", extensionVersion: chrome.runtime.getManifest().version }, connection);
+      label: firefox ? "Firefox" : "Navegador Chromium", extensionVersion: api.runtime.getManifest().version }, connection);
   };
   connection.onmessage = event => {
     if (connection !== socket || typeof event.data !== "string" || event.data.length > 256000) return;
@@ -108,34 +117,39 @@ function connect() {
 }
 
 const initialized = (async () => {
-  await chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
-  await chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
-  const local = await chrome.storage.local.get(["pairing", "instanceId"]);
-  const session = await chrome.storage.session.get("epoch");
+  await restrictStorageAccess();
+  const local = await api.storage.local.get(["pairing", "instanceId"]);
+  const session = await api.storage.session.get("epoch");
   instanceId = typeof local.instanceId === "string" ? local.instanceId : crypto.randomUUID();
   const epoch = typeof session.epoch === "string" ? session.epoch : crypto.randomUUID();
-  await chrome.storage.local.set({ instanceId });
-  await chrome.storage.session.set({ epoch });
-  controller = new BrowserController(epoch, conversationId => send({ type: "changed", conversationId }));
+  await api.storage.local.set({ instanceId });
+  await api.storage.session.set({ epoch });
+  const changed = (conversationId: string) => send({ type: "changed", conversationId });
+  controller = firefox ? new FirefoxBrowserController(epoch, changed, api as unknown as FirefoxApi) : new BrowserController(epoch, changed);
   await controller.restore();
   const config = pairingSchema.safeParse(local.pairing);
   pairing = config.success ? config.data : undefined;
-  await chrome.alarms.create("jarvis-reconnect", { periodInMinutes: 0.5 });
+  await api.alarms.create("jarvis-reconnect", { periodInMinutes: 0.5 });
   connect();
 })().catch(() => {
   setStatus({ state: "error", message: "Não foi possível inicializar a conexão. Recarregue a extensão e tente novamente." });
 });
 
-chrome.action.onClicked.addListener(() => { void chrome.runtime.openOptionsPage(); });
-chrome.alarms.onAlarm.addListener(alarm => {
+api.action.onClicked.addListener(() => { void api.runtime.openOptionsPage(); });
+api.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === "jarvis-reconnect") void initialized.then(connect);
 });
-chrome.tabs.onRemoved.addListener(id => { void initialized.then(() => controller?.removed(id)); });
-chrome.tabs.onUpdated.addListener((id, info) => { void initialized.then(() => controller?.updated(id, info)); });
-chrome.debugger.onDetach.addListener(source => { if (source.tabId !== undefined) void initialized.then(() => controller?.onDetach(source.tabId!)); });
-chrome.debugger.onEvent.addListener((source, method, params) => { if (source.tabId !== undefined) void initialized.then(() => controller?.event(source.tabId!, method, params, source.sessionId)); });
-chrome.runtime.onMessage.addListener((raw: unknown, sender, respond: (value: unknown) => void) => {
-  if (sender.id !== chrome.runtime.id) return false;
+api.tabs.onRemoved.addListener(id => { void initialized.then(() => controller?.removed(id)); });
+api.tabs.onUpdated.addListener((id, info) => { void initialized.then(() => controller?.updated(id, info)); });
+if (!firefox) {
+  api.debugger.onDetach.addListener(source => { if (source.tabId !== undefined) void initialized.then(() => (controller as BrowserController)?.onDetach(source.tabId!)); });
+  api.debugger.onEvent.addListener((source, method, params) => { if (source.tabId !== undefined) void initialized.then(() => (controller as BrowserController)?.event(source.tabId!, method, params, source.sessionId)); });
+}
+api.runtime.onMessage.addListener((raw: unknown, sender, respond: (value: unknown) => void) => {
+  // Pairing is a trusted options-page operation, never a content-script command.
+  // Firefox includes sender.tab for the options page too; validate its actual
+  // extension URL rather than treating all messages from tabs as page content.
+  if (sender.id !== api.runtime.id || sender.url !== api.runtime.getURL("options.html") || (sender.frameId !== undefined && sender.frameId !== 0)) return false;
   const message = object(raw);
   if (!["connect", "disconnect", "status"].includes(String(message.type))) return false;
   void initialized.then(async () => {
@@ -146,13 +160,13 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, respond: (value: unk
       disconnect();
       await controller.releaseAll();
       pairing = config.data;
-      await chrome.storage.local.set({ pairing });
+      await api.storage.local.set({ pairing });
       attempt = 0;
       connect();
     }
     if (message.type === "disconnect") {
       pairing = undefined;
-      await chrome.storage.local.remove("pairing");
+      await api.storage.local.remove("pairing");
       disconnect();
       await controller.releaseAll();
       setStatus({ state: "disconnected", message: "Desconectado. As abas foram preservadas." });

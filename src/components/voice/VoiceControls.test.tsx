@@ -1,36 +1,38 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { idleVoice, voiceSession, voiceSettings, voiceTarget } from "@/test/voice-fixtures";
 import type { VoiceSession } from "@/core/voice";
-import { VoiceControls, VoiceSessionPanel } from "./VoiceControls";
+import { VoiceControls, VoiceSessionPanel, type VoiceControlHandle } from "./VoiceControls";
 
-const mock = vi.hoisted(() => ({ start: vi.fn(), control: vi.fn(), save: vi.fn(), refresh: vi.fn(), session: null as VoiceSession | null, active: false, settings: null as ReturnType<typeof voiceSettings> | null, events: new Map<string, (value: unknown) => void>() }));
-vi.mock("@/hooks/use-voice", () => ({ useVoice: () => ({ ...mock, loading: false, error: null }) }));
+const mock = vi.hoisted(() => ({ start: vi.fn(), control: vi.fn(), save: vi.fn(), refresh: vi.fn(), acceptsDictation: vi.fn(), session: null as VoiceSession | null, active: false, settings: null as ReturnType<typeof voiceSettings> | null, events: new Map<string, (value: unknown) => void>() }));
+vi.mock("@/hooks/use-voice", () => ({ acceptsDictationTranscript: mock.acceptsDictation, useVoice: () => ({ ...mock, loading: false, error: null }) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name: string, callback: (event: { payload: unknown }) => void) => { mock.events.set(name, payload => callback({ payload })); return () => mock.events.delete(name); }) }));
 vi.mock("@/components/companion/Robot", () => ({ Robot: () => <span data-testid="voice-robot" /> }));
 const transcript = (text: string, mode = "call", sequence = 1, target = voiceTarget) => ({ sessionId: "voice-1", target, mode, sequence, text });
 const emit = async (value: unknown) => { await act(async () => { mock.events.get("voice:transcript")?.(value); }); };
 
 describe("voice controls", () => {
-  beforeEach(() => { mock.session = { ...idleVoice }; mock.active = false; mock.settings = voiceSettings(); mock.events.clear(); mock.start.mockReset().mockResolvedValue(voiceSession()); mock.control.mockReset().mockResolvedValue(undefined); });
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => { mock.session = { ...idleVoice }; mock.active = false; mock.settings = voiceSettings(); mock.events.clear(); mock.start.mockReset().mockResolvedValue(voiceSession()); mock.control.mockReset().mockResolvedValue(undefined); mock.acceptsDictation.mockReset().mockReturnValue(true); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
   it("starts explicitly, never reads old replies, and reads a new final response once", async () => {
     const snapshot = { ...emptyChat(), turns: [savedTurn()] };
     const onMessage = vi.fn().mockResolvedValue(true);
-    const { rerender } = render(<VoiceControls target={voiceTarget} snapshot={snapshot} onDictation={vi.fn()} onMessage={onMessage} />);
+    const call = createRef<VoiceControlHandle>();
+    const { rerender } = render(<VoiceControls ref={call} allowCall target={voiceTarget} snapshot={snapshot} onDictation={vi.fn()} onMessage={onMessage} />);
     expect(mock.start).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Ligar para o Jarvis" }));
+    await act(async () => { await call.current?.startCall(); });
     await waitFor(() => expect(mock.start).toHaveBeenCalledWith(voiceTarget, "call"));
     mock.session = voiceSession(); mock.active = true;
-    rerender(<VoiceControls target={voiceTarget} snapshot={snapshot} onDictation={vi.fn()} onMessage={onMessage} />);
+    rerender(<VoiceControls allowCall target={voiceTarget} snapshot={snapshot} onDictation={vi.fn()} onMessage={onMessage} />);
     expect(mock.control).not.toHaveBeenCalled();
     await emit(transcript("Verifique o projeto"));
     expect(onMessage).toHaveBeenCalledWith("Verifique o projeto");
     const next = { ...snapshot, turns: [...snapshot.turns, { ...savedTurn(), id: "earlier-new-turn" }, { ...savedTurn(), id: "new-turn", steps: [{ ...savedTurn().steps[0], text: "Verificação concluída." }] }] };
-    rerender(<VoiceControls target={voiceTarget} snapshot={next} onDictation={vi.fn()} onMessage={onMessage} />);
+    rerender(<VoiceControls allowCall target={voiceTarget} snapshot={next} onDictation={vi.fn()} onMessage={onMessage} />);
     await waitFor(() => expect(mock.control).toHaveBeenCalledWith("voice-1", "speak", "Verificação concluída."));
-    rerender(<VoiceControls target={voiceTarget} snapshot={{ ...next }} onDictation={vi.fn()} onMessage={onMessage} />);
+    rerender(<VoiceControls allowCall target={voiceTarget} snapshot={{ ...next }} onDictation={vi.fn()} onMessage={onMessage} />);
     expect(mock.control.mock.calls.filter(call => call[1] === "speak")).toHaveLength(1);
   });
   it("appends dictation and rejects duplicated or foreign transcripts", async () => {
@@ -40,6 +42,19 @@ describe("voice controls", () => {
     await emit(transcript("Meu texto", "dictation")); await emit(transcript("Duplicado", "dictation"));
     await emit(transcript("Outro chat", "dictation", 2, "chat:other"));
     expect(onDictation).toHaveBeenCalledExactlyOnceWith("Meu texto"); expect(onMessage).not.toHaveBeenCalled();
+    mock.acceptsDictation.mockReturnValue(false);
+    await emit(transcript("Fala anterior entregue após o envio", "dictation", 3));
+    expect(onDictation).toHaveBeenCalledTimes(1);
+  });
+  it("uses a microphone-off control instead of the chat stop icon and allows finishing while the chat is busy", async () => {
+    mock.session = voiceSession({ mode: "dictation" }); mock.active = true;
+    render(<VoiceControls disabled target={voiceTarget} onDictation={vi.fn()} onMessage={vi.fn()} />);
+    const finish = screen.getByRole("button", { name: "Concluir ditado" });
+    expect(finish).toBeEnabled();
+    expect(finish.querySelector(".lucide-mic-off")).not.toBeNull();
+    expect(finish.querySelector(".lucide-square")).toBeNull();
+    await act(async () => { fireEvent.click(finish); });
+    expect(mock.control).toHaveBeenCalledWith("voice-1", "finish");
   });
   it("preserves speech if sending fails and resumes listening", async () => {
     mock.session = voiceSession(); mock.active = true;
@@ -86,18 +101,79 @@ describe("voice controls", () => {
   it("cancels preparation without opening a microphone and exposes call controls", () => {
     mock.session = voiceSession({ mode: "dictation", phase: "preparing" }); mock.active = true;
     const { rerender } = render(<VoiceControls target={voiceTarget} onDictation={vi.fn()} onMessage={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "Ligar para o Jarvis" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Ligar para Jarvito" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Concluir ditado" })); expect(mock.control).toHaveBeenCalledWith("voice-1", "end");
     mock.session = voiceSession({ phase: "speaking", transcript: "Olá!", speaker: "jarvis", level: .7 });
-    rerender(<VoiceSessionPanel target={voiceTarget} large />);
-    expect(screen.getByText("Jarvis: Olá!")).toBeVisible();
+    rerender(<VoiceSessionPanel target={voiceTarget} />);
+    expect(screen.getByText("Jarvito: Olá!")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Interromper fala e ouvir" })); expect(mock.control).toHaveBeenCalledWith("voice-1", "interrupt");
-    fireEvent.click(screen.getByRole("button", { name: "Encerrar voz" })); expect(mock.control).toHaveBeenCalledWith("voice-1", "end");
+    fireEvent.click(screen.getByRole("button", { name: "Encerrar ligação" })); expect(mock.control).toHaveBeenCalledWith("voice-1", "end");
   });
   it("opens setup when the local model is absent instead of secretly downloading it", () => {
     mock.settings = voiceSettings({ models: [] });
     render(<VoiceControls target={voiceTarget} onDictation={vi.fn()} onMessage={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Ligar para o Jarvis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ditar mensagem" }));
     expect(screen.getByRole("dialog")).toBeVisible(); expect(mock.start).not.toHaveBeenCalled();
+  });
+  it("offers only dictation by default and keeps feedback free of call controls", async () => {
+    const message = vi.fn();
+    const call = createRef<VoiceControlHandle>();
+    const { rerender } = render(<VoiceControls ref={call} target={voiceTarget} onDictation={vi.fn()} onMessage={message} />);
+    expect(screen.getByRole("button", { name: "Ditar mensagem" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /Ligar|Encerrar ligação/ })).not.toBeInTheDocument();
+    await act(async () => { await call.current?.startCall(); });
+    expect(mock.start).not.toHaveBeenCalled();
+    mock.session = voiceSession({ mode: "dictation", phase: "listening" }); mock.active = true;
+    rerender(<VoiceSessionPanel target={voiceTarget} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Estou ouvindo");
+    expect(screen.queryByTestId("voice-robot")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(message).not.toHaveBeenCalled();
+  });
+  it("keeps listening without reading replies or questions when Jarvito speech is muted", async () => {
+    mock.session = voiceSession({ phase: "thinking" }); mock.active = true;
+    const answer = vi.fn().mockResolvedValue(true);
+    const { rerender } = render(<VoiceControls target={voiceTarget} speechEnabled={false} snapshot={{ ...emptyChat(), turns: [savedTurn()] }} onDictation={vi.fn()} onMessage={vi.fn()} onAnswerQuestion={answer} />);
+    expect(mock.control).toHaveBeenCalledWith("voice-1", "resume", undefined);
+    const question = { turnId: "turn", toolId: "question", questions: [{ id: "style", question: "Qual estilo?", options: [{ label: "Moderno" }] }] };
+    rerender(<VoiceControls target={voiceTarget} speechEnabled={false} snapshot={{ ...emptyChat(), pendingQuestion: question }} onDictation={vi.fn()} onMessage={vi.fn()} onAnswerQuestion={answer} />);
+    await emit(transcript("Moderno"));
+    expect(answer).toHaveBeenCalledWith(question, { cancelled: false, answers: [{ id: "style", value: "Moderno", selectedLabel: "Moderno" }] });
+    expect(mock.control.mock.calls.some(call => call[1] === "speak" || call[1] === "cue")).toBe(false);
+  });
+  it("offers brief varied thinking cues with enough quiet between them and stops on reconnection", async () => {
+    vi.useFakeTimers(); mock.session = voiceSession({ phase: "thinking" }); mock.active = true;
+    const chat = { ...emptyChat(), activeTurnId: "working" };
+    const { rerender } = render(<VoiceControls target={voiceTarget} snapshot={chat} onDictation={vi.fn()} onMessage={vi.fn()} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(3999); });
+    expect(mock.control).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(mock.control).toHaveBeenCalledExactlyOnceWith("voice-1", "cue", "Certo, deixa eu ver.");
+    await act(async () => { await vi.advanceTimersByTimeAsync(19999); });
+    expect(mock.control).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(mock.control).toHaveBeenLastCalledWith("voice-1", "cue", "Uhum, só um momento.");
+    const retry = { attempt: 1, maxAttempts: 5, retryAt: Date.now() + 60000, message: "Reconectando" };
+    rerender(<VoiceControls target={voiceTarget} snapshot={{ ...chat, turns: [{ ...savedTurn(), id: chat.activeTurnId, status: "running", steps: savedTurn().steps.map(step => ({ ...step, retry })) }] }} onDictation={vi.fn()} onMessage={vi.fn()} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(mock.control).toHaveBeenCalledTimes(2);
+  });
+  it("does not cue over speech, a muted microphone, questions or a muted Jarvito", async () => {
+    vi.useFakeTimers(); mock.session = voiceSession({ phase: "speaking" }); mock.active = true;
+    const chat = { ...emptyChat(), activeTurnId: "working" };
+    const props = { target: voiceTarget, snapshot: chat, onDictation: vi.fn(), onMessage: vi.fn() };
+    const { rerender } = render(<VoiceControls {...props} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(24000); });
+    expect(mock.control).not.toHaveBeenCalled();
+    mock.session = voiceSession({ phase: "thinking", muted: true }); rerender(<VoiceControls {...props} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(24000); });
+    expect(mock.control).not.toHaveBeenCalled();
+    mock.session = voiceSession({ phase: "thinking" }); rerender(<VoiceControls {...props} speechEnabled={false} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(24000); });
+    expect(mock.control).not.toHaveBeenCalled();
+    rerender(<VoiceControls {...props} snapshot={{ ...chat, pendingQuestion: { turnId: "working", toolId: "q", questions: [{ id: "q1", question: "Como prefere?", options: [] }] } }} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(24000); });
+    expect(mock.control.mock.calls.some(call => call[1] === "cue")).toBe(false);
+    expect(mock.control).toHaveBeenCalledWith("voice-1", "speak", expect.stringContaining("Como prefere?"));
   });
 });

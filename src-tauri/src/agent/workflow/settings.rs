@@ -1,15 +1,19 @@
 use super::*;
 use std::fs;
+pub(crate) mod chat;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModelChoice {
     #[serde(default, skip_serializing_if = "crate::claude::Executor::is_jarvis")]
+    #[cfg_attr(test, ts(as = "Option<crate::claude::Executor>", optional))]
     pub executor: crate::claude::Executor,
     pub account: String,
     pub model: String,
     pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub fallback: Option<Box<ModelChoice>>,
 }
 pub type ModelSettings = BTreeMap<String, ModelChoice>;

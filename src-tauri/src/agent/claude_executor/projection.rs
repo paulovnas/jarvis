@@ -20,6 +20,7 @@ pub(super) struct Projection {
     associated_calls: HashSet<String>,
     metrics: MessageMetrics,
     recoverable_provider_failure: bool,
+    generation: HashMap<String, generation::Clock>,
 }
 
 #[derive(Default)]
@@ -272,6 +273,22 @@ pub(in crate::agent) fn mapped_call(name: &str, args: Value) -> (String, Value) 
 }
 
 impl Projection {
+    pub(super) fn pause_generation(&mut self, session: &Session) -> Result<(), AgentError> {
+        let Some(id) = &self.message else {
+            return Ok(());
+        };
+        let Some(clock) = self.generation.get_mut(id) else {
+            return Ok(());
+        };
+        clock.finish(std::time::Instant::now(), None);
+        let metrics = clock.snapshot(std::time::Instant::now());
+        session.update(false, |data| {
+            if let Some(turn) = data.turns.last_mut() {
+                step_for(turn, id).generation = metrics;
+            }
+        })
+    }
+
     pub(super) fn final_result(&self, event: &Value) -> Option<Result<(), AgentError>> {
         final_result(event).map(|result| {
             result.map_err(|mut error| {
@@ -340,8 +357,36 @@ impl Projection {
             if event["type"] == "message_start" {
                 self.message = event["message"]["id"].as_str().map(str::to_owned);
                 self.started = Some(std::time::Instant::now());
+                if let Some(id) = &self.message {
+                    self.generation
+                        .entry(id.clone())
+                        .or_insert_with(|| generation::Clock::new(std::time::Instant::now()));
+                }
             }
             if let Some(id) = &self.message {
+                if let Some(clock) = self.generation.get_mut(id) {
+                    if event["type"] == "message_delta" {
+                        clock.reported(event["usage"]["output_tokens"].as_u64());
+                    }
+                    if event["type"] == "content_block_delta" {
+                        for kind in ["text", "thinking", "partial_json"] {
+                            if let Some(fragment) = event["delta"][kind].as_str() {
+                                clock.append(fragment.len());
+                            }
+                        }
+                    }
+                    if event["type"] == "message_stop" {
+                        clock.finish(std::time::Instant::now(), None);
+                    }
+                    let metrics = clock.snapshot(std::time::Instant::now());
+                    if metrics.is_some() {
+                        session.update(false, |data| {
+                            if let Some(turn) = data.turns.last_mut() {
+                                step_for(turn, id).generation = metrics;
+                            }
+                        })?;
+                    }
+                }
                 if event["type"] == "message_delta" {
                     if let Some(usage) = self
                         .metrics
@@ -384,6 +429,10 @@ impl Projection {
                 return Ok(());
             };
             let blocks = message["content"].as_array().cloned().unwrap_or_default();
+            let generation = self.generation.get_mut(id).and_then(|clock| {
+                clock.reported(message["usage"]["output_tokens"].as_u64());
+                clock.snapshot(std::time::Instant::now())
+            });
             let previews = self.previews.entry(id.into()).or_default();
             for (index, block) in blocks.iter().enumerate() {
                 let Some(kind @ ("text" | "thinking")) = block["type"].as_str() else {
@@ -433,6 +482,7 @@ impl Projection {
                         }
                     }
                     let step = step_for(turn, id);
+                    step.generation = generation;
                     step.tools.extend(existing_tools);
                     render_previews(step, previews);
                     if let Some(usage) = self
@@ -498,6 +548,7 @@ impl Projection {
                 });
             }
         } else if event["type"] == "result" {
+            self.pause_generation(session)?;
             if let Some(window) = context_window(event, self.metrics.last_model.as_deref()) {
                 session.update(true, |data| {
                     if let Some(turn) = data.turns.last_mut() {
@@ -553,6 +604,61 @@ pub(super) async fn start_tool(session: &Session, tool: &ToolCall) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn split_envelopes_do_not_stop_the_stream_or_add_cumulative_usage() {
+        use crate::agent::tests::{options, session, Fixture};
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve("Teste".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        let mut projection = Projection::default();
+        projection.apply(&session, &json!({"type":"stream_event","event":{"type":"message_start","message":{"id":"one"}}})).unwrap();
+        let start = std::time::Instant::now() - Duration::from_secs(2);
+        projection
+            .generation
+            .insert("one".into(), generation::Clock::new(start));
+        for event in [
+            json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"text":"one"}}}),
+            json!({"type":"assistant","uuid":"a","message":{"id":"one","usage":{"output_tokens":7},"content":[{"type":"text","text":"one"}]}}),
+            json!({"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"thinking":"two"}}}),
+        ] {
+            projection.apply(&session, &event).unwrap();
+        }
+        let first = session.snapshot().unwrap().turns[0].steps[0]
+            .generation
+            .clone()
+            .unwrap();
+        assert_eq!(first.output_tokens, 7);
+        assert!(
+            projection.generation["one"]
+                .snapshot(start + Duration::from_secs(10))
+                .unwrap()
+                .duration_ms
+                > first.duration_ms
+        );
+        for event in [
+            json!({"type":"stream_event","event":{"type":"message_delta","usage":{"output_tokens":30}}}),
+            json!({"type":"stream_event","event":{"type":"message_stop"}}),
+            json!({"type":"assistant","uuid":"b","message":{"id":"one","usage":{"output_tokens":30},"content":[{"type":"thinking","thinking":"two"}]}}),
+        ] {
+            projection.apply(&session, &event).unwrap();
+        }
+        let final_metrics = session.snapshot().unwrap().turns[0].steps[0]
+            .generation
+            .clone()
+            .unwrap();
+        assert_eq!(final_metrics.output_tokens, 30);
+        assert!(!final_metrics.estimated);
+        assert_eq!(
+            projection.generation["one"]
+                .snapshot(start + Duration::from_secs(100))
+                .unwrap(),
+            final_metrics
+        );
+        projection.apply(&session, &json!({"type":"stream_event","parent_tool_use_id":"child","event":{"type":"message_start","message":{"id":"child"}}})).unwrap();
+        assert!(!projection.generation.contains_key("child"));
+    }
     #[test]
     fn native_message_metrics_use_final_usage_once_across_split_envelopes() {
         let mut metrics = MessageMetrics::default();

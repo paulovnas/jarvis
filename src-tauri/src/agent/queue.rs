@@ -45,6 +45,67 @@ fn validate_next_queued_executor(data: &SessionData) -> Result<(), AgentError> {
 }
 
 impl Session {
+    pub(super) fn edit_queued(&self, id: &str, content: String) -> Result<(), AgentError> {
+        if content.trim().is_empty() || content.len() > 100_000 {
+            return Err(AgentError::new(
+                "invalid_message",
+                "Envie uma mensagem entre 1 e 100.000 bytes.",
+            ));
+        }
+        let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
+        if data.compacting || data.manual_compaction {
+            return Err(AgentError::new(
+                "compacting",
+                "Aguarde a compactação terminar.",
+            ));
+        }
+        let mut queue = data.extras.queue.clone();
+        let message = queue
+            .iter_mut()
+            .find(|message| message.id == id && message.scheduled())
+            .ok_or_else(|| {
+                AgentError::new(
+                    "queue_started",
+                    "A mensagem já começou a ser enviada ou foi retirada da fila.",
+                )
+            })?;
+        if !message.parts.is_empty() {
+            // Preserve authorized skills and attachments, while replacing the
+            // text that the desktop renders from the structured message parts.
+            let mut remaining = content.as_str();
+            let mut parts = vec![];
+            let mut retained = vec![];
+            for part in &message.parts {
+                match part {
+                    skill_input::MessagePart::Skill { name, .. } => {
+                        let mention = format!("/{name}");
+                        if let Some(index) = remaining.find(&mention) {
+                            parts.push(skill_input::MessagePart::Text {
+                                text: remaining[..index].into(),
+                            });
+                            parts.push(part.clone());
+                            remaining = &remaining[index + mention.len()..];
+                        } else {
+                            retained.push(part.clone());
+                        }
+                    }
+                    skill_input::MessagePart::Attachment { .. } => retained.push(part.clone()),
+                    skill_input::MessagePart::Text { .. } => {}
+                }
+            }
+            parts.push(skill_input::MessagePart::Text {
+                text: remaining.into(),
+            });
+            parts.extend(retained);
+            message.parts = parts;
+        }
+        message.content = content;
+        self.checkpoint(&mut data, "queue_checkpoint", &queue)?;
+        data.extras.queue = queue;
+        data.revision = next_revision();
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(super) fn submit(
         &self,
@@ -87,12 +148,20 @@ impl Session {
                 "A fila aceita até 20 mensagens. Aguarde ou retire uma mensagem.",
             ));
         }
+        let accepted = options.model_selection.clone();
+        let selected = workflow::settings::chat::selection_key(&options).ok();
         let mut options = data
             .turns
             .last()
             .filter(|_| data.active.is_some() || data.recovery.is_some())
             .map(|turn| turn.turn.options.clone())
             .unwrap_or(options);
+        if selected == workflow::settings::chat::selection_key(&options).ok() {
+            if let Some(accepted) = accepted {
+                accepted.apply(&mut options);
+                options.model_selection = Some(accepted);
+            }
+        }
         options.approval_mode = ApprovalMode::Yolo;
         options.executor.require_available()?;
         let mut queue = data.extras.queue.clone();
@@ -505,6 +574,90 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn editing_queued_text_is_atomic_durable_and_preserves_identity_options_and_resources() {
+        let fixture = Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        let signal = session
+            .reserve("Active request".into(), tests_options())
+            .unwrap();
+        let attachment = attachments::Attachment {
+            id: "attached".into(),
+            conversation_id: "conversation".into(),
+            name: "example.png".into(),
+            mime: "image/png".into(),
+            size: 10,
+            kind: "image".into(),
+        };
+        session
+            .submit_message(
+                "/review Original request".into(),
+                tests_options(),
+                vec![
+                    skill_input::MessagePart::Skill {
+                        id: "skill".into(),
+                        name: "review".into(),
+                    },
+                    skill_input::MessagePart::Text {
+                        text: " Original request".into(),
+                    },
+                    skill_input::MessagePart::Attachment {
+                        attachment: attachment.clone(),
+                    },
+                ],
+            )
+            .unwrap();
+        session
+            .submit("Next request".into(), tests_options())
+            .unwrap();
+        let original = session.snapshot().unwrap().queued_messages;
+        session
+            .edit_queued(&original[0].id, "/review Revised request".into())
+            .unwrap();
+        let updated = session.snapshot().unwrap().queued_messages;
+        assert_eq!(updated[0].id, original[0].id);
+        assert_eq!(updated[1].id, original[1].id);
+        assert_eq!(updated[0].content, "/review Revised request");
+        assert_eq!(
+            serde_json::to_value(&updated[0].options).unwrap(),
+            serde_json::to_value(&original[0].options).unwrap()
+        );
+        assert!(updated[0].parts.iter().any(|part| matches!(part, skill_input::MessagePart::Attachment { attachment: current } if current == &attachment)));
+        assert!(updated[0].parts.iter().any(|part| matches!(part, skill_input::MessagePart::Skill { id, name } if id == "skill" && name == "review")));
+        assert!(!serde_json::to_string(&updated[0].parts)
+            .unwrap()
+            .contains("Original request"));
+        assert_eq!(
+            journal::load_all(&session.journal).unwrap().1.queue[0].content,
+            "/review Revised request"
+        );
+        assert!(!*signal.borrow());
+        let stored = fs::read(&session.journal).unwrap();
+        assert_eq!(
+            session
+                .edit_queued(&original[0].id, " ".into())
+                .unwrap_err()
+                .code,
+            "invalid_message"
+        );
+        assert_eq!(
+            session
+                .edit_queued("missing", "Revised".into())
+                .unwrap_err()
+                .code,
+            "queue_started"
+        );
+        assert_eq!(fs::read(&session.journal).unwrap(), stored);
+        assert!(session.promote_queued(&original[0].id).unwrap());
+        assert_eq!(
+            session
+                .edit_queued(&original[0].id, "Too late".into())
+                .unwrap_err()
+                .code,
+            "queue_started"
+        );
+    }
+
+    #[test]
     fn retired_executor_queue_can_be_opened_and_retrieved_without_starting_or_losing_it() {
         let fixture = Fixture::new();
         let session = crate::agent::tests::session(&fixture);
@@ -605,6 +758,7 @@ mod tests {
             approval_mode: ApprovalMode::Manual,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         }
     }
 

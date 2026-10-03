@@ -852,6 +852,7 @@ mod tests {
             approval_mode: ApprovalMode::Yolo,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         };
         credential.antigravity_models.insert(
             options.model.clone(),
@@ -932,6 +933,7 @@ mod tests {
             approval_mode: ApprovalMode::Manual,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         };
         let auth = options.clone();
         let credential = tokio::task::spawn_blocking(move || {
@@ -1001,6 +1003,7 @@ mod tests {
                     approval_mode: ApprovalMode::Manual,
                     manual_validation: false,
                     automatic_publication: None,
+                    model_selection: None,
                 },
             )
             .unwrap();

@@ -34,8 +34,8 @@ export const terminalPreferencesSchema = z.object({
   fontSize: z.number().int().min(9).max(32),
 });
 
-export const browserApplications = { chrome: "Google Chrome", edge: "Microsoft Edge", brave: "Brave", chromium: "Chromium" } as const;
-export const browserPreferencesSchema = z.object({ mode: z.enum(["embedded", "extension"]).default("embedded"), application: z.enum(["chrome", "edge", "brave", "chromium"]).default("chrome") });
+export const browserApplications = { chrome: "Google Chrome", edge: "Microsoft Edge", brave: "Brave", chromium: "Chromium", firefox: "Mozilla Firefox" } as const;
+export const browserPreferencesSchema = z.object({ mode: z.enum(["embedded", "extension"]).default("embedded"), application: z.enum(["chrome", "edge", "brave", "chromium", "firefox"]).default("chrome") });
 export const DEFAULT_BROWSER_PREFERENCES = browserPreferencesSchema.parse({});
 export type BrowserPreferences = z.infer<typeof browserPreferencesSchema>;
 

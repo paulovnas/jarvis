@@ -1,11 +1,11 @@
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Mic, MicOff, Phone, PhoneOff, Settings2, Square, Volume2 } from "lucide-react";
+import { Mic, MicOff, PhoneOff, Settings2, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Hint } from "@/components/ui/hint";
-import { useVoice } from "@/hooks/use-voice";
+import { acceptsDictationTranscript, useVoice } from "@/hooks/use-voice";
 import { voiceActive, voicePhaseLabels, voiceQuestionAnswer, voiceQuestionPrompt, voiceReply, voiceTranscriptSchema } from "@/core/voice";
 import type { ChatSnapshot } from "@/core/chat";
 import type { PendingQuestion, QuestionAnswer, QuestionResponse } from "@/core/questions";
@@ -15,12 +15,13 @@ import { useRunningClock } from "@/hooks/use-running-clock";
 import "./voice.css";
 
 const errorMessage = (cause: unknown) => typeof cause === "string" ? cause : "Não foi possível usar a voz. Tente novamente.";
+const thinkingPhrases = ["Certo, deixa eu ver.", "Uhum, só um momento.", "Beleza, estou conferindo.", "Deixa eu olhar isso para você.", "Só mais um instante.", "Estou vendo os detalhes."];
 export interface VoiceControlHandle { startCall: () => Promise<void> }
-export function VoiceControls({ target, onDictation, onMessage, snapshot, onAnswerQuestion, onPauseQuestion, proposal, onConfirmProject, disabled = false, callOnly = false, ref }: {
+export function VoiceControls({ target, onDictation, onMessage, snapshot, onAnswerQuestion, onPauseQuestion, proposal, onConfirmProject, disabled = false, allowCall = false, speechEnabled = true, ref }: {
   target?: string; onDictation: (text: string) => void; onMessage: (text: string) => Promise<boolean>;
   snapshot?: ChatSnapshot | null; onAnswerQuestion?: (question: PendingQuestion, response: QuestionResponse) => Promise<boolean>;
   onPauseQuestion?: (question: PendingQuestion) => Promise<boolean>;
-  disabled?: boolean; callOnly?: boolean;
+  disabled?: boolean; allowCall?: boolean; speechEnabled?: boolean;
   ref?: Ref<VoiceControlHandle>;
   proposal?: { id: string; projectName: string } | null;
   onConfirmProject?: (confirmed: boolean) => Promise<boolean>;
@@ -32,12 +33,13 @@ export function VoiceControls({ target, onDictation, onMessage, snapshot, onAnsw
   const own = target && voice.session?.target === target;
   const active = Boolean(own && voice.active);
   const session = own ? voice.session : null;
-  const latest = useRef({ voice, target, onDictation, onMessage, snapshot, onAnswerQuestion, onPauseQuestion, proposal, onConfirmProject });
-  useLayoutEffect(() => { latest.current = { voice, target, onDictation, onMessage, snapshot, onAnswerQuestion, onPauseQuestion, proposal, onConfirmProject }; }, [voice, target, onDictation, onMessage, snapshot, onAnswerQuestion, onPauseQuestion, proposal, onConfirmProject]);
+  const latest = useRef({ voice, target, onDictation, onMessage, snapshot, onAnswerQuestion, onPauseQuestion, proposal, onConfirmProject, speechEnabled });
+  useLayoutEffect(() => { latest.current = { voice, target, onDictation, onMessage, snapshot, onAnswerQuestion, onPauseQuestion, proposal, onConfirmProject, speechEnabled }; }, [voice, target, onDictation, onMessage, snapshot, onAnswerQuestion, onPauseQuestion, proposal, onConfirmProject, speechEnabled]);
   const sequence = useRef(new Map<string, number>());
   const spoken = useRef(new Set<string>());
   const answers = useRef<{ toolId: string; values: QuestionAnswer[] } | null>(null);
   const ownedSession = useRef<string | null>(null);
+  const cue = useRef({ turnId: "", startedAt: 0, lastAt: 0, phrase: 0 });
 
   const control = async (action: "end" | "finish" | "interrupt" | "mute" | "unmute") => {
     if (!session?.id) return;
@@ -45,7 +47,7 @@ export function VoiceControls({ target, onDictation, onMessage, snapshot, onAnsw
     catch (cause) { setError(errorMessage(cause)); }
   };
   const start = async (mode: "dictation" | "call") => {
-    if (starting || disabled || !target) return;
+    if (starting || disabled || !target || mode === "call" && !allowCall) return;
     const installed = voice.settings?.models.find(model => model.id === voice.settings?.config.model)?.installed;
     if (!voice.settings?.config.enabled || !installed || mode === "call" && !voice.settings.speechReady) { setSettingsOpen(true); return; }
     setStarting(true); setError(null);
@@ -67,7 +69,7 @@ export function VoiceControls({ target, onDictation, onMessage, snapshot, onAnsw
       const value = result.data; const current = latest.current;
       if (value.target !== target || current.voice.session?.id !== value.sessionId || (sequence.current.get(value.sessionId) ?? 0) >= value.sequence) return;
       sequence.current.set(value.sessionId, value.sequence);
-      if (value.mode === "dictation") { current.onDictation(value.text); return; }
+      if (value.mode === "dictation") { if (acceptsDictationTranscript(value.sessionId)) current.onDictation(value.text); return; }
       if (!voiceActive(current.voice.session)) return;
       void (async () => {
         try {
@@ -78,7 +80,8 @@ export function VoiceControls({ target, onDictation, onMessage, snapshot, onAnsw
             if (confirmed || declined) {
               const accepted = await current.onConfirmProject(confirmed);
               if (!accepted || !confirmed) await current.voice.control(value.sessionId, "resume");
-            } else await current.voice.control(value.sessionId, "speak", `Você quer continuar no projeto ${current.proposal.projectName}? Diga confirmo ou agora não.`);
+            } else if (current.speechEnabled) await current.voice.control(value.sessionId, "speak", `Você quer continuar no projeto ${current.proposal.projectName}? Diga confirmo ou agora não.`);
+            else await current.voice.control(value.sessionId, "resume");
             return;
           }
           const question = current.snapshot?.pendingQuestion;
@@ -88,14 +91,14 @@ export function VoiceControls({ target, onDictation, onMessage, snapshot, onAnsw
             if (!remaining) return;
             answers.current.values.push(voiceQuestionAnswer(remaining, value.text));
             const next = question.questions.find(item => !answers.current?.values.some(answer => answer.id === item.id));
-            if (next) { await current.voice.control(value.sessionId, "speak", voiceQuestionPrompt(next)); return; }
+            if (next) { await current.voice.control(value.sessionId, current.speechEnabled ? "speak" : "resume", current.speechEnabled ? voiceQuestionPrompt(next) : undefined); return; }
             const accepted = await current.onAnswerQuestion(question, { cancelled: false, answers: answers.current.values });
             if (!accepted) { answers.current = null; await current.voice.control(value.sessionId, "resume"); }
             return;
           }
           if (current.snapshot?.pendingApproval || current.snapshot?.pendingAuthoring) {
             current.onDictation(value.text);
-            await current.voice.control(value.sessionId, "speak", "Essa ação precisa da sua aprovação nos controles da conversa. Mantive sua fala no campo de mensagem.");
+            await current.voice.control(value.sessionId, current.speechEnabled ? "speak" : "resume", current.speechEnabled ? "Essa ação precisa da sua aprovação nos controles da conversa. Mantive sua fala no campo de mensagem." : undefined);
             return;
           }
           const accepted = await current.onMessage(value.text);
@@ -120,11 +123,11 @@ export function VoiceControls({ target, onDictation, onMessage, snapshot, onAnsw
     if (proposal && !spoken.current.has(`project:${proposal.id}`)) {
       spoken.current.add(`project:${proposal.id}`);
       snapshot.turns.forEach(turn => spoken.current.add(`turn:${turn.id}`));
-      void voice.control(id, "speak", `Podemos continuar no projeto ${proposal.projectName}. Você confirma?`).catch(cause => setError(errorMessage(cause)));
+      void voice.control(id, speechEnabled ? "speak" : "resume", speechEnabled ? `Podemos continuar no projeto ${proposal.projectName}. Você confirma?` : undefined).catch(cause => setError(errorMessage(cause)));
       return;
     }
-    const key = question ? `question:${question.toolId}` : snapshot.pendingApproval ? `approval:${snapshot.pendingApproval.tool.id}` : snapshot.pendingAuthoring ? `authoring:${snapshot.pendingAuthoring.toolId}` : null;
-    const say = (text: string) => { void voice.control(id, "speak", text.slice(0, 12000)).catch(cause => setError(errorMessage(cause))); };
+    const key = question ? `question:${question.turnId}:${question.toolId}` : snapshot.pendingApproval ? `approval:${snapshot.pendingApproval.tool.id}` : snapshot.pendingAuthoring ? `authoring:${snapshot.pendingAuthoring.toolId}` : null;
+    const say = (text: string) => { void voice.control(id, speechEnabled ? "speak" : "resume", speechEnabled ? text.slice(0, 12000) : undefined).catch(cause => setError(errorMessage(cause))); };
     if (key && !spoken.current.has(key)) {
       spoken.current.add(key);
       if (question) {
@@ -137,7 +140,23 @@ export function VoiceControls({ target, onDictation, onMessage, snapshot, onAnsw
     if (key || snapshot.activeTurnId || snapshot.queuedMessages?.length) return;
     const turn = [...snapshot.turns].reverse().find(turn => turn.status !== "running" && !spoken.current.has(`turn:${turn.id}`));
     if (turn) { snapshot.turns.forEach(item => { if (item.status !== "running") spoken.current.add(`turn:${item.id}`); }); say(voiceReply(turn)); }
-  }, [active, session?.id, session?.mode, snapshot, voice, onPauseQuestion, proposal]);
+  }, [active, session?.id, session?.mode, snapshot, voice, onPauseQuestion, proposal, speechEnabled]);
+
+  useEffect(() => {
+    const turnId = snapshot?.activeTurnId;
+    if (!active || session?.mode !== "call" || !turnId) { cue.current.turnId = ""; return; }
+    if (cue.current.turnId !== turnId) cue.current = { ...cue.current, turnId, startedAt: Date.now(), lastAt: 0 };
+    const timer = setInterval(() => {
+      const current = latest.current, value = current.voice.session, chat = current.snapshot;
+      if (!current.speechEnabled || !current.voice.active || !value?.id || value.mode !== "call" || value.target !== current.target || value.phase !== "thinking" || value.muted || chat?.turns.find(turn => turn.id === chat.activeTurnId)?.steps.some(step => step.retry) || chat?.pendingQuestion || chat?.pendingApproval || chat?.pendingAuthoring || current.proposal || chat?.activeTurnId !== cue.current.turnId) return;
+      const now = Date.now();
+      if (now - cue.current.startedAt < 4000 || cue.current.lastAt && now - cue.current.lastAt < 20000) return;
+      cue.current.lastAt = now;
+      const phrase = thinkingPhrases[cue.current.phrase++ % thinkingPhrases.length];
+      void current.voice.control(value.id, "cue", phrase).catch(() => {});
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [active, session?.id, session?.mode, snapshot?.activeTurnId]);
 
   useEffect(() => { if (error) toast.error(error, { id: "voice-error" }); }, [error]);
 
@@ -151,16 +170,15 @@ export function VoiceControls({ target, onDictation, onMessage, snapshot, onAnsw
   });
 
   return <>
-    <div className="inline-flex shrink-0 items-center gap-0.5" aria-label="Jarvis Voice">
-      {!callOnly && <Hint content={active && session?.mode === "dictation" ? "Concluir ditado" : "Ditar mensagem · Ctrl/Cmd + Shift + Espaço"}><Button type="button" variant={active && session?.mode === "dictation" ? "secondary" : "ghost"} size="icon" className={`size-7.5 cursor-pointer rounded-full ${active && session?.mode === "dictation" ? "text-onedark-red" : "text-muted-foreground"}`} aria-label={active && session?.mode === "dictation" ? "Concluir ditado" : "Ditar mensagem"} aria-pressed={active && session?.mode === "dictation"} disabled={disabled || starting || !!voice.active && !own} onClick={dictation}>{active && session?.mode === "dictation" ? <Square className="size-3.5" /> : <Mic className="size-3.5" />}</Button></Hint>}
-      <Hint content={active && session?.mode === "call" ? "Encerrar ligação" : "Ligar para o Jarvis"}><Button type="button" variant={active && session?.mode === "call" ? "destructive" : "ghost"} size="icon" className="size-7.5 cursor-pointer rounded-full" aria-label={active && session?.mode === "call" ? "Encerrar ligação" : "Ligar para o Jarvis"} disabled={disabled || starting || !!voice.active && (!own || session?.mode !== "call")} onClick={() => { if (active) void control("end"); else void start("call"); }}>{active && session?.mode === "call" ? <PhoneOff className="size-3.5" /> : <Phone className="size-3.5" />}</Button></Hint>
+    <div className={active && session?.mode === "call" ? "hidden" : "inline-flex shrink-0 items-center gap-0.5"} aria-label="Jarvis Voice" hidden={active && session?.mode === "call"}>
+      <Hint content={active && session?.mode === "dictation" ? "Concluir ditado e desligar microfone" : "Ditar mensagem · Ctrl/Cmd + Shift + Espaço"}><Button type="button" variant={active && session?.mode === "dictation" ? "secondary" : "ghost"} size="icon" className={`size-7.5 cursor-pointer rounded-full ${active && session?.mode === "dictation" ? "text-onedark-red" : "text-muted-foreground"}`} aria-label={active && session?.mode === "dictation" ? "Concluir ditado" : "Ditar mensagem"} aria-pressed={active && session?.mode === "dictation"} disabled={disabled && !active || starting || !!voice.active && !own && voice.session?.mode !== "announcement"} onClick={dictation}>{active && session?.mode === "dictation" ? <MicOff className="size-3.5" /> : <Mic className="size-3.5" />}</Button></Hint>
       {(active || error) && <Hint content="Configurações de voz"><Button type="button" size="icon" variant="ghost" className="size-7 cursor-pointer" aria-label="Configurações de voz" onClick={() => setSettingsOpen(true)}><Settings2 className="size-3" /></Button></Hint>}
     </div>
     <VoiceSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
   </>;
 }
 
-export function VoiceSessionPanel({ target, compact = false, large = false }: { target?: string; compact?: boolean; large?: boolean }) {
+export function VoiceSessionPanel({ target, compact = false }: { target?: string; compact?: boolean }) {
   const voice = useVoice();
   const now = useRunningClock(voice.active);
   const session = target && voice.session?.target === target ? voice.session : null;
@@ -168,11 +186,23 @@ export function VoiceSessionPanel({ target, compact = false, large = false }: { 
     if (session?.id) void voice.control(session.id, action).catch(cause => toast.error(errorMessage(cause)));
   };
   if (!session || !voice.active) return session?.phase === "error" ? <p role="alert" className="text-xs text-destructive">{session.error}</p> : null;
-  return <Card className={`voice-session-card ${compact ? "voice-compact" : ""} ${large ? "voice-call-stage" : ""}`} data-phase={session.phase}>
-      <CardContent className="flex min-w-0 items-center gap-3 p-3">
-        {session.mode === "call" && <div className="voice-avatar shrink-0"><Robot status={session.phase === "thinking" || session.phase === "transcribing" ? "running" : "idle"} gesture={session.phase === "listening" ? "listen" : session.phase === "speaking" ? "speak" : "none"} voiceLevel={session.level} expanded /></div>}
-        <div className="min-w-0 flex-1">{session.mode === "call" && <p className="mb-1 font-mono text-[9px] text-muted-foreground">LIGAÇÃO · {Math.floor(Math.max(0, now - (session.startedAt ?? now)) / 60000).toString().padStart(2, "0")}:{Math.floor(Math.max(0, now - (session.startedAt ?? now)) / 1000 % 60).toString().padStart(2, "0")}</p>}<p role="status" className="flex items-center gap-2 text-xs font-medium text-primary"><span className="voice-meter" aria-hidden="true">{[0.4, 0.8, 1, 0.6, 0.9].map((scale, index) => <span key={index} style={{ transform: `scaleY(${Math.max(0.15, session.level * scale)})` }} />)}</span>{voicePhaseLabels[session.phase]}</p>{session.transcript && <p className="mt-1 line-clamp-2 break-words text-[11px] leading-4 text-muted-foreground">{session.speaker === "user" ? "Você" : "Jarvis"}: {session.transcript}</p>}{session.mode === "call" && <p className="mt-1 text-[10px] text-muted-foreground">{session.phase === "speaking" || session.phase === "synthesizing" ? "Toque no microfone para interromper e falar." : "Fale naturalmente; uma pausa envia sua mensagem."}</p>}</div>
-        <div className="flex shrink-0 flex-col gap-1"><Hint content={session.phase === "speaking" || session.phase === "synthesizing" || session.phase === "thinking" ? "Interromper fala e ouvir" : session.muted ? "Ativar microfone" : "Pausar microfone"}><Button type="button" size="icon-sm" variant="secondary" className="cursor-pointer rounded-full" disabled={session.phase === "closing" || session.phase === "preparing"} aria-label={session.phase === "speaking" || session.phase === "synthesizing" || session.phase === "thinking" ? "Interromper fala e ouvir" : session.muted ? "Ativar microfone" : "Pausar microfone"} onClick={() => { void control(session.phase === "speaking" || session.phase === "synthesizing" || session.phase === "thinking" ? "interrupt" : session.muted ? "unmute" : "mute"); }}>{session.muted ? <MicOff className="size-3.5" /> : session.phase === "speaking" ? <Volume2 className="size-3.5" /> : <Mic className="size-3.5" />}</Button></Hint><Hint content="Encerrar voz"><Button type="button" size="icon-sm" variant={large ? "destructive" : "ghost"} className={`cursor-pointer rounded-full ${large ? "" : "text-destructive"}`} aria-label="Encerrar voz" onClick={() => { void control("end"); }}><PhoneOff className="size-3.5" /></Button></Hint></div>
-      </CardContent>
-    </Card>;
+  const meter = <span className="voice-meter" aria-hidden="true">{[0.4, 0.8, 1, 0.6, 0.9].map((scale, index) => <span key={index} style={{ transform: `scaleY(${Math.max(0.15, session.level * scale)})` }} />)}</span>;
+  if (session.mode !== "call") return <div role="status" className="voice-dictation-status" data-phase={session.phase}>{meter}<span>{voicePhaseLabels[session.phase]}</span><span className="voice-dictation-hint">Uma pausa insere sua fala no campo.</span></div>;
+  const interrupting = session.phase === "speaking" || session.phase === "synthesizing" || session.phase === "thinking";
+  const microphoneLabel = interrupting ? "Interromper fala e ouvir" : session.muted ? "Ativar microfone" : "Pausar microfone";
+  const elapsed = Math.max(0, now - (session.startedAt ?? now));
+  return <Card className={`voice-call-stage min-h-0 gap-0 p-0 ${compact ? "voice-call-compact" : ""}`} data-phase={session.phase} aria-label="Ligação com Jarvito">
+    <CardContent className="voice-call-content">
+      <div className="voice-avatar"><Robot status={session.phase === "thinking" || session.phase === "transcribing" ? "running" : "idle"} gesture={session.phase === "listening" ? "listen" : session.phase === "speaking" ? "speak" : "none"} voiceLevel={session.level} expanded /></div>
+      <div className="voice-call-copy">
+        <p className="voice-call-time">LIGAÇÃO · {Math.floor(elapsed / 60000).toString().padStart(2, "0")}:{Math.floor(elapsed / 1000 % 60).toString().padStart(2, "0")}</p>
+        <p role="status" className="voice-call-status">{meter}{voicePhaseLabels[session.phase]}</p>
+        {!compact && <p className="voice-call-caption">{session.transcript ? `${session.speaker === "user" ? "Você" : "Jarvito"}: ${session.transcript}` : "Fale naturalmente. Estou aqui."}</p>}
+      </div>
+      <div className="voice-call-actions">
+        <Hint content={microphoneLabel}><Button type="button" size="icon" variant="secondary" className="cursor-pointer rounded-full" disabled={session.phase === "closing" || session.phase === "preparing"} aria-label={microphoneLabel} onClick={() => { void control(interrupting ? "interrupt" : session.muted ? "unmute" : "mute"); }}>{session.muted ? <MicOff /> : session.phase === "speaking" ? <Volume2 /> : <Mic />}</Button></Hint>
+        <Hint content="Encerrar ligação"><Button type="button" size="icon" variant="destructive" className="cursor-pointer rounded-full" aria-label="Encerrar ligação" onClick={() => { void control("end"); }}><PhoneOff /></Button></Hint>
+      </div>
+    </CardContent>
+  </Card>;
 }

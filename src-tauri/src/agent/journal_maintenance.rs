@@ -426,6 +426,7 @@ mod tests {
             approval_mode: ApprovalMode::Yolo,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         }
     }
 

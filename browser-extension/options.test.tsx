@@ -25,6 +25,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it("shows the Jarvis identity and updates the connection status without reconnecting", async () => {
   const { unmount } = render(<Options />);
   expect(screen.getByRole("img", { name: "Jarvis" })).toHaveAttribute("src", "./icons/64.png");
+  expect(screen.queryByText(/URLs das abas disponíveis/)).not.toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Navegador desconectado."));
   expect(screen.getByRole("button", { name: "Conectar" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Desconectar" })).toBeDisabled();
@@ -73,4 +74,27 @@ it("keeps invalid code editable and disconnects through its separate action", as
   await user.click(screen.getByRole("button", { name: "Desconectar" }));
   expect(chromeMock.runtime.sendMessage).toHaveBeenLastCalledWith({ type: "disconnect" });
   expect(toast.success).toHaveBeenCalledWith("Navegador desconectado");
+});
+
+it("configures Firefox through browser APIs without claiming a debugger connection", async () => {
+  const firefox = { ...chromeMock, runtime: { ...chromeMock.runtime, getURL: () => "moz-extension://profile/" } };
+  vi.stubGlobal("browser", firefox);
+  const user = userEvent.setup();
+  render(<Options />);
+  await screen.findByText(/No Firefox, permita acesso aos sites/);
+  expect(screen.queryByText(/exibe seu aviso de depuração/)).not.toBeInTheDocument();
+  const pairing = { version: 1, endpoint: "ws://127.0.0.1:17373/extension", token: "a".repeat(64) };
+  await user.click(screen.getByRole("textbox", { name: "Código de conexão" }));
+  await user.paste(JSON.stringify(pairing));
+  await user.click(screen.getByRole("button", { name: "Conectar" }));
+  expect(firefox.runtime.sendMessage).toHaveBeenLastCalledWith({ type: "connect", pairing });
+});
+
+it("explains Firefox data transfer before pairing without adding another approval", async () => {
+  vi.stubGlobal("browser", { ...chromeMock, runtime: { ...chromeMock.runtime, getURL: () => "moz-extension://profile/" } });
+  render(<Options />);
+  expect(screen.getByText(/URLs das abas disponíveis/)).toHaveTextContent("conteúdo, interações e diagnósticos das páginas conectadas");
+  expect(screen.getByText(/URLs das abas disponíveis/)).toHaveTextContent("podem ser processados pelos provedores de IA configurados no Jarvis");
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Navegador desconectado."));
+  expect(screen.getAllByRole("button").map(button => button.textContent)).toEqual(["Conectar", "Desconectar"]);
 });

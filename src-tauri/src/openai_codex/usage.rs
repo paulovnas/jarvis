@@ -14,6 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub(crate) mod go;
 mod parse;
 #[cfg(test)]
 mod tests;
@@ -79,15 +80,16 @@ fn alert_notices(
         UsageAlertWindow::FiveHour => 18_000.0,
         UsageAlertWindow::Weekly => 604_800.0,
     };
-    let provider = if record.provider_kind == "antigravity" {
-        "Antigravity"
-    } else {
-        "OpenAI Codex"
+    let provider = match record.provider_kind.as_str() {
+        "antigravity" => "Antigravity",
+        "opencode-go" => "OpenCode Go",
+        _ => "OpenAI Codex",
     };
     let alias = record
         .alias
         .strip_prefix("openai-codex-")
         .or_else(|| record.alias.strip_prefix("antigravity-"))
+        .or_else(|| record.alias.strip_prefix("opencode-go-"))
         .unwrap_or(&record.alias);
     usage
         .windows
@@ -122,6 +124,21 @@ fn alert_notices(
 struct Cached {
     attempted: Option<Instant>,
     value: Option<AccountUsage>,
+}
+impl Cached {
+    fn finish(
+        &mut self,
+        mut usage: AccountUsage,
+        result: Result<(), ProviderError>,
+    ) -> AccountUsage {
+        if let Err(error) = result {
+            usage = self.value.clone().unwrap_or(usage);
+            usage.error = Some(error.message);
+        }
+        self.attempted = Some(Instant::now());
+        self.value = Some(usage.clone());
+        usage
+    }
 }
 #[derive(Default)]
 pub(super) struct UsageCache {
@@ -319,6 +336,14 @@ impl OpenAiCodexState {
         {
             return Err(unavailable());
         }
+        if record.provider_kind == "opencode-go" {
+            return super::opencode_go::credential(
+                state,
+                home,
+                self.manager.secret_store.as_ref(),
+                &record.alias,
+            );
+        }
         let mut credential = self.manager.secret_store.load(&record.alias).map_err(|_| {
             ProviderError::new(
                 "credential_missing",
@@ -352,7 +377,12 @@ impl OpenAiCodexState {
             .map_err(|_| ProviderError::database())?
             .into_iter()
             .find(|record| {
-                record.alias == alias && record.enabled && record.provider_kind != "custom"
+                record.alias == alias
+                    && record.enabled
+                    && matches!(
+                        record.provider_kind.as_str(),
+                        "openai-codex" | "antigravity" | "opencode-go"
+                    )
             })
             .ok_or_else(unavailable)?;
         let entry = self.manager.usage_cache.entry(&record)?;
@@ -387,6 +417,13 @@ impl OpenAiCodexState {
             let now = current_time_millis()?;
             if record.provider_kind == "antigravity" {
                 google(&client, &antigravity::ENDPOINTS, &credential, &mut usage)?;
+            } else if record.provider_kind == "opencode-go" {
+                usage.windows = go::fetch_windows(
+                    &client,
+                    super::opencode_go::BASE_URL,
+                    &credential.access,
+                    &format!("jarvis-go-{}", credential.account_id),
+                )?;
             } else {
                 codex(
                     &client,
@@ -399,13 +436,7 @@ impl OpenAiCodexState {
             usage.fetched_at = Some(now);
             Ok::<_, ProviderError>(())
         })();
-        if let Err(error) = result {
-            usage = cached.value.clone().unwrap_or(usage);
-            usage.error = Some(error.message);
-        }
-        cached.attempted = Some(Instant::now());
-        cached.value = Some(usage.clone());
-        Ok(usage)
+        Ok(cached.finish(usage, result))
     }
 }
 
@@ -449,11 +480,15 @@ pub(super) fn save_visibility(
     alias: &str,
     show_usage: bool,
     third_party: bool,
+    five_hour: Option<bool>,
+    weekly: Option<bool>,
 ) -> Result<(), ProviderError> {
     let changed = connection
         .execute(
-            "UPDATE provider_accounts SET show_usage=?2, show_third_party_usage=?3 WHERE alias=?1",
-            rusqlite::params![alias, show_usage, third_party],
+            "UPDATE provider_accounts SET show_usage=?2, show_third_party_usage=?3,
+                show_five_hour_usage=COALESCE(?4, show_five_hour_usage),
+                show_weekly_usage=COALESCE(?5, show_weekly_usage) WHERE alias=?1",
+            rusqlite::params![alias, show_usage, third_party, five_hour, weekly],
         )
         .map_err(|_| ProviderError::database())?;
     if changed != 1 {
@@ -469,13 +504,22 @@ pub async fn set_provider_usage_visibility(
     alias: String,
     show_usage: bool,
     show_third_party_usage: bool,
+    show_five_hour_usage: Option<bool>,
+    show_weekly_usage: Option<bool>,
 ) -> Result<(), ProviderError> {
     super::validate_provider_alias(&alias).map_err(|_| ProviderError::invalid_alias())?;
     let home = super::home_dir(&app)?;
     let state = persistence_state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         state.with_connection(&home, |connection| {
-            save_visibility(connection, &alias, show_usage, show_third_party_usage)
+            save_visibility(
+                connection,
+                &alias,
+                show_usage,
+                show_third_party_usage,
+                show_five_hour_usage,
+                show_weekly_usage,
+            )
         })
     })
     .await
@@ -500,7 +544,7 @@ pub(super) fn save_alert(
         .map_err(|_| ProviderError::database())?;
     let changed = transaction
         .execute(
-            "UPDATE provider_accounts SET usage_alert_window=?2, usage_alert_threshold=?3 WHERE alias=?1 AND provider_kind IN ('openai-codex', 'antigravity')",
+            "UPDATE provider_accounts SET usage_alert_window=?2, usage_alert_threshold=?3 WHERE alias=?1 AND provider_kind IN ('openai-codex', 'antigravity', 'opencode-go')",
             rusqlite::params![alias, window, threshold],
         )
         .map_err(|_| ProviderError::database())?;

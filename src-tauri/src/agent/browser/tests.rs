@@ -49,6 +49,27 @@ fn read_only_agents_cannot_navigate_or_interact() {
 }
 
 #[test]
+fn extension_tools_explain_firefox_input_and_debugger_capabilities() {
+    let tools = definitions(crate::agent::Mode::Build);
+    let description = |name: &str| {
+        tools.iter().find(|tool| tool["name"] == name).unwrap()["description"]
+            .as_str()
+            .unwrap()
+    };
+    assert!(description("browser_click").contains("Firefox uses DOM activation"));
+    assert!(description("browser_devtools").contains("Firefox does not support CDP"));
+    assert!(description("browser_evaluate").contains("CSP"));
+    for name in [
+        "browser_discover",
+        "browser_snapshot",
+        "browser_network",
+        "browser_response_body",
+    ] {
+        assert!(!description(name).contains("Chromium"));
+    }
+}
+
+#[test]
 fn screenshot_save_path_is_optional_in_build_and_rejected_by_the_read_only_catalog() {
     for mode in [crate::agent::Mode::Plan, crate::agent::Mode::Build] {
         let tools = definitions(mode);

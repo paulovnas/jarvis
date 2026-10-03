@@ -56,7 +56,9 @@ export type MessagePart = { "type": "text", text: string, } | { "type": "skill",
 
 export type AutomaticPublication = { commit: boolean, push: boolean, pullRequest: boolean, };
 
-export type TurnOptions = { executor?: Executor, account: string, model: string, reasoning: string | null, mode: Mode, workflow?: Flow | null, customWorkflowId?: string | null, customAgentId?: string | null, approvalMode: ApprovalMode, manualValidation?: boolean, automaticPublication?: AutomaticPublication, };
+export type ModelChoice = { executor?: Executor, account: string, model: string, reasoning: string | null, fallback?: ModelChoice, };
+
+export type TurnOptions = { executor?: Executor, account: string, model: string, reasoning: string | null, modelSelection?: ModelChoice, mode: Mode, workflow?: Flow | null, customWorkflowId?: string | null, customAgentId?: string | null, approvalMode: ApprovalMode, manualValidation?: boolean, automaticPublication?: AutomaticPublication, };
 
 export type TaskStatus = "pending" | "in_progress" | "completed" | "blocked";
 
@@ -68,13 +70,15 @@ export type RetryStatus = { attempt: number, maxAttempts: number, retryAt: numbe
 
 export type Usage = { inputTokens: number, outputTokens: number, cacheReadTokens?: number | null, cacheWriteTokens?: number | null, };
 
+export type GenerationMetrics = { outputTokens: number, durationMs: number, estimated: boolean, };
+
 export type ContextReduction = { callId: string, originalBytes: number, retainedBytes: number, };
 
 export type CoreActivityStatus = "applied" | "reused" | "unavailable" | "pending" | "issues";
 
 export type CoreActivity = { component: "context-mode" | "ponytail" | "beads" | "open-design" | "context7" | "lsp" | "hyperframes" | "audiovisual" | "comfyui" | "graft", action: string, status: CoreActivityStatus, summary: string, sources: Array<string>, fingerprint?: string | null, durationMs: number, };
 
-export type AgentStep = { coreActivities?: Array<CoreActivity>, contextId?: string | null, contextSearches: number, contextReductions?: Array<ContextReduction>, readReuses?: Array<ContextReduction>, loopSteers?: number, loopAvoidedCalls?: number, progressEvents?: number, evidenceEvents?: number, progressCheckpoints?: number, progressPauses?: number, retry?: RetryStatus | null, durationMs: number, text: string, summary: string, tools: Array<AgentTool>, usage: Usage | null, };
+export type AgentStep = { generation?: GenerationMetrics, coreActivities?: Array<CoreActivity>, contextId?: string | null, contextSearches: number, contextReductions?: Array<ContextReduction>, readReuses?: Array<ContextReduction>, loopSteers?: number, loopAvoidedCalls?: number, progressEvents?: number, evidenceEvents?: number, progressCheckpoints?: number, progressPauses?: number, retry?: RetryStatus | null, durationMs: number, text: string, summary: string, tools: Array<AgentTool>, usage: Usage | null, };
 
 export type TurnStatus = "running" | "completed" | "cancelled" | "error" | "interrupted";
 
@@ -98,7 +102,7 @@ export type StartedItem = { "type": "step", stepIndex: number, step: AgentStep, 
 
 export type SnapshotState = { compacting: boolean, activeTurnId: string | null, pendingApproval: PendingApproval | null, pendingQuestion: unknown | null, pendingAuthoring: unknown | null, queuedMessages: Array<QueuedMessage>, context: ContextInfo, compactions: Array<CompactionEvent>, fileChanges: Array<FileChange>, history: HistoryWindow, };
 
-export type AgentEvent = { "type": "turnStarted", turn: AgentTurn, } | { "type": "turnTimingUpdated", turnId: string, durationMs: number, activeSince: number | null, } | { "type": "itemStarted", item: StartedItem, } | { "type": "itemDelta", stepIndex: number, textAppend: string, summaryAppend: string, textReplace?: string, summaryReplace?: string, coreActivities?: Array<CoreActivity>, durationMs: number, retry: RetryStatus | null, usage: Usage | null, } | { "type": "itemCompleted", stepIndex: number, tool: AgentTool, } | { "type": "tasksUpdated", tasks: Array<DirectTask>, } | { "type": "auxiliaryMessagesUpdated", messages: Array<QueuedMessage>, } | { "type": "approvalRequested", approval: PendingApproval | null, } | { "type": "stateChanged", state: SnapshotState, } | { "type": "turnCompleted", turn: AgentTurn, };
+export type AgentEvent = { "type": "turnStarted", turn: AgentTurn, } | { "type": "turnTimingUpdated", turnId: string, durationMs: number, activeSince: number | null, } | { "type": "itemStarted", item: StartedItem, } | { "type": "itemDelta", stepIndex: number, textAppend: string, summaryAppend: string, textReplace?: string, summaryReplace?: string, coreActivities?: Array<CoreActivity>, durationMs: number, retry: RetryStatus | null, usage: Usage | null, generation?: GenerationMetrics | null, } | { "type": "itemCompleted", stepIndex: number, tool: AgentTool, } | { "type": "tasksUpdated", tasks: Array<DirectTask>, } | { "type": "auxiliaryMessagesUpdated", messages: Array<QueuedMessage>, } | { "type": "approvalRequested", approval: PendingApproval | null, } | { "type": "stateChanged", state: SnapshotState, } | { "type": "turnCompleted", turn: AgentTurn, };
 
 export type AgentEventBatch = { protocolVersion: number, conversationId: string, baseRevision: number | null, revision: number, events: Array<AgentEvent>, };
 

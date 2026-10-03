@@ -8,7 +8,7 @@ import { CompanionChatPane } from "./CompanionChatPane";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
-vi.mock("@/components/chat/LazyChatMarkdown", () => ({ LazyChatMarkdown: ({ content }: { content: string }) => <p>{content}</p> }));
+vi.mock("@/components/chat/LazyChatMarkdown", () => ({ LazyChatMarkdown: ({ content }: { content: string }) => <p data-testid="project-markdown">{content}</p> }));
 const call = vi.mocked(invoke);
 const events = new Map<string, (payload: unknown) => void>();
 const stop = vi.fn();
@@ -25,6 +25,88 @@ let globalChat: CompanionChat;
 let projectChat: CompanionChat;
 
 describe("Jarvito chat", () => {
+  it("persists its model choice only for the selected conversation", async () => {
+    const user = userEvent.setup(); render(<CompanionChatPane />);
+    await screen.findByText("Oi, eu sou o Jarvito.");
+    await user.click(screen.getByRole("button", { name: "Modelo do Jarvito" }));
+    (await screen.findByRole("menuitem", { name: "codex" })).focus();
+    await user.keyboard("{ArrowRight}");
+    (await screen.findByRole("menuitem", { name: "GPT-6" })).focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_chat_agent_model", {
+      conversationId: "global-chat", key: "standard/builder", choice: { executor: "jarvis", account: "codex", model: "gpt-6", reasoning: "high" },
+    }));
+    expect(call).not.toHaveBeenCalledWith("set_agent_model", expect.anything());
+  });
+
+  it("highlights a missing saved model and blocks sending without discarding the draft", async () => {
+    globalChat.options = { ...options, account: "removed", model: "missing" };
+    const user = userEvent.setup(); render(<CompanionChatPane />);
+    await screen.findByText("Oi, eu sou o Jarvito.");
+    await user.type(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }), "Continue{Enter}");
+    expect(screen.getByRole("button", { name: "Modelo do Jarvito" })).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "Modelo do Jarvito" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Mensagem para Jarvito" })).toHaveValue("Continue");
+    expect(call).not.toHaveBeenCalledWith("send_companion_message", expect.anything());
+  });
+
+  it("retains the available saved secondary when changing the conversation primary model", async () => {
+    const fallback = { executor: "jarvis" as const, account: "codex", model: "backup", reasoning: "high" };
+    globalChat.options = { ...options, modelSelection: { executor: "jarvis", account: "codex", model: "gpt-6", reasoning: "high", fallback } };
+    const original = call.getMockImplementation()!;
+    call.mockImplementation(async (command, args, invokeOptions) => command === "get_companion_models" ? [{ provider: "codex", providerKind: "openai-codex", models: [
+      { value: "codex/gpt-6", label: "GPT-6", reasoningLevels: ["high"], defaultReasoningLevel: "high" },
+      { value: "codex/backup", label: "Backup", reasoningLevels: ["high"], defaultReasoningLevel: "high" },
+      { value: "codex/gpt-6-sol", label: "GPT-6 Sol", reasoningLevels: ["high"], defaultReasoningLevel: "high" },
+    ] }] : original(command, args, invokeOptions));
+    const user = userEvent.setup(); render(<CompanionChatPane />);
+    await screen.findByText("Oi, eu sou o Jarvito.");
+    expect(screen.getByRole("button", { name: "Modelo do Jarvito" })).not.toHaveAttribute("aria-invalid");
+    await user.click(screen.getByRole("button", { name: "Modelo do Jarvito" }));
+    (await screen.findByRole("menuitem", { name: "codex" })).focus();
+    await user.keyboard("{ArrowRight}");
+    (await screen.findByRole("menuitem", { name: "GPT-6 Sol" })).focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_chat_agent_model", {
+      conversationId: "global-chat", key: "standard/builder", choice: { executor: "jarvis", account: "codex", model: "gpt-6-sol", reasoning: "high", fallback },
+    }));
+    expect(screen.getByRole("button", { name: "Modelo do Jarvito" })).toHaveTextContent("GPT-6 Sol");
+    expect(call).not.toHaveBeenCalledWith("set_agent_model", expect.anything());
+  });
+
+  it("blocks a missing saved secondary and clears it only after an explicit valid chat selection", async () => {
+    const fallback = { executor: "jarvis" as const, account: "removed", model: "missing", reasoning: "high" };
+    globalChat.options = { ...options, modelSelection: { executor: "jarvis", account: "codex", model: "gpt-6", reasoning: "high", fallback } };
+    const user = userEvent.setup(); render(<CompanionChatPane />);
+    await screen.findByText("Oi, eu sou o Jarvito.");
+    const picker = screen.getByRole("button", { name: "Modelo do Jarvito" });
+    await user.type(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }), "Continue{Enter}");
+    expect(picker).toHaveTextContent("GPT-6");
+    expect(picker).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Mensagem para Jarvito" })).toHaveValue("Continue");
+    expect(call).not.toHaveBeenCalledWith("send_companion_message", expect.anything());
+    expect(call).not.toHaveBeenCalledWith("set_chat_agent_model", expect.anything());
+    await user.click(picker);
+    (await screen.findByRole("menuitem", { name: "codex" })).focus();
+    await user.keyboard("{ArrowRight}");
+    (await screen.findByRole("menuitem", { name: /^GPT-6/ })).focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_chat_agent_model", {
+      conversationId: "global-chat", key: "standard/builder", choice: { executor: "jarvis", account: "codex", model: "gpt-6", reasoning: "high", fallback: null },
+    }));
+    expect(picker).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByRole("textbox", { name: "Mensagem para Jarvito" })).toHaveValue("Continue");
+    expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
+    expect(call).toHaveBeenCalledWith("send_companion_message", expect.objectContaining({ content: "Continue" }));
+    expect(call).not.toHaveBeenCalledWith("set_agent_model", expect.anything());
+  });
+
   beforeEach(() => {
     globalChat = makeChat(); projectChat = makeChat("project-chat", true);
     events.clear(); stop.mockClear();
@@ -36,7 +118,7 @@ describe("Jarvito chat", () => {
     call.mockReset().mockImplementation(async (command, args) => {
       if (command === "get_companion_chat") return (args as { conversationId?: string } | undefined)?.conversationId ? projectChat : globalChat;
       if (command === "get_companion_conversations") return [{ id: "project-chat", projectId: "project-1", projectName: "Portal", workspaceName: "Trabalho", title: "Ajustar relatório", lastActivityAt: 10 }];
-      if (command === "get_companion_models") return [{ provider: "codex", providerKind: "openai-codex", models: [{ value: "codex/gpt-6", label: "GPT-6", reasoningLevels: [], defaultReasoningLevel: null }] }];
+      if (command === "get_companion_models") return [{ provider: "codex", providerKind: "openai-codex", models: [{ value: "codex/gpt-6", label: "GPT-6", reasoningLevels: ["high"], defaultReasoningLevel: "high" }] }];
       if (command === "send_companion_message") return globalChat;
       if (command === "clear_companion_chat") {
         const revision = globalChat.chat.revision + 1;
@@ -71,6 +153,16 @@ describe("Jarvito chat", () => {
     expect(await screen.findByText("Podemos começar pela experiência de quem usa.")).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Mensagem para Jarvito" })).toHaveValue("");
     expect(call).not.toHaveBeenCalledWith("companion_open_conversation", expect.anything());
+  });
+
+  it("keeps the general assistant in plain text and does not expose coding progress", async () => {
+    globalChat.chat.turns = [turn("Oi", "Olá, estou aqui.", "running")];
+    globalChat.chat.activeTurnId = "turn-1";
+    render(<CompanionChatPane />);
+    expect(await screen.findByText("Olá, estou aqui.")).toBeVisible();
+    expect(screen.queryByTestId("project-markdown")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Jarvito está pensando…");
+    expect(screen.queryByText("Conferindo o pedido")).not.toBeInTheDocument();
   });
 
   it("keeps a failed message editable for a retry", async () => {
@@ -352,11 +444,13 @@ describe("Jarvito chat", () => {
     await user.click(screen.getByRole("button", { name: "Modelo do Jarvito" }));
     (await screen.findByRole("menuitem", { name: "codex" })).focus();
     await user.keyboard("{ArrowRight}");
-    await user.click(await screen.findByRole("menuitem", { name: "GPT-6" }));
-    expect(screen.getByRole("button", { name: "Modelo do Jarvito" })).toHaveTextContent("GPT-6");
+    (await screen.findByRole("menuitem", { name: "GPT-6" })).focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Modelo do Jarvito" })).toHaveTextContent("GPT-6"));
     await user.type(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }), "Continue o pedido");
     await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
-    expect(call).toHaveBeenCalledWith("send_companion_message", { conversationId: null, content: "Continue o pedido", options: { ...options, executor: "jarvis", model: "gpt-6", reasoning: null } });
+    expect(call).toHaveBeenCalledWith("send_companion_message", { conversationId: null, content: "Continue o pedido", options: { ...options, executor: "jarvis", model: "gpt-6", reasoning: "high" } });
   });
 
   it("keeps each conversation's unsent draft separate when switching and collapsing", async () => {

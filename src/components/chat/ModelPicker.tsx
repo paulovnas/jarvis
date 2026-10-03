@@ -22,7 +22,7 @@ export interface ProviderModelGroup {
 
 
 export type ModelSelection = ExecutionSelection;
-export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLabel = "Nenhum", disabled = false, ariaLabel = "Selecionar modelo de IA", showProviderIdentity = false, onRefresh, refreshing = false, emptyMessage = "Conecte um provedor em Configurações." }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; onClear?: () => void; clearLabel?: string; disabled?: boolean; ariaLabel?: string; showProviderIdentity?: boolean; onRefresh?: () => void; refreshing?: boolean; emptyMessage?: string }) {
+export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLabel = "Nenhum", disabled = false, invalid = false, ariaLabel = "Selecionar modelo de IA", showProviderIdentity = false, onRefresh, refreshing = false, emptyMessage = "Conecte um provedor em Configurações." }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; onClear?: () => void; clearLabel?: string; disabled?: boolean; invalid?: boolean; ariaLabel?: string; showProviderIdentity?: boolean; onRefresh?: () => void; refreshing?: boolean; emptyMessage?: string }) {
   const currentGroup = modelGroups.find(group => executorOf(group) === executorOf(selection) && group.models.some(model => model.value === selection?.model));
   const currentModelDef = currentGroup?.models.find(model => model.value === selection?.model);
   const reasoning = selection?.reasoning;
@@ -32,8 +32,9 @@ export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLa
   return (<DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={ariaLabel}
+                aria-invalid={invalid || undefined}
                 disabled={disabled}
-                className="composer-model flex h-7.5 max-w-full cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-2 font-mono text-[10px] font-medium text-foreground shadow-none transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                className={`composer-model flex h-7.5 max-w-full cursor-pointer items-center gap-1 rounded-md px-2 font-mono text-[10px] font-medium shadow-none transition-colors focus-visible:ring-1 focus-visible:ring-ring ${invalid ? "border border-destructive bg-destructive/10 text-destructive hover:bg-destructive/15" : "border-0 bg-transparent text-foreground hover:bg-secondary hover:text-foreground"}`}
               >
                 {providerLabel && <ProviderIcon kind={currentGroup?.executor === "claude" ? "claude-code" : currentGroup?.providerKind ?? "custom"} className="size-3.5 text-onedark-cyan" />}
                 <Hint content={showProviderIdentity ? displayLabel : selection?.model} whenTruncated><span className="min-w-0 truncate">{displayLabel}</span></Hint>

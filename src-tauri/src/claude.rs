@@ -47,6 +47,8 @@ pub(crate) async fn get_claude_usage(
 pub(crate) struct ProviderPreferences {
     pub enabled: bool,
     pub show_usage: bool,
+    pub show_five_hour_usage: bool,
+    pub show_weekly_usage: bool,
     pub disabled_models: Vec<String>,
 }
 
@@ -55,6 +57,8 @@ impl Default for ProviderPreferences {
         Self {
             enabled: true,
             show_usage: true,
+            show_five_hour_usage: true,
+            show_weekly_usage: true,
             disabled_models: Vec::new(),
         }
     }

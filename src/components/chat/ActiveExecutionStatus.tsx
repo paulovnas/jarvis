@@ -4,6 +4,8 @@ import { Hint } from "@/components/ui/hint";
 import { Spinner } from "@/components/ui/spinner";
 import { executionDuration, formatExecutionDuration, useRunningClock } from "@/hooks/use-running-clock";
 import { describeExecution } from "./execution-status";
+import { combineGeneration, generationRate } from "@/core/generation";
+import { GenerationRate } from "./GenerationRate";
 
 export function ActiveExecutionStatus({ turn, waitingForUser = false }: { turn: AgentTurn; waitingForUser?: boolean }) {
   const now = useRunningClock(turn.activeSince !== null);
@@ -15,6 +17,7 @@ export function ActiveExecutionStatus({ turn, waitingForUser = false }: { turn: 
   }, true, waitingForUser);
   const waitingForAgents = turn.steps[turn.steps.length - 1]?.tools.some(tool => tool.name === "hub_wait" && tool.status === "running");
   const waiting = status.waiting || waitingForAgents;
+  const generation = combineGeneration(turn.steps.map(step => step.generation));
   const heading = status.retry || status.waiting ? status.heading
     : waitingForAgents ? "Aguardando agentes"
     : !turn.steps.length && turn.activeSince === null ? "Preparando execução…" : status.heading;
@@ -37,6 +40,7 @@ export function ActiveExecutionStatus({ turn, waitingForUser = false }: { turn: 
     <span className="flex shrink-0 items-center gap-1.5 font-mono text-[10px] tabular-nums text-muted-foreground">
       <span aria-label="Tempo total da execução">{formatExecutionDuration(durationMs)}</span>
       {status.tools.length > 0 && <span className="hidden items-center gap-1.5 sm:inline-flex"><span aria-hidden="true" className="text-border">·</span><span>{status.tools.length} {status.tools.length === 1 ? "ação" : "ações"}</span></span>}
+      {generationRate(generation) !== null && <><span aria-hidden="true" className="text-border">·</span><GenerationRate generation={generation} /></>}
     </span>
   </section>;
 }

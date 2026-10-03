@@ -134,10 +134,14 @@ fn claude_provider_preferences_survive_restart_and_preserve_legacy_choices() {
     let legacy: Preferences = serde_json::from_str(r#"{"notifications":false}"#).unwrap();
     assert!(legacy.claude.allows("sonnet"));
     assert!(legacy.claude.show_usage);
+    assert!(legacy.claude.show_five_hour_usage);
+    assert!(legacy.claude.show_weekly_usage);
     let mut store = Store::open(path.clone()).unwrap();
     let mut preferences = legacy;
     preferences.claude.disabled_models = vec!["opus".into()];
     preferences.claude.show_usage = false;
+    preferences.claude.show_five_hour_usage = false;
+    preferences.claude.show_weekly_usage = true;
     store.save(preferences.clone()).unwrap();
     assert_eq!(
         Store::open(path.clone()).unwrap().preferences.claude,

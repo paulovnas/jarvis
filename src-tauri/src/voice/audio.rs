@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::{
     collections::VecDeque,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc,
     },
 };
@@ -60,10 +60,72 @@ pub(super) fn device(id: Option<&str>, input: bool) -> Result<cpal::Device, Stri
 
 pub(super) struct Capture {
     pub _stream: cpal::Stream,
-    pub audio: mpsc::Receiver<Vec<f32>>,
+    pub audio: CaptureAudio,
     pub failed: Arc<AtomicBool>,
     pub dropped: Arc<AtomicBool>,
     pub rate: u32,
+}
+
+/// Bound queued microphone audio by duration, independent of the device callback size.
+pub(super) struct CaptureAudio {
+    receiver: mpsc::Receiver<Vec<f32>>,
+    queued: Arc<AtomicUsize>,
+}
+struct CaptureSender {
+    sender: mpsc::SyncSender<Vec<f32>>,
+    queued: Arc<AtomicUsize>,
+    limit: usize,
+    dropped: Arc<AtomicBool>,
+}
+impl CaptureAudio {
+    fn channel(rate: u32) -> (CaptureSender, Self) {
+        let (sender, receiver) = mpsc::sync_channel(4096);
+        let queued = Arc::new(AtomicUsize::new(0));
+        (
+            CaptureSender {
+                sender,
+                queued: queued.clone(),
+                limit: rate as usize * 10,
+                dropped: Arc::new(AtomicBool::new(false)),
+            },
+            Self { receiver, queued },
+        )
+    }
+    pub fn recv_timeout(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<f32>, mpsc::RecvTimeoutError> {
+        let samples = self.receiver.recv_timeout(timeout)?;
+        self.queued.fetch_sub(samples.len(), Ordering::AcqRel);
+        Ok(samples)
+    }
+    pub fn try_iter(&self) -> impl Iterator<Item = Vec<f32>> + '_ {
+        std::iter::from_fn(|| {
+            let samples = self.receiver.try_recv().ok()?;
+            self.queued.fetch_sub(samples.len(), Ordering::AcqRel);
+            Some(samples)
+        })
+    }
+}
+impl CaptureSender {
+    fn send(&self, samples: Vec<f32>) {
+        if samples.is_empty() {
+            return;
+        }
+        let size = samples.len();
+        if self
+            .queued
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |queued| {
+                queued.checked_add(size).filter(|size| *size <= self.limit)
+            })
+            .is_err()
+        {
+            self.dropped.store(true, Ordering::Release);
+        } else if self.sender.try_send(samples).is_err() {
+            self.queued.fetch_sub(size, Ordering::AcqRel);
+            self.dropped.store(true, Ordering::Release);
+        }
+    }
 }
 
 pub(super) fn capture(id: Option<&str>, enabled: Arc<AtomicBool>) -> Result<Capture, String> {
@@ -72,18 +134,18 @@ pub(super) fn capture(id: Option<&str>, enabled: Arc<AtomicBool>) -> Result<Capt
         .default_input_config()
         .map_err(|_| "O microfone não oferece um formato compatível.".to_owned())?;
     let config: cpal::StreamConfig = supported.clone().into();
-    let (sender, audio) = mpsc::sync_channel(12);
+    let (sender, audio) = CaptureAudio::channel(config.sample_rate);
     let failed = Arc::new(AtomicBool::new(false));
-    let dropped = Arc::new(AtomicBool::new(false));
+    let dropped = sender.dropped.clone();
     let error = failed.clone();
     let error_callback = move |_| {
         error.store(true, Ordering::Release);
     };
     let stream = match supported.sample_format() {
-        cpal::SampleFormat::F32 => input::<f32>(&device, &config, sender, enabled, dropped.clone(), error_callback),
-        cpal::SampleFormat::I16 => input::<i16>(&device, &config, sender, enabled, dropped.clone(), error_callback),
-        cpal::SampleFormat::U16 => input::<u16>(&device, &config, sender, enabled, dropped.clone(), error_callback),
-        cpal::SampleFormat::I32 => input::<i32>(&device, &config, sender, enabled, dropped.clone(), error_callback),
+        cpal::SampleFormat::F32 => input::<f32>(&device, &config, sender, enabled, error_callback),
+        cpal::SampleFormat::I16 => input::<i16>(&device, &config, sender, enabled, error_callback),
+        cpal::SampleFormat::U16 => input::<u16>(&device, &config, sender, enabled, error_callback),
+        cpal::SampleFormat::I32 => input::<i32>(&device, &config, sender, enabled, error_callback),
         _ => return Err("O formato do microfone não é compatível. Selecione outro dispositivo.".into()),
     }.map_err(|_| "Não foi possível abrir o microfone. Verifique a permissão de microfone do Jarvis nas configurações do sistema.".to_owned())?;
     stream
@@ -101,9 +163,8 @@ pub(super) fn capture(id: Option<&str>, enabled: Arc<AtomicBool>) -> Result<Capt
 fn input<T: cpal::SizedSample + cpal::Sample>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    sender: mpsc::SyncSender<Vec<f32>>,
+    sender: CaptureSender,
     enabled: Arc<AtomicBool>,
-    dropped: Arc<AtomicBool>,
     error: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> Result<cpal::Stream, cpal::BuildStreamError>
 where
@@ -133,9 +194,7 @@ where
                         / channels as f32
                 })
                 .collect();
-            if sender.try_send(mono).is_err() {
-                dropped.store(true, Ordering::Release);
-            }
+            sender.send(mono);
         },
         error,
         None,
@@ -252,17 +311,6 @@ impl Utterance {
         }
     }
     pub fn push(&mut self, samples: &[f32], speaking: bool) -> Option<Vec<f32>> {
-        self.append(samples, speaking, true)
-    }
-    pub fn dictation(&mut self, samples: &[f32], speaking: bool) -> Option<Vec<f32>> {
-        self.append(samples, speaking, false)
-    }
-    fn append(
-        &mut self,
-        samples: &[f32],
-        speaking: bool,
-        end_on_silence: bool,
-    ) -> Option<Vec<f32>> {
         if speaking {
             if self.samples.is_empty() {
                 self.samples.extend(self.pre_roll.drain(..));
@@ -280,8 +328,7 @@ impl Utterance {
             return None;
         }
         self.samples.extend(samples);
-        if end_on_silence && self.silence >= self.silence_samples || self.samples.len() >= RATE * 90
-        {
+        if self.silence >= self.silence_samples || self.samples.len() >= RATE * 90 {
             return self.finish();
         }
         None
@@ -326,6 +373,19 @@ mod tests {
         assert!(utterance.finish().is_none());
     }
     #[test]
+    fn dictation_delivers_each_pause_and_keeps_the_last_spoken_tail() {
+        let mut utterance = Utterance::new(650);
+        assert!(utterance.push(&vec![0.2; 6000], true).is_none());
+        let first = utterance.push(&vec![0.; 10400], false).unwrap();
+        assert_eq!(first.len(), 16400);
+        assert!(utterance.push(&vec![0.; 8000], false).is_none());
+        assert!(utterance.push(&vec![0.3; 6400], true).is_none());
+        let last = utterance.finish().unwrap();
+        assert_eq!(last.len(), 10400);
+        assert_eq!(last[4000], 0.3);
+        assert!(utterance.finish().is_none());
+    }
+    #[test]
     fn split_device_callbacks_have_the_same_clock_as_a_single_buffer() {
         let source: Vec<f32> = (0..48000).map(|i| (i as f32 / 80.).sin()).collect();
         let expected = Resampler::new(48000).push(source.clone());
@@ -336,5 +396,28 @@ mod tests {
             .collect();
         assert_eq!(actual, expected);
         assert_eq!(actual.len(), RATE);
+    }
+    #[test]
+    fn next_phrase_is_queued_during_transcription_with_a_fixed_audio_budget() {
+        let (sender, queue) = CaptureAudio::channel(16_000);
+        // More than twelve small callbacks must survive a local decode.
+        for _ in 0..100 {
+            sender.send(vec![0.25; 512]);
+        }
+        assert!(!sender.dropped.load(Ordering::Acquire));
+        assert_eq!(
+            queue.try_iter().map(|samples| samples.len()).sum::<usize>(),
+            51200
+        );
+        assert_eq!(queue.queued.load(Ordering::Acquire), 0);
+        sender.send(vec![0.; RATE * 10]);
+        sender.send(vec![0.5; 1]);
+        assert!(sender.dropped.load(Ordering::Acquire));
+        assert_eq!(
+            queue.recv_timeout(std::time::Duration::ZERO).unwrap().len(),
+            RATE * 10
+        );
+        assert!(queue.try_iter().next().is_none());
+        assert_eq!(queue.queued.load(Ordering::Acquire), 0);
     }
 }

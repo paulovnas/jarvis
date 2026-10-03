@@ -68,7 +68,7 @@ fn switch(data: &mut SessionData, choice: &ModelChoice) {
     current.wire.push(json!({
         "role":"user", "_jarvis_runtime":true,
         "_jarvis_model_fallback": {
-            "from": {"executor":previous.executor,"account":previous.account,"model":previous.model},
+            "from": {"executor":previous.executor,"account":previous.account,"model":previous.model,"reasoning":previous.reasoning},
             "to": choice,
         },
         "content":"The primary provider exhausted its retries. Continue the same task using the confirmed conversation and tool receipts. Do not repeat completed actions. Verify uncertain effects before retrying them.",

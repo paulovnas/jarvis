@@ -15,6 +15,7 @@ fn options(account: &str, model: &str) -> TurnOptions {
         approval_mode: super::super::ApprovalMode::Yolo,
         manual_validation: false,
         automatic_publication: None,
+        model_selection: None,
     }
 }
 

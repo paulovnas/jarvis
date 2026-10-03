@@ -141,6 +141,7 @@ mod tests {
             approval_mode: ApprovalMode::Manual,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         };
         session
             .submit_message("first".into(), options.clone(), vec![])

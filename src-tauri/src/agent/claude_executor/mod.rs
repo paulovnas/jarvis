@@ -403,6 +403,11 @@ async fn handle_control(
     if !control.is_pending(id).await {
         return Ok(());
     }
+    if matches!(request["subtype"].as_str(), Some("can_use_tool"))
+        || (request["subtype"] == "mcp_message" && request["message"]["method"] == "tools/call")
+    {
+        projection.pause_generation(session)?;
+    }
     let operation = control_request(bridge, id, request, native_tool);
     tokio::pin!(operation);
     let response = loop {

@@ -1382,6 +1382,7 @@ mod tests {
                     approval_mode: ApprovalMode::Manual,
                     manual_validation: false,
                     automatic_publication: None,
+                    model_selection: None,
                 },
                 status: TurnStatus::Running,
                 tasks: vec![],

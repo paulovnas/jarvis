@@ -11,6 +11,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+browser-extension/dist-firefox/
 *.local
 release-artifacts/
 .release-secrets/

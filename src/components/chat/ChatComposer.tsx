@@ -16,8 +16,11 @@ import { claudeModels, executionChoice, executionSelection, executorOf, selectMo
 import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
 export type { ProviderModelGroup } from "./ModelPicker";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
+import type { ChatAgentModelsController } from "@/hooks/use-chat-agent-models";
+import type { ModelChoice } from "@/core/provider-references";
 import { useWorkflowCatalog } from "@/hooks/use-workflow-catalog";
 import { flowOptions, flowSelection, type FlowSelection } from "@/core/workflow-catalog";
+import { chatAgentModelKey } from "@/core/chat-models";
 import { rootRole } from "@/core/workflow";
 import { resolveChatModel, type ModelBinding } from "@/core/provider-references";
 import { useModelProblemNotice } from "@/hooks/use-provider-references";
@@ -25,6 +28,7 @@ import { libraryError } from "@/core/library";
 import { mergeDrafts, type ChatDraft, type ChatSnapshot, type MessagePart, type QueuedMessage, type TurnOptions } from "@/core/chat";
 import type { PendingQuestion, QuestionResponse } from "@/core/questions";
 import { VoiceControls, VoiceSessionPanel } from "@/components/voice/VoiceControls";
+import { stopDictation } from "@/hooks/use-voice";
 import type { WorkflowSnapshot } from "@/core/workflow";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
@@ -46,6 +50,7 @@ interface ChatComposerProps {
   onOpenHttp?: () => void;
   httpBusy?: boolean;
   agentModels?: AgentModelsController;
+  chatModels?: ChatAgentModelsController;
   onSendMessage: (content: string, options: TurnOptions, parts?: MessagePart[]) => Promise<boolean>;
   onStop?: () => Promise<void>;
   running?: boolean;
@@ -78,6 +83,7 @@ export function ChatComposer({
   onOpenHttp,
   httpBusy = false,
   agentModels,
+  chatModels,
   onSendMessage,
   modelGroups,
   modelBindings = [],
@@ -153,6 +159,7 @@ export function ChatComposer({
   const [sending, setSending] = useState(false);
   const sendLock = useRef(false);
   const [selection, setSelection] = useState<ModelSelection | null>(executionSelection(initialOptions));
+  const [localChoices, setLocalChoices] = useState<Record<string, ModelChoice>>({});
   const catalog = useWorkflowCatalog();
   const [manualBindings, setManualBindings] = useState<ModelBinding[] | null>(null);
   const [choosingModel, setChoosingModel] = useState(false);
@@ -162,6 +169,7 @@ export function ChatComposer({
   const [automaticPublication, setAutomaticPublication] = useState<NonNullable<TurnOptions["automaticPublication"]> | null>(initialOptions?.automaticPublication ?? null);
   const [pendingWorkflow, setPendingWorkflow] = useState<FlowSelection | null>(null);
   const selectedFlow = flowOptions(workflow);
+  const modelKey = chatAgentModelKey(workflow);
   const manualValidationAvailable = selectedFlow.workflow === "planned"
     || selectedFlow.workflow === "complete"
     || (selectedFlow.workflow === "custom" && Boolean(selectedFlow.customWorkflowId));
@@ -182,20 +190,23 @@ export function ChatComposer({
     const submitted: ChatDraft = voiceText ? { content: voiceText } : draftRef.current;
     const trimmed = submitted.content.trim() || (submitted.parts?.some(part => part.type === "attachment") ? "Analise os anexos." : "");
     if (modelError) { toast.error("Revise o modelo antes de enviar", { description: modelError }); return false; }
-    if (!trimmed || disabled || !selectionReady || customUnavailable || compacting || importing.current || agentModels?.saving || choosingModelLock.current || sendLock.current || !currentModelDef) return false;
+    if (!trimmed || disabled || !selectionReady || customUnavailable || compacting || importing.current || chatModels?.saving || choosingModelLock.current || sendLock.current || !currentModelDef) return false;
     const choice = executionChoice({ executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning });
     if (choice.executor === "jarvis" && !choice.account) return false;
     sendLock.current = true;
     setSending(true);
-    if (!voiceText) setDraft({ content: "" });
+    let cleared = false;
     const restoreSubmitted = () => {
-      if (voiceText) return;
+      if (voiceText || !cleared) return;
       const current = draftKey && drafts ? drafts.get(draftKey) ?? { content: "" } : draftRef.current;
       setDraft(current.content || current.parts?.length
         ? mergeDrafts(submitted, current)
         : { ...submitted, parts: submitted.parts ? [...submitted.parts] : undefined });
     };
     try {
+      const stopping = stopDictation(draftKey ? `chat:${draftKey}` : undefined);
+      if (!voiceText) { setDraft({ content: "" }); cleared = true; }
+      await stopping;
       const options: TurnOptions = running && initialOptions ? { ...initialOptions, approvalMode: "yolo" } : { ...choice, mode: "build", ...selectedFlow, approvalMode: "yolo" };
       if (manualValidationAvailable && manualValidation && !githubSelected) options.manualValidation = true;
       else delete options.manualValidation;
@@ -217,19 +228,22 @@ export function ChatComposer({
     : selectedFlow.workflow === "custom" ? undefined : agentModels?.data?.[`${workflow}/${rootRole(selectedFlow.workflow ?? "standard")}`];
   const defaultProfile = agentModels?.data?.["standard/builder"];
   const profile = selectedProfile ?? (!nativeModels.length && executorOf(defaultProfile) !== "jarvis" ? defaultProfile : undefined);
-  const boundChoice = selection && manualBindings !== modelBindings ? resolveChatModel(modelBindings, draftKey, executionChoice(selection)) : null;
-  const effectiveSelection = running && initialOptions ? executionSelection(initialOptions) : executionSelection(selectedCustomAgent?.model) ?? executionSelection(profile) ?? executionSelection(boundChoice) ?? selection;
+  const savedChoice = chatModels?.data?.[modelKey] ?? localChoices[modelKey];
+  const historicalChoice = flowSelection(initialOptions) === workflow ? executionSelection(initialOptions) : null;
+  const baseSelection = executionSelection(savedChoice) ?? historicalChoice ?? executionSelection(selectedCustomAgent?.model) ?? executionSelection(profile) ?? selection;
+  const boundChoice = !chatModels?.data?.[modelKey] && baseSelection && manualBindings !== modelBindings ? resolveChatModel(modelBindings, draftKey, executionChoice(baseSelection), modelKey) : null;
+  const effectiveSelection = running && initialOptions ? executionSelection(initialOptions) : executionSelection(boundChoice) ?? baseSelection;
   const configuredAgents = selectedFlow.customAgentId
-    ? selectedCustomAgent?.model ? [{ name: selectedCustomAgent.name, choice: selectedCustomAgent.model }] : selectedBuiltinAgent && profile ? [{ name: selectedBuiltinAgent.name, choice: profile }] : []
+    ? savedChoice ? [{ name: selectedAgent?.name ?? "Chat", choice: savedChoice }] : selectedCustomAgent?.model ? [{ name: selectedCustomAgent.name, choice: selectedCustomAgent.model }] : selectedBuiltinAgent && profile ? [{ name: selectedBuiltinAgent.name, choice: profile }] : []
     : selectedFlow.workflow === "custom"
-      ? catalog.data?.agents.flatMap(agent => agent.model && customFlow?.steps.some(step => step.agentId === agent.id) ? [{ name: agent.name, choice: agent.model }] : []) ?? []
-      : Object.entries(agentModels?.data ?? {}).flatMap(([key, choice]) => key.startsWith(`${workflow}/`) ? [{ name: key, choice }] : []);
-  const claudeRequired = executorOf(effectiveSelection) === "claude" || configuredAgents.some(agent => executorOf(agent.choice) === "claude");
+      ? [...(savedChoice ? [{ name: customFlow?.name ?? "Chat", choice: savedChoice }] : []), ...(catalog.data?.agents.flatMap(agent => agent.model && customFlow?.steps.some(step => step.agentId === agent.id) ? [{ name: agent.name, choice: agent.model }] : []) ?? [])]
+      : Object.entries({ ...agentModels?.data, ...chatModels?.data, ...localChoices }).flatMap(([key, choice]) => key.startsWith(`${workflow}/`) ? [{ name: key, choice: key === modelKey && savedChoice ? savedChoice : choice }] : []);
+  const claudeRequired = executorOf(effectiveSelection) === "claude" || configuredAgents.some(agent => executorOf(agent.choice) === "claude" || executorOf(agent.choice.fallback) === "claude");
   const claude = useClaudeRuntime(claudeRequired);
   const runtimeModels = claudeModels(claude.data);
   const modelsFor = (choice: ModelSelection | null) => executorOf(choice) === "claude" ? runtimeModels : executorOf(choice) === "unavailable" ? [] : nativeModels;
   const availableModels = modelsFor(effectiveSelection);
-  const selectionReady = (executorOf(effectiveSelection) !== "jarvis" || modelsReady) && (!claudeRequired || Boolean(claude.data) && !claude.loading);
+  const selectionReady = (!chatModels || chatModels.data !== null && !chatModels.error) && (executorOf(effectiveSelection) !== "jarvis" || modelsReady) && (!claudeRequired || Boolean(claude.data) && !claude.loading);
   const currentModelDef =
     availableModels.find((availableModel) => availableModel.value === effectiveSelection?.model) ??
     (effectiveSelection ? undefined : availableModels[0]);
@@ -238,11 +252,11 @@ export function ChatComposer({
     const model = modelsFor(choice).find(item => item.value === choice.model);
     return !model || Boolean(choice.reasoning && !model.reasoningLevels.includes(choice.reasoning));
   };
-  const invalidAgent = configuredAgents.find(agent => invalidSelection(executionSelection(agent.choice)!))?.name;
+  const invalidAgent = configuredAgents.find(agent => invalidSelection(executionSelection(agent.choice)!) || Boolean(agent.choice.fallback && invalidSelection(executionSelection(agent.choice.fallback)!)))?.name;
   const claudeProblem = !claudeRequired || claude.loading ? null : claude.error ?? (claude.data?.preferences?.enabled === false ? "Ative o Claude Code em Configurações → Provedores." : claude.data && !claude.data.installed ? "Instale o Claude Code em Configurações → Provedores e atualize o status." : claude.data && !claude.data.authenticated ? "Entre na sua conta com claude auth login e atualize o status do Claude Code." : null);
   const removedExecutor = executorOf(effectiveSelection) === "unavailable" || configuredAgents.some(agent => executorOf(agent.choice) === "unavailable" || executorOf(agent.choice.fallback) === "unavailable");
-  const modelError = (removedExecutor ? "Este executor foi removido. Escolha um provedor e modelo disponíveis para continuar." : null) ?? claudeProblem ?? (!selectionReady ? null : invalidAgent
-    ? `O agente ${invalidAgent} usa um modelo indisponível. Revise o modelo em Configurações → Workflow.`
+  const modelError = chatModels?.error ?? (removedExecutor ? "Este executor foi removido. Escolha um provedor e modelo disponíveis para continuar." : null) ?? claudeProblem ?? (!selectionReady ? null : invalidAgent
+    ? `O agente ${invalidAgent} usa um modelo indisponível. Selecione um modelo válido para este chat.`
     : effectiveSelection && invalidSelection(effectiveSelection) ? `O modelo ${effectiveSelection.model} está indisponível. Revise o provedor e o modelo deste chat.` : null);
   useModelProblemNotice("Chat", modelError, `chat:${draftKey ?? "new"}`);
   const reasoning =
@@ -252,15 +266,16 @@ export function ChatComposer({
       ? effectiveSelection.reasoning
       : currentModelDef ? defaultReasoning(currentModelDef) : null;
   const chooseModel = (next: ModelSelection) => {
-    if (selectedCustomAgent?.model) return;
-    if (agentModels && (selectedFlow.workflow !== "custom" || builtinProfileFlow)) { const targetFlow = builtinProfileFlow ?? selectedFlow.workflow ?? "standard"; void agentModels.save(targetFlow, rootRole(targetFlow), selectModelChoice(agentModels.data?.[`${targetFlow}/${rootRole(targetFlow)}`], executionChoice(next), "primary")); }
+    const choice = selectModelChoice(savedChoice ?? selectedCustomAgent?.model ?? profile, executionChoice(next), "primary");
+    if (choice.fallback && invalidSelection(executionSelection(choice.fallback)!)) choice.fallback = null;
+    if (chatModels) { void chatModels.save(modelKey, choice); }
     else {
-      const choice = executionChoice(next);
       const bound = resolveChatModel(modelBindings, draftKey, choice);
-      if (!draftKey || JSON.stringify(choice) === JSON.stringify(bound)) { setSelection(next); return; }
+      const accept = () => { setLocalChoices(current => ({ ...current, [modelKey]: choice })); setSelection(executionSelection(choice)); };
+      if (!draftKey || JSON.stringify(choice) === JSON.stringify(bound)) { accept(); return; }
       if (choosingModelLock.current) return;
       choosingModelLock.current = true; setChoosingModel(true);
-      void invoke("clear_chat_model_binding", { conversationId: draftKey, choice }).then(() => { setManualBindings(modelBindings); setSelection(next); }).catch(cause => toast.error(libraryError(cause, "Não foi possível atualizar o modelo do chat."))).finally(() => { choosingModelLock.current = false; setChoosingModel(false); });
+      void invoke("clear_chat_model_binding", { conversationId: draftKey, choice }).then(() => { setManualBindings(modelBindings); accept(); }).catch(cause => toast.error(libraryError(cause, "Não foi possível atualizar o modelo do chat."))).finally(() => { choosingModelLock.current = false; setChoosingModel(false); });
     }
   };
   const chooseWorkflow = (next: FlowSelection) => {
@@ -315,7 +330,8 @@ export function ChatComposer({
       />}
       <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} onFiles={files => { void addFiles(files); }} attachments={(attachments.length > 0 || uploading) && <div className="flex flex-wrap gap-1 px-5 pt-4" aria-label="Anexos da mensagem">{attachments.map(part => <AttachmentPreview key={part.attachment.id} attachment={part.attachment} disabled={disabled || compacting || sending} onRemove={() => { const current = draftRef.current; setDraft({ ...current, parts: current.parts?.filter(item => item.type !== "attachment" || item.attachment.id !== part.attachment.id) }); }} />)}{uploading && <Skeleton className="mb-2 size-20 rounded-lg" role="status" aria-label="Preparando anexos" />}</div>} onSend={() => { void handleSend(); }} disabled={disabled || compacting} compacting={compacting} working={running || compacting}>
 
-        {draftKey && <div className="px-3 pb-1"><VoiceSessionPanel target={`chat:${draftKey}`} /></div>}
+        <div className="flex w-full min-w-0 flex-col">
+        {draftKey && <div className="px-4"><VoiceSessionPanel target={`chat:${draftKey}`} /></div>}
         {/* Linha de controles inferior no padrão Metis */}
         <div className="composer-controls flex w-full items-center justify-between gap-1 px-3 pb-3 pt-1">
           <DropdownMenu>
@@ -342,7 +358,7 @@ export function ChatComposer({
             <ChatBehaviorSettings manualAvailable={manualValidationAvailable} manualValidation={manualValidation} onManualChange={setManualValidation} publication={githubSelected ? null : automaticPublication} onPublicationChange={setAutomaticPublication} disabled={running || sending || compacting} githubSelected={githubSelected} />
             <FlowPicker customFlows={catalog.data?.flows} customAgents={catalog.data?.agents} builtinAgents={catalog.data?.builtinAgents} value={workflow} onChange={chooseWorkflow} disabled={running || sending || compacting} />
 
-            <ExecutorModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} nativeDisabled={!modelsReady} disabled={running || sending || compacting || choosingModel || agentModels?.saving || Boolean(selectedCustomAgent?.model)} showProviderIdentity onRefresh={onRefreshModels ? () => setRefreshDialogOpen(true) : undefined} refreshing={refreshingModels} />
+            <ExecutorModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} nativeDisabled={!modelsReady} disabled={running || sending || compacting || choosingModel || chatModels?.saving} invalid={Boolean(modelError)} showProviderIdentity onRefresh={onRefreshModels ? () => setRefreshDialogOpen(true) : undefined} refreshing={refreshingModels} />
 
             {/* Botão redondo com seta pra cima no canto inferior direito */}
             {running && !compacting && <Hint content="Interromper execução"><Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button></Hint>}
@@ -361,6 +377,7 @@ export function ChatComposer({
               <ArrowUp className="size-3.5 stroke-[2.5]" />
             </Button></Hint>
           </div>
+        </div>
         </div>
       </SkillInput></Suspense>
       <AlertDialog open={pendingWorkflow !== null} onOpenChange={open => { if (!open) setPendingWorkflow(null); }}>

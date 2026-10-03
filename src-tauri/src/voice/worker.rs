@@ -1,5 +1,6 @@
 //! One native owner for capture, recognition and speech, with independent cancellation.
-use super::{audio, Config, Control, Phase, Session};
+use super::{audio, Config, Control, Phase, Session, VoiceState};
+use rodio::Source;
 use serde::Serialize;
 use std::{
     collections::VecDeque,
@@ -7,7 +8,7 @@ use std::{
     sync::{atomic::Ordering, mpsc, Arc},
     time::{Duration, Instant},
 };
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperVadContext,
@@ -133,14 +134,14 @@ fn phrases(text: &str) -> Vec<String> {
     output
 }
 
-struct Speech {
+pub(super) struct Speech {
     child: tokio::process::Child,
     input: tokio::process::ChildStdin,
     output: tokio::io::BufReader<tokio::process::ChildStdout>,
     directory: tempfile::TempDir,
 }
 impl Speech {
-    async fn open(home: &Path, session: &Session) -> Result<Self, String> {
+    async fn open(home: &Path, session: &Session, revision: u64) -> Result<Self, String> {
         let runtime = crate::core::audiovisual::runtime(home)
             .map_err(|_| "Prepare o componente Audiovisual no Core para ouvir o Jarvis.")?;
         let directory =
@@ -176,9 +177,7 @@ impl Speech {
             output,
             directory,
         };
-        let result = speech
-            .response(session, session.audio_revision.load(Ordering::Acquire))
-            .await?;
+        let result = speech.response(session, revision).await?;
         if result["ready"] != true {
             return Err("A voz local não conseguiu carregar os modelos.".into());
         }
@@ -198,7 +197,7 @@ impl Speech {
                     return serde_json::from_slice(&line).map_err(|_| "A voz local retornou uma resposta inválida.".into());
                 }
                 _ = tokio::time::sleep(Duration::from_millis(40)) => {
-                    if session.cancelled() || session.audio_revision.load(Ordering::Acquire) != revision {
+                    if !session.current_speech(revision) {
                         let _ = self.child.kill().await; return Err("Fala interrompida.".into());
                     }
                 }
@@ -230,74 +229,220 @@ impl Speech {
     }
 }
 
+/// Announcements reveal their card on playback, so prepare their whole utterance first.
+fn speech_batches<T>(
+    phrases: Vec<String>,
+    announcement: bool,
+    current: impl Fn() -> bool,
+    mut prepare: impl FnMut(&str) -> Result<T, String>,
+    mut play: impl FnMut(Vec<(String, T)>) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut prepared = Vec::new();
+    for phrase in phrases {
+        if !current() {
+            return Ok(());
+        }
+        let result = prepare(&phrase);
+        if !current() {
+            return Ok(());
+        }
+        prepared.push((phrase, result?));
+        if !announcement {
+            play(std::mem::take(&mut prepared))?;
+        }
+    }
+    if !prepared.is_empty() && current() {
+        play(prepared)?;
+    }
+    Ok(())
+}
+
 fn speak(
     app: &tauri::AppHandle,
     home: &Path,
     config: &Config,
     session: &Arc<Session>,
-    speech: &mut Option<Speech>,
     text: &str,
+    revision: u64,
 ) -> Result<(), String> {
     session.enabled.store(false, Ordering::Release);
-    let revision = session.audio_revision.load(Ordering::Acquire);
-    for phrase in phrases(&spoken_text(text)) {
-        if session.cancelled() || session.audio_revision.load(Ordering::Acquire) != revision {
-            break;
-        }
-        session.update(app, Phase::Synthesizing, Some(phrase.clone()), None, 0.);
-        let result = tauri::async_runtime::block_on(async {
-            if speech.is_none() {
-                *speech = Some(Speech::open(home, session).await?);
-            }
-            speech
-                .as_mut()
-                .ok_or("Voz local indisponível.")?
-                .synthesize(&phrase, config, session, revision)
-                .await
-        });
-        if session.cancelled() || session.audio_revision.load(Ordering::Acquire) != revision {
-            *speech = None;
-            break;
-        }
-        let path = result?;
-        let device = audio::device(config.speaker.as_deref(), false)?;
-        let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let failure = failed.clone();
-        let mut sink = rodio::DeviceSinkBuilder::from_device(device)
-            .map_err(|_| "Alto-falante indisponível.")?
-            .with_error_callback(move |_| {
-                failure.store(true, Ordering::Release);
-            })
-            .open_sink_or_fallback()
-            .map_err(|_| "Não foi possível abrir o alto-falante.")?;
-        sink.log_on_drop(false);
-        let player = rodio::Player::connect_new(sink.mixer());
-        let source = rodio::Decoder::try_from(
-            std::fs::File::open(path).map_err(|_| "Áudio de voz indisponível.")?,
-        )
-        .map_err(|_| "O áudio da voz local é inválido.")?;
-        let level = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        player.append(audio::Metered::new(source, level.clone()));
-        session.update(app, Phase::Speaking, Some(phrase), None, 0.);
-        while !player.empty()
-            && !session.cancelled()
-            && session.audio_revision.load(Ordering::Acquire) == revision
-        {
-            session.update(
-                app,
-                Phase::Speaking,
-                None,
-                None,
-                f32::from_bits(level.load(Ordering::Acquire)),
-            );
-            if failed.load(Ordering::Acquire) {
-                return Err("O alto-falante foi desconectado durante a fala.".into());
-            }
-            std::thread::sleep(Duration::from_millis(35));
-        }
-        player.stop();
+    if !session.current_speech(revision)
+        || !app
+            .state::<crate::desktop::DesktopState>()
+            .companion_speech_enabled()
+    {
+        return Ok(());
     }
-    Ok(())
+    let state = app.state::<VoiceState>();
+    let mut speech = loop {
+        if !session.current_speech(revision) {
+            return Ok(());
+        }
+        match state.speech.try_lock() {
+            Ok(speech) => break speech,
+            Err(std::sync::TryLockError::WouldBlock) => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err("Estado da fala indisponível.".into());
+            }
+        }
+    };
+    speech_batches(
+        phrases(&spoken_text(text)),
+        session.mode == "announcement",
+        || session.current_speech(revision),
+        |phrase| {
+            session.update(app, Phase::Synthesizing, Some(phrase.to_owned()), None, 0.);
+            let result = tauri::async_runtime::block_on(async {
+                if speech.is_none() {
+                    *speech = Some(Speech::open(home, session, revision).await?);
+                }
+                speech
+                    .as_mut()
+                    .ok_or("Voz local indisponível.")?
+                    .synthesize(phrase, config, session, revision)
+                    .await
+            });
+            if !session.current_speech(revision) {
+                *speech = None;
+                return Err("Fala interrompida.".into());
+            }
+            let path = match result {
+                Ok(path) => path,
+                Err(error) => {
+                    *speech = None;
+                    return Err(error);
+                }
+            };
+            let source = rodio::Decoder::try_from(
+                std::fs::File::open(path).map_err(|_| "Áudio de voz indisponível.")?,
+            )
+            .map_err(|_| "O áudio da voz local é inválido.")?;
+            // The warm engine overwrites speech.wav for each phrase.
+            Ok(rodio::buffer::SamplesBuffer::new(
+                source.channels(),
+                source.sample_rate(),
+                source.collect::<Vec<_>>(),
+            ))
+        },
+        |prepared| {
+            let device = audio::device(config.speaker.as_deref(), false)?;
+            let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let failure = failed.clone();
+            let mut sink = rodio::DeviceSinkBuilder::from_device(device)
+                .map_err(|_| "Alto-falante indisponível.")?
+                .with_error_callback(move |_| {
+                    failure.store(true, Ordering::Release);
+                })
+                .open_sink_or_fallback()
+                .map_err(|_| "Não foi possível abrir o alto-falante.")?;
+            sink.log_on_drop(false);
+            let player = rodio::Player::connect_new(sink.mixer());
+            player.pause();
+            let transcript = prepared
+                .iter()
+                .map(|(phrase, _)| phrase.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let level = Arc::new(std::sync::atomic::AtomicU32::new(0));
+            for (_, source) in prepared {
+                player.append(audio::Metered::new(source, level.clone()));
+            }
+            if !session.current_speech(revision) {
+                player.stop();
+                return Ok(());
+            }
+            session.update(app, Phase::Speaking, Some(transcript), None, 0.);
+            player.play();
+            while !player.empty() && session.current_speech(revision) {
+                session.update(
+                    app,
+                    Phase::Speaking,
+                    None,
+                    None,
+                    f32::from_bits(level.load(Ordering::Acquire)),
+                );
+                if failed.load(Ordering::Acquire) {
+                    return Err("O alto-falante foi desconectado durante a fala.".into());
+                }
+                std::thread::sleep(Duration::from_millis(35));
+            }
+            player.stop();
+            Ok(())
+        },
+    )
+}
+
+/// Shared by live device callbacks and the real-engine regression fixture.
+struct Recognition {
+    resampler: audio::Resampler,
+    utterance: audio::Utterance,
+    window: VecDeque<f32>,
+    since_vad: usize,
+    speaking: bool,
+}
+impl Recognition {
+    fn new(rate: u32, silence_ms: u32) -> Self {
+        Self {
+            resampler: audio::Resampler::new(rate),
+            utterance: audio::Utterance::new(silence_ms),
+            window: VecDeque::new(),
+            since_vad: 0,
+            speaking: false,
+        }
+    }
+    fn clear(&mut self) {
+        self.utterance.clear();
+        self.window.clear();
+        self.since_vad = 0;
+        self.speaking = false;
+    }
+    fn push(
+        &mut self,
+        vad: &mut WhisperVadContext,
+        samples: Vec<f32>,
+    ) -> Result<(Option<Vec<f32>>, f32), String> {
+        let samples = self.resampler.push(samples);
+        let level = audio::level(&samples);
+        self.window.extend(samples.iter().copied());
+        while self.window.len() > audio::RATE {
+            self.window.pop_front();
+        }
+        self.since_vad += samples.len();
+        if self.window.len() >= 512 && self.since_vad >= audio::RATE / 10 {
+            let window: Vec<f32> = self.window.iter().copied().collect();
+            vad.detect_speech(&window)
+                .map_err(|_| "O detector de fala não conseguiu processar o microfone.")?;
+            self.speaking = vad
+                .probabilities()
+                .iter()
+                .rev()
+                .take(3)
+                .any(|probability| *probability >= 0.5)
+                && level > 0.002;
+            self.since_vad = 0;
+        }
+        Ok((self.utterance.push(&samples, self.speaking), level))
+    }
+    fn finish(
+        &mut self,
+        vad: &mut WhisperVadContext,
+        queued: impl Iterator<Item = Vec<f32>>,
+    ) -> Result<Vec<Vec<f32>>, String> {
+        // Finish stops the producer first. Include callbacks already captured,
+        // including a final phrase that has not reached the silence endpoint.
+        let mut completed = Vec::new();
+        for samples in queued {
+            if let (Some(samples), _) = self.push(vad, samples)? {
+                completed.push(samples);
+            }
+        }
+        if let Some(samples) = self.utterance.finish() {
+            completed.push(samples);
+        }
+        Ok(completed)
+    }
 }
 
 pub(super) fn run(
@@ -307,10 +452,10 @@ pub(super) fn run(
     paths: Option<(PathBuf, PathBuf)>,
     session: &Arc<Session>,
     controls: mpsc::Receiver<Control>,
+    announcement: Option<&str>,
 ) -> Result<(), String> {
-    let mut speech = None;
-    if session.mode == "test" {
-        return speak(app, home, config, session, &mut speech, "Olá! Eu sou o Jarvis. Agora podemos conversar por voz, em português, no chat e com o Jarvito.");
+    if matches!(session.mode.as_str(), "test" | "announcement") {
+        return speak(app, home, config, session, announcement.unwrap_or("Olá! Eu sou o Jarvis. Agora podemos conversar por voz, em português, no chat e com o Jarvito."), session.speech_revision.load(Ordering::Acquire));
     }
     let (model, vad_path) = paths.ok_or("Modelo de transcrição indisponível.")?;
     let parameters = WhisperContextParameters::default();
@@ -342,8 +487,8 @@ pub(super) fn run(
             home,
             config,
             session,
-            &mut speech,
             "Oi! Estou aqui. Pode falar.",
+            session.speech_revision.load(Ordering::Acquire),
         )?;
         std::thread::sleep(Duration::from_millis(180));
     }
@@ -351,11 +496,7 @@ pub(super) fn run(
         return Ok(());
     }
     let capture = audio::capture(config.microphone.as_deref(), session.enabled.clone())?;
-    let mut resampler = audio::Resampler::new(capture.rate);
-    let mut utterance = audio::Utterance::new(config.silence_ms);
-    let mut window = VecDeque::new();
-    let mut since_vad = 0;
-    let mut speaking = false;
+    let mut recognition = Recognition::new(capture.rate, config.silence_ms);
     let mut sequence = 0;
     let mut meter = Instant::now();
     session.listen(app);
@@ -364,68 +505,56 @@ pub(super) fn run(
             return Err("O microfone foi desconectado ou perdeu a permissão. Verifique o dispositivo e tente novamente.".into());
         }
         if capture.dropped.swap(false, Ordering::AcqRel) {
-            utterance.clear();
-            window.clear();
             return Err("A captura de áudio atrasou. A fala incompleta não foi enviada; tente novamente com o modelo Tiny.".into());
         }
         let control = controls.try_recv().ok();
         let finishing = matches!(control, Some(Control::Finish));
-        let mut complete = None;
+        let mut complete = Vec::new();
         match control {
-            Some(Control::Finish) => complete = utterance.finish(),
-            Some(Control::Speak(text)) => {
-                utterance.clear();
-                window.clear();
-                speak(app, home, config, session, &mut speech, &text)?;
+            Some(Control::Finish) => {
+                complete = recognition.finish(&mut vad, capture.audio.try_iter())?
+            }
+            Some(Control::Speak {
+                text,
+                revision,
+                cue,
+            }) => {
+                if !session.current_speech(revision) {
+                    continue;
+                }
+                recognition.clear();
+                speak(app, home, config, session, &text, revision)?;
                 // Drain old capture and allow the hardware output buffer to finish.
                 std::thread::sleep(Duration::from_millis(180));
                 for _ in capture.audio.try_iter() {}
-                since_vad = 0;
-                speaking = false;
-                session.listen(app);
+                if session.current_speech(revision)
+                    || !app
+                        .state::<crate::desktop::DesktopState>()
+                        .companion_speech_enabled()
+                {
+                    if cue {
+                        session.update(app, Phase::Thinking, None, None, 0.);
+                    } else {
+                        session.listen(app);
+                    }
+                }
             }
             Some(Control::Resume | Control::Interrupt) => {
-                utterance.clear();
-                window.clear();
+                recognition.clear();
                 for _ in capture.audio.try_iter() {}
                 session.listen(app);
             }
             Some(Control::Mute) => {
-                utterance.clear();
-                window.clear();
+                recognition.clear();
                 session.update(app, Phase::Paused, None, None, 0.);
             }
             None => {}
         }
         if session.enabled.load(Ordering::Acquire) {
             if let Ok(samples) = capture.audio.recv_timeout(Duration::from_millis(30)) {
-                let samples = resampler.push(samples);
-                let level = audio::level(&samples);
-                window.extend(samples.iter().copied());
-                while window.len() > audio::RATE {
-                    window.pop_front();
-                }
-                since_vad += samples.len();
-                if window.len() >= 512 && since_vad >= audio::RATE / 10 {
-                    let samples: Vec<f32> = window.iter().copied().collect();
-                    vad.detect_speech(&samples)
-                        .map_err(|_| "O detector de fala não conseguiu processar o microfone.")?;
-                    let probabilities = vad.probabilities();
-                    speaking = probabilities
-                        .iter()
-                        .rev()
-                        .take(3)
-                        .any(|probability| *probability >= 0.5)
-                        && level > 0.002;
-                    since_vad = 0;
-                }
-                if session.mode == "dictation" {
-                    // Dictation stops on the user's button; silence must not discard a longer thought.
-                    if let Some(chunk) = utterance.dictation(&samples, speaking) {
-                        complete = Some(chunk);
-                    }
-                } else {
-                    complete = utterance.push(&samples, speaking);
+                let (samples, level) = recognition.push(&mut vad, samples)?;
+                if let Some(samples) = samples {
+                    complete.push(samples);
                 }
                 if meter.elapsed() >= Duration::from_millis(80) {
                     session.update(app, Phase::Listening, None, None, (level * 8.).min(1.));
@@ -435,13 +564,17 @@ pub(super) fn run(
         } else {
             std::thread::sleep(Duration::from_millis(20));
         }
-        if let Some(samples) = complete {
-            session.enabled.store(false, Ordering::Release);
+        for samples in complete {
+            if session.mode != "dictation" {
+                session.enabled.store(false, Ordering::Release);
+            }
             session.update(app, Phase::Transcribing, None, None, 0.);
             let text = transcription(&context, &samples, session)?;
-            for _ in capture.audio.try_iter() {}
-            window.clear();
-            utterance.clear();
+            if session.mode != "dictation" {
+                for _ in capture.audio.try_iter() {}
+                recognition.clear();
+            }
+            let empty = text.is_empty();
             if !text.is_empty() && !session.cancelled() {
                 sequence += 1;
                 let transcript = Transcript {
@@ -457,16 +590,25 @@ pub(super) fn run(
                 };
                 session.update(app, Phase::Thinking, Some(text), None, 0.);
                 let _ = app.emit_to(&session.owner, "voice:transcript", transcript);
-                if session.mode == "dictation" {
-                    return Ok(());
-                }
-            } else {
-                session.listen(app);
             }
-        } else if finishing {
-            return Err(
-                "Não identifiquei uma fala. Aproxime-se do microfone e tente novamente.".into(),
-            );
+            if !finishing {
+                if session.mode == "dictation" {
+                    // Capture continues during decode. A concurrent Finish/Mute
+                    // must stay disabled until its queued control is processed.
+                    if session.enabled.load(Ordering::Acquire) {
+                        session.update(app, Phase::Listening, None, None, 0.);
+                    }
+                } else if empty {
+                    session.listen(app);
+                }
+            }
+        }
+        if finishing {
+            return if sequence == 0 {
+                Err("Não identifiquei uma fala. Verifique o microfone e tente novamente.".into())
+            } else {
+                Ok(())
+            };
         }
     }
     Ok(())
@@ -487,6 +629,132 @@ mod tests {
         assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 650));
         assert_eq!(chunks.join(" "), text.trim());
         assert!(phrases(&"x".repeat(1600)).is_empty());
+    }
+
+    #[test]
+    fn announcement_waits_for_every_phrase_before_first_playback() {
+        let (pending_sender, pending_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let (play_sender, play_receiver) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            speech_batches(
+                vec!["first".into(), "second".into()],
+                true,
+                || true,
+                |phrase| {
+                    if phrase == "second" {
+                        pending_sender.send(()).unwrap();
+                        release_receiver
+                            .recv_timeout(Duration::from_secs(5))
+                            .unwrap();
+                    }
+                    Ok(())
+                },
+                |prepared| {
+                    play_sender
+                        .send(
+                            prepared
+                                .into_iter()
+                                .map(|(phrase, ())| phrase)
+                                .collect::<Vec<_>>(),
+                        )
+                        .unwrap();
+                    Ok(())
+                },
+            )
+        });
+        pending_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let premature_playback = play_receiver.try_recv();
+        release_sender.send(()).unwrap();
+        worker.join().unwrap().unwrap();
+
+        assert!(matches!(premature_playback, Err(mpsc::TryRecvError::Empty)));
+        assert_eq!(play_receiver.recv().unwrap(), ["first", "second"]);
+        assert!(matches!(
+            play_receiver.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn announcement_does_not_play_partial_audio_when_later_preparation_fails() {
+        let played = std::cell::Cell::new(false);
+        let result = speech_batches(
+            vec!["first".into(), "second".into()],
+            true,
+            || true,
+            |phrase| {
+                if phrase == "second" {
+                    Err("Synthesis failed".into())
+                } else {
+                    Ok(())
+                }
+            },
+            |_| {
+                played.set(true);
+                Ok(())
+            },
+        );
+
+        assert_eq!(result, Err("Synthesis failed".into()));
+        assert!(!played.get());
+    }
+
+    #[test]
+    fn announcement_drops_prepared_audio_when_cancelled_during_later_preparation() {
+        let current = std::cell::Cell::new(true);
+        let played = std::cell::Cell::new(false);
+        speech_batches(
+            vec!["first".into(), "second".into()],
+            true,
+            || current.get(),
+            |phrase| {
+                if phrase == "second" {
+                    current.set(false);
+                }
+                Ok(())
+            },
+            |_| {
+                played.set(true);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(!played.get());
+    }
+
+    #[test]
+    fn other_voice_modes_keep_playback_between_phrase_preparations() {
+        let events = std::cell::RefCell::new(Vec::new());
+        speech_batches(
+            vec!["first".into(), "second".into()],
+            false,
+            || true,
+            |phrase| {
+                events.borrow_mut().push(format!("prepare {phrase}"));
+                Ok(())
+            },
+            |prepared| {
+                for (phrase, ()) in prepared {
+                    events.borrow_mut().push(format!("play {phrase}"));
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            events.into_inner(),
+            [
+                "prepare first",
+                "play first",
+                "prepare second",
+                "play second"
+            ]
+        );
     }
 
     #[test]
@@ -517,6 +785,7 @@ mod tests {
             enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             muted: std::sync::atomic::AtomicBool::new(false),
             audio_revision: std::sync::atomic::AtomicU64::new(0),
+            speech_revision: std::sync::atomic::AtomicU64::new(0),
             sender,
         });
         let started = Instant::now();
@@ -538,6 +807,47 @@ mod tests {
         assert!(vad.probabilities().iter().any(|p| *p >= 0.5));
         vad.detect_speech(&vec![0.; audio::RATE]).unwrap();
         assert!(vad.probabilities().iter().all(|p| *p < 0.5));
+        // Exercise the production resampler, rolling Silero window and endpoint,
+        // using small 48 kHz callbacks rather than bypassing capture with a WAV.
+        let device_samples: Vec<f32> = samples
+            .iter()
+            .flat_map(|sample| std::iter::repeat_n(*sample, 3))
+            .collect();
+        let mut recognition = Recognition::new(48_000, 650);
+        let mut paused = Vec::new();
+        for callback in device_samples
+            .iter()
+            .copied()
+            .chain(std::iter::repeat_n(0., 48_000))
+            .collect::<Vec<_>>()
+            .chunks(256)
+        {
+            if let (Some(phrase), _) = recognition.push(&mut vad, callback.to_vec()).unwrap() {
+                paused.push(phrase);
+            }
+        }
+        assert_eq!(
+            paused.len(),
+            1,
+            "A pause must produce a dictation transcript"
+        );
+        let first = transcription(&context, &paused[0], &session).unwrap();
+        assert!(first.to_lowercase().contains("projeto"), "Pause: {first}");
+        // While decoding that phrase, the next phrase is already queued. Finish
+        // must include it, even though it has not reached the silence endpoint.
+        let queued = device_samples.chunks(256).map(<[f32]>::to_vec);
+        let completed = recognition.finish(&mut vad, queued).unwrap();
+        assert_eq!(
+            completed.len(),
+            1,
+            "Finish must retain the queued final phrase"
+        );
+        let last = transcription(&context, &completed[0], &session).unwrap();
+        assert!(last.to_lowercase().contains("arquivos"), "Finish: {last}");
+        assert!(recognition
+            .finish(&mut vad, std::iter::empty())
+            .unwrap()
+            .is_empty());
         eprintln!(
             "Real Whisper/VAD PT-BR passed in {:.2}s: {text}",
             started.elapsed().as_secs_f32()

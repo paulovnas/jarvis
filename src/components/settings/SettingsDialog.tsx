@@ -56,6 +56,7 @@ import { accountList, enabledModels, type ProviderAccount, type ProviderUsageAle
 import { ProviderAccountCard } from "./ProviderAccountCard";
 import { ClaudeProviderCard } from "./ClaudeProviderCard";
 import { CustomProviderForm } from "./CustomProviderForm";
+import { OpenCodeGoProviderForm } from "./OpenCodeGoProviderForm";
 import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 import { Hint } from "@/components/ui/hint";
@@ -509,12 +510,16 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
     } finally { setRefreshingAlias(null); }
   };
 
-  const handleUsageChange = async (alias: string, showUsage: boolean, showThirdPartyUsage: boolean) => {
+  const handleUsageChange = async (alias: string, showUsage: boolean, showThirdPartyUsage: boolean, showFiveHourUsage?: boolean, showWeeklyUsage?: boolean) => {
     if (togglingRef.current) return;
     togglingRef.current = true; setToggling(true);
     try {
-      await invoke("set_provider_usage_visibility", { alias, showUsage, showThirdPartyUsage });
-      updateAccounts(accounts.map(account => account.alias === alias ? { ...account, showUsage, showThirdPartyUsage } : account));
+      const windows = {
+        ...(showFiveHourUsage === undefined ? {} : { showFiveHourUsage }),
+        ...(showWeeklyUsage === undefined ? {} : { showWeeklyUsage }),
+      };
+      await invoke("set_provider_usage_visibility", { alias, showUsage, showThirdPartyUsage, ...windows });
+      updateAccounts(accounts.map(account => account.alias === alias ? { ...account, showUsage, showThirdPartyUsage, ...windows } : account));
     } catch { toast.error("Não foi possível salvar a visualização dos limites."); }
     finally { togglingRef.current = false; setToggling(false); }
   };
@@ -593,7 +598,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
                 onReviewAgents={embeddedProviders ? undefined : tab => { setWorkflowInitialTab(tab); setActiveTab("agents"); }}
                 onEdit={setEditingCustom}
                 onReauthorize={handleReauthorize}
-                onUsageChange={(alias, showUsage, showThirdPartyUsage) => { void handleUsageChange(alias, showUsage, showThirdPartyUsage); }}
+                onUsageChange={(alias, showUsage, showThirdPartyUsage, showFiveHourUsage, showWeeklyUsage) => { void handleUsageChange(alias, showUsage, showThirdPartyUsage, showFiveHourUsage, showWeeklyUsage); }}
                 onUsageAlertChange={(alias, alert) => { void handleUsageAlertChange(alias, alert); }}
                 onEnabledChange={(alias, enabled) => { void handleEnabledChange(alias, enabled); }}
                 onDisconnect={(alias) => {
@@ -615,7 +620,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
 
   const renderAdd = () => {
     const computedAlias = `${aliasPrefix}${suffix}`;
-    const providerSelect = <div className="space-y-2"><Label htmlFor="account-provider">Provedor</Label><Select value={provider} onValueChange={value => { if (value) { setProvider(value); setConnectionError(null); } }} disabled={starting || savingCustom}><SelectTrigger id="account-provider" className="w-full cursor-pointer"><SelectValue>{provider === "custom" ? "Custom" : provider === "antigravity" ? "Antigravity" : "OpenAI Codex"}</SelectValue></SelectTrigger><SelectContent><SelectItem value="openai-codex" className="cursor-pointer">OpenAI Codex</SelectItem><SelectItem value="antigravity" className="cursor-pointer">Antigravity</SelectItem><SelectItem value="custom" className="cursor-pointer">Custom</SelectItem></SelectContent></Select></div>;
+    const providerSelect = <div className="space-y-2"><Label htmlFor="account-provider">Provedor</Label><Select value={provider} onValueChange={value => { if (value) { setProvider(value); setConnectionError(null); } }} disabled={starting || savingCustom}><SelectTrigger id="account-provider" className="w-full cursor-pointer"><SelectValue>{provider === "custom" ? "Custom" : provider === "antigravity" ? "Antigravity" : provider === "opencode-go" ? "OpenCode Go" : "OpenAI Codex"}</SelectValue></SelectTrigger><SelectContent><SelectItem value="openai-codex" className="cursor-pointer">OpenAI Codex</SelectItem><SelectItem value="antigravity" className="cursor-pointer">Antigravity</SelectItem><SelectItem value="opencode-go" className="cursor-pointer">OpenCode Go</SelectItem><SelectItem value="custom" className="cursor-pointer">Custom</SelectItem></SelectContent></Select></div>;
+    if (provider === "opencode-go") return <><DialogHeader><DialogTitle>Adicionar OpenCode Go</DialogTitle><DialogDescription>Conecte sua assinatura usando uma chave de API.</DialogDescription></DialogHeader>{providerSelect}<OpenCodeGoProviderForm onBusyChange={setSavingCustom} onCancel={() => setView("list")} onSaved={customSaved} /></>;
     if (provider === "custom") return <><DialogHeader><DialogTitle>Adicionar conta</DialogTitle><DialogDescription>Configure seu endpoint e os limites informados pelo provedor.</DialogDescription></DialogHeader>{providerSelect}<CustomProviderForm onBusyChange={setSavingCustom} onCancel={() => setView("list")} onSaved={customSaved} /></>;
     return (
       <>
@@ -797,7 +803,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
               {view === "waiting" ? renderWaiting() : view === "reauthorize" ? renderReauthorize() : renderAdd()}
             </DialogContent>
           </Dialog>
-          <Dialog open={open && editingCustom !== null} onOpenChange={next => { if (!next && !savingCustom) setEditingCustom(null); }}><DialogContent className="dark max-h-[85vh] grid-cols-1 overflow-x-hidden overflow-y-auto wrap-anywhere [scrollbar-gutter:stable] sm:max-w-2xl" aria-describedby={undefined}><DialogHeader className="pr-6"><DialogTitle>Editar provedor Custom</DialogTitle></DialogHeader>{editingCustom && <CustomProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} />}</DialogContent></Dialog>
+          <Dialog open={open && editingCustom !== null} onOpenChange={next => { if (!next && !savingCustom) setEditingCustom(null); }}><DialogContent className={`dark max-h-[85vh] grid-cols-1 overflow-x-hidden overflow-y-auto wrap-anywhere [scrollbar-gutter:stable] ${editingCustom?.providerKind === "opencode-go" ? "sm:max-w-xl" : "sm:max-w-2xl"}`} aria-describedby={undefined}><DialogHeader className="pr-6"><DialogTitle>{editingCustom?.providerKind === "opencode-go" ? "Editar OpenCode Go" : "Editar provedor Custom"}</DialogTitle></DialogHeader>{editingCustom && (editingCustom.providerKind === "opencode-go" ? <OpenCodeGoProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} /> : <CustomProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} />)}</DialogContent></Dialog>
       </SettingsSurface>
 
       {disconnectAlias && <ProviderRemovalDialog key={disconnectAlias} alias={disconnectAlias} accounts={accounts} onClose={() => setDisconnectAlias(null)} onBusyChange={busy => setDisconnecting(busy ? disconnectAlias : null)} onRemoved={handleProviderRemoved} />}

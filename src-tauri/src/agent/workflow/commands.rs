@@ -42,6 +42,8 @@ pub struct AgentCard {
     created_at: u64,
     started_at: u64,
     duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generation: Option<super::super::generation::Metrics>,
     active_since: Option<u64>,
     current_thought: Option<String>,
     options: TurnOptions,
@@ -88,8 +90,15 @@ fn live_telemetry(data: &SessionData) -> (u64, u64, Option<u64>, Option<String>)
                 .rev()
                 .find_map(|step| (!step.summary.trim().is_empty()).then_some(step.summary.trim()))
                 .unwrap_or_default()
+                .rsplit("\n\n")
+                .find(|paragraph| !paragraph.trim().is_empty())
+                .unwrap_or_default()
                 .chars()
+                .rev()
                 .take(2_000)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
                 .collect::<String>()
         })
         .filter(|thought| !thought.is_empty());
@@ -155,6 +164,7 @@ pub(super) fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, 
         updated_at: state.updated_at,
         started_at: state.updated_at,
         duration_ms: 0,
+        generation: None,
         active_since: None,
         current_thought: None,
         options: state.options.clone(),
@@ -174,6 +184,10 @@ pub(super) fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, 
             agents[0].started_at = started_at;
         }
         agents[0].duration_ms = duration_ms;
+        agents[0].generation = data
+            .turns
+            .last()
+            .and_then(|turn| super::super::generation::aggregate(&turn.turn.steps));
         agents[0].active_since = active_since;
         agents[0].current_thought = current_thought;
         agents[0].reconnecting = data.active.is_some()
@@ -225,6 +239,7 @@ pub(super) fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, 
             updated_at: job.updated_at,
             started_at: job.updated_at.saturating_sub(job.duration_ms),
             duration_ms: job.duration_ms,
+            generation: job.generation.clone(),
             active_since: None,
             current_thought: None,
             options: job.options.clone(),
@@ -247,6 +262,10 @@ pub(super) fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, 
                 card.started_at = started_at;
             }
             card.duration_ms = duration_ms;
+            card.generation = data
+                .turns
+                .last()
+                .and_then(|turn| super::super::generation::aggregate(&turn.turn.steps));
             card.active_since = active_since;
             card.current_thought = current_thought;
             card.reconnecting = data.active.is_some()
@@ -699,6 +718,34 @@ mod tests {
             "Conferindo o contrato antes de editar"
         );
     }
+    #[test]
+    fn live_thought_keeps_latest_streamed_paragraph_instead_of_freezing_at_the_prefix() {
+        let (_fixture, hub) = super::super::tests::hub();
+        let mut data = hub.root.data.lock().unwrap();
+        data.turns.last_mut().unwrap().turn.steps.push(Step {
+            summary: format!(
+                "{}\n\nVerificando a integração atual",
+                "Investigação anterior. ".repeat(200)
+            ),
+            ..Step::default()
+        });
+        assert_eq!(
+            live_telemetry(&data).3.as_deref(),
+            Some("Verificando a integração atual")
+        );
+        data.turns
+            .last_mut()
+            .unwrap()
+            .turn
+            .steps
+            .last_mut()
+            .unwrap()
+            .summary = format!("{}Nova etapa concluída", "á".repeat(2_050));
+        let latest = live_telemetry(&data).3.unwrap();
+        assert_eq!(latest.chars().count(), 2_000);
+        assert!(latest.ends_with("Nova etapa concluída"));
+    }
+
     #[test]
     fn inspector_snapshots_omit_full_handoff_evidence_until_transcript_is_opened() {
         let (_fixture, hub) = super::super::tests::hub();

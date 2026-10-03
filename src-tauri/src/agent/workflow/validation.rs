@@ -536,10 +536,9 @@ pub async fn submit_workflow_validation(
     let saved = session.clone();
     let root = home.clone();
     let histories = agent.histories.clone();
-    let state = persistence.inner().clone();
     let signal = tauri::async_runtime::spawn_blocking(move || {
         let (_, manifest) = load(&saved, &root)?;
-        settings::validate(manifest.flow, &settings::load(&state, &root)?)?;
+        settings::validate(manifest.flow, &manifest.profiles)?;
         reserve(&saved, &root, &histories, &batch_id)
     })
     .await

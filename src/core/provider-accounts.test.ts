@@ -8,6 +8,22 @@ const account: ProviderAccount = {
 };
 
 describe("provider account IPC validation", () => {
+  it("preserves per-window visibility choices and reads legacy accounts", () => {
+    expect(accountList([account])).toEqual([account]);
+    const configured = { ...account, showFiveHourUsage: false, showWeeklyUsage: true };
+    expect(accountList([configured])).toEqual([configured]);
+    expect(accountList([{ ...account, showFiveHourUsage: true, showWeeklyUsage: false }])).toHaveLength(1);
+  });
+
+  it.each([
+    { showFiveHourUsage: "false" },
+    { showWeeklyUsage: 0 },
+    { showFiveHourUsage: null },
+    { showWeeklyUsage: null },
+  ])("rejects invalid usage window preferences: %j", (visibility) => {
+    expect(accountList([{ ...account, ...visibility }])).toEqual([]);
+  });
+
   it("retains the model's reported levels and default", () => {
     const configured = { ...account, usageAlert: { window: "weekly" as const, remainingPercent: 20 } };
     expect(accountList([configured])).toEqual([configured]);
@@ -34,6 +50,12 @@ describe("provider account IPC validation", () => {
     expect(enabledModels({ ...account, disabledModels: ["compact"] })).toEqual([]);
   });
 
+  it("validates optional vision capabilities without requiring them from older providers", () => {
+    expect(accountList([account])).toHaveLength(1);
+    expect(accountList([{ ...account, visionModels: ["compact"] }])).toHaveLength(1);
+    expect(accountList([{ ...account, visionModels: [2] }])).toEqual([]);
+  });
+
   it.each([
     { window: "daily", remainingPercent: 20 },
     { window: "weekly", remainingPercent: 0 },
@@ -45,6 +67,18 @@ describe("provider account IPC validation", () => {
 });
 
 describe("model catalog refresh", () => {
+  it("preserves statusbar window choices across model refreshes", () => {
+    const configured = { ...account, showFiveHourUsage: false, showWeeklyUsage: true };
+    const refreshed = { ...account, showFiveHourUsage: true, showWeeklyUsage: false };
+    expect(mergeModelCatalogRefresh([configured], [refreshed]).accounts[0]).toMatchObject({ showFiveHourUsage: false, showWeeklyUsage: true });
+  });
+  it("refreshes Go catalogs and retains their per-model visibility settings", () => {
+    const go = { ...account, alias: "opencode-go-pessoal", providerKind: "opencode-go", disabledModels: ["compact"] };
+    const model = { id: "glm", name: "GLM", reasoningLevels: [], defaultReasoningLevel: null };
+    const result = mergeModelCatalogRefresh([go], [{ ...go, models: [model] }]);
+    expect(result.refreshed).toEqual([go.alias]);
+    expect(result.accounts[0]).toMatchObject({ models: [model], disabledModels: ["compact"] });
+  });
   it("updates Codex and Antigravity independently while preserving failed and custom catalogs", () => {
     const antigravity = { ...account, alias: "antigravity-pessoal", providerKind: "antigravity" };
     const custom = { ...account, alias: "custom-local", providerKind: "custom" };

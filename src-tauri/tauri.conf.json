@@ -39,7 +39,8 @@
       "entitlements": "Entitlements.plist"
     },
     "resources": {
-      "../browser-extension/dist/": "browser-extension/"
+      "../browser-extension/dist/": "browser-extension/",
+      "../browser-extension/dist-firefox/": "browser-extension-firefox/"
     },
     "icon": [
       "icons/32x32.png",

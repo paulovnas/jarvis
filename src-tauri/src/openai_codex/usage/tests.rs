@@ -101,8 +101,18 @@ fn usage_preferences_migrate_and_remain_isolated_by_alias() {
     let second =
         crate::persistence::insert_provider_account(&connection, "antigravity-b", "two").unwrap();
     assert!(first.show_usage);
+    assert!(first.show_five_hour_usage);
+    assert!(first.show_weekly_usage);
     assert!(!second.show_third_party_usage);
-    save_visibility(&connection, &second.alias, false, true).unwrap();
+    save_visibility(
+        &connection,
+        &second.alias,
+        false,
+        true,
+        Some(false),
+        Some(true),
+    )
+    .unwrap();
     let records = crate::persistence::list_provider_accounts(&connection).unwrap();
     assert!(
         records
@@ -118,7 +128,45 @@ fn usage_preferences_migrate_and_remain_isolated_by_alias() {
             .unwrap()
             .show_third_party_usage
     );
-    assert!(save_visibility(&connection, "openai-codex-missing", true, false).is_err());
+    assert!(
+        records
+            .iter()
+            .find(|record| record.alias == first.alias)
+            .unwrap()
+            .show_five_hour_usage
+    );
+    let hidden = records
+        .iter()
+        .find(|record| record.alias == second.alias)
+        .unwrap();
+    assert!(!hidden.show_five_hour_usage);
+    assert!(hidden.show_weekly_usage);
+    save_visibility(&connection, &second.alias, true, false, None, None).unwrap();
+    let restored = crate::persistence::list_provider_accounts(&connection).unwrap();
+    let restored = restored
+        .iter()
+        .find(|record| record.alias == second.alias)
+        .unwrap();
+    assert!(restored.show_usage);
+    assert!(!restored.show_five_hour_usage);
+    assert!(restored.show_weekly_usage);
+    save_visibility(
+        &connection,
+        &second.alias,
+        true,
+        false,
+        Some(true),
+        Some(false),
+    )
+    .unwrap();
+    let updated = crate::persistence::list_provider_accounts(&connection).unwrap();
+    let updated = updated
+        .iter()
+        .find(|record| record.alias == second.alias)
+        .unwrap();
+    assert!(updated.show_five_hour_usage);
+    assert!(!updated.show_weekly_usage);
+    assert!(save_visibility(&connection, "openai-codex-missing", true, false, None, None).is_err());
     let cache = UsageCache::default();
     let a = cache.entry(&first).unwrap();
     assert!(Arc::ptr_eq(&a, &cache.entry(&first).unwrap()));
@@ -427,4 +475,228 @@ fn codex_http_probe_is_read_only_and_scopes_requests_to_the_selected_account() {
     let serialized = serde_json::to_string(&usage).unwrap();
     assert!(!serialized.contains("private"));
     assert!(!serialized.contains("account-one"));
+}
+
+#[test]
+fn account_usage_accepts_go_aliases_and_returns_the_account_snapshot() {
+    use crate::openai_codex::{InMemorySecretStore, OAuthManager};
+
+    let temp = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    let record = state
+        .with_connection(
+            temp.path(),
+            |connection| -> Result<_, crate::persistence::PersistenceError> {
+                crate::persistence::insert_provider_account(
+                    connection,
+                    "opencode-go-pessoal",
+                    "opencode-go:fixture-account",
+                )?;
+                connection
+                    .execute(
+                        "UPDATE provider_accounts SET provider_kind='opencode-go' WHERE alias=?1",
+                        ["opencode-go-pessoal"],
+                    )
+                    .map_err(crate::persistence::PersistenceError::from)?;
+                Ok(crate::persistence::list_provider_accounts(connection)?
+                    .into_iter()
+                    .next()
+                    .unwrap())
+            },
+        )
+        .unwrap();
+    let oauth = OpenAiCodexState {
+        manager: Arc::new(OAuthManager::production(Arc::new(
+            InMemorySecretStore::default(),
+        ))),
+    };
+    oauth
+        .manager
+        .usage_cache
+        .entry(&record)
+        .unwrap()
+        .lock()
+        .unwrap()
+        .finish(
+            AccountUsage {
+                alias: record.alias.clone(),
+                fetched_at: Some(1234),
+                email: None,
+                plan: Some("OpenCode Go".into()),
+                windows: vec![UsageWindow {
+                    id: "five_hour".into(),
+                    group: "OpenCode Go".into(),
+                    third_party: false,
+                    label: "5h".into(),
+                    duration_seconds: Some(18_000.0),
+                    remaining_percent: Some(76.0),
+                    resets_at: Some(1_893_474_000_000),
+                }],
+                reset_credits: None,
+                error: None,
+            },
+            Ok(()),
+        );
+
+    let usage = oauth
+        .account_usage(&state, temp.path(), &record.alias)
+        .expect("the public usage path must accept OpenCode Go aliases");
+    assert_eq!(usage.alias, record.alias);
+    assert_eq!(usage.fetched_at, Some(1234));
+    assert_eq!(usage.windows[0].remaining_percent, Some(76.0));
+    assert!(usage.error.is_none());
+
+    // With no cached report, this reaches Go credential recovery instead of
+    // rejecting the provider's alias before the quota lookup can run.
+    oauth.manager.usage_cache.invalidate(&record.alias);
+    let uncached = oauth
+        .account_usage(&state, temp.path(), &record.alias)
+        .unwrap();
+    assert_eq!(
+        uncached.error.as_deref(),
+        Some("Edite o provedor OpenCode Go e informe sua chave de API.")
+    );
+    assert!(uncached.windows.is_empty());
+}
+
+#[test]
+fn go_http_probe_preserves_complete_stale_limits_and_explains_auth_failures() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let body = json!({"usage": {
+        "rolling":{"status":"ok","percent":24,"resetsAt":"2030-01-01T05:00:00Z"},
+        "weekly":{"status":"ok","percent":75,"resetsAt":"2030-01-07T00:00:00Z"},
+        "monthly":{"status":"ok","percent":40,"resetsAt":"2030-01-31T00:00:00Z"}
+    }});
+    let mut partial = body.clone();
+    partial["usage"].as_object_mut().unwrap().remove("monthly");
+    let worker = std::thread::spawn(move || {
+        for (status, body) in [
+            (200, body.clone()),
+            (200, partial),
+            (503, json!({"error":"do not expose private-go-key"})),
+            (401, json!({"error":"do not expose private-go-key"})),
+            (403, json!({"error":"do not expose private-go-key"})),
+            (200, body),
+        ] {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut lines = BufReader::new(&socket).lines();
+            assert!(lines.next().unwrap().unwrap().starts_with("GET /v1/usage "));
+            let headers: Vec<_> = lines
+                .map_while(Result::ok)
+                .take_while(|line| !line.is_empty())
+                .map(|line| line.to_ascii_lowercase())
+                .collect();
+            assert!(headers.contains(&"authorization: bearer private-go-key".into()));
+            assert!(headers.contains(&"x-opencode-session: jarvis-go-opaque-account".into()));
+            assert!(headers.contains(&format!(
+                "user-agent: {}",
+                crate::openai_codex::opencode_go::user_agent().to_ascii_lowercase()
+            )));
+            assert!(!headers
+                .iter()
+                .any(|header| header.starts_with("chatgpt-account-id:")));
+            let body = body.to_string();
+            write!(socket, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        }
+    });
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let mut cache = Cached::default();
+    for (attempt, expected_error) in [
+        None,
+        Some("usage_unavailable"),
+        Some("usage_unavailable"),
+        Some("opencode_go_key_invalid"),
+        Some("opencode_go_subscription_required"),
+        None,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let result =
+            go::fetch_windows(&client, &base, "private-go-key", "jarvis-go-opaque-account");
+        assert_eq!(
+            result.as_ref().err().map(|error| error.code.as_str()),
+            expected_error
+        );
+        let mut usage = AccountUsage {
+            alias: "opencode-go-personal".into(),
+            fetched_at: None,
+            email: None,
+            plan: None,
+            windows: vec![],
+            reset_credits: None,
+            error: None,
+        };
+        let result = result.map(|windows| {
+            usage.windows = windows;
+            usage.fetched_at = Some(attempt as i64 + 1);
+        });
+        let usage = cache.finish(usage, result);
+        assert_eq!(usage.windows.len(), 3);
+        assert_eq!(usage.windows[0].remaining_percent, Some(76.0));
+        assert_eq!(usage.error.is_some(), expected_error.is_some());
+        assert_eq!(usage.fetched_at, Some(if attempt == 5 { 6 } else { 1 }));
+        assert!(!serde_json::to_string(&usage)
+            .unwrap()
+            .contains("private-go-key"));
+    }
+    worker.join().unwrap();
+}
+
+#[test]
+fn go_usage_alerts_save_and_identify_the_subscription_provider() {
+    let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+    crate::persistence::initialize_database(&mut connection).unwrap();
+    let account = crate::persistence::insert_provider_account(
+        &connection,
+        "opencode-go-personal",
+        "opaque-account",
+    )
+    .unwrap();
+    connection
+        .execute(
+            "UPDATE provider_accounts SET provider_kind='opencode-go' WHERE alias=?1",
+            [&account.alias],
+        )
+        .unwrap();
+    save_alert(
+        &connection,
+        &account.alias,
+        Some(UsageAlert {
+            window: UsageAlertWindow::FiveHour,
+            remaining_percent: 20,
+        }),
+    )
+    .unwrap();
+    let record = crate::persistence::list_provider_accounts(&connection)
+        .unwrap()
+        .remove(0);
+    let usage = AccountUsage {
+        alias: record.alias.clone(),
+        fetched_at: Some(1_000),
+        email: None,
+        plan: None,
+        windows: vec![UsageWindow {
+            id: "five_hour".into(),
+            group: "OpenCode Go".into(),
+            third_party: false,
+            label: "5h".into(),
+            duration_seconds: Some(18_000.0),
+            remaining_percent: Some(15.0),
+            resets_at: Some(2_000),
+        }],
+        reset_credits: None,
+        error: None,
+    };
+    let notices = alert_notices(&record, &usage, 1_500);
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].title, "Limite do OpenCode Go");
+    assert!(notices[0].body.starts_with("personal · OpenCode Go · 5h"));
 }

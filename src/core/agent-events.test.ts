@@ -14,6 +14,24 @@ function stateChanged(snapshot: ChatSnapshot) {
 }
 
 describe("agent event protocol", () => {
+  it("updates live generation without dropping prior measurements on older deltas and clears a retried sample", () => {
+    const turn = { ...savedTurn(), status: "running" as const };
+    let current: ChatSnapshot = { ...emptyChat(), revision: 4, turns: [turn], activeTurnId: turn.id, history: { start: 0, total: 1 } };
+    const generation = { outputTokens: 100, durationMs: 2_000, estimated: true };
+    const delta = { type: "itemDelta", stepIndex: 0, textAppend: "", summaryAppend: "", durationMs: 2_000, retry: null, usage: null };
+    const apply = (changes: object) => {
+      const batch = agentEventBatchSchema.parse({ conversationId: "c1", baseRevision: current.revision, revision: current.revision + 1, events: [{ ...delta, ...changes }] });
+      const result = applyAgentEventBatch(current, batch);
+      expect(result.needsResync).toBe(false);
+      current = result.snapshot!;
+      return current.turns[0].steps[0].generation;
+    };
+    expect(apply({ generation })).toEqual(generation);
+    expect(apply({ textAppend: "Novo trecho" })).toEqual(generation);
+    expect(apply({ generation: { ...generation, outputTokens: 120, estimated: false } })).toEqual({ ...generation, outputTokens: 120, estimated: false });
+    expect(apply({ generation: null, retry: { attempt: 1, maxAttempts: 5, retryAt: 3_000, message: "Reconectando" } })).toBeUndefined();
+    expect(readChat(current, "c1").turns[0].steps[0].generation).toBeUndefined();
+  });
   it("shows auxiliary messages immediately and does not duplicate replayed delivery", () => {
     const current = { ...history(0, 1), activeTurnId: "turn-0" };
     const message = { id: "guidance", content: "Considere o modo escuro", parts: [], options: savedTurn().options, auxiliaryFor: "turn-0", sentAt: 123, afterStep: 1 };

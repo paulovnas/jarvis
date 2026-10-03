@@ -37,6 +37,11 @@ function respond(request) {
     }
     if (request.params.arguments?.query === "hang" || request.params.arguments?.hang === true) return null;
     result = { content: [{ type: "text", text: `Documentation: ${request.params.arguments?.query ?? "mutation"}; ${process.env.TEST_SECRET ?? ""}` }], structuredContent: { source: "fixture", cwd: process.cwd() }, isError: request.params.arguments?.query === "fail" };
+    if (request.params.arguments?.query === "mirrored-long-description") {
+      const description = `${"A long task description. ".repeat(4000)}\nMiddle acceptance criterion: copper lighthouse.\n${process.env.TEST_SECRET ?? ""}\nFinal acceptance criterion: amber harbor.`;
+      const structured = { items: [{ id: "fixture-task", name: "Long description", description }] };
+      result = { content: [{ type: "text", text: JSON.stringify(structured) }], structuredContent: structured };
+    }
   } else if (request.method === "ping") result = {};
   else return { jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Unknown method" } };
   return { jsonrpc: "2.0", id: request.id, result };

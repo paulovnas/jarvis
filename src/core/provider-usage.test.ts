@@ -5,6 +5,8 @@ import { shortId } from "./dashboard";
 it("keeps the complete alias suffix and formats only available quota data", () => {
   expect(aliasSuffix("openai-codex-paulo-trabalho")).toBe("paulo-trabalho");
   expect(aliasSuffix("antigravity-pessoal")).toBe("pessoal");
+  expect(aliasSuffix("opencode-go-pessoal-trabalho")).toBe("pessoal-trabalho");
+  expect(planLabel("go", "unknown")).toBe("Go");
   expect(planLabel("self_serve_business_prolite", "enterprise")).toBe("Business");
   expect(planLabel("g1-ultra-tier", "unknown")).toBe("Google AI Ultra");
   expect(planLabel(null, "unknown")).toBe("Não informado");

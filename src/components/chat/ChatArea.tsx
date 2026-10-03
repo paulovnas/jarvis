@@ -16,6 +16,7 @@ import { ToolApproval } from "./ToolApproval";
 import { QuestionCard } from "./QuestionCard";
 import { WorkerRequests } from "./WorkerRequests";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
+import { useChatAgentModels } from "@/hooks/use-chat-agent-models";
 import type { WorkflowController } from "@/hooks/use-workflow";
 import type { ProjectFilesController } from "@/hooks/use-project-files";
 import { FileWorkspace } from "@/components/files/FileWorkspace";
@@ -32,6 +33,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
   const footer = useRef<HTMLElement>(null);
   const previousQuestion = useRef<string | undefined>(undefined);
   const snapshot = chat.snapshot;
+  const chatModels = useChatAgentModels(context.conversation.id);
   useVideoReady(context.project.id, context.conversation.id, files, snapshot);
   const http = useHttpClient(context.conversation.id, context.project.id, !!snapshot, httpDrafts);
   const [draftInsertion, setDraftInsertion] = useState<{ id: string; text: string }>();
@@ -84,7 +86,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} onInteract={chat.pauseQuestion} />}
     {snapshot.pendingAuthoring && <AuthoringApprovalDrawer key={snapshot.pendingAuthoring.toolId} request={snapshot.pendingAuthoring} onAnswer={(approved, note) => chat.answerAuthoring(snapshot.pendingAuthoring!, approved, note)} />}
     <WorkerRequests conversationId={context.conversation.id} projectPath={context.project.path} agents={workflow?.data?.agents ?? []} drafts={questionDrafts} />
-    <ChatComposer voiceSnapshot={snapshot} onVoiceAnswer={chat.answerQuestion} onVoicePause={chat.pauseQuestion} draftInsertion={draftInsertion} onOpenBrowser={embeddedBrowser ? () => void browser.open() : undefined} browserBusy={browser.busy} onOpenHttp={openHttp} httpBusy={!!http.busy} agentModels={agentModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
+    <ChatComposer voiceSnapshot={snapshot} onVoiceAnswer={chat.answerQuestion} onVoicePause={chat.pauseQuestion} draftInsertion={draftInsertion} onOpenBrowser={embeddedBrowser ? () => void browser.open() : undefined} browserBusy={browser.busy} onOpenHttp={openHttp} httpBusy={!!http.busy} agentModels={agentModels} chatModels={chatModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
     {modelGroups.length === 0 && <p className="mt-2 text-center text-xs text-muted-foreground">Conecte uma conta em Configurações para enviar mensagens.</p>}
   </footer>;
   return <FileWorkspace files={files} browser={browser} http={http} onAnalyzeHttp={run => { http.select(null); browser.select(null); files?.select(null); setDraftInsertion({ id: crypto.randomUUID(), text: httpAnalysisPrompt(run) }); }} terminalLauncher={outsideChat ? <>{browserLauncher}{httpLauncher}</> : undefined}>

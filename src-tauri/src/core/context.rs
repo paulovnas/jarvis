@@ -465,11 +465,12 @@ impl ContextMode {
             return Err(error("Indexação auxiliar indisponível nesta execução."));
         }
         let source = format!("tool-{call_id}");
+        let content = index_content(name, output);
         let indexed = tokio::time::timeout(
             std::time::Duration::from_secs(3),
             self.client()?.core_call(
                 "ctx_index",
-                &json!({"content":output,"source":source}),
+                &json!({"content":content,"source":source}),
                 signal.clone(),
             ),
         )
@@ -511,6 +512,51 @@ impl ContextMode {
         }
     }
 }
+
+fn index_content(name: &str, output: &str) -> String {
+    // Keep the exact MCP result in its durable receipt. For retrieval, JSON
+    // strings containing documents must be decoded: indexing an escaped,
+    // single-line envelope makes every document one oversized search section.
+    let value = name
+        .starts_with("mcp_")
+        .then(|| serde_json::from_str::<Value>(output).ok())
+        .flatten();
+    let Some(value) = value else {
+        return output.to_owned();
+    };
+    let mut content = String::new();
+    index_json(&value, "", &mut content);
+    content
+}
+
+fn index_json(value: &Value, path: &str, content: &mut String) {
+    match value {
+        Value::Object(properties) if !properties.is_empty() => {
+            for (key, value) in properties {
+                let key = key.replace('~', "~0").replace('/', "~1");
+                index_json(value, &format!("{path}/{key}"), content);
+            }
+        }
+        Value::Array(values) if !values.is_empty() => {
+            for (index, value) in values.iter().enumerate() {
+                index_json(value, &format!("{path}/{index}"), content);
+            }
+        }
+        _ => {
+            // Encode the path itself so unusual property names cannot break its
+            // label. String bodies remain verbatim, including Markdown sections.
+            content.push_str("## ");
+            content.push_str(&json!(path).to_string());
+            content.push_str("\n\n");
+            match value {
+                Value::String(text) => content.push_str(text),
+                value => content.push_str(&value.to_string()),
+            }
+            content.push_str("\n\n");
+        }
+    }
+}
+
 /// Do not flood the model or claim an index exists when indexing failed. The
 /// caller persists the original output before continuing with this preview.
 pub fn fallback_result(name: &str, output: &str) -> String {
@@ -821,6 +867,37 @@ mod tests {
         );
         context.close().await;
     }
+    #[test]
+    fn mcp_json_document_indexing_preserves_multiline_sections_and_every_value() {
+        let description = "User story\n\n## Rules\nAll links are N:N.\n\n## Acceptance criteria\nCA1: preserve existing links.\nCA2: reject incomplete mappings.";
+        let raw = json!({
+            "board":{"id":"fixture-board"},
+            "items":[{"id":"fixture-task","description":description,"enabled":true,"count":2,"optional":null,"empty":{},"links":[]}],
+            "unusual/key~name":"retained value"
+        }).to_string();
+        let indexed = index_content("mcp_monday_get_items", &raw);
+        assert!(indexed.contains("## \"/items/0/description\"\n\n"));
+        assert!(indexed.contains(description));
+        assert!(indexed.contains("## \"/board/id\"\n\nfixture-board"));
+        assert!(indexed.contains("## \"/items/0/enabled\"\n\ntrue"));
+        assert!(indexed.contains("## \"/items/0/count\"\n\n2"));
+        assert!(indexed.contains("## \"/items/0/optional\"\n\nnull"));
+        assert!(indexed.contains("## \"/items/0/empty\"\n\n{}"));
+        assert!(indexed.contains("## \"/items/0/links\"\n\n[]"));
+        assert!(indexed.contains("## \"/unusual~1key~0name\"\n\nretained value"));
+        assert_eq!(index_content("mcp_plain_text", description), description);
+        assert_eq!(index_content("browser_snapshot", &raw), raw);
+        let compact = compact_result(
+            "mcp_monday_get_items",
+            &raw.repeat(100),
+            "tool-fixture",
+            "Indexed",
+        );
+        assert!(compact.len() < OUTPUT_BUDGET);
+        assert!(compact.contains("ctx_search"));
+        assert!(compact.contains("tool-fixture"));
+    }
+
     #[test]
     fn large_observations_are_indexed_but_exact_edit_reads_remain_intact() {
         let large = "observed output\n".repeat(1000);

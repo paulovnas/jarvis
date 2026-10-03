@@ -230,12 +230,8 @@ fn global_companion_validates_explicit_model_independently_of_a_retired_project_
     explicit.workflow = Some(Flow::Standard);
     let global_id = super::super::companion_chat::GLOBAL_CONVERSATION_ID;
     validate_options(&state, &oauth, home.path(), &explicit, global_id).unwrap();
-    assert_eq!(
-        validate_options(&state, &oauth, home.path(), &explicit, &"a".repeat(32))
-            .unwrap_err()
-            .code,
-        "unsupported_executor"
-    );
+    // An explicit per-chat choice also takes precedence over a retired agent default.
+    validate_options(&state, &oauth, home.path(), &explicit, &"a".repeat(32)).unwrap();
     assert_eq!(
         settings::read(home.path()).unwrap()["standard/builder"].executor,
         crate::claude::Executor::Unavailable
@@ -321,7 +317,7 @@ fn global_companion_workflow_never_adds_project_tools() {
     let mut definitions = crate::agent::tools::definitions(Mode::Build);
     definitions.extend(crate::agent::companion_chat::tools());
     execution.filter(&mut definitions);
-    assert_eq!(definitions.len(), 6);
+    assert_eq!(definitions.len(), 13);
     assert!(definitions
         .iter()
         .any(|definition| definition["name"] == "jarvito_list_executors"));
@@ -769,6 +765,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
         approval_mode: ApprovalMode::Manual,
         manual_validation: false,
         automatic_publication: None,
+        model_selection: None,
     };
     let signal = root
         .reserve("Implement the requested outcome".into(), options.clone())
@@ -845,6 +842,7 @@ pub(super) fn job(hub: &Hub, role: Role, scope: &str) -> Job {
         created_at: now(),
         updated_at: now(),
         duration_ms: 0,
+        generation: None,
         attempts: 1,
         recovery_attempts: 0,
         recovery_attempt_pending: false,

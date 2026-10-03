@@ -714,7 +714,25 @@ async fn completion_wakes_parent_once_even_when_it_arrives_before_wait_registrat
         Ok(())
     })
     .unwrap();
-    settle(&hub, &child, &Ok(()), Some(1200)).unwrap();
+    let generation = super::super::super::generation::Metrics {
+        output_tokens: 100,
+        duration_ms: 1_000,
+        estimated: false,
+    };
+    settle_generation(&hub, &child, &Ok(()), Some(1200), Some(generation.clone())).unwrap();
+    let persisted = storage::load(&hub.directory, &hub.root.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        persisted.jobs[&child.id].generation,
+        Some(generation.clone())
+    );
+    let roster = commands::snapshot(&persisted, None).unwrap();
+    let serialized = serde_json::to_value(roster).unwrap();
+    assert_eq!(
+        serialized["agents"][1]["generation"],
+        serde_json::to_value(generation).unwrap()
+    );
     let messages = tokio::time::timeout(
         Duration::from_secs(1),
         hub.wait("main", hub.root_signal.clone()),

@@ -728,8 +728,9 @@ struct RpcInput {
 }
 fn mutation(method: &str) -> Option<bool> {
     match method {
-        "library" | "chat" | "history" => Some(false),
-        "message" | "question" | "approval" | "validation" | "authoring" | "cancel" => Some(true),
+        "library" | "chat" | "history" | "beads" | "choices" | "usage" => Some(false),
+        "message" | "question" | "approval" | "validation" | "authoring" | "cancel"
+        | "queue_edit" | "queue_delete" | "queue_send_now" | "chat_model" => Some(true),
         _ => None,
     }
 }

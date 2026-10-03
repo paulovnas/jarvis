@@ -55,15 +55,16 @@ it("retains the draft and asks for CLI login instead of a missing provider", asy
   expect(send).not.toHaveBeenCalled();
 });
 
-it("persists Claude choices in native profiles instead of fabricating an account", async () => {
-  const user = userEvent.setup(); const save = vi.fn();
-  render(<ChatComposer modelGroups={[]} onSendMessage={vi.fn()} agentModels={{ data: {}, saving: false, error: null, save, refresh: vi.fn() }} />);
+it("persists Claude choices in the chat instead of changing agent defaults or fabricating an account", async () => {
+  const user = userEvent.setup(); const save = vi.fn(); const saveChat = vi.fn().mockResolvedValue(true);
+  render(<ChatComposer modelGroups={[]} onSendMessage={vi.fn()} agentModels={{ data: {}, saving: false, error: null, save, refresh: vi.fn() }} chatModels={{ data: {}, error: null, saving: false, save: saveChat, refresh: vi.fn() }} />);
   await screen.findByRole("textbox", { name: "Mensagem" });
   screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
   (await screen.findByRole("menuitem", { name: "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
   (await screen.findByRole("menuitem", { name: /^Claude Sonnet/ })).focus(); await user.keyboard("{ArrowRight}");
   await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
-  expect(save).toHaveBeenCalledWith("standard", "builder", { executor: "claude", account: "", model: "sonnet", reasoning: "high" });
+  expect(saveChat).toHaveBeenCalledWith("standard/builder", { executor: "claude", account: "", model: "sonnet", reasoning: "high" });
+  expect(save).not.toHaveBeenCalled();
 });
 
 it("preserves a selected Claude profile and draft when its provider is disabled", async () => {
@@ -76,33 +77,37 @@ it("preserves a selected Claude profile and draft when its provider is disabled"
   expect(send).not.toHaveBeenCalled();
 });
 
-it("preserves the configured secondary when the composer changes the native primary model", async () => {
-  const user = userEvent.setup(); const save = vi.fn();
+it("preserves an available secondary when the composer changes the chat primary model", async () => {
+  const user = userEvent.setup(); const save = vi.fn(); const saveChat = vi.fn().mockResolvedValue(true);
   const fallback = { account: "backup", model: "other", reasoning: null };
-  render(<ChatComposer modelGroups={[]} onSendMessage={vi.fn()} agentModels={{ data: { "standard/builder": { executor: "claude", account: "", model: "sonnet", reasoning: "high", fallback } }, saving: false, error: null, save, refresh: vi.fn() }} />);
+  const modelGroups: ProviderModelGroup[] = [{ provider: "backup", models: [{ value: "backup/other", label: "Backup", reasoningLevels: [], defaultReasoningLevel: null }] }];
+  render(<ChatComposer modelGroups={modelGroups} onSendMessage={vi.fn()} agentModels={{ data: { "standard/builder": { executor: "claude", account: "", model: "sonnet", reasoning: "high", fallback } }, saving: false, error: null, save, refresh: vi.fn() }} chatModels={{ data: {}, error: null, saving: false, save: saveChat, refresh: vi.fn() }} />);
   await screen.findByRole("textbox", { name: "Mensagem" });
   screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
   (await screen.findByRole("menuitem", { name: "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
   (await screen.findByRole("menuitem", { name: /^Claude Sonnet/ })).focus(); await user.keyboard("{ArrowRight}");
   await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
-  expect(save).toHaveBeenCalledWith("standard", "builder", { executor: "claude", account: "", model: "sonnet", reasoning: "high", fallback });
+  expect(saveChat).toHaveBeenCalledWith("standard/builder", { executor: "claude", account: "", model: "sonnet", reasoning: "high", fallback });
+  expect(save).not.toHaveBeenCalled();
 });
 
 it("swaps the configured secondary into the primary selection in the chat", async () => {
-  const user = userEvent.setup(); const save = vi.fn();
+  const user = userEvent.setup(); const save = vi.fn(); const saveChat = vi.fn().mockResolvedValue(true);
   const primary = { executor: "jarvis" as const, account: "work", model: "gpt", reasoning: null };
   const secondary = { executor: "claude" as const, account: "", model: "sonnet", reasoning: "high" };
   const modelGroups: ProviderModelGroup[] = [{ provider: "work", models: [{ value: "work/gpt", label: "GPT", reasoningLevels: [], defaultReasoningLevel: null }] }];
   const controller = { data: { "standard/builder": { ...primary, fallback: secondary } }, saving: false, error: null, save, refresh: vi.fn() };
-  const { rerender } = render(<ChatComposer modelGroups={modelGroups} onSendMessage={vi.fn()} agentModels={controller} />);
+  const chatController = { data: {}, saving: false, error: null, save: saveChat, refresh: vi.fn() };
+  const { rerender } = render(<ChatComposer modelGroups={modelGroups} onSendMessage={vi.fn()} agentModels={controller} chatModels={chatController} />);
   await screen.findByRole("textbox", { name: "Mensagem" });
   screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
   (await screen.findByRole("menuitem", { name: "Claude Code" })).focus(); await user.keyboard("{ArrowRight}");
   (await screen.findByRole("menuitem", { name: /^Claude Sonnet/ })).focus(); await user.keyboard("{ArrowRight}");
   await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
   const swapped = { ...secondary, fallback: primary };
-  expect(save).toHaveBeenCalledWith("standard", "builder", swapped);
-  rerender(<ChatComposer modelGroups={modelGroups} onSendMessage={vi.fn()} agentModels={{ ...controller, data: { "standard/builder": swapped } }} />);
+  expect(saveChat).toHaveBeenCalledWith("standard/builder", swapped);
+  expect(save).not.toHaveBeenCalled();
+  rerender(<ChatComposer modelGroups={modelGroups} onSendMessage={vi.fn()} agentModels={controller} chatModels={{ ...chatController, data: { "standard/builder": swapped } }} />);
   expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Claude Sonnet");
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

@@ -6,6 +6,7 @@ pub(crate) mod antigravity;
 mod catalog_cache;
 pub(crate) mod custom;
 mod inference_auth;
+pub(crate) mod opencode_go;
 mod reauthorization;
 pub(crate) mod usage;
 
@@ -118,6 +119,16 @@ pub(crate) struct ProviderAccount {
     pub(crate) enabled: bool,
     #[serde(rename = "showUsage")]
     pub(crate) show_usage: bool,
+    #[serde(
+        default = "default_usage_window_visibility",
+        rename = "showFiveHourUsage"
+    )]
+    pub(crate) show_five_hour_usage: bool,
+    #[serde(
+        default = "default_usage_window_visibility",
+        rename = "showWeeklyUsage"
+    )]
+    pub(crate) show_weekly_usage: bool,
     #[serde(rename = "showThirdPartyUsage")]
     pub(crate) show_third_party_usage: bool,
     #[serde(rename = "usageAlert", skip_serializing_if = "Option::is_none")]
@@ -130,6 +141,12 @@ pub(crate) struct ProviderAccount {
     #[serde(rename = "accountType")]
     pub(crate) account_type: ProviderAccountType,
     pub(crate) models: Vec<ProviderModel>,
+    #[serde(
+        default,
+        rename = "visionModels",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub(crate) vision_models: Vec<String>,
     #[serde(rename = "modelsAvailable")]
     pub(crate) models_available: bool,
     #[serde(default, rename = "modelsStale")]
@@ -138,6 +155,10 @@ pub(crate) struct ProviderAccount {
     pub(crate) disabled_models: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) custom: Option<custom::Config>,
+}
+
+fn default_usage_window_visibility() -> bool {
+    true
 }
 
 impl ProviderAccount {
@@ -152,6 +173,8 @@ impl ProviderAccount {
             alias: record.alias,
             enabled: record.enabled,
             show_usage: record.show_usage,
+            show_five_hour_usage: record.show_five_hour_usage,
+            show_weekly_usage: record.show_weekly_usage,
             show_third_party_usage: record.show_third_party_usage,
             usage_alert,
             provider_kind: record.provider_kind,
@@ -161,6 +184,7 @@ impl ProviderAccount {
                 .and_then(|value| value.plan_type.as_deref())
                 .map_or(ProviderAccountType::Unknown, classify_account_type),
             models,
+            vision_models: vec![],
             models_available,
             models_stale: false,
             disabled_models: Vec::new(),
@@ -288,6 +312,7 @@ pub(crate) fn validate_provider_alias(alias: &str) -> Result<(), AliasValidation
     let suffix = alias
         .strip_prefix(OPENAI_CODEX_ALIAS_PREFIX)
         .or_else(|| alias.strip_prefix("antigravity-"))
+        .or_else(|| alias.strip_prefix("opencode-go-"))
         .ok_or(AliasValidationError::InvalidAlias)?;
     validate_alias_suffix(suffix).map_err(|_| AliasValidationError::InvalidAlias)
 }
@@ -669,6 +694,23 @@ mod tests {
     }
 
     #[test]
+    fn opencode_go_aliases_share_the_subscription_suffix_contract() {
+        for alias in ["opencode-go-pessoal", "opencode-go-a-b", "opencode-go-1"] {
+            assert!(validate_provider_alias(alias).is_ok(), "{alias}");
+        }
+        for alias in [
+            "opencode-go-",
+            "opencode-go-A",
+            "opencode-go-pessoal/",
+            "opencode-go-../pessoal",
+            "opencode-go-a--b",
+            "custom-pessoal",
+        ] {
+            assert!(validate_provider_alias(alias).is_err(), "{alias}");
+        }
+    }
+
+    #[test]
     fn duplicate_alias_and_account_id_are_rejected_before_secret_storage() {
         let connection = connection();
         let secrets = InMemorySecretStore::default();
@@ -890,6 +932,8 @@ mod tests {
             alias: "openai-codex-one".to_owned(),
             enabled: true,
             show_usage: true,
+            show_five_hour_usage: true,
+            show_weekly_usage: true,
             show_third_party_usage: false,
             usage_alert: None,
             provider_kind: "openai-codex".to_owned(),
@@ -897,6 +941,7 @@ mod tests {
             email: Some("person@example.com".to_owned()),
             account_type: ProviderAccountType::Personal,
             models: Vec::new(),
+            vision_models: vec![],
             models_available: false,
             models_stale: false,
             disabled_models: Vec::new(),
@@ -905,7 +950,15 @@ mod tests {
         let value = serde_json::to_value(account).expect("metadata JSON");
         assert!(value.get("accountId").is_none());
         assert_eq!(value["providerKind"], "openai-codex");
+        assert_eq!(value["showFiveHourUsage"], true);
+        assert_eq!(value["showWeeklyUsage"], true);
         assert_eq!(value["createdAt"], 1_735_689_600);
+        let mut legacy = value;
+        legacy.as_object_mut().unwrap().remove("showFiveHourUsage");
+        legacy.as_object_mut().unwrap().remove("showWeeklyUsage");
+        let restored: ProviderAccount = serde_json::from_value(legacy).unwrap();
+        assert!(restored.show_five_hour_usage);
+        assert!(restored.show_weekly_usage);
     }
 
     #[test]
@@ -1432,7 +1485,9 @@ impl OAuthManager {
             .iter()
             .cloned()
             .map(|record| {
-                let account = if record.provider_kind == "custom" {
+                let account = if record.provider_kind == "opencode-go" {
+                    opencode_go::account(app_state, home_dir, record)?
+                } else if record.provider_kind == "custom" {
                     custom::account(app_state, home_dir, record)?
                 } else {
                     account_details(record, self.secret_store.as_ref(), &self.endpoints, client)
@@ -1464,6 +1519,18 @@ impl OAuthManager {
         home_dir: &std::path::Path,
         alias: Option<&str>,
     ) -> Result<Vec<ProviderAccount>, ProviderError> {
+        let initial = app_state
+            .list_provider_accounts(home_dir)
+            .map_err(|_| ProviderError::database())?;
+        let go_catalog = if initial.iter().any(|record| {
+            record.enabled
+                && record.provider_kind == "opencode-go"
+                && alias.is_none_or(|selected| selected == record.alias)
+        }) {
+            Some(opencode_go::discover()?)
+        } else {
+            None
+        };
         let _guard = self.credentials_guard.try_lock().map_err(|_| {
             ProviderError::new(
                 "provider_busy",
@@ -1479,13 +1546,13 @@ impl OAuthManager {
                     && record.enabled
                     && matches!(
                         record.provider_kind.as_str(),
-                        "openai-codex" | "antigravity"
+                        "openai-codex" | "antigravity" | "opencode-go"
                     )
             })
         }) {
             return Err(ProviderError::new(
                 "account_unavailable",
-                "Ative uma conta OpenAI/Codex ou Antigravity conectada para atualizar seus modelos.",
+                "Ative uma conta conectada para atualizar seus modelos.",
             ));
         }
         let client = build_codex_client().ok();
@@ -1495,12 +1562,22 @@ impl OAuthManager {
                 record.enabled
                     && matches!(
                         record.provider_kind.as_str(),
-                        "openai-codex" | "antigravity"
+                        "openai-codex" | "antigravity" | "opencode-go"
                     )
                     && alias.is_none_or(|selected| record.alias == selected)
             })
             .cloned()
             .map(|record| {
+                if record.provider_kind == "opencode-go" {
+                    if let Some(catalog) = &go_catalog {
+                        opencode_go::remember(app_state, home_dir, &record.alias, catalog)?;
+                    }
+                    return attach_model_exclusions(
+                        app_state,
+                        home_dir,
+                        opencode_go::account(app_state, home_dir, record)?,
+                    );
+                }
                 let account = account_details(
                     record,
                     self.secret_store.as_ref(),
@@ -1797,6 +1874,9 @@ impl OpenAiCodexState {
             ));
         }
         credential.inference_model = Some(selected.clone());
+        if credential.account_id.starts_with("opencode-go:") {
+            credential.custom = Some(opencode_go::model_config(state, home, alias, model)?);
+        }
         Ok((credential, selected.clone()))
     }
 
@@ -1826,6 +1906,17 @@ impl OpenAiCodexState {
                 "account_disabled",
                 "Ative a conta nas configurações para usá-la.",
             ));
+        }
+        if record.provider_kind == "opencode-go" {
+            let credential =
+                opencode_go::credential(state, home, self.manager.secret_store.as_ref(), alias)?;
+            let account = opencode_go::account(state, home, record.clone())?;
+            let disabled = state
+                .with_connection(home, |db| {
+                    persistence::list_provider_model_exclusions(db, alias)
+                })
+                .map_err(|_| ProviderError::database())?;
+            return Ok((credential, visible_models(account.models, &disabled)));
         }
         let mut credential = self.manager.secret_store.load(alias).map_err(|_| {
             ProviderError::new(

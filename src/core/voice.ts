@@ -9,7 +9,7 @@ export const voiceConfigSchema = z.object({
 });
 export const voiceSessionSchema = z.object({
   id: z.string().nullable(), target: z.string().nullable(), owner: z.string().nullable(),
-  mode: z.enum(["dictation", "call", "test"]).nullable(),
+  mode: z.enum(["dictation", "call", "test", "announcement"]).nullable(),
   phase: z.enum(["idle", "preparing", "listening", "transcribing", "thinking", "synthesizing", "speaking", "paused", "closing", "error"]),
   muted: z.boolean(), level: z.number().min(0).max(1), transcript: z.string(), error: z.string().nullable(), revision: z.number().int().nonnegative(),
   startedAt: z.number().nonnegative().nullable(), speaker: z.enum(["user", "jarvis"]).nullable(),

@@ -7,6 +7,53 @@ pub(super) fn scope(config: &Config, options: &TurnOptions) -> Value {
 fn metadata<'a>(item: &'a Value, scope: &Value) -> Option<&'a Value> {
     item.get("_custom").filter(|data| &data["scope"] == scope)
 }
+fn go_deepseek(config: &Config, model: &Model) -> bool {
+    model.id.starts_with("deepseek-")
+        && config.endpoint().is_ok_and(|endpoint| {
+            endpoint.scheme() == "https"
+                && endpoint.host_str() == Some("opencode.ai")
+                && endpoint.port_or_known_default() == Some(443)
+                && matches!(
+                    endpoint.path(),
+                    "/zen/go/v1/chat/completions" | "/zen/go/v1/responses"
+                )
+        })
+}
+fn plain_reasoning(item: &Value) -> bool {
+    item["content"].as_array().is_some_and(|parts| {
+        parts.iter().any(|part| {
+            part["type"] == "reasoning_text"
+                && part["text"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty())
+        })
+    })
+}
+fn go_responses_reasoning(input: Vec<Value>) -> Vec<Value> {
+    // Go's DeepSeek Responses lane requires non-empty reasoning_text for each
+    // assistant turn. Preserve native text; explicitly name missing history
+    // instead of inventing a previous chain of thought or copying foreign state.
+    let content = json!([{"type":"reasoning_text","text":"reasoning unavailable"}]);
+    let mut result = vec![];
+    let mut has_reasoning = false;
+    for mut item in input {
+        if item["type"] == "reasoning" {
+            if !plain_reasoning(&item) {
+                item["content"] = content.clone();
+            }
+            has_reasoning = true;
+        } else if item["type"] == "function_call" || item["role"] == "assistant" {
+            if !has_reasoning {
+                result.push(json!({"type":"reasoning","summary":[],"content":content}));
+                has_reasoning = true;
+            }
+        } else {
+            has_reasoning = false;
+        }
+        result.push(item);
+    }
+    result
+}
 fn text(item: &Value) -> String {
     item["content"]
         .as_str()
@@ -210,16 +257,24 @@ pub(super) fn body_with_capabilities(
 ) -> Result<Value, AgentError> {
     let scope = scope(config, options);
     let tools = if capabilities.tools { tools } else { vec![] };
+    let effort = options
+        .reasoning
+        .as_deref()
+        .or(model.default_reasoning_level.as_deref());
+    let go_deepseek_reasoning = go_deepseek(config, model)
+        && capabilities.reasoning.supported
+        && effort.is_some_and(|effort| !matches!(effort, "off" | "none"));
     let mut body = match config.protocol {
         Protocol::OpenaiResponses => {
             let input: Vec<_> = input
                 .into_iter()
                 .filter_map(|mut item| {
-                    if item["type"] == "reasoning"
-                        && (!item["encrypted_content"].is_string()
-                            || metadata(&item, &scope).is_none())
-                    {
-                        return None;
+                    if item["type"] == "reasoning" {
+                        let replayable = item["encrypted_content"].is_string()
+                            || (go_deepseek_reasoning && plain_reasoning(&item));
+                        if !replayable || metadata(&item, &scope).is_none() {
+                            return None;
+                        }
                     }
                     if item["type"] == "web_search_call" {
                         return None;
@@ -230,11 +285,25 @@ pub(super) fn body_with_capabilities(
                     Some(item)
                 })
                 .collect();
+            let input = if go_deepseek_reasoning {
+                go_responses_reasoning(input)
+            } else {
+                input
+            };
             // No Codex account, cache, beta or encrypted-reasoning headers are sent to gateways.
             json!({"model":model.id,"instructions":instructions,"input":input,"stream":true,"store":false,"max_output_tokens":model.max_output_tokens})
         }
         Protocol::OpenaiCompletions => {
             let mut messages = messages(&input, &scope, model, false, false)?;
+            if go_deepseek_reasoning {
+                for message in messages.iter_mut().filter(|m| m["role"] == "assistant") {
+                    if !message["reasoning_content"].is_string() {
+                        // DeepSeek accepts an empty string when reasoning was
+                        // absent from imported or compacted assistant history.
+                        message["reasoning_content"] = json!("");
+                    }
+                }
+            }
             messages.insert(0, json!({"role":"system","content":instructions}));
             let mut body = json!({"model":model.id,"messages":messages,"stream":true,"stream_options":{"include_usage":true}});
             body[match config.token_field {
@@ -257,10 +326,6 @@ pub(super) fn body_with_capabilities(
     if !body["tools"].is_null() && capabilities.parallel_tool_calls {
         body["parallel_tool_calls"] = json!(true);
     }
-    let effort = options
-        .reasoning
-        .as_deref()
-        .or(model.default_reasoning_level.as_deref());
     if capabilities.reasoning.supported {
         if let Some(effort) = effort {
             if !model.reasoning_levels.iter().any(|level| level == effort) {
@@ -289,6 +354,20 @@ pub(super) fn body_with_capabilities(
                     body["thinking"] = json!({"type":if off { "disabled" } else { "enabled" }});
                     if !off {
                         body["reasoning_effort"] = json!(effort);
+                    }
+                }
+                Reasoning::Toggle => {
+                    let enabled = if config.protocol == Protocol::AnthropicMessages {
+                        "adaptive"
+                    } else {
+                        "enabled"
+                    };
+                    body["thinking"] = json!({"type":if off { "disabled" } else { enabled }});
+                }
+                Reasoning::EnabledEffort => {
+                    body["thinking"] = json!({"type":if off { "disabled" } else { "enabled" }});
+                    if !off {
+                        body["output_config"] = json!({"effort":effort});
                     }
                 }
                 Reasoning::Budget => {

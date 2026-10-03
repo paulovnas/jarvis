@@ -34,6 +34,8 @@ pub(crate) enum Reasoning {
     Effort,
     Openrouter,
     Deepseek,
+    Toggle,
+    EnabledEffort,
     Budget,
     Adaptive,
 }
@@ -159,13 +161,18 @@ impl Config {
                         | Reasoning::Effort
                         | Reasoning::Openrouter
                         | Reasoning::Deepseek
+                        | Reasoning::Toggle
                 ),
                 Protocol::OpenaiResponses => {
                     matches!(model.reasoning, Reasoning::None | Reasoning::Effort)
                 }
                 Protocol::AnthropicMessages => matches!(
                     model.reasoning,
-                    Reasoning::None | Reasoning::Budget | Reasoning::Adaptive
+                    Reasoning::None
+                        | Reasoning::Budget
+                        | Reasoning::Adaptive
+                        | Reasoning::Toggle
+                        | Reasoning::EnabledEffort
                 ),
             };
             if !compatible {

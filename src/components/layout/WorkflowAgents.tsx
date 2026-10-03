@@ -19,6 +19,7 @@ import { reasoningPreview } from "@/components/chat/reasoning-preview";
 import { executionDuration, formatExecutionDuration, useRunningClock } from "@/hooks/use-running-clock";
 import { Hint } from "@/components/ui/hint";
 import { executionLabel, executorOf } from "@/core/executors";
+import { GenerationRate } from "@/components/chat/GenerationRate";
 
 function presentation(agent: WorkflowAgent) {
   return agent.role === "custom"
@@ -87,7 +88,7 @@ export function WorkflowAgents({ workflow, conversationId }: { workflow?: Workfl
           <span className="flex items-center gap-2"><Icon aria-hidden="true" className="size-3.5 shrink-0" style={{ color }} /><span className="flex-1 text-xs font-medium">{label}</span>{requiresAttention && selected !== agent.id && <Hint content="Aguardando sua resposta"><span aria-label="Aguardando sua resposta" className="flex size-5 items-center justify-center rounded-full border border-onedark-yellow/30 bg-onedark-yellow/10 text-onedark-yellow"><CircleAlert aria-hidden="true" className="size-3" /></span></Hint>}{agent.status === "running" && <span aria-label="Em execução" className="size-1.5 animate-pulse rounded-full motion-reduce:animate-none" style={{ backgroundColor: color }} />}<ChevronRight className="size-3 text-muted-foreground" /></span>
           {agent.title !== label && <span className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{agent.title}</span>}
           {thought && <Hint content={thought} whenTruncated><span className={`line-clamp-2 text-[10px] italic leading-4 text-muted-foreground ${agent.status === "running" ? "reasoning-shimmer" : ""}`}>{thought}</span></Hint>}
-          <span className="flex items-center gap-2"><StatusBadge agent={agent} /><span aria-label="Tempo de execução" className="font-mono text-[9px] tabular-nums text-muted-foreground">{formatExecutionDuration(duration)}</span></span>
+          <span className="flex flex-wrap items-center gap-2 text-[9px] text-muted-foreground"><StatusBadge agent={agent} /><span aria-label="Tempo de execução" className="font-mono tabular-nums">{formatExecutionDuration(duration)}</span><GenerationRate generation={agent.generation} /></span>
           <ModelDetails agent={agent} />
         </Button>;
       })}</div>}
@@ -97,6 +98,7 @@ export function WorkflowAgents({ workflow, conversationId }: { workflow?: Workfl
           <DialogDescription className="micro-label flex items-center gap-2" style={{ color: presentation(selectedAgent).color }}><SelectedIcon className="size-3.5" />{presentation(selectedAgent).label}<StatusBadge agent={selectedAgent} /></DialogDescription>
           <DialogTitle className="text-sm">{selectedAgent.title}</DialogTitle>
           <ModelDetails agent={selectedAgent} />
+          <span className="flex items-center gap-2 font-mono text-[10px] tabular-nums text-muted-foreground"><span aria-label="Tempo de execução">{formatExecutionDuration(executionDuration(selectedAgent.startedAt, selectedAgent.durationMs, timingActive(selectedAgent), now, selectedAgent.activeSince))}</span><GenerationRate generation={selectedAgent.generation} /></span>
           {selectedAgent.attempts > 1 && <span className="font-mono text-[10px] text-muted-foreground">Rodada {selectedAgent.attempts}</span>}
         </DialogHeader>
         <AgentHistory key={`${conversationId}/${selectedAgent.id}`} conversationId={conversationId} agent={selectedAgent} />

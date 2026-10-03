@@ -122,7 +122,10 @@ fn bounded_summary(summary: String) -> Result<String, AgentError> {
     Ok(summary)
 }
 
-fn agent_schema() -> Value {
+pub(in crate::agent) fn agent_schema() -> Value {
+    let primary = json!({"type":"object","additionalProperties":false,"required":["account","model","reasoning"],"properties":{"executor":{"type":"string","enum":["jarvis","claude"],"description":"Defaults to jarvis. Claude uses the official local CLI and an empty account."},"account":{"type":"string","maxLength":200},"model":{"type":"string","minLength":1,"maxLength":200},"reasoning":{"anyOf":[{"type":"null"},{"type":"string","minLength":1,"maxLength":40}]}}});
+    let mut model = primary.clone();
+    model["properties"]["fallback"] = json!({"anyOf":[{"type":"null"},primary]});
     json!({
         "type":"object", "additionalProperties":false,
         "required":["id","name","description","instructions","usage","capability","model"],
@@ -134,13 +137,13 @@ fn agent_schema() -> Value {
             "usage":{"type":"string","enum":["solo","mixed","flow_only"],"description":"Where this agent can run: solo as the primary chat agent, flow_only only as a workflow step, or mixed in both contexts."},
             "capability":{"type":"string","enum":["read_only","write_files","commands"]},
             "deniedTools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":128}},
-            "model":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["account","model","reasoning"],"properties":{"executor":{"type":"string","enum":["jarvis","claude"],"description":"Defaults to jarvis. Claude uses the official local CLI and an empty account; it is not a Jarvis API provider."},"account":{"type":"string","maxLength":200},"model":{"type":"string","minLength":1,"maxLength":200},"reasoning":{"anyOf":[{"type":"null"},{"type":"string","minLength":1,"maxLength":40}]}}}]},
+            "model":{"anyOf":[{"type":"null"},model]},
             "appearance":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["icon","color"],"properties":{"icon":{"type":"string","enum":["bot","workflow","route","brain","search","code","palette","film","shield","terminal","wrench","book","sparkles","target","pen","lightbulb","rocket"]},"color":{"type":"string","enum":["blue","green","cyan","yellow","red","purple","neutral"]}}}]}
         }
     })
 }
 
-fn flow_schema() -> Value {
+pub(in crate::agent) fn flow_schema() -> Value {
     json!({
         "type":"object", "additionalProperties":false,
         "required":["id","name","description","entry","maxSteps","steps"],

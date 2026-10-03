@@ -34,22 +34,29 @@ it("keeps missing saved flows explicit and refuses to silently execute Standard"
   expect(send).not.toHaveBeenCalled();
 });
 
-it("runs a Solo agent as the main chat agent with its fixed model", async () => {
-  const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true);
+it("runs a Solo agent with its default model and allows a chat-specific override", async () => {
+  const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true), saveChat = vi.fn().mockResolvedValue(true);
   const solo = { ...customAgent, usage: "solo" as const, model: { account: "local", model: "specialist", reasoning: null } };
   vi.mocked(invoke).mockImplementation(async command => command === "get_workflow_catalog" ? { ...customCatalog, agents: [solo] } : []);
   const modelGroups = [{ provider: "local", models: [
     { value: "local/general", label: "General", reasoningLevels: [], defaultReasoningLevel: null },
     { value: "local/specialist", label: "Specialist", reasoningLevels: [], defaultReasoningLevel: null },
   ] }];
-  render(<ChatComposer modelGroups={modelGroups} onSendMessage={send} />);
+  render(<ChatComposer modelGroups={modelGroups} onSendMessage={send} chatModels={{ data: {}, error: null, saving: false, save: saveChat, refresh: vi.fn() }} />);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_workflow_catalog"));
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
   await user.click(await screen.findByRole("option", { name: solo.name }));
   expect(screen.queryByRole("switch", { name: "Validação manual" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Specialist");
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Analise este chamado{Enter}");
   expect(send).toHaveBeenCalledWith("Analise este chamado", { executor: "jarvis", account: "local", model: "specialist", reasoning: null, mode: "build", workflow: "custom", customAgentId: solo.id, approvalMode: "yolo" });
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  await user.click(await screen.findByRole("menuitem", { name: "local" }));
+  (await screen.findByRole("menuitem", { name: "General" })).focus();
+  await user.keyboard("{Enter}");
+  expect(saveChat).toHaveBeenCalledWith(`agent:${solo.id}`, { executor: "jarvis", account: "local", model: "general", reasoning: null });
+  expect(solo.model.model).toBe("specialist");
 });
 
 it("runs the mixed GitHub agent directly with its dedicated configurable model", async () => {
@@ -83,23 +90,26 @@ it.each([false, true])("disables saved behavior options in a reopened Github cha
   expect(send.mock.calls[0][1]).not.toHaveProperty("automaticPublication");
 });
 
-it("reopens an old GitHub chat with its current configured model", async () => {
+it("reopens a GitHub chat with its own historical model instead of adopting a changed agent default", async () => {
   const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true);
-  const modelGroups = [{ provider: "local", models: [{ value: "local/gpt-6-luna", label: "GPT-6 Luna", reasoningLevels: [], defaultReasoningLevel: null }] }];
+  const modelGroups = [{ provider: "local", models: [
+    { value: "local/gpt-5.6-luna", label: "GPT-5.6 Luna", reasoningLevels: [], defaultReasoningLevel: null },
+    { value: "local/gpt-6-luna", label: "GPT-6 Luna", reasoningLevels: [], defaultReasoningLevel: null },
+  ] }];
   render(<ChatComposer modelGroups={modelGroups} onSendMessage={send}
     initialOptions={{ account: "local", model: "gpt-5.6-luna", reasoning: null, mode: "build", workflow: "custom", customAgentId: "builtin:github", approvalMode: "yolo" }}
     agentModels={{ data: { "publication/github": { account: "local", model: "gpt-6-luna", reasoning: null } }, error: null, saving: false, save: vi.fn(), refresh: vi.fn() }} />);
-  await waitFor(() => expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("GPT-6 Luna"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("GPT-5.6 Luna"));
   expect(screen.queryByText(/gpt-5\.6-luna.*indisponível/)).not.toBeInTheDocument();
   await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Liste as PRs abertas{Enter}");
-  expect(send).toHaveBeenCalledWith("Liste as PRs abertas", expect.objectContaining({ model: "gpt-6-luna", customAgentId: "builtin:github" }));
+  expect(send).toHaveBeenCalledWith("Liste as PRs abertas", expect.objectContaining({ model: "gpt-5.6-luna", customAgentId: "builtin:github" }));
 });
 
 it("runs the renamed native video generator with its original identity, saved model and secondary", async () => {
-  const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true), save = vi.fn();
+  const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true), save = vi.fn(), saveChat = vi.fn().mockResolvedValue(true);
   const profile = { account: "local", model: "model", reasoning: null, fallback: { account: "local", model: "model", reasoning: null } };
   vi.mocked(invoke).mockImplementation(async command => command === "get_workflow_catalog" ? { ...customCatalog, builtinAgents: [builtinVideoAgent] } : []);
-  render(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "video/video": profile }, error: null, saving: false, save, refresh: vi.fn() }} />);
+  render(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "video/video": profile }, error: null, saving: false, save, refresh: vi.fn() }} chatModels={{ data: {}, error: null, saving: false, save: saveChat, refresh: vi.fn() }} />);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_workflow_catalog"));
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
   await user.click(await screen.findByRole("option", { name: "Gerador de vídeos" }));
@@ -111,14 +121,15 @@ it("runs the renamed native video generator with its original identity, saved mo
   const model = await screen.findByRole("menuitem", { name: "Model" });
   model.focus();
   await user.keyboard("{Enter}");
-  expect(save).toHaveBeenCalledWith("video", "video", profile);
+  expect(saveChat).toHaveBeenCalledWith("agent:builtin:video", profile);
+  expect(save).not.toHaveBeenCalled();
 });
 
 it("runs the image specialist with its reasoning profile independently from the image provider", async () => {
-  const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true), save = vi.fn();
+  const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true), save = vi.fn(), saveChat = vi.fn().mockResolvedValue(true);
   const profile = { account: "local", model: "model", reasoning: null };
   vi.mocked(invoke).mockImplementation(async command => command === "get_workflow_catalog" ? { ...customCatalog, builtinAgents: [builtinImageAgent] } : []);
-  render(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "image_generator/image_generator": profile }, error: null, saving: false, save, refresh: vi.fn() }} />);
+  render(<ChatComposer modelGroups={models} onSendMessage={send} agentModels={{ data: { "image_generator/image_generator": profile }, error: null, saving: false, save, refresh: vi.fn() }} chatModels={{ data: {}, error: null, saving: false, save: saveChat, refresh: vi.fn() }} />);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_workflow_catalog"));
   await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
   await user.click(await screen.findByRole("option", { name: "Gerador de imagens" }));
@@ -129,6 +140,7 @@ it("runs the image specialist with its reasoning profile independently from the 
   await user.click(await screen.findByRole("menuitem", { name: "local" }));
   (await screen.findByRole("menuitem", { name: "Model" })).focus();
   await user.keyboard("{Enter}");
-  expect(save).toHaveBeenCalledWith("image_generator", "image_generator", { ...profile, executor: "jarvis" });
+  expect(saveChat).toHaveBeenCalledWith("agent:builtin:image_generator", { ...profile, executor: "jarvis" });
+  expect(save).not.toHaveBeenCalled();
   expect(invoke).not.toHaveBeenCalledWith("set_api_tool_config", expect.anything());
 });

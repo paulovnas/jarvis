@@ -32,6 +32,7 @@ fn options(model: &str) -> TurnOptions {
         approval_mode: super::super::ApprovalMode::Manual,
         manual_validation: false,
         automatic_publication: None,
+        model_selection: None,
     }
 }
 

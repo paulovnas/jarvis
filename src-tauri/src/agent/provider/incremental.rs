@@ -171,6 +171,7 @@ impl Transport {
             );
         }
         let started = Instant::now();
+        let mut generation = super::super::generation::Clock::new(started);
         let mut first_event_ms = None;
         let socket = self.socket.as_mut().ok_or_else(protocol_error)?;
         let sent = tokio::select! {
@@ -180,17 +181,30 @@ impl Transport {
         let result = match sent {
             Ok(()) => {
                 self.receive(body, &mut signal, &mut |delta| {
+                    let changed = generation.observe(&delta);
                     if first_event_ms.is_none()
                         && matches!(delta, Delta::Text(_) | Delta::Summary(_))
                     {
                         first_event_ms = Some(started.elapsed().as_millis() as u64);
                     }
-                    on_delta(delta)
+                    on_delta(delta)?;
+                    if changed {
+                        if let Some(metrics) = generation.snapshot(Instant::now()) {
+                            on_delta(Delta::Generation(metrics))?;
+                        }
+                    }
+                    Ok(())
                 })
                 .await
             }
             Err(error) => Err(error),
         };
+        if let Ok(Some(response)) = &result {
+            generation.complete_response(response);
+            if let Some(metrics) = generation.snapshot(Instant::now()) {
+                on_delta(Delta::Generation(metrics))?;
+            }
+        }
         if let Some((trace, provider)) = &self.telemetry {
             let failure = result.as_ref().err();
             let usage = result

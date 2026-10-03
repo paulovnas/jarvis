@@ -29,6 +29,15 @@ def diagnostics(text):
 
 
 def publish_later(document, text):
+    if Path("slow-project-push").exists():
+        # A real TypeScript project can take longer than the old five-second
+        # automatic budget before it publishes the first semantic results.
+        time.sleep(6)
+        params = {"uri": document["uri"], "diagnostics": []}
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": params})
+        time.sleep(0.3)
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {**params, "diagnostics": diagnostics(text)}})
+        return
     if Path("unversioned-push").exists() or Path("incremental-push").exists():
         params = {"uri": document["uri"], "diagnostics": []}
         if Path("incremental-push").exists():
@@ -71,15 +80,17 @@ while True:
         documents[document["uri"]] = document["text"]
     elif method == "textDocument/didChange":
         documents[params["textDocument"]["uri"]] = params["contentChanges"][0]["text"]
-    if method in ("textDocument/didOpen", "textDocument/didChange") and any(Path(name).exists() for name in ["delayed-push", "unversioned-push", "incremental-push"]):
+    if method in ("textDocument/didOpen", "textDocument/didChange") and any(Path(name).exists() for name in ["delayed-push", "unversioned-push", "incremental-push", "slow-project-push"]):
         document = params["textDocument"]
         threading.Thread(target=publish_later, args=(document, documents[document["uri"]]), daemon=True).start()
     if "id" not in message:
         continue
     result = None
     if method == "initialize":
-        result = {"capabilities": {} if any(Path(name).exists() for name in ["push-only", "delayed-push", "unversioned-push", "incremental-push"]) else {"diagnosticProvider": True}}
+        result = {"capabilities": {} if any(Path(name).exists() for name in ["push-only", "delayed-push", "unversioned-push", "incremental-push", "slow-project-push"]) else {"diagnosticProvider": True}}
     elif method == "textDocument/diagnostic":
+        if Path("slow-pull").exists():
+            time.sleep(3)
         uri = params["textDocument"]["uri"]
         text = documents[uri]
         if "CHANGE_DURING_QUERY" in text:

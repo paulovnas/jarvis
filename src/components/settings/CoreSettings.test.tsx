@@ -172,6 +172,7 @@ it("shows audiovisual model downloads through the existing progress events", asy
   invokeMock.mockResolvedValue(state);
   render(<CoreSettings />);
   await screen.findByText("1 MB");
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
   await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: "audiovisual", download: { receivedBytes: 2097152, totalBytes: null } } }));
   expect(screen.getByText("2 MB")).toBeVisible();
   expect(screen.getByText("Baixando modelos de voz e música")).toBeVisible();

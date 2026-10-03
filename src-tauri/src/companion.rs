@@ -729,6 +729,24 @@ pub(crate) fn set_companion_sound(app: tauri::AppHandle, enabled: bool) -> Resul
 }
 
 #[tauri::command]
+pub(crate) fn get_companion_speech(app: tauri::AppHandle) -> bool {
+    app.state::<crate::desktop::DesktopState>()
+        .companion_speech_enabled()
+}
+
+#[tauri::command]
+pub(crate) fn set_companion_speech(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    app.state::<crate::desktop::DesktopState>()
+        .save_companion_speech_enabled(enabled)?;
+    if !enabled {
+        app.state::<crate::voice::VoiceState>().silence_speech(&app);
+    }
+    app.emit("companion:speech_changed", enabled)
+        .map_err(|_| "Não foi possível atualizar a preferência de fala.")?;
+    Ok(enabled)
+}
+
+#[tauri::command]
 pub(crate) fn companion_start_drag(
     app: tauri::AppHandle,
     robot_x: Option<f64>,
@@ -1496,7 +1514,7 @@ pub(crate) async fn get_companion_usage(
     refresh: Option<bool>,
 ) -> Result<Vec<CompanionUsage>, String> {
     let state = app.state::<CompanionState>();
-    if refresh == Some(true) && state.enabled.load(Ordering::SeqCst) {
+    if refresh == Some(true) {
         let usage = refresh_usage(&app).await;
         *state.usage.lock().map_err(|_| "Limites indisponíveis.")? = usage;
     }
@@ -1531,7 +1549,7 @@ async fn refresh_usage(app: &tauri::AppHandle) -> Vec<CompanionUsage> {
                     && account.show_usage
                     && matches!(
                         account.provider_kind.as_str(),
-                        "openai-codex" | "antigravity"
+                        "openai-codex" | "antigravity" | "opencode-go"
                     )
             }) {
                 let app = app.clone();
@@ -1665,7 +1683,7 @@ mod tests {
 
     #[test]
     fn companion_usage_preserves_provider_identity_and_the_flat_report() {
-        for provider_kind in ["openai-codex", "antigravity", "claude-code"] {
+        for provider_kind in ["openai-codex", "antigravity", "opencode-go", "claude-code"] {
             let mut usage = unavailable("personal".into(), "offline".into());
             usage.fetched_at = Some(1_000);
             usage.email = Some("test@example.com".into());

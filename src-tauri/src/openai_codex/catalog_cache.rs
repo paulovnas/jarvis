@@ -66,6 +66,13 @@ pub(super) fn list(
         .map_err(|_| ProviderError::database())?
         .into_iter()
         .map(|record| {
+            if record.provider_kind == "opencode-go" {
+                return attach_model_exclusions(
+                    state,
+                    home,
+                    opencode_go::account(state, home, record)?,
+                );
+            }
             if record.provider_kind == "custom" {
                 return attach_model_exclusions(state, home, custom::account(state, home, record)?);
             }

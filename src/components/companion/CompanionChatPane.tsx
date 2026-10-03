@@ -12,11 +12,14 @@ import { Hint } from "@/components/ui/hint";
 import { LazyChatMarkdown } from "@/components/chat/LazyChatMarkdown";
 import { CompanionQuestion, type CompanionQuestionContext } from "./CompanionQuestion";
 import { ModelPicker, type ModelSelection, type ProviderModelGroup } from "@/components/chat/ModelPicker";
-import { executionChoice, executionSelection } from "@/core/executors";
+import { executionChoice, executionSelection, executorOf, selectModelChoice } from "@/core/executors";
+import type { ModelChoice } from "@/core/provider-references";
+import { flowSelection } from "@/core/workflow-catalog";
+import { chatAgentModelKey } from "@/core/chat-models";
 import { companionChatSchema, companionConversationsSchema, companionModelsSchema, type CompanionChat, type CompanionConversation } from "@/core/companion";
 import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/questions";
 import { libraryError } from "@/core/library";
-import { useVoice } from "@/hooks/use-voice";
+import { stopDictation, useVoice } from "@/hooks/use-voice";
 import { VoiceControls, VoiceSessionPanel, type VoiceControlHandle } from "@/components/voice/VoiceControls";
 
 const errorMessage = (cause: unknown) => typeof cause === "string" ? cause : libraryError(cause, "Não foi possível conversar com o Jarvito.");
@@ -27,9 +30,10 @@ export interface CompanionChatHandle {
 }
 
 /** A thin view of the same native conversations and agent runtime used by Jarvis. */
-export function CompanionChatPane({ active = true, externalQuestions = false, onQuestionChange, onView, onSend, ref }: {
+export function CompanionChatPane({ active = true, externalQuestions = false, speechEnabled = true, onQuestionChange, onView, onSend, ref }: {
   active?: boolean;
   externalQuestions?: boolean;
+  speechEnabled?: boolean;
   onQuestionChange?: (context: CompanionQuestionContext | null) => void;
   onView?: (conversationId: string, revision: number) => void;
   onSend?: () => void;
@@ -49,7 +53,8 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [models, setModels] = useState<ProviderModelGroup[]>([]);
-  const [modelOverride, setModelOverride] = useState<{ conversation: string; selection: ModelSelection } | null>(null);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [modelOverride, setModelOverride] = useState<{ conversation: string; selection: ModelSelection; choice?: ModelChoice } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [questionDrafts] = useState(() => new Map<string, QuestionDraft>());
   const scroll = useRef<HTMLDivElement>(null);
@@ -97,10 +102,17 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
     const subscription = listen<{ conversationId: string }>("companion:chat_changed", event => {
       if (selected === event.payload.conversationId || selected === "global" && (!currentConversation.current || currentConversation.current === event.payload.conversationId)) schedule();
     });
+    const modelSubscription = listen<{ conversationId: string }>("chat-agent-models:changed", event => {
+      if (currentConversation.current === event.payload.conversationId) schedule();
+    });
+    const refreshModels = () => {
+      void invoke("get_companion_models").then(value => { if (alive) { setModels(companionModelsSchema.parse(value)); setModelsLoaded(true); } }).catch(cause => { if (alive) setError(errorMessage(cause)); });
+    };
+    const providerSubscriptions = Promise.all(["system:changed", "provider-model-bindings:changed"].map(name => listen(name, () => { if (alive) { refreshModels(); schedule(); } })));
     void subscription.then(() => { if (alive) void refresh(); }).catch(cause => { if (alive) { setError(errorMessage(cause)); setLoading(false); } });
     void invoke("get_companion_conversations").then(value => { if (alive) setConversations(companionConversationsSchema.parse(value)); }).catch(cause => { if (alive) setError(errorMessage(cause)); });
-    void invoke("get_companion_models").then(value => { if (alive) setModels(companionModelsSchema.parse(value)); }).catch(cause => { if (alive) setError(errorMessage(cause)); });
-    return () => { alive = false; ++version; window.clearTimeout(timer); void subscription.then(stop => stop()).catch(() => {}); };
+    refreshModels();
+    return () => { alive = false; ++version; window.clearTimeout(timer); void subscription.then(stop => stop()).catch(() => {}); void modelSubscription.then(stop => stop()).catch(() => {}); void providerSubscriptions.then(stops => stops.forEach(stop => stop())).catch(() => {}); };
   }, [active, selected, attempt, applyChat]);
 
   const selectConversation = (value: string) => {
@@ -138,8 +150,10 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
   const send = async (voiceText?: string): Promise<boolean> => {
     const content = (voiceText ?? draft).trim();
     if (!content || busy || loading) return false;
+    if (modelInvalid) { setActionError("O modelo deste chat não está disponível. Selecione outro modelo."); return false; }
     setBusy(true); setActionError(null); setPreservedRequest(null);
     try {
+      if (voiceText === undefined) await stopDictation(voiceTarget);
       const selectedOptions = modelOverride?.conversation === selected ? {
         ...(chat?.options ?? { account: "", model: "", reasoning: null, mode: "build" as const, workflow: "standard" as const, approvalMode: "yolo" as const }),
         ...executionChoice(modelOverride.selection),
@@ -173,7 +187,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
         drafts.current.delete(draftKey); drafts.current.delete("global"); return "";
       });
       setPreservedRequest(null); setError(null);
-      if (selectedModel) setModelOverride({ conversation: selected, selection: selectedModel });
+      if (selectedModel) setModelOverride({ conversation: selected, selection: selectedModel, choice: selectedChoice ?? undefined });
       stickToBottom.current = true;
     } catch (cause) { setActionError(errorMessage(cause)); }
     finally { setBusy(false); }
@@ -216,6 +230,23 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
   const running = Boolean(chat?.chat.activeTurnId);
   const clearBlocked = running || Boolean(chat?.chat.queuedMessages?.length || chat?.chat.compacting || chat?.chat.context?.compacting);
   const selectedModel = modelOverride?.conversation === selected ? modelOverride.selection : executionSelection(chat?.options);
+  const selectedChoice = modelOverride?.conversation === selected ? modelOverride.choice ?? chat?.options?.modelSelection : chat?.options?.modelSelection;
+  const invalidSelection = (selection: ModelSelection | null) => {
+    const definition = models.filter(group => executorOf(group) === executorOf(selection)).flatMap(group => group.models).find(model => model.value === selection?.model);
+    return Boolean(selection && (!definition || selection.reasoning && !definition.reasoningLevels.includes(selection.reasoning)));
+  };
+  const modelInvalid = modelsLoaded && (invalidSelection(selectedModel) || invalidSelection(executionSelection(selectedChoice?.fallback)));
+  const chooseModel = async (selection: ModelSelection) => {
+    if (!chat || busy || loading || running) return;
+    setBusy(true); setActionError(null);
+    try {
+      const choice = selectModelChoice(selectedChoice, executionChoice(selection), "primary");
+      if (choice.fallback && invalidSelection(executionSelection(choice.fallback))) choice.fallback = null;
+      await invoke("set_chat_agent_model", { conversationId: chat.conversationId, key: chatAgentModelKey(flowSelection(chat.options ?? undefined)), choice });
+      setModelOverride({ conversation: selected, selection: executionSelection(choice)!, choice });
+    } catch (cause) { setActionError(errorMessage(cause)); }
+    finally { setBusy(false); }
+  };
   const selectedTitle = selected === "global" ? "Conversar com Jarvito" : conversations.find(item => item.id === selected)?.title ?? chat?.projectName ?? "Conversa do projeto";
 
   useEffect(() => {
@@ -244,13 +275,13 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
         {conversations.map(item => <SelectItem key={item.id} value={item.id} className="cursor-pointer text-[11px]"><span className="flex min-w-0 flex-col gap-0.5"><span className="truncate">{item.title}</span><span className="truncate font-mono text-[9px] text-muted-foreground">{item.workspaceName} · {item.projectName}</span></span></SelectItem>)}
       </SelectContent>
     </Select>
-    <VoiceControls ref={call} target={voiceTarget} snapshot={chat?.chat} proposal={chat?.proposal} onConfirmProject={confirm} onAnswerQuestion={answer} onPauseQuestion={pause} disabled={busy || loading} onDictation={text => { setDraft(current => { const next = current ? `${current}\n\n${text}` : text; drafts.current.set(draftKey, next); return next; }); }} onMessage={text => send(text)} />
-    {selected === "global" && <Hint content={running ? "Pare a resposta antes de limpar a conversa." : clearBlocked ? "Aguarde as operações da conversa terminarem para limpar." : "Limpar histórico e começar uma nova conversa."}><Button type="button" aria-label="Limpar conversa" aria-busy={busy} variant="ghost" size="icon-sm" disabled={busy || loading || !chat?.global || clearBlocked} className="shrink-0 cursor-pointer text-muted-foreground" onClick={() => { void clear(); }}><Eraser className="size-3.5" /></Button></Hint>}
+    <VoiceControls ref={call} allowCall speechEnabled={speechEnabled} target={voiceTarget} snapshot={chat?.chat} proposal={chat?.proposal} onConfirmProject={confirm} onAnswerQuestion={answer} onPauseQuestion={pause} disabled={busy || loading} onDictation={text => { setDraft(current => { const next = current ? `${current}\n\n${text}` : text; drafts.current.set(draftKey, next); return next; }); }} onMessage={text => send(text)} />
+    {selected === "global" && !calling && <Hint content={running ? "Pare a resposta antes de limpar a conversa." : clearBlocked ? "Aguarde as operações da conversa terminarem para limpar." : "Limpar histórico e começar uma nova conversa."}><Button type="button" aria-label="Limpar conversa" aria-busy={busy} variant="ghost" size="icon-sm" disabled={busy || loading || !chat?.global || clearBlocked} className="shrink-0 cursor-pointer text-muted-foreground" onClick={() => { void clear(); }}><Eraser className="size-3.5" /></Button></Hint>}
     </div>
-    {calling && !showCallChat && <VoiceSessionPanel target={voiceTarget} compact large />}
+    {calling && <VoiceSessionPanel target={voiceTarget} compact={showCallChat} />}
     {calling && <Button type="button" size="sm" variant="ghost" className="h-6 cursor-pointer text-[10px] text-muted-foreground" onClick={() => setShowCallChat(value => !value)}>{showCallChat ? "Voltar à ligação" : "Mostrar conversa"}</Button>}
     {!calling && <VoiceSessionPanel target={voiceTarget} compact />}
-    {chat?.global === false && <p className="px-1 text-[9px] text-muted-foreground">Projeto {chat.projectName} · conversa compartilhada com o Jarvis</p>}
+    {chat?.global === false && (!calling || showCallChat) && <p className="px-1 text-[9px] text-muted-foreground">Projeto {chat.projectName} · conversa compartilhada com o Jarvis</p>}
     <ScrollArea ref={scroll} className={`min-h-0 flex-1 pr-2 ${calling && !showCallChat ? "hidden" : ""}`} onScrollCapture={event => {
       const target = event.target;
       if (target instanceof HTMLElement) stickToBottom.current = target.scrollHeight - target.scrollTop - target.clientHeight < 40;
@@ -262,9 +293,9 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
         {chat?.chat.turns.map(turn => <section key={turn.id} aria-label="Troca de mensagens" className="space-y-2">
           <p className="ml-7 whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-border bg-secondary/55 px-3 py-2 text-[11px] leading-5">{turn.user}</p>
           {turn.auxiliaryMessages?.map(message => <p key={message.id} className="ml-7 whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-border bg-secondary/55 px-3 py-2 text-[11px] leading-5">{message.content}</p>)}
-          {turn.steps.some(step => step.text) && <div className="companion-chat-answer mr-3 text-[11px] leading-5"><LazyChatMarkdown content={turn.steps.map(step => step.text).filter(Boolean).join("\n\n")} /></div>}
+          {turn.steps.some(step => step.text) && <div className="companion-chat-answer mr-3 text-[11px] leading-5">{chat.global ? <p className="whitespace-pre-wrap break-words">{turn.steps.map(step => step.text).filter(Boolean).join("\n\n")}</p> : <LazyChatMarkdown content={turn.steps.map(step => step.text).filter(Boolean).join("\n\n")} />}</div>}
           {turn.error && <p role="alert" className="text-[11px] leading-5 text-onedark-red">{turn.error.message}</p>}
-          {turn.status === "running" && <p role="status" className="flex items-center gap-2 text-[10px] text-onedark-cyan"><span aria-hidden="true" className="size-1.5 rounded-full bg-current" />{turn.steps[turn.steps.length - 1]?.summary || "Jarvito está pensando…"}</p>}
+          {turn.status === "running" && <p role="status" className="flex items-center gap-2 text-[10px] text-onedark-cyan"><span aria-hidden="true" className="size-1.5 rounded-full bg-current" />{chat.global ? "Jarvito está pensando…" : turn.steps[turn.steps.length - 1]?.summary || "Jarvito está pensando…"}</p>}
         </section>)}
         {chat?.chat.queuedMessages?.map(message => <div key={message.id} className="ml-7 space-y-1 rounded-xl border border-border bg-secondary/40 px-3 py-2"><p className="whitespace-pre-wrap break-words text-[11px] leading-5">{message.content}</p><Badge variant="outline" className="font-mono text-[9px]">Aguardando envio</Badge></div>)}
         {chat?.proposal && <section aria-label="Continuar em um projeto" className="space-y-2 rounded-xl border border-onedark-cyan/30 bg-onedark-cyan/5 p-3">
@@ -277,15 +308,15 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
         {(actionError || error) && <div className="space-y-1"><p role="alert" className="text-[11px] leading-5 text-onedark-yellow">{actionError || error}</p>{preservedRequest && preservedRequest !== draft && <p className="whitespace-pre-wrap break-words rounded-lg border border-border p-2 text-[11px] leading-5">{preservedRequest}</p>}{!chat && <Button size="sm" variant="ghost" className="h-7 cursor-pointer text-[10px]" onClick={() => { setLoading(true); setError(null); setAttempt(value => value + 1); }}>Tentar novamente</Button>}</div>}
       </div>
     </ScrollArea>
-    <form className="relative shrink-0" onSubmit={event => { event.preventDefault(); void send(); }}>
+    {(!calling || showCallChat) && <form className="relative shrink-0" onSubmit={event => { event.preventDefault(); void send(); }}>
       <Textarea aria-label="Mensagem para Jarvito" placeholder={running ? "Envie uma orientação…" : "Converse com Jarvito…"} value={draft} onChange={event => { drafts.current.set(draftKey, event.target.value); setDraft(event.target.value); }} className={`min-h-14 max-h-24 resize-none rounded-2xl border-border bg-secondary/40 text-[11px] leading-5 ${running ? "pr-20" : "pr-11"}`} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
       <div className="absolute right-2 bottom-2 flex items-center gap-1">
         {running && <Hint content="Parar resposta"><Button type="button" variant="secondary" size="icon-sm" aria-label="Parar resposta" disabled={busy} className="cursor-pointer rounded-full" onClick={() => { void stop(); }}><Square className="size-3" /></Button></Hint>}
-        <Button type="submit" size="icon-sm" aria-label={running ? "Enviar orientação agora" : "Enviar mensagem"} aria-busy={busy} disabled={busy || loading || !draft.trim()} className="cursor-pointer rounded-full"><ArrowUp className="size-3.5" /></Button>
+        <Button type="submit" size="icon-sm" aria-label={running ? "Enviar orientação agora" : "Enviar mensagem"} aria-busy={busy} disabled={busy || loading || modelInvalid || !draft.trim()} className="cursor-pointer rounded-full"><ArrowUp className="size-3.5" /></Button>
       </div>
-    </form>
-    <div className="-mx-1 flex shrink-0 items-center overflow-hidden">
-      <ModelPicker modelGroups={models} selection={selectedModel} onSelect={selection => setModelOverride({ conversation: selected, selection })} disabled={busy || loading || running} showProviderIdentity ariaLabel="Modelo do Jarvito" />
-    </div>
+    </form>}
+    {!calling && <div className="-mx-1 flex shrink-0 items-center overflow-hidden">
+      <ModelPicker modelGroups={models} selection={selectedModel} onSelect={selection => { void chooseModel(selection); }} disabled={busy || loading || running} invalid={modelInvalid} showProviderIdentity ariaLabel="Modelo do Jarvito" />
+    </div>}
   </div>;
 }

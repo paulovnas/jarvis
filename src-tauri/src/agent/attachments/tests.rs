@@ -246,6 +246,7 @@ async fn attachment_references_survive_queue_and_journal_and_never_inline_binary
         approval_mode: ApprovalMode::Yolo,
         manual_validation: false,
         automatic_publication: None,
+        model_selection: None,
     };
     session
         .submit_message("first".into(), options.clone(), vec![])

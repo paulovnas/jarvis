@@ -224,6 +224,7 @@ mod tests {
             approval_mode: ApprovalMode::Manual,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         };
         assert!(begin(session.clone()).is_err());
         session.reserve("Request".into(), options.clone()).unwrap();

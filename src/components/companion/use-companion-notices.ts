@@ -24,11 +24,15 @@ export function useCompanionNotices() {
     });
   }, []);
   const clear = useCallback(() => setQueue([]), []);
-  const id = queue[0]?.id;
+  const dismiss = useCallback((id: string) => setQueue(current => current[0]?.id === id ? current.slice(1) : current), []);
+  return { notice: queue[0] ?? null, sync, clear, dismiss };
+}
+
+/** Count display time only after preparation; keep the current notice while it speaks. */
+export function useCompanionNoticeLifetime(id: string | null, paused: boolean, dismiss: (id: string) => void) {
   useEffect(() => {
-    if (!id) return;
-    const timer = window.setTimeout(() => setQueue(current => current[0]?.id === id ? current.slice(1) : current), 30_000);
+    if (!id || paused) return;
+    const timer = window.setTimeout(() => dismiss(id), 30_000);
     return () => window.clearTimeout(timer);
-  }, [id]);
-  return { notice: queue[0] ?? null, sync, clear };
+  }, [id, paused, dismiss]);
 }

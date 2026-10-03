@@ -7,7 +7,7 @@
     "dev": "bun run build:extension && vite",
     "db:generate": "drizzle-kit generate",
     "build": "bun run typecheck && bun run build:extension && vite build",
-    "build:extension": "vite build --config vite.extension.config.ts",
+    "build:extension": "vite build --config vite.extension.config.ts && vite build --config vite.extension.config.ts --mode firefox",
     "preview": "vite preview",
     "tauri": "bun scripts/tauri.ts",
     "release": "bun scripts/release.ts",

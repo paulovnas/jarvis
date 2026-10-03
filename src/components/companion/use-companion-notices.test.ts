@@ -1,7 +1,13 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CompanionItem } from "@/core/companion";
-import { useCompanionNotices } from "./use-companion-notices";
+import { useCompanionNotices, useCompanionNoticeLifetime } from "./use-companion-notices";
+
+function useTimedNotices(paused = false) {
+  const notices = useCompanionNotices();
+  useCompanionNoticeLifetime(notices.notice?.id ?? null, paused, notices.dismiss);
+  return notices;
+}
 
 const item = (status: CompanionItem["status"], id: string, updatedAt = 1): CompanionItem => ({
   conversationId: id, agentId: null, projectId: "project", projectName: "Portal", title: id, role: "builder", status,
@@ -14,7 +20,7 @@ describe("Jarvito speech queue", () => {
 
   it("shows one notice at a time with a fresh 30 seconds for each", async () => {
     vi.useFakeTimers();
-    const { result } = renderHook(useCompanionNotices);
+    const { result } = renderHook(useTimedNotices);
     act(() => result.current.sync([item("completed", "second", 2), item("waiting", "first", 1), item("failed", "third", 3)]));
     expect(result.current.notice?.item.conversationId).toBe("first");
     await act(async () => { await vi.advanceTimersByTimeAsync(29_999); });
@@ -29,7 +35,7 @@ describe("Jarvito speech queue", () => {
 
   it("does not reset timers on repeated snapshots or replay a cleared backlog", async () => {
     vi.useFakeTimers();
-    const { result } = renderHook(useCompanionNotices);
+    const { result } = renderHook(useTimedNotices);
     const first = item("completed", "first");
     act(() => result.current.sync([first]));
     await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
@@ -67,5 +73,18 @@ describe("Jarvito speech queue", () => {
     act(() => result.current.clear());
     act(() => result.current.sync([{ ...waiting, pendingQuestion: { ...waiting.pendingQuestion, toolId: "two" } }]));
     expect(result.current.notice?.item.pendingQuestion?.toolId).toBe("two");
+  });
+
+  it("does not consume display time while audio is preparing or playing", async () => {
+    vi.useFakeTimers();
+    const { result, rerender } = renderHook(({ paused }) => useTimedNotices(paused), { initialProps: { paused: true } });
+    act(() => result.current.sync([item("completed", "first"), item("failed", "second", 2)]));
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
+    expect(result.current.notice?.item.conversationId).toBe("first");
+    rerender({ paused: false });
+    await act(async () => { await vi.advanceTimersByTimeAsync(29_999); });
+    expect(result.current.notice?.item.conversationId).toBe("first");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(result.current.notice?.item.conversationId).toBe("second");
   });
 });

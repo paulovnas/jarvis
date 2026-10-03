@@ -1,7 +1,8 @@
 use super::{
-    cancelled, context_overflow, http_failure, overflow_error, protocol_error, request_id,
-    upstream_code, with_provider_metadata, AgentError, CodexCredential, Delta, ModelCapabilities,
-    Response, Sse, TurnOptions, Usage, MAX_STREAM,
+    cancelled, context_overflow, go_region_error, http_failure, overflow_error, protocol_error,
+    request_id, request_parameter, upstream_code, with_provider_metadata, with_request_parameter,
+    AgentError, CodexCredential, Delta, ModelCapabilities, Response, Sse, TurnOptions, Usage,
+    MAX_STREAM,
 };
 use crate::openai_codex::custom::{AuthMode, Config, Model, Protocol};
 use serde_json::{json, Value};
@@ -162,6 +163,18 @@ fn session_request_with_client(
     let mut request = authenticated_request_with_client(client, credential, config, &body)?;
     if official && endpoint.host_str() == Some("openrouter.ai") {
         request = request.header("x-session-id", session_id);
+    }
+    if official
+        && endpoint.host_str() == Some("opencode.ai")
+        && endpoint.path().starts_with("/zen/go/v1/")
+    {
+        let conversation = session_id
+            .strip_suffix(":title")
+            .or_else(|| session_id.strip_suffix("-vision"))
+            .unwrap_or(session_id);
+        request = request
+            .header("User-Agent", crate::openai_codex::opencode_go::user_agent())
+            .header("x-opencode-session", conversation);
     }
     Ok(request)
 }
@@ -333,6 +346,7 @@ async fn receive(
     };
     if !response.status().is_success() {
         let status = response.status().as_u16();
+        let endpoint = response.url().clone();
         let read = async {
             let mut bytes = vec![];
             while let Ok(Some(chunk)) = response.chunk().await {
@@ -345,11 +359,15 @@ async fn receive(
             (
                 value.as_ref().is_some_and(context_overflow),
                 value.as_ref().and_then(upstream_code),
+                value.as_ref().and_then(request_parameter),
+                value
+                    .as_ref()
+                    .and_then(|value| go_region_error(&endpoint, value)),
             )
         };
-        let (overflow, upstream_code) = tokio::select! {
+        let (overflow, upstream_code, parameter, region_error) = tokio::select! {
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-            value = tokio::time::timeout(Duration::from_secs(5), read) => value.unwrap_or((false, None)),
+            value = tokio::time::timeout(Duration::from_secs(5), read) => value.unwrap_or((false, None, None, None)),
         };
         if overflow {
             return Err(with_provider_metadata(
@@ -367,7 +385,18 @@ async fn receive(
                 request_id(&response),
             ));
         }
-        return Err(http_failure(&response, upstream_code.as_deref()));
+        if let Some(error) = region_error.filter(|_| status == 400) {
+            return Err(with_provider_metadata(
+                error,
+                Some(status),
+                upstream_code.as_deref(),
+                request_id(&response),
+            ));
+        }
+        return Err(with_request_parameter(
+            http_failure(&response, upstream_code.as_deref()),
+            parameter.as_deref(),
+        ));
     }
     let mut parser = Sse::default();
     let mut completions = completions::Stream::default();

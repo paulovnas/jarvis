@@ -137,6 +137,7 @@ fn options() -> TurnOptions {
         approval_mode: ApprovalMode::Yolo,
         manual_validation: false,
         automatic_publication: None,
+        model_selection: None,
     }
 }
 #[test]
@@ -179,6 +180,163 @@ fn cache_affinity_is_stable_and_limited_to_documented_provider_hosts() {
                     .map(|v| v.to_str().unwrap()),
                 (host == "https://openrouter.ai/api/v1").then_some("stable-session")
             );
+        }
+    }
+}
+
+#[test]
+fn go_requests_use_own_identity_stable_session_and_protocol_specific_auth_only_on_official_origin()
+{
+    let credential = CodexCredential::new(
+        "synthetic-key",
+        "",
+        i64::MAX,
+        "opencode-go:test",
+        None,
+        None,
+    );
+    for protocol in [
+        Protocol::OpenaiCompletions,
+        Protocol::OpenaiResponses,
+        Protocol::AnthropicMessages,
+    ] {
+        for host in [
+            "https://opencode.ai/zen/go/v1",
+            "https://opencode.ai.evil.test/zen/go/v1",
+            "https://opencode.ai/zen/v1",
+        ] {
+            let mut config = config(protocol);
+            config.base_url = host.into();
+            config.auth_mode = if protocol == Protocol::AnthropicMessages {
+                AuthMode::XApiKey
+            } else {
+                AuthMode::Bearer
+            };
+            let request = session_request(
+                &credential,
+                &config,
+                json!({"model":"fixture"}),
+                "conversation-stable",
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+            let official = host == "https://opencode.ai/zen/go/v1";
+            assert_eq!(
+                request
+                    .headers()
+                    .get("x-opencode-session")
+                    .map(|v| v.to_str().unwrap()),
+                official.then_some("conversation-stable")
+            );
+            assert_eq!(
+                request
+                    .headers()
+                    .get("user-agent")
+                    .map(|v| v.to_str().unwrap()),
+                official.then_some(crate::openai_codex::opencode_go::user_agent().as_str())
+            );
+            if protocol == Protocol::AnthropicMessages {
+                assert_eq!(request.headers()["x-api-key"], "synthetic-key");
+                assert!(!request.headers().contains_key("authorization"));
+            } else {
+                assert_eq!(request.headers()["authorization"], "Bearer synthetic-key");
+                assert!(!request.headers().contains_key("x-api-key"));
+            }
+            for header in ["chatgpt-account-id", "openai-beta", "x-openrouter-title"] {
+                assert!(!request.headers().contains_key(header));
+            }
+        }
+    }
+}
+
+#[test]
+fn go_toggle_does_not_invent_an_effort_parameter_and_messages_replay_unsigned_thinking() {
+    use crate::openai_codex::custom::Reasoning;
+    let mut config = config(Protocol::AnthropicMessages);
+    config.base_url = crate::openai_codex::opencode_go::BASE_URL.into();
+    config.auth_mode = AuthMode::XApiKey;
+    config.replay_unsigned_thinking = true;
+    config.models[0].reasoning = Reasoning::Toggle;
+    config.models[0].reasoning_levels = vec!["off".into(), "on".into()];
+    config.models[0].default_reasoning_level = Some("on".into());
+    config.validate().unwrap();
+    let options = options();
+    let scope = request::scope(&config, &options);
+    let input = vec![
+        json!({"role":"user","content":"Task"}),
+        json!({"type":"reasoning","summary":[],"_custom":{"scope":scope,"blocks":[{"type":"thinking","thinking":"Preserved reasoning"}]}}),
+        json!({"type":"function_call","call_id":"c1","name":"read","arguments":"{}"}),
+        json!({"type":"function_call_output","call_id":"c1","output":"result"}),
+    ];
+    let body = request::body(
+        &config,
+        &config.models[0],
+        &options,
+        "Instructions",
+        input,
+        vec![tool()],
+    )
+    .unwrap();
+    assert_eq!(body["thinking"], json!({"type":"adaptive"}));
+    assert!(body.get("reasoning_effort").is_none());
+    assert!(body.get("output_config").is_none());
+    assert_eq!(
+        body["messages"][1]["content"][0]["thinking"],
+        "Preserved reasoning"
+    );
+}
+
+#[test]
+fn go_auxiliary_requests_keep_the_conversation_header_without_mixing_replay_scopes() {
+    let credential = CodexCredential::new("key", "", i64::MAX, "opencode-go:fixture", None, None);
+    let mut config = config(Protocol::OpenaiResponses);
+    config.base_url = crate::openai_codex::opencode_go::BASE_URL.into();
+    for session in ["conversation", "conversation:title", "conversation-vision"] {
+        let request = session_request(&credential, &config, json!({"model":"fixture"}), session)
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(request.headers()["x-opencode-session"], "conversation");
+    }
+}
+
+#[test]
+fn qwen_messages_efforts_use_enabled_thinking_without_a_conflicting_budget() {
+    use crate::openai_codex::custom::Reasoning;
+    let mut config = config(Protocol::AnthropicMessages);
+    config.base_url = crate::openai_codex::opencode_go::BASE_URL.into();
+    config.auth_mode = AuthMode::XApiKey;
+    config.models[0].reasoning = Reasoning::EnabledEffort;
+    config.models[0].reasoning_levels =
+        vec!["off".into(), "low".into(), "medium".into(), "xhigh".into()];
+    config.models[0].default_reasoning_level = Some("medium".into());
+    config.validate().unwrap();
+    for effort in ["off", "low", "medium", "xhigh"] {
+        let mut options = options();
+        options.reasoning = Some(effort.into());
+        let body = request::body(
+            &config,
+            &config.models[0],
+            &options,
+            "Instructions",
+            vec![json!({"role":"user","content":"Task"})],
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(
+            body["thinking"]["type"],
+            if effort == "off" {
+                "disabled"
+            } else {
+                "enabled"
+            }
+        );
+        assert!(body["thinking"].get("budget_tokens").is_none());
+        if effort == "off" {
+            assert!(body.get("output_config").is_none());
+        } else {
+            assert_eq!(body["output_config"]["effort"], effort);
         }
     }
 }
@@ -647,6 +805,295 @@ fn completions_replay_preserves_reasoning_and_fragmented_tool_arguments_only_in_
     );
     assert!(!body.to_string().contains("_custom"));
 }
+
+fn go_deepseek_fixture(protocol: Protocol) -> (Config, TurnOptions) {
+    let mut config = config(protocol);
+    config.base_url = crate::openai_codex::opencode_go::BASE_URL.into();
+    config.token_field = TokenField::MaxCompletionTokens;
+    let model = &mut config.models[0];
+    model.id = if protocol == Protocol::OpenaiResponses {
+        "deepseek-v4-flash"
+    } else {
+        "deepseek-v4.1-flash"
+    }
+    .into();
+    model.context_window = 1_000_000;
+    model.max_output_tokens = 32_000;
+    model.reasoning = Reasoning::Effort;
+    model.reasoning_levels = ["low", "high", "max"].map(str::to_owned).to_vec();
+    model.default_reasoning_level = Some("high".into());
+    let mut options = options();
+    options.account = "opencode-go-personal".into();
+    options.model = model.id.clone();
+    options.reasoning = Some("high".into());
+    config.validate().unwrap();
+    (config, options)
+}
+
+#[test]
+fn go_v41_first_greeting_keeps_high_reasoning_and_the_completions_gateway_envelope() {
+    let (config, options) = go_deepseek_fixture(Protocol::OpenaiCompletions);
+    let body = request::body(
+        &config,
+        &config.models[0],
+        &options,
+        "System instructions",
+        vec![json!({"role":"user","content":"Oi, boa noite"})],
+        vec![tool()],
+    )
+    .unwrap();
+    assert_eq!(
+        config.endpoint().unwrap().as_str(),
+        "https://opencode.ai/zen/go/v1/chat/completions"
+    );
+    assert_eq!(body["max_completion_tokens"], 32_000);
+    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(body["messages"][1]["content"], "Oi, boa noite");
+    assert_eq!(body["tools"][0]["function"]["name"], "read");
+    for field in [
+        "max_tokens",
+        "thinking",
+        "tool_choice",
+        "parallel_tool_calls",
+    ] {
+        assert!(body.get(field).is_none(), "unexpected {field}");
+    }
+}
+
+#[test]
+fn go_completions_replays_scoped_reasoning_and_adds_empty_fields_to_other_assistant_turns() {
+    let (config, options) = go_deepseek_fixture(Protocol::OpenaiCompletions);
+    let scope = request::scope(&config, &options);
+    let mut stream = completions::Stream::default();
+    stream.event(&json!({"choices":[{"index":0,"delta":{"reasoning_content":"Inspect the project first.","tool_calls":[{"index":0,"id":"read-1","function":{"name":"read","arguments":"{\"path\":\"README.md\"}"}}]},"finish_reason":"tool_calls"}]}), &mut |_| Ok(())).unwrap();
+    let response = stream.finish(&scope).unwrap();
+    let mut input = vec![
+        json!({"role":"user","content":"Greeting"}),
+        json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"Earlier reply from another model."}]}),
+        json!({"role":"user","content":"Read the project"}),
+    ];
+    input.extend(response.output);
+    input
+        .push(json!({"type":"function_call_output","call_id":"read-1","output":"Readme contents"}));
+    input.push(json!({"type":"function_call","call_id":"read-2","name":"read","arguments":"{}"}));
+    input.push(json!({"type":"function_call_output","call_id":"read-2","output":"Another result"}));
+    let body = request::body(
+        &config,
+        &config.models[0],
+        &options,
+        "System",
+        input,
+        vec![tool()],
+    )
+    .unwrap();
+    let assistant: Vec<_> = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["role"] == "assistant")
+        .collect();
+    assert_eq!(assistant.len(), 3);
+    assert_eq!(assistant[0]["reasoning_content"], "");
+    assert_eq!(
+        assistant[1]["reasoning_content"],
+        "Inspect the project first."
+    );
+    assert_eq!(assistant[1]["tool_calls"][0]["id"], "read-1");
+    assert_eq!(assistant[2]["reasoning_content"], "");
+    assert_eq!(assistant[2]["tool_calls"][0]["id"], "read-2");
+    assert!(body.to_string().contains("Readme contents"));
+    assert!(!body.to_string().contains("_custom"));
+}
+
+#[test]
+fn go_completions_never_replays_foreign_reasoning_or_ciphertext() {
+    let (config, options) = go_deepseek_fixture(Protocol::OpenaiCompletions);
+    for (field, foreign) in [
+        ("account", json!("other-account")),
+        ("model", json!("deepseek-v4-pro")),
+        ("endpoint", json!("https://api.deepseek.com/v1")),
+        ("protocol", json!("openai-responses")),
+    ] {
+        let mut scope = request::scope(&config, &options);
+        scope[field] = foreign;
+        let body = request::body(
+            &config,
+            &config.models[0],
+            &options,
+            "",
+            vec![
+                json!({"role":"user","content":"Read"}),
+                json!({"type":"reasoning","encrypted_content":"foreign-cipher","_custom":{"scope":scope,"reasoning_content":"foreign-thinking","reasoning_details":[{"type":"reasoning.encrypted","data":"foreign-private-data"}]}}),
+                json!({"type":"function_call","call_id":"read-1","name":"read","arguments":"{}"}),
+                json!({"type":"function_call_output","call_id":"read-1","output":"Confirmed result"}),
+            ],
+            vec![tool()],
+        )
+        .unwrap();
+        assert_eq!(body["messages"][2]["reasoning_content"], "");
+        assert_eq!(body["messages"][2]["tool_calls"][0]["id"], "read-1");
+        assert!(body.to_string().contains("Confirmed result"));
+        assert!(!body.to_string().contains("foreign-"));
+    }
+}
+
+#[test]
+fn go_responses_replays_native_plain_reasoning_and_preserves_the_tool_result() {
+    let (config, options) = go_deepseek_fixture(Protocol::OpenaiResponses);
+    let native_reasoning = json!({"type":"reasoning","id":"reason-1","summary":[],"content":[{"type":"reasoning_text","text":"Inspect the project before answering."}]});
+    let mut response = fixture_response(
+        Protocol::OpenaiResponses,
+        &[json!({"status":"completed","output":[native_reasoning,{"type":"function_call","call_id":"read-1","name":"read","arguments":"{}"}]})],
+    )
+    .unwrap();
+    scope_responses_output(&config, &options, &mut response);
+    let mut input = vec![json!({"role":"user","content":"Read"})];
+    input.extend(response.output);
+    input.push(
+        json!({"type":"function_call_output","call_id":"read-1","output":"Confirmed result"}),
+    );
+    let body = request::body(
+        &config,
+        &config.models[0],
+        &options,
+        "",
+        input,
+        vec![tool()],
+    )
+    .unwrap();
+    assert_eq!(body["reasoning"]["effort"], "high");
+    assert_eq!(body["input"][1], native_reasoning);
+    assert_eq!(body["input"][2]["call_id"], "read-1");
+    assert_eq!(body["input"][3]["output"], "Confirmed result");
+    assert!(!body.to_string().contains("reasoning unavailable"));
+    assert!(!body.to_string().contains("_custom"));
+}
+
+#[test]
+fn go_responses_uses_an_honest_missing_history_marker_without_foreign_replay() {
+    let (config, options) = go_deepseek_fixture(Protocol::OpenaiResponses);
+    let mut foreign_scope = request::scope(&config, &options);
+    foreign_scope["account"] = json!("other-account");
+    let body = request::body(
+        &config,
+        &config.models[0],
+        &options,
+        "",
+        vec![
+            json!({"role":"user","content":"Task"}),
+            json!({"type":"reasoning","encrypted_content":"foreign-cipher","summary":[],"content":[{"type":"reasoning_text","text":"foreign-thinking"}],"_custom":{"scope":foreign_scope}}),
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"Previous answer"}]}),
+            json!({"role":"user","content":"Continue"}),
+            json!({"type":"function_call","call_id":"read-1","name":"read","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"read-1","output":"Confirmed result"}),
+        ],
+        vec![tool()],
+    )
+    .unwrap();
+    let input = body["input"].as_array().unwrap();
+    let reasoning: Vec<_> = input
+        .iter()
+        .filter(|item| item["type"] == "reasoning")
+        .collect();
+    assert_eq!(reasoning.len(), 2);
+    for item in reasoning {
+        assert_eq!(item["content"][0]["text"], "reasoning unavailable");
+        assert!(item.get("encrypted_content").is_none());
+    }
+    assert_eq!(input[1]["type"], "reasoning");
+    assert_eq!(input[2]["role"], "assistant");
+    assert_eq!(input[4]["type"], "reasoning");
+    assert_eq!(input[5]["call_id"], "read-1");
+    assert_eq!(input[6]["output"], "Confirmed result");
+    assert!(!body.to_string().contains("foreign-"));
+}
+
+#[test]
+fn go_reasoning_history_compatibility_never_leaks_to_other_hosts_models_or_disabled_turns() {
+    for protocol in [Protocol::OpenaiCompletions, Protocol::OpenaiResponses] {
+        let (baseline, baseline_options) = go_deepseek_fixture(protocol);
+        for (host, model, reasoning) in [
+            (
+                "https://opencode.ai.evil.test/zen/go/v1",
+                baseline_options.model.as_str(),
+                "high",
+            ),
+            (
+                "https://opencode.ai:444/zen/go/v1",
+                baseline_options.model.as_str(),
+                "high",
+            ),
+            (
+                "https://opencode.ai/zen/v1",
+                baseline_options.model.as_str(),
+                "high",
+            ),
+            (
+                "https://gateway.example/v1",
+                baseline_options.model.as_str(),
+                "high",
+            ),
+            (
+                crate::openai_codex::opencode_go::BASE_URL,
+                "other-model",
+                "high",
+            ),
+            (
+                crate::openai_codex::opencode_go::BASE_URL,
+                baseline_options.model.as_str(),
+                "none",
+            ),
+        ] {
+            let mut config = baseline.clone();
+            config.base_url = host.into();
+            config.models[0].id = model.into();
+            config.models[0].reasoning_levels.push("none".into());
+            let mut options = baseline_options.clone();
+            options.model = model.into();
+            options.reasoning = Some(reasoning.into());
+            let body = request::body(
+                &config,
+                &config.models[0],
+                &options,
+                "",
+                vec![json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"Previous answer"}]})],
+                vec![],
+            )
+            .unwrap();
+            assert!(!body.to_string().contains("reasoning unavailable"));
+            assert!(!body.to_string().contains("reasoning_content"));
+        }
+    }
+}
+
+#[test]
+fn ordinary_responses_keeps_exact_scoped_encrypted_replay_and_rejects_plain_or_foreign_items() {
+    let config = config(Protocol::OpenaiResponses);
+    let options = options();
+    let scope = request::scope(&config, &options);
+    let body = request::body(
+        &config,
+        &config.models[0],
+        &options,
+        "",
+        vec![
+            json!({"type":"reasoning","encrypted_content":"native-cipher","summary":[],"_custom":{"scope":scope}}),
+            json!({"type":"reasoning","content":[{"type":"reasoning_text","text":"plain-private"}],"_custom":{"scope":scope}}),
+            json!({"type":"reasoning","encrypted_content":"foreign-cipher","_custom":{"scope":{"account":"other"}}}),
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"Previous answer"}]}),
+        ],
+        vec![],
+    )
+    .unwrap();
+    let input = body["input"].as_array().unwrap();
+    assert_eq!(input.len(), 2);
+    assert_eq!(input[0]["encrypted_content"], "native-cipher");
+    assert_eq!(input[1]["role"], "assistant");
+    assert!(!body.to_string().contains("plain-private"));
+    assert!(!body.to_string().contains("foreign-cipher"));
+    assert!(!body.to_string().contains("_custom"));
+}
+
 #[test]
 fn incomplete_streams_never_return_dispatchable_tools() {
     let mut stream = completions::Stream::default();
@@ -779,6 +1226,85 @@ fn messages_replay_keeps_signed_thinking_and_cache_usage() {
     assert_eq!(body["messages"][0]["content"][0]["signature"], "opaque");
     assert_eq!(body["messages"][0]["content"][1]["type"], "tool_use");
 }
+#[tokio::test]
+async fn custom_http_errors_only_expose_known_protocol_parameters() {
+    use std::io::{Read, Write};
+
+    for (status, parameter, expected) in [
+        (400, Some("max_tokens"), Some("max_tokens")),
+        (
+            400,
+            Some("messages[0].reasoning_content"),
+            Some("messages[0].reasoning_content"),
+        ),
+        (400, Some("sk_test_private_credential"), None),
+        (400, Some("messages[0].content.private_text"), None),
+        (400, Some("messages[0].content.private text"), None),
+        (
+            400,
+            Some("tools[0].function.parameters.properties.customer_name"),
+            None,
+        ),
+        (400, None, None),
+        (401, Some("max_tokens"), None),
+        (429, Some("max_tokens"), None),
+    ] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let body = json!({
+            "error": {
+                "type": "invalid_request_error",
+                "param": parameter,
+                "message": "Echoed sk_test_private_credential and private text; field max_tokens",
+            }
+        })
+        .to_string();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.read(&mut [0; 4096]);
+            write!(stream, "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nX-Request-ID: req-safe-custom\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        });
+        let (_cancel, signal) = watch::channel(false);
+        let error = receive(
+            reqwest::Client::new().post(url),
+            Protocol::OpenaiCompletions,
+            &json!({}),
+            signal,
+            |_| Ok(()),
+        )
+        .await
+        .err()
+        .unwrap();
+
+        if let Some(parameter) = expected {
+            assert_eq!(
+                error.message,
+                format!("O provedor recusou o campo {parameter} da solicitação. O progresso foi preservado."),
+            );
+        } else {
+            assert!(!error.message.contains("campo"));
+        }
+        assert!(!error.message.contains("private"));
+        assert!(!error.message.contains("customer_name"));
+        assert_eq!(
+            error.code,
+            match status {
+                401 => "provider_auth",
+                429 => "provider_limit",
+                _ => "provider_request",
+            },
+        );
+        let metadata = error.provider_metadata.unwrap();
+        assert_eq!(metadata.http_status, Some(status));
+        assert_eq!(
+            metadata.upstream_code.as_deref(),
+            Some("invalid_request_error"),
+        );
+        assert_eq!(metadata.request_id.as_deref(), Some("req-safe-custom"));
+        server.join().unwrap();
+    }
+}
+
 #[tokio::test]
 async fn local_sse_reads_trailing_usage_and_classifies_errors_without_contacting_custom_accounts() {
     use std::io::{Read, Write};

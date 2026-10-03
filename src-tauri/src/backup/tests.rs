@@ -64,6 +64,8 @@ fn round_trip_preserves_portable_settings_and_skill_payload() {
     settings.system.claude = crate::claude::ProviderPreferences {
         enabled: false,
         show_usage: false,
+        show_five_hour_usage: false,
+        show_weekly_usage: true,
         disabled_models: vec!["opus".into()],
     };
     settings.executor_models.insert(

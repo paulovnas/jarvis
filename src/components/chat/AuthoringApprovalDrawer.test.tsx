@@ -94,7 +94,7 @@ it("shows the exact commit, PR and merge scope before publishing", async () => {
   expect(answer).toHaveBeenCalledWith(true, null);
 });
 
-it("sends a publication observation back for revision instead of presenting it as immediate execution", async () => {
+it("preserves pending publication and its observation on outside clicks and Escape until explicit revision", async () => {
   const user = userEvent.setup();
   const answer = vi.fn().mockResolvedValue(true);
   const request: PendingAuthoring = {
@@ -109,9 +109,20 @@ it("sends a publication observation back for revision instead of presenting it a
 
   await user.type(within(dialog).getByLabelText(/Orientação para o agente/), "Ignore docs/picpay.ofx");
   expect(within(dialog).getByText(/nenhuma ação será executada agora/i)).toBeVisible();
+  const overlay = document.querySelector('[data-slot="sheet-overlay"]');
+  expect(overlay).toBeInstanceOf(HTMLElement);
+  await user.click(overlay as HTMLElement);
+  expect(answer).not.toHaveBeenCalled();
+  expect(dialog).toBeVisible();
+  await user.keyboard("{Escape}");
+
+  expect(answer).not.toHaveBeenCalled();
+  expect(dialog).toBeVisible();
+  expect(within(dialog).getByLabelText(/Orientação para o agente/)).toHaveValue("Ignore docs/picpay.ofx");
   await user.click(within(dialog).getByRole("button", { name: "Enviar para revisão" }));
 
   expect(answer).toHaveBeenCalledWith(true, "Ignore docs/picpay.ofx");
+  expect(answer).toHaveBeenCalledTimes(1);
 });
 
 it("shows a supervised soft reset without requiring a commit", () => {

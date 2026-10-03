@@ -1,4 +1,4 @@
-//! Authenticated, local-only transport for the externally installed Chromium extension.
+//! Authenticated, local-only transport for the externally installed browser extension.
 use super::AgentError;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -291,9 +291,22 @@ fn ensure_listener(
 }
 
 fn valid_origin(origin: &str) -> bool {
-    origin
+    if origin
         .strip_prefix("chrome-extension://")
         .is_some_and(|id| id.len() == 32 && id.bytes().all(|byte| (b'a'..=b'p').contains(&byte)))
+    {
+        return true;
+    }
+    origin.strip_prefix("moz-extension://").is_some_and(|id| {
+        id.len() == 36
+            && id.bytes().enumerate().all(|(index, byte)| {
+                if matches!(index, 8 | 13 | 18 | 23) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_hexdigit()
+                }
+            })
+    })
 }
 fn matches_secret(left: &str, right: &str) -> bool {
     left.len() == right.len()
@@ -666,6 +679,7 @@ pub(crate) async fn request(
             super::BrowserApplication::Edge => "edge",
             super::BrowserApplication::Brave => "brave",
             super::BrowserApplication::Chromium => "chromium",
+            super::BrowserApplication::Firefox => "firefox",
         };
         launch_browser(application).await?;
     }
@@ -806,27 +820,50 @@ fn install_assets(source: &Path, target: &Path) -> Result<(), AgentError> {
     }
     Ok(())
 }
+
+fn extension_asset_directory(application: super::BrowserApplication) -> &'static str {
+    match application {
+        super::BrowserApplication::Firefox => "browser-extension-firefox",
+        _ => "browser-extension",
+    }
+}
+
+fn selected_asset_directory(app: &tauri::AppHandle) -> Result<&'static str, AgentError> {
+    let application = app
+        .state::<crate::system::SystemState>()
+        .browser_preferences()
+        .map_err(|message| failure("browser_application", &message))?
+        .application;
+    Ok(extension_asset_directory(application))
+}
+
 #[tauri::command]
 pub async fn prepare_browser_extension(
     app: tauri::AppHandle,
 ) -> Result<ExtensionInstallation, AgentError> {
     ensure_listener(&app).await?;
+    let asset_directory = selected_asset_directory(&app)?;
     let resource = app
         .path()
         .resource_dir()
         .map_err(|_| storage_error())?
-        .join("browser-extension");
+        .join(asset_directory);
     #[cfg(debug_assertions)]
     let resource = if resource.join("manifest.json").is_file() {
         resource
     } else {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../browser-extension/dist")
+        let distribution = if asset_directory == "browser-extension-firefox" {
+            "../browser-extension/dist-firefox"
+        } else {
+            "../browser-extension/dist"
+        };
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(distribution)
     };
     let path = app
         .path()
         .app_data_dir()
         .map_err(|_| storage_error())?
-        .join("browser-extension");
+        .join(asset_directory);
     let target = path.clone();
     tauri::async_runtime::spawn_blocking(move || install_assets(&resource, &target))
         .await
@@ -842,11 +879,12 @@ pub async fn prepare_browser_extension(
 }
 #[tauri::command]
 pub fn open_browser_extension_directory(app: tauri::AppHandle) -> Result<(), AgentError> {
+    let asset_directory = selected_asset_directory(&app)?;
     let path = app
         .path()
         .app_data_dir()
         .map_err(|_| storage_error())?
-        .join("browser-extension");
+        .join(asset_directory);
     if !path.join("manifest.json").is_file() {
         return Err(failure(
             "browser_extension_assets",
@@ -890,11 +928,11 @@ pub async fn revoke_browser_extension(
 pub async fn open_browser_application(application: String) -> Result<(), AgentError> {
     if !matches!(
         application.as_str(),
-        "chrome" | "edge" | "brave" | "chromium"
+        "chrome" | "edge" | "brave" | "chromium" | "firefox"
     ) {
         return Err(failure(
             "browser_application",
-            "Selecione um navegador Chromium válido.",
+            "Selecione um navegador válido.",
         ));
     }
     launch_browser(&application).await
@@ -905,6 +943,7 @@ async fn launch_browser(application: &str) -> Result<(), AgentError> {
         "chrome" => "Google Chrome",
         "edge" => "Microsoft Edge",
         "brave" => "Brave Browser",
+        "firefox" => "Firefox",
         _ => "Chromium",
     };
     let result = timeout(
@@ -953,6 +992,7 @@ fn browser_candidates(application: &str) -> Vec<PathBuf> {
         "chrome" => &["google-chrome", "google-chrome-stable"],
         "edge" => &["microsoft-edge", "microsoft-edge-stable"],
         "brave" => &["brave-browser", "brave"],
+        "firefox" => &["firefox", "firefox-esr"],
         _ => &["chromium", "chromium-browser"],
     };
     names.iter().map(PathBuf::from).collect()
@@ -963,6 +1003,7 @@ fn browser_candidates(application: &str) -> Vec<PathBuf> {
         "chrome" => "Google/Chrome/Application/chrome.exe",
         "edge" => "Microsoft/Edge/Application/msedge.exe",
         "brave" => "BraveSoftware/Brave-Browser/Application/brave.exe",
+        "firefox" => "Mozilla Firefox/firefox.exe",
         _ => "Chromium/Application/chrome.exe",
     };
     ["LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)"]
@@ -1019,6 +1060,85 @@ mod tests {
         let old_hello = hello(&pairing.token);
         let rotated = Pairing::fresh(pairing.port).unwrap();
         assert!(!authorized(&rotated, &origin, &old_hello));
+    }
+    #[test]
+    fn firefox_pairing_authenticates_and_binds_the_exact_extension_origin() {
+        let mut pairing = Pairing::fresh(DEFAULT_PORT).unwrap();
+        let origin = "moz-extension://023093ad-883f-41de-bc4b-7c6f32c60b98";
+        assert!(authorized(&pairing, origin, &hello(&pairing.token)));
+        assert!(!authorized(&pairing, origin, &hello("wrong")));
+        pairing.origin = Some(origin.into());
+        pairing.instance_id = Some("profile-1".into());
+        assert!(authorized(&pairing, origin, &hello(&pairing.token)));
+        assert!(!authorized(
+            &pairing,
+            "moz-extension://023093ad-883f-41de-bc4b-7c6f32c60b99",
+            &hello(&pairing.token)
+        ));
+        assert!(!authorized(
+            &pairing,
+            &format!("chrome-extension://{}", "a".repeat(32)),
+            &hello(&pairing.token)
+        ));
+        for invalid in [
+            "moz-extension://023093ad-883f-41de-bc4b-7c6f32c60b98/",
+            "moz-extension://023093ad-883f-41de-bc4b-7c6f32c60b98:17373",
+            "moz-extension://023093ad-883f-41de-bc4b-7c6f32c60b98.attacker.test",
+            "moz-extension://not-an-extension-id",
+            "moz-extension://023093ad_883f_41de_bc4b_7c6f32c60b98",
+            "moz-extension://user@023093ad-883f-41de-bc4b-7c6f32c60b98",
+            "null",
+        ] {
+            assert!(!valid_origin(invalid), "accepted {invalid}");
+        }
+    }
+    #[test]
+    fn firefox_upgrade_requires_loopback_host_without_weakening_pairing_binding() {
+        let mut pairing = Pairing::fresh(DEFAULT_PORT).unwrap();
+        let origin = "moz-extension://023093ad-883f-41de-bc4b-7c6f32c60b98";
+        let request = Request::builder()
+            .uri("/extension")
+            .header("origin", origin)
+            .header("host", "127.0.0.1:17373")
+            .body(())
+            .unwrap();
+        assert!(validate_upgrade(&request, Response::new(()), &pairing).is_ok());
+        pairing.origin = Some(format!("chrome-extension://{}", "a".repeat(32)));
+        assert!(validate_upgrade(&request, Response::new(()), &pairing).is_err());
+    }
+    #[test]
+    fn firefox_assets_are_separate_and_do_not_replace_chromium_installations() {
+        let root = tempfile::tempdir().unwrap();
+        let firefox_source = root.path().join("firefox-source");
+        let chrome_source = root.path().join("chrome-source");
+        fs::create_dir(&firefox_source).unwrap();
+        fs::create_dir(&chrome_source).unwrap();
+        fs::write(firefox_source.join("manifest.json"), "firefox").unwrap();
+        fs::write(chrome_source.join("manifest.json"), "chrome").unwrap();
+        let chrome = root.path().join(extension_asset_directory(
+            super::super::BrowserApplication::Chrome,
+        ));
+        let firefox = root.path().join(extension_asset_directory(
+            super::super::BrowserApplication::Firefox,
+        ));
+        install_assets(&chrome_source, &chrome).unwrap();
+        install_assets(&firefox_source, &firefox).unwrap();
+        assert_eq!(
+            fs::read_to_string(chrome.join("manifest.json")).unwrap(),
+            "chrome"
+        );
+        assert_eq!(
+            fs::read_to_string(firefox.join("manifest.json")).unwrap(),
+            "firefox"
+        );
+        assert_eq!(
+            serde_json::from_value::<super::super::BrowserPreferences>(
+                json!({"mode":"extension","application":"firefox"})
+            )
+            .unwrap()
+            .application,
+            super::super::BrowserApplication::Firefox
+        );
     }
     #[test]
     fn upgrade_rejects_web_origins_wrong_paths_and_credentials_in_query() {

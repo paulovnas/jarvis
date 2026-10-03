@@ -34,10 +34,12 @@ export function executionChoice(selection: ExecutionSelection): ExecutionChoice 
 export const claudeProviderPreferencesSchema = z.object({
   enabled: z.boolean(),
   showUsage: z.boolean().optional(),
+  showFiveHourUsage: z.boolean().optional(),
+  showWeeklyUsage: z.boolean().optional(),
   disabledModels: z.array(z.string().min(1).max(256)).max(256),
 });
 export type ClaudeProviderPreferences = z.infer<typeof claudeProviderPreferencesSchema>;
-export const DEFAULT_CLAUDE_PREFERENCES: ClaudeProviderPreferences = { enabled: true, showUsage: true, disabledModels: [] };
+export const DEFAULT_CLAUDE_PREFERENCES: ClaudeProviderPreferences = { enabled: true, showUsage: true, showFiveHourUsage: true, showWeeklyUsage: true, disabledModels: [] };
 
 export const claudeRuntimeSchema = z.object({
   preferences: claudeProviderPreferencesSchema.optional(),

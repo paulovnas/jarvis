@@ -117,7 +117,48 @@ const MIGRATIONS: &[Migration] = &[
         version: 26,
         sql: include_str!("../../drizzle/0025_http_client.sql"),
     },
+    Migration {
+        version: 27,
+        sql: include_str!("../../drizzle/0026_chat_agent_models.sql"),
+    },
+    Migration {
+        version: 28,
+        sql: include_str!("../../drizzle/0027_opencode_go.sql"),
+    },
+    Migration {
+        version: 29,
+        sql: include_str!("../../drizzle/0028_provider_usage_windows.sql"),
+    },
 ];
+
+#[test]
+fn usage_window_migration_preserves_existing_provider_visibility() {
+    let mut db = Connection::open_in_memory().unwrap();
+    for migration in MIGRATIONS.iter().take(28) {
+        db.execute_batch(migration.sql).unwrap();
+    }
+    db.execute_batch(
+        "INSERT INTO provider_accounts(alias,provider_kind,account_id,enabled,show_usage,show_third_party_usage)
+         VALUES ('openai-codex-old','openai-codex','old',0,0,1);
+         PRAGMA user_version=28;",
+    )
+    .unwrap();
+    initialize_database(&mut db).unwrap();
+    let accounts = list_provider_accounts(&db).unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert!(!accounts[0].enabled);
+    assert!(!accounts[0].show_usage);
+    assert!(accounts[0].show_third_party_usage);
+    assert!(accounts[0].show_five_hour_usage);
+    assert!(accounts[0].show_weekly_usage);
+    initialize_database(&mut db).unwrap();
+    assert_eq!(list_provider_accounts(&db).unwrap(), accounts);
+    for column in ["show_five_hour_usage", "show_weekly_usage"] {
+        assert!(db
+            .execute(&format!("UPDATE provider_accounts SET {column}=2"), [])
+            .is_err());
+    }
+}
 
 #[test]
 fn custom_migration_preserves_oauth_accounts_and_both_tool_selections() {
@@ -153,6 +194,64 @@ fn custom_migration_preserves_oauth_accounts_and_both_tool_selections() {
         .unwrap(),
         0
     );
+}
+
+#[test]
+fn go_migration_keeps_provider_preferences_catalogs_and_tool_selections() {
+    let mut db = Connection::open_in_memory().unwrap();
+    db.pragma_update(None, "foreign_keys", true).unwrap();
+    for migration in MIGRATIONS.iter().take(27) {
+        db.execute_batch(migration.sql).unwrap();
+    }
+    db.execute_batch("INSERT INTO provider_accounts(alias,provider_kind,account_id,usage_alert_window,usage_alert_threshold) VALUES ('custom-old','custom','old','weekly',20); INSERT INTO custom_provider_configs VALUES ('custom-old','{}'); INSERT INTO provider_model_exclusions VALUES ('custom-old','excluded'); INSERT INTO provider_transport_preferences VALUES ('custom-old',1); INSERT INTO provider_usage_alert_deliveries VALUES ('custom-old','weekly',100,20); INSERT INTO web_search_config(id,account_alias,model,inherit_chat) VALUES (1,'custom-old','model',0); INSERT INTO vision_config(id,account_alias,model,inherit_chat) VALUES (1,'custom-old','vision',0); INSERT INTO image_generation_config(id,account_alias) VALUES (1,'custom-old'); PRAGMA user_version=27;").unwrap();
+    initialize_database(&mut db).unwrap();
+    for table in [
+        "custom_provider_configs",
+        "provider_model_exclusions",
+        "provider_transport_preferences",
+        "provider_usage_alert_deliveries",
+    ] {
+        assert_eq!(
+            db.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1,
+            "{table}"
+        );
+    }
+    for table in [
+        "web_search_config",
+        "vision_config",
+        "image_generation_config",
+    ] {
+        assert_eq!(
+            db.query_row(&format!("SELECT account_alias FROM {table}"), [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            "custom-old",
+            "{table}"
+        );
+    }
+    assert_eq!(
+        db.query_row(
+            "SELECT usage_alert_threshold FROM provider_accounts",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        20
+    );
+    db.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('opencode-go-new','opencode-go','new')",[]).unwrap();
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
+            .get::<_, i64>(
+            0
+        ))
+        .unwrap(),
+        0
+    );
+    initialize_database(&mut db).unwrap();
 }
 
 #[derive(Debug)]
@@ -349,6 +448,8 @@ pub(crate) struct ProviderAccountRecord {
     pub(crate) created_at: i64,
     pub(crate) enabled: bool,
     pub(crate) show_usage: bool,
+    pub(crate) show_five_hour_usage: bool,
+    pub(crate) show_weekly_usage: bool,
     pub(crate) show_third_party_usage: bool,
     pub(crate) usage_alert_window: Option<String>,
     pub(crate) usage_alert_threshold: Option<i64>,
@@ -365,6 +466,8 @@ fn provider_account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provid
         show_third_party_usage: row.get(6)?,
         usage_alert_window: row.get(7)?,
         usage_alert_threshold: row.get(8)?,
+        show_five_hour_usage: row.get(9)?,
+        show_weekly_usage: row.get(10)?,
     })
 }
 
@@ -372,7 +475,7 @@ pub(crate) fn list_provider_accounts(
     connection: &Connection,
 ) -> Result<Vec<ProviderAccountRecord>, PersistenceError> {
     let mut statement = connection.prepare(
-        "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage, usage_alert_window, usage_alert_threshold
+        "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage, usage_alert_window, usage_alert_threshold, show_five_hour_usage, show_weekly_usage
          FROM provider_accounts
          ORDER BY created_at, alias",
     )?;
@@ -432,7 +535,7 @@ pub(crate) fn insert_provider_account(
     )?;
     connection
         .query_row(
-            "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage, usage_alert_window, usage_alert_threshold
+            "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage, usage_alert_window, usage_alert_threshold, show_five_hour_usage, show_weekly_usage
              FROM provider_accounts
              WHERE alias = ?1",
             params![alias],
@@ -855,7 +958,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 26);
+        assert_eq!(version, 29);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -997,7 +1100,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 26);
+        assert_eq!(version, 29);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {
@@ -1070,7 +1173,9 @@ mod tests {
                 "show_usage",
                 "show_third_party_usage",
                 "usage_alert_window",
-                "usage_alert_threshold"
+                "usage_alert_threshold",
+                "show_five_hour_usage",
+                "show_weekly_usage"
             ]
         );
         assert_eq!(

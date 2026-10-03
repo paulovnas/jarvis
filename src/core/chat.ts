@@ -6,6 +6,8 @@ import { pendingAuthoringSchema } from "./authoring";
 import type { PendingAuthoring } from "./authoring";
 import { executorSchema, type Executor } from "./executors";
 import { coreIdSchema } from "./core-components";
+import { modelChoiceSchema } from "./workflow-catalog";
+import { generationSchema } from "./generation";
 import {
   IPC_PROTOCOL_VERSION,
   type ApprovalDecision as GeneratedApprovalDecision,
@@ -57,6 +59,7 @@ export const turnOptionsSchema = z.object({
   approvalMode: z.enum(["manual", "yolo"]),
   manualValidation: z.boolean().optional(),
   automaticPublication: z.object({ commit: z.boolean(), push: z.boolean(), pullRequest: z.boolean() }).optional(),
+  modelSelection: modelChoiceSchema.transform(({ fallback, ...primary }) => ({ ...primary, ...(fallback ? { fallback } : {}) })).optional(),
 });
 export const agentToolSchema = z.object({
   id: z.string(), name: z.string(), args: z.record(z.string(), z.unknown()),
@@ -129,6 +132,7 @@ export const agentStepSchema = z.object({
   text: z.string(), summary: z.string(), tools: z.array(agentToolSchema),
   retry: retryStatusSchema.nullable().optional(),
   usage: usageSchema.nullable(),
+  generation: generationSchema.optional(),
 });
 export const queuedMessageSchema = z.object({
   id: z.string(), content: z.string(), options: turnOptionsSchema,

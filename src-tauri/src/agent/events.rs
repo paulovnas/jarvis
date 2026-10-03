@@ -86,6 +86,8 @@ pub(super) enum Event {
         duration_ms: u64,
         retry: Option<super::provider::retry::Status>,
         usage: Option<Usage>,
+        #[cfg_attr(test, ts(optional = nullable))]
+        generation: Option<super::generation::Metrics>,
     },
     ItemCompleted {
         step_index: usize,
@@ -116,7 +118,7 @@ pub(super) enum Event {
     rename_all_fields = "camelCase"
 )]
 pub(super) enum StartedItem {
-    Step { step_index: usize, step: Step },
+    Step { step_index: usize, step: Box<Step> },
     Tool { step_index: usize, tool: ToolCall },
 }
 
@@ -355,7 +357,7 @@ fn append_step_events(events: &mut Vec<Event>, before: &Turn, after: &Turn) {
         events.push(Event::ItemStarted {
             item: StartedItem::Step {
                 step_index: index,
-                step: step.clone(),
+                step: Box::new(step.clone()),
             },
         });
     }
@@ -381,6 +383,7 @@ fn append_step_events(events: &mut Vec<Event>, before: &Turn, after: &Turn) {
             || old.duration_ms != new.duration_ms
             || !same(&old.retry, &new.retry)
             || !same(&old.usage, &new.usage)
+            || !same(&old.generation, &new.generation)
             || !same(&old.core_activities, &new.core_activities)
         {
             events.push(Event::ItemDelta {
@@ -394,6 +397,7 @@ fn append_step_events(events: &mut Vec<Event>, before: &Turn, after: &Turn) {
                 duration_ms: new.duration_ms,
                 retry: new.retry.clone(),
                 usage: new.usage.clone(),
+                generation: new.generation.clone(),
             });
         }
         for tool in new.tools.iter().skip(old.tools.len()) {
@@ -595,6 +599,7 @@ mod tests {
             duration_ms: 15,
             retry: None,
             usage: None,
+            generation: None,
         };
         let serialized = serde_json::to_value(event).unwrap();
         assert_eq!(serialized["type"], "itemDelta");
@@ -602,6 +607,52 @@ mod tests {
         assert_eq!(serialized["textAppend"], "texto");
         assert!(serialized.get("step_index").is_none());
         assert!(serialized.get("textReplace").is_none());
+    }
+
+    #[test]
+    fn generation_only_deltas_include_reconciliation_and_reset() {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve("Implementar".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        session
+            .update(false, |data| {
+                data.turns
+                    .last_mut()
+                    .unwrap()
+                    .turn
+                    .steps
+                    .push(Step::default())
+            })
+            .unwrap();
+        let before = session.snapshot().unwrap();
+        session
+            .update(false, |data| {
+                data.turns.last_mut().unwrap().turn.steps[0].generation =
+                    Some(super::super::generation::Metrics {
+                        output_tokens: 50,
+                        duration_ms: 1_000,
+                        estimated: false,
+                    })
+            })
+            .unwrap();
+        let after = session.snapshot().unwrap();
+        assert!(
+            matches!(differences(Some(&before), &after).first(), Some(Event::ItemDelta { generation: Some(metrics), .. }) if metrics.output_tokens == 50)
+        );
+        session
+            .update(false, |data| {
+                data.turns.last_mut().unwrap().turn.steps[0].generation = None
+            })
+            .unwrap();
+        assert!(matches!(
+            differences(Some(&after), &session.snapshot().unwrap()).first(),
+            Some(Event::ItemDelta {
+                generation: None,
+                ..
+            })
+        ));
     }
 
     #[test]

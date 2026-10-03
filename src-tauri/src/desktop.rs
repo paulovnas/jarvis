@@ -183,6 +183,7 @@ struct WindowPreferences {
     maximized: bool,
     fullscreen: bool,
     companion_sound_muted: bool,
+    companion_speech_muted: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -272,6 +273,29 @@ impl DesktopState {
         store.preferences.window.companion_sound_muted = !enabled;
         if let Err(error) = store.save() {
             store.preferences.window.companion_sound_muted = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn companion_speech_enabled(&self) -> bool {
+        self.store.lock().ok().is_none_or(|guard| {
+            guard
+                .as_ref()
+                .is_none_or(|store| !store.preferences.window.companion_speech_muted)
+        })
+    }
+
+    pub(crate) fn save_companion_speech_enabled(&self, enabled: bool) -> Result<(), String> {
+        let mut guard = self.store.lock().map_err(|_| "Desktop lock poisoned")?;
+        let store = guard.as_mut().ok_or("Desktop preferences unavailable")?;
+        let previous = store.preferences.window.companion_speech_muted;
+        if previous != enabled {
+            return Ok(());
+        }
+        store.preferences.window.companion_speech_muted = !enabled;
+        if let Err(error) = store.save() {
+            store.preferences.window.companion_speech_muted = previous;
             return Err(error);
         }
         Ok(())
@@ -570,6 +594,24 @@ mod tests {
     }
 
     #[test]
+    fn speech_mute_is_independent_from_sounds_and_survives_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("desktop.json");
+        let state = DesktopState::default();
+        *state.store.lock().unwrap() = Some(Store::open(path.clone()).unwrap());
+        assert!(state.companion_speech_enabled());
+        state.save_companion_speech_enabled(false).unwrap();
+        assert!(state.companion_sound_enabled());
+        *state.store.lock().unwrap() = Some(Store::open(path.clone()).unwrap());
+        assert!(!state.companion_speech_enabled());
+        state.save_companion_sound_enabled(false).unwrap();
+        state.save_companion_speech_enabled(true).unwrap();
+        *state.store.lock().unwrap() = Some(Store::open(path).unwrap());
+        assert!(state.companion_speech_enabled());
+        assert!(!state.companion_sound_enabled());
+    }
+
+    #[test]
     fn layout_and_window_survive_atomic_round_trip() {
         let temp = tempfile::tempdir().unwrap();
         let path = crate::data_dir::root(temp.path()).join("desktop.json");
@@ -584,6 +626,7 @@ mod tests {
             maximized: true,
             fullscreen: false,
             companion_sound_muted: false,
+            companion_speech_muted: false,
         };
         store.preferences.layout.inspector_tab = InspectorTab::Explorer;
         store.preferences.layout.settings_tab = SettingsTab::Tools;

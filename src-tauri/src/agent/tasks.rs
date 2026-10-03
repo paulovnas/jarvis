@@ -215,6 +215,13 @@ fn read_only_invocation(argv: &[String]) -> bool {
     }
     match words.as_slice() {
         ["pwd" | "Get-Location" | "true" | "false"] | ["cd", _] => true,
+        ["grep" | "head", ..] => true,
+        ["rg", args @ ..] => !args.iter().any(|arg| {
+            arg.starts_with("--pre")
+                || arg.starts_with("--hostname-bin")
+                || *arg == "--search-zip"
+                || (arg.starts_with('-') && !arg.starts_with("--") && arg.contains('z'))
+        }),
         ["git", rest @ ..] => {
             let rest = match rest {
                 ["-C", _, rest @ ..] => rest,
@@ -316,6 +323,45 @@ mod tests {
         assert!(requires_active_task_for(&tool));
         tool.args = json!({"commands":[{"label":"Missing command"}]});
         assert!(requires_active_task_for(&tool));
+    }
+
+    #[test]
+    fn source_inspection_from_claude_history_does_not_require_a_task_checkpoint() {
+        let mut tool = super::super::ToolCall {
+            id: "source-inspection".into(),
+            name: "bash".into(),
+            args: json!({"command":"grep -rn 'Toaster' src --include=*.tsx | head -5; grep -rln 'from \"sonner\"' src | head -10; grep -n '\"sonner\"' package.json"}),
+            status: "running".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        assert!(!requires_active_task_for(&tool));
+        tool.name = "ctx_batch_execute".into();
+        tool.args = json!({"commands":[
+            {"label":"Files", "command":"git ls-files src | head -300"},
+            {"label":"Search", "command":"grep -rniE 'sessionNumber|session_number|numeroSessao|sessionId|session_id' src --include=*.ts --include=*.tsx -l | head -50"},
+            {"label":"Symbols", "command":"rg -n --glob '*.tsx' Toaster src | head -20"}
+        ]});
+        assert!(!requires_active_task_for(&tool));
+        for command in [
+            "rg --pre 'touch sentinel' pattern src",
+            "rg --pre=helper pattern src",
+            "rg --pre-glob '*.ts' pattern src",
+            "rg --pre-glob=*.ts pattern src",
+            "rg --hostname-bin helper pattern src",
+            "rg --hostname-bin=helper pattern src",
+            "rg --search-zip pattern src",
+            "rg -nz pattern src",
+            "grep -n pattern src > result.txt",
+            "grep -n pattern src | tee result.txt",
+            "grep -n pattern src; npm test",
+            "head -5 src/file.ts && touch sentinel",
+            "grep pattern `touch sentinel`",
+            "rg pattern $(touch sentinel)",
+        ] {
+            tool.args["commands"][1]["command"] = json!(command);
+            assert!(requires_active_task_for(&tool), "{command}");
+        }
     }
 
     fn task(id: &str, title: &str, status: Status) -> Task {

@@ -28,6 +28,39 @@ const account: ProviderAccount = {
 };
 
 describe("ProviderAccountCard", () => {
+  it.each(["openai-codex", "opencode-go"] as const)("offers independent quota windows for %s and preserves them when hiding limits", async providerKind => {
+    const user = userEvent.setup();
+    const onUsageChange = vi.fn();
+    const props = { onDisconnect: vi.fn(), onEnabledChange: vi.fn(), onUsageChange };
+    const provider = { ...account, providerKind, showFiveHourUsage: false, showWeeklyUsage: true };
+    const view = render(<ProviderAccountCard account={provider} {...props} />);
+    await user.click(screen.getByRole("button", { name: `Detalhes de ${account.alias}` }));
+    const fiveHour = screen.getByRole("checkbox", { name: "5 horas" });
+    const weekly = screen.getByRole("checkbox", { name: "Semanal" });
+    expect(fiveHour).not.toBeChecked();
+    expect(weekly).toBeChecked();
+    await user.click(weekly);
+    expect(onUsageChange).toHaveBeenLastCalledWith(account.alias, true, false, false, false);
+    await user.click(screen.getByRole("switch", { name: `Limites de ${account.alias} na statusbar` }));
+    expect(onUsageChange).toHaveBeenLastCalledWith(account.alias, false, false);
+    view.rerender(<ProviderAccountCard account={{ ...provider, showUsage: false }} {...props} />);
+    expect(fiveHour).toHaveAttribute("aria-disabled", "true");
+    expect(weekly).toHaveAttribute("aria-disabled", "true");
+    expect(fiveHour).not.toBeChecked();
+    expect(weekly).toBeChecked();
+    view.rerender(<ProviderAccountCard account={provider} {...props} saving />);
+    expect(fiveHour).toHaveAttribute("aria-disabled", "true");
+    expect(weekly).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("does not offer fixed time-window choices for Antigravity group quotas", async () => {
+    const user = userEvent.setup();
+    render(<ProviderAccountCard account={{ ...account, providerKind: "antigravity" }} onDisconnect={vi.fn()} onEnabledChange={vi.fn()} onUsageChange={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: `Detalhes de ${account.alias}` }));
+    expect(screen.queryByRole("checkbox", { name: /5 horas|Semanal/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: `Incluir modelos de terceiros de ${account.alias}` })).toBeVisible();
+  });
+
   it("usa conexão incremental automaticamente sem apresentar opção experimental", async () => {
     invokeMock.mockResolvedValue({ supported: true, enabled: false, references: [], bindings: [] });
     const user = userEvent.setup();

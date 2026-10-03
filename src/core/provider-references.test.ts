@@ -22,6 +22,18 @@ it("offers destinations compatible with the selected tool", () => {
   expect(compatibleModels({ ...referenceAccount(), providerKind: "antigravity" }, "image_generation")[0].id).toBe("gemini-3.1-flash-image");
 });
 
+it("offers only Go vision models confirmed by the catalog, independent of their name", () => {
+  const go = { ...referenceAccount(), alias: "opencode-go-pessoal", providerKind: "opencode-go", models: [
+    { id: "qwen-vl", name: "Qwen Vision", reasoningLevels: [], defaultReasoningLevel: null },
+    { id: "claude-text", name: "Text", reasoningLevels: [], defaultReasoningLevel: null },
+  ], visionModels: ["qwen-vl"] };
+  expect(compatibleModels(go, "vision").map(model => model.id)).toEqual(["qwen-vl"]);
+  expect(compatibleModels({ ...go, visionModels: undefined }, "vision")).toEqual([]);
+  expect(compatibleModels({ ...go, visionModels: [] }, "vision")).toEqual([]);
+  expect(compatibleModels({ ...go, disabledModels: ["qwen-vl"] }, "vision")).toEqual([]);
+  expect(compatibleModels(go, "web_search")).toEqual([]);
+});
+
 it("waits for a fresh catalog before declaring models invalid while keeping explicit restrictions", () => {
   const account = { ...referenceAccount(), modelsAvailable: false, modelsStale: true, models: [] };
   const choice = { account: account.alias, model: "gpt-test", reasoning: "high" };
@@ -53,4 +65,19 @@ it("uses a real effort for new choices while accepting saved Ultra configuration
   account.models[0] = { ...account.models[0], reasoningLevels: ["low", "max", "ultra"], defaultReasoningLevel: "ultra" };
   expect(defaultChoice(account, account.models[0]).reasoning).toBe("max");
   expect(modelProblem({ account: account.alias, model: account.models[0].id, reasoning: "ultra" }, [account])).toBeNull();
+});
+
+it("keeps explicit chat agent replacements scoped and stronger than legacy chat bindings", () => {
+  const source = { account: "old", model: "primary", reasoning: null };
+  const legacy = { account: "legacy", model: "other", reasoning: null };
+  const target = { account: "new", model: "replacement", reasoning: null };
+  const bindings = [
+    { itemKey: "chat:c1", source, target: legacy },
+    { itemKey: "chat:c1:agent:standard/builder", source, target },
+  ];
+  expect(resolveChatModel(bindings, "c1", source, "standard/builder")).toEqual(target);
+  expect(resolveChatModel(bindings, "c1", source, "designer/designer")).toEqual(legacy);
+  expect(resolveChatModel(bindings, "c2", source, "standard/builder")).toEqual(source);
+  const edited = { ...source, model: "explicit" };
+  expect(resolveChatModel(bindings, "c1", edited, "standard/builder")).toEqual(edited);
 });

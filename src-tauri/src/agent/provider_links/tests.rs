@@ -30,6 +30,93 @@ fn fixture() -> (Connection, tempfile::TempDir) {
 }
 
 #[test]
+fn unsent_chat_models_and_fallbacks_are_independent_dependencies_and_remain_unresolved_without_replacement(
+) {
+    let (mut db, home) = fixture();
+    let conversation = "d".repeat(32);
+    db.execute_batch("INSERT INTO workspaces(id,name) VALUES('w','Workspace'); INSERT INTO projects(id,workspace_id,name,path) VALUES('p','w','Project','/tmp/project');").unwrap();
+    db.execute(
+        "INSERT INTO conversations(id,project_id,title) VALUES(?1,'p','Unsent chat')",
+        [&conversation],
+    )
+    .unwrap();
+    let mut model = choice("openai-codex-old", "chat-primary");
+    model.fallback = Some(Box::new(choice("openai-codex-old", "chat-secondary")));
+    db.execute("INSERT INTO conversation_agent_models(conversation_id,agent_key,choice) VALUES(?1,'complete/planner',?2)", params![conversation,serde_json::to_string(&model).unwrap()]).unwrap();
+    let preview = plan(&db, home.path(), "openai-codex-old").unwrap();
+    let local: Vec<_> = preview
+        .items
+        .iter()
+        .filter(|item| item.label == "Unsent chat")
+        .collect();
+    assert_eq!(local.len(), 2);
+    assert!(local.iter().any(|item| item.choice.model == "chat-primary"));
+    assert!(local
+        .iter()
+        .any(|item| item.choice.model == "chat-secondary"));
+    let tx = db.transaction().unwrap();
+    let result = apply(&tx, home.path(), &preview.alias, &preview.revision, &[]).unwrap();
+    assert!(result
+        .unresolved
+        .iter()
+        .any(|item| item.label == "Unsent chat"));
+    tx.commit().unwrap();
+    assert_eq!(
+        workflow::settings::chat::read(&db, &conversation).unwrap()["complete/planner"],
+        model
+    );
+}
+
+#[test]
+fn queued_primary_and_secondary_remain_dependencies_after_chat_and_agent_defaults_change() {
+    let (db, home) = fixture();
+    let project = "2".repeat(32);
+    let conversation = "3".repeat(32);
+    db.execute_batch("INSERT INTO workspaces(id,name) VALUES('w','Workspace');")
+        .unwrap();
+    db.execute(
+        "INSERT INTO projects(id,workspace_id,name,path) VALUES(?1,'w','Project','/tmp/project')",
+        [&project],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO conversations(id,project_id,title) VALUES(?1,?2,'Queued snapshot')",
+        params![conversation, project],
+    )
+    .unwrap();
+    let updated = choice("openai-codex-new", "next-model");
+    std::fs::write(
+        crate::data_dir::root(home.path()).join("agents.json"),
+        json!({"standard/builder":updated}).to_string(),
+    )
+    .unwrap();
+    db.execute("INSERT INTO conversation_agent_models(conversation_id,agent_key,choice) VALUES(?1,'standard/builder',?2)", params![conversation,serde_json::to_string(&updated).unwrap()]).unwrap();
+    let mut accepted = choice("openai-codex-old", "queued-primary");
+    accepted.fallback = Some(Box::new(choice("openai-codex-old", "queued-secondary")));
+    let mut options = super::super::tests::options(super::super::ApprovalMode::Yolo);
+    options.workflow = Some(workflow::Flow::Standard);
+    accepted.apply(&mut options);
+    options.model_selection = Some(accepted);
+    let path = library::session_path(home.path(), &project, &conversation, true).unwrap();
+    std::fs::write(path, format!("{{}}\n{}\n", json!({"type":"queue_checkpoint","version":1,"data":[{"id":"queued-1","options":options}]}))).unwrap();
+    let dependencies = plan(&db, home.path(), "openai-codex-old").unwrap().items;
+    let queued: Vec<_> = dependencies
+        .iter()
+        .filter(|item| item.label == "Queued snapshot")
+        .collect();
+    assert_eq!(queued.len(), 2);
+    assert!(queued
+        .iter()
+        .any(|item| item.choice.model == "queued-primary"));
+    assert!(queued
+        .iter()
+        .any(|item| item.choice.model == "queued-secondary"));
+    assert!(queued
+        .iter()
+        .all(|item| item.details.contains(&"Mensagens na fila".into())));
+}
+
+#[test]
 fn global_jarvito_history_does_not_surface_as_an_invisible_project_model_warning() {
     let (mut db, home) = fixture();
     let before = inventory(&db, home.path()).unwrap();
@@ -601,7 +688,7 @@ fn configured_standalone_models_do_not_create_obsolete_chat_references() {
         // A queued native GitHub turn still uses the choice submitted with it.
         (Some("builtin:github"), None, true, true),
         (Some(agent.as_str()), None, false, false),
-        (Some(agent.as_str()), None, true, false),
+        (Some(agent.as_str()), None, true, true),
         // Custom graphs retain the composer fallback for unassigned step models.
         (None, Some(flow.as_str()), false, true),
         (Some(missing.as_str()), None, false, true),

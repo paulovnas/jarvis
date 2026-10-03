@@ -36,6 +36,7 @@ pub(crate) enum BrowserApplication {
     Edge,
     Brave,
     Chromium,
+    Firefox,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]

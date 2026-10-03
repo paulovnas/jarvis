@@ -60,6 +60,8 @@ fn application_command_allowed(label: &str, command: &str) -> bool {
                     | "get_companion_usage"
                     | "get_companion_sound"
                     | "set_companion_sound"
+                    | "get_companion_speech"
+                    | "set_companion_speech"
                     | "companion_set_hit_rect"
                     | "set_companion_expanded"
                     | "set_companion_bubble"
@@ -77,6 +79,7 @@ fn application_command_allowed(label: &str, command: &str) -> bool {
                     | "stop_companion_chat"
                     | "clear_companion_chat"
                     | "get_companion_models"
+                    | "set_chat_agent_model"
                     | "get_voice_settings"
                     | "save_voice_settings"
                     | "get_voice_session"
@@ -102,6 +105,8 @@ mod companion_policy_tests {
             "get_companion_usage",
             "get_companion_sound",
             "set_companion_sound",
+            "get_companion_speech",
+            "set_companion_speech",
             "companion_set_hit_rect",
             "companion_move_horizontal",
             "companion_finish_drag",
@@ -115,6 +120,7 @@ mod companion_policy_tests {
             "stop_companion_chat",
             "clear_companion_chat",
             "get_companion_models",
+            "set_chat_agent_model",
             "get_voice_settings",
             "save_voice_settings",
             "get_voice_session",
@@ -261,6 +267,8 @@ pub fn run() {
                 companion::get_companion_usage,
                 companion::get_companion_sound,
                 companion::set_companion_sound,
+                companion::get_companion_speech,
+                companion::set_companion_speech,
                 companion::companion_set_hit_rect,
                 companion::set_companion_expanded,
                 companion::set_companion_bubble,
@@ -425,6 +433,8 @@ pub fn run() {
                 agent::workflow::settings::get_agent_models,
                 agent::workflow::settings::get_agent_instructions,
                 agent::workflow::settings::set_agent_model,
+                agent::workflow::settings::chat::get_chat_agent_models,
+                agent::workflow::settings::chat::set_chat_agent_model,
                 agent::workflow::get_workflow_transcript,
                 agent::workflow::approve_workflow_tool,
                 agent::workflow::answer_workflow_question,
@@ -459,6 +469,8 @@ pub fn run() {
                 openai_codex::refresh_provider_models,
                 openai_codex::set_provider_model_enabled,
                 openai_codex::custom::save_custom_provider,
+                openai_codex::opencode_go::save_opencode_go_provider,
+                openai_codex::opencode_go::free_models::get_opencode_go_free_models,
                 openai_codex::custom::discovery::lookup_custom_model,
                 openai_codex::set_provider_enabled,
                 openai_codex::usage::get_provider_usage,

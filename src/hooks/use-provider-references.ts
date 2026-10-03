@@ -22,7 +22,7 @@ export function useProviderReferences(accounts: ProviderAccount[], ready: boolea
       catch (error) { if (active && version === request) toast.error(libraryError(error, "Não foi possível verificar os vínculos dos modelos."), { id: "provider-reference-load" }); }
       finally { if (active && version === request) { setLoading(false); setSettledAccounts(accounts); } }
     };
-    void Promise.all(["provider-model-bindings:changed", "agent-models:changed", "workflow-catalog:changed"].map(event => listen(event, () => { if (active) void refresh(); }).then(stop => { if (active) disposers.push(stop); else stop(); }))).then(() => { if (active) void refresh(); }).catch(() => { if (active) void refresh(); });
+    void Promise.all(["provider-model-bindings:changed", "agent-models:changed", "chat-agent-models:changed", "workflow-catalog:changed"].map(event => listen(event, () => { if (active) void refresh(); }).then(stop => { if (active) disposers.push(stop); else stop(); }))).then(() => { if (active) void refresh(); }).catch(() => { if (active) void refresh(); });
     return () => { active = false; disposers.forEach(stop => stop()); };
   }, [accounts, ready]);
   useEffect(() => {

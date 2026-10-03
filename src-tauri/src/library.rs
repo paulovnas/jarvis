@@ -317,7 +317,7 @@ fn save_selection(connection: &Connection, selection: &Selection) -> Result<(), 
     Ok(())
 }
 
-fn insert_workspace(
+pub(crate) fn insert_workspace(
     connection: &mut Connection,
     value: &str,
 ) -> Result<LibrarySnapshot, LibraryError> {
@@ -456,7 +456,7 @@ pub(crate) fn serialize_display_opt_path_buf<S: serde::Serializer>(
     }
 }
 
-fn insert_project(
+pub(crate) fn insert_project(
     connection: &mut Connection,
     workspace_id: &str,
     directory: &Path,
@@ -841,7 +841,7 @@ pub(crate) fn save_generated_title(
     })
 }
 
-fn update_project_record(
+pub(crate) fn update_project_record(
     connection: &mut Connection,
     id: &str,
     value: &str,

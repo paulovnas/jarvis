@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Jarvis — navegador",
   "description": "Conecte este navegador ao Jarvis para navegar e inspecionar páginas durante suas conversas.",
-  "version": "1.1.0",
+  "version": "1.2.1",
   "minimum_chrome_version": "125",
   "icons": { "16": "icons/32.png", "32": "icons/32.png", "48": "icons/64.png", "128": "icons/128.png" },
   "permissions": ["debugger", "tabs", "storage", "alarms"],

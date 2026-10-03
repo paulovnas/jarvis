@@ -9,6 +9,7 @@ import { BootstrapResourcesProvider } from "@/components/bootstrap/BootstrapReso
 import { emptyLibrary } from "@/test/library-fixtures";
 import { coreFixture } from "@/test/core-fixtures";
 import { StatusBar } from "./StatusBar";
+import { ProviderUsage } from "./ProviderUsage";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("../remote/RemoteAccess", () => ({ RemoteAccess: () => null }));
@@ -17,6 +18,84 @@ const call = vi.mocked(invoke);
 const account: ProviderAccount = { alias: "openai-codex-paulo", providerKind: "openai-codex", enabled: true, createdAt: 1, email: "paulo@example.test", accountType: "personal", models: [], modelsAvailable: true };
 const report = (alias: string): AccountUsage => ({ alias, fetchedAt: Date.now(), email: account.email, plan: "pro", error: null, resetCredits: { availableCount: 1, expirations: [Date.now() + 86400_000], detailsAvailable: true }, windows: [{ id: "weekly", group: "Codex", thirdParty: false, label: "7d", durationSeconds: 604800, remainingPercent: 36, resetsAt: Date.now() + 60_000 }] });
 beforeEach(() => { call.mockReset().mockImplementation((_command, args) => Promise.resolve(report((args as { alias: string }).alias))); });
+
+it("keeps Go five-hour and weekly quotas in the statusbar and its monthly quota in the details", async () => {
+  const user = userEvent.setup();
+  const go = { ...account, alias: "opencode-go-pessoal", providerKind: "opencode-go" };
+  call.mockResolvedValue({ ...report(go.alias), plan: "go", resetCredits: null, windows: [
+    { id: "five_hour", group: "OpenCode Go", thirdParty: false, label: "5h", durationSeconds: 18_000, remainingPercent: 88, resetsAt: Date.now() + 9_000_000 },
+    { id: "weekly", group: "OpenCode Go", thirdParty: false, label: "Semanal", durationSeconds: 604_800, remainingPercent: 66, resetsAt: Date.now() + 302_400_000 },
+    { id: "monthly", group: "OpenCode Go", thirdParty: false, label: "Mensal", durationSeconds: null, remainingPercent: 44, resetsAt: Date.now() + 86400_000 },
+  ] });
+  render(<StatusBar accounts={[go]} />);
+  const button = await screen.findByRole("button", { name: `Limites de ${go.alias}` });
+  await waitFor(() => expect(button).toHaveTextContent("88%"));
+  expect(button).toHaveTextContent("pessoal");
+  expect(button).toHaveTextContent("5h88%");
+  expect(button).toHaveTextContent("Semanal66%");
+  expect(button).not.toHaveTextContent("Mensal");
+  expect(button).not.toHaveTextContent("44%");
+  await user.click(button);
+  const details = await screen.findByRole("dialog", { name: `Limites de ${go.alias}` });
+  expect(within(details).getByText("OpenCode Go · pessoal")).toBeVisible();
+  expect(within(details).getByRole("progressbar", { name: "OpenCode Go 5h restante" })).toHaveAttribute("aria-valuenow", "88");
+  expect(within(details).getByRole("progressbar", { name: "OpenCode Go Semanal restante" })).toHaveAttribute("aria-valuenow", "66");
+  expect(within(details).getByRole("progressbar", { name: "OpenCode Go Mensal restante" })).toHaveAttribute("aria-valuenow", "44");
+});
+
+it.each(["openai-codex", "opencode-go", "claude-code"])("keeps hidden windows in the %s popover and supports an icon-only quota summary", async providerKind => {
+  const user = userEvent.setup();
+  const selected = { ...account, providerKind, showFiveHourUsage: false, showWeeklyUsage: true };
+  const group = providerKind === "openai-codex" ? "Codex" : providerKind === "opencode-go" ? "OpenCode Go" : "Claude Code";
+  call.mockImplementation(command => Promise.resolve(command === "get_opencode_go_free_models" ? [] : { ...report(selected.alias), windows: [
+    { id: "five_hour", group, thirdParty: false, label: "5h", durationSeconds: 18_000, remainingPercent: 88, resetsAt: Date.now() + 9_000_000 },
+    { id: "weekly", group, thirdParty: false, label: "7d", durationSeconds: 604_800, remainingPercent: 66, resetsAt: Date.now() + 302_400_000 },
+  ] }));
+  const { rerender } = render(<ProviderUsage account={selected} now={Date.now()} />);
+  const button = screen.getByRole("button", { name: `Limites de ${selected.alias}` });
+  await waitFor(() => expect(button).toHaveTextContent("66%"));
+  expect(button).not.toHaveTextContent("5h");
+  await user.click(button);
+  const details = await screen.findByRole("dialog", { name: `Limites de ${selected.alias}` });
+  expect(within(details).getByRole("progressbar", { name: `${group} 5h restante` })).toHaveAttribute("aria-valuenow", "88");
+  rerender(<ProviderUsage account={{ ...selected, showFiveHourUsage: true, showWeeklyUsage: false }} now={Date.now()} />);
+  expect(button).toHaveTextContent("88%");
+  expect(button).not.toHaveTextContent("7d");
+  rerender(<ProviderUsage account={{ ...selected, showWeeklyUsage: false }} now={Date.now()} />);
+  expect(button).not.toHaveTextContent("88%");
+  expect(button).not.toHaveTextContent("66%");
+  expect(within(details).getByRole("progressbar", { name: `${group} 7d restante` })).toHaveAttribute("aria-valuenow", "66");
+});
+
+it("loads verified Go freebies only when opening its popover, independently of failed quotas", async () => {
+  const user = userEvent.setup();
+  const go = { ...account, alias: "opencode-go-pessoal", providerKind: "opencode-go" };
+  call.mockImplementation(command => command === "get_opencode_go_free_models" ? Promise.resolve([
+    { id: "space-bunny-free", name: "Space Bunny Free" },
+    { id: "longcat-2.5-preview-free", name: "LongCat 2.5 Preview Free" },
+  ]) : Promise.reject(new Error("Quota unavailable")));
+  render(<StatusBar accounts={[go]} />);
+  const button = await screen.findByRole("button", { name: `Limites de ${go.alias}` });
+  await screen.findByLabelText("Limites desatualizados");
+  expect(call).not.toHaveBeenCalledWith("get_opencode_go_free_models");
+  await user.click(button);
+  const section = await screen.findByRole("region", { name: "Modelos gratuitos agora" });
+  expect(await within(section).findByText("Space Bunny Free")).toBeVisible();
+  expect(within(section).getByText("LongCat 2.5 Preview Free")).toBeVisible();
+  expect(within(section).getAllByText("Grátis")).toHaveLength(2);
+  expect(screen.getByText("Limites indisponíveis")).toBeVisible();
+});
+
+it("shows unavailable free-model pricing without inventing an empty or free catalog", async () => {
+  const user = userEvent.setup();
+  const go = { ...account, alias: "opencode-go-pessoal", providerKind: "opencode-go" };
+  call.mockImplementation(command => command === "get_opencode_go_free_models" ? Promise.reject(new Error("Catalog unavailable")) : Promise.resolve(report(go.alias)));
+  render(<StatusBar accounts={[go]} />);
+  await user.click(await screen.findByRole("button", { name: `Limites de ${go.alias}` }));
+  expect(await screen.findByText("Não foi possível confirmar os gratuitos agora.")).toBeVisible();
+  expect(screen.queryByText("Nenhum modelo gratuito no momento.")).not.toBeInTheDocument();
+  expect(screen.queryByText("Grátis")).not.toBeInTheDocument();
+});
 
 it("shows remaining percentages and details on hover or keyboard without inventing a five-hour window", async () => {
   const user = userEvent.setup();

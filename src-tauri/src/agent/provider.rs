@@ -26,6 +26,7 @@ const MAX_STREAM: usize = 16 * 1024 * 1024;
 pub(super) enum Delta {
     Text(String),
     Summary(String),
+    Generation(super::generation::Metrics),
     Retry(Option<retry::Status>),
     Reset,
     /// Fully delimited call, never a fragment of function arguments.
@@ -506,19 +507,51 @@ fn error_detail(value: &Value) -> &Value {
         .unwrap_or(value)
 }
 
+fn go_region_error(endpoint: &reqwest::Url, value: &Value) -> Option<AgentError> {
+    if endpoint.scheme() != "https"
+        || endpoint.host_str() != Some("opencode.ai")
+        || endpoint.port_or_known_default() != Some(443)
+        || !endpoint.path().starts_with("/zen/go/v1/")
+    {
+        return None;
+    }
+    let message = error_detail(value)["message"].as_str()?.trim();
+    let message = if let Some(message) = message.strip_prefix("Error from provider: ") {
+        message
+    } else if message.starts_with("Error from provider (") {
+        message.split_once("): ")?.1
+    } else {
+        message
+    };
+    if message != "This GO model requires Global Regions" {
+        return None;
+    }
+    Some(AgentError::new(
+        "provider_request",
+        "Este modelo do OpenCode Go exige a região Global. No console do OpenCode, defina a região do workspace como Global e tente novamente. O progresso foi preservado.",
+    ))
+}
+
 // Keep only known protocol paths, never echoed input, schema property names or
 // raw provider messages. This detail is safe to persist with the turn's error.
 fn request_parameter(value: &Value) -> Option<String> {
     let parameter = error_detail(value)["param"].as_str()?;
     const FIELDS: &[&str] = &[
         "input",
+        "messages",
         "tools",
         "model",
         "reasoning",
+        "reasoning_effort",
+        "reasoning_content",
+        "thinking",
+        "enabled",
         "effort",
         "summary",
         "instructions",
         "stream",
+        "stream_options",
+        "include_usage",
         "store",
         "include",
         "previous_response_id",
@@ -526,6 +559,8 @@ fn request_parameter(value: &Value) -> Option<String> {
         "tool_choice",
         "parallel_tool_calls",
         "max_output_tokens",
+        "max_tokens",
+        "max_completion_tokens",
         "temperature",
         "top_p",
         "type",
@@ -536,6 +571,9 @@ fn request_parameter(value: &Value) -> Option<String> {
         "additionalProperties",
         "items",
         "call_id",
+        "tool_calls",
+        "tool_call_id",
+        "function",
         "arguments",
         "output",
         "content",
@@ -991,6 +1029,7 @@ pub(super) async fn receive(
         if matches!(response.status().as_u16(), 400 | 413) {
             // Inspect only a bounded error body for the known unsupported-model
             // case. Never return upstream bodies, which can contain private data.
+            let endpoint = response.url().clone();
             let read_error = async {
                 let mut bytes = vec![];
                 while let Ok(Some(chunk)) = response.chunk().await {
@@ -1009,11 +1048,14 @@ pub(super) async fn receive(
                     value.as_ref().is_some_and(context_overflow),
                     value.as_ref().and_then(upstream_code),
                     value.as_ref().and_then(request_parameter),
+                    value
+                        .as_ref()
+                        .and_then(|value| go_region_error(&endpoint, value)),
                 )
             };
-            let (unsupported, overflow, upstream_code, parameter) = tokio::select! {
+            let (unsupported, overflow, upstream_code, parameter, region_error) = tokio::select! {
                 _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-                result = tokio::time::timeout(Duration::from_secs(5), read_error) => result.unwrap_or((false, false, None, None)),
+                result = tokio::time::timeout(Duration::from_secs(5), read_error) => result.unwrap_or((false, false, None, None, None)),
             };
             if overflow {
                 return Err(with_provider_metadata(
@@ -1030,6 +1072,14 @@ pub(super) async fn receive(
                         "O modelo não é compatível com esta conta ChatGPT.",
                     ),
                     Some(response.status().as_u16()),
+                    upstream_code.as_deref(),
+                    request_id(&response),
+                ));
+            }
+            if let Some(error) = region_error.filter(|_| response.status().as_u16() == 400) {
+                return Err(with_provider_metadata(
+                    error,
+                    Some(400),
                     upstream_code.as_deref(),
                     request_id(&response),
                 ));
@@ -1195,6 +1245,50 @@ pub(super) fn tool_calls(output: &[Value]) -> Result<Vec<ToolCall>, AgentError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn go_region_refusal_explains_workspace_setting_without_echoing_provider_data() {
+        for path in ["chat/completions", "responses", "messages"] {
+            let endpoint =
+                reqwest::Url::parse(&format!("https://opencode.ai/zen/go/v1/{path}")).unwrap();
+            for value in [
+                json!({"error":{"type":"server_error","message":"This GO model requires Global Regions"}}),
+                json!({"error":{"message":"Error from provider: This GO model requires Global Regions"}}),
+                json!({"response":{"error":{"message":"This GO model requires Global Regions"}}}),
+                json!({"error":{"message":"Error from provider (sk_private_test): This GO model requires Global Regions"}}),
+            ] {
+                let error = go_region_error(&endpoint, &value).unwrap();
+                assert_eq!(error.code, "provider_request");
+                assert!(error.message.contains("região do workspace como Global"));
+                assert!(error.message.contains("progresso foi preservado"));
+                assert!(!error.message.contains("sk_private_test"));
+                assert!(!error.message.contains("server_error"));
+            }
+        }
+    }
+
+    #[test]
+    fn go_region_refusal_requires_official_endpoint_and_the_exact_known_error() {
+        let detail = json!({"error":{"message":"This GO model requires Global Regions"}});
+        for url in [
+            "http://opencode.ai/zen/go/v1/chat/completions",
+            "https://opencode.ai:8443/zen/go/v1/chat/completions",
+            "https://opencode.ai.example.com/zen/go/v1/chat/completions",
+            "https://gateway.example/zen/go/v1/chat/completions",
+            "https://opencode.ai/zen/v1/chat/completions",
+        ] {
+            assert!(go_region_error(&reqwest::Url::parse(url).unwrap(), &detail).is_none());
+        }
+        let endpoint =
+            reqwest::Url::parse("https://opencode.ai/zen/go/v1/chat/completions").unwrap();
+        for value in [
+            json!({"error":{"message":"Private prompt: This GO model requires Global Regions"}}),
+            json!({"error":{"message":"This GO model requires Global Regions; sk_private_test"}}),
+            json!({"error":{"type":"server_error","message":"Another provider failure"}}),
+        ] {
+            assert!(go_region_error(&endpoint, &value).is_none());
+        }
+    }
 
     #[test]
     fn out_of_order_completed_items_preserve_mutation_barriers() {
@@ -1562,6 +1656,7 @@ mod tests {
             approval_mode: ApprovalMode::Manual,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         };
         let auth_options = options.clone();
         let credential = tokio::task::spawn_blocking(move || {
@@ -1631,6 +1726,7 @@ mod tests {
             approval_mode: ApprovalMode::Manual,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         };
         let credential = CodexCredential::new("", "", 0, "", None, None);
         let capabilities = ModelCapabilities::resolve_for_options(&credential, &options);
@@ -1821,6 +1917,7 @@ mod tests {
             approval_mode: ApprovalMode::Manual,
             manual_validation: false,
             automatic_publication: None,
+            model_selection: None,
         };
         let credential = CodexCredential::new("", "", 0, "", None, None);
         let capabilities = ModelCapabilities::resolve_for_options(&credential, &options);

@@ -25,9 +25,9 @@ const invokeMock = vi.mocked(invoke);
 const accountsMock = vi.fn<() => Promise<ProviderAccount[]>>();
 
 describe("Home shell", () => {
-  it("reloads connected provider models from the composer without reconnecting the account", async () => {
+  it.each(["openai-codex", "opencode-go"])("reloads %s models from the composer without reconnecting the account", async providerKind => {
     const user = userEvent.setup();
-    const account: ProviderAccount = { alias: "openai-codex-pessoal", providerKind: "openai-codex", enabled: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, models: [{ id: "old", name: "Antigo", reasoningLevels: [], defaultReasoningLevel: null }] };
+    const account: ProviderAccount = { alias: `${providerKind}-pessoal`, providerKind, enabled: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, models: [{ id: "old", name: "Antigo", reasoningLevels: [], defaultReasoningLevel: null }] };
     accountsMock.mockResolvedValueOnce([account]).mockResolvedValueOnce([{ ...account, models: [{ id: "gpt-6-sol", name: "GPT 6 Sol", reasoningLevels: ["high"], defaultReasoningLevel: "high" }] }]);
     render(<Home />);
     const selector = await screen.findByRole("button", { name: "Selecionar modelo de IA" });
@@ -240,11 +240,15 @@ describe("Home shell", () => {
     invokeMock.mockReset();
     accountsMock.mockReset().mockResolvedValue([]);
     invokeMock.mockImplementation((command, args) => {
-      if (command === "get_agent_models") return Promise.resolve({});
+      if (command === "get_agent_models" || command === "get_chat_agent_models") return Promise.resolve({});
       if (command === "get_workflow") return Promise.resolve(null);
       if (command === "set_agent_model") {
         const selection = args as { flow: string; role: string; choice: { account: string; model: string; reasoning: string | null } };
         return Promise.resolve({ [`${selection.flow}/${selection.role}`]: selection.choice });
+      }
+      if (command === "set_chat_agent_model") {
+        const selection = args as { key: string; choice: { account: string; model: string; reasoning: string | null } };
+        return Promise.resolve({ [selection.key]: selection.choice });
       }
       if (command === "get_library_snapshot") return Promise.resolve(populatedLibrary());
       if (command === "subscribe_chat") return Promise.resolve(emptyChat());
@@ -339,6 +343,9 @@ describe("Home shell", () => {
     await user.keyboard("{ArrowRight}");
     await user.click(await screen.findByRole("menuitem", { name: "Extra alto" }));
     await waitFor(() => expect(modelButton).toHaveTextContent("GPT-5.6 Luna · Extra alto"));
+    expect(invokeMock).toHaveBeenCalledWith("get_chat_agent_models", { conversationId: "c1" });
+    expect(invokeMock).toHaveBeenCalledWith("set_chat_agent_model", { conversationId: "c1", key: "standard/builder", choice: { executor: "jarvis", account: "openai-codex-pessoal", model: "gpt-5.6-luna", reasoning: "xhigh" } });
+    expect(invokeMock).not.toHaveBeenCalledWith("set_agent_model", expect.anything());
   });
 
   it("abre Configurações pela statusbar em uma modal central", async () => {

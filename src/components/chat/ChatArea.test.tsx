@@ -13,6 +13,8 @@ import { useChat } from "@/hooks/use-chat";
 import { ChatArea } from "./ChatArea";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+// Chat model persistence is covered by its hook and composer regressions; keep live-chat fixtures scoped to chat snapshots.
+vi.mock("@/hooks/use-chat-agent-models", () => ({ useChatAgentModels: () => ({ data: {}, error: null, saving: false, save: vi.fn(), refresh: vi.fn() }) }));
 const call = vi.mocked(invoke);
 const listeners = new Map<string, Set<EventCallback<unknown>>>();
 function TestChat({ library = populatedLibrary(), connected = true }: { library?: LibrarySnapshot; connected?: boolean }) {

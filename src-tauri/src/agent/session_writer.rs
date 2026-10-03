@@ -543,6 +543,7 @@ mod tests {
                     approval_mode: super::super::ApprovalMode::Yolo,
                     manual_validation: false,
                     automatic_publication: None,
+                    model_selection: None,
                 },
                 context_window: None,
                 status: super::super::TurnStatus::Running,

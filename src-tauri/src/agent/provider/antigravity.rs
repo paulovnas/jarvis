@@ -725,6 +725,7 @@ fn grounded_body(
         approval_mode: super::super::ApprovalMode::Yolo,
         manual_validation: false,
         automatic_publication: None,
+        model_selection: None,
     };
     let capabilities = ModelCapabilities::resolve_for_options(credential, &options);
     let mut body = request_body(credential, session, &options, &capabilities,
