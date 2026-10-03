@@ -43,6 +43,15 @@ async function expanded() {
   await screen.findByRole("region", { name: "Assistente Jarvis" });
   return user;
 }
+function measureSliders() {
+  // Base UI edge-aligned thumbs require measured widths; jsdom has no layout.
+  const original = Element.prototype.getBoundingClientRect;
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    if (this.matches("[data-base-ui-slider-control]")) return new DOMRect(0, 0, 200, 12);
+    if (this.matches("[data-slot=slider-thumb]")) return new DOMRect(0, 0, 12, 12);
+    return original.call(this);
+  });
+}
 
 describe("Desktop companion", () => {
   beforeEach(() => {
@@ -60,6 +69,8 @@ describe("Desktop companion", () => {
     call.mockReset().mockImplementation(async (command, args) => {
       if (command === "get_companion_snapshot") return snapshot;
       if (command === "get_companion_usage") return accounts;
+      if (command === "get_companion_speech_volume") return 1;
+      if (command === "set_companion_speech_volume") return (args as { volume: number }).volume;
       if (command === "set_companion_expanded") {
         const isExpanded = (args as { expanded: boolean }).expanded;
         expandedState = isExpanded;
@@ -83,6 +94,13 @@ describe("Desktop companion", () => {
     expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument();
     expect(call.mock.calls.map(([command]) => command)).toEqual(expect.arrayContaining(["get_companion_snapshot", "set_companion_expanded"]));
     expect(call.mock.calls.some(([command]) => /bootstrap|transcript|get_provider/.test(command))).toBe(false);
+  });
+
+  it("opens the assistant without a phone action or microphone indicator", async () => {
+    await expanded();
+    expect(screen.queryByRole("button", { name: /Ligar para Jarvito|Encerrar ligação|Ditar mensagem|Concluir ditado/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Microfone ativo no Jarvito")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Chat" })).toBeVisible();
   });
 
   it("opens an announcement only after audio is ready and keeps it visible throughout speech", async () => {
@@ -318,6 +336,68 @@ describe("Desktop companion", () => {
     await user.click(sound);
     await waitFor(() => expect(sound).toBeChecked());
     expect(speech).toBeChecked();
+  });
+
+  it("restores voice volume and persists keyboard adjustment independently of both mute switches", async () => {
+    measureSliders();
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => command === "get_companion_speech_volume" ? 0.42
+      : command === "set_companion_speech_volume" ? Math.fround((args as { volume: number }).volume)
+      : command === "set_companion_speech" ? (args as { enabled: boolean }).enabled : original?.(command, args));
+    const user = await expanded();
+    await user.click(screen.getByRole("button", { name: "Sons e fala do Jarvito" }));
+    const slider = await screen.findByRole("slider", { name: "Volume da voz" });
+    expect(slider).toHaveAttribute("aria-valuenow", "42");
+    expect(slider).toHaveAttribute("min", "0"); expect(slider).toHaveAttribute("max", "100");
+    expect(screen.getByText("42%")).toHaveClass("font-mono");
+    expect(slider.closest("[data-slot=slider]")).toHaveClass("cursor-pointer");
+    slider.focus();
+    await user.keyboard("{ArrowRight}");
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_companion_speech_volume", { volume: 0.43 }));
+    expect(slider).toHaveAttribute("aria-valuenow", "43");
+    expect(screen.getByText("43%")).toBeVisible();
+    const sound = screen.getByRole("switch", { name: "Silenciar sons" });
+    const speech = screen.getByRole("switch", { name: "Silenciar Jarvito" });
+    expect(sound).not.toBeChecked(); expect(speech).not.toBeChecked();
+    expect(call).not.toHaveBeenCalledWith("set_companion_sound", expect.anything());
+    expect(call).not.toHaveBeenCalledWith("set_companion_speech", expect.anything());
+    await user.click(speech);
+    await waitFor(() => expect(speech).toBeChecked());
+    expect(slider).toHaveAttribute("aria-valuenow", "43");
+    expect(slider).not.toBeDisabled();
+    expect(sound).not.toBeChecked();
+  });
+
+  it("restores the confirmed volume and shows feedback if saving fails", async () => {
+    measureSliders();
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => {
+      if (command === "get_companion_speech_volume") return 0.4;
+      if (command === "set_companion_speech_volume") throw new Error("Disk full");
+      return original?.(command, args);
+    });
+    const user = await expanded();
+    await user.click(screen.getByRole("button", { name: "Sons e fala do Jarvito" }));
+    const slider = await screen.findByRole("slider", { name: "Volume da voz" });
+    slider.focus(); await user.keyboard("{ArrowLeft}");
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_companion_speech_volume", { volume: 0.39 }));
+    await waitFor(() => expect(slider).toHaveAttribute("aria-valuenow", "40"));
+    expect(slider).not.toBeDisabled();
+    expect(screen.getByText("40%")).toBeVisible();
+    expect(screen.getByRole("alert", { name: "" })).toHaveTextContent("Não foi possível salvar o volume da voz.");
+    expect(screen.getByRole("switch", { name: "Silenciar Jarvito" })).not.toBeChecked();
+  });
+
+  it("reserves native window space for the sound popover and restores the compact activity height afterward", async () => {
+    measureSliders();
+    const user = await expanded();
+    const trigger = screen.getByRole("button", { name: "Sons e fala do Jarvito" });
+    await user.click(trigger);
+    await screen.findByRole("slider", { name: "Volume da voz" });
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_companion_expanded", { expanded: true, height: 256 }));
+    call.mockClear();
+    await user.click(trigger);
+    await waitFor(() => expect(call).toHaveBeenCalledWith("set_companion_expanded", { expanded: true, height: 160 }));
   });
 
   it("reacts to pet taps without resizing, dragging or toggling the expanded island", async () => {

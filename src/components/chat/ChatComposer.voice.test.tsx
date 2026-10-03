@@ -7,7 +7,7 @@ import type { ChatDraft } from "@/core/chat";
 const stopDictation = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/use-voice", () => ({ stopDictation }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async command => command === "get_workflow_catalog" ? { revision: 0, agents: [], flows: [], builtinAgents: [], builtinFlows: [] } : undefined) }));
-vi.mock("@/components/voice/VoiceControls", () => ({ VoiceSessionPanel: () => <p role="status">Estou ouvindo</p>, VoiceControls: ({ onDictation, allowCall }: { onDictation: (text: string) => void; allowCall?: boolean }) => <><Button onClick={() => onDictation("Texto ditado")}>Ditar no teste</Button>{allowCall && <Button>Ligar no teste</Button>}</> }));
+vi.mock("@/components/voice/VoiceControls", () => ({ VoiceSessionPanel: () => <p role="status">Estou ouvindo</p>, VoiceControls: ({ onDictation }: { onDictation: (text: string) => void }) => <Button onClick={() => onDictation("Texto ditado")}>Ditar no teste</Button> }));
 const models = [{ provider: "pessoal", models: [{ value: "pessoal/model", label: "Modelo", reasoningLevels: [], defaultReasoningLevel: null }] }];
 
 describe("composer voice adapter", () => {

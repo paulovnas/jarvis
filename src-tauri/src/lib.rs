@@ -62,6 +62,8 @@ fn application_command_allowed(label: &str, command: &str) -> bool {
                     | "set_companion_sound"
                     | "get_companion_speech"
                     | "set_companion_speech"
+                    | "get_companion_speech_volume"
+                    | "set_companion_speech_volume"
                     | "companion_set_hit_rect"
                     | "set_companion_expanded"
                     | "set_companion_bubble"
@@ -107,6 +109,8 @@ mod companion_policy_tests {
             "set_companion_sound",
             "get_companion_speech",
             "set_companion_speech",
+            "get_companion_speech_volume",
+            "set_companion_speech_volume",
             "companion_set_hit_rect",
             "companion_move_horizontal",
             "companion_finish_drag",
@@ -269,6 +273,8 @@ pub fn run() {
                 companion::set_companion_sound,
                 companion::get_companion_speech,
                 companion::set_companion_speech,
+                companion::get_companion_speech_volume,
+                companion::set_companion_speech_volume,
                 companion::companion_set_hit_rect,
                 companion::set_companion_expanded,
                 companion::set_companion_bubble,

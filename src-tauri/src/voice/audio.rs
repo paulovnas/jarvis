@@ -292,7 +292,7 @@ impl<S: Source> Source for Metered<S> {
     }
 }
 
-/// Pre-roll protects initial consonants. Silence ends a phrase, never the call.
+/// Pre-roll protects initial consonants. Silence ends a phrase, never the dictation.
 pub(super) struct Utterance {
     pre_roll: VecDeque<f32>,
     pub samples: Vec<f32>,
@@ -341,12 +341,6 @@ impl Utterance {
         self.pre_roll.clear();
         accepted.then_some(samples)
     }
-    pub fn clear(&mut self) {
-        self.samples.clear();
-        self.pre_roll.clear();
-        self.silence = 0;
-        self.speech = 0;
-    }
 }
 
 #[cfg(test)]
@@ -369,7 +363,9 @@ mod tests {
         utterance.push(&[0.4; 256], true);
         assert!(utterance.finish().is_none());
         utterance.push(&[0.4; 6000], true);
-        utterance.clear();
+        // Cancellation drops capture and recognition instead of reusing audio.
+        drop(utterance);
+        let mut utterance = Utterance::new(650);
         assert!(utterance.finish().is_none());
     }
     #[test]

@@ -41,9 +41,12 @@ const phrases = {
 } as const;
 
 /** Fixed speech is feedback only: never invent a result, read logs or call an LLM. */
-export function companionSpeechText(item: CompanionItem, variant: number): string | null {
-  const kind = item.status === "waiting" ? item.pendingQuestion ? "question" : "approval"
+function noticeKind(item: CompanionItem) {
+  return item.status === "waiting" ? item.pendingQuestion ? "question" : "approval"
     : item.status === "completed" || item.status === "failed" ? item.status : null;
+}
+export function companionSpeechText(item: CompanionItem, variant: number): string | null {
+  const kind = noticeKind(item);
   if (!kind || item.acknowledged) return null;
   const title = item.global ? "nossa conversa" : item.title.replace(/\s+/gu, " ").trim().slice(0, 180) || "esta atividade";
   return phrases[kind][variant % phrases[kind].length].replace("{task}", title);
@@ -52,6 +55,7 @@ const eventId = (item: CompanionItem) => item.status === "waiting"
   ? `${companionItemKey(item)}/waiting/${item.pendingQuestion?.turnId ?? item.attentionId}/${item.pendingQuestion?.toolId ?? "approval"}`
   : `${companionItemKey(item)}/${item.status}/${item.attentionId}`;
 type Playback = { noticeId: string; sessionId: string | null; presented: boolean };
+const isVolume = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 
 /** The visual queue owns ordering; reveal its current notice when that session can speak. */
 export function useCompanionSpeech(items: CompanionItem[], loaded: boolean, visible = true, notice: CompanionNotice | null = null) {
@@ -59,10 +63,15 @@ export function useCompanionSpeech(items: CompanionItem[], loaded: boolean, visi
   const { start, control } = voice;
   const [enabled, setEnabled] = useState(false);
   const [ready, setReady] = useState(false);
+  const [volume, setVolumeValue] = useState(1);
+  const [volumeReady, setVolumeReady] = useState(false);
+  const [volumeSaving, setVolumeSaving] = useState(false);
+  const [volumeError, setVolumeError] = useState<string | null>(null);
   const [playback, setPlayback] = useState<Playback | null>(null);
   const currentPlayback = useRef<Playback | null>(null);
   const mounted = useRef(false);
   const saving = useRef(false);
+  const savingVolume = useRef(false);
   const enabledRef = useRef(false);
   const [initialized, setInitialized] = useState(false);
   const [seen, setSeen] = useState(() => new Set<string>());
@@ -74,13 +83,18 @@ export function useCompanionSpeech(items: CompanionItem[], loaded: boolean, visi
     let version = 0;
     const refresh = async () => {
       const request = ++version;
-      try {
-        const value = await invoke<unknown>("get_companion_speech");
-        if (!mounted.current || request !== version) return;
-        enabledRef.current = value === true;
-        setEnabled(value === true);
-      } catch { /* Text and existing sound cues remain available. */ }
-      finally { if (mounted.current && request === version) setReady(true); }
+      const current = () => mounted.current && request === version;
+      await Promise.allSettled([
+        invoke<unknown>("get_companion_speech").then(value => {
+          if (!current()) return;
+          enabledRef.current = value === true; setEnabled(value === true);
+        }).finally(() => { if (current()) setReady(true); }),
+        invoke<unknown>("get_companion_speech_volume").then(value => {
+          if (!isVolume(value)) throw new Error("Invalid speech volume");
+          if (!current()) return;
+          setVolumeValue(value); setVolumeReady(true); setVolumeError(null);
+        }).catch(() => { if (current()) setVolumeError("Não foi possível carregar o volume da voz."); }),
+      ]);
     };
     const subscription = listen("companion:speech_changed", () => { void refresh(); });
     void subscription.then(() => refresh()).catch(() => { void refresh(); });
@@ -104,11 +118,34 @@ export function useCompanionSpeech(items: CompanionItem[], loaded: boolean, visi
     } finally { saving.current = false; }
   }, [ready]);
 
-  const canSpeak = ready && enabled && visible && Boolean(voice.settings?.config.enabled && voice.settings.speechReady)
-    && (!voice.active || voice.session?.mode === "announcement");
+  const setVolume = useCallback(async (next: number) => {
+    if (!isVolume(next)) throw new Error("O volume da voz deve estar entre 0 e 100%.");
+    if (!volumeReady || savingVolume.current) return;
+    savingVolume.current = true; setVolumeSaving(true); setVolumeError(null);
+    try {
+      const value = await invoke<unknown>("set_companion_speech_volume", { volume: next });
+      if (!isVolume(value)) throw new Error("Não foi possível salvar o volume da voz.");
+      if (mounted.current) setVolumeValue(value);
+    } catch (cause) {
+      if (mounted.current) setVolumeError("Não foi possível salvar o volume da voz.");
+      throw cause;
+    } finally {
+      savingVolume.current = false;
+      if (mounted.current) setVolumeSaving(false);
+    }
+  }, [volumeReady]);
+
   const id = notice ? eventId(notice.item) : null;
   const text = notice ? companionSpeechText(notice.item, variant) : null;
-  const shouldStart = initialized && canSpeak && Boolean(id && text && !seen.has(id));
+  const kind = notice ? noticeKind(notice.item) : null;
+  const clips = kind ? voice.settings?.announcementClips.filter(id => new RegExp(`^${kind}-[1-8]$`, "u").test(id)).sort() : [];
+  const clip = clips?.length ? clips[variant % clips.length] : undefined;
+  const canSynthesize = Boolean(voice.settings?.config.enabled && voice.settings.speechReady);
+  // Availability must not depend on the queue effect having selected a notice yet.
+  const hasClips = voice.settings?.announcementClips.some(id => /^(completed|failed|question|approval)-[1-8]$/u.test(id));
+  const canSpeak = ready && enabled && visible && Boolean(hasClips || canSynthesize)
+    && (!voice.active || voice.session?.mode === "announcement");
+  const shouldStart = initialized && canSpeak && Boolean((clip || canSynthesize) && id && text && !seen.has(id));
   const current = playback?.noticeId === notice?.id ? playback : null;
   const sessionMatches = Boolean(current?.sessionId && current.sessionId === voice.session?.id);
   const presented = current?.presented || sessionMatches && voice.session?.phase === "speaking";
@@ -151,10 +188,11 @@ export function useCompanionSpeech(items: CompanionItem[], loaded: boolean, visi
     currentPlayback.current = request; seenEvents.current.add(id);
     queueMicrotask(() => {
       if (!mounted.current) return;
-      setSeen(current => new Set([...current, id])); setVariant(current => (current + 1) % 6);
+      setSeen(current => new Set([...current, id])); setVariant(current => current + 1);
       if (currentPlayback.current === request) setPlayback(request);
     });
-    void start("companion-notice", "announcement", text).then(session => {
+    const requestAudio = clip ? start("companion-notice", "announcement", text, clip) : start("companion-notice", "announcement", text);
+    void requestAudio.then(session => {
       if (!mounted.current || currentPlayback.current !== request) {
         if (session.id) void control(session.id, "end").catch(() => {});
         return;
@@ -166,7 +204,8 @@ export function useCompanionSpeech(items: CompanionItem[], loaded: boolean, visi
       currentPlayback.current = null;
       if (mounted.current) setPlayback(null); // Visual fallback; never retry an uncertain speech outcome.
     });
-  }, [shouldStart, id, text, notice, voice.active, start, control]);
+  }, [shouldStart, id, text, clip, notice, voice.active, start, control]);
 
-  return { enabled, ready, toggle, pending: canSpeak && (shouldStart || Boolean(current && !presented)), playing: canSpeak && Boolean(current) };
+  return { enabled, ready, toggle, volume, volumeReady, volumeSaving, volumeError, setVolume,
+    pending: canSpeak && (shouldStart || Boolean(current && !presented)), playing: canSpeak && Boolean(current) };
 }

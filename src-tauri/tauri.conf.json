@@ -40,7 +40,8 @@
     },
     "resources": {
       "../browser-extension/dist/": "browser-extension/",
-      "../browser-extension/dist-firefox/": "browser-extension-firefox/"
+      "../browser-extension/dist-firefox/": "browser-extension-firefox/",
+      "resources/jarvito/announcements/": "jarvito/announcements/"
     },
     "icon": [
       "icons/32x32.png",

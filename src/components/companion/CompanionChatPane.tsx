@@ -19,30 +19,22 @@ import { chatAgentModelKey } from "@/core/chat-models";
 import { companionChatSchema, companionConversationsSchema, companionModelsSchema, type CompanionChat, type CompanionConversation } from "@/core/companion";
 import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/questions";
 import { libraryError } from "@/core/library";
-import { stopDictation, useVoice } from "@/hooks/use-voice";
-import { VoiceControls, VoiceSessionPanel, type VoiceControlHandle } from "@/components/voice/VoiceControls";
 
 const errorMessage = (cause: unknown) => typeof cause === "string" ? cause : libraryError(cause, "Não foi possível conversar com o Jarvito.");
 export interface CompanionChatHandle {
-  startCall: () => void;
   startGeneral: () => void;
   openGeneral: (conversationId: string, revision?: number) => Promise<boolean>;
 }
 
 /** A thin view of the same native conversations and agent runtime used by Jarvis. */
-export function CompanionChatPane({ active = true, externalQuestions = false, speechEnabled = true, onQuestionChange, onView, onSend, ref }: {
+export function CompanionChatPane({ active = true, externalQuestions = false, onQuestionChange, onView, onSend, ref }: {
   active?: boolean;
   externalQuestions?: boolean;
-  speechEnabled?: boolean;
   onQuestionChange?: (context: CompanionQuestionContext | null) => void;
   onView?: (conversationId: string, revision: number) => void;
   onSend?: () => void;
   ref?: Ref<CompanionChatHandle>;
 }) {
-  const voice = useVoice();
-  const [wantCall, setWantCall] = useState(false);
-  const call = useRef<VoiceControlHandle>(null);
-  const [showCallChat, setShowCallChat] = useState(false);
   const [selected, setSelected] = useState("global");
   const [conversations, setConversations] = useState<CompanionConversation[]>([]);
   const [chat, setChat] = useState<CompanionChat | null>(null);
@@ -63,8 +55,6 @@ export function CompanionChatPane({ active = true, externalQuestions = false, sp
   const globalConversation = useRef<string | null>(null);
   const drafts = useRef(new Map<string, string>());
   const draftKey = selected === "global" ? chat?.global ? chat.conversationId : "global" : selected;
-  const voiceTarget = chat ? `companion:${chat.conversationId}` : undefined;
-  const calling = voice.active && voice.session?.target === voiceTarget && voice.session?.mode === "call";
   const applyChat = useCallback((next: CompanionChat) => {
     if (next.global) {
       globalConversation.current = next.conversationId;
@@ -121,11 +111,10 @@ export function CompanionChatPane({ active = true, externalQuestions = false, sp
   };
 
   const chooseConversation = (value: string) => {
-    if (value === selected || busy || calling) return;
+    if (value === selected || busy) return;
     setChat(null); selectConversation(value);
   };
   useImperativeHandle(ref, () => ({
-    startCall: () => { chooseConversation("global"); setWantCall(true); },
     startGeneral: () => chooseConversation("global"),
     openGeneral: async (conversationId, revision) => {
       if (busy) return false;
@@ -139,27 +128,22 @@ export function CompanionChatPane({ active = true, externalQuestions = false, sp
   }));
 
   useEffect(() => {
-    if (wantCall && chat && !loading && !busy) queueMicrotask(() => { setWantCall(false); void call.current?.startCall(); });
-  }, [wantCall, chat, loading, busy]);
-
-  useEffect(() => {
     const viewport = scroll.current?.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]");
     if (viewport && stickToBottom.current) viewport.scrollTop = viewport.scrollHeight;
   }, [chat]);
 
-  const send = async (voiceText?: string): Promise<boolean> => {
-    const content = (voiceText ?? draft).trim();
+  const send = async (): Promise<boolean> => {
+    const content = draft.trim();
     if (!content || busy || loading) return false;
     if (modelInvalid) { setActionError("O modelo deste chat não está disponível. Selecione outro modelo."); return false; }
     setBusy(true); setActionError(null); setPreservedRequest(null);
     try {
-      if (voiceText === undefined) await stopDictation(voiceTarget);
       const selectedOptions = modelOverride?.conversation === selected ? {
         ...(chat?.options ?? { account: "", model: "", reasoning: null, mode: "build" as const, workflow: "standard" as const, approvalMode: "yolo" as const }),
         ...executionChoice(modelOverride.selection),
       } : undefined;
       const result = companionChatSchema.parse(await invoke("send_companion_message", { conversationId: selected === "global" ? null : selected, content, ...(selectedOptions ? { options: selectedOptions } : {}) }));
-      applyChat(result); onSend?.(); if (!voiceText) setDraft(current => {
+      applyChat(result); onSend?.(); setDraft(current => {
         if (current.trim() !== content) return current;
         drafts.current.delete(draftKey); return "";
       }); stickToBottom.current = true;
@@ -198,7 +182,6 @@ export function CompanionChatPane({ active = true, externalQuestions = false, sp
     setBusy(true); setActionError(null);
     try {
       const result = companionChatSchema.parse(await invoke("confirm_companion_project", { proposalId: proposal.id, confirmed }));
-      if (confirmed && !result.global && calling && voice.session?.id) await voice.control(voice.session.id, "retarget", `companion:${result.conversationId}`);
       applyChat(result);
       if (confirmed && !result.global) selectConversation(result.conversationId);
       return true;
@@ -261,7 +244,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, sp
     if (active && chat && !chat.chat.activeTurnId && !chat.chat.compacting && !chat.chat.pendingQuestion && !chat.chat.pendingApproval && !chat.chat.pendingAuthoring) onView?.(chat.conversationId, chat.chat.revision);
   }, [active, chat, onView]);
 
-  if (active && chat && (chat.chat.pendingQuestion || chat.chat.pendingApproval || chat.chat.pendingAuthoring) && !externalQuestions && !calling) return <CompanionQuestion context={{
+  if (active && chat && (chat.chat.pendingQuestion || chat.chat.pendingApproval || chat.chat.pendingAuthoring) && !externalQuestions) return <CompanionQuestion context={{
     conversationId: chat.conversationId, agentId: null, title: selectedTitle, projectName: chat.projectName ?? "Conversa com Jarvito",
     request: chat.chat.pendingQuestion, requiresConversation: Boolean(chat.chat.pendingApproval || chat.chat.pendingAuthoring),
   }} drafts={questionDrafts} onAnswer={answer} onInteract={pause} onOpenConversation={() => { void invoke("companion_open_conversation", { conversationId: chat.conversationId }).catch(cause => setActionError(errorMessage(cause))); }} error={actionError || error} />;
@@ -269,20 +252,16 @@ export function CompanionChatPane({ active = true, externalQuestions = false, sp
   return <div role="region" aria-label="Conversa e controles do Jarvito" className="companion-chat flex h-full min-h-0 flex-col gap-2">
     <div className="flex items-center gap-1">
     <Select value={selected} onValueChange={value => { if (typeof value === "string") chooseConversation(value); }}>
-      <SelectTrigger aria-label="Conversa do Jarvito" size="sm" disabled={busy || calling} className="min-w-0 flex-1 cursor-pointer text-[11px]"><SelectValue>{selectedTitle}</SelectValue></SelectTrigger>
+      <SelectTrigger aria-label="Conversa do Jarvito" size="sm" disabled={busy} className="min-w-0 flex-1 cursor-pointer text-[11px]"><SelectValue>{selectedTitle}</SelectValue></SelectTrigger>
       <SelectContent className="max-h-64 max-w-[calc(100vw-36px)]">
         <SelectItem value="global" className="cursor-pointer text-[11px]"><span className="flex flex-col gap-0.5"><span>Conversar com Jarvito</span><span className="text-[9px] text-muted-foreground">Sem projeto · perguntas e ajuda do dia a dia</span></span></SelectItem>
         {conversations.map(item => <SelectItem key={item.id} value={item.id} className="cursor-pointer text-[11px]"><span className="flex min-w-0 flex-col gap-0.5"><span className="truncate">{item.title}</span><span className="truncate font-mono text-[9px] text-muted-foreground">{item.workspaceName} · {item.projectName}</span></span></SelectItem>)}
       </SelectContent>
     </Select>
-    <VoiceControls ref={call} allowCall speechEnabled={speechEnabled} target={voiceTarget} snapshot={chat?.chat} proposal={chat?.proposal} onConfirmProject={confirm} onAnswerQuestion={answer} onPauseQuestion={pause} disabled={busy || loading} onDictation={text => { setDraft(current => { const next = current ? `${current}\n\n${text}` : text; drafts.current.set(draftKey, next); return next; }); }} onMessage={text => send(text)} />
-    {selected === "global" && !calling && <Hint content={running ? "Pare a resposta antes de limpar a conversa." : clearBlocked ? "Aguarde as operações da conversa terminarem para limpar." : "Limpar histórico e começar uma nova conversa."}><Button type="button" aria-label="Limpar conversa" aria-busy={busy} variant="ghost" size="icon-sm" disabled={busy || loading || !chat?.global || clearBlocked} className="shrink-0 cursor-pointer text-muted-foreground" onClick={() => { void clear(); }}><Eraser className="size-3.5" /></Button></Hint>}
+    {selected === "global" && <Hint content={running ? "Pare a resposta antes de limpar a conversa." : clearBlocked ? "Aguarde as operações da conversa terminarem para limpar." : "Limpar histórico e começar uma nova conversa."}><Button type="button" aria-label="Limpar conversa" aria-busy={busy} variant="ghost" size="icon-sm" disabled={busy || loading || !chat?.global || clearBlocked} className="shrink-0 cursor-pointer text-muted-foreground" onClick={() => { void clear(); }}><Eraser className="size-3.5" /></Button></Hint>}
     </div>
-    {calling && <VoiceSessionPanel target={voiceTarget} compact={showCallChat} />}
-    {calling && <Button type="button" size="sm" variant="ghost" className="h-6 cursor-pointer text-[10px] text-muted-foreground" onClick={() => setShowCallChat(value => !value)}>{showCallChat ? "Voltar à ligação" : "Mostrar conversa"}</Button>}
-    {!calling && <VoiceSessionPanel target={voiceTarget} compact />}
-    {chat?.global === false && (!calling || showCallChat) && <p className="px-1 text-[9px] text-muted-foreground">Projeto {chat.projectName} · conversa compartilhada com o Jarvis</p>}
-    <ScrollArea ref={scroll} className={`min-h-0 flex-1 pr-2 ${calling && !showCallChat ? "hidden" : ""}`} onScrollCapture={event => {
+    {chat?.global === false && <p className="px-1 text-[9px] text-muted-foreground">Projeto {chat.projectName} · conversa compartilhada com o Jarvis</p>}
+    <ScrollArea ref={scroll} className="min-h-0 flex-1 pr-2" onScrollCapture={event => {
       const target = event.target;
       if (target instanceof HTMLElement) stickToBottom.current = target.scrollHeight - target.scrollTop - target.clientHeight < 40;
     }}>
@@ -308,15 +287,15 @@ export function CompanionChatPane({ active = true, externalQuestions = false, sp
         {(actionError || error) && <div className="space-y-1"><p role="alert" className="text-[11px] leading-5 text-onedark-yellow">{actionError || error}</p>{preservedRequest && preservedRequest !== draft && <p className="whitespace-pre-wrap break-words rounded-lg border border-border p-2 text-[11px] leading-5">{preservedRequest}</p>}{!chat && <Button size="sm" variant="ghost" className="h-7 cursor-pointer text-[10px]" onClick={() => { setLoading(true); setError(null); setAttempt(value => value + 1); }}>Tentar novamente</Button>}</div>}
       </div>
     </ScrollArea>
-    {(!calling || showCallChat) && <form className="relative shrink-0" onSubmit={event => { event.preventDefault(); void send(); }}>
+    <form className="relative shrink-0" onSubmit={event => { event.preventDefault(); void send(); }}>
       <Textarea aria-label="Mensagem para Jarvito" placeholder={running ? "Envie uma orientação…" : "Converse com Jarvito…"} value={draft} onChange={event => { drafts.current.set(draftKey, event.target.value); setDraft(event.target.value); }} className={`min-h-14 max-h-24 resize-none rounded-2xl border-border bg-secondary/40 text-[11px] leading-5 ${running ? "pr-20" : "pr-11"}`} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
       <div className="absolute right-2 bottom-2 flex items-center gap-1">
         {running && <Hint content="Parar resposta"><Button type="button" variant="secondary" size="icon-sm" aria-label="Parar resposta" disabled={busy} className="cursor-pointer rounded-full" onClick={() => { void stop(); }}><Square className="size-3" /></Button></Hint>}
         <Button type="submit" size="icon-sm" aria-label={running ? "Enviar orientação agora" : "Enviar mensagem"} aria-busy={busy} disabled={busy || loading || modelInvalid || !draft.trim()} className="cursor-pointer rounded-full"><ArrowUp className="size-3.5" /></Button>
       </div>
-    </form>}
-    {!calling && <div className="-mx-1 flex shrink-0 items-center overflow-hidden">
+    </form>
+    <div className="-mx-1 flex shrink-0 items-center overflow-hidden">
       <ModelPicker modelGroups={models} selection={selectedModel} onSelect={selection => { void chooseModel(selection); }} disabled={busy || loading || running} invalid={modelInvalid} showProviderIdentity ariaLabel="Modelo do Jarvito" />
-    </div>}
+    </div>
   </div>;
 }

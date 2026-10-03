@@ -1,25 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { savedTurn } from "@/test/chat-fixtures";
-import { voiceSession } from "@/test/voice-fixtures";
-import { voiceActive, voiceConfigSchema, voiceQuestionAnswer, voiceReply } from "./voice";
+import { voiceSession, voiceSettings } from "@/test/voice-fixtures";
+import { voiceActive, voiceConfigSchema, voiceSessionSchema, voiceSettingsSchema, voiceTranscriptSchema } from "./voice";
 
-describe("voice conversation contract", () => {
-  it("uses only the final visible reply, preserving error and interrupted states", () => {
-    const turn = savedTurn();
-    turn.steps.push({ ...turn.steps[0], text: "Feito!", summary: "Private work" });
-    expect(voiceReply(turn)).toBe("Feito!");
-    expect(voiceReply({ ...turn, status: "error", error: { message: "Sem conexão", code: "network" } })).toBe("Sem conexão");
-    expect(voiceReply({ ...turn, status: "cancelled" })).toContain("interrompida");
-  });
-  it("recognizes Portuguese option numbers and labels while preserving free text", () => {
-    const question = { id: "q1", header: "Estilo", question: "Qual estilo?", options: [{ label: "Clássico", description: "Clássico" }, { label: "Moderno", description: "Moderno" }] };
-    expect(voiceQuestionAnswer(question, "Opção duas.")).toEqual({ id: "q1", value: "Moderno", selectedLabel: "Moderno" });
-    expect(voiceQuestionAnswer(question, "classico!").selectedLabel).toBe("Clássico");
-    expect(voiceQuestionAnswer(question, "Prefiro um estilo industrial")).toEqual({ id: "q1", value: "Prefiro um estilo industrial" });
+describe("voice contract", () => {
+  it("accepts dictation and speech playback modes while rejecting removed call sessions and transcripts", () => {
+    for (const mode of ["dictation", "test", "announcement"] as const) expect(voiceSessionSchema.safeParse(voiceSession({ mode })).success).toBe(true);
+    expect(voiceSessionSchema.safeParse({ ...voiceSession(), mode: "call" }).success).toBe(false);
+    const transcript = { sessionId: "voice-1", target: "chat:1", sequence: 1, text: "Meu texto", mode: "dictation" };
+    expect(voiceTranscriptSchema.safeParse(transcript).success).toBe(true);
+    expect(voiceTranscriptSchema.safeParse({ ...transcript, mode: "call" }).success).toBe(false);
   });
   it("keeps ownership during shutdown and rejects invalid calibration", () => {
     expect(voiceActive(voiceSession({ phase: "closing" }))).toBe(true);
     expect(voiceActive(voiceSession({ phase: "error" }))).toBe(false);
     expect(voiceConfigSchema.safeParse({ enabled: true, microphone: null, speaker: null, model: "small", voice: "pm_alex", speed: NaN, silenceMs: 50 }).success).toBe(false);
+  });
+  it("loads optional recorded announcement clips without breaking existing settings", () => {
+    const previous = { ...voiceSettings(), announcementClips: undefined };
+    expect(voiceSettingsSchema.parse(previous).announcementClips).toEqual([]);
+    expect(voiceSettingsSchema.parse({ ...previous, announcementClips: ["completed-1", "question-2"] }).announcementClips).toEqual(["completed-1", "question-2"]);
   });
 });

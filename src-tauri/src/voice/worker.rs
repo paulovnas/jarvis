@@ -257,6 +257,107 @@ fn speech_batches<T>(
     Ok(())
 }
 
+fn prepared_audio(path: &Path) -> Result<rodio::buffer::SamplesBuffer, String> {
+    // The WAV decoder asserts nonzero rates/channels; malformed user recordings
+    // must still take the normal synthesis/visual fallback, never end the worker.
+    std::panic::catch_unwind(|| {
+        let source = rodio::Decoder::try_from(
+            std::fs::File::open(path).map_err(|_| "Áudio de voz indisponível.")?,
+        )
+        .map_err(|_| "O áudio da voz local é inválido.")?;
+        let channels = source.channels();
+        let sample_rate = source.sample_rate();
+        let expected_samples = source.size_hint().1;
+        let samples = source.collect::<Vec<_>>();
+        if samples.is_empty() || expected_samples.is_some_and(|length| length != samples.len()) {
+            return Err("O áudio da voz local está vazio ou incompleto.".into());
+        }
+        Ok(rodio::buffer::SamplesBuffer::new(
+            channels,
+            sample_rate,
+            samples,
+        ))
+    })
+    .unwrap_or_else(|_| Err("O áudio da voz local é inválido.".into()))
+}
+
+fn prepared_announcement(
+    path: &Path,
+    synthesis_ready: impl FnOnce() -> bool,
+) -> Result<Option<rodio::buffer::SamplesBuffer>, String> {
+    match prepared_audio(path) {
+        Ok(audio) => Ok(Some(audio)),
+        Err(_) if synthesis_ready() => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn speech_allowed(mode: &str, companion_enabled: bool) -> bool {
+    mode != "announcement" || companion_enabled
+}
+
+fn set_speech_volume(player: &rodio::Player, mode: &str, volume: f32) {
+    player.set_volume(if mode == "announcement" { volume } else { 1.0 });
+}
+
+fn play_prepared(
+    app: &tauri::AppHandle,
+    config: &Config,
+    session: &Arc<Session>,
+    revision: u64,
+    prepared: Vec<(String, rodio::buffer::SamplesBuffer)>,
+) -> Result<(), String> {
+    if !session.current_speech(revision) {
+        return Ok(());
+    }
+    let device = audio::device(config.speaker.as_deref(), false)?;
+    let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let failure = failed.clone();
+    let mut sink = rodio::DeviceSinkBuilder::from_device(device)
+        .map_err(|_| "Alto-falante indisponível.")?
+        .with_error_callback(move |_| {
+            failure.store(true, Ordering::Release);
+        })
+        .open_sink_or_fallback()
+        .map_err(|_| "Não foi possível abrir o alto-falante.")?;
+    sink.log_on_drop(false);
+    let player = rodio::Player::connect_new(sink.mixer());
+    player.pause();
+    let desktop = app.state::<crate::desktop::DesktopState>();
+    set_speech_volume(&player, &session.mode, desktop.companion_speech_volume());
+    let transcript = prepared
+        .iter()
+        .map(|(phrase, _)| phrase.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let level = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    for (_, source) in prepared {
+        player.append(audio::Metered::new(source, level.clone()));
+    }
+    if !session.current_speech(revision) {
+        player.stop();
+        return Ok(());
+    }
+    session.update(app, Phase::Speaking, Some(transcript), None, 0.);
+    player.play();
+    while !player.empty() && session.current_speech(revision) {
+        set_speech_volume(&player, &session.mode, desktop.companion_speech_volume());
+        session.update(
+            app,
+            Phase::Speaking,
+            None,
+            None,
+            f32::from_bits(level.load(Ordering::Acquire)),
+        );
+        if failed.load(Ordering::Acquire) {
+            return Err("O alto-falante foi desconectado durante a fala.".into());
+        }
+        std::thread::sleep(Duration::from_millis(35));
+    }
+    player.stop();
+    Ok(())
+}
+
 fn speak(
     app: &tauri::AppHandle,
     home: &Path,
@@ -267,9 +368,11 @@ fn speak(
 ) -> Result<(), String> {
     session.enabled.store(false, Ordering::Release);
     if !session.current_speech(revision)
-        || !app
-            .state::<crate::desktop::DesktopState>()
-            .companion_speech_enabled()
+        || !speech_allowed(
+            &session.mode,
+            app.state::<crate::desktop::DesktopState>()
+                .companion_speech_enabled(),
+        )
     {
         return Ok(());
     }
@@ -315,62 +418,10 @@ fn speak(
                     return Err(error);
                 }
             };
-            let source = rodio::Decoder::try_from(
-                std::fs::File::open(path).map_err(|_| "Áudio de voz indisponível.")?,
-            )
-            .map_err(|_| "O áudio da voz local é inválido.")?;
             // The warm engine overwrites speech.wav for each phrase.
-            Ok(rodio::buffer::SamplesBuffer::new(
-                source.channels(),
-                source.sample_rate(),
-                source.collect::<Vec<_>>(),
-            ))
+            prepared_audio(&path)
         },
-        |prepared| {
-            let device = audio::device(config.speaker.as_deref(), false)?;
-            let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let failure = failed.clone();
-            let mut sink = rodio::DeviceSinkBuilder::from_device(device)
-                .map_err(|_| "Alto-falante indisponível.")?
-                .with_error_callback(move |_| {
-                    failure.store(true, Ordering::Release);
-                })
-                .open_sink_or_fallback()
-                .map_err(|_| "Não foi possível abrir o alto-falante.")?;
-            sink.log_on_drop(false);
-            let player = rodio::Player::connect_new(sink.mixer());
-            player.pause();
-            let transcript = prepared
-                .iter()
-                .map(|(phrase, _)| phrase.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
-            let level = Arc::new(std::sync::atomic::AtomicU32::new(0));
-            for (_, source) in prepared {
-                player.append(audio::Metered::new(source, level.clone()));
-            }
-            if !session.current_speech(revision) {
-                player.stop();
-                return Ok(());
-            }
-            session.update(app, Phase::Speaking, Some(transcript), None, 0.);
-            player.play();
-            while !player.empty() && session.current_speech(revision) {
-                session.update(
-                    app,
-                    Phase::Speaking,
-                    None,
-                    None,
-                    f32::from_bits(level.load(Ordering::Acquire)),
-                );
-                if failed.load(Ordering::Acquire) {
-                    return Err("O alto-falante foi desconectado durante a fala.".into());
-                }
-                std::thread::sleep(Duration::from_millis(35));
-            }
-            player.stop();
-            Ok(())
-        },
+        |prepared| play_prepared(app, config, session, revision, prepared),
     )
 }
 
@@ -391,12 +442,6 @@ impl Recognition {
             since_vad: 0,
             speaking: false,
         }
-    }
-    fn clear(&mut self) {
-        self.utterance.clear();
-        self.window.clear();
-        self.since_vad = 0;
-        self.speaking = false;
     }
     fn push(
         &mut self,
@@ -445,6 +490,11 @@ impl Recognition {
     }
 }
 
+pub(super) struct SpeechRequest<'a> {
+    pub text: Option<&'a str>,
+    pub clip: Option<&'a Path>,
+}
+
 pub(super) fn run(
     app: &tauri::AppHandle,
     home: &Path,
@@ -452,10 +502,37 @@ pub(super) fn run(
     paths: Option<(PathBuf, PathBuf)>,
     session: &Arc<Session>,
     controls: mpsc::Receiver<Control>,
-    announcement: Option<&str>,
+    speech: SpeechRequest<'_>,
 ) -> Result<(), String> {
     if matches!(session.mode.as_str(), "test" | "announcement") {
-        return speak(app, home, config, session, announcement.unwrap_or("Olá! Eu sou o Jarvis. Agora podemos conversar por voz, em português, no chat e com o Jarvito."), session.speech_revision.load(Ordering::Acquire));
+        let revision = session.speech_revision.load(Ordering::Acquire);
+        session.enabled.store(false, Ordering::Release);
+        if !session.current_speech(revision)
+            || !speech_allowed(
+                &session.mode,
+                app.state::<crate::desktop::DesktopState>()
+                    .companion_speech_enabled(),
+            )
+        {
+            return Ok(());
+        }
+        let text = speech.text.unwrap_or(
+            "Olá! Eu sou o Jarvis. Minha voz local está pronta para os avisos em português.",
+        );
+        if let Some(path) = speech.clip {
+            if let Some(audio) = prepared_announcement(path, || {
+                config.enabled && crate::core::audiovisual::runtime(home).is_ok()
+            })? {
+                return play_prepared(
+                    app,
+                    config,
+                    session,
+                    revision,
+                    vec![(spoken_text(text), audio)],
+                );
+            }
+        }
+        return speak(app, home, config, session, text, revision);
     }
     let (model, vad_path) = paths.ok_or("Modelo de transcrição indisponível.")?;
     let parameters = WhisperContextParameters::default();
@@ -481,20 +558,6 @@ pub(super) fn run(
     if session.cancelled() {
         return Ok(());
     }
-    if session.mode == "call" {
-        speak(
-            app,
-            home,
-            config,
-            session,
-            "Oi! Estou aqui. Pode falar.",
-            session.speech_revision.load(Ordering::Acquire),
-        )?;
-        std::thread::sleep(Duration::from_millis(180));
-    }
-    if session.cancelled() {
-        return Ok(());
-    }
     let capture = audio::capture(config.microphone.as_deref(), session.enabled.clone())?;
     let mut recognition = Recognition::new(capture.rate, config.silence_ms);
     let mut sequence = 0;
@@ -512,41 +575,8 @@ pub(super) fn run(
         let mut complete = Vec::new();
         match control {
             Some(Control::Finish) => {
+                session.enabled.store(false, Ordering::Release);
                 complete = recognition.finish(&mut vad, capture.audio.try_iter())?
-            }
-            Some(Control::Speak {
-                text,
-                revision,
-                cue,
-            }) => {
-                if !session.current_speech(revision) {
-                    continue;
-                }
-                recognition.clear();
-                speak(app, home, config, session, &text, revision)?;
-                // Drain old capture and allow the hardware output buffer to finish.
-                std::thread::sleep(Duration::from_millis(180));
-                for _ in capture.audio.try_iter() {}
-                if session.current_speech(revision)
-                    || !app
-                        .state::<crate::desktop::DesktopState>()
-                        .companion_speech_enabled()
-                {
-                    if cue {
-                        session.update(app, Phase::Thinking, None, None, 0.);
-                    } else {
-                        session.listen(app);
-                    }
-                }
-            }
-            Some(Control::Resume | Control::Interrupt) => {
-                recognition.clear();
-                for _ in capture.audio.try_iter() {}
-                session.listen(app);
-            }
-            Some(Control::Mute) => {
-                recognition.clear();
-                session.update(app, Phase::Paused, None, None, 0.);
             }
             None => {}
         }
@@ -565,42 +595,24 @@ pub(super) fn run(
             std::thread::sleep(Duration::from_millis(20));
         }
         for samples in complete {
-            if session.mode != "dictation" {
-                session.enabled.store(false, Ordering::Release);
-            }
             session.update(app, Phase::Transcribing, None, None, 0.);
             let text = transcription(&context, &samples, session)?;
-            if session.mode != "dictation" {
-                for _ in capture.audio.try_iter() {}
-                recognition.clear();
-            }
-            let empty = text.is_empty();
             if !text.is_empty() && !session.cancelled() {
                 sequence += 1;
                 let transcript = Transcript {
                     session_id: session.id.clone(),
-                    target: session
-                        .target
-                        .lock()
-                        .map_err(|_| "Destino da voz indisponível.")?
-                        .clone(),
+                    target: session.target.clone(),
                     sequence,
                     text: text.clone(),
                     mode: session.mode.clone(),
                 };
-                session.update(app, Phase::Thinking, Some(text), None, 0.);
+                session.update(app, Phase::Transcribing, Some(text), None, 0.);
                 let _ = app.emit_to(&session.owner, "voice:transcript", transcript);
             }
-            if !finishing {
-                if session.mode == "dictation" {
-                    // Capture continues during decode. A concurrent Finish/Mute
-                    // must stay disabled until its queued control is processed.
-                    if session.enabled.load(Ordering::Acquire) {
-                        session.update(app, Phase::Listening, None, None, 0.);
-                    }
-                } else if empty {
-                    session.listen(app);
-                }
+            // Capture continues during decode. A concurrent Finish must stay
+            // disabled until its queued control is processed.
+            if !finishing && session.enabled.load(Ordering::Acquire) {
+                session.update(app, Phase::Listening, None, None, 0.);
             }
         }
         if finishing {
@@ -617,6 +629,102 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pcm_recording() -> tempfile::NamedTempFile {
+        let mut bytes = Vec::from(*b"RIFF");
+        bytes.extend(40_u32.to_le_bytes());
+        bytes.extend(b"WAVEfmt ");
+        bytes.extend(16_u32.to_le_bytes());
+        bytes.extend(1_u16.to_le_bytes());
+        bytes.extend(1_u16.to_le_bytes());
+        bytes.extend(16_000_u32.to_le_bytes());
+        bytes.extend(32_000_u32.to_le_bytes());
+        bytes.extend(2_u16.to_le_bytes());
+        bytes.extend(16_u16.to_le_bytes());
+        bytes.extend(b"data");
+        bytes.extend(4_u32.to_le_bytes());
+        bytes.extend(16_384_i16.to_le_bytes());
+        bytes.extend((-16_384_i16).to_le_bytes());
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), bytes).unwrap();
+        file
+    }
+
+    #[test]
+    fn main_voice_test_is_independent_of_companion_speech_preferences() {
+        assert!(speech_allowed("test", false));
+        assert!(!speech_allowed("announcement", false));
+        assert!(speech_allowed("announcement", true));
+    }
+
+    #[test]
+    fn prerecorded_announcement_is_fully_decoded_without_preparing_local_models() {
+        let file = pcm_recording();
+        let audio = prepared_announcement(file.path(), || {
+            panic!("A valid recording never needs local synthesis models")
+        })
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(audio.channels().get(), 1);
+        assert_eq!(audio.sample_rate().get(), 16_000);
+        assert_eq!(audio.collect::<Vec<_>>(), [0.5, -0.5]);
+    }
+
+    #[test]
+    fn speech_volume_changes_already_queued_audio_and_keeps_voice_tests_independent() {
+        let recording = pcm_recording();
+        let prepared = prepared_audio(recording.path()).unwrap();
+        let (player, source) = rodio::Player::new();
+        set_speech_volume(&player, "announcement", 0.5);
+        player.append(prepared.repeat_infinite());
+        let mut source = source.skip_while(|sample| *sample == 0.0);
+
+        let initial: Vec<_> = source.by_ref().take(160).collect();
+        assert!(initial.iter().all(|sample| sample.abs() == 0.25));
+        for (volume, amplitude) in [(0.25, 0.125), (0.0, 0.0)] {
+            set_speech_volume(&player, "announcement", volume);
+            let samples: Vec<_> = source.by_ref().take(160).collect();
+            // Rodio refreshes its gain every 5 ms (80 samples at this rate).
+            assert!(samples[80..].iter().all(|sample| sample.abs() == amplitude));
+        }
+        set_speech_volume(&player, "test", 0.0);
+        let samples: Vec<_> = source.take(160).collect();
+        assert!(samples[80..].iter().all(|sample| sample.abs() == 0.5));
+        player.stop();
+    }
+
+    #[test]
+    fn corrupt_recording_falls_back_only_when_local_synthesis_is_ready() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"corrupt audio").unwrap();
+
+        assert!(prepared_announcement(file.path(), || false).is_err());
+        assert!(prepared_announcement(file.path(), || true)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn truncated_recording_never_becomes_playable_partial_audio() {
+        let file = pcm_recording();
+        file.as_file().set_len(46).unwrap();
+
+        assert!(prepared_announcement(file.path(), || false).is_err());
+    }
+
+    #[test]
+    fn invalid_recording_dimensions_use_the_synthesis_fallback() {
+        let file = pcm_recording();
+        let mut bytes = std::fs::read(file.path()).unwrap();
+        bytes[24..28].fill(0);
+        std::fs::write(file.path(), bytes).unwrap();
+
+        assert!(prepared_announcement(file.path(), || true)
+            .unwrap()
+            .is_none());
+    }
+
     #[test]
     fn spoken_answers_preserve_prose_and_never_read_code_or_link_targets() {
         assert_eq!(spoken_text("## Olá\nAbra [o projeto](https://secret/token).\n```sh\nrm -rf /\n```\n**Concluído.**"), "Olá Abra o projeto. Concluído.");
@@ -778,12 +886,11 @@ mod tests {
         let (sender, _) = mpsc::sync_channel(1);
         let session = Arc::new(Session {
             id: "smoke".into(),
-            target: std::sync::Mutex::new("voice-test".into()),
+            target: "chat:0123456789abcdef0123456789abcdef".into(),
             owner: "main".into(),
-            mode: "call".into(),
+            mode: "dictation".into(),
             stop: std::sync::atomic::AtomicBool::new(false),
             enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            muted: std::sync::atomic::AtomicBool::new(false),
             audio_revision: std::sync::atomic::AtomicU64::new(0),
             speech_revision: std::sync::atomic::AtomicU64::new(0),
             sender,

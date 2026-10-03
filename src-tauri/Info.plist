@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>O Jarvis usa o microfone somente quando você inicia um ditado ou uma ligação com o Jarvis Voice. O áudio é transcrito localmente.</string>
+  <string>O Jarvis usa o microfone somente quando você inicia um ditado. O áudio é transcrito localmente.</string>
 </dict>
 </plist>

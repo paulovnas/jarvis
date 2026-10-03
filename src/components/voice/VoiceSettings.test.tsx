@@ -35,10 +35,12 @@ describe("local voice setup", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Cancelar" })));
     expect(invoke).toHaveBeenCalledWith("cancel_voice_download");
   });
-  it("keeps dictation available without TTS and explains how to prepare spoken replies", () => {
+  it("keeps dictation available without TTS and explains how to prepare speech", () => {
     mock.settings = voiceSettings({ speechReady: false });
     render(<VoiceSettings />);
     expect(screen.getByRole("button", { name: "Testar voz" })).toBeDisabled();
     expect(screen.getByText(/O ditado funciona/)).toBeVisible();
+    expect(screen.getByText(/O microfone só abre ao iniciar um ditado\./)).toBeVisible();
+    expect(screen.queryByText(/ligaç/)).not.toBeInTheDocument();
   });
 });

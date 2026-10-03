@@ -1,4 +1,5 @@
 //! Voice is an input/output adapter for existing conversations, never a second agent.
+mod announcements;
 mod audio;
 pub(crate) mod models;
 mod worker;
@@ -79,7 +80,6 @@ pub(crate) struct SessionView {
     pub owner: Option<String>,
     pub mode: Option<String>,
     pub phase: Phase,
-    pub muted: bool,
     pub level: f32,
     pub transcript: String,
     pub error: Option<String>,
@@ -93,10 +93,8 @@ pub(crate) enum Phase {
     Preparing,
     Listening,
     Transcribing,
-    Thinking,
     Synthesizing,
     Speaking,
-    Paused,
     Closing,
     Error,
 }
@@ -112,37 +110,28 @@ pub(crate) struct VoiceState {
 }
 pub(super) struct Session {
     id: String,
-    target: Mutex<String>,
+    target: String,
     owner: String,
     mode: String,
     stop: AtomicBool,
     enabled: Arc<AtomicBool>,
-    muted: AtomicBool,
     audio_revision: AtomicU64,
     speech_revision: AtomicU64,
     sender: mpsc::SyncSender<Control>,
 }
 pub(super) enum Control {
     Finish,
-    Resume,
-    Speak {
-        text: String,
-        revision: u64,
-        cue: bool,
-    },
-    Interrupt,
-    Mute,
 }
 
 impl VoiceState {
     pub(crate) fn silence_speech(&self, app: &tauri::AppHandle) {
         if let Ok(active) = self.active.lock() {
-            if let Some(session) = active.as_ref() {
-                session.speech_revision.fetch_add(1, Ordering::AcqRel);
-                if session.mode == "announcement" {
-                    session.stop_for_owner(None);
-                    session.update(app, Phase::Closing, None, None, 0.);
-                }
+            if let Some(session) = active
+                .as_ref()
+                .filter(|session| session.mode == "announcement")
+            {
+                session.stop_for_owner(None);
+                session.update(app, Phase::Closing, None, None, 0.);
             }
         }
     }
@@ -176,19 +165,6 @@ impl Session {
     fn current_speech(&self, revision: u64) -> bool {
         !self.cancelled() && self.speech_revision.load(Ordering::Acquire) == revision
     }
-    fn speech(&self, text: String, cue: bool) -> Control {
-        self.enabled.store(false, Ordering::Release);
-        let revision = if cue {
-            self.speech_revision.load(Ordering::Acquire)
-        } else {
-            self.speech_revision.fetch_add(1, Ordering::AcqRel) + 1
-        };
-        Control::Speak {
-            text,
-            revision,
-            cue,
-        }
-    }
     fn update(
         &self,
         app: &tauri::AppHandle,
@@ -206,16 +182,12 @@ impl Session {
                 return;
             }
             view.phase = phase;
-            if let Ok(target) = self.target.lock() {
-                view.target = Some(target.clone());
-            }
-            view.muted = self.muted.load(Ordering::Acquire);
             view.level = level.clamp(0., 1.);
             view.error = error;
             if let Some(transcript) = transcript {
                 view.transcript = transcript;
                 view.speaker = Some(
-                    if phase == Phase::Thinking {
+                    if self.mode == "dictation" {
                         "user"
                     } else {
                         "jarvis"
@@ -228,20 +200,8 @@ impl Session {
         };
     }
     fn listen(&self, app: &tauri::AppHandle) {
-        let muted = self.muted.load(Ordering::Acquire);
-        self.enabled
-            .store(!muted && !self.cancelled(), Ordering::Release);
-        self.update(
-            app,
-            if muted {
-                Phase::Paused
-            } else {
-                Phase::Listening
-            },
-            None,
-            None,
-            0.,
-        );
+        self.enabled.store(!self.cancelled(), Ordering::Release);
+        self.update(app, Phase::Listening, None, None, 0.);
     }
     fn finish(&self, app: &tauri::AppHandle, error: Option<String>) {
         self.enabled.store(false, Ordering::Release);
@@ -274,6 +234,7 @@ pub(crate) struct Settings {
     models: Vec<models::Model>,
     speech_ready: bool,
     speech_error: Option<String>,
+    announcement_clips: Vec<String>,
     download: Option<models::Download>,
     session: SessionView,
 }
@@ -301,6 +262,7 @@ fn settings(app: tauri::AppHandle) -> Result<Settings, String> {
         models: models::list(&home),
         speech_ready: speech.is_ok(),
         speech_error: speech.err().map(|error| error.message),
+        announcement_clips: announcements::available(&app),
         download,
         session,
     })
@@ -357,21 +319,19 @@ pub(crate) fn get_voice_session(
 fn valid_target(target: &str) -> bool {
     target
         .strip_prefix("chat:")
-        .or_else(|| target.strip_prefix("companion:"))
         .is_some_and(|id| id.len() == 32 && id.bytes().all(|c| c.is_ascii_hexdigit()))
         || target == "voice-test"
 }
 fn valid_session(target: &str, mode: &str, owner: &str) -> bool {
-    if mode == "announcement" {
-        return owner == "companion" && target == "companion-notice";
+    match mode {
+        "dictation" => owner == "main" && target.starts_with("chat:") && valid_target(target),
+        "test" => owner == "main" && target == "voice-test",
+        "announcement" => owner == "companion" && target == "companion-notice",
+        _ => false,
     }
-    valid_target(target)
-        && ["dictation", "call", "test"].contains(&mode)
-        && (mode == "test") == (target == "voice-test")
-        && (mode != "call" || (owner == "companion" && target.starts_with("companion:")))
 }
 fn recognition_required(mode: &str) -> bool {
-    !matches!(mode, "test" | "announcement")
+    mode == "dictation"
 }
 fn announcement_text(mode: &str, text: Option<String>) -> Result<Option<String>, String> {
     match (mode, text) {
@@ -384,6 +344,13 @@ fn announcement_text(mode: &str, text: Option<String>) -> Result<Option<String>,
         (_, None) => Ok(None),
     }
 }
+fn announcement_clip(mode: &str, clip: Option<String>) -> Result<Option<String>, String> {
+    match (mode, clip) {
+        ("announcement", Some(clip)) if announcements::valid_id(&clip) => Ok(Some(clip)),
+        (_, Some(_)) => Err("Áudio de aviso inválido.".into()),
+        (_, None) => Ok(None),
+    }
+}
 #[tauri::command]
 pub(crate) fn start_voice_session(
     app: tauri::AppHandle,
@@ -391,17 +358,22 @@ pub(crate) fn start_voice_session(
     target: String,
     mode: String,
     text: Option<String>,
+    clip: Option<String>,
 ) -> Result<SessionView, String> {
     if !valid_session(&target, &mode, window.label()) {
         return Err("Destino da conversa por voz inválido.".into());
     }
     let text = announcement_text(&mode, text)?;
+    let clip = announcement_clip(&mode, clip)?;
+    let clip_path = clip
+        .as_deref()
+        .and_then(|id| announcements::resolve(&app, id));
     let home = app
         .path()
         .home_dir()
         .map_err(|_| "Diretório de dados indisponível.")?;
     let config = config(&home)?;
-    if !config.enabled {
+    if !config.enabled && clip_path.is_none() {
         return Err("Ative o Jarvis Voice nas configurações de voz.".into());
     }
     let paths = if !recognition_required(&mode) {
@@ -409,7 +381,7 @@ pub(crate) fn start_voice_session(
     } else {
         Some(models::paths(&home, &config)?)
     };
-    if mode != "dictation" {
+    if mode != "dictation" && clip_path.is_none() {
         crate::core::audiovisual::runtime(&home)
             .map_err(|_| "Prepare o componente Audiovisual no Core para ouvir o Jarvis.")?;
     }
@@ -419,7 +391,7 @@ pub(crate) fn start_voice_session(
         .lock()
         .map_err(|_| "Estado da voz indisponível.")?;
     if let Some(previous) = active.as_ref() {
-        if previous.mode == "announcement" && matches!(mode.as_str(), "dictation" | "call") {
+        if previous.mode == "announcement" && mode == "dictation" {
             previous.stop_for_owner(None);
         } else {
             return Err(
@@ -436,12 +408,11 @@ pub(crate) fn start_voice_session(
     let (sender, receiver) = mpsc::sync_channel(16);
     let session = Arc::new(Session {
         id: id.clone(),
-        target: Mutex::new(target.clone()),
+        target: target.clone(),
         owner: window.label().into(),
         mode: mode.clone(),
         stop: AtomicBool::new(false),
         enabled: Arc::new(AtomicBool::new(false)),
-        muted: AtomicBool::new(false),
         audio_revision: AtomicU64::new(0),
         speech_revision: AtomicU64::new(0),
         sender,
@@ -484,11 +455,14 @@ pub(crate) fn start_voice_session(
                     paths,
                     &worker_session,
                     receiver,
-                    text.as_deref(),
+                    worker::SpeechRequest {
+                        text: text.as_deref(),
+                        clip: clip_path.as_deref(),
+                    },
                 )
             }))
             .unwrap_or_else(|_| {
-                Err("O serviço de voz foi interrompido. Inicie uma nova ligação.".into())
+                Err("O serviço de voz foi interrompido. Inicie uma nova sessão.".into())
             });
             worker_session.finish(
                 &worker_app,
@@ -515,7 +489,6 @@ pub(crate) fn control_voice_session(
     window: tauri::WebviewWindow,
     session_id: String,
     action: String,
-    text: Option<String>,
 ) -> Result<(), String> {
     let state = app.state::<VoiceState>();
     let active = state
@@ -533,64 +506,11 @@ pub(crate) fn control_voice_session(
             return Ok(());
         }
         "finish" => {
+            if session.mode != "dictation" {
+                return Err("Somente o ditado pode finalizar uma transcrição.".into());
+            }
             session.enabled.store(false, Ordering::Release);
             Control::Finish
-        }
-        "resume" => Control::Resume,
-        "retarget" => {
-            let target = text
-                .filter(|target| valid_target(target) && target.starts_with("companion:"))
-                .ok_or("Destino da ligação inválido.")?;
-            if session.mode != "call" {
-                return Err("Somente ligações podem continuar em outro projeto.".into());
-            }
-            session.enabled.store(false, Ordering::Release);
-            session.audio_revision.fetch_add(1, Ordering::AcqRel);
-            session.speech_revision.fetch_add(1, Ordering::AcqRel);
-            *session
-                .target
-                .lock()
-                .map_err(|_| "Estado da voz indisponível.")? = target;
-            session.update(&app, Phase::Thinking, Some(String::new()), None, 0.);
-            Control::Resume
-        }
-        "interrupt" => {
-            session.audio_revision.fetch_add(1, Ordering::AcqRel);
-            session.speech_revision.fetch_add(1, Ordering::AcqRel);
-            Control::Interrupt
-        }
-        "mute" => {
-            session.muted.store(true, Ordering::Release);
-            session.enabled.store(false, Ordering::Release);
-            Control::Mute
-        }
-        "unmute" => {
-            session.muted.store(false, Ordering::Release);
-            Control::Resume
-        }
-        "speak" | "cue" => {
-            if session.mode != "call" {
-                return Err("Somente ligações recebem respostas por voz.".into());
-            }
-            let cue = action == "cue";
-            if cue
-                && state
-                    .view
-                    .lock()
-                    .map_err(|_| "Estado da voz indisponível.")?
-                    .phase
-                    != Phase::Thinking
-            {
-                return Ok(());
-            }
-            let text = text
-                .filter(|value| {
-                    !value.trim().is_empty()
-                        && value.chars().count() <= if cue { 600 } else { 12_000 }
-                        && !value.contains('\0')
-                })
-                .ok_or("Texto de voz inválido.")?;
-            session.speech(text, cue)
         }
         _ => return Err("Controle de voz inválido.".into()),
     };
@@ -615,20 +535,24 @@ mod tests {
         assert!(config.validate().is_ok());
         config.speed = f32::NAN;
         assert!(config.validate().is_err());
-        assert!(valid_target("companion:0123456789abcdef0123456789abcdef"));
+        assert!(valid_target("chat:0123456789abcdef0123456789abcdef"));
+        assert!(!valid_target("companion:0123456789abcdef0123456789abcdef"));
         assert!(!valid_target("chat:../../another-project"));
     }
     #[test]
-    fn calls_only_start_in_the_companion_while_desktop_keeps_dictation() {
+    fn dictation_only_starts_in_the_main_chat_and_calls_are_retired() {
         let chat = "chat:0123456789abcdef0123456789abcdef";
         let companion = "companion:0123456789abcdef0123456789abcdef";
         assert!(valid_session(chat, "dictation", "main"));
-        assert!(valid_session(companion, "dictation", "companion"));
-        assert!(valid_session(companion, "call", "companion"));
+        assert!(!valid_session(companion, "dictation", "companion"));
+        assert!(!valid_session(chat, "dictation", "companion"));
+        assert!(!valid_session(companion, "dictation", "main"));
+        assert!(!valid_session(companion, "call", "companion"));
         assert!(!valid_session(chat, "call", "main"));
         assert!(!valid_session(companion, "call", "main"));
         assert!(!valid_session(chat, "call", "companion"));
         assert!(valid_session("voice-test", "test", "main"));
+        assert!(!valid_session("voice-test", "test", "companion"));
         assert!(!valid_session(chat, "test", "main"));
         assert!(!valid_session("voice-test", "dictation", "main"));
         assert!(valid_session(
@@ -649,52 +573,45 @@ mod tests {
         assert!(announcement_text("call", Some("Não pode injetar uma saudação.".into())).is_err());
     }
     #[test]
-    fn destroying_the_owner_releases_capture_without_stopping_another_windows_call() {
+    fn destroying_the_owner_releases_capture_and_invalidates_pending_speech() {
         let (sender, _) = mpsc::sync_channel(1);
         let session = Session {
-            id: "call".into(),
-            target: Mutex::new("companion:0123456789abcdef0123456789abcdef".into()),
-            owner: "companion".into(),
-            mode: "call".into(),
+            id: "dictation".into(),
+            target: "chat:0123456789abcdef0123456789abcdef".into(),
+            owner: "main".into(),
+            mode: "dictation".into(),
             stop: AtomicBool::new(false),
             enabled: Arc::new(AtomicBool::new(true)),
-            muted: AtomicBool::new(false),
             audio_revision: AtomicU64::new(0),
             speech_revision: AtomicU64::new(0),
             sender,
         };
-        assert!(!session.stop_for_owner(Some("main")));
+        assert!(!session.stop_for_owner(Some("companion")));
         assert!(session.enabled.load(Ordering::Acquire));
         assert!(!session.cancelled());
-        let Control::Speak { revision: cue, .. } = session.speech("Só um instante.".into(), true)
-        else {
-            panic!("Expected speech")
-        };
-        let Control::Speak {
-            revision: reply,
-            cue: false,
-            ..
-        } = session.speech("Aqui está sua resposta.".into(), false)
-        else {
-            panic!("Expected reply")
-        };
-        assert!(
-            !session.current_speech(cue),
-            "The final reply invalidates playing and queued cues"
-        );
-        assert!(session.current_speech(reply));
-        assert!(
-            !session.enabled.load(Ordering::Acquire),
-            "Speech never opens the microphone"
-        );
-        assert!(
-            !session.muted.load(Ordering::Acquire),
-            "Speech does not change the microphone preference"
-        );
-        assert!(session.stop_for_owner(Some("companion")));
+        let revision = session.speech_revision.load(Ordering::Acquire);
+        assert!(session.current_speech(revision));
+        assert!(session.stop_for_owner(Some("main")));
         assert!(!session.enabled.load(Ordering::Acquire));
         assert!(session.cancelled());
         assert_eq!(session.audio_revision.load(Ordering::Acquire), 1);
-        assert!(!session.current_speech(reply));
+        assert!(!session.current_speech(revision));
+    }
+    #[test]
+    fn prerecorded_clips_are_only_accepted_for_known_announcement_ids() {
+        assert_eq!(
+            announcement_clip("announcement", Some("completed-1".into())).unwrap(),
+            Some("completed-1".into())
+        );
+        assert!(announcement_clip("announcement", Some("../../voice.wav".into())).is_err());
+        assert!(announcement_clip("dictation", Some("completed-1".into())).is_err());
+        assert!(announcement_clip("test", Some("completed-1".into())).is_err());
+    }
+    #[test]
+    fn announcements_and_voice_tests_do_not_prepare_microphone_recognition() {
+        for mode in ["announcement", "test"] {
+            assert!(!recognition_required(mode), "{mode}");
+        }
+        assert!(recognition_required("dictation"));
     }
 }

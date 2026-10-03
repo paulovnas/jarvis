@@ -68,16 +68,15 @@ async function save(config: VoiceConfig) {
   const settings = voiceSettingsSchema.parse(await invoke("save_voice_settings", { config }));
   update({ ...snapshot, settings, error: null }); applySession(settings.session);
 }
-async function start(target: string, mode: "dictation" | "call" | "test" | "announcement", text?: string) {
+async function start(target: string, mode: "dictation" | "test" | "announcement", text?: string, clip?: string) {
   const pending = ensureSubscriptions();
   await pending;
   if (subscriptions !== pending || !listeners.size) throw "A interface de voz foi fechada. Tente novamente.";
-  const session = voiceSessionSchema.parse(await invoke("start_voice_session", { target, mode, ...(text ? { text } : {}) }));
+  const session = voiceSessionSchema.parse(await invoke("start_voice_session", { target, mode, ...(text ? { text } : {}), ...(clip ? { clip } : {}) }));
   applySession(session); return session;
 }
-async function control(sessionId: string, action: "end" | "finish" | "resume" | "interrupt" | "mute" | "unmute" | "speak" | "cue" | "retarget", text?: string) {
-  await invoke("control_voice_session", { sessionId, action, ...(text ? { text } : {}) });
-  if (action === "retarget") applySession(voiceSessionSchema.parse(await invoke("get_voice_session")));
+async function control(sessionId: string, action: "end" | "finish") {
+  await invoke("control_voice_session", { sessionId, action });
 }
 
 export const acceptsDictationTranscript = (sessionId: string) => stoppedDictation !== sessionId;

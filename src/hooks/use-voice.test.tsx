@@ -68,15 +68,14 @@ describe("shared native voice state", () => {
     first.unmount(); expect(stopped).not.toHaveBeenCalled(); second.unmount();
     await waitFor(() => expect(stopped).toHaveBeenCalledTimes(3));
   });
-  it("retargets the native call before the old conversation unmounts", async () => {
+  it("starts recorded announcements with the optional clip and keeps controls limited to capture lifecycle", async () => {
     vi.resetModules(); vi.mocked(listen).mockImplementation(async () => () => {});
-    const nextTarget = "companion:abcdef0123456789abcdef0123456789";
-    vi.mocked(invoke).mockImplementation(async command => command === "get_voice_settings" ? voiceSettings() : command === "start_voice_session" ? voiceSession() : command === "get_voice_session" ? voiceSession({ target: nextTarget, owner: "companion", revision: 3 }) : undefined);
+    vi.mocked(invoke).mockReset().mockImplementation(async command => command === "get_voice_settings" ? voiceSettings() : command === "start_voice_session" ? voiceSession({ mode: "announcement" }) : undefined);
     const { useVoice } = await import("./use-voice"); const { result, unmount } = renderHook(useVoice);
     await waitFor(() => expect(result.current.settings).not.toBeNull());
-    await act(async () => { await result.current.start(voiceTarget, "call"); await result.current.control("voice-1", "retarget", nextTarget); });
-    expect(result.current.session?.target).toBe(nextTarget);
-    expect(invoke).toHaveBeenCalledWith("control_voice_session", { sessionId: "voice-1", action: "retarget", text: nextTarget });
+    await act(async () => { await result.current.start("companion-notice", "announcement", "Concluído.", "completed-1"); await result.current.control("voice-1", "end"); });
+    expect(invoke).toHaveBeenCalledWith("start_voice_session", { target: "companion-notice", mode: "announcement", text: "Concluído.", clip: "completed-1" });
+    expect(invoke).toHaveBeenCalledWith("control_voice_session", { sessionId: "voice-1", action: "end" });
     unmount();
   });
   it("stops only the submitted dictation and rejects a late final transcript before native cancellation resolves", async () => {
@@ -95,11 +94,11 @@ describe("shared native voice state", () => {
     await act(async () => { ended(); await stopping; });
     unmount();
   });
-  it("does not end a call on message submission and permits dictation retry when cancellation fails", async () => {
+  it("does not end an announcement on message submission and permits dictation retry when cancellation fails", async () => {
     vi.resetModules();
     const events = new Map<string, (payload: unknown) => void>();
     vi.mocked(listen).mockImplementation(async (name, callback) => { events.set(String(name), payload => callback({ event: String(name), id: 1, payload })); return () => {}; });
-    vi.mocked(invoke).mockReset().mockImplementation(async command => command === "get_voice_settings" ? voiceSettings({ session: voiceSession() }) : Promise.reject("Captura indisponível"));
+    vi.mocked(invoke).mockReset().mockImplementation(async command => command === "get_voice_settings" ? voiceSettings({ session: voiceSession({ mode: "announcement" }) }) : Promise.reject("Captura indisponível"));
     const { useVoice, stopDictation, acceptsDictationTranscript } = await import("./use-voice");
     const { result, unmount } = renderHook(useVoice);
     await waitFor(() => expect(result.current.active).toBe(true));

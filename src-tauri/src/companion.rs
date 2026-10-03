@@ -747,6 +747,27 @@ pub(crate) fn set_companion_speech(app: tauri::AppHandle, enabled: bool) -> Resu
 }
 
 #[tauri::command]
+pub(crate) fn get_companion_speech_volume(app: tauri::AppHandle) -> f32 {
+    app.state::<crate::desktop::DesktopState>()
+        .companion_speech_volume()
+}
+
+#[tauri::command]
+pub(crate) fn set_companion_speech_volume(
+    app: tauri::AppHandle,
+    volume: f32,
+) -> Result<f32, String> {
+    let desktop = app.state::<crate::desktop::DesktopState>();
+    desktop.save_companion_speech_volume(volume)?;
+    app.emit(
+        "companion:speech_changed",
+        desktop.companion_speech_enabled(),
+    )
+    .map_err(|_| "Não foi possível atualizar o volume da fala.")?;
+    Ok(volume)
+}
+
+#[tauri::command]
 pub(crate) fn companion_start_drag(
     app: tauri::AppHandle,
     robot_x: Option<f64>,

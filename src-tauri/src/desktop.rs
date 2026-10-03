@@ -176,7 +176,7 @@ struct Bounds {
     height: f64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 struct WindowPreferences {
     normal: Option<Bounds>,
@@ -184,6 +184,27 @@ struct WindowPreferences {
     fullscreen: bool,
     companion_sound_muted: bool,
     companion_speech_muted: bool,
+    companion_speech_volume: f32,
+}
+
+impl Default for WindowPreferences {
+    fn default() -> Self {
+        Self {
+            normal: None,
+            maximized: false,
+            fullscreen: false,
+            companion_sound_muted: false,
+            companion_speech_muted: false,
+            companion_speech_volume: 1.0,
+        }
+    }
+}
+
+fn validate_companion_speech_volume(volume: f32) -> Result<(), String> {
+    if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+        return Err("O volume da fala deve estar entre 0 e 100%.".into());
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -229,6 +250,7 @@ impl Store {
             return Err("Unsupported desktop preferences version".into());
         }
         preferences.layout.validate()?;
+        validate_companion_speech_volume(preferences.window.companion_speech_volume)?;
         Ok(Self { path, preferences })
     }
 
@@ -296,6 +318,34 @@ impl DesktopState {
         store.preferences.window.companion_speech_muted = !enabled;
         if let Err(error) = store.save() {
             store.preferences.window.companion_speech_muted = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn companion_speech_volume(&self) -> f32 {
+        self.store
+            .lock()
+            .ok()
+            .and_then(|guard| {
+                guard
+                    .as_ref()
+                    .map(|store| store.preferences.window.companion_speech_volume)
+            })
+            .unwrap_or(1.0)
+    }
+
+    pub(crate) fn save_companion_speech_volume(&self, volume: f32) -> Result<(), String> {
+        validate_companion_speech_volume(volume)?;
+        let mut guard = self.store.lock().map_err(|_| "Desktop lock poisoned")?;
+        let store = guard.as_mut().ok_or("Desktop preferences unavailable")?;
+        let previous = store.preferences.window.companion_speech_volume;
+        if previous == volume {
+            return Ok(());
+        }
+        store.preferences.window.companion_speech_volume = volume;
+        if let Err(error) = store.save() {
+            store.preferences.window.companion_speech_volume = previous;
             return Err(error);
         }
         Ok(())
@@ -612,6 +662,99 @@ mod tests {
     }
 
     #[test]
+    fn speech_volume_survives_layout_edits_and_restart_without_changing_mutes() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("desktop.json");
+        let state = DesktopState::default();
+        *state.store.lock().unwrap() = Some(Store::open(path.clone()).unwrap());
+        state.save_companion_speech_enabled(false).unwrap();
+        state.save_companion_speech_volume(0.25).unwrap();
+        {
+            let mut guard = state.store.lock().unwrap();
+            let store = guard.as_mut().unwrap();
+            store.preferences.layout.sidebar_collapsed = true;
+            store.preferences.window.maximized = true;
+            store.save().unwrap();
+        }
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["window"]["companionSpeechVolume"], 0.25);
+        *state.store.lock().unwrap() = Some(Store::open(path.clone()).unwrap());
+        assert_eq!(state.companion_speech_volume(), 0.25);
+        assert!(!state.companion_speech_enabled());
+        assert!(state.companion_sound_enabled());
+        for volume in [0.0, 1.0] {
+            state.save_companion_speech_volume(volume).unwrap();
+            *state.store.lock().unwrap() = Some(Store::open(path.clone()).unwrap());
+            assert_eq!(state.companion_speech_volume(), volume);
+        }
+    }
+
+    #[test]
+    fn legacy_and_unavailable_preferences_keep_full_speech_volume() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("desktop.json");
+        assert_eq!(DesktopState::default().companion_speech_volume(), 1.0);
+        assert_eq!(
+            Store::open(path.clone())
+                .unwrap()
+                .preferences
+                .window
+                .companion_speech_volume,
+            1.0
+        );
+        for contents in ["{}", r#"{"window":{"companionSpeechMuted":true}}"#] {
+            fs::write(&path, contents).unwrap();
+            assert_eq!(
+                Store::open(path.clone())
+                    .unwrap()
+                    .preferences
+                    .window
+                    .companion_speech_volume,
+                1.0
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_speech_volume_cannot_change_persisted_preferences() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("desktop.json");
+        let state = DesktopState::default();
+        *state.store.lock().unwrap() = Some(Store::open(path.clone()).unwrap());
+        state.save_companion_speech_volume(0.5).unwrap();
+        let original = fs::read(&path).unwrap();
+        for volume in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 1.1] {
+            assert!(state.save_companion_speech_volume(volume).is_err());
+            assert_eq!(state.companion_speech_volume(), 0.5);
+            assert_eq!(fs::read(&path).unwrap(), original);
+        }
+        for volume in [-0.1, 1.1] {
+            let contents = format!(r#"{{"window":{{"companionSpeechVolume":{volume}}}}}"#);
+            fs::write(&path, &contents).unwrap();
+            assert!(Store::open(path.clone()).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), contents);
+        }
+    }
+
+    #[test]
+    fn failed_speech_volume_save_restores_the_active_volume() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("desktop.json");
+        let state = DesktopState::default();
+        *state.store.lock().unwrap() = Some(Store::open(path.clone()).unwrap());
+        state.save_companion_speech_volume(0.5).unwrap();
+        let original = fs::read(&path).unwrap();
+        let blocked = temp.path().join("blocked");
+        fs::write(&blocked, b"not a directory").unwrap();
+        state.store.lock().unwrap().as_mut().unwrap().path = blocked.join("desktop.json");
+
+        assert!(state.save_companion_speech_volume(0.25).is_err());
+        assert_eq!(state.companion_speech_volume(), 0.5);
+        assert_eq!(fs::read(path).unwrap(), original);
+        assert_eq!(fs::read(blocked).unwrap(), b"not a directory");
+    }
+
+    #[test]
     fn layout_and_window_survive_atomic_round_trip() {
         let temp = tempfile::tempdir().unwrap();
         let path = crate::data_dir::root(temp.path()).join("desktop.json");
@@ -627,6 +770,7 @@ mod tests {
             fullscreen: false,
             companion_sound_muted: false,
             companion_speech_muted: false,
+            companion_speech_volume: 1.0,
         };
         store.preferences.layout.inspector_tab = InspectorTab::Explorer;
         store.preferences.layout.settings_tab = SettingsTab::Tools;
