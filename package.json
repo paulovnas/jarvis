@@ -1,7 +1,7 @@
 {
   "name": "jarvis",
   "private": true,
-  "version": "1.9.2",
+  "version": "1.9.4",
   "type": "module",
   "scripts": {
     "dev": "bun run build:extension && vite",

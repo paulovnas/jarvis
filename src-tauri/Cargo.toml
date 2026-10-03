@@ -1,6 +1,6 @@
 [package]
 name = "jarvis"
-version = "1.9.2"
+version = "1.9.4"
 description = "Jarvis — ambiente de desenvolvimento com agentes de IA"
 authors = ["Paulo Vitor Nascimento"]
 edition = "2021"
