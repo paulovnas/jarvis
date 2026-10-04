@@ -184,6 +184,7 @@ describe("SettingsDialog provider accounts", () => {
     const user = userEvent.setup();
     invokeMock.mockResolvedValue([]);
     render(<TooltipProvider delay={0}><SettingsDialog open onOpenChange={vi.fn()} /></TooltipProvider>);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Geral" })).toHaveFocus());
     const providers = screen.getByRole("tab", { name: /Provedores/ });
     await user.hover(providers);
     await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent("Provedores"));
