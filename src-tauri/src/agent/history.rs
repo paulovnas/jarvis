@@ -765,6 +765,10 @@ impl Index {
     }
 
     fn refresh(&mut self, path: &Path) -> Result<(), AgentError> {
+        self.refresh_internal(path, true)
+    }
+
+    fn refresh_internal(&mut self, path: &Path, persist: bool) -> Result<(), AgentError> {
         let metadata = std::fs::symlink_metadata(path).map_err(|_| AgentError::storage())?;
         if !metadata.is_file() || metadata.is_symlink() {
             return Err(AgentError::storage());
@@ -830,7 +834,7 @@ impl Index {
             .transpose()
             .map_err(|_| AgentError::storage())?
             .unwrap_or(0);
-        if !sidecar_is_current {
+        if persist && !sidecar_is_current {
             let _ = persist_sidecar(path, self, snapshot.fingerprint);
         }
         Ok(())
@@ -1225,6 +1229,48 @@ impl HistoryState {
 }
 
 impl AgentState {
+    /// A bounded, transient snapshot for explicit local incident capture. This
+    /// reader never creates a session, repairs a journal or writes its sidecar.
+    pub(crate) fn self_development_snapshot(
+        &self,
+        state: &AppState,
+        home: &Path,
+        id: &str,
+    ) -> Result<Value, AgentError> {
+        let (path, _) = library::agent_location(state, home, id)?;
+        let mut index = Index::default();
+        index.refresh_internal(&path, false)?;
+        let mut page = index.page(&path, id, None, None, None)?;
+        if let Some(session) = self
+            .sessions
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .get(id)
+            .cloned()
+        {
+            let data = session.data.lock().map_err(|_| AgentError::internal())?;
+            for turn in &mut page.turns {
+                if let Some(live) = data.turns.last().filter(|last| last.turn.id == turn.id) {
+                    *turn = live.turn.clone();
+                }
+            }
+        }
+        let mut snapshot = serde_json::to_value(page).map_err(|_| AgentError::storage())?;
+        snapshot["subagents"] = Value::Array(self.workflows.self_development_agents(id));
+        Ok(snapshot)
+    }
+
+    pub(crate) fn self_development_source_status(&self, id: &str) -> Option<String> {
+        let session = self.sessions.lock().ok()?.get(id)?.clone();
+        let data = session.data.lock().ok()?;
+        data.turns.last().and_then(|stored| {
+            serde_json::to_value(&stored.turn.status)
+                .ok()?
+                .as_str()
+                .map(str::to_owned)
+        })
+    }
+
     pub(super) fn file_session(
         &self,
         state: &AppState,

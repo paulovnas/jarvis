@@ -18,6 +18,37 @@ fn assistant(id: &str, uuid: &str, content: Value) -> Value {
 }
 
 #[test]
+fn private_diagnostic_receipts_never_reveal_cached_results_on_resume() {
+    let fixture = Fixture::new();
+    let (session, _) = reserve(&fixture);
+    session.update(true, |data| { data.turns[0].wire.extend([
+            json!({"type":"function_call","call_id":"private-read","name":"jarvis_dev_incident","arguments":"{\"incidentId\":\"shared-only\"}","_jarvis_claude_request":"scope:request"}),
+            json!({"type":"function_call_output","call_id":"private-read","output":"PRIVATE_OLD_RECEIPT"}),
+    ]); }).unwrap();
+    for result in [
+        replay_request(&session, "scope:request").unwrap(),
+        replay_tool(&session, "private-read").unwrap(),
+    ] {
+        let result = result.unwrap();
+        assert_eq!(result["isError"], true);
+        assert!(!result.to_string().contains("PRIVATE_OLD_RECEIPT"));
+    }
+    // A forged callback name cannot change the original tool selected by ID.
+    for (request, id) in [("scope:request", None), ("other", Some("private-read"))] {
+        let original = private_diagnostic_replay(&session, request, id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(original.name, "jarvis_dev_incident");
+        assert_eq!(original.args["incidentId"], "shared-only");
+    }
+    assert!(
+        private_diagnostic_replay(&session, "other", Some("unknown"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn native_user_acknowledgements_never_replace_the_visible_user_message() {
     let fixture = Fixture::new();
     let (session, _) = reserve(&fixture);

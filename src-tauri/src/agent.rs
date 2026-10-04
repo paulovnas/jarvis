@@ -45,6 +45,7 @@ pub(crate) mod queue;
 mod read_ahead;
 pub(crate) mod remote;
 pub(crate) mod response_export;
+mod self_development;
 mod session_writer;
 pub(crate) mod shell;
 mod skill_input;
@@ -3015,6 +3016,11 @@ fn run_turn_once<'a>(
                 definitions.push(publication::inspection::definition());
                 if !publication_agent {
                     definitions.extend(authoring::definitions());
+                    if self_development::available(state, home, &session.root, owner.project_id()?)
+                    {
+                        definitions.extend(self_development::definitions());
+                        instructions.push_str(self_development::INSTRUCTIONS);
+                    }
                 }
                 if options.mode == Mode::Build {
                     definitions.push(publication::definition());
@@ -3901,6 +3907,9 @@ fn run_turn_once<'a>(
                                 signal.clone(),
                             )
                             .await
+                        }
+                        Some(tool_contract::Handler::SelfDevelopment) => {
+                            self_development::execute(state, home, &session.root, owner.project_id()?, &tool).await
                         }
                         Some(tool_contract::Handler::Workflow) => match &execution {
                             Some(exec) => {

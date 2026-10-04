@@ -588,7 +588,7 @@ impl DiagnosticsState {
         Ok(result)
     }
 
-    fn summary(&self) -> Result<DiagnosticSummary, DiagnosticError> {
+    pub(crate) fn summary(&self) -> Result<DiagnosticSummary, DiagnosticError> {
         let grouped = self
             .records()
             .map_err(|_| error("Não foi possível ler os registros locais."))?;
@@ -883,6 +883,13 @@ pub async fn get_diagnostic_summary(
     tauri::async_runtime::spawn_blocking(move || state.summary())
         .await
         .map_err(|_| error("A leitura do diagnóstico foi interrompida."))?
+}
+
+pub(crate) fn active_summary() -> Result<DiagnosticSummary, DiagnosticError> {
+    ACTIVE
+        .get()
+        .ok_or_else(|| error("O diagnóstico local ainda não foi inicializado."))?
+        .summary()
 }
 
 #[tauri::command]

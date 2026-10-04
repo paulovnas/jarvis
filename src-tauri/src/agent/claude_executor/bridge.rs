@@ -121,6 +121,12 @@ impl<'a> Bridge<'a> {
         };
         let mut activities = graft.take_activity();
         let mut prompt = tools::instructions(&session.root, options.mode, options.approval_mode);
+        if !global_companion
+            && !publication
+            && self_development::available(runtime.state, home, &session.root, owner.project_id()?)
+        {
+            prompt.push_str(self_development::INSTRUCTIONS);
+        }
         let backend = "Claude Code";
         let mcp_dispatcher = "call_mcp_tool";
         prompt.push_str(&format!("\nExecution backend: {backend}. Keep your native reasoning and conversation management. All project operations, commands, tasks, questions, workflow coordination, approvals and external integrations are exposed by the Jarvis MCP server. Use these tools rather than describing actions for the user to execute. Jarvis owns their permissions and durable results. Do not create a second task/agent system. MCP discovery results include availableTools with exact schemas. Execute newly available tools and discovery controls through {mcp_dispatcher} using their exact name and arguments; no new user message or tools/list refresh is required. Search results marked loaded:true already include their schema; do not load them again. Native built-in tools are intentionally disabled to preserve the selected Jarvis role, project scope and approval contract.\n"));
@@ -367,6 +373,14 @@ impl<'a> Bridge<'a> {
         definitions.extend(self.graft.definitions());
         if !self.publication {
             definitions.extend(authoring::definitions());
+            if self_development::available(
+                self.runtime.state,
+                self.runtime.home,
+                &self.session.root,
+                self.owner().project_id()?,
+            ) {
+                definitions.extend(self_development::definitions());
+            }
             definitions.extend([
                 crate::skills::definition(),
                 crate::skills::search_definition(),
@@ -642,6 +656,16 @@ impl<'a> Bridge<'a> {
             Handler::Learning => learning::remember(state, home, owner, &tool.args),
             Handler::PublicationInspection => {
                 publication::inspection::inspect(&self.session.root, &tool.args, signal).await
+            }
+            Handler::SelfDevelopment => {
+                self_development::execute(
+                    state,
+                    home,
+                    &self.session.root,
+                    owner.project_id()?,
+                    tool,
+                )
+                .await
             }
             Handler::Workflow => {
                 if tool.name == "hub_complete" {

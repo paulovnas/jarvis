@@ -496,6 +496,20 @@ async fn execute_tool(
     let name = params["name"]
         .as_str()
         .ok_or_else(|| runtime_error("Ferramenta sem nome.".into()))?;
+    // Private diagnostic receipts can become stale after a grant/incident is
+    // removed. Resolve the durable original call (not callback-supplied name)
+    // and read it afresh through the current catalog and native authorization.
+    if let Some(original) = private_diagnostic_replay(
+        bridge.session,
+        request_id,
+        native_tool.as_ref().map(|tool| tool.id.as_str()),
+    )? {
+        let (output, status, structured) = settle_tool_result(bridge.call(&original).await)?;
+        return Ok(json!({
+            "isError":status == "error",
+            "content":[{"type":"text","text":structured.unwrap_or(output)}]
+        }));
+    }
     if let Some(previous) = replay_request(bridge.session, request_id)? {
         return with_native_images(bridge, name, &params["arguments"], previous);
     }
@@ -674,13 +688,20 @@ pub(super) fn replay_request(
 fn replay_tool(session: &Session, call_id: &str) -> Result<Option<Value>, AgentError> {
     let output = {
         let data = session.data.lock().map_err(|_| AgentError::internal())?;
-        if !data
+        let Some(call) = data
             .turns
             .iter()
             .flat_map(|turn| &turn.wire)
-            .any(|item| item["type"] == "function_call" && item["call_id"] == call_id)
-        {
+            .find(|item| item["type"] == "function_call" && item["call_id"] == call_id)
+        else {
             return Ok(None);
+        };
+        if call["name"].as_str().is_some_and(self_development::handles) {
+            // This helper has no runtime authority. Never expose a cached
+            // private read here, including during callback correlation.
+            return Ok(Some(
+                json!({"isError":true,"content":[{"type":"text","text":"Private diagnostics require a fresh authorized read."}]}),
+            ));
         }
         data.turns
             .iter()
@@ -694,4 +715,40 @@ fn replay_tool(session: &Session, call_id: &str) -> Result<Option<Value>, AgentE
             json!({"isError":true,"content":[{"type":"text","text":"This exact tool request was previously started, but no durable result is available. Its effect is uncertain. Inspect the actual state before issuing a new operation; Jarvis will not blindly repeat this request."}]}),
         )),
     }
+}
+
+fn private_diagnostic_replay(
+    session: &Session,
+    request_id: &str,
+    call_id: Option<&str>,
+) -> Result<Option<ToolCall>, AgentError> {
+    let data = session.data.lock().map_err(|_| AgentError::internal())?;
+    let call = data.turns.iter().flat_map(|turn| &turn.wire).find(|item| {
+        item["type"] == "function_call"
+            && item["name"].as_str().is_some_and(self_development::handles)
+            && (item["_jarvis_claude_request"] == request_id
+                || call_id.is_some_and(|id| item["call_id"] == id))
+    });
+    call.map(|item| {
+        Ok(ToolCall {
+            id: item["call_id"]
+                .as_str()
+                .ok_or_else(AgentError::internal)?
+                .into(),
+            name: item["name"]
+                .as_str()
+                .ok_or_else(AgentError::internal)?
+                .into(),
+            args: match &item["arguments"] {
+                Value::String(arguments) => serde_json::from_str(arguments).map_err(|_| {
+                    AgentError::new("invalid_arguments", "Argumentos de diagnóstico inválidos.")
+                })?,
+                arguments => arguments.clone(),
+            },
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        })
+    })
+    .transpose()
 }

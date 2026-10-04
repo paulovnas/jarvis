@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Tabs as OptionsTabs } from "@base-ui/react/tabs";
-import { AlertTriangle, BookOpen, Brain, FolderCog, FolderGit2, GitCommitHorizontal, Globe2, Save, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertTriangle, BookOpen, Brain, Bug, FolderCog, FolderGit2, GitCommitHorizontal, Globe2, Save, ShieldCheck, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -22,8 +22,10 @@ import { ProjectIdentitySettings } from "./ProjectIdentitySettings";
 import { ProjectKnowledgeSettings } from "./ProjectKnowledgeSettings";
 import { ProjectLearningSettings } from "./ProjectLearningSettings";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
+import { useSelfDevelopment } from "@/hooks/use-self-development";
 
 const ProjectHttpSettings = lazy(() => import("@/components/http/ProjectHttpSettings").then(module => ({ default: module.ProjectHttpSettings })));
+const ProjectSelfDevelopmentSettings = lazy(() => import("@/components/self-development/ProjectSelfDevelopmentSettings").then(module => ({ default: module.ProjectSelfDevelopmentSettings })));
 
 const SECTIONS = [
   { value: "general", label: "Geral", Icon: FolderCog, description: "Nome, pasta e aparência do projeto na barra lateral." },
@@ -39,7 +41,10 @@ export function ProjectOptions({ project, projectUpdater }: { project: Project; 
   const [active, setActive] = useState("general");
   const [visited, setVisited] = useState(["general"]);
   const compact = useIsMobile();
-  const selected = SECTIONS.find(section => section.value === active) ?? SECTIONS[0];
+  const selfDevelopment = useSelfDevelopment(project.id);
+  const sections = [...SECTIONS, ...(selfDevelopment.status?.eligible ? [{ value: "self-development", label: "Autodesenvolvimento", Icon: Bug, description: "Diagnósticos locais compartilhados explicitamente para corrigir o próprio Jarvis." }] : [])];
+  const selected = sections.find(section => section.value === active) ?? SECTIONS[0];
+  const selectedValue = selected.value;
   const panels = {
     general: <ProjectIdentitySettings key={`${project.id}:${project.name}:${project.path}:${project.icon ?? ""}:${project.color ?? ""}`} project={project} updater={projectUpdater} />,
     knowledge: <ProjectKnowledgeSettings key={`${project.id}:${project.path}`} projectId={project.id} />,
@@ -48,9 +53,10 @@ export function ProjectOptions({ project, projectUpdater }: { project: Project; 
     http: <Suspense fallback={<CardsSkeleton label="Carregando configurações HTTP" />}><ProjectHttpSettings key={project.id} projectId={project.id} /></Suspense>,
     commit: <ProjectCommitSettings key={project.id} projectId={project.id} />,
     execution: <ExecutionGrantsSettings key={project.id} projectId={project.id} />,
+    "self-development": <Suspense fallback={<CardsSkeleton label="Carregando autodesenvolvimento" />}><ProjectSelfDevelopmentSettings key={project.id} controller={selfDevelopment} /></Suspense>,
   };
 
-  return <OptionsTabs.Root orientation="vertical" value={active} onValueChange={value => {
+  return <OptionsTabs.Root orientation="vertical" value={selectedValue} onValueChange={value => {
     if (typeof value !== "string") return;
     setActive(value);
     setVisited(current => current.includes(value) ? current : [...current, value]);
@@ -60,13 +66,13 @@ export function ProjectOptions({ project, projectUpdater }: { project: Project; 
         <h2 className="text-sm font-medium">{selected.label}</h2>
         <p className="mt-1 text-xs text-muted-foreground">{selected.description}</p>
       </header>
-      {SECTIONS.map(section => <TabsContent key={section.value} value={section.value} keepMounted={visited.includes(section.value)} className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 md:p-6">
-        <div className="mx-auto w-full max-w-4xl">{panels[section.value]}</div>
+      {sections.map(section => <TabsContent key={section.value} value={section.value} keepMounted={visited.includes(section.value)} className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 md:p-6">
+        <div className="mx-auto w-full max-w-4xl">{panels[section.value as keyof typeof panels]}</div>
       </TabsContent>)}
     </div>
     <nav aria-label="Seções das opções do projeto" className="settings-navigation w-14 shrink-0 overflow-y-auto border-l border-border bg-sidebar p-2 md:w-48 md:p-3">
       <TabsList aria-label="Opções do projeto" className="h-auto w-full flex-col items-stretch justify-start gap-1 rounded-none bg-transparent p-0 group-data-horizontal/tabs:h-auto">
-        {SECTIONS.map(section => <Hint key={section.value} content={section.label} disabled={!compact} side="left"><TabsTrigger value={section.value} className="h-10 flex-none cursor-pointer justify-center gap-2.5 px-2 text-xs md:justify-start">
+        {sections.map(section => <Hint key={section.value} content={section.label} disabled={!compact} side="left"><TabsTrigger value={section.value} className="h-10 flex-none cursor-pointer justify-center gap-2.5 px-2 text-xs md:justify-start">
           <section.Icon aria-hidden="true" className="size-4" />
           <span className="sr-only min-w-0 flex-1 text-left md:not-sr-only">{section.label}</span>
         </TabsTrigger></Hint>)}

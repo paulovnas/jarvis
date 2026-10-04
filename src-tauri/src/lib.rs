@@ -21,6 +21,7 @@ mod persistence;
 mod remote;
 #[cfg_attr(target_os = "linux", path = "secrets_linux.rs")]
 mod secrets;
+mod self_development;
 mod skills;
 mod system;
 mod updater;
@@ -355,6 +356,12 @@ pub fn run() {
                 core::health::diagnose_core,
                 core::health::repair_core_component,
                 diagnostics::get_diagnostic_summary,
+                self_development::get_self_development_status,
+                self_development::set_self_development_enabled,
+                self_development::list_self_development_sources,
+                self_development::capture_self_development_incident,
+                self_development::list_self_development_incidents,
+                self_development::delete_self_development_incident,
                 diagnostics::check_database_integrity,
                 diagnostics::export_diagnostic_bundle,
                 agent::telemetry::export_harness_trace,

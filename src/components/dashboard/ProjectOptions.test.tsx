@@ -34,6 +34,7 @@ beforeEach(() => {
   projectUpdater.clearError.mockReset();
   projectUpdater.updateProject.mockReset().mockResolvedValue(true);
   call.mockReset().mockImplementation(async (command, args) => {
+    if (command === "get_self_development_status") return { projectId: "p1", eligible: false, enabled: false };
     if (command === "get_project_publication_settings") return settings;
     if (command === "get_project_knowledge") return knowledge;
     if (command === "get_project_http_settings") return { ...DEFAULT_HTTP_SETTINGS, projectId: "p1", revision: 0 };
@@ -67,7 +68,7 @@ it("places navigation after the content and retains drafts without reloading vis
   const navigation = screen.getByRole("tablist", { name: "Opções do projeto" });
   expect(navigation).toHaveAttribute("aria-orientation", "vertical");
   expect(within(navigation).getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Geral", "Conhecimento", "Aprendizados", "Repositórios", "Cliente HTTP", "Commit", "Autorizações"]);
-  expect(call).not.toHaveBeenCalled();
+  expect(call.mock.calls.map(([command]) => command)).toEqual(["get_self_development_status"]);
   await user.clear(screen.getByRole("textbox", { name: "Nome do projeto" }));
   await user.type(screen.getByRole("textbox", { name: "Nome do projeto" }), "Rascunho do nome");
   await user.click(within(navigation).getByRole("tab", { name: "Conhecimento" }));
@@ -80,6 +81,32 @@ it("places navigation after the content and retains drafts without reloading vis
   await user.keyboard("{ArrowDown}{Enter}");
   expect(await markdownSource(user, "Produto · Markdown")).toHaveValue("# Product\nProduct draft");
   expect(call.mock.calls.filter(([command]) => command === "get_project_knowledge")).toHaveLength(1);
+});
+
+it("keeps self-development absent for an ordinary project and does not request incidents", async () => {
+  render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
+  await waitFor(() => expect(call).toHaveBeenCalledWith("get_self_development_status", { projectId: project.id }));
+  expect(screen.queryByRole("tab", { name: "Autodesenvolvimento" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Investigar com o Jarvis")).not.toBeInTheDocument();
+  expect(call.mock.calls.map(([command]) => command)).toEqual(["get_self_development_status"]);
+});
+
+it("offers explicit development configuration only after native eligibility is confirmed", async () => {
+  call.mockResolvedValue({ projectId: project.id, eligible: true, enabled: false });
+  const user = userEvent.setup();
+  render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
+  await user.click(await screen.findByRole("tab", { name: "Autodesenvolvimento" }));
+  expect(await screen.findByRole("switch", { name: "Ambiente de desenvolvimento do Jarvis" })).not.toBeChecked();
+  expect(screen.queryByText("Investigar com o Jarvis")).not.toBeInTheDocument();
+  expect(call.mock.calls.map(([command]) => command)).toEqual(["get_self_development_status"]);
+});
+
+it("hides development configuration when native authorization fails", async () => {
+  call.mockRejectedValue(new Error("Native status unavailable"));
+  render(<ProjectOptions project={project} projectUpdater={projectUpdater} />);
+  await waitFor(() => expect(call).toHaveBeenCalledWith("get_self_development_status", { projectId: project.id }));
+  expect(screen.queryByRole("tab", { name: "Autodesenvolvimento" })).not.toBeInTheDocument();
+  expect(call.mock.calls.map(([command]) => command)).toEqual(["get_self_development_status"]);
 });
 
 it("keeps project knowledge usable when publication settings cannot load", async () => {

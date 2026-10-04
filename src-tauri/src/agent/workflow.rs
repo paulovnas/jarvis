@@ -261,6 +261,30 @@ pub(super) struct Execution {
 pub(super) struct Registry(Arc<Mutex<HashMap<String, Arc<Hub>>>>);
 
 impl Registry {
+    /// Structural metadata for one explicitly selected local incident. This
+    /// does not load a workflow, recover a worker or inspect any other chat.
+    pub(super) fn self_development_agents(&self, conversation_id: &str) -> Vec<Value> {
+        let Ok(registry) = self.0.try_lock() else {
+            return vec![];
+        };
+        let Some(hub) = registry.get(conversation_id).cloned() else {
+            return vec![];
+        };
+        drop(registry);
+        let Ok(state) = hub.manifest.try_lock() else {
+            return vec![];
+        };
+        state.jobs.values().filter(|job| job.run_id == state.run_id).take(64).map(|job| {
+            json!({
+                "id": super::telemetry::context_id(&job.id),
+                "parentId": super::telemetry::context_id(&job.parent_id),
+                "status": job.status,
+                "durationMs": job.duration_ms,
+                "options": {"executor": job.options.executor, "model": job.options.model, "reasoning": job.options.reasoning},
+            })
+        }).collect()
+    }
+
     pub(super) fn loaded_root_identity(
         &self,
         conversation_id: &str,

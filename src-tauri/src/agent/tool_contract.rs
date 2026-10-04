@@ -32,6 +32,7 @@ pub(super) enum Handler {
     Beads,
     ProjectBeads,
     JarvisAuthoring,
+    SelfDevelopment,
     Context7,
     Lsp,
     Graft,
@@ -78,6 +79,8 @@ impl Handler {
             Self::ProjectBeads
         } else if name.starts_with("beads_") {
             Self::Beads
+        } else if super::self_development::handles(name) {
+            Self::SelfDevelopment
         } else if name.starts_with("jarvis_") {
             Self::JarvisAuthoring
         } else if name.starts_with("context7_") {
@@ -148,8 +151,8 @@ impl Capabilities {
                 | "jarvito_read_conversation"
                 | "jarvito_catalog"
                 | "jarvito_read_knowledge"
-        ) || (name.starts_with("ctx_")
-            && !crate::core::context::needs_approval(name))
+        ) || super::self_development::handles(name)
+            || (name.starts_with("ctx_") && !crate::core::context::needs_approval(name))
             || name.starts_with("context7_")
             || name.starts_with("lsp_")
             || name.starts_with("graft_")
@@ -192,7 +195,9 @@ impl Capabilities {
         Self {
             effect,
             approval,
-            parallel_safe: effect == Effect::ReadOnly && !name.starts_with("jarvito_"),
+            parallel_safe: effect == Effect::ReadOnly
+                && !name.starts_with("jarvito_")
+                && !super::self_development::handles(name),
         }
     }
 }
@@ -401,6 +406,48 @@ mod tests {
             output: String::new(),
             duration_ms: 0,
         }
+    }
+
+    #[test]
+    fn private_diagnostics_are_read_only_and_cannot_be_guessed_in_normal_catalogs() {
+        let normal =
+            Orchestrator::new(&super::super::tools::definitions(super::super::Mode::Build));
+        let private = Orchestrator::new(&super::super::self_development::definitions());
+        for name in [
+            "jarvis_dev_incidents",
+            "jarvis_dev_diagnostics",
+            "jarvis_dev_incident",
+        ] {
+            let tool = call(
+                name,
+                if name == "jarvis_dev_incident" {
+                    json!({"incidentId":"selected"})
+                } else {
+                    json!({})
+                },
+            );
+            assert_eq!(
+                normal.preflight(&tool).unwrap_err().code,
+                "tool_unavailable"
+            );
+            let prepared = private.preflight(&tool).unwrap();
+            assert_eq!(prepared.handler, Handler::SelfDevelopment);
+            assert_eq!(prepared.capabilities.effect, Effect::ReadOnly);
+            assert_eq!(prepared.capabilities.approval, ApprovalPolicy::Never);
+            assert!(!prepared.capabilities.parallel_safe);
+        }
+        assert!(private
+            .preflight(&call(
+                "jarvis_dev_incident",
+                json!({"incidentId":"selected","conversationId":"other"})
+            ))
+            .is_err());
+        assert!(private
+            .preflight(&call(
+                "jarvis_dev_incident",
+                json!({"incidentId":"selected","limit":101})
+            ))
+            .is_err());
     }
 
     #[test]
