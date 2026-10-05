@@ -357,13 +357,16 @@ fn video_director_contract_reaches_native_selection_and_existing_custom_flows() 
             "creative marketing director and video producer",
             "project_knowledge product/design/learning",
             "real navigation and clicks",
-            "grouping at most three concise questions",
+            "Group at most three concise questions",
             "script/storyboard",
             "without redundant approvals",
             "Native voice generation supports PT-BR only",
             "New padding does not alter existing WAVs",
             "first/last syllables and natural pauses",
-            "provided licensed track without asking the same question again",
+            "reuse confirmed music without asking the same question again",
+            "enabled only when the user explicitly requests /brag",
+            "evidence ledger in brag-plan.md",
+            "returned attribution, source URL and license link into share-copy.txt",
             "static checks alone do not prove that speech sounds natural",
         ] {
             assert!(prompt.contains(requirement), "Missing: {requirement}");
@@ -371,12 +374,146 @@ fn video_director_contract_reaches_native_selection_and_existing_custom_flows() 
     }
     for tool in [
         "ask_user",
+        "read",
+        "list",
+        "search",
         "project_knowledge",
+        "browser_open",
+        "browser_navigate",
+        "browser_snapshot",
         "browser_click",
+        "browser_screenshot",
         "video_audio",
     ] {
         assert!(custom::allowed(&direct, tool), "{tool}");
         assert!(custom::allowed(&run.agents[0], tool), "{tool}");
+    }
+}
+
+#[test]
+fn video_briefing_guards_survive_native_selection_and_serialized_custom_nodes() {
+    let mut catalog = example();
+    for step in &mut catalog.flows[0].steps {
+        step.agent_id = "builtin:video".into();
+    }
+    let restored: Catalog = serde_json::from_slice(&serde_json::to_vec(&catalog).unwrap()).unwrap();
+    let direct = restored.resolve_agent("builtin:video").unwrap();
+    let run = restored.resolve(&restored.flows[0].id).unwrap();
+    for instructions in [
+        contracts::prompt(Flow::Video, Role::Video, "builtin:video"),
+        custom::direct_instructions(&direct),
+        custom::instructions(&run.agents[0]),
+    ] {
+        let research = instructions.find("Research autonomously").unwrap();
+        let briefing = instructions
+            .find("For an underspecified new video")
+            .unwrap();
+        let storyboard = instructions
+            .find("Before production, show a compact script/storyboard")
+            .unwrap();
+        let production = instructions
+            .find("Direct the visual production deliberately")
+            .unwrap();
+        assert!(research < briefing && briefing < storyboard && storyboard < production);
+        assert!(instructions
+            .contains("one collaborative creative process for every new video, including Brag"));
+        assert!(instructions.contains(
+            "For an underspecified new video, including a bare \"faça um brag\", use ask_user"
+        ));
+        assert!(instructions.contains("Ask only material unanswered choices"));
+        assert!(instructions.contains("dismissal or cancellation is not acceptance"));
+        assert!(instructions.contains("Reuse answers and an accepted brief on follow-up turns"));
+        assert!(instructions.contains("an explicit request to decide and execute is sufficient"));
+        assert!(instructions.contains("do not produce a final film based on unanswered questions"));
+        assert!(instructions.contains("Never claim a live screen was observed"));
+        assert!(instructions.contains("compact claim-to-source and scene mapping"));
+        assert!(instructions.contains("choreograph interactions, callouts and camera movement"));
+        assert!(instructions.contains("retain the actual product's identity"));
+    }
+}
+
+#[test]
+fn designer_direction_and_explicit_improvement_choices_reach_native_and_custom_execution() {
+    let mut catalog = example();
+    for step in &mut catalog.flows[0].steps {
+        step.agent_id = "builtin:designer".into();
+    }
+    catalog.validate().unwrap();
+    let restored: Catalog = serde_json::from_slice(&serde_json::to_vec(&catalog).unwrap()).unwrap();
+    assert!(restored.resolve_agent("builtin:designer").is_err());
+    let run = restored.resolve(&restored.flows[0].id).unwrap();
+    let custom_node = custom::instructions(&run.agents[0]);
+    for instructions in [
+        contracts::prompt(Flow::Designer, Role::Designer, "builtin:designer"),
+        contracts::prompt(Flow::Planned, Role::Designer, "delegated"),
+        contracts::prompt(Flow::Complete, Role::Designer, "delegated"),
+        custom_node.clone(),
+    ] {
+        let stages = [
+            "1. Establish the actual design problem",
+            "2. Notice valuable improvements",
+            "3. Resolve relevant Open Design contracts",
+            "4. Implement and perform a real design review",
+            "5. Preserve direction and hand off evidence",
+        ];
+        let positions: Vec<_> = stages
+            .iter()
+            .map(|stage| instructions.find(stage).unwrap())
+            .collect();
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+        for requirement in [
+            "senior product UI/UX designer and art director",
+            "offer two concrete directions",
+            "requireExplicitAnswer=true for optional scope expansion",
+            "No reply, timeout, a dismissed question or a recommended default is authorization",
+            "preserve the original scope",
+            "Broad improvement authority already given by the user is sufficient",
+            "An already-specified small correction does not need a new briefing exercise",
+            "relevant USAGE.md, DESIGN.md, token contract and component manifest/example",
+            "a short prose excerpt is not the complete component contract",
+            "affected loading, empty, error, populated and edge states",
+            "Fix concrete defects found by this review",
+            "a keyboard event is only synthetic",
+            "a self-assigned quality score is not evidence",
+            "a suggested improvement remains pending until accepted",
+        ] {
+            assert!(instructions.contains(requirement), "Missing: {requirement}");
+        }
+    }
+    assert!(custom_node.contains("current Designer execution only"));
+    assert!(custom_node.contains("Use ask_user directly"));
+    assert!(!custom_node.contains("hub_request_guidance"));
+    for tool in [
+        "ask_user",
+        "design_brief",
+        "design_search",
+        "design_read",
+        "write",
+        "edit",
+        "project_knowledge",
+        "browser_snapshot",
+        "browser_screenshot",
+    ] {
+        assert!(custom::allowed(&run.agents[0], tool), "{tool}");
+    }
+}
+
+#[test]
+fn coordinated_designer_improvements_require_the_real_user_choice_and_preserve_scope() {
+    for (flow, role) in [
+        (Flow::Planned, Role::Planner),
+        (Flow::Complete, Role::Orchestrator),
+    ] {
+        let instructions = contracts::prompt(flow, role, "main");
+        for requirement in [
+            "ask_user with requireExplicitAnswer=true",
+            "An existing broad user authorization is sufficient",
+            "a recommendation, timeout or dismissed question is not consent",
+            "Preserve the original requested work and relay only the actual decision",
+            "without granting unrelated browser or filesystem access",
+        ] {
+            assert!(instructions.contains(requirement), "Missing: {requirement}");
+        }
     }
 }
 

@@ -32,6 +32,15 @@ async function openFirst(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole("textbox", { name: "Mensagem" });
 }
 
+it("names spaces consistently while browsing the remote library", async () => {
+  const user = userEvent.setup(); const { client } = fixtures();
+  render(<RemoteApp client={client} />);
+  expect(await screen.findByLabelText("Espaços disponíveis")).toBeVisible();
+  expect(screen.getByText("Espaços")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Pessoal" }));
+  expect(screen.getByLabelText("Projetos do espaço")).toBeVisible();
+});
+
 it("opens provider limits from the mobile header without opening a chat", async () => {
   const user = userEvent.setup(); const { client, usage, chat } = fixtures();
   render(<RemoteApp client={client} />);

@@ -31,7 +31,7 @@ const GUIDANCE: Record<Role, string> = {
   orchestrator: "Priorize seguir contratos, dependências e decisões entre agentes. Exemplo: GPT 5.6 Sol com Alto; Extra alto para fluxos complexos.",
   designer: "Prefira um modelo capaz de analisar referências visuais e implementar interfaces. Exemplo: GPT 5.6 Sol com Alto ou Terra com Alto. A inspeção visual também depende das ferramentas disponíveis.",
   video: "Prefira um modelo capaz de combinar roteiro, direção visual e código. Ele coordena animações, narração e música; as ferramentas do Core geram o áudio. Use raciocínio maior para várias cenas e sincronização.",
-  image_generator: "Este modelo interpreta o pedido e coordena os workflows do ComfyUI. A geração visual usa o provedor de imagem definido em Configurações > Provedores > Ferramentas; essa escolha permanece independente do raciocínio do agente.",
+  image_generator: "Este modelo interpreta o pedido e coordena os fluxos do ComfyUI. A geração visual usa o provedor de imagem definido em Configurações > Provedores > Ferramentas; essa escolha permanece independente do raciocínio do agente.",
   builder: "Equilibre capacidade de programação e volume de trabalho. Exemplo: GPT 5.6 Terra com Alto; Sol com Extra alto para alterações complexas; Luna com Alto para tarefas menores.",
   reviewer: "Priorize análise crítica independente. Exemplo: GPT 5.6 Sol com Extra alto. Usar um modelo diferente do Construtor pode trazer outra perspectiva, sem garantir a detecção de todos os problemas.",
   github: "Um modelo rápido e econômico costuma ser suficiente para inspecionar diffs, executar checks e preparar commits e pull requests. Use raciocínio maior em projetos com vários repositórios.",

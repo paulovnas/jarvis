@@ -159,7 +159,7 @@ describe("ProviderAccountCard", () => {
     expect(onModelEnabledChange).toHaveBeenCalledWith(account.alias, "test-model", false);
     await user.click(screen.getByRole("button", { name: "Atualizar modelos" }));
     expect(onRefreshModels).toHaveBeenCalledWith(account.alias);
-    await user.click(screen.getByRole("button", { name: "Revisar no Workflow" }));
+    await user.click(screen.getByRole("button", { name: "Revisar nos Fluxos" }));
     expect(onReviewAgents).toHaveBeenCalledExactlyOnceWith("agents");
   });
 });

@@ -140,7 +140,7 @@ describe("application bootstrap", () => {
     expect(result.resources?.warnings).toEqual([
       "Não foi possível carregar os provedores conectados.",
       "Não foi possível carregar as skills instaladas.",
-      "Não foi possível pré-carregar os workspaces.",
+      "Não foi possível pré-carregar os espaços.",
     ]);
     expect(invokeMock.mock.calls.map(([command]) => command).filter(Boolean).sort()).toEqual([
       "get_core_status",

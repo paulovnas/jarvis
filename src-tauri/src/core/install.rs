@@ -1119,6 +1119,8 @@ pub(super) async fn install(
                 .env("npm_config_userconfig", destination.join("empty.npmrc"));
             self::command(command, 300).await?;
             hyperframes::install_documentation(destination)?;
+            stage("Preparando biblioteca criativa Brag");
+            super::brag::install(destination)?;
             stage("Baixando FFmpeg e FFprobe");
             let encoders: Release = serde_json::from_value(
                 json("https://api.github.com/repos/eugeneware/ffmpeg-static/releases/tags/b6.1.1")

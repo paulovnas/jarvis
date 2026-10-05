@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ArrowUpToLine, Check, CircleAlert, CircleCheck, Copy, ExternalLink, RefreshCw } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -18,25 +18,33 @@ import { displayVersion, nativeUpdaterAvailable, PROJECT_URL } from "@/core/app-
 import { writeClipboardText } from "@/core/clipboard";
 import { useAppUpdate } from "@/hooks/use-app-update";
 import { cn } from "@/lib/utils";
+import { openAuxiliaryWindow } from "@/core/auxiliary-windows";
 
 function megabytes(bytes: number): string { return `${(bytes / 1024 / 1024).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB`; }
 
 const PIX_COPY_AND_PASTE = "00020101021126540014br.gov.bcb.pix0132nascimento.paulo.vitor@gmail.com5204000053039865802BR5923PAULO V A DE O NASCIMEN6006AMPARO62070503***6304B333";
 
-export function AppUpdate() {
+function AboutSurface({ standalone, open, busy, onOpenChange, trigger, children }: { standalone: boolean; open: boolean; busy: boolean; onOpenChange: (open: boolean) => void; trigger: ReactNode; children: ReactNode }) {
+  if (standalone) return <Card role="region" aria-label="Sobre o Jarvis" className="flex h-full min-h-0 flex-1 flex-col gap-0 overflow-hidden rounded-none border-0 py-0 shadow-none">{children}</Card>;
+  return <Dialog open={open} onOpenChange={onOpenChange}>{trigger}<DialogContent className="dark flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl" showCloseButton={!busy}>{children}</DialogContent></Dialog>;
+}
+
+export function AppUpdate({ standalone = false, onBusyChange }: { standalone?: boolean; onBusyChange?: (busy: boolean) => void }) {
   const [open, setOpen] = useState(false);
   const [pixCopied, setPixCopied] = useState(false);
   const { info, checking, busy, progress, error, upToDate, pendingShutdown, check, install, confirmInstall, cancelInstall } = useAppUpdate();
+  const Description = standalone ? CardDescription : DialogDescription;
+  useEffect(() => { onBusyChange?.(busy || pendingShutdown !== null); }, [busy, pendingShutdown, onBusyChange]);
   useEffect(() => {
-    if (!nativeUpdaterAvailable()) return;
+    if (standalone || !nativeUpdaterAvailable()) return;
     let active = true;
     let dispose: (() => void) | undefined;
-    void listen("app:about", () => { if (active) setOpen(true); }).then(unlisten => {
+    void listen("app:about", () => { if (active) void openAuxiliaryWindow("about").then(native => { if (!native && active) setOpen(true); }).catch(() => toast.error("Não foi possível abrir Sobre o Jarvis.")); }).then(unlisten => {
       if (active) dispose = unlisten;
       else unlisten();
     }).catch(() => {});
     return () => { active = false; dispose?.(); };
-  }, []);
+  }, [standalone]);
   const release = info.available;
   const downloaded = progress?.stage === "downloading" ? progress.downloaded : 0;
   const total = progress?.stage === "downloading" ? progress.total : null;
@@ -52,26 +60,23 @@ export function AppUpdate() {
       toast.error("Não foi possível copiar o PIX.");
     }
   };
-  return <><Dialog open={open} onOpenChange={next => { if (!busy) setOpen(next); }}>
-    <DialogTrigger render={<Button variant="ghost" size="sm" />} className={cn("h-6 shrink-0 cursor-pointer rounded-sm px-1.5 font-mono text-[10px]", release ? "text-onedark-green" : "text-muted-foreground")} aria-label={release ? "Atualização Disponível" : `Sobre o Jarvis ${displayVersion(info.currentVersion)}`}>
-      {release ? "Atualização Disponível" : displayVersion(info.currentVersion)}
-    </DialogTrigger>
-    <DialogContent className="dark flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl" showCloseButton={!busy}>
-      <DialogHeader className="shrink-0 p-5 pr-10 sm:p-6 sm:pr-10">
-        <div className="flex items-center gap-5">
-          <JarvisLogo variant="vertical" className="size-24 shrink-0" />
-          <div className="flex min-w-0 flex-col gap-2">
-            <DialogTitle>{release ? "Atualizar Jarvis" : "Sobre o Jarvis"}</DialogTitle>
-            <DialogDescription>{release ? "Uma nova versão está disponível para você." : "Ambiente de desenvolvimento com agentes de IA."}</DialogDescription>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="font-mono text-[10px]">{displayVersion(info.currentVersion)}</Badge>
-              {release && <><span aria-hidden="true" className="text-muted-foreground">→</span><Badge variant="secondary" className="font-mono text-[10px]">{displayVersion(release.version)}</Badge></>}
-            </div>
-          </div>
-        </div>
-      </DialogHeader>
-      <Separator />
-      <section aria-label={release ? "Notas da versão" : "Sobre o projeto"} tabIndex={0} className="flex min-h-0 flex-col gap-5 overflow-y-auto overscroll-contain p-5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:p-6">
+  const aboutIdentity = <div className="flex items-center gap-5">
+    <JarvisLogo variant="vertical" className="size-24 shrink-0" />
+    <div className="flex min-w-0 flex-col gap-2">
+      {!standalone && <DialogTitle>{release ? "Atualizar Jarvis" : "Sobre o Jarvis"}</DialogTitle>}
+      <Description>{release ? "Uma nova versão está disponível para você." : "Ambiente de desenvolvimento com agentes de IA."}</Description>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline" className="font-mono text-[10px]">{displayVersion(info.currentVersion)}</Badge>
+        {release && <><span aria-hidden="true" className="text-muted-foreground">→</span><Badge variant="secondary" className="font-mono text-[10px]">{displayVersion(release.version)}</Badge></>}
+      </div>
+    </div>
+  </div>;
+  const versionButton = <Button variant="ghost" size="sm" className={cn("h-6 shrink-0 cursor-pointer rounded-sm px-1.5 font-mono text-[10px]", release ? "text-onedark-green" : "text-muted-foreground")} aria-label={release ? "Atualização Disponível" : `Sobre o Jarvis ${displayVersion(info.currentVersion)}`} onClick={() => { void openAuxiliaryWindow("about").then(native => { if (!native) setOpen(true); }).catch(() => toast.error("Não foi possível abrir Sobre o Jarvis.")); }}>{release ? "Atualização Disponível" : displayVersion(info.currentVersion)}</Button>;
+  if (!standalone && "__TAURI_INTERNALS__" in window) return versionButton;
+  return <><AboutSurface standalone={standalone} open={open} busy={busy} onOpenChange={next => { if (!busy) setOpen(next); }} trigger={<DialogTrigger render={versionButton} />}>
+      {!standalone && <><DialogHeader className="shrink-0 p-5 pr-10 sm:p-6 sm:pr-10">{aboutIdentity}</DialogHeader><Separator /></>}
+      <section aria-label={release ? "Notas da versão" : "Sobre o projeto"} tabIndex={0} className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain p-5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:p-6">
+        {standalone && aboutIdentity}
         {release ? <>
           {release.notes ? <LazyChatMarkdown content={release.notes} /> : <p className="text-sm text-muted-foreground">Nova versão disponível.</p>}
           {!info.installable && <p className="text-xs text-muted-foreground">A atualização automática não está disponível nesta instalação. Baixe a nova versão; no Linux, instale o novo DEB ou use um AppImage em uma pasta com permissão de escrita.</p>}
@@ -112,8 +117,7 @@ export function AppUpdate() {
           {release ? info.installable ? <Button className="cursor-pointer" disabled={busy || checking} onClick={() => void install()}><ArrowUpToLine data-icon="inline-start" />{busy ? stage : installed ? "Reabrir Jarvis" : "Atualizar e reiniciar"}</Button> : <Button className="cursor-pointer" onClick={() => { void openUrl(`${PROJECT_URL}/releases`).catch(() => toast.error("Não foi possível abrir os downloads.")); }}><ExternalLink data-icon="inline-start" />Baixar nova versão</Button> : <Button variant="outline" className="cursor-pointer" disabled={checking} onClick={() => void check(true)}><RefreshCw data-icon="inline-start" />Verificar atualizações</Button>}
         </div>
       </DialogFooter>
-    </DialogContent>
-  </Dialog>
+  </AboutSurface>
     <AlertDialog open={pendingShutdown !== null} onOpenChange={next => { if (!next) cancelInstall(); }}>
       <ConfirmationDialogContent className="dark">
         <AlertDialogHeader>

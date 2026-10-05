@@ -66,10 +66,10 @@ const SETTINGS_SECTIONS = [
               { value: "general", label: "Geral", Icon: Settings, description: "Preferências do aplicativo e organização das conversas." },
               { value: "terminal", label: "Terminal", Icon: TerminalIcon, description: "Shell interativo, argumentos e aparência do terminal integrado." },
               { value: "browser", label: "Navegador", Icon: Globe, description: "Navegação integrada ou controle do seu navegador pela extensão." },
-              { value: "voice", label: "Jarvis Voice", Icon: Mic, description: "Converse por voz no chat e ligue para o Jarvito." },
-              { value: "workspaces", label: "Workspaces", Icon: Layers, description: "Projetos, conversas e armazenamento local." },
+              { value: "voice", label: "Jarvis Voice", Icon: Mic, description: "Dite mensagens no chat e ajuste a voz das notificações do Jarvito." },
+              { value: "workspaces", label: "Espaços", Icon: Layers, description: "Projetos, conversas e armazenamento local." },
               { value: "tools", label: "Ferramentas", Icon: Plug, description: "Prepare e acompanhe as ferramentas do ambiente." },
-              { value: "agents", label: "Workflow", Icon: Users, description: "Organize fluxos e agentes para o seu jeito de trabalhar." },
+              { value: "agents", label: "Fluxos", Icon: Users, description: "Organize fluxos e agentes para o seu jeito de trabalhar." },
               { value: "providers", label: "Provedores", Icon: Sparkles, description: "Contas, modelos e recursos de inteligência artificial." },
               { value: "skills", label: "Skills", Icon: BookOpen, description: "Instruções especializadas disponíveis para os agentes." },
               { value: "mcps", label: "MCPs", Icon: Plug, description: "Conecte ferramentas e serviços aos seus agentes." },
@@ -113,7 +113,9 @@ type SettingsDialogProps = {
   onOpenChange: (open: boolean) => void;
   onAccountsChange?: (accounts: ProviderAccount[]) => void;
   embeddedProviders?: boolean;
+  standalone?: boolean;
   onBusyChange?: (busy: boolean) => void;
+  onCloseRequestChange?: (handler: (() => void) | null) => void;
 };
 
 function validateAliasSuffix(value: string): string | null {
@@ -134,18 +136,27 @@ function safeErrorMessage(error: unknown, fallback: string): string {
 }
 
 
-function SettingsSurface({ embedded, open, onOpenChange, children }: { embedded: boolean; open: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {
+function SettingsSurface({ embedded, standalone, open, onOpenChange, children }: { embedded: boolean; standalone: boolean; open: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {
   if (embedded) return <div className="min-w-0">{children}</div>;
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent showCloseButton className="settings-panel dark flex h-[min(900px,92dvh)] max-h-[92dvh] w-[calc(100vw-2rem)] max-w-none sm:max-w-[1180px] flex-col gap-0 border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden motion-reduce:transition-none">{children}</DialogContent></Dialog>;
+  if (standalone) return <Card role="region" aria-label="Configurações" className="settings-panel flex h-full min-h-0 w-full flex-1 flex-col gap-0 overflow-hidden rounded-none border-0 bg-background py-0 shadow-none">{children}</Card>;
+  return <Dialog open={open} onOpenChange={(next, details) => { if (details.reason !== "outside-press" && details.reason !== "escape-key") onOpenChange(next); }}><DialogContent showCloseButton className="settings-panel dark flex h-[min(960px,94dvh)] max-h-[94dvh] w-[calc(100vw-2rem)] max-w-none sm:max-w-[1400px] flex-col gap-0 border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden motion-reduce:transition-none">{children}</DialogContent></Dialog>;
 }
 
-export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedProviders = false, onBusyChange }: SettingsDialogProps) {
+export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedProviders = false, standalone = false, onBusyChange, onCloseRequestChange }: SettingsDialogProps) {
   const compactSettingsNavigation = useCompactSettingsNavigation();
   const bootstrap = useBootstrapResources();
   const { layout, updateLayout } = useDesktopLayout();
-  const activeTab = layout.settingsTab;
+  const [windowTab, setWindowTab] = useState(() => {
+    try { const stored = localStorage.getItem("jarvis:settings-window-tab"); return SETTINGS_SECTIONS.some(section => section.value === stored) ? stored as typeof layout.settingsTab : "general"; }
+    catch { return "general"; }
+  });
+  const activeTab = standalone ? windowTab : layout.settingsTab;
   const [workflowInitialTab, setWorkflowInitialTab] = useState<"flows" | "agents">("flows");
-  const setActiveTab = (value: string) => { if (value === "general" || value === "terminal" || value === "browser" || value === "voice" || value === "tools" || value === "providers" || value === "agents" || value === "skills" || value === "mcps" || value === "workspaces") updateLayout({ settingsTab: value }); };
+  const setActiveTab = (value: string) => {
+    if (value !== "general" && value !== "terminal" && value !== "browser" && value !== "voice" && value !== "tools" && value !== "providers" && value !== "agents" && value !== "skills" && value !== "mcps" && value !== "workspaces") return;
+    if (standalone) { setWindowTab(value); try { localStorage.setItem("jarvis:settings-window-tab", value); } catch { /* Keep navigation usable without persistent storage. */ } }
+    else updateLayout({ settingsTab: value });
+  };
   const [mcpCount, setMcpCount] = useState<number | null>(null);
   const [skillCount, setSkillCount] = useState<number | null>(() => bootstrap?.resources.skills?.skills.length ?? null);
   const visibleSkillCount = skillCount ?? bootstrap?.resources.skills?.skills.length ?? null;
@@ -186,7 +197,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   const preloadedAccounts = useRef(bootstrap?.resources.loaded.accounts ?? false);
   const [searchBusy, setSearchBusy] = useState(false);
   const [visionBusy, setVisionBusy] = useState(false);
-  useEffect(() => { onBusyChange?.(view !== "list" || editingCustom !== null || listState !== "ready" || toggling || refreshingAlias !== null || disconnecting !== null || searchBusy || visionBusy); }, [view, editingCustom, listState, toggling, refreshingAlias, disconnecting, searchBusy, visionBusy, onBusyChange]);
+  const operationBusy = savingCustom || (starting && view !== "waiting") || cancelling || toggling || refreshingAlias !== null || disconnecting !== null || searchBusy || visionBusy;
+  useEffect(() => { onBusyChange?.(standalone ? operationBusy : operationBusy || view !== "list" || editingCustom !== null || listState !== "ready"); }, [view, editingCustom, listState, operationBusy, standalone, onBusyChange]);
   useEffect(() => {
     closeRequestedRef.current = false;
     return () => {
@@ -414,7 +426,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
     [onOpenChange],
   );
 
-  const handleDialogOpenChange = (nextOpen: boolean, closeSettings = true) => {
+  const handleDialogOpenChange = useCallback((nextOpen: boolean, closeSettings = true) => {
     if (savingCustom && !nextOpen) return;
     if (nextOpen) {
       onOpenChange(true);
@@ -439,7 +451,12 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
 
     setView("list");
     if (closeSettings) onOpenChange(false);
-  };
+  }, [savingCustom, onOpenChange, cancelActiveConnection]);
+
+  useEffect(() => {
+    onCloseRequestChange?.(() => handleDialogOpenChange(false));
+    return () => onCloseRequestChange?.(null);
+  }, [handleDialogOpenChange, onCloseRequestChange]);
 
   const handleReopenBrowser = async () => {
     const connection = activeConnectionRef.current;
@@ -765,11 +782,11 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
 
   return (
     <>
-      <SettingsSurface embedded={embeddedProviders} open={open} onOpenChange={(nextOpen) => handleDialogOpenChange(nextOpen)}>
-          {embeddedProviders ? renderList() : <><DialogHeader className="shrink-0 border-b border-border bg-sidebar px-5 py-4">
+      <SettingsSurface embedded={embeddedProviders} standalone={standalone} open={open} onOpenChange={(nextOpen) => handleDialogOpenChange(nextOpen)}>
+          {embeddedProviders ? renderList() : <>{!standalone && <DialogHeader className="shrink-0 border-b border-border bg-sidebar px-5 py-4">
             <DialogTitle className="flex items-center gap-3 text-base font-heading font-medium text-foreground"><Settings aria-hidden="true" className="size-4 text-muted-foreground" />Configurações</DialogTitle>
             <DialogDescription className="sr-only">Painel de configurações do Jarvis</DialogDescription>
-          </DialogHeader>
+          </DialogHeader>}
 
           <SettingsTabs.Root orientation="vertical" value={activeTab} onValueChange={value => { if (typeof value === "string") setActiveTab(value); }} className="group/tabs flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden">
             <div className="settings-navigation w-14 shrink-0 overflow-y-auto border-r border-border bg-sidebar p-2 sm:w-48 sm:p-3">

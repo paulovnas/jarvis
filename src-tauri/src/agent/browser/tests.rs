@@ -88,6 +88,27 @@ fn screenshot_save_path_is_optional_in_build_and_rejected_by_the_read_only_catal
 }
 
 #[test]
+fn screenshot_contract_supports_video_assets_without_replacing_dom_discovery_or_reuse() {
+    for mode in [crate::agent::Mode::Plan, crate::agent::Mode::Build] {
+        let tools = definitions(mode);
+        let screenshot = tools
+            .iter()
+            .find(|tool| tool["name"] == "browser_screenshot")
+            .unwrap();
+        let description = screenshot["description"].as_str().unwrap();
+        assert!(description.contains("requested product/UI assets for a video"));
+        assert!(description.contains("Prefer snapshot for text and element discovery"));
+        assert!(description.contains("when visual analysis is needed"));
+        assert!(description.contains("reuse captures until the page changes"));
+    }
+    assert!(EFFICIENCY.contains("intentional product/UI captures needed by the requested video"));
+    assert!(EFFICIENCY.contains("truthful product evidence and assets for the requested video"));
+    assert!(EFFICIENCY.contains("Prefer a DOM snapshot for text, element discovery and behavior"));
+    assert!(EFFICIENCY.contains("does not require a new capture of an unchanged page"));
+    assert!(EFFICIENCY.contains("Never replace an unavailable browser with shell automation"));
+}
+
+#[test]
 fn bounds_reject_nan_negative_and_oversized_surfaces() {
     let good = Viewport {
         x: 50.,

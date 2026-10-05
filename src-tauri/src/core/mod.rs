@@ -2,6 +2,7 @@
 pub mod activity;
 pub(crate) mod audiovisual;
 pub mod beads;
+pub(crate) mod brag;
 pub(crate) mod comfyui;
 pub mod context;
 pub mod context7;

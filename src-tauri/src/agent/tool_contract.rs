@@ -145,6 +145,7 @@ impl Capabilities {
                 | "http_result"
                 | "video_docs"
                 | "video_presentation"
+                | "video_brag_assets"
                 | "jarvito_list_projects"
                 | "jarvito_list_executors"
                 | "jarvito_list_conversations"

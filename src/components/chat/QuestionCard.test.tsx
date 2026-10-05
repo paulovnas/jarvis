@@ -116,6 +116,39 @@ describe("Interactive questions", () => {
     expect(screen.queryByText("Recomendada")).not.toBeInTheDocument();
   });
 
+  it.each(["submit", "dismiss"])("keeps a recommended improvement without a deadline pending until explicit %s", async action => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const proposal: PendingQuestion = { turnId: "design", toolId: "proposal", questions: [
+      { id: "scope", question: "Também podemos melhorar os filtros no celular. Deseja incluir?", options: [
+        { label: "Incluir melhoria", description: "Mais espaço para o conteúdo", recommended: true },
+        { label: "Manter apenas o pedido" },
+      ] },
+    ] };
+    const onAnswer = vi.fn().mockResolvedValue(true);
+    render(<QuestionCard request={proposal} drafts={new Map()} draftKey="design/proposal" onAnswer={onAnswer} onInteract={vi.fn().mockResolvedValue(true)} />);
+    expect(screen.getByText("Recomendada")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Incluir melhoria/ })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Enviar respostas" })).toBeDisabled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(screen.queryByText("Enviando…")).not.toBeInTheDocument();
+    if (action === "submit") {
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Incluir melhoria/ })); });
+      expect(screen.getByRole("button", { name: "Enviar respostas" })).toBeEnabled();
+    }
+    await act(async () => {
+      if (action === "submit") {
+        fireEvent.click(screen.getByRole("button", { name: "Enviar respostas" }));
+      } else {
+        fireEvent.click(screen.getByRole("button", { name: "Cancelar perguntas" }));
+      }
+    });
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith(proposal, action === "submit"
+      ? { cancelled: false, answers: [{ id: "scope", value: "Incluir melhoria", selectedLabel: "Incluir melhoria" }] }
+      : { cancelled: true, answers: [] });
+  });
+
   it.each(["typing", "choice", "keyboard", "navigation"])("pauses on %s, preserves the draft and stays paused after reopening", async method => {
     vi.useFakeTimers();
     const timed = { ...request, deadlineAt: Date.now() + 1_000, questions: request.questions.map(question => ({ ...question, options: question.options.map((option, index) => ({ ...option, recommended: index === 0 })) })) };

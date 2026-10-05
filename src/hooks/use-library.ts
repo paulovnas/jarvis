@@ -121,7 +121,7 @@ export function useLibrary() {
     refresh,
     clearError: () => setError(null),
     createWorkspace: (name: string) =>
-      perform("create_workspace", { name }, "Workspace criado"),
+      perform("create_workspace", { name }, "Espaço criado"),
     addProject: (workspaceId: string) =>
       perform("add_project", { workspaceId }, "Projeto adicionado"),
     createConversation: (projectId: string) =>
@@ -133,7 +133,7 @@ export function useLibrary() {
     renameConversation: (id: string, title: string) =>
       perform("rename_conversation", { id, title }, "Conversa atualizada"),
     deleteItem: (target: LibraryDeleteTarget) =>
-      perform("delete_library_item", { target, confirmed: true }, target.kind === "workspace" ? "Workspace e históricos excluídos" : target.kind === "project" ? "Projeto e históricos excluídos" : "Conversa excluída"),
+      perform("delete_library_item", { target, confirmed: true }, target.kind === "workspace" ? "Espaço e históricos excluídos" : target.kind === "project" ? "Projeto e históricos excluídos" : "Conversa excluída"),
     select: (target: LibraryTarget) =>
       perform("select_library_item", { target }),
   };

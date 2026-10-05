@@ -98,6 +98,8 @@ fn description(name: &str) -> &'static str {
         "generate_image" => "Delegar imagens ao especialista com a conta e pipeline configuradas.",
         "image_process" => "Refinar anexos de imagem com a pipeline nativa do ComfyUI.",
         "video_docs" => "Consultar contratos e guias de composição do Hyperframes.",
+        "video_brag_assets" => "Consultar trilhas e efeitos licenciados do Brag.",
+        "video_brag_asset" => "Importar um áudio Brag e seus créditos para o projeto.",
         "video_run" => "Criar, verificar ou renderizar uma composição de vídeo.",
         "video_audio" => "Gerar narração PT-BR por cena ou música instrumental local.",
         "video_presentation" => {

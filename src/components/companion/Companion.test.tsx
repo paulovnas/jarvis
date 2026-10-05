@@ -884,6 +884,51 @@ describe("Desktop companion", () => {
     expect(main).toHaveAttribute("data-closing", "false");
   });
 
+  it.each(["sound", "activities"] as const)("closes the %s menu when the island collapses and keeps it closed when reopened", async menu => {
+    if (menu === "activities") snapshot.items.push({ ...base, agentId: "designer", role: "designer" });
+    measureSliders();
+    const user = userEvent.setup();
+    render(<Companion />);
+    await user.click(await screen.findByRole("button", { name: /Abrir assistente Jarvis/ }));
+    await screen.findByRole("region", { name: "Assistente Jarvis" });
+    await user.click(menu === "sound"
+      ? screen.getByRole("button", { name: "Sons e fala do Jarvito" })
+      : screen.getByRole("combobox", { name: "Conversa ou agente" }));
+    const menuIsOpen = () => menu === "sound"
+      ? screen.queryByRole("slider", { name: "Volume da voz" })
+      : screen.queryByRole("listbox");
+    await waitFor(() => expect(menuIsOpen()).toBeInTheDocument());
+    act(() => events.get("companion:collapse-request")?.(null));
+    await waitFor(() => expect(menuIsOpen()).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /Abrir assistente Jarvis/ }));
+    await screen.findByRole("region", { name: "Assistente Jarvis" });
+    expect(menuIsOpen()).not.toBeInTheDocument();
+  });
+
+  it("closes sound controls when native geometry compacts the island directly", async () => {
+    measureSliders();
+    const user = await expanded();
+    await user.click(screen.getByRole("button", { name: "Sons e fala do Jarvito" }));
+    await screen.findByRole("slider", { name: "Volume da voz" });
+    act(() => events.get("companion:geometry")?.(geometryFor(false)));
+    await waitFor(() => expect(screen.queryByRole("slider", { name: "Volume da voz" })).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /Abrir assistente Jarvis/ }));
+    await screen.findByRole("region", { name: "Assistente Jarvis" });
+    expect(screen.queryByRole("slider", { name: "Volume da voz" })).not.toBeInTheDocument();
+  });
+
+  it("counts only the parent request as completed while workers finish their stages", async () => {
+    snapshot.items.push({ ...base, agentId: "designer", role: "designer", status: "completed", attentionId: "designer/completed" });
+    await expanded();
+    expect(screen.queryByText("Resultado pronto")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "OK" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Conversa ou agente" })).not.toBeInTheDocument();
+    expect(screen.getByText("Trabalhando")).toBeVisible();
+    act(() => events.get("companion:collapse-request")?.(null));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Abrir assistente Jarvis/ })).toHaveAccessibleName(/1 atividade/));
+  });
+
   it("honors an outside-click collapse requested while opening is still in flight", async () => {
     let finishOpen: ((value: unknown) => void) | undefined;
     const original = call.getMockImplementation();

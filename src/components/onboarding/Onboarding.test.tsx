@@ -112,8 +112,8 @@ it("keeps tool settings visible after connection and sends the named workspace o
   expect(await screen.findByRole("combobox", { name: "Provedor de Vision" })).toHaveTextContent("Herdar do chat");
   await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Avançar" }));
-  expect(screen.getByLabelText("Workspace padrão")).toHaveAttribute("placeholder", "Pessoal");
-  await user.type(screen.getByLabelText("Workspace padrão"), "Estúdio");
+  expect(screen.getByLabelText("Espaço padrão")).toHaveAttribute("placeholder", "Pessoal");
+  await user.type(screen.getByLabelText("Espaço padrão"), "Estúdio");
   await user.click(screen.getByRole("button", { name: "Começar" }));
   expect(complete).toHaveBeenCalledWith("Estúdio");
 });

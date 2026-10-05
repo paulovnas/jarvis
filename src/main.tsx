@@ -4,14 +4,18 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./index.css";
 import { installWebviewShortcutGuards } from "./core/webview-shortcuts";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { applicationSurface } from "./core/auxiliary-windows";
 
 installWebviewShortcutGuards();
 
-const companion = "__TAURI_INTERNALS__" in window && getCurrentWindow().label === "companion";
-if (companion) { document.documentElement.dataset.companion = ""; document.documentElement.classList.add("dark"); }
-export const WindowContent = companion
+const surface = applicationSurface("__TAURI_INTERNALS__" in window ? getCurrentWindow().label : "main");
+if (surface !== "main") document.documentElement.classList.add("dark");
+if (surface === "companion") document.documentElement.dataset.companion = "";
+export const WindowContent = surface === "companion"
   ? lazy(() => import("./components/companion/Companion").then(module => ({ default: module.Companion })))
-  : lazy(() => import("./App"));
+  : surface === "settings" || surface === "about"
+    ? lazy(() => import("./components/windows/AuxiliaryWindow").then(module => ({ default: surface === "settings" ? module.SettingsWindow : module.AboutWindow })))
+    : lazy(() => import("./App"));
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

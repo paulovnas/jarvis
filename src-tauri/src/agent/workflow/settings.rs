@@ -160,7 +160,7 @@ pub(in crate::agent) fn validate(flow: Flow, profiles: &ModelSettings) -> Result
         Ok(())
     } else {
         Err(invalid(&format!(
-            "Escolha os modelos em Configurações > Workflow: {}.",
+            "Escolha os modelos em Configurações > Fluxos: {}.",
             missing.join(", ")
         )))
     }

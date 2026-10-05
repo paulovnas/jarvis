@@ -330,7 +330,7 @@ pub(crate) fn insert_workspace(
     )? {
         return Err(LibraryError::new(
             "duplicate_workspace",
-            "Já existe um workspace com esse nome.",
+            "Já existe um espaço com esse nome.",
         ));
     }
     let id = new_id()?;

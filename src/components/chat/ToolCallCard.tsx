@@ -63,6 +63,8 @@ const tools = {
   generate_image: { label: "Geração de imagem", icon: ImagePlus },
   image_process: { label: "Processar imagem", icon: ImagePlus },
   video_docs: { label: "Vídeo · Documentação", icon: BookOpen },
+  video_brag_assets: { label: "Brag · Trilhas e efeitos", icon: AudioLines },
+  video_brag_asset: { label: "Brag · Importar áudio", icon: AudioLines },
   video_run: { label: "Vídeo · Executar etapa", icon: Film },
   video_wait: { label: "Vídeo e áudio · Aguardar etapa", icon: Film },
   video_cancel: { label: "Vídeo e áudio · Cancelar etapa", icon: TriangleAlert },

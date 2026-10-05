@@ -617,10 +617,10 @@ pub(crate) fn read(home: &Path) -> Result<Catalog, AgentError> {
     if !meta.is_file() || meta.is_symlink() || meta.len() > 4 * 1024 * 1024 {
         return Err(AgentError::storage());
     }
-    let catalog: Catalog =
-        serde_json::from_slice(&fs::read(path).map_err(|_| AgentError::storage())?).map_err(
-            |_| invalid("O catálogo de Workflow não pôde ser lido. Os dados foram preservados."),
-        )?;
+    let catalog: Catalog = serde_json::from_slice(
+        &fs::read(path).map_err(|_| AgentError::storage())?,
+    )
+    .map_err(|_| invalid("O catálogo de Fluxos não pôde ser lido. Os dados foram preservados."))?;
     catalog.validate()?;
     Ok(catalog)
 }

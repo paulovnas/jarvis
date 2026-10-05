@@ -31,9 +31,11 @@ pub struct Question {
     options: Vec<QuestionOption>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Request {
     questions: Vec<Question>,
+    #[serde(default)]
+    require_explicit_answer: bool,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -157,6 +159,9 @@ fn validate_response(request: &PendingQuestion, response: &Response) -> Result<(
     Ok(())
 }
 fn recommended_response(request: &Request) -> Option<Response> {
+    if request.require_explicit_answer {
+        return None;
+    }
     let answers = request
         .questions
         .iter()
@@ -177,10 +182,10 @@ fn recommended_response(request: &Request) -> Option<Response> {
 pub(super) fn definition() -> Value {
     json!({
         "type": "function", "name": "ask_user",
-        "description": "Ask the user 1-3 concise clarification questions and wait for their answers in the Jarvis UI. Use this instead of listing questions/options in chat when missing preferences, requirements or decisions materially affect the task and cannot be resolved from available evidence. Write questions and choices in the response language configured by the shared system instructions. Supply 0-6 distinct choices per question; descriptions are optional and should only explain useful tradeoffs. Mark exactly one option as recommended whenever choices are supplied: after the user's configured countdown, Jarvis may automatically use the recommendation only if the user has not interacted with the questions. Typing, selecting or navigating pauses automatic answering for the entire request. The UI always includes a free-text answer: do not add Other/manual answer options. A cancelled response means the user did not answer: do not invent an answer or treat it as authorization. This tool collects user input; it does not replace tool execution approvals.",
+        "description": "Ask the user 1-3 concise clarification questions and wait for their answers in the Jarvis UI. Use this instead of listing questions/options in chat when missing preferences, requirements or decisions materially affect the task and cannot be resolved from available evidence. Write questions and choices in the response language configured by the shared system instructions. Supply 0-6 distinct choices per question; descriptions are optional and should only explain useful tradeoffs. Mark exactly one option as recommended whenever choices are supplied. By default, after the user's configured countdown, Jarvis may automatically use the recommendation only if the user has not interacted with the questions. Typing, selecting or navigating pauses automatic answering for the entire request. Set requireExplicitAnswer=true when an explicit user choice is required, including optional improvements that expand the requested scope: recommendations remain visible, but automatic selection and the countdown are disabled until the user submits or dismisses the questions. The UI always includes a free-text answer: do not add Other/manual answer options. A cancelled response means the user did not answer: do not invent an answer or treat it as authorization. This tool collects user input; it does not replace tool execution approvals.",
         "parameters": {
             "type": "object", "additionalProperties": false, "required": ["questions"],
-            "properties": {"questions": {"type": "array", "minItems": 1, "maxItems": 3,
+            "properties": {"requireExplicitAnswer": {"type": "boolean", "default": false, "description": "Require an explicit submitted answer. Disables automatic recommendation selection and the countdown; recommendations remain visible. Use for optional changes outside the requested scope."}, "questions": {"type": "array", "minItems": 1, "maxItems": 3,
                 "items": {"type": "object", "additionalProperties": false, "required": ["id", "question"],
                     "properties": {
                         "id": {"type": "string", "minLength": 1, "maxLength": 64},

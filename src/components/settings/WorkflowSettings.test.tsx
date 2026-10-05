@@ -13,7 +13,7 @@ beforeEach(() => { mutate.mockClear(); vi.mocked(useWorkflowCatalog).mockReturnV
 
 it("separates immutable built-in flow and agent cards from custom management", async () => {
   const user = userEvent.setup(); render(<WorkflowSettings accounts={[]} />);
-  expect(screen.getByRole("tablist", { name: "Workflow" })).toHaveAttribute("aria-orientation", "horizontal");
+  expect(screen.getByRole("tablist", { name: "Fluxos" })).toHaveAttribute("aria-orientation", "horizontal");
   const jarvis = screen.getByRole("region", { name: "Fluxos Jarvis" });
   expect(within(jarvis).getAllByRole("button")).toHaveLength(6);
   expect(within(jarvis).queryByRole("button", { name: /Excluir|Editar/ })).not.toBeInTheDocument();
@@ -51,6 +51,18 @@ it("opens the real native definition in the shared read-only canvas", async () =
   expect(screen.getByText("Somente leitura")).toBeVisible();
   expect(screen.getByText(/topologia executada pelo Jarvis/i)).toBeVisible();
   expect(screen.getByLabelText("Modelos do fluxo")).toBeVisible();
+});
+
+it("closes a built-in flow with its persistent footer action", async () => {
+  const user = userEvent.setup(); render(<WorkflowSettings accounts={[]} />);
+  await user.click(screen.getByRole("button", { name: "Ver fluxo Designer" }));
+  const dialog = await screen.findByRole("dialog");
+  const footer = within(dialog).getByRole("group", { name: "Ações do fluxo" });
+  const close = within(footer).getByRole("button", { name: "Fechar" });
+  expect(close).toBeVisible();
+  await user.click(close);
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(mutate).not.toHaveBeenCalled();
 });
 
 it("requires a concrete delete confirmation and preserves the editor after save failure", async () => {

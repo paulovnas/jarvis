@@ -693,7 +693,15 @@ impl Execution {
         let brief = state
             .design_briefs
             .get(&self.id)
-            .or_else(|| state.design_briefs.get("main"))
+            .or_else(|| {
+                // Canvas nodes retain their own decisions. A previous direct
+                // Designer's brief is not the direction for a new graph run.
+                if self.flow != Flow::Custom {
+                    state.design_briefs.get("main")
+                } else {
+                    None
+                }
+            })
             .cloned()
             .unwrap_or_default();
         Ok((scopes, brief))
@@ -852,7 +860,12 @@ impl Execution {
         definitions.extend(super::browser::definitions(self.role_mode()));
         definitions.extend(super::http::definitions(self.role_mode()));
         if self.flow == Flow::Custom && !direct {
-            definitions.extend(dispatch::definitions(self.flow, Role::Builder));
+            let role = if self.designer() {
+                Role::Designer
+            } else {
+                Role::Builder
+            };
+            definitions.extend(dispatch::definitions(self.flow, role));
         } else if !direct || self.designer() {
             definitions.extend(dispatch::definitions(self.flow, self.role));
         }
@@ -1292,6 +1305,7 @@ fn recovery_inspection_tool(name: &str, mcp_mutating: bool) -> bool {
             | "design_read"
             | "video_docs"
             | "video_presentation"
+            | "video_brag_assets"
             | "ctx_search"
             | "ctx_stats"
             | "beads_show"

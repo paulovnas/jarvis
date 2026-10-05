@@ -56,6 +56,24 @@ describe("Jarvito spoken notifications", () => {
     expect(companionSpeechText(item("reconnecting"), 0)).toBeNull();
     expect(companionSpeechText({ ...item("completed"), acknowledged: true }, 0)).toBeNull();
     expect(companionSpeechText({ ...item("completed"), global: true, title: "Jarvito" }, 0)).toContain("nossa conversa");
+    expect(companionSpeechText({ ...item("completed"), agentId: "designer" }, 0)).toBeNull();
+    expect(companionSpeechText({ ...item("waiting"), agentId: "designer" }, 0)).toContain("Revisão da funcionalidade Sienge");
+  });
+
+  it("speaks once when the root finishes after multiple worker completions", async () => {
+    const root = item("running");
+    const designer = { ...root, agentId: "designer" };
+    const builder = { ...root, agentId: "builder" };
+    const { result, rerender } = renderHook(({ items }) => useNotifiedSpeech(items), { initialProps: { items: [root, designer, builder] } });
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    const finishedDesigner = { ...designer, status: "completed" as const, attentionId: "designer/completed" };
+    const finishedBuilder = { ...builder, status: "completed" as const, attentionId: "builder/completed" };
+    rerender({ items: [root, finishedDesigner, builder] });
+    rerender({ items: [root, finishedDesigner, finishedBuilder] });
+    expect(voice.start).not.toHaveBeenCalled();
+    expect(result.current.notice).toBeNull();
+    rerender({ items: [item("completed"), finishedDesigner, finishedBuilder] });
+    await waitFor(() => expect(voice.start).toHaveBeenCalledOnce());
   });
 
   it("does not replay loaded history, speaks a new result once and queues the next result", async () => {

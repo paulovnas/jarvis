@@ -22,3 +22,15 @@
 [submodule "docs/opencode"]
 	path = docs/opencode
 	url = https://github.com/anomalyco/opencode.git
+[submodule "docs/OpenGhost"]
+	path = docs/OpenGhost
+	url = https://github.com/ANDRETRIPOL/OpenGhost.git
+[submodule "docs/Openlive"]
+	path = docs/Openlive
+	url = https://github.com/byte271/Openlive.git
+[submodule "docs/adk-rust"]
+	path = docs/adk-rust
+	url = https://github.com/zavora-ai/adk-rust.git
+[submodule "docs/brag"]
+	path = docs/brag
+	url = https://github.com/latent-spaces/brag.git

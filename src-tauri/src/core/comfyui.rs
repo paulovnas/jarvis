@@ -262,7 +262,7 @@ pub(super) async fn install(
     let runtime = Runtime::at(destination);
     let requirements = destination.join("requirements.txt");
     fs::write(&requirements, include_str!("comfyui/requirements.txt"))?;
-    stage("Instalando workflow e remoção de fundo CPU");
+    stage("Instalando fluxo e remoção de fundo CPU");
     let mut command = tokio::process::Command::new(&runtime.python);
     command
         .args([

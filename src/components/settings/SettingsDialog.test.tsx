@@ -1,5 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -62,6 +62,74 @@ function renderSettings(onOpenChange = vi.fn()) {
 }
 
 describe("SettingsDialog provider accounts", () => {
+  it("keeps settings open on outside clicks and Escape, and closes explicitly", async () => {
+    invokeMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    const changed = vi.fn();
+    render(<SettingsDialog open onOpenChange={changed} />);
+    await user.keyboard("{Escape}");
+    const backdrop = document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]');
+    expect(backdrop).not.toBeNull();
+    if (backdrop) await user.click(backdrop);
+    expect(changed).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Configurações" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(changed).toHaveBeenCalledWith(false);
+  });
+
+  it("offers standalone settings without redundant window chrome or saving the main window layout", async () => {
+    invokeMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    const changed = vi.fn();
+    render(<SettingsDialog standalone open onOpenChange={changed} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Configurações" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Configurações" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Fechar Configurações" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /Provedores/ }));
+    expect(screen.getByRole("tabpanel", { name: /Provedores/ })).toBeVisible();
+    expect(invokeMock).not.toHaveBeenCalledWith("save_desktop_layout", expect.anything());
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("restores the native settings tab without overwriting chat panel preferences", async () => {
+    invokeMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    const { unmount } = render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
+    await user.click(screen.getByRole("tab", { name: /Provedores/ }));
+    unmount();
+    render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
+    expect(screen.getByRole("tab", { name: /Provedores/ })).toHaveAttribute("aria-selected", "true");
+    expect(invokeMock).not.toHaveBeenCalledWith("save_desktop_layout", expect.anything());
+  });
+
+  it("cancels pending OAuth before accepting a native window close request", async () => {
+    const existing = account("openai-codex-pessoal");
+    const pending = deferred<ProviderAccount>();
+    const requestClose: { current: (() => void) | null } = { current: null };
+    const changed = vi.fn();
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_provider_accounts") return Promise.resolve([existing]);
+      if (command === "reauthorize_provider_account") return Promise.resolve({ flowId: "native-oauth", authorizationUrl: "https://example.test/auth" });
+      if (command === "wait_openai_codex_connection") return pending.promise;
+      if (command === "cancel_openai_codex_connection") pending.reject({ code: "cancelled", message: "Cancelada" });
+      return Promise.resolve();
+    });
+    const user = userEvent.setup();
+    render(<SettingsDialog standalone open onOpenChange={changed} onCloseRequestChange={handler => { requestClose.current = handler; }} />);
+    await user.click(screen.getByRole("tab", { name: /Provedores/ }));
+    await user.click(await screen.findByRole("button", { name: `Detalhes de ${existing.alias}` }));
+    await user.click(screen.getByRole("button", { name: "Re-autorizar" }));
+    await screen.findByText("Aguardando autenticação no navegador");
+    expect(changed).not.toHaveBeenCalled();
+    expect(requestClose.current).not.toBeNull();
+    // This callback is installed on the native title bar close request.
+    await act(async () => { requestClose.current?.(); });
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("cancel_openai_codex_connection", { flowId: "native-oauth" }));
+    await waitFor(() => expect(changed).toHaveBeenCalledWith(false));
+  });
+
   it.each(["openai-codex", "opencode-go"] as const)("persists independent %s quota windows and keeps choices across the master switch", async providerKind => {
     const user = userEvent.setup();
     const errorToast = vi.spyOn(toast, "error");
@@ -284,6 +352,7 @@ describe("SettingsDialog provider accounts", () => {
     expect(screen.getByRole("button", { name: "Desconectar" })).toBeInTheDocument();
   });
   beforeEach(() => {
+    localStorage.removeItem("jarvis:settings-window-tab");
     vi.restoreAllMocks();
     invokeMock.mockReset();
     usageMock.mockReset().mockReturnValue({ data: null, error: false });
@@ -296,7 +365,7 @@ describe("SettingsDialog provider accounts", () => {
     const user = userEvent.setup();
     render(<SettingsDialog open onOpenChange={vi.fn()} />);
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Terminal", "Navegador", "Jarvis Voice", "Workspaces", "Ferramentas", "Workflow", "Provedores", "Skills", "MCPs"]);
+    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Terminal", "Navegador", "Jarvis Voice", "Espaços", "Ferramentas", "Fluxos", "Provedores", "Skills", "MCPs"]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
     expect(within(screen.getByRole("tabpanel", { name: "Geral" })).queryByRole("heading", { name: "Core" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Ferramentas" }));

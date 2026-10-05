@@ -290,7 +290,7 @@ fn publish(
         .filter(|v| v.len() == request.image_ids.len())
         .ok_or_else(|| error("O ComfyUI não entregou todas as imagens solicitadas."))?;
     let _: serde_json::Map<String, Value> =
-        serde_json::from_slice(&workflow).map_err(|_| error("Workflow ComfyUI inválido."))?;
+        serde_json::from_slice(&workflow).map_err(|_| error("Fluxo ComfyUI inválido."))?;
     let mut outputs = vec![];
     for (index, record) in files.iter().enumerate() {
         let name = format!("image-{:02}.{}", index + 1, request.processing.format);

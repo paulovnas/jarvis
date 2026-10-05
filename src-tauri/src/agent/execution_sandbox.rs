@@ -296,6 +296,7 @@ pub(super) fn add_permission_parameters(definition: &mut serde_json::Value) {
                 | "terminal_start"
                 | "video_run"
                 | "video_audio"
+                | "video_brag_asset"
                 | "image_process"
         )
     ) {
@@ -580,6 +581,10 @@ mod tests {
             (
                 "video_audio",
                 serde_json::json!({"action":"narrate","text":"Olá","output":"voice.wav"}),
+            ),
+            (
+                "video_brag_asset",
+                serde_json::json!({"asset":"music/track.mp3","output":"videos/demo/music.wav"}),
             ),
             (
                 "image_process",

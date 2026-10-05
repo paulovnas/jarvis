@@ -3,6 +3,7 @@ mod agent;
 mod app_exit;
 #[cfg(target_os = "macos")]
 mod app_menu;
+mod auxiliary_windows;
 mod background;
 mod backup;
 mod claude;
@@ -45,7 +46,7 @@ fn main_only(
     if !application_command_allowed(invoke.message.webview().label(), invoke.message.command()) {
         invoke
             .resolver
-            .reject("Application commands are unavailable in browser tabs.");
+            .reject("This command is unavailable in this window.");
         return true;
     }
     handler(invoke)
@@ -53,6 +54,7 @@ fn main_only(
 
 fn application_command_allowed(label: &str, command: &str) -> bool {
     label == "main"
+        || auxiliary_windows::command_allowed(label, command)
         || (label == "companion"
             && matches!(
                 command,
@@ -148,6 +150,37 @@ mod companion_policy_tests {
             assert!(!application_command_allowed("companion", command));
             assert!(!application_command_allowed("other", command));
         }
+    }
+
+    #[test]
+    fn settings_and_about_keep_separate_application_permissions() {
+        assert!(application_command_allowed("main", "open_auxiliary_window"));
+        assert!(application_command_allowed(
+            "settings",
+            "save_system_preferences"
+        ));
+        assert!(application_command_allowed(
+            "settings",
+            "mutate_workflow_catalog"
+        ));
+        assert!(application_command_allowed("about", "check_app_update"));
+        assert!(application_command_allowed("about", "install_app_update"));
+        for label in ["settings", "about", "browser-1", "remote", "other"] {
+            assert!(!application_command_allowed(label, "start_agent_turn"));
+            assert!(!application_command_allowed(label, "browser_command"));
+            assert!(!application_command_allowed(
+                label,
+                "capture_self_development_incident"
+            ));
+        }
+        assert!(!application_command_allowed(
+            "about",
+            "save_system_preferences"
+        ));
+        assert!(!application_command_allowed(
+            "browser-1",
+            "open_auxiliary_window"
+        ));
     }
 }
 #[tauri::command]
@@ -256,6 +289,7 @@ pub fn run() {
             // Remote child views must never call privileged application commands,
             // even if a site navigates to a local URL matching the development origin.
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                auxiliary_windows::open_auxiliary_window,
                 voice::get_voice_settings,
                 voice::save_voice_settings,
                 voice::get_voice_session,

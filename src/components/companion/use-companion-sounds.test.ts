@@ -70,6 +70,18 @@ describe("Jarvito native lifecycle sound cues", () => {
     expect(start).toHaveBeenCalledTimes(5);
   });
 
+  it("plays the finish cue only for the whole request after workers hand off their results", async () => {
+    const root = item("running");
+    const child = { ...root, agentId: "designer" };
+    const { result, rerender } = renderHook(({ items }) => useCompanionSounds(items, true), { initialProps: { items: [root, child] } });
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+    const completedChild = { ...child, status: "completed" as const, attentionId: "designer/completed" };
+    rerender({ items: [root, completedChild] });
+    expect(start).not.toHaveBeenCalled();
+    rerender({ items: [item("completed"), completedChild] });
+    expect(start).toHaveBeenCalledTimes(3);
+  });
+
   it("persists mute before changing state, stays muted after failed saves, and keeps hidden transitions silent", async () => {
     const { result, rerender } = renderHook(({ items, visible }) => useCompanionSounds(items, true, visible), { initialProps: { items: [] as CompanionItem[], visible: false } });
     await waitFor(() => expect(result.current.enabled).toBe(true));

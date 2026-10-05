@@ -137,6 +137,17 @@ it("offers Open Design installation alongside the other Core resources", async (
   expect(screen.getByText("8/9 essenciais")).toBeInTheDocument();
 });
 
+it("presents Brag as an included HyperFrames resource with a usable video request", async () => {
+  invokeMock.mockResolvedValue(coreFixture());
+  render(<CoreSettings />);
+  const resource = await screen.findByLabelText("Brag incluído no HyperFrames");
+  expect(within(resource).getByText("Brag incluído")).toBeVisible();
+  expect(resource).toHaveTextContent("faça um brag");
+  expect(resource).toHaveTextContent("Gerador de Vídeos");
+  expect(resource).toHaveTextContent("fontes reais");
+  expect(screen.queryByRole("button", { name: "Instalar Brag" })).not.toBeInTheDocument();
+});
+
 it.each(["hyperframes", "audiovisual", "comfyui", "graft"] as const)("offers required %s installation in the essential Core", async id => {
   const state = coreFixture();
   const video = state.items.find(item => item.id === id)!;

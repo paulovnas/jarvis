@@ -116,7 +116,10 @@ pub(super) fn allowed(agent: &catalog::AgentDefinition, name: &str) -> bool {
         if name.starts_with("hub_") {
             return name == "hub_complete";
         }
-        if matches!(name, "validation_publish" | "design_brief") {
+        if name == "design_brief" {
+            return native_designer(agent);
+        }
+        if name == "validation_publish" {
             return false;
         }
         return role.allows(Flow::Custom, name, true);
@@ -131,6 +134,11 @@ pub(super) fn allowed(agent: &catalog::AgentDefinition, name: &str) -> bool {
     capability_allows(agent.capability, name)
 }
 
+pub(super) fn native_designer(agent: &catalog::AgentDefinition) -> bool {
+    agent.native_role == Some(Role::Designer)
+        && Role::from_builtin_id(&agent.id) == Some(Role::Designer)
+}
+
 pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
     if name == "image_process" {
         return false;
@@ -140,7 +148,7 @@ pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
     }
     if matches!(
         name,
-        "video_run" | "video_audio" | "video_wait" | "video_cancel"
+        "video_run" | "video_audio" | "video_wait" | "video_cancel" | "video_brag_asset"
     ) {
         return capability == Capability::Commands;
     }

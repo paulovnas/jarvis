@@ -25,6 +25,20 @@ const invokeMock = vi.mocked(invoke);
 const accountsMock = vi.fn<() => Promise<ProviderAccount[]>>();
 
 describe("Home shell", () => {
+  it("opens native settings while leaving the conversation and its draft available", async () => {
+    vi.stubGlobal("__TAURI_INTERNALS__", {});
+    const original = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation(async (command, args, options) => command === "open_auxiliary_window" ? undefined : original(command, args, options));
+    const user = userEvent.setup();
+    render(<Home />);
+    const field = await screen.findByRole("textbox", { name: "Mensagem" });
+    field.focus();
+    await user.paste("Continue daqui");
+    await user.click(screen.getByRole("button", { name: "Configurações" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("open_auxiliary_window", { kind: "settings" }));
+    expect(screen.queryByRole("dialog", { name: "Configurações" })).not.toBeInTheDocument();
+    expect(field).toHaveTextContent("Continue daqui");
+  });
   it.each(["openai-codex", "opencode-go"])("reloads %s models from the composer without reconnecting the account", async providerKind => {
     const user = userEvent.setup();
     const account: ProviderAccount = { alias: `${providerKind}-pessoal`, providerKind, enabled: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, models: [{ id: "old", name: "Antigo", reasoningLevels: [], defaultReasoningLevel: null }] };
@@ -86,7 +100,7 @@ describe("Home shell", () => {
     expect(await screen.findByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho pessoal");
     const workspace = async (name: string) => {
       // jsdom has no panel geometry; avoid the resize handle's (0, 0) hit area.
-      screen.getByRole("combobox", { name: "Selecionar workspace" }).focus();
+      screen.getByRole("combobox", { name: "Selecionar espaço" }).focus();
       await user.keyboard("{Enter}");
       await user.click(await screen.findByRole("option", { name }));
     };
@@ -220,13 +234,13 @@ describe("Home shell", () => {
     });
     render(<Home />);
     const add = await screen.findByRole("button", { name: "Adicionar projeto" });
-    expect(screen.getByRole("combobox", { name: "Selecionar workspace" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Selecionar espaço" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Configurações" })).toBeEnabled();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     await user.click(add);
     expect(invokeMock).toHaveBeenCalledWith("add_project", { workspaceId: "w1" });
     expect(await screen.findByRole("button", { name: "Configurações" })).toBeEnabled();
-    expect(screen.getByRole("complementary", { name: "Workspace" })).toBeVisible();
+    expect(screen.getByRole("complementary", { name: "Espaço" })).toBeVisible();
   });
   beforeEach(() => {
     clearChatStore();
@@ -259,7 +273,7 @@ describe("Home shell", () => {
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
   it("abre o Kanban do projeto pelo resumo do plano", async () => {
     const user = userEvent.setup();
@@ -288,10 +302,10 @@ describe("Home shell", () => {
   it("renderiza a hierarquia persistida e o contexto da conversa selecionada", async () => {
     render(<Home />);
 
-    expect(screen.getByRole("complementary", { name: "Workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Espaço" })).toBeInTheDocument();
     await screen.findByRole("heading", { name: "Primeira conversa" });
-    expect(screen.getByRole("combobox", { name: "Selecionar workspace" })).toHaveTextContent("Pessoal");
-    expect(screen.getByRole("button", { name: "Adicionar projeto ou workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Selecionar espaço" })).toHaveTextContent("Pessoal");
+    expect(screen.getByRole("button", { name: "Adicionar projeto ou espaço" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Detalhes" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Atividades" })).not.toBeInTheDocument();
     expect(screen.getByRole("main", { name: "Conversa" })).toBeInTheDocument();
@@ -372,14 +386,14 @@ describe("Home shell", () => {
     expect(field).toHaveTextContent("Rascunho preservado");
     await user.click(screen.getByRole("button", { name: "Recolher barra lateral" }));
     await user.click(screen.getByRole("button", { name: "Recolher inspector" }));
-    expect(screen.queryByRole("complementary", { name: "Workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Espaço" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Atividades" })).not.toBeInTheDocument();
     expect(screen.queryByRole("separator", { name: "Redimensionar barra lateral" })).not.toBeInTheDocument();
     expect(screen.queryByRole("separator", { name: "Redimensionar inspector" })).not.toBeInTheDocument();
     expect(field).toHaveTextContent("Rascunho preservado");
     await user.click(screen.getByRole("button", { name: "Abrir barra lateral" }));
     await user.click(screen.getByRole("button", { name: "Abrir inspector" }));
-    expect(screen.getByRole("complementary", { name: "Workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Espaço" })).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Inspector" })).toBeInTheDocument();
     expect(screen.getByRole("separator", { name: "Redimensionar barra lateral" })).toHaveAttribute("tabindex", "0");
     expect(screen.getByRole("separator", { name: "Redimensionar inspector" })).toHaveAttribute("tabindex", "0");

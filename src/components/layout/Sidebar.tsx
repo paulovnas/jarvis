@@ -137,7 +137,7 @@ export function AppSidebar({
 
   return (
     <aside
-      aria-label="Workspace"
+      aria-label="Espaço"
       className="h-full min-h-0 w-full overflow-hidden border-r border-border/70"
     >
       <SidebarProvider
@@ -147,7 +147,7 @@ export function AppSidebar({
       >
         <Sidebar collapsible="none" className="h-full w-full bg-sidebar">
           <SidebarHeader className="gap-2 border-b border-border/70 px-3 pt-3 pb-3.5">
-            <span className="micro-label flex items-center gap-2 px-1 text-muted-foreground"><Layers aria-hidden="true" className="size-3 text-onedark-cyan" />Workspace</span>
+            <span className="micro-label flex items-center gap-2 px-1 text-muted-foreground"><Layers aria-hidden="true" className="size-3 text-onedark-cyan" />Espaço</span>
             <div className="flex items-center gap-2">
               <Select
                 items={(snapshot?.workspaces ?? []).map((item) => ({
@@ -161,10 +161,10 @@ export function AppSidebar({
                 }}
               >
                 <SelectTrigger
-                  aria-label="Selecionar workspace"
+                  aria-label="Selecionar espaço"
                   className="h-8 w-full min-w-0 cursor-pointer border-transparent bg-card/30 text-xs shadow-none hover:border-border hover:bg-card/50"
                 >
-                  <SelectValue placeholder="Selecione um workspace" />
+                  <SelectValue placeholder="Selecione um espaço" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
@@ -181,13 +181,13 @@ export function AppSidebar({
                 </SelectContent>
             </Select>
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Adicionar projeto ou workspace" className="shrink-0 cursor-pointer" disabled={busy || !snapshot} />}>
-                <Hint content="Adicionar projeto ou workspace"><span className="flex items-center"><Plus /></span></Hint>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Adicionar projeto ou espaço" className="shrink-0 cursor-pointer" disabled={busy || !snapshot} />}>
+                <Hint content="Adicionar projeto ou espaço"><span className="flex items-center"><Plus /></span></Hint>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-64">
                 <DropdownMenuGroup>
                   <DropdownMenuItem className="cursor-pointer" disabled={!workspace || busy} onClick={() => { if (workspace) void library.addProject(workspace.id); }}><FolderPlus />Adicionar projeto</DropdownMenuItem>
-                  <DropdownMenuItem className="cursor-pointer" disabled={busy} onClick={() => openDialog({ kind: "workspace" })}><Layers />Novo workspace</DropdownMenuItem>
+                  <DropdownMenuItem className="cursor-pointer" disabled={busy} onClick={() => openDialog({ kind: "workspace" })}><Layers />Novo espaço</DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -220,7 +220,7 @@ export function AppSidebar({
                       <EmptyHeader>
                         <EmptyTitle>Organize seus projetos</EmptyTitle>
                         <EmptyDescription>
-                          Crie um workspace para começar.
+                          Crie um espaço para começar.
                         </EmptyDescription>
                       </EmptyHeader>
                     </Empty>
@@ -236,7 +236,7 @@ export function AppSidebar({
                           </EmptyHeader>
                         </Empty>
                       )}
-                      <SortableList ids={projects.map(item => item.id)} onReorder={ids => saveOrder(projectOrderKey, ids)}><SidebarMenu aria-label="Projetos do workspace">
+                      <SortableList ids={projects.map(item => item.id)} onReorder={ids => saveOrder(projectOrderKey, ids)}><SidebarMenu aria-label="Projetos do espaço">
                         {projects.map((item) => {
                           const conversations = orderedItems(snapshot.conversations.filter(entry => entry.projectId === item.id)
                             .sort((a, b) => (b.lastActivityAt ?? b.createdAt) - (a.lastActivityAt ?? a.createdAt) || b.createdAt - a.createdAt || a.id.localeCompare(b.id)), layout.itemOrder[`chats:${item.id}`], entry => entry.id, "first");

@@ -429,11 +429,11 @@ export function RemoteApp({ pairingToken = null, client: providedClient }: { pai
       }} onCancel={selectedBundle?.chat.activeTurnId ? () => { void onAction("cancel", { conversationId: selection.conversationId, turnId: selectedBundle.chat.activeTurnId }); } : undefined} /></footer>
     </> : <div className="remote-scroll remote-library flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
       {!library ? <CardsSkeleton label="Carregando biblioteca" /> : <>
-        <div className="remote-library-heading"><p className="micro-label">{selection.projectId ? "Conversas" : selection.workspaceId ? "Projetos" : "Workspaces"}</p><h1>{selection.projectId ? "Acompanhe as conversas" : selection.workspaceId ? "Seus projetos" : "Seu Jarvis por perto"}</h1>{scopeActivity && <ActivityCounts activity={scopeActivity} />}</div>
+        <div className="remote-library-heading"><p className="micro-label">{selection.projectId ? "Conversas" : selection.workspaceId ? "Projetos" : "Espaços"}</p><h1>{selection.projectId ? "Acompanhe as conversas" : selection.workspaceId ? "Seus projetos" : "Seu Jarvis por perto"}</h1>{scopeActivity && <ActivityCounts activity={scopeActivity} />}</div>
         {library.discoveringAttention && <p role="status" className="remote-discovery text-xs text-muted-foreground"><Activity aria-hidden="true" />Verificando pendências…</p>}
         {library.attentionDiscoveryFailed && <Alert><AlertTitle>Pendências incompletas</AlertTitle><AlertDescription>Algumas conversas não puderam ser verificadas. O Jarvis tentará novamente.</AlertDescription></Alert>}
         {needsYou.length > 0 && <Card size="sm" className="remote-attention-card"><CardHeader><CardTitle><CircleAlert aria-hidden="true" />Precisa de você <span className="font-mono">{needsYou.length}</span></CardTitle></CardHeader><CardContent className="flex flex-col gap-2">{pendingRows}</CardContent></Card>}
-        <div className="remote-navigation-list" aria-label={selection.projectId ? "Conversas do projeto" : selection.workspaceId ? "Projetos do workspace" : "Workspaces disponíveis"}>
+        <div className="remote-navigation-list" aria-label={selection.projectId ? "Conversas do projeto" : selection.workspaceId ? "Projetos do espaço" : "Espaços disponíveis"}>
         {selection.projectId ? library.library.conversations.filter(item => item.projectId === selection.projectId).sort((a, b) => (b.lastActivityAt ?? b.createdAt) - (a.lastActivityAt ?? a.createdAt)).map(conversation => {
           const runtime = runtimeFor(conversation.id);
           const activity = aggregateActivity(library, [conversation.id]);
@@ -448,7 +448,7 @@ export function RemoteApp({ pairingToken = null, client: providedClient }: { pai
           return <NavigationCard key={workspace.id} title={workspace.name} subtitle={`${projects.length} projeto${projects.length === 1 ? "" : "s"} · ${activity.total} conversa${activity.total === 1 ? "" : "s"}`} icon={<Layers3 />} status={activity.status} onOpen={() => setSelection({ workspaceId: workspace.id, projectId: null, conversationId: null })}><ActivityCounts activity={activity} /></NavigationCard>;
         })}
         </div>
-        {(selection.projectId ? !library.library.conversations.some(item => item.projectId === selection.projectId) : selection.workspaceId ? !library.library.projects.some(item => item.workspaceId === selection.workspaceId) : !library.library.workspaces.length) && <Empty><EmptyHeader><EmptyTitle>Nenhum item por aqui</EmptyTitle><EmptyDescription>Crie workspaces, projetos e conversas no Jarvis do computador.</EmptyDescription></EmptyHeader></Empty>}
+        {(selection.projectId ? !library.library.conversations.some(item => item.projectId === selection.projectId) : selection.workspaceId ? !library.library.projects.some(item => item.workspaceId === selection.workspaceId) : !library.library.workspaces.length) && <Empty><EmptyHeader><EmptyTitle>Nenhum item por aqui</EmptyTitle><EmptyDescription>Crie espaços, projetos e conversas no Jarvis do computador.</EmptyDescription></EmptyHeader></Empty>}
       </>}
     </div>}
     <Toaster position="top-center" />

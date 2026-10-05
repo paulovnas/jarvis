@@ -617,7 +617,7 @@ fn complete_app_config(
         Some(id) => id,
         None => {
             let id = crate::library::new_id()
-                .map_err(|_| PersistenceError::new("Não foi possível criar o workspace."))?;
+                .map_err(|_| PersistenceError::new("Não foi possível criar o espaço."))?;
             transaction.execute(
                 "INSERT INTO workspaces(id, name) VALUES (?1, ?2)",
                 params![id, name],

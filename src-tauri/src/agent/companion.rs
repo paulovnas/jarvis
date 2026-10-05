@@ -214,9 +214,10 @@ impl Recent {
             .map_err(|_| AgentError::internal())?;
         // Reads may race with newer outcomes. They never prune or overwrite acknowledgement state.
         for item in items {
-            item.acknowledged = acknowledged
-                .get(&(item.conversation_id.clone(), item.agent_id.clone()))
-                .is_some_and(|(_, ids)| ids.contains(&item.attention_id));
+            item.acknowledged = (item.agent_id.is_some() && item.status == Status::Completed)
+                || acknowledged
+                    .get(&(item.conversation_id.clone(), item.agent_id.clone()))
+                    .is_some_and(|(_, ids)| ids.contains(&item.attention_id));
         }
         Ok(())
     }
@@ -438,6 +439,23 @@ struct Identity {
 }
 
 fn add_workflow(items: &mut Vec<Item>, value: WorkflowView) {
+    // The chat turn can settle before publication or workflow shutdown. Only
+    // the workflow's settled root represents completion of the whole request.
+    let flow_active = value.agents.iter().any(|card| {
+        card.active_turn_id.is_some()
+            || card.reconnecting
+            || matches!(card.status.as_str(), "queued" | "running" | "waiting")
+    });
+    if let Some(item) = items.iter_mut().find(|item| {
+        flow_active
+            && item.conversation_id == value.conversation_id
+            && item.agent_id.is_none()
+            && item.status == Status::Completed
+    }) {
+        item.status = Status::Running;
+        item.activity = "Finalizando o fluxo".into();
+        item.result = None;
+    }
     let Some(root) = items
         .iter()
         .find(|item| item.conversation_id == value.conversation_id && item.agent_id.is_none())
@@ -506,7 +524,7 @@ fn add_workflow(items: &mut Vec<Item>, value: WorkflowView) {
             role: short(role, 120),
             status,
             attention_id,
-            acknowledged: false,
+            acknowledged: status == Status::Completed,
             attention_generation: card.updated_at,
             activity,
             tasks: Vec::new(),
@@ -1117,6 +1135,38 @@ mod tests {
         assert_eq!(item.activity, "Validação disponível");
         assert!(item.requires_conversation);
         assert_eq!(item.active_since, None);
+    }
+
+    #[test]
+    fn workflow_completion_waits_for_the_root_and_never_promotes_worker_handoffs() {
+        let (_fixture, session, _) = running();
+        finish(&session, Ok(()));
+        let completed = project(&session.snapshot().unwrap()).unwrap().item;
+        let view = |root_status: &str| {
+            serde_json::from_value(json!({"conversationId":completed.conversation_id,"agents":[
+                {"id":"main","role":"planner","status":root_status,"title":"Planejar","updatedAt":2,"durationMs":3_000,"activeSince":null,"currentThought":null,"activeTurnId":null,"pendingQuestion":null,"pendingApproval":null,"pendingAuthoring":null,"identity":null,"error":null},
+                {"id":"designer","role":"designer","status":"completed","title":"Revisar a tela","updatedAt":1,"durationMs":3_000,"activeSince":null,"currentThought":null,"activeTurnId":null,"pendingQuestion":null,"pendingApproval":null,"pendingAuthoring":null,"identity":null,"error":null}
+            ]})).unwrap()
+        };
+        let mut publishing = vec![completed.clone()];
+        add_workflow(&mut publishing, view("running"));
+        Recent::default()
+            .apply_acknowledgements(&mut publishing)
+            .unwrap();
+        assert_eq!(publishing[0].status, Status::Running);
+        assert_eq!(publishing[0].activity, "Finalizando o fluxo");
+        assert_eq!(publishing[0].result, None);
+        assert_eq!(publishing[1].status, Status::Completed);
+        assert!(publishing[1].acknowledged);
+
+        let mut settled = vec![completed.clone()];
+        add_workflow(&mut settled, view("completed"));
+        Recent::default()
+            .apply_acknowledgements(&mut settled)
+            .unwrap();
+        assert_eq!(settled[0].status, Status::Completed);
+        assert!(!settled[0].acknowledged);
+        assert!(settled[1].acknowledged);
     }
 
     #[test]

@@ -208,6 +208,16 @@ pub(super) fn inspect_tool(
         "video_run" | "video_audio" => {
             ExecutionOperation::Command(parse_or_dynamic("hyperframes native-video-task"))
         }
+        "video_brag_asset" => {
+            let output = tool.args["output"].as_str().unwrap_or(".");
+            ExecutionOperation::Filesystem {
+                read_paths: vec![],
+                write_paths: vec![
+                    PathBuf::from(output),
+                    PathBuf::from(format!("{output}.credits.md")),
+                ],
+            }
+        }
         "image_process" => ExecutionOperation::Declared {
             read_paths: vec![PathBuf::from(".")],
             write_paths: vec![PathBuf::from(".")],
@@ -228,6 +238,11 @@ pub(super) fn inspect_tool(
         // This tool accepts only attachment IDs and closed processing options.
         // Its argv is host-owned; do not infer opaque-shell network privileges.
         outcome.command = Some(parse_or_dynamic("comfyui native-image-task"));
+    }
+    if tool.name == "video_brag_asset" && outcome.decision != ExecutionDecision::Deny {
+        // The closed import contract validates both project outputs first.
+        // Decoding uses host-owned FFmpeg argv and needs the native sandbox.
+        outcome.command = Some(parse_or_dynamic("hyperframes native-audio-import"));
     }
     let native_requested = tool.args["sandboxPermissions"] == "require_escalated";
     let external_command = outcome.command.is_some()
@@ -1036,6 +1051,50 @@ mod tests {
         assert!(policy.outcome.command.is_some());
         assert!(!policy.outcome.effects.uses_network);
         assert!(super::super::execution_sandbox::prepare(&policy).is_some());
+    }
+
+    #[test]
+    fn brag_import_declares_audio_and_credits_writes_without_network() {
+        let root = Path::new("/workspace/project");
+        let policy = inspect_tool(
+            root,
+            &tool(
+                "video_brag_asset",
+                serde_json::json!({"asset":"music/track.mp3","output":"videos/track.wav"}),
+            ),
+            capabilities(Effect::Mutating),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            policy.outcome.write_paths,
+            [
+                root.join("videos/track.wav"),
+                root.join("videos/track.wav.credits.md")
+            ]
+        );
+        assert!(policy.outcome.effects.writes_filesystem);
+        assert!(!policy.outcome.effects.uses_network);
+        assert!(policy.outcome.command.is_some());
+        assert!(super::super::execution_sandbox::prepare(&policy).is_some());
+        assert!(inspect_tool(
+            root,
+            &tool("video_brag_assets", serde_json::json!({})),
+            capabilities(Effect::ReadOnly)
+        )
+        .unwrap()
+        .is_none());
+        let escape = inspect_tool(
+            root,
+            &tool(
+                "video_brag_asset",
+                serde_json::json!({"output":"../outside.wav"}),
+            ),
+            capabilities(Effect::Mutating),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(escape.outcome.decision, ExecutionDecision::Deny);
     }
 
     #[test]

@@ -251,7 +251,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
 
   return <div role="region" aria-label="Conversa e controles do Jarvito" className="companion-chat flex h-full min-h-0 flex-col gap-2">
     <div className="flex items-center gap-1">
-    <Select value={selected} onValueChange={value => { if (typeof value === "string") chooseConversation(value); }}>
+    <Select key={active ? "active-conversation-menu" : "inactive-conversation-menu"} value={selected} onValueChange={value => { if (typeof value === "string") chooseConversation(value); }}>
       <SelectTrigger aria-label="Conversa do Jarvito" size="sm" disabled={busy} className="min-w-0 flex-1 cursor-pointer text-[11px]"><SelectValue>{selectedTitle}</SelectValue></SelectTrigger>
       <SelectContent className="max-h-64 max-w-[calc(100vw-36px)]">
         <SelectItem value="global" className="cursor-pointer text-[11px]"><span className="flex flex-col gap-0.5"><span>Conversar com Jarvito</span><span className="text-[9px] text-muted-foreground">Sem projeto · perguntas e ajuda do dia a dia</span></span></SelectItem>
@@ -295,7 +295,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
       </div>
     </form>
     <div className="-mx-1 flex shrink-0 items-center overflow-hidden">
-      <ModelPicker modelGroups={models} selection={selectedModel} onSelect={selection => { void chooseModel(selection); }} disabled={busy || loading || running} invalid={modelInvalid} showProviderIdentity ariaLabel="Modelo do Jarvito" />
+      <ModelPicker key={active ? "active-model-menu" : "inactive-model-menu"} modelGroups={models} selection={selectedModel} onSelect={selection => { void chooseModel(selection); }} disabled={busy || loading || running} invalid={modelInvalid} showProviderIdentity ariaLabel="Modelo do Jarvito" />
     </div>
   </div>;
 }

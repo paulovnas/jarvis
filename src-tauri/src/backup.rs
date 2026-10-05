@@ -826,7 +826,7 @@ fn preview(loaded: &LoadedBackup) -> BackupPreview {
     let mut warnings = vec![
         "Provedores, contas, credenciais de IA e modelos vinculados a contas não fazem parte do backup. Seleções dos executores CLI são preservadas; sua instalação e autenticação permanecem locais.".into(),
         "A restauração substitui as preferências, os agentes, os fluxos, as skills e os MCPs atuais.".into(),
-        "Workspaces, projetos, conversas e pacotes instalados do Core permanecem nesta instalação.".into(),
+        "Espaços, projetos, conversas e pacotes instalados do Core permanecem nesta instalação.".into(),
         "Layout da janela, abas abertas e dimensões dos painéis permanecem nesta instalação.".into(),
         "Web Search, Vision, geração de imagens, alertas de limite e vínculos de modelos dependem das contas conectadas e devem ser configurados nesta instalação.".into(),
     ];

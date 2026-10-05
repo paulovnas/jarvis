@@ -19,7 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { companionGeometrySchema, companionItemKey, companionSnapshotSchema, companionStatusLabels, type CompanionGeometry, type CompanionItem, type CompanionSnapshot, type CompanionStatus } from "@/core/companion";
+import { companionGeometrySchema, companionIsStageCompletion, companionItemKey, companionSnapshotSchema, companionStatusLabels, type CompanionGeometry, type CompanionItem, type CompanionSnapshot, type CompanionStatus } from "@/core/companion";
 import { accountUsageSchema, aliasSuffix } from "@/core/provider-usage";
 import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/questions";
 import { ROLE_LABELS } from "@/core/workflow";
@@ -121,8 +121,8 @@ export function Companion() {
   const items = useMemo(() => snapshot?.items ?? [], [snapshot]);
   const waiting = items.filter(item => item.status === "waiting").length;
   const working = items.filter(item => item.status === "running" || item.status === "reconnecting").length;
-  const attentive = items.filter(item => item.status !== "idle" && (!(item.status === "completed" || item.status === "failed") || !item.acknowledged));
-  const notifications = useMemo(() => items.filter(item => !item.acknowledged && (item.status === "completed" || item.status === "failed")), [items]);
+  const attentive = items.filter(item => item.status !== "idle" && !companionIsStageCompletion(item) && (!(item.status === "completed" || item.status === "failed") || !item.acknowledged));
+  const notifications = useMemo(() => items.filter(item => !item.acknowledged && !companionIsStageCompletion(item) && (item.status === "completed" || item.status === "failed")), [items]);
   const active = attentive.filter(item => item.status !== "completed" && item.status !== "failed");
   const current = attentive.find(item => item.status === "waiting") ?? attentive.find(item => item.status === "reconnecting")
     ?? attentive.find(item => item.status === "running") ?? attentive.reduce<CompanionItem | undefined>((latest, item) => !latest || item.updatedAt > latest.updatedAt ? item : latest, undefined);
@@ -146,6 +146,11 @@ export function Companion() {
   useCompanionNoticeLifetime(notice?.id ?? null, speeches.pending || speeches.playing, dismissNotice);
   const [soundSettingsOpen, setSoundSettingsOpen] = useState(false);
   const [speechVolumeDraft, setSpeechVolumeDraft] = useState<number | null>(null);
+  const closeOverlays = useCallback(() => {
+    setSoundSettingsOpen(false);
+    setActivityPicker(false);
+    setSpeechVolumeDraft(null);
+  }, []);
   const speechVolumePercent = speechVolumeDraft ?? Math.round(speeches.volume * 100);
   useEffect(() => () => { toast.dismiss("companion-speech-volume-save"); }, []);
   useEffect(() => {
@@ -196,14 +201,14 @@ export function Companion() {
       listen("companion:changed", schedule),
       listen("companion:geometry", event => {
         const next = companionGeometrySchema.safeParse(event.payload);
-        if (alive && next.success) { geometryRevision.current++; nativeExpanded.current = next.data.expanded; setGeometry(next.data); }
+        if (alive && next.success) { geometryRevision.current++; nativeExpanded.current = next.data.expanded; if (!next.data.expanded) closeOverlays(); setGeometry(next.data); }
       }),
       listen("companion:drag-end", () => { pointer.current = null; if (alive) setDragging(false); }),
       listen("companion:collapse-request", () => { if (alive) collapseHandler.current(); }),
     ];
     void Promise.all(subscriptions).then(() => { if (alive) void refresh(); }).catch(cause => { if (alive) setError(companionError(cause, "Não foi possível acompanhar as atividades.")); });
     return () => { alive = false; refreshSnapshot.current = () => {}; window.clearTimeout(timer); for (const subscription of subscriptions) void subscription.then(stop => stop()).catch(() => {}); };
-  }, [attempt, syncNotices]);
+  }, [attempt, syncNotices, closeOverlays]);
 
   useEffect(() => {
     let alive = true;
@@ -276,6 +281,7 @@ export function Companion() {
 
   const expand = useCallback(async (expanded: boolean) => {
     const request = ++expansionVersion.current;
+    if (!expanded) closeOverlays();
     setResizing(true);
     geometryRevision.current++;
     try {
@@ -292,7 +298,7 @@ export function Companion() {
     }
     catch (cause) { setError(companionError(cause, "Não foi possível abrir o assistente.")); }
     finally { if (request === expansionVersion.current) { setResizing(false); setClosing(false); } }
-  }, [requestedHeight, sounds]);
+  }, [requestedHeight, sounds, closeOverlays]);
   useEffect(() => {
     collapseHandler.current = () => { void expand(false); };
   }, [expand]);
@@ -394,7 +400,7 @@ export function Companion() {
             <Hint content="Limites dos provedores"><TabsTrigger value="usage" aria-label="Limites" className="companion-nav-button cursor-pointer"><Gauge className="size-3.5" /></TabsTrigger></Hint>
             <Hint content="Ajustes"><TabsTrigger value="settings" aria-label="Ajustes" className="companion-nav-button cursor-pointer"><Settings2 className="size-3.5" /></TabsTrigger></Hint>
           </TabsList>
-          <Popover open={soundSettingsOpen} onOpenChange={open => { setSoundSettingsOpen(open); if (!open) setSpeechVolumeDraft(null); }}>
+          <Popover open={soundSettingsOpen && geometry.expanded && !closing} onOpenChange={open => { setSoundSettingsOpen(open); if (!open) setSpeechVolumeDraft(null); }}>
             <Hint content="Sons e fala"><PopoverTrigger render={<Button aria-label="Sons e fala do Jarvito" variant="ghost" size="icon-xs" className="companion-nav-button cursor-pointer" />}>
               {sounds.enabled || speeches.enabled ? <Volume2 data-icon="inline-start" /> : <VolumeX data-icon="inline-start" />}
             </PopoverTrigger></Hint>
@@ -431,7 +437,7 @@ export function Companion() {
                 <div className="flex items-center gap-1.5"><span aria-hidden="true" className={`companion-state-dot ${statusColor[focused.status]}`} /><p className="min-w-0 flex-1 truncate text-[11px] font-medium">{focused.projectName}</p><span className="shrink-0 font-mono text-[9px] text-muted-foreground">{activeDuration(focused)}</span><Hint content={focused.global ? "Ver conversa com Jarvito" : "Abrir conversa no Jarvis"}><Button size="icon-xs" variant="ghost" aria-label={focused.global ? "Ver conversa com Jarvito" : "Abrir conversa no Jarvis"} className="companion-jump shrink-0 cursor-pointer" onClick={() => { void openConversation(focused); }}><ArrowUpRight className="size-3" /></Button></Hint></div>
                 <div className="flex min-w-0 items-center gap-1">
                   <h2 className="min-w-0 flex-1 truncate text-[12px] font-semibold">{focused.title}</h2>
-                  {attentive.length > 1 && <Select value={companionItemKey(focused)} onOpenChange={setActivityPicker} onValueChange={value => { if (typeof value === "string") setSelectedKey(value); }}><SelectTrigger aria-label="Conversa ou agente" size="sm" className="companion-activity-select cursor-pointer"><SelectValue><span className="sr-only">{focused.title}</span></SelectValue></SelectTrigger><SelectContent className="max-h-[calc(100vh-100px)] max-w-[calc(100vw-24px)]">{attentive.map(item => <SelectItem key={companionItemKey(item)} value={companionItemKey(item)} className="cursor-pointer py-2 text-[11px]"><span className="flex min-w-0 flex-col gap-1"><span className="truncate font-medium">{item.title}</span><span className="truncate font-mono text-[9px] text-muted-foreground">{item.projectName} · {roleLabel(item.role)}{item.agentId ? " · subagente" : ""} · {companionStatusLabels[item.status]}</span></span></SelectItem>)}</SelectContent></Select>}
+                  {attentive.length > 1 && <Select open={activityPicker && geometry.expanded && !closing} value={companionItemKey(focused)} onOpenChange={setActivityPicker} onValueChange={value => { if (typeof value === "string") setSelectedKey(value); }}><SelectTrigger aria-label="Conversa ou agente" size="sm" className="companion-activity-select cursor-pointer"><SelectValue><span className="sr-only">{focused.title}</span></SelectValue></SelectTrigger><SelectContent className="max-h-[calc(100vh-100px)] max-w-[calc(100vw-24px)]">{attentive.map(item => <SelectItem key={companionItemKey(item)} value={companionItemKey(item)} className="cursor-pointer py-2 text-[11px]"><span className="flex min-w-0 flex-col gap-1"><span className="truncate font-medium">{item.title}</span><span className="truncate font-mono text-[9px] text-muted-foreground">{item.projectName} · {roleLabel(item.role)}{item.agentId ? " · subagente" : ""} · {companionStatusLabels[item.status]}</span></span></SelectItem>)}</SelectContent></Select>}
                 </div>
                 <p key={`${companionItemKey(focused)}/${focused.status}`} className="companion-live-detail line-clamp-1 text-[11px] leading-4 text-muted-foreground">{focused.activity || `${roleLabel(focused.role)}${focused.agentId ? " · subagente" : ""}`}</p>
                 <CompanionTaskProgress tasks={focused.tasks} active={focused.status === "running" || focused.status === "reconnecting"} open={tasksOpen} onOpenChange={open => setTasksKey(open ? companionItemKey(focused) : null)}><span className={`flex shrink-0 items-center gap-1 text-[10px] ${statusColor[focused.status]}`}>{focused.status === "reconnecting" && <Wifi className="size-3" />}{companionStatusLabels[focused.status]}</span></CompanionTaskProgress>
@@ -440,7 +446,7 @@ export function Companion() {
           </Card>}
           {(notifications.length ? active.length > 0 : active.length > 1) && <Card className="companion-activity-card companion-other-card" aria-label="Outras atividades"><div className="flex h-full min-w-0 flex-col gap-2 p-3"><p className="text-[10px] text-muted-foreground">Também estou acompanhando</p><ScrollArea className="min-h-0 flex-1">{active.filter(item => notifications.length || companionItemKey(item) !== (focused && companionItemKey(focused))).map(item => <Button key={companionItemKey(item)} variant="ghost" className="mb-1 h-auto w-full cursor-pointer justify-start gap-2 px-1 py-1 text-left" aria-label={notifications.length ? `Ver atividade: ${item.title}` : undefined} onClick={() => { if (notifications.length) void openConversation(item); else setSelectedKey(companionItemKey(item)); }}><span aria-hidden="true" className={`companion-state-dot ${statusColor[item.status]}`} /><span className="min-w-0 flex-1"><span className="block truncate text-[11px]">{item.projectName}</span><span className="block truncate text-[10px] text-muted-foreground">{item.title}</span>{notifications.length > 0 && <span className="mt-1 flex items-center gap-1 text-[10px] text-primary">Ver atividade<ArrowUpRight className="size-3" /></span>}</span></Button>)}</ScrollArea></div></Card>}
         </TabsContent>
-        <TabsContent value="chat" keepMounted className="companion-detail-view min-h-0 overflow-hidden" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable=true], [data-slot=select-trigger], [aria-haspopup=menu]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }}><CompanionChatPane ref={chatPane} active={geometry.expanded && tab === "chat"} externalQuestions onQuestionChange={setChatQuestion} onView={viewedChat} onSend={() => sounds.play("send")} /></TabsContent>
+        <TabsContent value="chat" keepMounted className="companion-detail-view min-h-0 overflow-hidden" onPointerDownCapture={event => { if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable=true], [data-slot=select-trigger], [aria-haspopup=menu]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }}><CompanionChatPane ref={chatPane} active={geometry.expanded && !closing && tab === "chat"} externalQuestions onQuestionChange={setChatQuestion} onView={viewedChat} onSend={() => sounds.play("send")} /></TabsContent>
         <TabsContent value="usage" className="companion-detail-view min-h-0 overflow-hidden"><div className="mb-3 flex items-center justify-between gap-2"><h2 className="text-xs font-medium">Limites dos provedores</h2><Hint content="Atualizar limites"><Button aria-label="Atualizar limites" aria-busy={usageBusy} disabled={usageBusy} size="icon-xs" variant="ghost" className="cursor-pointer text-muted-foreground" onClick={() => { forceUsage.current = true; setUsageAttempt(value => value + 1); }}><RefreshCw className={`size-3 ${usageBusy ? "motion-safe:animate-spin" : ""}`} /></Button></Hint></div><ScrollArea className="h-[calc(100%-34px)] pr-2"><Usage accounts={usage} error={usageError} now={usageAt} /></ScrollArea></TabsContent>
         <TabsContent value="settings" className="companion-detail-view min-h-0"><h2 className="mb-3 text-xs font-medium">Ajustes do Jarvito</h2><Card className="companion-activity-card gap-0"><div className="flex items-center gap-4 p-4"><div className="min-w-0 flex-1"><label htmlFor="companion-sounds" className="cursor-pointer text-xs font-medium">Sons de interação</label><p className="mt-1 text-[11px] leading-4 text-muted-foreground">Abertura, perguntas, atividades e conclusões.</p></div><Switch id="companion-sounds" checked={sounds.enabled} disabled={!sounds.ready} onCheckedChange={toggleSound} className="cursor-pointer" /></div></Card><p className="mt-4 text-[11px] leading-5 text-muted-foreground">{geometry.dragAxis === "horizontal" ? "Arraste a área preta do cabeçalho para mover a ilha para os lados." : "A ilha fica junto à câmera, no topo da tela."} Ao usar outro aplicativo, ela recolhe sem interromper seu trabalho.</p></TabsContent>
       </div>

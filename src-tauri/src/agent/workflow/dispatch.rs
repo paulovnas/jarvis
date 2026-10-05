@@ -196,8 +196,31 @@ pub(super) async fn execute(
             tool.args["answer"].as_str().unwrap(),
         ),
         "design_brief" => exec.hub.mutate(|state| {
+            if exec.flow == Flow::Custom {
+                let native_designer = if exec.id == "main" {
+                    state
+                        .custom_agent
+                        .as_ref()
+                        .is_some_and(custom::native_designer)
+                } else {
+                    state.jobs.get(&exec.id).is_some_and(|job| {
+                        job.run_id == state.run_id
+                            && job.role == Role::Designer
+                            && job.custom_step_id.as_ref().is_some_and(|id| !id.is_empty())
+                            && job
+                                .custom_agent
+                                .as_ref()
+                                .is_some_and(custom::native_designer)
+                    })
+                };
+                if state.flow != Flow::Custom || exec.role != Role::Designer || !native_designer {
+                    return Err(invalid(
+                        "Briefing disponível apenas para o Designer nativo da execução atual.",
+                    ));
+                }
+            }
             if let Some(text) = tool.args["text"].as_str() {
-                if text.len() > 16000 {
+                if text.chars().count() > 4000 {
                     return Err(invalid("Resuma o briefing em até 4 mil caracteres."));
                 }
                 state.design_briefs.insert(exec.id.clone(), text.into());

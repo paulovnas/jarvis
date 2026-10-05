@@ -1,0 +1,2617 @@
+{
+  "schemaVersion": 1,
+  "version": "0.4.0",
+  "archiveSha256": "416b59a99072ee691756a1e968159284bbfed70106b94bc9a49fdefa35437708",
+  "files": [
+    {
+      "path": "asset-catalog.json",
+      "bytes": 98803,
+      "sha256": "5783a5bbd4d60093d09a3ccda32c23bfef1ee42946b0a02783e7aeebc9d84b97",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/music/cues/happy-beats-business-moves-vol-1-by-ende-dot-app.music-cues.json",
+      "bytes": 80788,
+      "sha256": "cdf23150e6a52899e4092bea88e28498314667a77f7cb18e1678b9f602f5d9ac",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/music/cues/happy-beats-business-moves-vol-1-by-ende-dot-app.music-cues.md",
+      "bytes": 1253,
+      "sha256": "43546fa23e922b4370b751b65656d540027efaa2c2918c57bae1f3210b374b86",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/music/cues/happy-beats-business-moves-vol-10-by-ende-dot-app.music-cues.json",
+      "bytes": 38548,
+      "sha256": "f9e3e7fd0cb0bd426d58d93e0341b86a7e00f9bdace83710f90b3f123214ba18",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/music/cues/happy-beats-business-moves-vol-10-by-ende-dot-app.music-cues.md",
+      "bytes": 1263,
+      "sha256": "b14050eba9abd2ee98fc4af9aefadc32c4f503b809c597e09f1c5d70ad9783f2",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/music/cues/happy-beats-business-moves-vol-11-by-ende-dot-app.music-cues.json",
+      "bytes": 47432,
+      "sha256": "878b2e5e65e4af347011780f242b25f8b857366ac402649c9ed1e56418aec0cf",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/music/cues/happy-beats-business-moves-vol-11-by-ende-dot-app.music-cues.md",
+      "bytes": 1248,
+      "sha256": "9475a954b1db9ea356f3bd5cb6f9bd172e4b8594345d9bf3c5733b0a8a5f4dd8",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/music/cues/happy-beats-business-moves-vol-12-by-ende-dot-app.music-cues.json",
+      "bytes": 59326,
+      "sha256": "b5d9d3fab3d73565fd7931b3f5ea22bf18b04ebcea56815df659c64639381c4f",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/music/cues/happy-beats-business-moves-vol-12-by-ende-dot-app.music-cues.md",
+      "bytes": 1255,
+      "sha256": "964b2f0843f9b39b3083eddee5814d34291e843188b7624d3446eea6963ad8fd",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/music/cues/happy-beats-business-moves-vol-9-by-ende-dot-app.music-cues.json",
+      "bytes": 58762,
+      "sha256": "369e3a91c96cbcbb504757dee8b2835793dac3396499b69e79db69f9f3d811b4",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/music/cues/happy-beats-business-moves-vol-9-by-ende-dot-app.music-cues.md",
+      "bytes": 1255,
+      "sha256": "d0e64d229b73bf92acb7588aeb8026071e886d411458e5ce0b52f54d6fcde8ec",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/music/happy-beats-business-moves-vol-1-by-ende-dot-app.mp3",
+      "bytes": 3936384,
+      "sha256": "aa56ab1cdcbef6b05566c6a7c114323078580ccf6a740a9e6c6b6c4b40b4389f",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "path": "assets/music/happy-beats-business-moves-vol-10-by-ende-dot-app.mp3",
+      "bytes": 1441152,
+      "sha256": "f9912f2c962ada1e579f5ccc5a7d854d67e5e81ee96a7dd8c885a8480ae58d09",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "path": "assets/music/happy-beats-business-moves-vol-11-by-ende-dot-app.mp3",
+      "bytes": 2103552,
+      "sha256": "364a546834db4c0c2e3b3240eb6df03e98b7362230154b04c5c614442f6660d7",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "path": "assets/music/happy-beats-business-moves-vol-12-by-ende-dot-app.mp3",
+      "bytes": 2817792,
+      "sha256": "5888d4bd2ba0119b87a94e502ae2cc401c08192945cc5e5c2f8e8a33aa47a0a1",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "path": "assets/music/happy-beats-business-moves-vol-9-by-ende-dot-app.mp3",
+      "bytes": 2728512,
+      "sha256": "f5793597e520aa8fa9cce91086816fc1e15e3aac0128bcf375df51ba70c0dc63",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-fan-1.ogg",
+      "bytes": 12489,
+      "sha256": "7a9758ccad8899baef1b9f60b4064e4baa724a548293832fdaea07e6e07e638d",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-fan-2.ogg",
+      "bytes": 18363,
+      "sha256": "5743373c9dde00c6eee949a2c8e65d75946522768999167e1f5632451630e848",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-place-1.ogg",
+      "bytes": 9624,
+      "sha256": "d8f26c33a665dcbdcc6f632f6050bc9dd548feb0d4942d4547615926d3926810",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-place-2.ogg",
+      "bytes": 8046,
+      "sha256": "903d5050718595e87864dd755643b476ab1a5533080dcc2dddc72570d33ba9f8",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-place-3.ogg",
+      "bytes": 11503,
+      "sha256": "1d988631a6e5201ed1bb0d728f2e43a3ec79401258426858793598044ac95841",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-place-4.ogg",
+      "bytes": 9618,
+      "sha256": "18e3ba713b7259605fd27cdc048085ed56cf86b32403f070b6cb125019f77183",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-shove-1.ogg",
+      "bytes": 10690,
+      "sha256": "1ea667aa6795d5f14239192116ebcbd8f3f47eb1c7faaf2ec56844b9067b8b06",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-shove-2.ogg",
+      "bytes": 10445,
+      "sha256": "8e95c1d3ae94b5b91bc663432ad7c3bf4e03a541c22ec10fa51c65fe0e29054b",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-shove-3.ogg",
+      "bytes": 9948,
+      "sha256": "399520d483a1466fcaa850b9c407b4edbd5c7f0cbdf17e84dea12e9636326d0d",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-shove-4.ogg",
+      "bytes": 10875,
+      "sha256": "0a1ad3a2f16bd2ed73349e6342426ca7a59a6e26b7e26e36d51d51c2c2349d6f",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-shuffle.ogg",
+      "bytes": 30002,
+      "sha256": "96c84883a30845ede723a4cf2e8369e9837e7dd4e0d4eb0212b0a7ed21b0f544",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-slide-1.ogg",
+      "bytes": 8833,
+      "sha256": "006cf9822d15d7063f8899e56041f41646df30adb6fbd8b974ee5d5420012690",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-slide-2.ogg",
+      "bytes": 9042,
+      "sha256": "e674a1679ec87b507047fe012d068ad2c412125f56186f0e732684705c2a6888",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-slide-3.ogg",
+      "bytes": 9164,
+      "sha256": "af2ab62656cb3df73316ce5771b8ee1111a840962b21607e3202151e7413c52c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-slide-4.ogg",
+      "bytes": 7912,
+      "sha256": "b9c82bcdbe6b7d00a06e2546bd2683a9ab082ca5fd090a42882f33eddd925b7f",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-slide-5.ogg",
+      "bytes": 9180,
+      "sha256": "8638ab0c17f029aded0e27a4f9b9bb9f8c621b19a6e9975e855cb40ea63e2201",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-slide-6.ogg",
+      "bytes": 8780,
+      "sha256": "be85da181ac879c20cb667d0f9f156dbdc236d3751737ad27359a15e946430a0",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-slide-7.ogg",
+      "bytes": 9580,
+      "sha256": "bda2040194f43484d03ee3c65ed6fff57251882ea7227abce4214bfa30bf2705",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/card-slide-8.ogg",
+      "bytes": 9863,
+      "sha256": "95d9aa26f8c63af9934f27a8e3b7e9b583f177640f0bbd6982f12dba52b9ae6b",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/cards-pack-open-1.ogg",
+      "bytes": 12715,
+      "sha256": "1214059fdfbf1c396c0702244fc833739cc346d326a71e450b731f456e54d6fb",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/cards-pack-open-2.ogg",
+      "bytes": 10918,
+      "sha256": "49e02479815c69cd303e0d8f12952c0492d5b3e555838f3485cc25a09818e6fb",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chip-lay-1.ogg",
+      "bytes": 5720,
+      "sha256": "4b2111252ccb64eed67f171e061053849cfbb29873536c03948646f244a3905c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chip-lay-2.ogg",
+      "bytes": 6123,
+      "sha256": "8ca8b2d450741c04ed7b4ba51ed3f73c2400c8b3dbe83b974be4fe4774a76712",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chip-lay-3.ogg",
+      "bytes": 6327,
+      "sha256": "bf24ebb417b6279568800dffdb0205d3ec8854c7efe179e8964755a6341727aa",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-collide-1.ogg",
+      "bytes": 6356,
+      "sha256": "f41b3d106360fc68ebc061a211d4265b4cb5fa1fbe86e4d57d3673510e2c3784",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-collide-2.ogg",
+      "bytes": 5987,
+      "sha256": "2a10c5ff4b2fbaa55a317fc258ddce3fec85bd26db2d3c2ad298b3b33ce23bc6",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-collide-3.ogg",
+      "bytes": 6301,
+      "sha256": "1c5e885f72b64c38fff7ef05579e49310e7acf026cf123ffb65fffb57fb06e1c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-collide-4.ogg",
+      "bytes": 6038,
+      "sha256": "1ffa34af64adc62fce583c5aa9a3c98287b1673ef191576a5571f1ffd39529dd",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-handle-1.ogg",
+      "bytes": 9374,
+      "sha256": "a2c495237fb0dc0dc96ccc2c9840572edd226e6459398ecb631c6c9f9e5408f0",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-handle-2.ogg",
+      "bytes": 8639,
+      "sha256": "099b6d7d3a71e7d22171a93d124e7366e326d32eb85d718ba29abded8a49c329",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-handle-3.ogg",
+      "bytes": 6261,
+      "sha256": "7c5a86e27b2bef839ae096dd655506cf46a82494bd01cc28f51bed6ab26cc342",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-handle-4.ogg",
+      "bytes": 7347,
+      "sha256": "0d171ea00224709cbe31ef95a111eabaf1382606a4836c5717043b339cbed8e9",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-handle-6.ogg",
+      "bytes": 8909,
+      "sha256": "527d4d3de55cc261dc476329b71a750c296f3ad633ac50318d913976bb89857c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-stack-1.ogg",
+      "bytes": 6469,
+      "sha256": "12bf175b9afcea112175b241ad3336c6244ac5fdcdff8b5942ecc03f2225e0c4",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-stack-2.ogg",
+      "bytes": 5642,
+      "sha256": "9f985e766c3557eef1764240b48e30b2f0ffa870a99f05de85cd6bf0ea758ef5",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-stack-3.ogg",
+      "bytes": 7203,
+      "sha256": "48cc0f01e2b62be7677f2e8c02177906cab80e96fa8176fa05b3ced35bc2a9c2",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-stack-4.ogg",
+      "bytes": 6095,
+      "sha256": "129a3af12f096ef9d8326b32c3c674d687f1a0b447157ccd02fb431ba134b580",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-stack-5.ogg",
+      "bytes": 5749,
+      "sha256": "42dd800e3e24bbd07d3ebfc86c44b6500d376641e30270dc363d95a73e90b56e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/chips-stack-6.ogg",
+      "bytes": 5821,
+      "sha256": "5ec35171aa65bf5edd977e293523a649227accf36e682bf1ac9a84286f04c682",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/dice-grab-1.ogg",
+      "bytes": 10278,
+      "sha256": "1952cf1987b2c1ebb035b30b5f0caf23604b6ce4c88b6a226fe6e6257ce730f3",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/dice-grab-2.ogg",
+      "bytes": 11437,
+      "sha256": "4eb4940d1e71aa3f6ac5f865b6b47748a492adf6a83d622c8efe6284dbebbd2c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/dice-shake-1.ogg",
+      "bytes": 19388,
+      "sha256": "ba603441c857204dbe3ff3345902c7e1c3f523bf1bd314acf088609bc6c1e4e5",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/dice-shake-2.ogg",
+      "bytes": 19976,
+      "sha256": "47e8e2cb0adb95bcd7348b58db8dc2bbfe3c553e50a4e9ef007e67891ed51ca2",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/dice-shake-3.ogg",
+      "bytes": 19722,
+      "sha256": "aecd1dd0de6e42ebb510d1f9bfe91a580a8af238dd73bdfda368b90b894b5c09",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/dice-throw-1.ogg",
+      "bytes": 9523,
+      "sha256": "4e6581c73465cdd7ec32e86a709b4ea5c682e819c9bdb7989d1df1880ba67886",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/dice-throw-2.ogg",
+      "bytes": 7545,
+      "sha256": "e0b8c370503b2c5c2a72d311cccae30fe63a6afd48f2be32e771fcf1a98585d6",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/dice-throw-3.ogg",
+      "bytes": 9231,
+      "sha256": "09c13d35a9a30bfce31a5e9bca94adc5be189ddecd0b4500237d54c7fd05227c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/die-throw-1.ogg",
+      "bytes": 8410,
+      "sha256": "b31d716165be60e442da3c1ca25a3968aad1e0851a7f0859f495aecc02fd9e13",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/die-throw-2.ogg",
+      "bytes": 9824,
+      "sha256": "a2702cfe14d24aab302483a1499daa88474a4af4acd794b58d97f4af16333b3d",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/die-throw-3.ogg",
+      "bytes": 10018,
+      "sha256": "52fc44c7bb89328a147738574c925508c34abf4c19a014575b37ffb8c6b02437",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/casino/die-throw-4.ogg",
+      "bytes": 8159,
+      "sha256": "6253cabcb10c4152548cbc9d3ea87c1bf1bd484f0bd8d6b73c542e690509c0fd",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_carpet_000.ogg",
+      "bytes": 6353,
+      "sha256": "b9524658b52a99a20590f8feefc103088637fd13ea8ec35811aee785e1f2f330",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_carpet_003.ogg",
+      "bytes": 6301,
+      "sha256": "4ae7454338d57c7d102145919ae653c7d010eb542797c4f25a1c7470be3a7e4c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_carpet_004.ogg",
+      "bytes": 6301,
+      "sha256": "4ae7454338d57c7d102145919ae653c7d010eb542797c4f25a1c7470be3a7e4c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_concrete_000.ogg",
+      "bytes": 5808,
+      "sha256": "d7267e183067757c92c169de2a379abea592cfca6b39bb2e8feea15221ad79fe",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_concrete_001.ogg",
+      "bytes": 6308,
+      "sha256": "507a75eb19b897087855a3be3cf11a12d7fa37d143ad535eeebe0b8031c7325d",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_concrete_002.ogg",
+      "bytes": 6255,
+      "sha256": "b21fa546d74941196b25da8a20b7010abd8c05c4fcf93545d1f344e66a664e13",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_concrete_003.ogg",
+      "bytes": 5805,
+      "sha256": "8b513c2f0316324060b9174b8f28df6c2147418c506e6a53b77f18e149a5547b",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_concrete_004.ogg",
+      "bytes": 5912,
+      "sha256": "24dd8db2413e5b81ad181e1205c12a1c7801da5f85715d471b92a4b2f632e45e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_grass_000.ogg",
+      "bytes": 8290,
+      "sha256": "9d49497777405d78d7cf7f2888e28277f3a23192300cfd1d79d54876b20f479f",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_grass_001.ogg",
+      "bytes": 8313,
+      "sha256": "fb28781bd22b2eefdc14077f1adf5c94d7fe9c3a130194633b55f3e0d39d9f04",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_grass_002.ogg",
+      "bytes": 8278,
+      "sha256": "73a520139f5be716a403bfe9c80e0e94d1e61d8e9de04a354b336392164b53dc",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_grass_003.ogg",
+      "bytes": 8129,
+      "sha256": "0546e1d8ab2def714425701a18bd34c5ee2794b12e858e5b595aabcf38a34137",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_grass_004.ogg",
+      "bytes": 7800,
+      "sha256": "086fd4ab3546a507ea5f5c759a9a10e535c95ade13705c238bc0eeffd7d4e8ba",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_snow_000.ogg",
+      "bytes": 7880,
+      "sha256": "c05fa4a9dc9a7aabc04996466fb589537e49af76de9998d8f9e6270ec92dcef7",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_snow_001.ogg",
+      "bytes": 7794,
+      "sha256": "980fb9a1c9227aed7995067b0357f373053337f2416316db8ea0438418542fb4",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_snow_002.ogg",
+      "bytes": 7694,
+      "sha256": "db52bafdc66304f3b999f2c29227826c65993916e630ac2ffbca17d07b263178",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_snow_003.ogg",
+      "bytes": 7860,
+      "sha256": "68272e3f1cabcabd02d328fd344454d7c04cb58b5a86972fcdd858f845e3d007",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_snow_004.ogg",
+      "bytes": 7630,
+      "sha256": "7fe9ce5f5732aaa0a50ef02bb1ac162c27f6bd85214e86aaea6e13e7a41dbc00",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_wood_000.ogg",
+      "bytes": 5949,
+      "sha256": "5f1c252942a220d658121bd9417448cd19649ded9fff2ff15f6e50899373ce8e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_wood_001.ogg",
+      "bytes": 5929,
+      "sha256": "e4f68e1c9fd55b4dc8ca89ed2bbab6f200171bc54bdc18aa96b80d8e7336f462",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_wood_002.ogg",
+      "bytes": 5895,
+      "sha256": "9ff095b05cee5eec40b081defe3f0eef7232bb16d4865ce03b9f6dbab875cfdd",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_wood_003.ogg",
+      "bytes": 6207,
+      "sha256": "2a68a083daa9eda08fed0ea5da5280dfbe0de226196c576be02f95259dd139d9",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/footstep_wood_004.ogg",
+      "bytes": 5799,
+      "sha256": "b33e0854e2b3f6b6492e25c25ef8f90447a332f7c6bb25dd02edced9581d3441",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactBell_heavy_000.ogg",
+      "bytes": 13915,
+      "sha256": "94b8bb5f2d43ab65e4bcc32b28562416e9bc2c51d9fd4be1e333660ee52f977f",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactBell_heavy_003.ogg",
+      "bytes": 9429,
+      "sha256": "5572ccdeb3b62373b86fa955355b3a222c36e815f0636ba16165189a21cf2514",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactBell_heavy_004.ogg",
+      "bytes": 6529,
+      "sha256": "49fe4fafa2001bd0d312976796824571ca8429851f285997e1327d17bb34fd00",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactGeneric_light_000.ogg",
+      "bytes": 5827,
+      "sha256": "f0e982611e97512fee5f777986b67e8b435434b601f94992ec044f7e89fb5acb",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactGeneric_light_001.ogg",
+      "bytes": 5636,
+      "sha256": "c3cd1c073d186ae8fa35788ba94de581f1826e7427a7bb26490b2695fac18efa",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactGeneric_light_002.ogg",
+      "bytes": 5795,
+      "sha256": "d0bf60905b59ff630ffe01eb0edeeacd2504eaa8fb6523aeef7d2458b78264d3",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactGeneric_light_003.ogg",
+      "bytes": 5792,
+      "sha256": "0e8896706130f6bc88cdf1f0157aaacdbe88dce86cf0330f9136e44eb1209e81",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactGeneric_light_004.ogg",
+      "bytes": 5747,
+      "sha256": "f906fa3a37acc4372787b496efcedefa2856045d5ec9456a3bd6c303c0eabb41",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactGlass_heavy_002.ogg",
+      "bytes": 7661,
+      "sha256": "4978654ac840ad519692d5d5ba48a8101cabce13b9a577be73ad589185e5e9ed",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactGlass_light_001.ogg",
+      "bytes": 6544,
+      "sha256": "05e513fbd42829060eb37855f8c3866722ec5c39a8937c9bfde518cc609effa2",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactGlass_light_002.ogg",
+      "bytes": 6562,
+      "sha256": "710db7451bb7857b9140dfe6afe4621ea2188ad65eda3919c569d1bb285b933d",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactGlass_light_003.ogg",
+      "bytes": 6618,
+      "sha256": "765290ce32fa108c939a0dbd6fbacbcd05abde622b57b708eb8a64058ef4225a",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactGlass_medium_000.ogg",
+      "bytes": 8400,
+      "sha256": "9252d50bfb85edb17d6073c4a7806e10cdb9de56d3dbfc93a4b9727146d2df6d",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactGlass_medium_002.ogg",
+      "bytes": 8341,
+      "sha256": "48616f22c95589ed9fe55babf0fd012721d7b2ef1b9e85c2ad6408a2cd7c164f",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactGlass_medium_004.ogg",
+      "bytes": 8397,
+      "sha256": "853fe77ad46bd0cf106e40e741b039e15b90f73edecd92cde524fbad9e3ebe00",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactMetal_heavy_000.ogg",
+      "bytes": 6110,
+      "sha256": "e07045693e4a2b3d165c424e3dab4c781d9ff8880a386880ac89a51315d7f831",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactMetal_heavy_002.ogg",
+      "bytes": 5634,
+      "sha256": "b914c8f1eb7c0f34bb165d7c77f4be0351f6be0660c13c53e65424e262e2c093",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactMetal_heavy_004.ogg",
+      "bytes": 5788,
+      "sha256": "6d65b463c0555dd5be16b8db6d2cbe23a94e07a4637779b8ad17d0db3e500a87",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactMetal_light_002.ogg",
+      "bytes": 6804,
+      "sha256": "25a96f90a9a1f88a531e824e126f0519504625e5635e65a72e4f31611428db29",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactMetal_light_003.ogg",
+      "bytes": 9023,
+      "sha256": "92d5db6bfc672d9dc1b4f390b2900504f013187fa36335472554fafefa9050b1",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactMetal_medium_000.ogg",
+      "bytes": 7117,
+      "sha256": "a96f879fec0864a8938e0c745b6996a6c5679c16a234ce31a01cc995e8401003",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactMetal_medium_001.ogg",
+      "bytes": 6151,
+      "sha256": "e8a9eaba7c4d27422e4eeb3e6c7100d5d7dc0f83e005efc98c960adcc5265337",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactMetal_medium_002.ogg",
+      "bytes": 5857,
+      "sha256": "7e89ce2ca0dbda95ea2b78d4b50791cab35c10d20e9f5ccd45dd0b00e99ff548",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactMetal_medium_003.ogg",
+      "bytes": 6964,
+      "sha256": "2a185e2e57211d02c1bdd33b872d6b6a2fe83e6c14f4e56f426a95e717acf08e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactMetal_medium_004.ogg",
+      "bytes": 5744,
+      "sha256": "03e10f800199c7166208e41c11cf4acfac6cc265467f02357da71972bc967295",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactMining_001.ogg",
+      "bytes": 11481,
+      "sha256": "61235a18de3f3d92118235398222dbf51d448f1be70b1c8bc962b10b86f2d9c6",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlank_medium_000.ogg",
+      "bytes": 12016,
+      "sha256": "8403cd7a043f0391574c88c55dd205743725b5363d2407f6de145f201690b68f",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlank_medium_001.ogg",
+      "bytes": 12082,
+      "sha256": "d7c304319f8beac616231b62041fa8da74045b62d7155965516efb9b19303df4",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlank_medium_002.ogg",
+      "bytes": 12313,
+      "sha256": "f6a14da45994229676b4f29e6a35f504b5c2ec2b8166fb1a3b1aa004bc6911ef",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlank_medium_003.ogg",
+      "bytes": 12138,
+      "sha256": "0602a7b3eab5f53484f10fe775ee4204e7a2ba9703c886b302e012f7f6fab8de",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlank_medium_004.ogg",
+      "bytes": 12084,
+      "sha256": "6a51318c1c63821ea757622b57fafbf44c16c28129f6d39406a784260d87c447",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_heavy_000.ogg",
+      "bytes": 10032,
+      "sha256": "112d4f93ddcc370b410630f971c0f5d991856102da9c76bc5c5540d388e75aaa",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_heavy_001.ogg",
+      "bytes": 8713,
+      "sha256": "142fd6c77f13d25f318265901163f70f8dfe12f87829169a570025be43de7011",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_heavy_002.ogg",
+      "bytes": 10188,
+      "sha256": "b0cab75d1befa32b4cf215d8ee7e1c400a39182e8b105963b8e310f825b198a1",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_heavy_003.ogg",
+      "bytes": 8490,
+      "sha256": "59775f8979a396c8a793b0a1db206d5bdc651eae808d858e9acaee8ebda5bc6d",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_heavy_004.ogg",
+      "bytes": 11092,
+      "sha256": "e31bfec90630155bcc6af541d1d14ae8202c435c52b42e6b6183fdb6ffb248b0",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_light_000.ogg",
+      "bytes": 10474,
+      "sha256": "6e797cf8a5bfc52d7ed5eb47c227974c1cf2a674954fec5b539cea7d62c7282c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_light_001.ogg",
+      "bytes": 11730,
+      "sha256": "947915c2eb6ac57ee08fd3a48b297fd108d69abc72076e79882c21cad0eef56e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_light_002.ogg",
+      "bytes": 9932,
+      "sha256": "8ac5869ea434cf0d364872774efe70b2d666a4f02ba35ddfc1e051d336721be8",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_light_003.ogg",
+      "bytes": 10626,
+      "sha256": "dbfb7c1d002576696df3e9a43d6639ee3f342068398b5e7b55bc2389d20508a9",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_light_004.ogg",
+      "bytes": 11928,
+      "sha256": "9cb33b0c0cce948313f078b60769d2f8e4075472494fc8f8129aa4a23c951897",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_medium_000.ogg",
+      "bytes": 10921,
+      "sha256": "b670d30452983369771081319c268475edaaafe782bf4e8d70bd7eef09d8823c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_medium_001.ogg",
+      "bytes": 11491,
+      "sha256": "68ba7701b71ef620f498f3038e832157d71ac8db7ad59424545890b250ceb24e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_medium_002.ogg",
+      "bytes": 10250,
+      "sha256": "68762e1ed49bb59ae6602fad6ce2ebac61958478ddb2668de9106f010cd4b6b0",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_medium_003.ogg",
+      "bytes": 11616,
+      "sha256": "964c5fcfb91e7710e2af25c2243c8b7160756b223b0984bacc9eb25bfeea057b",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPlate_medium_004.ogg",
+      "bytes": 10803,
+      "sha256": "f0e8164081190839caff6c2958361b22780ffba5617f77f2d4ee3a4275b318bf",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPunch_heavy_000.ogg",
+      "bytes": 11617,
+      "sha256": "b33a8f14068aec24ec69ba85e5e87fdc41228975f6a1a3e44a6e7d6fc3d9f8d8",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPunch_heavy_001.ogg",
+      "bytes": 10861,
+      "sha256": "f92f5cb6ba4ff2766497292ffd90865654317eeca976f5652e0708dbdcdc0dd9",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPunch_heavy_002.ogg",
+      "bytes": 9025,
+      "sha256": "7993dd4c156b9979ad69f17be5ebe31850b16039a3857f8477141be54dfee1b3",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPunch_heavy_003.ogg",
+      "bytes": 10029,
+      "sha256": "4ab53b26f4ea575120dcc1348526c9e0db2afc6af7a442aa0489bdead2ca80b6",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPunch_heavy_004.ogg",
+      "bytes": 10452,
+      "sha256": "f4c0c3eb8ab6517583b8218ed03f28923d1b687379aab4c1d5a6d4c10cf8e500",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPunch_medium_000.ogg",
+      "bytes": 8800,
+      "sha256": "486988aa2d6440ffc4c62a0e8ccf3c23673ba84424bd4723378d451b7255eb5c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPunch_medium_001.ogg",
+      "bytes": 8701,
+      "sha256": "e71d23abcc3f10d9d6bc9615b2a431fff70b12333a5fcdd9964457564ace4349",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPunch_medium_002.ogg",
+      "bytes": 10399,
+      "sha256": "6492f9ccbc8d24dcef607bb1b48790b7870961474561f7fe5601e1c73a3018ef",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPunch_medium_003.ogg",
+      "bytes": 9509,
+      "sha256": "2d7c719c05999e0532f4384e1018e04cd916db715140bf16dee2dff3f820e908",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactPunch_medium_004.ogg",
+      "bytes": 10032,
+      "sha256": "4a256878a3afb994ec9a4399336687748e68c7c136872c08c9c797d8c4e2464a",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactSoft_heavy_000.ogg",
+      "bytes": 6570,
+      "sha256": "49e7ca88743fca974bb8676ea138b751cfd8f9033b5e7af8736c2a215d6edbc1",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactSoft_heavy_001.ogg",
+      "bytes": 6689,
+      "sha256": "4d0096364ba9e46119d2ff6df493fdc101bd2e1efae061da5e5f77a53b3fdcb6",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactSoft_heavy_002.ogg",
+      "bytes": 6749,
+      "sha256": "d130ae541951243d3f6ed963d0057450a445ffe117fbf9a084d34eb1635cb563",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactSoft_heavy_003.ogg",
+      "bytes": 6665,
+      "sha256": "d00286a2dc62ee5cb4d42bf56120e7050a855f69e655fc1294410aadd337eba3",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactSoft_heavy_004.ogg",
+      "bytes": 6478,
+      "sha256": "e008f0b6b14f62339c8fe9f9b45cbd6317ba4f66604c4899053b8017020a36f0",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactSoft_medium_000.ogg",
+      "bytes": 5351,
+      "sha256": "7d3ba0bb5e60a11b5d3e558c141303dcf494256675fbf753c0d252d2cf0481e3",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactSoft_medium_001.ogg",
+      "bytes": 5506,
+      "sha256": "7642a4fd43e547afe4f7adfadb3dabb681c0ff512f52c1674bae30a726841faf",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactSoft_medium_002.ogg",
+      "bytes": 5358,
+      "sha256": "5069e3571a77d7f7aae9ef71d0364aa245fb7d64a7c8cc9956f221d03088c089",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactSoft_medium_003.ogg",
+      "bytes": 5392,
+      "sha256": "5c4a1f35fde7e14046931da7bc3d1b23736541b7190ba107e08a379c4ca43cd6",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactSoft_medium_004.ogg",
+      "bytes": 5438,
+      "sha256": "b0a4dea90eed47accf50b768beff1166f2f1486fb139e4d025b2427637624bca",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactTin_medium_000.ogg",
+      "bytes": 6509,
+      "sha256": "f4bbee66ca191ec744b84fc07ac9ed2a6fda955d51cfed8360f12b62815d3cbd",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactTin_medium_001.ogg",
+      "bytes": 6603,
+      "sha256": "84253095543c094d83cd749f42ecfbc96e356b60385f18a192c18eafb25b3cc6",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactTin_medium_002.ogg",
+      "bytes": 6156,
+      "sha256": "c1d2c4f9910d4529581ae56a9a9a01454c4619fbb7d6da7616221d8ec58cc0c4",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactTin_medium_003.ogg",
+      "bytes": 6541,
+      "sha256": "0d18737d93ba7aa0669f751094cbc1671bbebac4fe207783922938ce75e24334",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactTin_medium_004.ogg",
+      "bytes": 6362,
+      "sha256": "fd53e24efec3d5c1cee5a46fee70f97efd4bd01e53ac5d9b5f3b6719dfe9f5aa",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_heavy_000.ogg",
+      "bytes": 6233,
+      "sha256": "15ff82332f342c30e469215539e1cc57e11b221aa2cf7e11e811d313a9927f3d",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_heavy_001.ogg",
+      "bytes": 6239,
+      "sha256": "f1b07a53ac10c615fff9ba470511fdeb722b5902e1a8520759fc20ad6f546015",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_heavy_002.ogg",
+      "bytes": 6146,
+      "sha256": "ce1e06f2a05f2634c645cb72f6a1623e64bc2d92be34917430a61031fb6597d4",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_heavy_003.ogg",
+      "bytes": 6181,
+      "sha256": "af07511902b309b3f6d8f0e1fafbe93869127fb88099ebdc0aa6a00a98dc3cb0",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_heavy_004.ogg",
+      "bytes": 6253,
+      "sha256": "2c647ae6bd29c72ae2523f7e16e325d8d331b75cc99ab4f637c48a0e11c34677",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_light_000.ogg",
+      "bytes": 6343,
+      "sha256": "eb45e35b4bed784d3f120de4afec4b0d6ac09d9e143cce8cfcb7d739e1b1f3c3",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_light_001.ogg",
+      "bytes": 6373,
+      "sha256": "4b76bf3ccc8e60d19188f3165b778a7817786faa6887c55d9049bcbeef3b425f",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_light_002.ogg",
+      "bytes": 6366,
+      "sha256": "b183cf7a5bd783817e0e4b82af34ac6658fa1927049089dadc8b15c2ecc771dc",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_light_003.ogg",
+      "bytes": 6381,
+      "sha256": "cdfbe8af2fe7ff9ee28f337a0a989deee0f327620da456c8413644880e9d0004",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_light_004.ogg",
+      "bytes": 6395,
+      "sha256": "e10009f67ddaeb3a59a3e1129cfc1615d84ba60ab578eae07e7092ac223f099c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_medium_000.ogg",
+      "bytes": 6575,
+      "sha256": "1723a9fd25103ed41af06054814e84e65f4a772bac86ab2dc927da93d9592ff5",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_medium_001.ogg",
+      "bytes": 6555,
+      "sha256": "15271dbe8e2872dbb0ff1aeb7b12b2d2b92b7c1951c88532b9ab9158c36dfc73",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_medium_002.ogg",
+      "bytes": 6607,
+      "sha256": "3f3f1917428b828f733a963167833c707bf88296ff158e1559c57c5cb813d799",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_medium_003.ogg",
+      "bytes": 6598,
+      "sha256": "635c37cfcd854b187d643d450ff0397798dcc29ae94da32192b814fae6bd854c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/impact/impactWood_medium_004.ogg",
+      "bytes": 6481,
+      "sha256": "7ba48f2f99c91c71be420841a91f1e69c0cbc4fe887fcd7213144d67bb87b13a",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/bong_001.ogg",
+      "bytes": 4848,
+      "sha256": "d21d0f0b782445db579d11e2506b24cd1ac9d664ee33aeaf807761aa7b6fd710",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/click_001.ogg",
+      "bytes": 4876,
+      "sha256": "ccfb7fa0cccdd9faec0eb16033c732b1e308d139d80f799161495d58f7adcdb9",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/click_002.ogg",
+      "bytes": 4275,
+      "sha256": "adcd1f4adc35f1b41bc1b5bbefeff7aa44f2f3f0d96d3199b544140c7c1e761c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/click_003.ogg",
+      "bytes": 4371,
+      "sha256": "2fa929138bc3a0f432696588f66eac94b8f6d463905ec8808c6461ce4b054292",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/click_004.ogg",
+      "bytes": 4486,
+      "sha256": "09e2c1b643b71b9aff9932b4e02d78db116446b9a14b00a5b2a9b28d2668fd8e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/click_005.ogg",
+      "bytes": 4410,
+      "sha256": "a3ee7ebb036bc3cdc218ae52bb27548c4f49bcf07505274f8b61b1af8236acc2",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/drop_001.ogg",
+      "bytes": 5859,
+      "sha256": "692ee3a6f1821402ca649ff735bee9591dc4846c8098fc7d6a90fd15fa57c1af",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/drop_002.ogg",
+      "bytes": 6411,
+      "sha256": "4ac4d1cef7e936965cbf795852ca2020300b9e2ba7daa59f2bf4f1f7bf416218",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/drop_003.ogg",
+      "bytes": 6288,
+      "sha256": "43d086d50f90493a98cd2e09aa6dbf150d164f1578e1ec768d21cb185571ad87",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/error_005.ogg",
+      "bytes": 7266,
+      "sha256": "3f75b11df5b06d68d2c25fbf0e9c9d9e7dd9250562a4007ee34856b8a309a2ae",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/error_006.ogg",
+      "bytes": 8288,
+      "sha256": "a97513d7fd2b12b1210c423be943b4c1ab0e899b11db95855e9b74836e646ae0",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/glitch_002.ogg",
+      "bytes": 5473,
+      "sha256": "1da06a2e63ce131f5e0316ca27c75fc0d672db7a8f9b986c70693f2bd992eabc",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/glitch_004.ogg",
+      "bytes": 5225,
+      "sha256": "d0f4db4d12f88592bc328bd621d356d099eaa2dda37bab37a6cf17891c5026d1",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/select_008.ogg",
+      "bytes": 6339,
+      "sha256": "f703b6b1c62dae1c246a46d5c2442802588f68be2df4d17e0d65cf7e0dbfc826",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/switch_001.ogg",
+      "bytes": 6753,
+      "sha256": "3b74efad87f1e69dbd1d05c5ad952ab90859b5a3d11da6ec5bd79b4f03b42afa",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/switch_002.ogg",
+      "bytes": 7097,
+      "sha256": "6fc395be2ad1f99ce318a5d28f98fb76dbeb676d83a0b28239d8c1fb90736180",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/switch_004.ogg",
+      "bytes": 7248,
+      "sha256": "541c19cc1ab712a9efc5765df602e7d0da09d9cafdd297ce1e19b092289fd62f",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/switch_005.ogg",
+      "bytes": 7814,
+      "sha256": "e94dfab6fd6558068ab3ea97e22e4b4f16b83ee440e6abf33ec4c4e9fbe8a70e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/switch_006.ogg",
+      "bytes": 7873,
+      "sha256": "2676ddc4e341ee557b4d1dc8767ef8655540d66fb3ded6a1614080dbc4dc6f18",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/interface/switch_007.ogg",
+      "bytes": 7921,
+      "sha256": "eeaf60c2abc7e1b715e2b032401bcbf6b3753b77f96b238f861a034a75515967",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-001.wav",
+      "bytes": 25260,
+      "sha256": "7b873548c399b9aa0efbe63052fe1344c5317a9b23455b8be3523f47d434daf1",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-002.wav",
+      "bytes": 25260,
+      "sha256": "f58f93430c1ad434feb341a89b89740ccad75e7a775d778d91b7f206e0acbe8e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-003.wav",
+      "bytes": 25260,
+      "sha256": "d67cf9547d99fc65c815c4c68fa9181e0af71419761cbb1d1f0a10eb8491a8d2",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-004.wav",
+      "bytes": 25260,
+      "sha256": "29e1aea1fb841a0663ce75e9d83e675ddc7ae5cef00c623bdda65a72604fde7e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-005.wav",
+      "bytes": 25260,
+      "sha256": "619eb7e26571657b76fc9e1e3d99e85c3fc2259fa91c4c45f57384a85774ac24",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-006.wav",
+      "bytes": 25260,
+      "sha256": "419bde001e7ed1cae63b84f60c803fb024a0254e1afe65e59d8c6d8ad4196eb7",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-007.wav",
+      "bytes": 25260,
+      "sha256": "522834f471e6c2935fd1e6a28042c0864925556efbec32c36d7c7a98026d4bfc",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-008.wav",
+      "bytes": 25260,
+      "sha256": "c2ab8722a81a2f1cab66cd863a09a9ec00392e2ede61362b3707a7bcc0eee506",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-009.wav",
+      "bytes": 25260,
+      "sha256": "25595c1d1e0e18aada04dce3a651dc2c499f1fbc2647c1ab0b3c4e718275b16b",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-010.wav",
+      "bytes": 25260,
+      "sha256": "3a65bf93ec554b068b0a64d11d2bb521cd54e7a9e7ef3362a670efb1e410f0dc",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-011.wav",
+      "bytes": 25260,
+      "sha256": "72e79b249040bff166be863dd75f5c50d6e22bf904bd7e0adab1b30941e19968",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-012.wav",
+      "bytes": 25260,
+      "sha256": "79de7a9cc035ca4204600a52281129be9f258b1d903c88279b1e7128e57ba86c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-013.wav",
+      "bytes": 25260,
+      "sha256": "a73d12a22403fe7b63a3da41ff07f13f956e3a30b397196288262d467f1e28c3",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-014.wav",
+      "bytes": 25260,
+      "sha256": "b2069e29be488a7e55b151ef458e3314ec8f138f6d5a34fe19189f4810cba098",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-015.wav",
+      "bytes": 25260,
+      "sha256": "39df76e16d6daa76619f17b724ed4fdcfacc3d0c311103f6d45dc23ec3634678",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-016.wav",
+      "bytes": 25260,
+      "sha256": "181e3c5d28d2a1ed0e953f5668391ef1f9b7cd577d33058fb62bd18473b45791",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-017.wav",
+      "bytes": 25260,
+      "sha256": "0f8d80d3f64328936bb699eade15cc89de12b7464833459e539bcf001101e431",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-018.wav",
+      "bytes": 25260,
+      "sha256": "784622e91e8797605fa76c43c0e4745663688c9faf455ff2a951d79f5f4dac65",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-019.wav",
+      "bytes": 25260,
+      "sha256": "9cdb32c0074eaa114f8740e80bdfc28b1b44b4c6789371e1ec872e185e92d49e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-020.wav",
+      "bytes": 25260,
+      "sha256": "056b14dea2cc590e817851d93f910b0ba918cd9179bbb4d2b39b4db92c0d505f",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-021.wav",
+      "bytes": 25260,
+      "sha256": "209c16dabc4f687a210db16db590a9e1ac40bfc2740ce569d2a9382d1e79acc7",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-022.wav",
+      "bytes": 25260,
+      "sha256": "8cf602c150e338a94e9c19dcf68b1d80af5adb311c84ec20590a6ab0359b91c5",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-023.wav",
+      "bytes": 25260,
+      "sha256": "b7395018288bc4842af0983a97d790e9db84ab65dc8ae57629dc6a9ba31ff62c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-024.wav",
+      "bytes": 25260,
+      "sha256": "39f3a508a9be3bbf31f630ccf9a9413f02068965babd3885771d6060f58b388e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-025.wav",
+      "bytes": 25260,
+      "sha256": "bd3f9c7f28df223592fd6b3ae3c8c6f6f0fa5d899e66492825ee7b5dd4a3a9dc",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-026.wav",
+      "bytes": 25260,
+      "sha256": "a7016b0c501bcc73a190bb3783626ecc6c3086e9a935e13c3828d70854e4774e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-027.wav",
+      "bytes": 25260,
+      "sha256": "c0376d2249a2c6d4e79d166445bb83ca6efbdcc09518b8323499644e393dd5ab",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-028.wav",
+      "bytes": 25260,
+      "sha256": "a324dd279d5422bc2328e49122cdd39d071faccaf109332602f6ede13686ada7",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-029.wav",
+      "bytes": 25260,
+      "sha256": "248b459e92dce812858aab2498546887957828007978fa29f481ac16d799a14b",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-030.wav",
+      "bytes": 25260,
+      "sha256": "355fb80cc1a40165de17c7653eed643da30afbb87f444d74c2eb0119adeec4f5",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-031.wav",
+      "bytes": 25260,
+      "sha256": "df5718d60529e81769597226c5bce593b3a6fd6ae7aeb9b7249754059d0c464a",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/keyboard/keypress-032.wav",
+      "bytes": 25260,
+      "sha256": "569648b47017747070b6d2a6d640449030b1b70da717c1f774c76a32dd75fb6c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/sfx-analysis.json",
+      "bytes": 405942,
+      "sha256": "3c13d1d9dad3983f7ef48834285a3790823537580f4c2e88f8cb9cb8f6aefa62",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/sfx/sfx-analysis.md",
+      "bytes": 7055,
+      "sha256": "9f36bb767bef6802f5660e6914244115e842cd39f24b179f3f585c683e728f6a",
+      "license": "MIT"
+    },
+    {
+      "path": "assets/sfx/ui/click1.ogg",
+      "bytes": 4983,
+      "sha256": "59175ac17cd49a68dd736285738441287636112a84a6f7ce0d89921bda5a5360",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/click2.ogg",
+      "bytes": 4656,
+      "sha256": "c394b46bc6737f7f7edfbfa3031ce621b7a43d498d456d6198364eee9cd3e306",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/click3.ogg",
+      "bytes": 4880,
+      "sha256": "e3e7fc7ccd9c5cfdf77bffa05aee10d4973812076c76dc889ba2b16ea434127f",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/click4.ogg",
+      "bytes": 4558,
+      "sha256": "9c02bbfc872b50eb8750adf4b7c343120f19f5d2f04ab06a7a8948368a77b872",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/click5.ogg",
+      "bytes": 4532,
+      "sha256": "52d41e0bb012731bf2a391d53ffb52265ef21589c7701e66b391d5e36a65b293",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/mouseclick1.ogg",
+      "bytes": 4686,
+      "sha256": "ece1210c62ccae6c9ea4f4c59466d9d453d6b357c7d4b1a6c31196e5e6fea1bf",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/rollover1.ogg",
+      "bytes": 5932,
+      "sha256": "4eb47e2e1540c44847b47a89825e21335c820a4e54cacf8c4c1eb5100e36af42",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/rollover2.ogg",
+      "bytes": 4701,
+      "sha256": "d0bc0fcba496d73df1da8c145e5330df75f87ab5a4f33a9b71461b006b5c338e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/rollover4.ogg",
+      "bytes": 5188,
+      "sha256": "8b70e47aa1d51d220a3609a02cc50ceed6e05a20f51c6f8daaf5fd83eae42cf3",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/rollover5.ogg",
+      "bytes": 5258,
+      "sha256": "3e1805b914a66e63695913d19ba98c5ec584cc69d29c7167d83c460ab752a5d3",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch1.ogg",
+      "bytes": 6104,
+      "sha256": "efdd1d1e2904fb2d81259cd96bb80101caceae94be02baa4b5310714a6708b19",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch10.ogg",
+      "bytes": 6456,
+      "sha256": "bf61b3f3af39b2c680e70ee2f791786edd2bca2016ea683947059f079849bbf3",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch11.ogg",
+      "bytes": 6248,
+      "sha256": "a8d445bd96fe3842ff2dcdd42ae728330baa8928032ca5f3d5cd4b926929550a",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch12.ogg",
+      "bytes": 4588,
+      "sha256": "dab0c21eacb6536724d139c27c0d60c932c87171752dc8d24d7a826694377f94",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch13.ogg",
+      "bytes": 4467,
+      "sha256": "54d1e63b907274bb415a8de7f652194756a8eeab4079a7cf769ec153b93a436a",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch14.ogg",
+      "bytes": 4522,
+      "sha256": "c640b370738c816eda3d1196d8a8dda7130825b4094f3bb3cbba22a9f6f9b7c9",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch15.ogg",
+      "bytes": 6325,
+      "sha256": "5a20a9d5365dec8fec1311731540f56429cab38822326133c7ce60fbcf9fd275",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch16.ogg",
+      "bytes": 6991,
+      "sha256": "d2e9dd4fd2918132f8400e270701384e93139f2207ac115705a2c183cf3d2098",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch17.ogg",
+      "bytes": 6686,
+      "sha256": "d09974d4cf5ccb2d75647e2464cd424e7e3c7a0374e73e8a22577662031a3677",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch18.ogg",
+      "bytes": 7633,
+      "sha256": "ba759707fc2e55f4e7d1edd1dd78a4110267f4dc564edfb989c00f062ef69d8c",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch19.ogg",
+      "bytes": 7177,
+      "sha256": "63753f884e4e0d44b0939bee9f048b32e658d996958930363c0579ffa0f810c1",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch2.ogg",
+      "bytes": 6042,
+      "sha256": "aa8ad6e4745e87c84c24a0335e0e0f8629ccbbc474ccfd544fe07d7f3a1b2280",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch20.ogg",
+      "bytes": 6965,
+      "sha256": "276b402ee4840f88a8df4eca6ece029b61c5840fa9149b0c5008fe4bda89cc21",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch21.ogg",
+      "bytes": 7453,
+      "sha256": "8a3fdc5d35c74ae4ce4ec75c1f85c7f5fac1a2a6ac838353b09c48c5d7888fc9",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch22.ogg",
+      "bytes": 7116,
+      "sha256": "913261ad55fa0692902e4027a7a139844e7589d30c4286ab10e6d637f28b1d9f",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch23.ogg",
+      "bytes": 7177,
+      "sha256": "148d91722dd819b450d8b50e65686d9b1d39d38ca05b361caa387bcbd2a90d81",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch24.ogg",
+      "bytes": 6340,
+      "sha256": "aec5e91eef35c4a64d3bec7a25e54a68fa0448f4cf3179455e18c72c3dda60e9",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch25.ogg",
+      "bytes": 7130,
+      "sha256": "ba31fc9a780a6908809154e0108e8d2728b5b9a6e769c8f56d61d920fba100ae",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch26.ogg",
+      "bytes": 6031,
+      "sha256": "1a628e2fbede99afdb57533fa367f352fede596df18c91deb841a21f8171654a",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch27.ogg",
+      "bytes": 6445,
+      "sha256": "a6a3a5fa54037e3b69c0fe7f2d9b50422cb23dd616bb7f72ac0a2a028a810028",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch28.ogg",
+      "bytes": 5916,
+      "sha256": "2f7b627d85ce1530faef5374d3826bfca1ff2823b1b41d5f908448976061e2d4",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch29.ogg",
+      "bytes": 6769,
+      "sha256": "b2923ed170e963b5e211bf73e75f8eeb41f6b49a46eb52f3b3fc43234c713a16",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch3.ogg",
+      "bytes": 6270,
+      "sha256": "75d87dc60b7d29df838530af8c9e28205102234e07b5f1e849aa3d95c3922bd0",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch30.ogg",
+      "bytes": 7151,
+      "sha256": "d220abb5218fccc6d37649e17e7cce2a4e253f474332d9ea2b0f0518264aff5a",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch31.ogg",
+      "bytes": 8180,
+      "sha256": "bca5f3047e73d28f6619d49a45dee1984340c165da5fa49b239068c2cb9b4be1",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch32.ogg",
+      "bytes": 7868,
+      "sha256": "b740f507ad386a1d09bb5ca69a75231656a71375df11348fcd2d5e323b8d6727",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch33.ogg",
+      "bytes": 8530,
+      "sha256": "977ecead4b27cf9801aed433bfa4bdfcf49444c15990d27d2e472401a1fb2742",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch34.ogg",
+      "bytes": 7910,
+      "sha256": "6e7943ed133c1b559d009da5028da0a318fee0b1bcfe6e4fa49744ba2cd3975b",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch35.ogg",
+      "bytes": 6935,
+      "sha256": "1ec7f5a76318f88c499d37567167f565cb564266d52b37112aac6467fe4126cb",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch36.ogg",
+      "bytes": 6616,
+      "sha256": "1dd3cf29291219ab2eed0292d5c3b06b1e102ea70821099e741fc127734ffa04",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch37.ogg",
+      "bytes": 6822,
+      "sha256": "25faa57a3e819a3e3a2191934226e540467fcd11680131a7a77b47271048327e",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch38.ogg",
+      "bytes": 7303,
+      "sha256": "d5c164ba622e3c7904eb0f442a81cff9985bebbd8951202348d2a7c8a449309b",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch4.ogg",
+      "bytes": 6477,
+      "sha256": "687a42c24e5d25be1a256f35a439fe858548fe76d43ccfb17db546618b0d36db",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch5.ogg",
+      "bytes": 6181,
+      "sha256": "8a5c85c0009cfd985634e8fdb4e0350690be5d85fd49f43a90b35c7de0bef7c0",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch6.ogg",
+      "bytes": 6610,
+      "sha256": "34d37cbfe6785cab2f3217b613fc976ba05b869c0ce61381eafa67ee257ecc9d",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch7.ogg",
+      "bytes": 5707,
+      "sha256": "7a3032d1dae63d1096cf2f1e59cb43e598d5229dcb9617e9d3fb13e96c78d5f2",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch8.ogg",
+      "bytes": 6253,
+      "sha256": "c7bf07f8d58ac62faac2427868619631b1a89b0ab08e87c7c01621a086fa1873",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "assets/sfx/ui/switch9.ogg",
+      "bytes": 6009,
+      "sha256": "069861740681c528866483e3d528d79034f24d744c4fc79f7045b7d9ed999e26",
+      "license": "CC0-1.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/adapters/animate-text.md",
+      "bytes": 4069,
+      "sha256": "82f0e94d031480d186df792f0e2f8535276d805d699e5c84b9a7b736d107b10a",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/adapters/animejs.md",
+      "bytes": 6224,
+      "sha256": "ade4ebfdfe4bab62ef98ec4ebc83b84f0792faad5993ff5d398d67d1a499de93",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/adapters/css-animations.md",
+      "bytes": 5407,
+      "sha256": "52a1a7fd8702cf8721bbe63e324f0492f3966c5b092925f5135839132a999012",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/adapters/gsap-easing-and-stagger.md",
+      "bytes": 13270,
+      "sha256": "825e8d2524ad166d8c29d59d72caa9e81c3a0368bcfbe059c86371a64d3494d0",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/adapters/gsap-timeline-and-labels.md",
+      "bytes": 3734,
+      "sha256": "96aaef95ff4e546dfff9d2090ca07d3d921d99b01348ef4adccae7686a515dca",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/adapters/gsap-transforms-and-perf.md",
+      "bytes": 8552,
+      "sha256": "a73c1ea0af7dd782936dd5726e0ea6c1cdc98126c89c6aec4370624f4622ee67",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/adapters/gsap.md",
+      "bytes": 7504,
+      "sha256": "1e4fd8f99fcefedc53352828f1370fd06065fe1abd4762016e5365a5da017341",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/adapters/html-in-canvas-patterns.md",
+      "bytes": 17166,
+      "sha256": "5e7c801c65d8f34f38c535bc9ed6808ebb6f475f166347bf71a453eb87614e9a",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/adapters/lottie.md",
+      "bytes": 6181,
+      "sha256": "16da66c43a511b261f6a249c56c0c0bc3cdb76632e20952aa289e32803565d42",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/adapters/three.md",
+      "bytes": 6473,
+      "sha256": "cf0082681b4cba66116fe091493db3d85e24c8b82620e0c5b01c58729aa35562",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/adapters/typegpu.md",
+      "bytes": 8100,
+      "sha256": "221d7aa6dc3007e0c9fc31f27e10aa979c0a25567d98540fc0d2e4e9a79bbd24",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/adapters/waapi.md",
+      "bytes": 4248,
+      "sha256": "3e173bc484cd7daef9022c2c80e8e2091ab73321def54c2a100ddf738ee8d1e0",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints-index.md",
+      "bytes": 26512,
+      "sha256": "601228ddcfda89ed6add52bd08becf53296764e155126fb5e7100eb29caaa46e",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/agent-progress-theater.md",
+      "bytes": 16091,
+      "sha256": "1939690276ebf41123126e40915c283b69d3b2fd7d563f774c96e6ff6a076d4b",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/camera-journey.md",
+      "bytes": 13648,
+      "sha256": "0508b034b4a1c30bf3cd37a25137987c435e7805f3d5a98f85921ce0e6f06d1e",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/comparison-split.md",
+      "bytes": 3316,
+      "sha256": "af2af2ddf86aba21ed8b2016b7b1bd4b1ced52b4ac98f17eff487dca1097599a",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/constellation-hub.md",
+      "bytes": 7144,
+      "sha256": "729357480806d512217f46155d7810537f0ab6f7f46ba47b0905e4c3ea4d59c0",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/cta-morph-press.md",
+      "bytes": 6407,
+      "sha256": "0f8ee56ff89af960cf2deb1da86994d5bb93186b85e71d601fb5c64b40deaaeb",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/cursor-ui-demo.md",
+      "bytes": 20276,
+      "sha256": "f4403a088e1358b59a21eabc4f5867f53b9179f5a4abf2f28e8e9982ef9fb479",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/dataviz-countup.md",
+      "bytes": 14611,
+      "sha256": "9de0c34b44bcee7dda7371f8597df3421b4e6d46380237f76e815044f02e4a1f",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/device-surface-showcase.md",
+      "bytes": 17151,
+      "sha256": "83d1c7b91b40ba24de324a14b50d023514c95b6b01a3c5bcf5c066a770e07fc8",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/fixed-anchor-cycle.md",
+      "bytes": 9089,
+      "sha256": "1a49afda275f54c0383e8569b405175f2a2424a74574d935d1fdf3858f50eb89",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/grid-card-assemble.md",
+      "bytes": 15594,
+      "sha256": "c35349ce839aec1e279ec66b297553c3a9dd1f30fdf64ce8b768c9fafdb4e662",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/kinetic-type-beats.md",
+      "bytes": 29151,
+      "sha256": "4515b7aa6284898117e8970b76c04fd350ec61c664f5b241deb81c7fdd655d8c",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/logo-assemble-lockup.md",
+      "bytes": 26609,
+      "sha256": "53bff65b0b4b14566bceb061c71a9a987003273aa1f7ef711dc20c30b812ec55",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/overwhelm-surround.md",
+      "bytes": 6140,
+      "sha256": "e35c5bff4db70574124db06122d79443cc0d3ab8238b52949548c4ba995c5b9e",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/panel-edit-live-sync.md",
+      "bytes": 13394,
+      "sha256": "f864194c9a56ca7936df72b92b4806427437c1a09fab11cd27eb3d0499186644",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/prompt-type-submit-generate.md",
+      "bytes": 18636,
+      "sha256": "c94f17f6cccec12c7e8eac246d8b534e7cb4120a3f9b7c52dee049b9d228da1a",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/spatial-pan-stations.md",
+      "bytes": 4868,
+      "sha256": "6c044d1fbdb057aae80d46efd1e5fa7222ad3e294a249566f36c82221ba02386",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/ticker-takeover.md",
+      "bytes": 3052,
+      "sha256": "58e7a19b1aca8f3a85affbc24005d1b26ffd9b953053166783afa428f524b5d8",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/titlecard-reveal.md",
+      "bytes": 7441,
+      "sha256": "39ebf47ec45da556a03d0521d028924c61a02e0c6d60cd194cc40a236af2f08e",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/transcript-scroll-artifact-reveal.md",
+      "bytes": 11666,
+      "sha256": "bb76b82b375ad919412fd201186c82950f636753608efd810ac4f32c5655de4b",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/typewriter-reveal.md",
+      "bytes": 6276,
+      "sha256": "be324c142dc5bf89649df3c59aa8a7e218ca99d8afe1222f4028a314a237245c",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/video-text-pivot.md",
+      "bytes": 3281,
+      "sha256": "6472224469cfb1801989510bec88a997819fa51cd4a5260bc23eee0fd7f086ed",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/blueprints/zoom-out-workspace-reveal.md",
+      "bytes": 14714,
+      "sha256": "30a6a396a72bcd37127100f6e4cb5f13f6ca1ea179df7001ce347a3b84c8b7ae",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/references/motion-blur.md",
+      "bytes": 12792,
+      "sha256": "22d1b89734f0d91f2fdc071d509c23352ce8aca052229eb07d32db69efc8715a",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules-index.md",
+      "bytes": 21204,
+      "sha256": "21eba5fd57769b7560b846a0a9aca8e8f6cacb3130d76e9cd090b564f9e46679",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/3d-camera-flight.md",
+      "bytes": 18137,
+      "sha256": "f88aa996dfff909ba780e0ace41dd7fe3cb2b275b6d87694470f26e78fbb13c1",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/3d-page-scroll.md",
+      "bytes": 7406,
+      "sha256": "4afe02d1205513afc9fe669c739e9734f23057b15b92bf62dff6004f00c1650c",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/3d-text-depth-layers.md",
+      "bytes": 6708,
+      "sha256": "e95234a6a42bdd25a555365d5978f7f3cf20305c5f1a3be46c39b9b5d34a49d9",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/ai-tracking-box.md",
+      "bytes": 6562,
+      "sha256": "7e7b0433c58d95f468d65ae061beb3037f83442940aadfe89e32da8039ef5bfa",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/ambient-glow-bloom.md",
+      "bytes": 9840,
+      "sha256": "06cf000cd14dc72f92f4038114c21020ffc358efad921bcea05d85025d28a5e4",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/anchored-layout-expand.md",
+      "bytes": 10313,
+      "sha256": "11eae6a4c3ca7c31ae41c068c577a960c76fd9714bea12a2bc9ec608f8b098c3",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/asr-keyword-glow.md",
+      "bytes": 6762,
+      "sha256": "30d60b09bfe977896b588f2ae53d2c02a6d45d65aeaa32e261c25cba0e26d4d8",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/avatar-cloud-network.md",
+      "bytes": 6578,
+      "sha256": "c29e0c58150e0056516c76c30932d93f9ac9a57bdb99ec6ff7327867d34a1a90",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/camera-cursor-tracking.md",
+      "bytes": 7911,
+      "sha256": "60dc50359c1cf60b96cee782a2ce11ec33c5e653c5f330df6ee270b280693235",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/card-morph-anchor.md",
+      "bytes": 7411,
+      "sha256": "57ee55f0401026160808532dbfe4d060a412b1c2c603f8ce1f097913a556676b",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/center-outward-expansion.md",
+      "bytes": 4263,
+      "sha256": "e8f95caa0060d015abce3c3dc422b9e05756bde5c2d5ce6a341360a14ec75217",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/chart-scrub-readout.md",
+      "bytes": 10348,
+      "sha256": "e0a0fb62a9ce7ca4ef535ee50328078dc8bb7cf63f1f3a8ee68844b4a5294f61",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/chromatic-glitch.md",
+      "bytes": 10339,
+      "sha256": "388eb6e8d7eb65c8ebca22c07538e7bd383184242a9dfcfe5561fad854551f28",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/context-sensitive-cursor.md",
+      "bytes": 6938,
+      "sha256": "ba33d4d325d83e8e96905cfa24160f9d64a9ae36b831374f203436e790cd1951",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/control-target-sync.md",
+      "bytes": 10276,
+      "sha256": "7f82b8a64cca6759580b9c7ab1dd4373a7c03a474bd8cfc927e18b587614dc47",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/coordinate-target-zoom.md",
+      "bytes": 7607,
+      "sha256": "b716cdceace2e34518bf77dae1e0f04e2bad3c0d181b0e4919843ca8ed2c957c",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/counting-dynamic-scale.md",
+      "bytes": 5977,
+      "sha256": "442d9f9a5cf8c10cc62fc5ece5732eca58f76aaa9724cebe92c1f91cc515fa62",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/css-marker-patterns.md",
+      "bytes": 5702,
+      "sha256": "8ac8dd360b4dc8d78d34c3846b834155ad2b482a2d1388cbbd2d3061c6e9d0c2",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/cursor-click-ripple.md",
+      "bytes": 6397,
+      "sha256": "f3cfefe1c4d2ef61388bafd3ffbf09debc4596a7abf46fef6b9fa70dd013b1c1",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/cursor-drag.md",
+      "bytes": 10215,
+      "sha256": "c7c88d33ab9f7f1c6f0a93d984d4acb1b95698a2bd7a99ef306065da727445be",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/depth-of-field-blur.md",
+      "bytes": 8876,
+      "sha256": "d83b73641a8d5591ca1809bb0df21675537628e00ddb2a2d144fe562be1025df",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/depth-scatter-assemble.md",
+      "bytes": 7054,
+      "sha256": "63689fce3df29c4eca02f83cebf578f6026935bb04f3b57dbf465c63b4d8ba1e",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/discrete-text-sequence.md",
+      "bytes": 6454,
+      "sha256": "d3eb00b0942f98eb30908f1b90f44c0bf9a4da1c2eb0dc6899b14accb75802cf",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/dynamic-content-sequencing.md",
+      "bytes": 8558,
+      "sha256": "7fd77bb18f989e31136338d383179beb2abe2da4b208a67ab7edb712607bc92d",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/gradient-text-sweep.md",
+      "bytes": 8751,
+      "sha256": "ee17df8644eea65f2751c97604db1546c17260ab054483579e221eba6a5257a1",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/gsap-effects.md",
+      "bytes": 6912,
+      "sha256": "63ee2ee5d9dcef1ecbd88b69526e1621f0ff7ce682ec7f2dbe553b5647656bbd",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/hacker-flip-3d.md",
+      "bytes": 5586,
+      "sha256": "67a79e585996b4a58dfb778283d9431ce02ae6bb0150a474d5adb1c4d23d6951",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/kinetic-beat-slam.md",
+      "bytes": 6445,
+      "sha256": "05ae130e17e6229bec8fb144bdf2ec43f8cd1105221af5246673d5d403f0451a",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/motion-blur-streak.md",
+      "bytes": 10616,
+      "sha256": "a970baf9802c7239934a18696753d0c4ef6d70746889473c8b1316740d98a2d7",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/multi-cursor-choreography.md",
+      "bytes": 10520,
+      "sha256": "6d4207d9a0dac8a9ec9d681a6bd30b5cb2707b76349c513f336701c8ea4b4c14",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/multi-phase-camera.md",
+      "bytes": 7773,
+      "sha256": "ffdcd08f47ed49d52d31b27f11676435d45fb34581fabe1507bc59e79364e375",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/nudge-curve.md",
+      "bytes": 2689,
+      "sha256": "91084469a672c8c979e8f2e2f76f78526fdff8e1d647650a5f4a54e21df1b3ad",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/orbit-3d-entry.md",
+      "bytes": 6628,
+      "sha256": "2b24b8d92203e75faaef14c4bfdb216a70f700660056a6f77a9e5f035c5de94f",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/particle-burst.md",
+      "bytes": 9956,
+      "sha256": "b54113dc2d079ff49cd800b650e2c521cd4cf1af8aa125bfa2c9ff53fe5c88d1",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/physics-press-reaction.md",
+      "bytes": 6687,
+      "sha256": "858ebad87af7bc4e7d7141f7aea19ad62d67a6af0bda6e01c9e3e8e841f38483",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/press-release-spring.md",
+      "bytes": 7041,
+      "sha256": "36947331983342c48470c6a685ce04175ada089b0370adbb62acc06dcc98f579",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/reactive-displacement.md",
+      "bytes": 6539,
+      "sha256": "7913e02dd6a303017993315045e0c3cd30aa2df9f09093b697e0396ecb7cfe51",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/scale-swap-transition.md",
+      "bytes": 5517,
+      "sha256": "e527ce5e2614f5ef8dc0a4da8b97d2a015a85866f1d52d22d22c8411efdaa854",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/sine-wave-loop.md",
+      "bytes": 6163,
+      "sha256": "54f283f4a8915de5c3f6d7c668b97f416efad3df6b5baf4941254cea8831944b",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/split-tilt-cards.md",
+      "bytes": 5669,
+      "sha256": "a50c135af38eb5a85f7f2f8753e5a8dcff3e6782392c2c6ee42bfafad9e41ab4",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/spring-pop-entrance.md",
+      "bytes": 6533,
+      "sha256": "f6cfb58b967769900edc0a4b9ed2685127167a8e4f74f7047df07d4ca4a10fbf",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/stat-bars-and-fills.md",
+      "bytes": 5486,
+      "sha256": "2da2a14d1d040e6c7c3634745eb047cd2805090ad374900d07ada50ecbcf650e",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/svg-icon-enrichment.md",
+      "bytes": 7621,
+      "sha256": "f0209f4c4254281d1750bb5d4e963f5372361b1443ada43236a27a0e37bbb810",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/svg-path-draw.md",
+      "bytes": 5646,
+      "sha256": "38e304463abcde3ac88095d682f86a2ea30517d366683d09d6bccccc6752c304",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/theme-crossfade-morph.md",
+      "bytes": 9404,
+      "sha256": "d1855ee32b2b2a45f9b5dffd3d1edf96dd08b199d6aa8c685e302878ba8f0fef",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/vertical-spring-ticker.md",
+      "bytes": 5495,
+      "sha256": "44ca684601429932cc9667ee56e44c8473e591de9b29c0eef808fabb432cda88",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/viewport-change.md",
+      "bytes": 8974,
+      "sha256": "c1ac00dab35da2fe57fd11d460a96730c37f73d8b4d5e73a0ce85b18b9922a75",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/rules/waterfall-entry.md",
+      "bytes": 4582,
+      "sha256": "d9b8a3df6c59e0af6eef1f3f3d7ffb8058c8983976e4ce150566215770ff7c50",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/SKILL.md",
+      "bytes": 8357,
+      "sha256": "c16fed4153a9ec22b3de51a40bf1b3d756dde1835b32534291565259a413d4ad",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/techniques.md",
+      "bytes": 15823,
+      "sha256": "9852a58701c6d5456ec90048bb604274c5b6307016d00085c642352c0ff93ed3",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/catalog.md",
+      "bytes": 6679,
+      "sha256": "3914ec091c1f16bfee5c53d38ed6af1dfab74caedf561788dc39e67c6d7ca239",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-3d.md",
+      "bytes": 421,
+      "sha256": "e1c3888dd0a2d4b36d25200c1e5ef9038649ae63953865e4b2c4c40fb028d7dd",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-blur.md",
+      "bytes": 1787,
+      "sha256": "fd3eef889a517e1dd985ca816f36f1abfb43420a4b664d4fcc453554cdf561f9",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-cover.md",
+      "bytes": 1448,
+      "sha256": "ba4e5926791c9e6a0a069e20afc91324acb018903f43b4b3f2866d9654f5b7eb",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-destruction.md",
+      "bytes": 4484,
+      "sha256": "3f2fbbd561aacc8276f70cbee09ff420fc6e9c65b1e060c14e8399960d3bfbbc",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-dissolve.md",
+      "bytes": 2462,
+      "sha256": "47c11ca0a715675c2788aa4a162a652b5dc5f1773b058ea93e9907af56a4eb7c",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-distortion.md",
+      "bytes": 1803,
+      "sha256": "7140650692926959bd5459ca5c478a9b4f137cc76fb92b9138e3b0d353677c06",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-grid.md",
+      "bytes": 370,
+      "sha256": "c62b17058aa7ba42d34df29436b6b4233e47ff2b72f2c7ce0963c75bdec45144",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-light.md",
+      "bytes": 2376,
+      "sha256": "53f0422d3f6dd2584a30501f84e4f09c9b515f605d51ed264a2061567dda15db",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-mechanical.md",
+      "bytes": 1613,
+      "sha256": "4fed48fa659a4b215a996beeea619d244e6c893700178b1f969c17f2ee0a8612",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-other.md",
+      "bytes": 838,
+      "sha256": "2156e4fcc3b42cba9e0d9e268944269057fb48ff15fc1983e3ff9386fa2a8cf8",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-push.md",
+      "bytes": 1243,
+      "sha256": "d55f18fd88c71ca694a7709ac613967cf81ead4f325900be3b8ace1888818eff",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-radial.md",
+      "bytes": 1060,
+      "sha256": "5d8f20de439e3f2c8d45df11c8acbe31dc1b9342e2d54bbe66b451cf81ca0a1b",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/css-scale.md",
+      "bytes": 715,
+      "sha256": "3c0cb33d6c844a7265379225f3241d8964afcc908ee757a1ebfb1700a5320ea7",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/overview.md",
+      "bytes": 13857,
+      "sha256": "ec878d479d16addcd88c770b39fc88fa5219086478aee39e9f96a1096a58b084",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-animation/transitions/TRANSITION-REGISTRY.md",
+      "bytes": 8171,
+      "sha256": "250b59a56011c75c1eab69196c6f1ddf7ebb13fb4b0d89d765c016da35ff2a67",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/biennale-yellow/FRAME.md",
+      "bytes": 17789,
+      "sha256": "76d22cced9c152b0edb520543cf34c4ce772a312caa7211c40d4315b53c053cf",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/blockframe/FRAME.md",
+      "bytes": 16292,
+      "sha256": "ef8d9d47a209bed4ccc2d928c14a81cdaecb5129f5dc0cdc0dc40afc7ef92931",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/blue-professional/FRAME.md",
+      "bytes": 17202,
+      "sha256": "62e9a445885f6057084493de385a8ce20c3b4a299ae36a553ef54884f06bad68",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/bold-poster/FRAME.md",
+      "bytes": 15984,
+      "sha256": "af756ef993099f9ac78328f676eb79a6572ff0e9c2aacf12787471cd4525b171",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/broadside/FRAME.md",
+      "bytes": 16303,
+      "sha256": "3af0a1e5e61bece19841671672d7732082f03d5699b713475e90323a21dbcc89",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/capsule/FRAME.md",
+      "bytes": 17214,
+      "sha256": "f06dba67a3859f7c732b5177f7bcc58c94592caa5d6bbbcc6730a7876f5baa7a",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/cartesian/FRAME.md",
+      "bytes": 17294,
+      "sha256": "3dc6a31813a333b2a7a1509ddbd3b4dabbbd7e12e6479b6cff10d69c185fec95",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/cobalt-grid/FRAME.md",
+      "bytes": 17286,
+      "sha256": "62a6c9e6e5188cc29b9c0098e9bb8e72c23f152d9a99dd92c58139d26b69b19f",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/code-editorial/FRAME.md",
+      "bytes": 20600,
+      "sha256": "b1c123526634e31a3e36cff9856e3b4322f2f778d2c7f573aa35a9ee1e90deb7",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/coral/FRAME.md",
+      "bytes": 18950,
+      "sha256": "8530ecb36d1bb2d53392d88d972df35beeba19a5bcb3260fc9b18a58de7cdfe8",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/creative-mode/FRAME.md",
+      "bytes": 19605,
+      "sha256": "c1a1359502d9fc79ef267305291fe0f651219c72d88088cee32327dd933dead8",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/daisy-days/FRAME.md",
+      "bytes": 17445,
+      "sha256": "42d827dbd279990052e171d04380b5e6bbc111ae391dc283deb7a452e70b9b97",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/frame-presets/editorial-forest/FRAME.md",
+      "bytes": 17019,
+      "sha256": "ceeb2ab768367da1e1f3e1eca36ab9feeb3de3e4d15493319b0044c3d869329c",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/palettes/bold-energetic.md",
+      "bytes": 417,
+      "sha256": "17bc6b7889302151b4e5c84c0c6a33df676647078011d9decb2b68810e3baa7f",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/palettes/clean-corporate.md",
+      "bytes": 410,
+      "sha256": "d0c8c86838abb77985609629afe600d0ca365eccd835820f309959e8a85cba9d",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/palettes/dark-premium.md",
+      "bytes": 389,
+      "sha256": "abfecbf7e8dca3b674376590a0467aac3e13b2135022ae4ec519c4b27c2303b1",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/palettes/jewel-rich.md",
+      "bytes": 394,
+      "sha256": "17c8f7506469f66bca4e27ef78c19f0bcbf250f88fe840e3043816b7041c4fc5",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/palettes/monochrome.md",
+      "bytes": 454,
+      "sha256": "fe8586f6d70707098859063bdef34d68084f02cf7d5aaa436d4c9915a7ae3748",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/palettes/nature-earth.md",
+      "bytes": 399,
+      "sha256": "9710549b17487787fef3c7cb459cfd6e4ac28c1593bf471fcf55a3b4e546beed",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/palettes/neon-electric.md",
+      "bytes": 380,
+      "sha256": "35225bf8d2cd37223e88e0bc59b0a96bc8adeda7225389b3df97b675cfd33dfb",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/palettes/pastel-soft.md",
+      "bytes": 392,
+      "sha256": "ed4e25bb5f4953c002e55a53320249621437e03b5a11d43e3c1bd32c869b6d95",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/palettes/warm-editorial.md",
+      "bytes": 411,
+      "sha256": "c467ee3cc0bbf4b2bedccc8106e18293b8a06dbac8f092b10300492da0e0559a",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/audio-reactive.md",
+      "bytes": 3062,
+      "sha256": "ad93a0c588a702203a08ed909842570f010f041500aa33512d2b06f66d450c1c",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/beat-direction.md",
+      "bytes": 13640,
+      "sha256": "312560b513e689aeda44956c9a883cf465a982b8efce9730722bfb8d147f94f9",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/composition-patterns.md",
+      "bytes": 5685,
+      "sha256": "bb287bdaa4779698d8cb6541488335aacabef781ebca1fa661b3fd8f3462d034",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/data-in-motion.md",
+      "bytes": 1274,
+      "sha256": "6066c79717156c4a41ef86f28e07c6bd35f18d6830b12893c58523063c788d7d",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/design-adherence.md",
+      "bytes": 1423,
+      "sha256": "ff21deb80143c8e09092958a6f40bc712173a43d23c5ea88742566573a2a7241",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/design-picker.md",
+      "bytes": 12221,
+      "sha256": "3b37cd0e9366b8f9c30b5e31a909193b23b58ada7f73675eab0fe7d2a74bbdf8",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/design-spec.md",
+      "bytes": 10498,
+      "sha256": "a583fe293facc2e6d242fa69f64c8cdc110c5cfe25f8ddb2429bfb445fcf8ad5",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/house-style.md",
+      "bytes": 5025,
+      "sha256": "3adc51745bfce9719b63ba74251fcf9e5b9eed56b1e0d8c3928f47c3703eba92",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/motion-principles.md",
+      "bytes": 9335,
+      "sha256": "43cb4193d2716bffde5a44f3740021f0b2eede83fe5c75d30e3f5398e2bf6d2e",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/narration.md",
+      "bytes": 3482,
+      "sha256": "6002bb2a2270149a8955068d5952fc57cd22594649f576b3e8c38057846610b6",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/prompt-expansion.md",
+      "bytes": 5707,
+      "sha256": "3c428274da00f7809e93a2036454b2b9cba9a20b3ae3811d43f33a50501a36f6",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/story-spine.md",
+      "bytes": 4154,
+      "sha256": "6c390b68004ffaaf3368e22a0355d914302d31921436c9a8fe79f9e0e096b4ef",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/storyboard-recipe.md",
+      "bytes": 7455,
+      "sha256": "75ce8a42aaa087c1b18f932eb61f5baccb6a0eb8315c97afb6f8bea00f0b158b",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/typography.md",
+      "bytes": 14481,
+      "sha256": "2213319b8055285dbe5b6aeb923f27660355a04a1b27da1edda8fd0c91888ab2",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/video-composition.md",
+      "bytes": 4298,
+      "sha256": "037a966583e4b5fc4c3385ef6217560d36237ec638d2b68b5808950c873e424b",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/references/visual-styles.md",
+      "bytes": 11967,
+      "sha256": "c22d2c3f0732398ff52cbb469cf17567706b4d6555ad4149cae950a7cb3867c6",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-creative/SKILL.md",
+      "bytes": 6598,
+      "sha256": "3ea9a6108ad547ba52742520281ad61e15edd7b969f3829072e3eb70e1c06cec",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-keyframes/references/keyframe-patterns.md",
+      "bytes": 6692,
+      "sha256": "727cbc8db92968e9a8c9e77434e6aa45ad4e938df577c86ba75d118aa7e6e88d",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/hyperframes-keyframes/SKILL.md",
+      "bytes": 16145,
+      "sha256": "6356d2f77036c19e8773bf940dccb917d05f00c2dabda1cbf08894eecf54625a",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/LICENSE",
+      "bytes": 10763,
+      "sha256": "4259155fb06f127687ee7b0a8a3682d45132db0f2da26cbc0b7a2d1e796436b8",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "hyperframes/provenance.json",
+      "bytes": 47483,
+      "sha256": "bf723ab1b20ba68f3bf40d8956f5e625d08f18fb5000350c29e45834dac01ad6",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "JARVIS_ADAPTER.md",
+      "bytes": 4780,
+      "sha256": "55ebef0e53f765b875cdafd6e66df17ea6991982f8049469cfec6eb009a50da3",
+      "license": "MIT"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 1076,
+      "sha256": "92d538e0da9abeaafff8ecfc62e142f5053fa92b2c3ef29978742c325c554089",
+      "license": "MIT"
+    },
+    {
+      "path": "MUSIC_NOTICE.md",
+      "bytes": 1501,
+      "sha256": "0b04edd7c508145e78a29dee967a5b01b61df2612a488a306fe96c0a3a733dbc",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "path": "provenance.json",
+      "bytes": 446,
+      "sha256": "ac21758e465c3fbb0a5c3990b2efa6dfa9fa6fdcf54fcd7bef84c0b5704f15dc",
+      "license": "MIT"
+    },
+    {
+      "path": "references/audio.md",
+      "bytes": 18208,
+      "sha256": "8225dc498aeddd693c11542beb57986a783b4f13e02e5b6d253256f21c3a1f1f",
+      "license": "MIT"
+    },
+    {
+      "path": "references/step-1-inspect.md",
+      "bytes": 6049,
+      "sha256": "eb2ca315b727d8fa1e2dec12c58aa79e30888f98485217a588e84a7252e33e51",
+      "license": "MIT"
+    },
+    {
+      "path": "references/step-2-plan.md",
+      "bytes": 13151,
+      "sha256": "2caec3b2f21626174683804961dc7f2b1c4bf439827cca9b1423f7ebd805e7db",
+      "license": "MIT"
+    },
+    {
+      "path": "references/step-3-compose.md",
+      "bytes": 14780,
+      "sha256": "e61e338fe47f51569905b61512a5502b3029ad1ab33a34aa436d9e937f804156",
+      "license": "MIT"
+    },
+    {
+      "path": "references/step-4-deliver.md",
+      "bytes": 6228,
+      "sha256": "4413fbabb454e9404d5521ba3dc85f42424d3553f55b85a38d50cad151cfd9f8",
+      "license": "MIT"
+    },
+    {
+      "path": "references/tones.md",
+      "bytes": 6677,
+      "sha256": "e6ea8c6d3061a8734194cdad2c176b371f3ec41cb85c89306ac549baeebaa59e",
+      "license": "MIT"
+    },
+    {
+      "path": "SKILL.md",
+      "bytes": 8724,
+      "sha256": "d7689a329c52701d3f9d1639f83e4f16e98b3bc33b89955e0911951dd0de29ad",
+      "license": "MIT"
+    }
+  ]
+}

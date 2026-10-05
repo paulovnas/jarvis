@@ -19,7 +19,7 @@ export const BOOTSTRAP_STEPS: ReadonlyArray<{
   { id: "core", label: "Ferramentas do Core", weight: 27 },
   { id: "providers", label: "Provedores e limites", weight: 25 },
   { id: "skills", label: "Skills instaladas", weight: 23 },
-  { id: "workspace", label: "Workspaces e conversas", weight: 15 },
+  { id: "workspace", label: "Espaços e conversas", weight: 15 },
 ];
 
 export function initialBootstrapProgress(): BootstrapProgressState {

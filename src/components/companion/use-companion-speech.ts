@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { companionItemKey, type CompanionItem } from "@/core/companion";
+import { companionIsStageCompletion, companionItemKey, type CompanionItem } from "@/core/companion";
 import { useVoice } from "@/hooks/use-voice";
 import type { CompanionNotice } from "./use-companion-notices";
 
@@ -42,6 +42,7 @@ const phrases = {
 
 /** Fixed speech is feedback only: never invent a result, read logs or call an LLM. */
 function noticeKind(item: CompanionItem) {
+  if (companionIsStageCompletion(item)) return null;
   return item.status === "waiting" ? item.pendingQuestion ? "question" : "approval"
     : item.status === "completed" || item.status === "failed" ? item.status : null;
 }

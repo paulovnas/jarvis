@@ -4,10 +4,12 @@ import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AppUpdate } from "./AppUpdate";
+import { invoke } from "@tauri-apps/api/core";
 import { APP_VERSION, checkAppUpdate, displayVersion, getAppShutdownStatus, installAppUpdate, PROJECT_URL, type UpdateInfo, type UpdateProgress } from "@/core/app-update";
 
 vi.mock("@/core/app-update", async original => ({ ...await original<typeof import("@/core/app-update")>(), nativeUpdaterAvailable: () => true, checkAppUpdate: vi.fn(), getAppShutdownStatus: vi.fn(), installAppUpdate: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@tauri-apps/api/core", async original => ({ ...await original<typeof import("@tauri-apps/api/core")>(), invoke: vi.fn().mockResolvedValue(undefined) }));
 const update: UpdateInfo = { currentVersion: APP_VERSION, installable: true, available: { version: "0.8.0-beta.2", notes: "Melhorias no Jarvis.", publishedAt: null } };
 let aboutListener: EventCallback<unknown> | undefined;
 const stopListening = vi.fn();
@@ -22,7 +24,39 @@ beforeEach(() => {
     return stopListening;
   });
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.mocked(invoke).mockClear(); });
+
+it("opens About in its native window without adding a modal over the main chat", async () => {
+  vi.stubGlobal("__TAURI_INTERNALS__", {});
+  const user = userEvent.setup();
+  render(<AppUpdate />);
+  await user.click(screen.getByRole("button", { name: /Sobre o Jarvis/ }));
+  expect(invoke).toHaveBeenCalledWith("open_auxiliary_window", { kind: "about" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("shows standalone About content without redundant window chrome", () => {
+  render(<AppUpdate standalone />);
+  expect(screen.getByRole("region", { name: "Sobre o Jarvis" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Sobre o Jarvis" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Fechar Sobre o Jarvis" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+  expect(screen.getByText("Paulo Vitor Nascimento")).toBeVisible();
+  expect(screen.getByText("Ambiente de desenvolvimento com agentes de IA.")).toBeVisible();
+  expect(screen.getByText(displayVersion(APP_VERSION))).toBeVisible();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("keeps native About update details visible without adding an internal window title", async () => {
+  const user = userEvent.setup();
+  render(<AppUpdate standalone />);
+  await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));
+  expect(await screen.findByText("Melhorias no Jarvis.")).toBeVisible();
+  expect(screen.getByText("Uma nova versão está disponível para você.")).toBeVisible();
+  expect(screen.getByText(displayVersion(update.available!.version))).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Atualizar Jarvis" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Fechar Sobre o Jarvis" })).not.toBeInTheDocument();
+});
 
 it("oferece download manual para instalações sem atualização automática", async () => {
   vi.mocked(checkAppUpdate).mockResolvedValue({ ...update, installable: false });

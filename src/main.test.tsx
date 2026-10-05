@@ -6,6 +6,10 @@ vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: sta
 vi.mock("./core/webview-shortcuts", () => ({ installWebviewShortcutGuards: vi.fn() }));
 vi.mock("./App", () => ({ default: () => <main>Aplicativo principal</main> }));
 vi.mock("./components/companion/Companion", () => ({ Companion: () => <main>Assistente isolado</main> }));
+vi.mock("./components/windows/AuxiliaryWindow", () => ({
+  SettingsWindow: () => <main>Configurações isoladas</main>,
+  AboutWindow: () => <main>Sobre o Jarvis isolado</main>,
+}));
 vi.mock("react-dom/client", async original => {
   const actual = await original<typeof import("react-dom/client")>();
   return { ...actual, default: { ...actual, createRoot: (...args: Parameters<typeof actual.createRoot>) => {
@@ -41,6 +45,19 @@ describe("Desktop window entry", () => {
     await act(async () => { await import("./main"); });
     expect(await screen.findByText("Aplicativo principal")).toBeVisible();
     expect(screen.queryByText("Assistente isolado")).not.toBeInTheDocument();
+    expect(document.documentElement).not.toHaveAttribute("data-companion");
+  });
+  it.each([
+    { label: "settings", content: "Configurações isoladas", other: "Sobre o Jarvis isolado" },
+    { label: "about", content: "Sobre o Jarvis isolado", other: "Configurações isoladas" },
+  ])("mounts only the $label surface in its native window", async ({ label, content, other }) => {
+    state.label = label;
+    await act(async () => { await import("./main"); });
+    expect(await screen.findByText(content)).toBeVisible();
+    expect(screen.queryByText(other)).not.toBeInTheDocument();
+    expect(screen.queryByText("Aplicativo principal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Assistente isolado")).not.toBeInTheDocument();
+    expect(document.documentElement).toHaveClass("dark");
     expect(document.documentElement).not.toHaveAttribute("data-companion");
   });
 });

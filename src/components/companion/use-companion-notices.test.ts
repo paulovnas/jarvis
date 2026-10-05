@@ -66,6 +66,23 @@ describe("Jarvito speech queue", () => {
     expect(result.current.notice?.id).toBe("done/next-turn");
   });
 
+  it("waits for the whole request to finish instead of announcing completed workers", () => {
+    const { result } = renderHook(useCompanionNotices);
+    const root = item("running", "request");
+    const worker = { ...item("completed", "request"), agentId: "designer", attentionId: "designer/completed" };
+    act(() => result.current.sync([root, worker]));
+    expect(result.current.notice).toBeNull();
+    const question = { ...worker, status: "waiting" as const, attentionId: "designer/question" };
+    act(() => result.current.sync([root, question]));
+    expect(result.current.notice?.item.agentId).toBe("designer");
+    act(() => result.current.sync([root, worker]));
+    expect(result.current.notice).toBeNull();
+    const finished = { ...root, status: "completed" as const, attentionId: "request/completed" };
+    act(() => result.current.sync([finished, worker]));
+    expect(result.current.notice?.item.agentId).toBeNull();
+    expect(result.current.notice?.item.status).toBe("completed");
+  });
+
   it("recognizes a new question in the same conversation rather than treating it as a duplicate", () => {
     const { result } = renderHook(useCompanionNotices);
     const waiting = { ...item("waiting", "chat"), pendingQuestion: { turnId: "turn", toolId: "one", questions: [{ id: "scope", question: "Qual escopo?", options: [] }] } };

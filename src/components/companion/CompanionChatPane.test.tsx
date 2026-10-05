@@ -142,6 +142,23 @@ describe("Jarvito chat", () => {
     expect(call.mock.calls.some(([name]) => name === "send_companion_message" || name === "companion_open_conversation")).toBe(false);
   });
 
+  it.each(["conversation", "model"] as const)("closes the %s menu when hidden without losing the chat draft", async menu => {
+    const user = userEvent.setup();
+    const { rerender } = render(<CompanionChatPane active />);
+    await screen.findByText("Oi, eu sou o Jarvito.");
+    await user.type(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }), "Minha orientação");
+    await user.click(menu === "conversation"
+      ? screen.getByRole("combobox", { name: "Conversa do Jarvito" })
+      : screen.getByRole("button", { name: "Modelo do Jarvito" }));
+    const menuIsOpen = () => screen.queryByRole(menu === "conversation" ? "listbox" : "menu");
+    await waitFor(() => expect(menuIsOpen()).toBeInTheDocument());
+    rerender(<CompanionChatPane active={false} />);
+    await waitFor(() => expect(menuIsOpen()).not.toBeInTheDocument());
+    rerender(<CompanionChatPane active />);
+    expect(menuIsOpen()).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Mensagem para Jarvito" })).toHaveValue("Minha orientação");
+  });
+
   it("sends a message through the shared runtime, renders the reply and clears the accepted draft", async () => {
     const user = userEvent.setup(); render(<CompanionChatPane />);
     await screen.findByText("Oi, eu sou o Jarvito.");

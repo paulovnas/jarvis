@@ -1047,6 +1047,10 @@ fn direct_designer_has_questions_and_design_tools_but_no_delegation() {
         "design_brief",
         "design_search",
         "design_read",
+        "browser_snapshot",
+        "browser_screenshot",
+        "browser_navigate",
+        "project_knowledge",
         "process_check_port",
         "process_start",
         "terminal_list",
@@ -1065,6 +1069,18 @@ fn direct_designer_has_questions_and_design_tools_but_no_delegation() {
     assert!(tools
         .iter()
         .all(|tool| !tool["name"].as_str().unwrap().starts_with("beads_")));
+    let question = tools
+        .iter()
+        .find(|tool| tool["name"] == "ask_user")
+        .unwrap();
+    assert_eq!(
+        question["parameters"]["properties"]["requireExplicitAnswer"]["type"],
+        "boolean"
+    );
+    assert!(question["description"]
+        .as_str()
+        .unwrap()
+        .contains("optional improvements that expand the requested scope"));
     for role in [Role::Planner, Role::Builder, Role::Designer] {
         assert!(!Role::Designer.spawns(Flow::Designer, role));
     }
@@ -1089,6 +1105,15 @@ fn video_flow_has_native_commands_and_tasks_without_coordinated_agents() {
     direct.filter(&mut definitions);
     for name in [
         "ask_user",
+        "read",
+        "list",
+        "search",
+        "project_knowledge",
+        "browser_open",
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_screenshot",
         "write",
         "video_docs",
         "video_run",
@@ -1115,6 +1140,87 @@ fn video_flow_has_native_commands_and_tasks_without_coordinated_agents() {
     assert!(!Flow::Complete.roster().contains(&Role::Video));
     assert!(settings::validate(Flow::Video, &BTreeMap::new()).is_ok());
     assert!(Role::Video.contract().contains("video_docs"));
+}
+
+#[test]
+fn video_prompt_keeps_brag_opt_in_without_replacing_ordinary_video_direction() {
+    let instructions = Role::Video.contract();
+    for requirement in [
+        "enabled only when the user explicitly requests /brag",
+        "faça um brag",
+        "An ordinary request for a video, presentation or promotion does not enable Brag",
+        "video_docs(topic=\"brag\")",
+        "Always use the full managed Hyperframes workflow, regardless of the selected model",
+        "never switch to brag-slim",
+        "For an underspecified new video, including a bare \"faça um brag\"",
+        "Choose pacing from content and measured speech rather than a fixed scene count",
+    ] {
+        assert!(instructions.contains(requirement), "missing {requirement}");
+    }
+    assert_eq!(Flow::Video.root(), Role::Video);
+    assert!(Flow::Video.delegations().is_empty());
+}
+
+#[test]
+fn brag_prompt_preserves_explicit_choices_and_professional_native_production() {
+    let instructions = Role::Video.contract();
+    for requirement in [
+        "preserve explicit format, duration, language, title, tone and audio choices",
+        "Use 15–25 seconds only when duration is unspecified",
+        "polished, confident, professional product film",
+        "Humor, parody or satire requires an explicit user request",
+        "Narration is off by default for Brag",
+        "--voice or an explicit narration request enables it",
+        "native PT-BR video_audio",
+        "measured video_presentation timeline",
+        "Honor --no-music and --no-sfx",
+        "video_brag_assets(category=",
+        "video_brag_asset(asset=",
+        "without overwriting",
+        "Do not assume external assets, scripts or packages are installed",
+    ] {
+        assert!(instructions.contains(requirement), "missing {requirement}");
+    }
+}
+
+#[test]
+fn brag_prompt_uses_licensed_music_with_credits_and_native_wav_conversion() {
+    let instructions = Role::Video.contract();
+    for requirement in [
+        "\"casino\"|\"music\"",
+        "five bundled music tracks by Sascha Ende are verified CC BY 4.0",
+        "usable commercially with attribution",
+        "through video_brag_asset to a new .wav output for music.path",
+        "managed importer converts it to PCM WAV with FFmpeg",
+        "returned attribution, source URL and license link into share-copy.txt",
+        "disclose any trimming, mixing or format conversion",
+        "Reusing this licensed music requires no noncommercial confirmation",
+        "Generating new MusicGen audio still requires the explicit noncommercial consent",
+        "Preserve user-selected music or silence",
+    ] {
+        assert!(instructions.contains(requirement), "missing {requirement}");
+    }
+    assert!(!instructions.contains("Bundled music is unavailable"));
+}
+
+#[test]
+fn brag_prompt_requires_traceable_product_evidence_and_verified_deliverables() {
+    let instructions = Role::Video.contract();
+    for requirement in [
+        "real user journey from entry through its key action to the result",
+        "evidence ledger in brag-plan.md",
+        "source path or verified URL to the supported claim and scene ID",
+        "Distinguish implemented behavior from marketing copy or planned functionality",
+        "Never fabricate statistics, testimonials, UI states, successful interactions or screen recordings",
+        "faithful source-based reconstruction and disclose that limitation",
+        "composition-brief.md",
+        "presentation.json with stable scene IDs",
+        "Deliver share-copy.txt alongside the actual verified MP4",
+        "not an approval gate unless the user requests review",
+        "A composition, plan or passing check alone does not satisfy a request for a rendered video",
+    ] {
+        assert!(instructions.contains(requirement), "missing {requirement}");
+    }
 }
 
 #[test]

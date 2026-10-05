@@ -116,11 +116,11 @@ async function loadWorkspace(
   report(onProgress, "workspace", 0.18, "running", "Restaurando o último contexto");
   try {
     const library = readLibrarySnapshot(await readResource("get_library_snapshot"));
-    report(onProgress, "workspace", 1, "complete", "Workspaces e conversas prontos");
+    report(onProgress, "workspace", 1, "complete", "Espaços e conversas prontos");
     return library;
   } catch {
-    warnings.push("Não foi possível pré-carregar os workspaces.");
-    report(onProgress, "workspace", 1, "warning", "Workspaces serão carregados novamente");
+    warnings.push("Não foi possível pré-carregar os espaços.");
+    report(onProgress, "workspace", 1, "warning", "Espaços serão carregados novamente");
     return null;
   }
 }

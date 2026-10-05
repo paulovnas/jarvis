@@ -142,7 +142,7 @@ pub(super) async fn execute(
                 LibraryAction::AddProject { workspace_id, path } => {
                     validate_id(&workspace_id)?;
                     if workspace_id == library::companion::GLOBAL_WORKSPACE_ID {
-                        return Err(invalid("Escolha um workspace do usuário."));
+                        return Err(invalid("Escolha um espaço do usuário."));
                     }
                     let directory = library_directory(&path)?;
                     let state = state.clone();
@@ -182,7 +182,7 @@ pub(super) async fn execute(
                     product_project(&project_id)?;
                     validate_id(&workspace_id)?;
                     if workspace_id == library::companion::GLOBAL_WORKSPACE_ID {
-                        return Err(invalid("Escolha um workspace do usuário."));
+                        return Err(invalid("Escolha um espaço do usuário."));
                     }
                     library::workspaces::move_project_workspace(
                         app.clone(),

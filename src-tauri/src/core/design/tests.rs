@@ -148,6 +148,91 @@ fn searches_metadata_and_reads_unicode_in_bounded_pages_without_path_escape() {
         .execute("design_search", &json!({"query":"","offset":-1}))
         .is_err());
 }
+
+#[test]
+fn portuguese_intent_search_ranks_partial_matches_and_preserves_filters_and_pages() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths: Vec<_> = (0..14)
+        .map(|n| format!("design-templates/form-{n:02}/SKILL.md"))
+        .collect();
+    let extra: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            (
+                path.as_str(),
+                "---\nname: Form\ndescription: Accessible form controls and buttons\n---\n# Form",
+            )
+        })
+        .collect();
+    prepare_fixture(dir.path(), &extra).unwrap();
+    let pack = Pack::at(dir.path(), "1.2.3").unwrap();
+    let search = |query: &str, kind: &str, offset: usize| -> Value {
+        serde_json::from_str(
+            &pack
+                .execute(
+                    "design_search",
+                    &json!({"query":query,"kind":kind,"offset":offset}),
+                )
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    // No resource contains every original Portuguese word; task synonyms and
+    // ranked partial overlap still find all of the relevant form references.
+    let first = search(
+        "Quero melhorar acessibilidade dos formulários e botões",
+        "template",
+        0,
+    );
+    assert_eq!(first["total"], 14);
+    assert_eq!(first["resources"].as_array().unwrap().len(), 12);
+    assert_eq!(first["nextOffset"], 12);
+    let second = search("acessibilidade formularios botoes", "template", 12);
+    assert_eq!(second["total"], 14);
+    assert_eq!(second["resources"].as_array().unwrap().len(), 2);
+    assert!(second["nextOffset"].is_null());
+    assert_ne!(first["resources"][0]["id"], second["resources"][0]["id"]);
+    assert_eq!(search("formulários", "system", 0)["total"], 0);
+    assert_eq!(search("nadaequivalente", "all", 0)["total"], 0);
+    assert_eq!(search("", "template", 0)["total"], 15);
+    assert_eq!(
+        search("contraste de cores", "craft", 0)["resources"][0]["id"],
+        "craft/color.md"
+    );
+}
+
+#[test]
+fn named_resource_ranks_above_incidental_description_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    prepare_fixture(
+        dir.path(),
+        &[
+            (
+                "design-systems/stripe/manifest.json",
+                r#"{"name":"Stripe","description":"Payment surfaces"}"#,
+            ),
+            ("design-systems/stripe/DESIGN.md", "Stripe rules"),
+            (
+                "design-systems/incidental/manifest.json",
+                r#"{"name":"Incidental","description":"Examples related to Stripe"}"#,
+            ),
+            ("design-systems/incidental/DESIGN.md", "Other rules"),
+        ],
+    )
+    .unwrap();
+    let result: Value = serde_json::from_str(
+        &Pack::at(dir.path(), "1.2.3")
+            .unwrap()
+            .execute(
+                "design_search",
+                &json!({"query":"sistema Stripe contraste","kind":"system"}),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(result["total"], 2);
+    assert_eq!(result["resources"][0]["id"], "design-systems/stripe");
+}
 #[test]
 fn incomplete_or_duplicate_packages_never_validate() {
     let dir = tempfile::tempdir().unwrap();

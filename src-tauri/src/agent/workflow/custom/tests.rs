@@ -42,13 +42,14 @@ fn native_canvas_instructions_match_the_available_tools_and_routing() {
             assert!(exposed.contains(&available), "{role:?}: {available}");
             assert!(prompt.contains(available), "{role:?}: {available}");
         }
+        assert_eq!(exposed.contains(&"design_brief"), role == Role::Designer);
+        assert_eq!(prompt.contains("Use design_brief"), role == Role::Designer);
         for unavailable in [
             "hub_spawn",
             "hub_wait",
             "hub_retry",
             "hub_request_guidance",
             "hub_respond_guidance",
-            "design_brief",
             "validation_publish",
         ] {
             assert!(!exposed.contains(&unavailable), "{role:?}: {unavailable}");
@@ -458,7 +459,14 @@ fn native_designer_steps_execute_with_the_fixed_design_contract_and_mutation_too
     assert_eq!(job.role, Role::Designer);
     assert_eq!(job.options.mode, Mode::Build);
     assert!(job.writes());
-    for tool in ["write", "edit", "apply_patch", "bash", "workflow_check"] {
+    for tool in [
+        "write",
+        "edit",
+        "apply_patch",
+        "bash",
+        "workflow_check",
+        "design_brief",
+    ] {
         assert!(allowed(agent, tool), "missing {tool}");
     }
     assert!(!allowed(agent, "hub_spawn"));
@@ -467,6 +475,242 @@ fn native_designer_steps_execute_with_the_fixed_design_contract_and_mutation_too
     assert!(prompt.contains("embedded in a user-defined workflow"));
     assert!(prompt
         .contains("Deliver the requested frontend/design outcome within the authorized scope"));
+}
+
+fn designer_definition() -> RunDefinition {
+    let mut catalog = catalog::tests::example();
+    for step in &mut catalog.flows[0].steps {
+        step.agent_id = "builtin:designer".into();
+    }
+    catalog.resolve(&catalog.flows[0].id).unwrap()
+}
+
+fn brief_tool(args: Value) -> ToolCall {
+    ToolCall {
+        id: "brief".into(),
+        name: "design_brief".into(),
+        args,
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    }
+}
+
+#[test]
+fn designer_brief_permission_requires_the_exact_native_identity() {
+    let mut agent = designer_definition().agents[0].clone();
+    assert!(allowed(&agent, "design_brief"));
+    agent.id = "builtin:builder".into();
+    assert!(!allowed(&agent, "design_brief"));
+    agent.id = "builtin:designer".into();
+    agent.native_role = Some(Role::Builder);
+    assert!(!allowed(&agent, "design_brief"));
+    agent.native_role = None;
+    agent.name = "Designer".into();
+    for capability in [
+        Capability::ReadOnly,
+        Capability::WriteFiles,
+        Capability::Commands,
+    ] {
+        agent.capability = capability;
+        assert!(!allowed(&agent, "design_brief"));
+    }
+}
+
+#[tokio::test]
+async fn native_canvas_design_briefs_survive_compaction_restart_and_rework_per_node() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let definition = designer_definition();
+    hub.mutate(|state| {
+        state.flow = Flow::Custom;
+        state.options.workflow = Some(Flow::Custom);
+        state.custom_definition = Some(definition.clone());
+        state
+            .design_briefs
+            .insert("main".into(), "Previous direct direction".into());
+        Ok(())
+    })
+    .unwrap();
+    let first = prepare(&hub, &definition, &definition.flow.steps[0], &[], 0).unwrap();
+    let second = prepare(&hub, &definition, &definition.flow.steps[1], &[], 1).unwrap();
+    assert_ne!(first.id, second.id);
+    hub.mutate(|state| {
+        state.jobs.insert(first.id.clone(), first.clone());
+        state.jobs.insert(second.id.clone(), second.clone());
+        Ok(())
+    })
+    .unwrap();
+    let execution = |job: &Job| Execution {
+        hub: hub.clone(),
+        id: job.id.clone(),
+        role: Role::Designer,
+        flow: Flow::Custom,
+        scope: vec![".".into()],
+    };
+    let first_exec = execution(&first);
+    let second_exec = execution(&second);
+    assert!(first_exec.design_inputs().unwrap().1.is_empty());
+    for (exec, brief) in [
+        (
+            &first_exec,
+            "Accepted: graphite; system=agentic; mobile states required",
+        ),
+        (
+            &second_exec,
+            "Accepted: restrained motion; keyboard review required",
+        ),
+    ] {
+        exec.execute(&brief_tool(json!({"text":brief})), hub.root_signal.clone())
+            .await
+            .unwrap();
+        let result: Value = serde_json::from_str(
+            &exec
+                .execute(&brief_tool(json!({})), hub.root_signal.clone())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result["brief"], brief);
+        assert_eq!(exec.design_inputs().unwrap().1, brief);
+        assert!(exec.context().unwrap().contains(brief));
+        assert!(!exec.instructions().unwrap().contains(brief));
+    }
+    assert!(!first_exec
+        .context()
+        .unwrap()
+        .contains("Accepted: restrained motion"));
+    assert!(!second_exec
+        .context()
+        .unwrap()
+        .contains("Accepted: graphite"));
+    let (session, _) = storage::worker(&hub, &first, None).unwrap();
+    session.update(true, |data| {
+        data.turns.last_mut().unwrap().wire.extend([
+            json!({"type":"function_call","call_id":"reference","name":"design_read","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"reference","output":"Relevant component reference. ".repeat(1000)}),
+        ]);
+    }).unwrap();
+    assert!(crate::agent::compaction::ensure_with(
+        &session,
+        0,
+        true,
+        hub.root_signal.clone(),
+        |_| async { Ok("Continue the assigned canvas step from confirmed work.".into()) }
+    )
+    .await
+    .unwrap());
+    assert!(first_exec.context().unwrap().contains("Accepted: graphite"));
+    super::super::super::finish(&session, Ok(()));
+    drop(session);
+    let saved = storage::load(&hub.directory, &hub.root.id)
+        .unwrap()
+        .unwrap();
+    *hub.manifest.lock().unwrap() = saved;
+    assert!(first_exec.context().unwrap().contains("Accepted: graphite"));
+    assert!(!second_exec
+        .context()
+        .unwrap()
+        .contains("Accepted: graphite"));
+    hub.mutate(|state| {
+        let job = state.jobs.get_mut(&first.id).unwrap();
+        job.status = Status::Completed;
+        job.handoff = Some(handoff(Verdict::Completed));
+        Ok(())
+    })
+    .unwrap();
+    let reworked = prepare(&hub, &definition, &definition.flow.steps[0], &[], 2).unwrap();
+    assert_eq!(reworked.id, first.id);
+    assert_eq!(
+        execution(&reworked).design_inputs().unwrap().1,
+        first_exec.design_inputs().unwrap().1
+    );
+    hub.mutate(|state| {
+        state.run_id = "next-run".into();
+        Ok(())
+    })
+    .unwrap();
+    let next_run = prepare(&hub, &definition, &definition.flow.steps[0], &[], 0).unwrap();
+    assert_ne!(next_run.id, first.id);
+    hub.mutate(|state| {
+        state.jobs.insert(next_run.id.clone(), next_run.clone());
+        Ok(())
+    })
+    .unwrap();
+    let next_exec = execution(&next_run);
+    assert!(next_exec.design_inputs().unwrap().1.is_empty());
+    let result: Value = serde_json::from_str(
+        &next_exec
+            .execute(&brief_tool(json!({})), hub.root_signal.clone())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(result["brief"].is_null());
+    assert!(first_exec
+        .execute(
+            &brief_tool(json!({"text":"Stale overwrite"})),
+            hub.root_signal.clone()
+        )
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn canvas_design_brief_rejects_foreign_targets_invalid_identity_and_oversized_text() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let definition = designer_definition();
+    let job = prepare(&hub, &definition, &definition.flow.steps[0], &[], 0).unwrap();
+    hub.mutate(|state| {
+        state.flow = Flow::Custom;
+        state.jobs.insert(job.id.clone(), job.clone());
+        Ok(())
+    })
+    .unwrap();
+    let exec = Execution {
+        hub: hub.clone(),
+        id: job.id.clone(),
+        role: Role::Designer,
+        flow: Flow::Custom,
+        scope: vec![".".into()],
+    };
+    let accepted = "界".repeat(4000);
+    exec.execute(
+        &brief_tool(json!({"text":accepted})),
+        hub.root_signal.clone(),
+    )
+    .await
+    .unwrap();
+    for args in [
+        json!({"text":"界".repeat(4001)}),
+        json!({"text":"Overwrite", "id":"main"}),
+    ] {
+        assert!(exec
+            .execute(&brief_tool(args), hub.root_signal.clone())
+            .await
+            .is_err());
+        assert_eq!(exec.design_inputs().unwrap().1, accepted);
+    }
+    hub.mutate(|state| {
+        state
+            .jobs
+            .get_mut(&job.id)
+            .unwrap()
+            .custom_agent
+            .as_mut()
+            .unwrap()
+            .id = "builtin:builder".into();
+        Ok(())
+    })
+    .unwrap();
+    assert!(!exec.allowed("design_brief"));
+    assert!(exec
+        .execute(&brief_tool(json!({})), hub.root_signal.clone())
+        .await
+        .is_err());
+    assert_eq!(
+        hub.manifest.lock().unwrap().design_briefs[&job.id],
+        accepted
+    );
 }
 
 #[test]

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "version": "0.4.0",
+  "repository": "https://github.com/latent-spaces/brag",
+  "revision": "cb89b9f44309b0bf4e3cb89e685fadf80c7999ed",
+  "adapterVersion": "1.0.0",
+  "softwareLicense": "MIT",
+  "sfxLicense": "CC0-1.0",
+  "sfxCount": 260,
+  "musicCount": 5,
+  "musicLicense": "CC-BY-4.0",
+  "musicTerms": "https://ende.app/en/standard-license",
+  "omitted": [
+    "brag-slim",
+    "Python helpers and dependencies"
+  ]
+}

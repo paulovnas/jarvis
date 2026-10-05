@@ -77,12 +77,12 @@ export function ItemNameDialog({
           <DialogHeader>
             <DialogTitle>
               {isWorkspace
-                ? "Novo workspace"
+                ? "Novo espaço"
                 : "Editar conversa"}
             </DialogTitle>
             <DialogDescription>
               {isWorkspace
-                ? "Agrupe seus projetos. O workspace não possui pasta nem configurações próprias."
+                ? "Agrupe seus projetos. O espaço não possui pasta nem configurações próprias."
                 : "Escolha um título curto para identificar a conversa."}
             </DialogDescription>
           </DialogHeader>
@@ -90,7 +90,7 @@ export function ItemNameDialog({
             <Field data-invalid={!!message} data-disabled={pending}>
               <FieldLabel htmlFor={id}>
                 {isWorkspace
-                  ? "Nome do workspace"
+                  ? "Nome do espaço"
                   : "Título da conversa"}
               </FieldLabel>
               <Input
@@ -128,7 +128,7 @@ export function ItemNameDialog({
               disabled={pending || !value.trim()}
             >
               {pending && <Spinner />}
-              {isWorkspace ? "Criar workspace" : "Salvar"}
+              {isWorkspace ? "Criar espaço" : "Salvar"}
             </Button>
           </DialogFooter>
         </form>

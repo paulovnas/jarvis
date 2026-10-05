@@ -56,6 +56,10 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
           <p className={`micro-label mb-1 ${color}`}>{label}</p>
           <h3 className="text-sm font-medium">{item.name}</h3>
           <p className="mb-4 mt-2 text-xs leading-5 text-muted-foreground">{description}</p>
+          {item.id === "hyperframes" && <div aria-label="Brag incluído no HyperFrames" className="mb-4 rounded-md border border-onedark-purple/20 bg-onedark-purple/5 p-3">
+            <Badge variant="outline" className="border-onedark-purple/25 text-[10px] text-onedark-purple">Brag incluído</Badge>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">Peça “faça um brag” ao Gerador de Vídeos para criar uma apresentação curta do seu produto, com fontes reais, trilha e efeitos sonoros.</p>
+          </div>}
           <div className="mt-auto space-y-3 border-t border-border/70 pt-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               {usable && !item.error ? <Badge variant="outline" className="gap-1 border-onedark-green/25 bg-onedark-green/10 text-[9px] text-onedark-green"><Check className="size-2.5" />Pronto</Badge> : <Badge variant="outline" className="border-onedark-yellow/25 text-[9px] text-onedark-yellow">{item.error ? "Atenção" : item.healthError ? "Reparar" : optional ? "Opcional" : item.installed ? "Configurar chave" : item.installedVersion ? "Reparar" : "Pendente"}</Badge>}

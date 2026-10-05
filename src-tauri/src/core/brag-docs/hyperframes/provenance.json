@@ -1,0 +1,1023 @@
+{
+  "source": "https://github.com/heygen-com/hyperframes",
+  "revision": "bc57e282fdde4afdccec1d1a2bacd94a9c3c5383",
+  "license": "Apache-2.0",
+  "scope": "Unmodified Markdown for animation, creative and keyframes domains only. No helper scripts or external runtime libraries installed.",
+  "files": [
+    {
+      "path": "hyperframes-animation/adapters/animate-text.md",
+      "sourcePath": "skills/hyperframes-animation/adapters/animate-text.md",
+      "gitBlob": "d722d705c09ff53cb163a19164df0c0e44aacc37",
+      "sha256": "82f0e94d031480d186df792f0e2f8535276d805d699e5c84b9a7b736d107b10a",
+      "bytes": 4069
+    },
+    {
+      "path": "hyperframes-animation/adapters/animejs.md",
+      "sourcePath": "skills/hyperframes-animation/adapters/animejs.md",
+      "gitBlob": "1f1b8f979393bcbbd6f52b6a63d9c3993ab5d52a",
+      "sha256": "ade4ebfdfe4bab62ef98ec4ebc83b84f0792faad5993ff5d398d67d1a499de93",
+      "bytes": 6224
+    },
+    {
+      "path": "hyperframes-animation/adapters/css-animations.md",
+      "sourcePath": "skills/hyperframes-animation/adapters/css-animations.md",
+      "gitBlob": "61915aa7938798b86653abe35cd94a3fbe139df3",
+      "sha256": "52a1a7fd8702cf8721bbe63e324f0492f3966c5b092925f5135839132a999012",
+      "bytes": 5407
+    },
+    {
+      "path": "hyperframes-animation/adapters/gsap-easing-and-stagger.md",
+      "sourcePath": "skills/hyperframes-animation/adapters/gsap-easing-and-stagger.md",
+      "gitBlob": "8e03eafd531a93b837718f80042fb89711031fda",
+      "sha256": "825e8d2524ad166d8c29d59d72caa9e81c3a0368bcfbe059c86371a64d3494d0",
+      "bytes": 13270
+    },
+    {
+      "path": "hyperframes-animation/adapters/gsap-timeline-and-labels.md",
+      "sourcePath": "skills/hyperframes-animation/adapters/gsap-timeline-and-labels.md",
+      "gitBlob": "98256c8560cee648312985db689dc10b5c1f30e3",
+      "sha256": "96aaef95ff4e546dfff9d2090ca07d3d921d99b01348ef4adccae7686a515dca",
+      "bytes": 3734
+    },
+    {
+      "path": "hyperframes-animation/adapters/gsap-transforms-and-perf.md",
+      "sourcePath": "skills/hyperframes-animation/adapters/gsap-transforms-and-perf.md",
+      "gitBlob": "e84670dc2997b53c1d8855b8e96e3a925d1070b5",
+      "sha256": "a73c1ea0af7dd782936dd5726e0ea6c1cdc98126c89c6aec4370624f4622ee67",
+      "bytes": 8552
+    },
+    {
+      "path": "hyperframes-animation/adapters/gsap.md",
+      "sourcePath": "skills/hyperframes-animation/adapters/gsap.md",
+      "gitBlob": "53dddf92f06c5f58d0e59fda36b5879267719729",
+      "sha256": "1e4fd8f99fcefedc53352828f1370fd06065fe1abd4762016e5365a5da017341",
+      "bytes": 7504
+    },
+    {
+      "path": "hyperframes-animation/adapters/html-in-canvas-patterns.md",
+      "sourcePath": "skills/hyperframes-animation/adapters/html-in-canvas-patterns.md",
+      "gitBlob": "f826b1f9215cbab54669cd0711b3cfccd5c9a53f",
+      "sha256": "5e7c801c65d8f34f38c535bc9ed6808ebb6f475f166347bf71a453eb87614e9a",
+      "bytes": 17166
+    },
+    {
+      "path": "hyperframes-animation/adapters/lottie.md",
+      "sourcePath": "skills/hyperframes-animation/adapters/lottie.md",
+      "gitBlob": "ef7d6b9365907b0b4fa3ec8f55807486572856a8",
+      "sha256": "16da66c43a511b261f6a249c56c0c0bc3cdb76632e20952aa289e32803565d42",
+      "bytes": 6181
+    },
+    {
+      "path": "hyperframes-animation/adapters/three.md",
+      "sourcePath": "skills/hyperframes-animation/adapters/three.md",
+      "gitBlob": "4c532b46b53fec9ac42e202ebfeb16f0f26257b8",
+      "sha256": "cf0082681b4cba66116fe091493db3d85e24c8b82620e0c5b01c58729aa35562",
+      "bytes": 6473
+    },
+    {
+      "path": "hyperframes-animation/adapters/typegpu.md",
+      "sourcePath": "skills/hyperframes-animation/adapters/typegpu.md",
+      "gitBlob": "675d1bd753f6e1104d16cccec9e1386268bb6c50",
+      "sha256": "221d7aa6dc3007e0c9fc31f27e10aa979c0a25567d98540fc0d2e4e9a79bbd24",
+      "bytes": 8100
+    },
+    {
+      "path": "hyperframes-animation/adapters/waapi.md",
+      "sourcePath": "skills/hyperframes-animation/adapters/waapi.md",
+      "gitBlob": "fc87cdad98a192e692a2b4ee84a240852877a434",
+      "sha256": "3e173bc484cd7daef9022c2c80e8e2091ab73321def54c2a100ddf738ee8d1e0",
+      "bytes": 4248
+    },
+    {
+      "path": "hyperframes-animation/blueprints-index.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints-index.md",
+      "gitBlob": "864a68b7555998de0bbc5f47df8565d29701d1b7",
+      "sha256": "601228ddcfda89ed6add52bd08becf53296764e155126fb5e7100eb29caaa46e",
+      "bytes": 26512
+    },
+    {
+      "path": "hyperframes-animation/blueprints/agent-progress-theater.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/agent-progress-theater.md",
+      "gitBlob": "90501e4b6f15a1c46481c4836855287c4a843ecd",
+      "sha256": "1939690276ebf41123126e40915c283b69d3b2fd7d563f774c96e6ff6a076d4b",
+      "bytes": 16091
+    },
+    {
+      "path": "hyperframes-animation/blueprints/camera-journey.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/camera-journey.md",
+      "gitBlob": "e1e4e62d0c59c3f1f116235a575a9b0566c2ec51",
+      "sha256": "0508b034b4a1c30bf3cd37a25137987c435e7805f3d5a98f85921ce0e6f06d1e",
+      "bytes": 13648
+    },
+    {
+      "path": "hyperframes-animation/blueprints/comparison-split.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/comparison-split.md",
+      "gitBlob": "625cf89d2e640d535bb3ca127fdbe86869ebaf54",
+      "sha256": "af2af2ddf86aba21ed8b2016b7b1bd4b1ced52b4ac98f17eff487dca1097599a",
+      "bytes": 3316
+    },
+    {
+      "path": "hyperframes-animation/blueprints/constellation-hub.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/constellation-hub.md",
+      "gitBlob": "1234152fd2897bb3b624d34ce92cba278e7afc94",
+      "sha256": "729357480806d512217f46155d7810537f0ab6f7f46ba47b0905e4c3ea4d59c0",
+      "bytes": 7144
+    },
+    {
+      "path": "hyperframes-animation/blueprints/cta-morph-press.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/cta-morph-press.md",
+      "gitBlob": "cc791c9348677d8bff63e27f2d400767ef5395a0",
+      "sha256": "0f8ee56ff89af960cf2deb1da86994d5bb93186b85e71d601fb5c64b40deaaeb",
+      "bytes": 6407
+    },
+    {
+      "path": "hyperframes-animation/blueprints/cursor-ui-demo.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/cursor-ui-demo.md",
+      "gitBlob": "d47a66779c1acdc857992865c9551cb94505d9ac",
+      "sha256": "f4403a088e1358b59a21eabc4f5867f53b9179f5a4abf2f28e8e9982ef9fb479",
+      "bytes": 20276
+    },
+    {
+      "path": "hyperframes-animation/blueprints/dataviz-countup.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/dataviz-countup.md",
+      "gitBlob": "2cea2a1cd78020c92873fb300c5ea9f2a7d858e3",
+      "sha256": "9de0c34b44bcee7dda7371f8597df3421b4e6d46380237f76e815044f02e4a1f",
+      "bytes": 14611
+    },
+    {
+      "path": "hyperframes-animation/blueprints/device-surface-showcase.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/device-surface-showcase.md",
+      "gitBlob": "408ce700d62290a474180bb5022682c1e67afdea",
+      "sha256": "83d1c7b91b40ba24de324a14b50d023514c95b6b01a3c5bcf5c066a770e07fc8",
+      "bytes": 17151
+    },
+    {
+      "path": "hyperframes-animation/blueprints/fixed-anchor-cycle.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/fixed-anchor-cycle.md",
+      "gitBlob": "1752ee4540f2868595210a2ba29683c289584eee",
+      "sha256": "1a49afda275f54c0383e8569b405175f2a2424a74574d935d1fdf3858f50eb89",
+      "bytes": 9089
+    },
+    {
+      "path": "hyperframes-animation/blueprints/grid-card-assemble.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/grid-card-assemble.md",
+      "gitBlob": "e7588d447e58ee12076f1d768dc6eb05d6987151",
+      "sha256": "c35349ce839aec1e279ec66b297553c3a9dd1f30fdf64ce8b768c9fafdb4e662",
+      "bytes": 15594
+    },
+    {
+      "path": "hyperframes-animation/blueprints/kinetic-type-beats.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/kinetic-type-beats.md",
+      "gitBlob": "4d992335175fc688ae3de3f7efe5f7e1f3ed69f4",
+      "sha256": "4515b7aa6284898117e8970b76c04fd350ec61c664f5b241deb81c7fdd655d8c",
+      "bytes": 29151
+    },
+    {
+      "path": "hyperframes-animation/blueprints/logo-assemble-lockup.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/logo-assemble-lockup.md",
+      "gitBlob": "554e175ab5cae93607007b81aa443ea0d65e2481",
+      "sha256": "53bff65b0b4b14566bceb061c71a9a987003273aa1f7ef711dc20c30b812ec55",
+      "bytes": 26609
+    },
+    {
+      "path": "hyperframes-animation/blueprints/overwhelm-surround.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/overwhelm-surround.md",
+      "gitBlob": "751d143984013d5d50cdd2514eb6ea62b22374bd",
+      "sha256": "e35c5bff4db70574124db06122d79443cc0d3ab8238b52949548c4ba995c5b9e",
+      "bytes": 6140
+    },
+    {
+      "path": "hyperframes-animation/blueprints/panel-edit-live-sync.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/panel-edit-live-sync.md",
+      "gitBlob": "2eb2fd2f0e1a3c940b2fcb011c8a919931fcb6c1",
+      "sha256": "f864194c9a56ca7936df72b92b4806427437c1a09fab11cd27eb3d0499186644",
+      "bytes": 13394
+    },
+    {
+      "path": "hyperframes-animation/blueprints/prompt-type-submit-generate.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/prompt-type-submit-generate.md",
+      "gitBlob": "57fd27e8aadb9c5eaa4ffe7afeb9ecd3925e0380",
+      "sha256": "c94f17f6cccec12c7e8eac246d8b534e7cb4120a3f9b7c52dee049b9d228da1a",
+      "bytes": 18636
+    },
+    {
+      "path": "hyperframes-animation/blueprints/spatial-pan-stations.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/spatial-pan-stations.md",
+      "gitBlob": "d3f172e4bc11e466ddacd32109a01073f76a709b",
+      "sha256": "6c044d1fbdb057aae80d46efd1e5fa7222ad3e294a249566f36c82221ba02386",
+      "bytes": 4868
+    },
+    {
+      "path": "hyperframes-animation/blueprints/ticker-takeover.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/ticker-takeover.md",
+      "gitBlob": "f4e0984685f3f3a76017a9cafc08bea524796863",
+      "sha256": "58e7a19b1aca8f3a85affbc24005d1b26ffd9b953053166783afa428f524b5d8",
+      "bytes": 3052
+    },
+    {
+      "path": "hyperframes-animation/blueprints/titlecard-reveal.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/titlecard-reveal.md",
+      "gitBlob": "8fa752b44372bf73a0b0330227e4e2f27ea7f330",
+      "sha256": "39ebf47ec45da556a03d0521d028924c61a02e0c6d60cd194cc40a236af2f08e",
+      "bytes": 7441
+    },
+    {
+      "path": "hyperframes-animation/blueprints/transcript-scroll-artifact-reveal.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/transcript-scroll-artifact-reveal.md",
+      "gitBlob": "c7cc88d4b3190cad5138feabac13a51791add0fc",
+      "sha256": "bb76b82b375ad919412fd201186c82950f636753608efd810ac4f32c5655de4b",
+      "bytes": 11666
+    },
+    {
+      "path": "hyperframes-animation/blueprints/typewriter-reveal.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/typewriter-reveal.md",
+      "gitBlob": "23b1cbaf91d0914365f160323e869a997f3fd98c",
+      "sha256": "be324c142dc5bf89649df3c59aa8a7e218ca99d8afe1222f4028a314a237245c",
+      "bytes": 6276
+    },
+    {
+      "path": "hyperframes-animation/blueprints/video-text-pivot.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/video-text-pivot.md",
+      "gitBlob": "40f75fcb792a48938f2267761d0657b99b8fc25d",
+      "sha256": "6472224469cfb1801989510bec88a997819fa51cd4a5260bc23eee0fd7f086ed",
+      "bytes": 3281
+    },
+    {
+      "path": "hyperframes-animation/blueprints/zoom-out-workspace-reveal.md",
+      "sourcePath": "skills/hyperframes-animation/blueprints/zoom-out-workspace-reveal.md",
+      "gitBlob": "38467542024a00eaba44f1e3258dac37088aed5e",
+      "sha256": "30a6a396a72bcd37127100f6e4cb5f13f6ca1ea179df7001ce347a3b84c8b7ae",
+      "bytes": 14714
+    },
+    {
+      "path": "hyperframes-animation/references/motion-blur.md",
+      "sourcePath": "skills/hyperframes-animation/references/motion-blur.md",
+      "gitBlob": "483762c641fd550340470cc6256044350b2fc01f",
+      "sha256": "22d1b89734f0d91f2fdc071d509c23352ce8aca052229eb07d32db69efc8715a",
+      "bytes": 12792
+    },
+    {
+      "path": "hyperframes-animation/rules-index.md",
+      "sourcePath": "skills/hyperframes-animation/rules-index.md",
+      "gitBlob": "8568d22791ec1ef7690c175df6bf5cfeecf33559",
+      "sha256": "21eba5fd57769b7560b846a0a9aca8e8f6cacb3130d76e9cd090b564f9e46679",
+      "bytes": 21204
+    },
+    {
+      "path": "hyperframes-animation/rules/3d-camera-flight.md",
+      "sourcePath": "skills/hyperframes-animation/rules/3d-camera-flight.md",
+      "gitBlob": "08ac4895b81030042022f39273d3f3ad6ac85597",
+      "sha256": "f88aa996dfff909ba780e0ace41dd7fe3cb2b275b6d87694470f26e78fbb13c1",
+      "bytes": 18137
+    },
+    {
+      "path": "hyperframes-animation/rules/3d-page-scroll.md",
+      "sourcePath": "skills/hyperframes-animation/rules/3d-page-scroll.md",
+      "gitBlob": "e3a8f86350862068d719aed7312998e04e50ebe7",
+      "sha256": "4afe02d1205513afc9fe669c739e9734f23057b15b92bf62dff6004f00c1650c",
+      "bytes": 7406
+    },
+    {
+      "path": "hyperframes-animation/rules/3d-text-depth-layers.md",
+      "sourcePath": "skills/hyperframes-animation/rules/3d-text-depth-layers.md",
+      "gitBlob": "5ca2641b068a358188bb922a35ef32271067d67b",
+      "sha256": "e95234a6a42bdd25a555365d5978f7f3cf20305c5f1a3be46c39b9b5d34a49d9",
+      "bytes": 6708
+    },
+    {
+      "path": "hyperframes-animation/rules/ai-tracking-box.md",
+      "sourcePath": "skills/hyperframes-animation/rules/ai-tracking-box.md",
+      "gitBlob": "0ae63af7e598367da6737be778d0611af47b5913",
+      "sha256": "7e7b0433c58d95f468d65ae061beb3037f83442940aadfe89e32da8039ef5bfa",
+      "bytes": 6562
+    },
+    {
+      "path": "hyperframes-animation/rules/ambient-glow-bloom.md",
+      "sourcePath": "skills/hyperframes-animation/rules/ambient-glow-bloom.md",
+      "gitBlob": "e1807bdd92e1f0b4465a3f046f414c8feee3db36",
+      "sha256": "06cf000cd14dc72f92f4038114c21020ffc358efad921bcea05d85025d28a5e4",
+      "bytes": 9840
+    },
+    {
+      "path": "hyperframes-animation/rules/anchored-layout-expand.md",
+      "sourcePath": "skills/hyperframes-animation/rules/anchored-layout-expand.md",
+      "gitBlob": "040e9766d6bcad3b24e3929018014d31c63b2b9d",
+      "sha256": "11eae6a4c3ca7c31ae41c068c577a960c76fd9714bea12a2bc9ec608f8b098c3",
+      "bytes": 10313
+    },
+    {
+      "path": "hyperframes-animation/rules/asr-keyword-glow.md",
+      "sourcePath": "skills/hyperframes-animation/rules/asr-keyword-glow.md",
+      "gitBlob": "8a0eb9019f431da239941a52bfb63dfb1286d062",
+      "sha256": "30d60b09bfe977896b588f2ae53d2c02a6d45d65aeaa32e261c25cba0e26d4d8",
+      "bytes": 6762
+    },
+    {
+      "path": "hyperframes-animation/rules/avatar-cloud-network.md",
+      "sourcePath": "skills/hyperframes-animation/rules/avatar-cloud-network.md",
+      "gitBlob": "7d47ebc9dd91262b1d9505e2e3b15d1a49963921",
+      "sha256": "c29e0c58150e0056516c76c30932d93f9ac9a57bdb99ec6ff7327867d34a1a90",
+      "bytes": 6578
+    },
+    {
+      "path": "hyperframes-animation/rules/camera-cursor-tracking.md",
+      "sourcePath": "skills/hyperframes-animation/rules/camera-cursor-tracking.md",
+      "gitBlob": "b979bade937bcf312ce63950275848c094073a12",
+      "sha256": "60dc50359c1cf60b96cee782a2ce11ec33c5e653c5f330df6ee270b280693235",
+      "bytes": 7911
+    },
+    {
+      "path": "hyperframes-animation/rules/card-morph-anchor.md",
+      "sourcePath": "skills/hyperframes-animation/rules/card-morph-anchor.md",
+      "gitBlob": "3ae8ae1cb7501061e84a0daa110bddea8f3a98f4",
+      "sha256": "57ee55f0401026160808532dbfe4d060a412b1c2c603f8ce1f097913a556676b",
+      "bytes": 7411
+    },
+    {
+      "path": "hyperframes-animation/rules/center-outward-expansion.md",
+      "sourcePath": "skills/hyperframes-animation/rules/center-outward-expansion.md",
+      "gitBlob": "0b6c1063807493b65e6ac64ccc80dffb0769bdeb",
+      "sha256": "e8f95caa0060d015abce3c3dc422b9e05756bde5c2d5ce6a341360a14ec75217",
+      "bytes": 4263
+    },
+    {
+      "path": "hyperframes-animation/rules/chart-scrub-readout.md",
+      "sourcePath": "skills/hyperframes-animation/rules/chart-scrub-readout.md",
+      "gitBlob": "527878f1765ffbfa558f6644fc88e8255198a037",
+      "sha256": "e0a0fb62a9ce7ca4ef535ee50328078dc8bb7cf63f1f3a8ee68844b4a5294f61",
+      "bytes": 10348
+    },
+    {
+      "path": "hyperframes-animation/rules/chromatic-glitch.md",
+      "sourcePath": "skills/hyperframes-animation/rules/chromatic-glitch.md",
+      "gitBlob": "c35713a92b72f4147e0f9a4b73c3a4cdd6fa691b",
+      "sha256": "388eb6e8d7eb65c8ebca22c07538e7bd383184242a9dfcfe5561fad854551f28",
+      "bytes": 10339
+    },
+    {
+      "path": "hyperframes-animation/rules/context-sensitive-cursor.md",
+      "sourcePath": "skills/hyperframes-animation/rules/context-sensitive-cursor.md",
+      "gitBlob": "a75f6da5459d5a6c6840311b9f1e36b3415b2fce",
+      "sha256": "ba33d4d325d83e8e96905cfa24160f9d64a9ae36b831374f203436e790cd1951",
+      "bytes": 6938
+    },
+    {
+      "path": "hyperframes-animation/rules/control-target-sync.md",
+      "sourcePath": "skills/hyperframes-animation/rules/control-target-sync.md",
+      "gitBlob": "d521589c961e57ee825940f5a09b4ad442e175ab",
+      "sha256": "7f82b8a64cca6759580b9c7ab1dd4373a7c03a474bd8cfc927e18b587614dc47",
+      "bytes": 10276
+    },
+    {
+      "path": "hyperframes-animation/rules/coordinate-target-zoom.md",
+      "sourcePath": "skills/hyperframes-animation/rules/coordinate-target-zoom.md",
+      "gitBlob": "a28e80fa6fb9292acff3854d0274157c3ee907f3",
+      "sha256": "b716cdceace2e34518bf77dae1e0f04e2bad3c0d181b0e4919843ca8ed2c957c",
+      "bytes": 7607
+    },
+    {
+      "path": "hyperframes-animation/rules/counting-dynamic-scale.md",
+      "sourcePath": "skills/hyperframes-animation/rules/counting-dynamic-scale.md",
+      "gitBlob": "5d9da5f3072e4ee2990b44dde6c9c37a302429c0",
+      "sha256": "442d9f9a5cf8c10cc62fc5ece5732eca58f76aaa9724cebe92c1f91cc515fa62",
+      "bytes": 5977
+    },
+    {
+      "path": "hyperframes-animation/rules/css-marker-patterns.md",
+      "sourcePath": "skills/hyperframes-animation/rules/css-marker-patterns.md",
+      "gitBlob": "97ba6c4a039ec1adff8d47ad97d12316a68970b1",
+      "sha256": "8ac8dd360b4dc8d78d34c3846b834155ad2b482a2d1388cbbd2d3061c6e9d0c2",
+      "bytes": 5702
+    },
+    {
+      "path": "hyperframes-animation/rules/cursor-click-ripple.md",
+      "sourcePath": "skills/hyperframes-animation/rules/cursor-click-ripple.md",
+      "gitBlob": "727e1411eb88f2e4164274c0625a320bcdd09022",
+      "sha256": "f3cfefe1c4d2ef61388bafd3ffbf09debc4596a7abf46fef6b9fa70dd013b1c1",
+      "bytes": 6397
+    },
+    {
+      "path": "hyperframes-animation/rules/cursor-drag.md",
+      "sourcePath": "skills/hyperframes-animation/rules/cursor-drag.md",
+      "gitBlob": "e2495915994fae112de73037fd3d93ab450fdea9",
+      "sha256": "c7c88d33ab9f7f1c6f0a93d984d4acb1b95698a2bd7a99ef306065da727445be",
+      "bytes": 10215
+    },
+    {
+      "path": "hyperframes-animation/rules/depth-of-field-blur.md",
+      "sourcePath": "skills/hyperframes-animation/rules/depth-of-field-blur.md",
+      "gitBlob": "e1b974a8f2f4c9ac40c23f5fc65e86646f9f83f7",
+      "sha256": "d83b73641a8d5591ca1809bb0df21675537628e00ddb2a2d144fe562be1025df",
+      "bytes": 8876
+    },
+    {
+      "path": "hyperframes-animation/rules/depth-scatter-assemble.md",
+      "sourcePath": "skills/hyperframes-animation/rules/depth-scatter-assemble.md",
+      "gitBlob": "8d1968088a6f5a7567eafeec1790e01c88e4ee96",
+      "sha256": "63689fce3df29c4eca02f83cebf578f6026935bb04f3b57dbf465c63b4d8ba1e",
+      "bytes": 7054
+    },
+    {
+      "path": "hyperframes-animation/rules/discrete-text-sequence.md",
+      "sourcePath": "skills/hyperframes-animation/rules/discrete-text-sequence.md",
+      "gitBlob": "2d3ba111cb68e0da64aa9b0eb11615cfa5731d7d",
+      "sha256": "d3eb00b0942f98eb30908f1b90f44c0bf9a4da1c2eb0dc6899b14accb75802cf",
+      "bytes": 6454
+    },
+    {
+      "path": "hyperframes-animation/rules/dynamic-content-sequencing.md",
+      "sourcePath": "skills/hyperframes-animation/rules/dynamic-content-sequencing.md",
+      "gitBlob": "4f281af7cdc732196b2e9e4921b73f795541c80c",
+      "sha256": "7fd77bb18f989e31136338d383179beb2abe2da4b208a67ab7edb712607bc92d",
+      "bytes": 8558
+    },
+    {
+      "path": "hyperframes-animation/rules/gradient-text-sweep.md",
+      "sourcePath": "skills/hyperframes-animation/rules/gradient-text-sweep.md",
+      "gitBlob": "e633dad56b20dae13c220baca7d34626b17b09db",
+      "sha256": "ee17df8644eea65f2751c97604db1546c17260ab054483579e221eba6a5257a1",
+      "bytes": 8751
+    },
+    {
+      "path": "hyperframes-animation/rules/gsap-effects.md",
+      "sourcePath": "skills/hyperframes-animation/rules/gsap-effects.md",
+      "gitBlob": "0dcf6954f2523429f22cc05227baef32a74af6fe",
+      "sha256": "63ee2ee5d9dcef1ecbd88b69526e1621f0ff7ce682ec7f2dbe553b5647656bbd",
+      "bytes": 6912
+    },
+    {
+      "path": "hyperframes-animation/rules/hacker-flip-3d.md",
+      "sourcePath": "skills/hyperframes-animation/rules/hacker-flip-3d.md",
+      "gitBlob": "e6db1e4eb914d0d41dccb3985563f55b7dafe8b8",
+      "sha256": "67a79e585996b4a58dfb778283d9431ce02ae6bb0150a474d5adb1c4d23d6951",
+      "bytes": 5586
+    },
+    {
+      "path": "hyperframes-animation/rules/kinetic-beat-slam.md",
+      "sourcePath": "skills/hyperframes-animation/rules/kinetic-beat-slam.md",
+      "gitBlob": "ad6562c6925a6958b207165e4b085063dddddedf",
+      "sha256": "05ae130e17e6229bec8fb144bdf2ec43f8cd1105221af5246673d5d403f0451a",
+      "bytes": 6445
+    },
+    {
+      "path": "hyperframes-animation/rules/motion-blur-streak.md",
+      "sourcePath": "skills/hyperframes-animation/rules/motion-blur-streak.md",
+      "gitBlob": "a914ecab7de3baa436aaf3093698f5f274543a21",
+      "sha256": "a970baf9802c7239934a18696753d0c4ef6d70746889473c8b1316740d98a2d7",
+      "bytes": 10616
+    },
+    {
+      "path": "hyperframes-animation/rules/multi-cursor-choreography.md",
+      "sourcePath": "skills/hyperframes-animation/rules/multi-cursor-choreography.md",
+      "gitBlob": "bd5895557bd7512b640580394209764052a6607e",
+      "sha256": "6d4207d9a0dac8a9ec9d681a6bd30b5cb2707b76349c513f336701c8ea4b4c14",
+      "bytes": 10520
+    },
+    {
+      "path": "hyperframes-animation/rules/multi-phase-camera.md",
+      "sourcePath": "skills/hyperframes-animation/rules/multi-phase-camera.md",
+      "gitBlob": "9b03ce7cf24c13143ba3c57bb8c82e3b49ae7c2e",
+      "sha256": "ffdcd08f47ed49d52d31b27f11676435d45fb34581fabe1507bc59e79364e375",
+      "bytes": 7773
+    },
+    {
+      "path": "hyperframes-animation/rules/nudge-curve.md",
+      "sourcePath": "skills/hyperframes-animation/rules/nudge-curve.md",
+      "gitBlob": "25e552618d5ce65abf4dd7eef6590e3cc9e66aa6",
+      "sha256": "91084469a672c8c979e8f2e2f76f78526fdff8e1d647650a5f4a54e21df1b3ad",
+      "bytes": 2689
+    },
+    {
+      "path": "hyperframes-animation/rules/orbit-3d-entry.md",
+      "sourcePath": "skills/hyperframes-animation/rules/orbit-3d-entry.md",
+      "gitBlob": "ef46b771c38a2b30d038d3631a08a4b640c2c7e8",
+      "sha256": "2b24b8d92203e75faaef14c4bfdb216a70f700660056a6f77a9e5f035c5de94f",
+      "bytes": 6628
+    },
+    {
+      "path": "hyperframes-animation/rules/particle-burst.md",
+      "sourcePath": "skills/hyperframes-animation/rules/particle-burst.md",
+      "gitBlob": "01a96e4a8a040e23f4e577ecd893d6a27469d428",
+      "sha256": "b54113dc2d079ff49cd800b650e2c521cd4cf1af8aa125bfa2c9ff53fe5c88d1",
+      "bytes": 9956
+    },
+    {
+      "path": "hyperframes-animation/rules/physics-press-reaction.md",
+      "sourcePath": "skills/hyperframes-animation/rules/physics-press-reaction.md",
+      "gitBlob": "9fec017088384a1893e214f988a06227001e6559",
+      "sha256": "858ebad87af7bc4e7d7141f7aea19ad62d67a6af0bda6e01c9e3e8e841f38483",
+      "bytes": 6687
+    },
+    {
+      "path": "hyperframes-animation/rules/press-release-spring.md",
+      "sourcePath": "skills/hyperframes-animation/rules/press-release-spring.md",
+      "gitBlob": "3c6eac9671ce61e9307abf5bb068beea59f74e4a",
+      "sha256": "36947331983342c48470c6a685ce04175ada089b0370adbb62acc06dcc98f579",
+      "bytes": 7041
+    },
+    {
+      "path": "hyperframes-animation/rules/reactive-displacement.md",
+      "sourcePath": "skills/hyperframes-animation/rules/reactive-displacement.md",
+      "gitBlob": "ae4b84f9acabd6337faa7601ff793684ddda8996",
+      "sha256": "7913e02dd6a303017993315045e0c3cd30aa2df9f09093b697e0396ecb7cfe51",
+      "bytes": 6539
+    },
+    {
+      "path": "hyperframes-animation/rules/scale-swap-transition.md",
+      "sourcePath": "skills/hyperframes-animation/rules/scale-swap-transition.md",
+      "gitBlob": "cc350543577bd640f035cca1f7e27acdbc2bbb92",
+      "sha256": "e527ce5e2614f5ef8dc0a4da8b97d2a015a85866f1d52d22d22c8411efdaa854",
+      "bytes": 5517
+    },
+    {
+      "path": "hyperframes-animation/rules/sine-wave-loop.md",
+      "sourcePath": "skills/hyperframes-animation/rules/sine-wave-loop.md",
+      "gitBlob": "6619603b75febc427b49c0b21def8e9727bd461e",
+      "sha256": "54f283f4a8915de5c3f6d7c668b97f416efad3df6b5baf4941254cea8831944b",
+      "bytes": 6163
+    },
+    {
+      "path": "hyperframes-animation/rules/split-tilt-cards.md",
+      "sourcePath": "skills/hyperframes-animation/rules/split-tilt-cards.md",
+      "gitBlob": "def415a99b833199d84c4e93b562c3951dd7602c",
+      "sha256": "a50c135af38eb5a85f7f2f8753e5a8dcff3e6782392c2c6ee42bfafad9e41ab4",
+      "bytes": 5669
+    },
+    {
+      "path": "hyperframes-animation/rules/spring-pop-entrance.md",
+      "sourcePath": "skills/hyperframes-animation/rules/spring-pop-entrance.md",
+      "gitBlob": "2debc1eee003dd25f6c163f856aa8a0f7922466c",
+      "sha256": "f6cfb58b967769900edc0a4b9ed2685127167a8e4f74f7047df07d4ca4a10fbf",
+      "bytes": 6533
+    },
+    {
+      "path": "hyperframes-animation/rules/stat-bars-and-fills.md",
+      "sourcePath": "skills/hyperframes-animation/rules/stat-bars-and-fills.md",
+      "gitBlob": "58679e72cbe9c8f532317ce6804db086f8cfe192",
+      "sha256": "2da2a14d1d040e6c7c3634745eb047cd2805090ad374900d07ada50ecbcf650e",
+      "bytes": 5486
+    },
+    {
+      "path": "hyperframes-animation/rules/svg-icon-enrichment.md",
+      "sourcePath": "skills/hyperframes-animation/rules/svg-icon-enrichment.md",
+      "gitBlob": "073d0fd0bb81296548bf3e56b860630e41fa6c01",
+      "sha256": "f0209f4c4254281d1750bb5d4e963f5372361b1443ada43236a27a0e37bbb810",
+      "bytes": 7621
+    },
+    {
+      "path": "hyperframes-animation/rules/svg-path-draw.md",
+      "sourcePath": "skills/hyperframes-animation/rules/svg-path-draw.md",
+      "gitBlob": "6cf1199878846201788d159125c873669d5f835d",
+      "sha256": "38e304463abcde3ac88095d682f86a2ea30517d366683d09d6bccccc6752c304",
+      "bytes": 5646
+    },
+    {
+      "path": "hyperframes-animation/rules/theme-crossfade-morph.md",
+      "sourcePath": "skills/hyperframes-animation/rules/theme-crossfade-morph.md",
+      "gitBlob": "0621633e2bdf9e2d3c98c15764212852f720858e",
+      "sha256": "d1855ee32b2b2a45f9b5dffd3d1edf96dd08b199d6aa8c685e302878ba8f0fef",
+      "bytes": 9404
+    },
+    {
+      "path": "hyperframes-animation/rules/vertical-spring-ticker.md",
+      "sourcePath": "skills/hyperframes-animation/rules/vertical-spring-ticker.md",
+      "gitBlob": "9c2c8feb2dcd503b3f4a19fb0207d9396613ece3",
+      "sha256": "44ca684601429932cc9667ee56e44c8473e591de9b29c0eef808fabb432cda88",
+      "bytes": 5495
+    },
+    {
+      "path": "hyperframes-animation/rules/viewport-change.md",
+      "sourcePath": "skills/hyperframes-animation/rules/viewport-change.md",
+      "gitBlob": "fe6faac8f23ea9896eead3162deec3cc1ee0917b",
+      "sha256": "c1ac00dab35da2fe57fd11d460a96730c37f73d8b4d5e73a0ce85b18b9922a75",
+      "bytes": 8974
+    },
+    {
+      "path": "hyperframes-animation/rules/waterfall-entry.md",
+      "sourcePath": "skills/hyperframes-animation/rules/waterfall-entry.md",
+      "gitBlob": "e19322bf3b4bb067ffb713c0ff73ca87f0517605",
+      "sha256": "d9b8a3df6c59e0af6eef1f3f3d7ffb8058c8983976e4ce150566215770ff7c50",
+      "bytes": 4582
+    },
+    {
+      "path": "hyperframes-animation/SKILL.md",
+      "sourcePath": "skills/hyperframes-animation/SKILL.md",
+      "gitBlob": "23ae488791646965452d99457e3d3acdc76b1e1b",
+      "sha256": "c16fed4153a9ec22b3de51a40bf1b3d756dde1835b32534291565259a413d4ad",
+      "bytes": 8357
+    },
+    {
+      "path": "hyperframes-animation/techniques.md",
+      "sourcePath": "skills/hyperframes-animation/techniques.md",
+      "gitBlob": "afdb5965254f9366dea498e6720304206fab16d7",
+      "sha256": "9852a58701c6d5456ec90048bb604274c5b6307016d00085c642352c0ff93ed3",
+      "bytes": 15823
+    },
+    {
+      "path": "hyperframes-animation/transitions/catalog.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/catalog.md",
+      "gitBlob": "3d40b9db5c520fc642fafe5b0e2f351ce2e12e1e",
+      "sha256": "3914ec091c1f16bfee5c53d38ed6af1dfab74caedf561788dc39e67c6d7ca239",
+      "bytes": 6679
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-3d.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-3d.md",
+      "gitBlob": "b86b52012b41d8da60f9fb396da3a4dab8d7e985",
+      "sha256": "e1c3888dd0a2d4b36d25200c1e5ef9038649ae63953865e4b2c4c40fb028d7dd",
+      "bytes": 421
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-blur.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-blur.md",
+      "gitBlob": "2698ba90ece6a581d0482e89c244cf2cf0c5651e",
+      "sha256": "fd3eef889a517e1dd985ca816f36f1abfb43420a4b664d4fcc453554cdf561f9",
+      "bytes": 1787
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-cover.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-cover.md",
+      "gitBlob": "6ec60b80cec571776134265053b2ef1a322b4077",
+      "sha256": "ba4e5926791c9e6a0a069e20afc91324acb018903f43b4b3f2866d9654f5b7eb",
+      "bytes": 1448
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-destruction.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-destruction.md",
+      "gitBlob": "5db9b97385d7ff1650cadcb427b29d3031a50326",
+      "sha256": "3f2fbbd561aacc8276f70cbee09ff420fc6e9c65b1e060c14e8399960d3bfbbc",
+      "bytes": 4484
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-dissolve.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-dissolve.md",
+      "gitBlob": "3966fa9aa5b6dcb36f5215c5c2cba53cb177736e",
+      "sha256": "47c11ca0a715675c2788aa4a162a652b5dc5f1773b058ea93e9907af56a4eb7c",
+      "bytes": 2462
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-distortion.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-distortion.md",
+      "gitBlob": "44627f7c276a2dac3cec216b5aabd2fffaec1a79",
+      "sha256": "7140650692926959bd5459ca5c478a9b4f137cc76fb92b9138e3b0d353677c06",
+      "bytes": 1803
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-grid.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-grid.md",
+      "gitBlob": "ee16700684216e80e81d60d8c28a1079173e6f44",
+      "sha256": "c62b17058aa7ba42d34df29436b6b4233e47ff2b72f2c7ce0963c75bdec45144",
+      "bytes": 370
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-light.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-light.md",
+      "gitBlob": "08d4d5293eff3412695e0df81bf140f687bd5671",
+      "sha256": "53f0422d3f6dd2584a30501f84e4f09c9b515f605d51ed264a2061567dda15db",
+      "bytes": 2376
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-mechanical.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-mechanical.md",
+      "gitBlob": "fa119e7de2a02db264c43fe2e65eb68d1de85884",
+      "sha256": "4fed48fa659a4b215a996beeea619d244e6c893700178b1f969c17f2ee0a8612",
+      "bytes": 1613
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-other.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-other.md",
+      "gitBlob": "698368a3879d0e28a4b9b83e1e49c25e60e47dc4",
+      "sha256": "2156e4fcc3b42cba9e0d9e268944269057fb48ff15fc1983e3ff9386fa2a8cf8",
+      "bytes": 838
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-push.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-push.md",
+      "gitBlob": "be258f7b1e8acc7f4ca73587fb3bdb6ffaf99ee7",
+      "sha256": "d55f18fd88c71ca694a7709ac613967cf81ead4f325900be3b8ace1888818eff",
+      "bytes": 1243
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-radial.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-radial.md",
+      "gitBlob": "040dad2f130fbe74b508255b81e6a0d812b8861e",
+      "sha256": "5d8f20de439e3f2c8d45df11c8acbe31dc1b9342e2d54bbe66b451cf81ca0a1b",
+      "bytes": 1060
+    },
+    {
+      "path": "hyperframes-animation/transitions/css-scale.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/css-scale.md",
+      "gitBlob": "b16e26469d6b813c730567fa931adb753b42797f",
+      "sha256": "3c0cb33d6c844a7265379225f3241d8964afcc908ee757a1ebfb1700a5320ea7",
+      "bytes": 715
+    },
+    {
+      "path": "hyperframes-animation/transitions/overview.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/overview.md",
+      "gitBlob": "425a13e256e9322759f02e9261be282123b028f8",
+      "sha256": "ec878d479d16addcd88c770b39fc88fa5219086478aee39e9f96a1096a58b084",
+      "bytes": 13857
+    },
+    {
+      "path": "hyperframes-animation/transitions/TRANSITION-REGISTRY.md",
+      "sourcePath": "skills/hyperframes-animation/transitions/TRANSITION-REGISTRY.md",
+      "gitBlob": "68fafca86c06c9d8f999d48e1b5d70e921606863",
+      "sha256": "250b59a56011c75c1eab69196c6f1ddf7ebb13fb4b0d89d765c016da35ff2a67",
+      "bytes": 8171
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/biennale-yellow/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/biennale-yellow/FRAME.md",
+      "gitBlob": "c082ea2fefdd47bd2679d72d6a50a3a41aa99eaf",
+      "sha256": "76d22cced9c152b0edb520543cf34c4ce772a312caa7211c40d4315b53c053cf",
+      "bytes": 17789
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/blockframe/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/blockframe/FRAME.md",
+      "gitBlob": "00e4d88318288c8c138716d266b13dcb31350d57",
+      "sha256": "ef8d9d47a209bed4ccc2d928c14a81cdaecb5129f5dc0cdc0dc40afc7ef92931",
+      "bytes": 16292
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/blue-professional/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/blue-professional/FRAME.md",
+      "gitBlob": "e821dee2dccc8e424ac160ca6714d561027cce46",
+      "sha256": "62e9a445885f6057084493de385a8ce20c3b4a299ae36a553ef54884f06bad68",
+      "bytes": 17202
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/bold-poster/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/bold-poster/FRAME.md",
+      "gitBlob": "c9f31256cd127913c3ff2457811f8467639da539",
+      "sha256": "af756ef993099f9ac78328f676eb79a6572ff0e9c2aacf12787471cd4525b171",
+      "bytes": 15984
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/broadside/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/broadside/FRAME.md",
+      "gitBlob": "4dff52def23bb5492844cbbc25a25c19909c6fc4",
+      "sha256": "3af0a1e5e61bece19841671672d7732082f03d5699b713475e90323a21dbcc89",
+      "bytes": 16303
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/capsule/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/capsule/FRAME.md",
+      "gitBlob": "a37f828c847c031f1603406ce1440a8fc2b4f803",
+      "sha256": "f06dba67a3859f7c732b5177f7bcc58c94592caa5d6bbbcc6730a7876f5baa7a",
+      "bytes": 17214
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/cartesian/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/cartesian/FRAME.md",
+      "gitBlob": "a00c21d9250ace9886fc835834993b9d63f64b3f",
+      "sha256": "3dc6a31813a333b2a7a1509ddbd3b4dabbbd7e12e6479b6cff10d69c185fec95",
+      "bytes": 17294
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/cobalt-grid/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/cobalt-grid/FRAME.md",
+      "gitBlob": "af52eec8f3cd86880530f4c0169c9cf422e31e4e",
+      "sha256": "62a6c9e6e5188cc29b9c0098e9bb8e72c23f152d9a99dd92c58139d26b69b19f",
+      "bytes": 17286
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/code-editorial/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/code-editorial/FRAME.md",
+      "gitBlob": "aa15b65eab5c50e8b4c861b525f7365f9f6c925f",
+      "sha256": "b1c123526634e31a3e36cff9856e3b4322f2f778d2c7f573aa35a9ee1e90deb7",
+      "bytes": 20600
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/coral/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/coral/FRAME.md",
+      "gitBlob": "0c73b04acba1d4b86e5285daa90273b5e346a3c9",
+      "sha256": "8530ecb36d1bb2d53392d88d972df35beeba19a5bcb3260fc9b18a58de7cdfe8",
+      "bytes": 18950
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/creative-mode/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/creative-mode/FRAME.md",
+      "gitBlob": "e00e6fed67b6a1a1f366119714d548238427d752",
+      "sha256": "c1a1359502d9fc79ef267305291fe0f651219c72d88088cee32327dd933dead8",
+      "bytes": 19605
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/daisy-days/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/daisy-days/FRAME.md",
+      "gitBlob": "ed3ebf49e0a0f78cb5ac543e5c175d8da4c07541",
+      "sha256": "42d827dbd279990052e171d04380b5e6bbc111ae391dc283deb7a452e70b9b97",
+      "bytes": 17445
+    },
+    {
+      "path": "hyperframes-creative/frame-presets/editorial-forest/FRAME.md",
+      "sourcePath": "skills/hyperframes-creative/frame-presets/editorial-forest/FRAME.md",
+      "gitBlob": "83e2594f6301b54d98569ad478417d6fbb0d95ed",
+      "sha256": "ceeb2ab768367da1e1f3e1eca36ab9feeb3de3e4d15493319b0044c3d869329c",
+      "bytes": 17019
+    },
+    {
+      "path": "hyperframes-creative/palettes/bold-energetic.md",
+      "sourcePath": "skills/hyperframes-creative/palettes/bold-energetic.md",
+      "gitBlob": "e60e2d76a481c0f1f3853374532411426b261f9e",
+      "sha256": "17bc6b7889302151b4e5c84c0c6a33df676647078011d9decb2b68810e3baa7f",
+      "bytes": 417
+    },
+    {
+      "path": "hyperframes-creative/palettes/clean-corporate.md",
+      "sourcePath": "skills/hyperframes-creative/palettes/clean-corporate.md",
+      "gitBlob": "a4b79c939d0517c3235cccf9dadc4cc59ef5b8c8",
+      "sha256": "d0c8c86838abb77985609629afe600d0ca365eccd835820f309959e8a85cba9d",
+      "bytes": 410
+    },
+    {
+      "path": "hyperframes-creative/palettes/dark-premium.md",
+      "sourcePath": "skills/hyperframes-creative/palettes/dark-premium.md",
+      "gitBlob": "84f81d5622d8f3fd18b97e072a45e171356008ae",
+      "sha256": "abfecbf7e8dca3b674376590a0467aac3e13b2135022ae4ec519c4b27c2303b1",
+      "bytes": 389
+    },
+    {
+      "path": "hyperframes-creative/palettes/jewel-rich.md",
+      "sourcePath": "skills/hyperframes-creative/palettes/jewel-rich.md",
+      "gitBlob": "fbd5542b2a01ba16e5601d20d4115bc91d146201",
+      "sha256": "17c8f7506469f66bca4e27ef78c19f0bcbf250f88fe840e3043816b7041c4fc5",
+      "bytes": 394
+    },
+    {
+      "path": "hyperframes-creative/palettes/monochrome.md",
+      "sourcePath": "skills/hyperframes-creative/palettes/monochrome.md",
+      "gitBlob": "e26d247379de3a2133af87294f5e3d7304a86c1e",
+      "sha256": "fe8586f6d70707098859063bdef34d68084f02cf7d5aaa436d4c9915a7ae3748",
+      "bytes": 454
+    },
+    {
+      "path": "hyperframes-creative/palettes/nature-earth.md",
+      "sourcePath": "skills/hyperframes-creative/palettes/nature-earth.md",
+      "gitBlob": "cc3cb9d63b0320310852659b99d38de62e811288",
+      "sha256": "9710549b17487787fef3c7cb459cfd6e4ac28c1593bf471fcf55a3b4e546beed",
+      "bytes": 399
+    },
+    {
+      "path": "hyperframes-creative/palettes/neon-electric.md",
+      "sourcePath": "skills/hyperframes-creative/palettes/neon-electric.md",
+      "gitBlob": "94c3e86e8de695ad49c1108c96ea3113095de368",
+      "sha256": "35225bf8d2cd37223e88e0bc59b0a96bc8adeda7225389b3df97b675cfd33dfb",
+      "bytes": 380
+    },
+    {
+      "path": "hyperframes-creative/palettes/pastel-soft.md",
+      "sourcePath": "skills/hyperframes-creative/palettes/pastel-soft.md",
+      "gitBlob": "f4e99c5383955b41932e776152f38be5179ce27b",
+      "sha256": "ed4e25bb5f4953c002e55a53320249621437e03b5a11d43e3c1bd32c869b6d95",
+      "bytes": 392
+    },
+    {
+      "path": "hyperframes-creative/palettes/warm-editorial.md",
+      "sourcePath": "skills/hyperframes-creative/palettes/warm-editorial.md",
+      "gitBlob": "2b1907aac544928b0fd82d82a2bdd21960be6830",
+      "sha256": "c467ee3cc0bbf4b2bedccc8106e18293b8a06dbac8f092b10300492da0e0559a",
+      "bytes": 411
+    },
+    {
+      "path": "hyperframes-creative/references/audio-reactive.md",
+      "sourcePath": "skills/hyperframes-creative/references/audio-reactive.md",
+      "gitBlob": "69549bbebac1a16b5696c58e8b715949e7e675d1",
+      "sha256": "ad93a0c588a702203a08ed909842570f010f041500aa33512d2b06f66d450c1c",
+      "bytes": 3062
+    },
+    {
+      "path": "hyperframes-creative/references/beat-direction.md",
+      "sourcePath": "skills/hyperframes-creative/references/beat-direction.md",
+      "gitBlob": "b1d436a5b9b371452e2186c9489cf1c7ee78616c",
+      "sha256": "312560b513e689aeda44956c9a883cf465a982b8efce9730722bfb8d147f94f9",
+      "bytes": 13640
+    },
+    {
+      "path": "hyperframes-creative/references/composition-patterns.md",
+      "sourcePath": "skills/hyperframes-creative/references/composition-patterns.md",
+      "gitBlob": "e2ddb391c06f492897dc49e8762f7235b9634418",
+      "sha256": "bb287bdaa4779698d8cb6541488335aacabef781ebca1fa661b3fd8f3462d034",
+      "bytes": 5685
+    },
+    {
+      "path": "hyperframes-creative/references/data-in-motion.md",
+      "sourcePath": "skills/hyperframes-creative/references/data-in-motion.md",
+      "gitBlob": "0578cd155a7bbc1c3af7e31d1a6ce7f6416e86f3",
+      "sha256": "6066c79717156c4a41ef86f28e07c6bd35f18d6830b12893c58523063c788d7d",
+      "bytes": 1274
+    },
+    {
+      "path": "hyperframes-creative/references/design-adherence.md",
+      "sourcePath": "skills/hyperframes-creative/references/design-adherence.md",
+      "gitBlob": "130d469df25aed5f057c81e507b22226417da43b",
+      "sha256": "ff21deb80143c8e09092958a6f40bc712173a43d23c5ea88742566573a2a7241",
+      "bytes": 1423
+    },
+    {
+      "path": "hyperframes-creative/references/design-picker.md",
+      "sourcePath": "skills/hyperframes-creative/references/design-picker.md",
+      "gitBlob": "b0a9019226c9885fb6a385a93c94f51bbcd6b9c8",
+      "sha256": "3b37cd0e9366b8f9c30b5e31a909193b23b58ada7f73675eab0fe7d2a74bbdf8",
+      "bytes": 12221
+    },
+    {
+      "path": "hyperframes-creative/references/design-spec.md",
+      "sourcePath": "skills/hyperframes-creative/references/design-spec.md",
+      "gitBlob": "696f91d95fac415a6afdc1fd7a5e8df5cd21fe8b",
+      "sha256": "a583fe293facc2e6d242fa69f64c8cdc110c5cfe25f8ddb2429bfb445fcf8ad5",
+      "bytes": 10498
+    },
+    {
+      "path": "hyperframes-creative/references/house-style.md",
+      "sourcePath": "skills/hyperframes-creative/references/house-style.md",
+      "gitBlob": "2455737525af4413e1c0855c6041107746b57cc6",
+      "sha256": "3adc51745bfce9719b63ba74251fcf9e5b9eed56b1e0d8c3928f47c3703eba92",
+      "bytes": 5025
+    },
+    {
+      "path": "hyperframes-creative/references/motion-principles.md",
+      "sourcePath": "skills/hyperframes-creative/references/motion-principles.md",
+      "gitBlob": "44a4604a6ed49a6fb3d9ab883d8a48a056676093",
+      "sha256": "43cb4193d2716bffde5a44f3740021f0b2eede83fe5c75d30e3f5398e2bf6d2e",
+      "bytes": 9335
+    },
+    {
+      "path": "hyperframes-creative/references/narration.md",
+      "sourcePath": "skills/hyperframes-creative/references/narration.md",
+      "gitBlob": "c28fff2ee65ec0620db9033a62834c6aa580384e",
+      "sha256": "6002bb2a2270149a8955068d5952fc57cd22594649f576b3e8c38057846610b6",
+      "bytes": 3482
+    },
+    {
+      "path": "hyperframes-creative/references/prompt-expansion.md",
+      "sourcePath": "skills/hyperframes-creative/references/prompt-expansion.md",
+      "gitBlob": "ef6450d46c289e1027250a87e857835f9b68c75f",
+      "sha256": "3c428274da00f7809e93a2036454b2b9cba9a20b3ae3811d43f33a50501a36f6",
+      "bytes": 5707
+    },
+    {
+      "path": "hyperframes-creative/references/story-spine.md",
+      "sourcePath": "skills/hyperframes-creative/references/story-spine.md",
+      "gitBlob": "f87cd872a8a8c60846e0259c6dc2d90a45f120ad",
+      "sha256": "6c390b68004ffaaf3368e22a0355d914302d31921436c9a8fe79f9e0e096b4ef",
+      "bytes": 4154
+    },
+    {
+      "path": "hyperframes-creative/references/storyboard-recipe.md",
+      "sourcePath": "skills/hyperframes-creative/references/storyboard-recipe.md",
+      "gitBlob": "23d0eb795ae03d313446f8c2c177626d66bc2601",
+      "sha256": "75ce8a42aaa087c1b18f932eb61f5baccb6a0eb8315c97afb6f8bea00f0b158b",
+      "bytes": 7455
+    },
+    {
+      "path": "hyperframes-creative/references/typography.md",
+      "sourcePath": "skills/hyperframes-creative/references/typography.md",
+      "gitBlob": "ccd2a6388cba0885ce29e81acd3b2748671319ce",
+      "sha256": "2213319b8055285dbe5b6aeb923f27660355a04a1b27da1edda8fd0c91888ab2",
+      "bytes": 14481
+    },
+    {
+      "path": "hyperframes-creative/references/video-composition.md",
+      "sourcePath": "skills/hyperframes-creative/references/video-composition.md",
+      "gitBlob": "fb2a19320a30e10a9801b93e2053f30dde737aa6",
+      "sha256": "037a966583e4b5fc4c3385ef6217560d36237ec638d2b68b5808950c873e424b",
+      "bytes": 4298
+    },
+    {
+      "path": "hyperframes-creative/references/visual-styles.md",
+      "sourcePath": "skills/hyperframes-creative/references/visual-styles.md",
+      "gitBlob": "621ff9e6bfd4f0fd4b2e8c0e2a121939082bf3ea",
+      "sha256": "c22d2c3f0732398ff52cbb469cf17567706b4d6555ad4149cae950a7cb3867c6",
+      "bytes": 11967
+    },
+    {
+      "path": "hyperframes-creative/SKILL.md",
+      "sourcePath": "skills/hyperframes-creative/SKILL.md",
+      "gitBlob": "abd8ef5705321c868e48f5d0a3f9cebdfd771d43",
+      "sha256": "3ea9a6108ad547ba52742520281ad61e15edd7b969f3829072e3eb70e1c06cec",
+      "bytes": 6598
+    },
+    {
+      "path": "hyperframes-keyframes/references/keyframe-patterns.md",
+      "sourcePath": "skills/hyperframes-keyframes/references/keyframe-patterns.md",
+      "gitBlob": "5770721d018d7106376766d43614d318f9c7f191",
+      "sha256": "727cbc8db92968e9a8c9e77434e6aa45ad4e938df577c86ba75d118aa7e6e88d",
+      "bytes": 6692
+    },
+    {
+      "path": "hyperframes-keyframes/SKILL.md",
+      "sourcePath": "skills/hyperframes-keyframes/SKILL.md",
+      "gitBlob": "1e8912e3b96b8cf1d784bba0c6f2c134e45b6017",
+      "sha256": "6356d2f77036c19e8773bf940dccb917d05f00c2dabda1cbf08894eecf54625a",
+      "bytes": 16145
+    },
+    {
+      "path": "LICENSE",
+      "sourcePath": "LICENSE",
+      "gitBlob": "ae06b37e1c5116ccfaa615ac25ec1aabf5658d8c",
+      "sha256": "4259155fb06f127687ee7b0a8a3682d45132db0f2da26cbc0b7a2d1e796436b8",
+      "bytes": 10763
+    }
+  ]
+}

@@ -96,7 +96,7 @@ describe("App bootstrap and onboarding", () => {
     });
     const user = userEvent.setup();
     const { unmount } = render(<App />);
-    const sidebar = await screen.findByRole("complementary", { name: "Workspace" });
+    const sidebar = await screen.findByRole("complementary", { name: "Espaço" });
     const project = await within(sidebar).findByRole("button", {
       name: "Jarvis",
     });
@@ -110,7 +110,7 @@ describe("App bootstrap and onboarding", () => {
     fireEvent.contextMenu(project);
     const projectMenu = await screen.findByRole("menu");
     expect(within(projectMenu).queryByRole("menuitem", { name: "Editar" })).not.toBeInTheDocument();
-    expect(within(projectMenu).getByRole("menuitem", { name: "Mover para outro workspace" })).toBeVisible();
+    expect(within(projectMenu).getByRole("menuitem", { name: "Mover para outro espaço" })).toBeVisible();
     await user.keyboard("{Escape}");
     fireEvent.contextMenu(within(sidebar).getByRole("button", { name: "Primeira conversa" }));
     await user.click(await screen.findByRole("menuitem", { name: "Editar" }));

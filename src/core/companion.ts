@@ -60,6 +60,8 @@ export type CompanionGeometry = z.infer<typeof companionGeometrySchema>;
 export type CompanionChat = z.infer<typeof companionChatSchema>;
 export type CompanionConversation = z.infer<typeof companionConversationsSchema>[number];
 export const companionItemKey = (item: CompanionItem) => `${item.conversationId}/${item.agentId ?? "root"}`;
+/** A worker's handoff is progress within the request, rather than its final outcome. */
+export const companionIsStageCompletion = (item: CompanionItem) => item.agentId !== null && item.status === "completed";
 export const companionStatusLabels: Record<CompanionStatus, string> = {
   running: "Trabalhando", waiting: "Precisa de você", reconnecting: "Reconectando", completed: "Concluído", failed: "Falhou", idle: "Em repouso",
 };

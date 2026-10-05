@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { companionItemKey, type CompanionItem } from "@/core/companion";
+import { companionIsStageCompletion, companionItemKey, type CompanionItem } from "@/core/companion";
 
 export interface CompanionNotice { id: string; item: CompanionItem }
 
@@ -12,7 +12,7 @@ export function useCompanionNotices() {
   const [queue, setQueue] = useState<CompanionNotice[]>([]);
   const seen = useRef(new Set<string>());
   const sync = useCallback((items: CompanionItem[]) => {
-    const eligible = items.filter(item => item.status === "waiting" || (!item.acknowledged && (item.status === "completed" || item.status === "failed")));
+    const eligible = items.filter(item => item.status === "waiting" || (!item.acknowledged && !companionIsStageCompletion(item) && (item.status === "completed" || item.status === "failed")));
     const fresh = eligible.filter(item => !seen.current.has(noticeId(item))).sort((a, b) => a.updatedAt - b.updatedAt);
     for (const item of fresh) seen.current.add(noticeId(item));
     while (seen.current.size > 128) { const oldest = seen.current.values().next().value; if (oldest) seen.current.delete(oldest); }

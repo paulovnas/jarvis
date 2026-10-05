@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { companionItemKey, type CompanionItem } from "@/core/companion";
+import { companionIsStageCompletion, companionItemKey, type CompanionItem } from "@/core/companion";
 
 export type CompanionSound = "open" | "close" | "hover" | "send" | "approve" | "question" | "work" | "finish" | "error" | "rate" | "think" | "search" | "poke" | "dizzy";
 type Note = readonly [frequency: number, offset: number, duration: number, target?: number];
@@ -20,7 +20,7 @@ const eventId = (item: CompanionItem) => item.status === "waiting"
   : `${companionItemKey(item)}/${item.status}/${item.attentionId}`;
 const cue = (item: CompanionItem): CompanionSound | null => {
   if (item.status === "waiting") return "question";
-  if (item.acknowledged) return null;
+  if (item.acknowledged || companionIsStageCompletion(item)) return null;
   if (item.status === "failed") return "error";
   if (item.status === "completed") return "finish";
   if (item.status === "reconnecting") return "rate";

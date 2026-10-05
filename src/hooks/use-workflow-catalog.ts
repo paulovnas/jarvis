@@ -17,7 +17,7 @@ export function useWorkflowCatalog() {
     try {
       const value = workflowCatalogSchema.parse(await invoke("get_workflow_catalog"));
       if (mounted.current && request === version.current) { setData(current => current && current.revision > value.revision ? current : value); setError(null); }
-    } catch (cause) { if (mounted.current && request === version.current) setError(libraryError(cause, "Não foi possível carregar o Workflow.")); }
+    } catch (cause) { if (mounted.current && request === version.current) setError(libraryError(cause, "Não foi possível carregar os fluxos.")); }
   }, []);
   useEffect(() => {
     mounted.current = true;

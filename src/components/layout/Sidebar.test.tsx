@@ -30,7 +30,7 @@ describe("Persistent sidebar", () => {
     call.mockImplementation(async command => command === "get_desktop_layout" ? { ...DEFAULT_DESKTOP_LAYOUT, itemOrder: { "projects:w1": ["p3", "p1"], "chats:p1": ["c1", "c3"] } } : stored);
     render(<DesktopLayoutProvider><Harness /></DesktopLayoutProvider>);
     await screen.findByRole("button", { name: "Primeira conversa" });
-    const projects = screen.getByRole("list", { name: "Projetos do workspace" });
+    const projects = screen.getByRole("list", { name: "Projetos do espaço" });
     expect(within(projects).getAllByRole("group").map(group => group.getAttribute("aria-label"))).toEqual(["Projeto Website", "Projeto Jarvis"]);
     const chats = screen.getByRole("list", { name: "Conversas do projeto" });
     expect(within(chats).getAllByRole("button", { name: /^(Primeira|Terceira)/ }).map(button => button.textContent)).toEqual(["Primeira conversa", "Terceira conversa"]);
@@ -80,10 +80,10 @@ describe("Persistent sidebar", () => {
     expect(screen.getByRole("alertdialog")).toHaveTextContent("Primeira conversa");
     await user.click(screen.getByRole("button", { name: "Cancelar" }));
     fireEvent.contextMenu(screen.getByRole("button", { name: "Jarvis" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Mover para outro workspace" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Mover para outro espaço" }));
     const target = stored.workspaces.find(item => item.id !== "w1")!;
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByRole("combobox", { name: "Workspace de destino" })).toHaveTextContent(target.name);
+    expect(within(dialog).getByRole("combobox", { name: "Espaço de destino" })).toHaveTextContent(target.name);
     await user.click(within(dialog).getByRole("button", { name: "Mover projeto" }));
     await waitFor(() => expect(call).toHaveBeenCalledWith("move_project_workspace", { id: "p1", workspaceId: target.id }));
   });
@@ -196,7 +196,7 @@ describe("Persistent sidebar", () => {
     call.mockResolvedValueOnce(initial);
     render(<Harness />);
     await screen.findByText("Primeira conversa");
-    const panel = screen.getByRole("complementary", { name: "Workspace" });
+    const panel = screen.getByRole("complementary", { name: "Espaço" });
     fireEvent.contextMenu(within(panel).getByRole("button", { name: "Primeira conversa" }));
     await user.click(await screen.findByRole("menuitem", { name: "Excluir" }));
     let dialog = screen.getByRole("alertdialog", { name: "Excluir conversa?" });
@@ -271,13 +271,13 @@ describe("Persistent sidebar", () => {
       await screen.findByText("Organize seus projetos"),
     ).toBeInTheDocument();
     expect(screen.queryByText("Jarvis")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Adicionar projeto ou workspace" }));
+    await user.click(screen.getByRole("button", { name: "Adicionar projeto ou espaço" }));
     expect(await screen.findByRole("menuitem", { name: "Adicionar projeto" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.queryByRole("menuitem", { name: "Nova conversa" })).not.toBeInTheDocument();
-    await user.click(await screen.findByRole("menuitem", { name: "Novo workspace" }));
-    const dialog = screen.getByRole("dialog", { name: "Novo workspace" });
+    await user.click(await screen.findByRole("menuitem", { name: "Novo espaço" }));
+    const dialog = screen.getByRole("dialog", { name: "Novo espaço" });
     await user.type(
-      within(dialog).getByLabelText("Nome do workspace"),
+      within(dialog).getByLabelText("Nome do espaço"),
       "  Pessoal  ",
     );
     const created = emptyLibrary();
@@ -285,7 +285,7 @@ describe("Persistent sidebar", () => {
     created.selection.workspaceId = "w1";
     call.mockResolvedValueOnce(created);
     await user.click(
-      within(dialog).getByRole("button", { name: "Criar workspace" }),
+      within(dialog).getByRole("button", { name: "Criar espaço" }),
     );
     expect(call).toHaveBeenCalledWith("create_workspace", { name: "Pessoal" });
     expect(await screen.findByText("Nenhum projeto")).toBeInTheDocument();
@@ -293,7 +293,7 @@ describe("Persistent sidebar", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
     expect(
-      screen.getByRole("combobox", { name: "Selecionar workspace" }),
+      screen.getByRole("combobox", { name: "Selecionar espaço" }),
     ).toHaveTextContent("Pessoal");
   });
 
@@ -305,7 +305,7 @@ describe("Persistent sidebar", () => {
     call.mockResolvedValueOnce(initial);
     render(<Harness />);
     await screen.findByText("Nenhum projeto");
-    await user.click(screen.getByRole("button", { name: "Adicionar projeto ou workspace" }));
+    await user.click(screen.getByRole("button", { name: "Adicionar projeto ou espaço" }));
     const add = await screen.findByRole("menuitem", { name: "Adicionar projeto" });
     call.mockResolvedValueOnce(null);
     await user.click(add);
@@ -316,7 +316,7 @@ describe("Persistent sidebar", () => {
       conversations: [],
       selection: { workspaceId: "w1", projectId: "p1", conversationId: null },
     });
-    await user.click(screen.getByRole("button", { name: "Adicionar projeto ou workspace" }));
+    await user.click(screen.getByRole("button", { name: "Adicionar projeto ou espaço" }));
     await user.click(await screen.findByRole("menuitem", { name: "Adicionar projeto" }));
     const projectButton = await screen.findByRole("button", { name: "Jarvis" });
     expect(projectButton).not.toHaveAttribute("title");
@@ -345,7 +345,7 @@ describe("Persistent sidebar", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(create).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Adicionar projeto ou workspace" }),
+      screen.getByRole("button", { name: "Adicionar projeto ou espaço" }),
     ).toBeDisabled();
     await act(async () => finish({ bad: "payload" }));
     expect(screen.getByRole("alert")).toHaveTextContent("dados recebidos");
@@ -417,7 +417,7 @@ describe("Persistent sidebar", () => {
     fireEvent.contextMenu(target);
     const menu = await screen.findByRole("menu");
     expect(within(menu).queryByRole("menuitem", { name: "Editar" })).not.toBeInTheDocument();
-    expect(within(menu).getByRole("menuitem", { name: "Mover para outro workspace" })).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: "Mover para outro espaço" })).toBeVisible();
     expect(within(menu).getByRole("menuitem", { name: "Excluir" })).toBeVisible();
   });
 
@@ -442,7 +442,7 @@ describe("Persistent sidebar", () => {
       call.mockResolvedValueOnce(populatedLibrary());
       render(<Harness />);
       await screen.findByText("Primeira conversa");
-      const panel = screen.getByRole("complementary", { name: "Workspace" });
+      const panel = screen.getByRole("complementary", { name: "Espaço" });
       fireEvent.contextMenu(
         within(panel).getByRole("button", { name: "Primeira conversa" }),
       );
@@ -480,7 +480,7 @@ describe("Persistent sidebar", () => {
     expect(await screen.findByText("Primeira conversa")).toBeInTheDocument();
     expect(screen.queryByText("Outro projeto")).not.toBeInTheDocument();
     await user.click(
-      screen.getByRole("combobox", { name: "Selecionar workspace" }),
+      screen.getByRole("combobox", { name: "Selecionar espaço" }),
     );
     const next = populatedLibrary();
     next.selection = {
@@ -522,7 +522,7 @@ describe("Persistent sidebar", () => {
     render(<Harness />);
     await screen.findByText("Primeira conversa");
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Adicionar projeto ou workspace" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Adicionar projeto ou espaço" })).toHaveLength(1);
     const project = screen.getByRole("button", { name: "Jarvis" });
     expect(project).toHaveTextContent(/^Jarvis$/);
     await user.click(project);
@@ -530,8 +530,8 @@ describe("Persistent sidebar", () => {
     expect(call).not.toHaveBeenCalledWith("select_library_item", expect.anything());
     await user.click(project);
     expect(await screen.findByRole("button", { name: "Primeira conversa" })).toHaveAttribute("aria-current", "page");
-    await user.click(screen.getByRole("button", { name: "Adicionar projeto ou workspace" }));
-    expect((await screen.findAllByRole("menuitem")).map(item => item.textContent)).toEqual(["Adicionar projeto", "Novo workspace"]);
+    await user.click(screen.getByRole("button", { name: "Adicionar projeto ou espaço" }));
+    expect((await screen.findAllByRole("menuitem")).map(item => item.textContent)).toEqual(["Adicionar projeto", "Novo espaço"]);
   });
 
   it("offers retry after loading fails and keeps Settings available", async () => {

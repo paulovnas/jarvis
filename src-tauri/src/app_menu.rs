@@ -1,7 +1,6 @@
-use tauri::{
-    menu::{Menu, MenuItem, MenuItemKind},
-    Emitter, Manager,
-};
+use tauri::menu::{Menu, MenuItem, MenuItemKind};
+
+use crate::auxiliary_windows::{open_from_menu, AuxiliaryWindowKind};
 
 const ABOUT_ID: &str = "jarvis.about";
 const SETTINGS_ID: &str = "jarvis.settings";
@@ -33,17 +32,12 @@ pub(crate) fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
     app.set_menu(menu)?;
     app.on_menu_event(|app, event| {
         let target = match event.id().as_ref() {
-            ABOUT_ID => Some("app:about"),
-            SETTINGS_ID => Some("app:settings"),
+            ABOUT_ID => Some(AuxiliaryWindowKind::About),
+            SETTINGS_ID => Some(AuxiliaryWindowKind::Settings),
             _ => None,
         };
         if let Some(target) = target {
-            if let Some(window) = app.get_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-                let _ = window.emit(target, ());
-            }
+            open_from_menu(app, target);
         }
     });
     Ok(())

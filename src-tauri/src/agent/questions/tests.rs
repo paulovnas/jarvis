@@ -21,6 +21,12 @@ fn response() -> Response {
     .unwrap()
 }
 fn prepare(fixture: &Fixture) -> (Arc<Session>, ToolCall, watch::Receiver<bool>) {
+    prepare_request(fixture, request())
+}
+fn prepare_request(
+    fixture: &Fixture,
+    args: Value,
+) -> (Arc<Session>, ToolCall, watch::Receiver<bool>) {
     let session = session(fixture);
     let signal = session
         .reserve(
@@ -44,7 +50,7 @@ fn prepare(fixture: &Fixture) -> (Arc<Session>, ToolCall, watch::Receiver<bool>)
     let tool = ToolCall {
         id: "ask-1".into(),
         name: "ask_user".into(),
-        args: request(),
+        args,
         status: "running".into(),
         output: String::new(),
         duration_ms: 0,
@@ -61,8 +67,16 @@ async fn start(
     tool: ToolCall,
     signal: watch::Receiver<bool>,
 ) -> tokio::task::JoinHandle<Result<String, AgentError>> {
+    start_with_timeout(session, tool, signal, 30).await
+}
+async fn start_with_timeout(
+    session: &Arc<Session>,
+    tool: ToolCall,
+    signal: watch::Receiver<bool>,
+    timeout_seconds: u16,
+) -> tokio::task::JoinHandle<Result<String, AgentError>> {
     let running = session.clone();
-    let task = tokio::spawn(async move { execute(&running, &tool, signal, 30).await });
+    let task = tokio::spawn(async move { execute(&running, &tool, signal, timeout_seconds).await });
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         while session.snapshot().unwrap().pending_question.is_none() {
             tokio::task::yield_now().await;
@@ -75,20 +89,104 @@ async fn start(
 
 #[tokio::test]
 async fn timeout_answers_with_recommendations_even_when_the_question_ui_is_not_open() {
+    for explicit in [None, Some(false)] {
+        let fixture = Fixture::new();
+        let mut args = request();
+        if let Some(explicit) = explicit {
+            args["requireExplicitAnswer"] = json!(explicit);
+        }
+        let (session, tool, signal) = prepare_request(&fixture, args);
+        let running = session.clone();
+        let task = tokio::spawn(async move { execute(&running, &tool, signal, 0).await });
+        let output = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let response: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(response["cancelled"], false);
+        assert_eq!(response["answers"][0]["selectedLabel"], "Praia");
+        assert_eq!(response["answers"][1]["value"], "Ficar em casa e jogar");
+        assert!(session.snapshot().unwrap().pending_question.is_none());
+    }
+}
+
+#[tokio::test]
+async fn explicit_questions_preserve_recommendations_and_wait_for_a_submitted_answer() {
     let fixture = Fixture::new();
-    let (session, tool, signal) = prepare(&fixture);
-    let running = session.clone();
-    let task = tokio::spawn(async move { execute(&running, &tool, signal, 1).await });
-    let output = tokio::time::timeout(std::time::Duration::from_secs(2), task)
-        .await
+    let mut args = request();
+    args["requireExplicitAnswer"] = json!(true);
+    assert!(recommended_response(&parse_request(&args).unwrap()).is_none());
+    let (session, tool, signal) = prepare_request(&fixture, args);
+    let task = start_with_timeout(&session, tool, signal, 0).await;
+    let pending = session.snapshot().unwrap().pending_question.unwrap();
+    assert!(pending.deadline_at.is_none());
+    assert!(pending.questions[0].options[0].recommended);
+    assert!(pending.questions[1].options[0].recommended);
+    assert!(serde_json::to_value(&pending)
         .unwrap()
-        .unwrap()
-        .unwrap();
-    let response: Value = serde_json::from_str(&output).unwrap();
-    assert_eq!(response["cancelled"], false);
-    assert_eq!(response["answers"][0]["selectedLabel"], "Praia");
-    assert_eq!(response["answers"][1]["value"], "Ficar em casa e jogar");
+        .get("deadlineAt")
+        .is_none());
+    // Even an already-scheduled automatic answer cannot claim an explicit request.
+    assert!(answer_inner(
+        &session,
+        &pending.turn_id,
+        &pending.tool_id,
+        response(),
+        true
+    )
+    .unwrap()
+    .is_none());
+    assert!(!task.is_finished());
+    let mut manual = response();
+    manual.answers[0].value = "Montanha".into();
+    manual.answers[0].selected_label = Some("Montanha".into());
+    answer(&session, &pending.turn_id, &pending.tool_id, manual).unwrap();
+    let output = task.await.unwrap().unwrap();
+    let parsed: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(parsed["cancelled"], false);
+    assert_eq!(parsed["answers"][0]["value"], "Montanha");
     assert!(session.snapshot().unwrap().pending_question.is_none());
+    let (reloaded, _) = journal::load_all(&session.journal).unwrap();
+    assert_eq!(reloaded[0].wire.last().unwrap()["output"], output);
+}
+
+#[tokio::test]
+async fn dismissing_explicit_questions_does_not_answer_or_cancel_the_agent_turn() {
+    let fixture = Fixture::new();
+    let mut args = request();
+    args["requireExplicitAnswer"] = json!(true);
+    let (session, tool, signal) = prepare_request(&fixture, args);
+    let task = start_with_timeout(&session, tool, signal, 0).await;
+    let pending = session.snapshot().unwrap().pending_question.unwrap();
+    assert!(pending.deadline_at.is_none());
+    answer(
+        &session,
+        &pending.turn_id,
+        &pending.tool_id,
+        Response {
+            cancelled: true,
+            answers: vec![],
+        },
+    )
+    .unwrap();
+    let output = task.await.unwrap().unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&output).unwrap(),
+        json!({"cancelled":true,"answers":[]})
+    );
+    let snapshot = session.snapshot().unwrap();
+    assert!(snapshot.pending_question.is_none());
+    assert!(snapshot.active_turn_id.is_some());
+    assert!(!*session
+        .data
+        .lock()
+        .unwrap()
+        .active
+        .as_ref()
+        .unwrap()
+        .cancel
+        .borrow());
 }
 
 #[tokio::test]
@@ -415,6 +513,8 @@ fn validates_bounded_question_schema_before_opening_ui() {
         json!({"questions":[{"id":"x","question":"Pick?","options": [{"label":"A","description":"x".repeat(501)}]}]}),
         json!({"questions":[{"id":"x","question":"Pick?","options":[{"label":"A","recommended":true},{"label":"B","recommended":true}]}]}),
         json!({"questions":[{"id":"x","question":"Pick?","options":"bad"}]}),
+        json!({"questions":[{"id":"x","question":"Pick?"}],"requireExplicitAnswer":"true"}),
+        json!({"questions":[{"id":"x","question":"Pick?"}],"requireExplicitAnswer":null}),
     ] {
         assert!(parse_request(&args).is_err());
     }

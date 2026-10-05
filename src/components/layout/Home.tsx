@@ -30,6 +30,9 @@ import { useProjectFiles } from "@/hooks/use-project-files";
 import type { ChatDraft } from "@/core/chat";
 import type { QuestionDraft } from "@/core/questions";
 import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
+import { openAuxiliaryWindow } from "@/core/auxiliary-windows";
+import { useProviderSettingsChanges } from "@/hooks/use-provider-settings-changes";
+import { toast } from "sonner";
 
 const SettingsDialog = lazy(() => import("@/components/settings/SettingsDialog").then(module => ({ default: module.SettingsDialog })));
 const ProjectDashboard = lazy(() => import("@/components/dashboard/ProjectDashboard").then(module => ({ default: module.ProjectDashboard })));
@@ -85,13 +88,16 @@ export function Home() {
   const leftToggle = <PanelToggle side="left" collapsed={layout.sidebarCollapsed} onToggle={() => toggle("left")} />;
   const rightToggle = <PanelToggle side="right" collapsed={layout.inspectorCollapsed} onToggle={() => toggle("right")} />;
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const openSettings = useCallback(() => {
+    void openAuxiliaryWindow("settings").then(native => { if (!native) setSettingsOpen(true); }).catch(() => toast.error("Não foi possível abrir Configurações."));
+  }, [setSettingsOpen]);
   const [latestVisibleId, setLatestVisibleId] = useState<string | null>(null);
   const onLatestVisibility = useCallback((id: string, visible: boolean) => {
     setLatestVisibleId(current => visible ? id : current === id ? null : current);
   }, []);
   const selectedId = library.snapshot?.selection.conversationId;
   const unreadConversationIds = useUnreadConversations(!settingsOpen && !files.tabs.activePath && !chat.error && chat.snapshot && latestVisibleId === selectedId ? latestVisibleId : null);
-  useSettingsMenu(setSettingsOpen);
+  useSettingsMenu(openSettings);
   const [localAccounts, setLocalAccounts] = useState<ProviderAccount[]>(() => bootstrapResources?.resources.accounts ?? []);
   const [localAccountsReady, setLocalAccountsReady] = useState(() => bootstrapResources?.resources.loaded.accounts ?? false);
   const accounts = bootstrapResources ? bootstrapResources.resources.accounts : localAccounts;
@@ -106,6 +112,7 @@ export function Home() {
     if (updateBootstrapAccounts) updateBootstrapAccounts(updated);
     else { setLocalAccounts(updated); setLocalAccountsReady(true); }
   }, [updateBootstrapAccounts]);
+  useProviderSettingsChanges(updateAccounts);
   const [refreshingModels, setRefreshingModels] = useState(false);
   const refreshInFlight = useRef(false);
   const refreshModels = useCallback(async () => {
@@ -157,7 +164,7 @@ export function Home() {
 
   const workspace = library.snapshot?.workspaces.find(item => item.id === library.snapshot?.selection.workspaceId);
   if (workspace && !library.snapshot?.projects.some(project => project.workspaceId === workspace.id)) {
-    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground"><div className="flex min-h-0 flex-1"><div className="w-64 shrink-0"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} /></div><EmptyWorkspace workspace={workspace} library={library} /></div><StatusBar accounts={accounts} onOpenSettings={() => setSettingsOpen(true)} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;
+    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground"><div className="flex min-h-0 flex-1"><div className="w-64 shrink-0"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} /></div><EmptyWorkspace workspace={workspace} library={library} /></div><StatusBar accounts={accounts} onOpenSettings={openSettings} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;
   }
 
   return (
@@ -221,7 +228,7 @@ export function Home() {
           <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} files={files} /></div>
         </ResizablePanel></>}
       </ResizablePanelGroup>
-      <StatusBar accounts={accounts} onOpenSettings={() => setSettingsOpen(true)} />
+      <StatusBar accounts={accounts} onOpenSettings={openSettings} />
 
       <Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog
         open={settingsOpen}

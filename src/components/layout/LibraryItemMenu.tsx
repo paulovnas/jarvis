@@ -39,7 +39,7 @@ export function LibraryItemMenu({
             </ContextMenuItem>
             <ContextMenuSeparator />
           </>}
-          {onMove && <ContextMenuItem className="cursor-pointer" onClick={onMove}><FolderInput />Mover para outro workspace</ContextMenuItem>}
+          {onMove && <ContextMenuItem className="cursor-pointer" onClick={onMove}><FolderInput />Mover para outro espaço</ContextMenuItem>}
           <ContextMenuItem variant="destructive" className="cursor-pointer" disabled={disabled} onClick={onDelete}>
             <Trash2 />
             Excluir

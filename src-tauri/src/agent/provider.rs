@@ -528,7 +528,7 @@ fn go_region_error(endpoint: &reqwest::Url, value: &Value) -> Option<AgentError>
     }
     Some(AgentError::new(
         "provider_request",
-        "Este modelo do OpenCode Go exige a região Global. No console do OpenCode, defina a região do workspace como Global e tente novamente. O progresso foi preservado.",
+        "Este modelo do OpenCode Go exige a região Global. No console do OpenCode, defina a região do espaço como Global e tente novamente. O progresso foi preservado.",
     ))
 }
 
@@ -1298,7 +1298,7 @@ mod tests {
             ] {
                 let error = go_region_error(&endpoint, &value).unwrap();
                 assert_eq!(error.code, "provider_request");
-                assert!(error.message.contains("região do workspace como Global"));
+                assert!(error.message.contains("região do espaço como Global"));
                 assert!(error.message.contains("progresso foi preservado"));
                 assert!(!error.message.contains("sk_private_test"));
                 assert!(!error.message.contains("server_error"));

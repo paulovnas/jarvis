@@ -87,7 +87,7 @@ pub(crate) fn fetch_windows(
         )),
         403 => Err(ProviderError::new(
             "opencode_go_subscription_required",
-            "Esta chave não possui uma assinatura OpenCode Go ativa no workspace do OpenCode.",
+            "Esta chave não possui uma assinatura OpenCode Go ativa no espaço do OpenCode.",
         )),
         _ => parse(response_json(response)?),
     }

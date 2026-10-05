@@ -71,6 +71,8 @@ describe("ToolCallCard Web Search", () => {
     ["http_result", "HTTP · Analisar resultado"],
     ["http_cancel", "HTTP · Cancelar requisição"],
     ["video_docs", "Vídeo · Documentação"],
+    ["video_brag_assets", "Brag · Trilhas e efeitos"],
+    ["video_brag_asset", "Brag · Importar áudio"],
     ["image_process", "Processar imagem"],
     ["video_run", "Vídeo · Executar etapa"],
     ["video_wait", "Vídeo e áudio · Aguardar etapa"],
