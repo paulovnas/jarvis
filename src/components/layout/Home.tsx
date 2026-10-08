@@ -158,6 +158,7 @@ export function Home() {
         label: model.name,
         reasoningLevels: model.reasoningLevels,
         defaultReasoningLevel: model.defaultReasoningLevel,
+        supportsFast: model.supportsFast === true,
       })),
     }));
   const canRefreshModels = accounts.some(account => account.enabled && (account.providerKind === "openai-codex" || account.providerKind === "antigravity" || account.providerKind === "opencode-go"));

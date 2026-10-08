@@ -128,8 +128,16 @@ pub(super) fn instructions(root: &Path, mode: Mode, approval_mode: ApprovalMode)
     }
     instructions.push_str("For code navigation, prefer lsp_definition, lsp_references and lsp_symbols over repeated text searches when a project language server is installed. Use lsp_diagnostics for focused compiler feedback; if a server is unavailable, report it once and use the smallest text-based fallback.\n");
     instructions.push_str("Keep progress updates concise: what the evidence established or ruled out, what remains unresolved and the next concrete action. Continue working after an update. When a tool rejects arguments, correct the indicated fields and continue. Runtime recovery guidance is not a new task, approval request or reason to stop. A tool-level failure does not erase completed work or the user's current authorization. Before the final response, compare the result with the user's requested outcome. Unknown cause is work to investigate while a useful authorized check remains, not an external blocker. If relevant available checks are exhausted and no evidence justifies a next probe, report the inconclusive result, ruled-out causes and exact evidence still needed; do not repeat checks indefinitely or claim a repair. Report a blocker only with evidence of the specific unavailable dependency and the smallest user action actually required. Never weaken an acceptance criterion to make an unfinished outcome look complete.\n");
+    instructions.push_str("For the final response, lead with the concrete result or direct answer in plain language. Briefly report relevant checks actually run and their results, plus material limitations or uncertainty. Automated checks, observed runtime behavior, deployment and user acceptance are separate evidence; never claim one from another. Complete authorized agent-owned work before handing anything back to the user. When manual verification is useful, give bounded numbered actions using verified project paths, controls or commands and an observable expected result; identify any known prerequisite. Offer a next action only for a real remaining need, and never invent a cause, time estimate, prerequisite or verification result. Match detail to the request; no fixed list cap or mandatory checklist for a simple answer.\n");
     instructions.push_str(super::browser::EFFICIENCY);
     instructions.push_str(&format!("{}\n", super::shell::prompt()));
+    if mode == Mode::Build {
+        match fs::symlink_metadata(root.join("AGENTS.md")) {
+            Ok(_) => instructions.push_str("Root AGENTS.md is present. When project setup or an explicit guidance review makes it relevant, offer to review its project-specific instructions through jarvis_propose_project_instructions only if that tool is available; preserve the applicable rules and continue the current task.\n"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => instructions.push_str("Root AGENTS.md is missing. When persistent guidance would help, offer creation once at a natural project-setup or completion moment, only if jarvis_propose_project_instructions is available. Do not interrupt the current task or draft without a user request.\n"),
+            Err(_) => {},
+        }
+    }
     if let Ok(path) = scoped(root, "AGENTS.md", false) {
         if let Ok(text) = read_text(&path) {
             instructions.push_str("\nProject instructions from AGENTS.md:\n");
@@ -973,6 +981,40 @@ mod tests {
                 assert!(prompt.contains("Do not edit files or execute commands"));
             }
         }
+    }
+    #[test]
+    fn final_delivery_reports_observed_results_without_delegating_agent_work() {
+        let fixture = Fixture::new();
+        for mode in [Mode::Plan, Mode::Build] {
+            let prompt = instructions(&fixture.root, mode, ApprovalMode::Yolo);
+            assert!(prompt.contains("lead with the concrete result or direct answer"));
+            assert!(prompt.contains("checks actually run and their results"));
+            assert!(prompt.contains("user acceptance are separate evidence"));
+            assert!(prompt.contains("Complete authorized agent-owned work"));
+            assert!(prompt.contains("When manual verification is useful"));
+            assert!(prompt.contains("an observable expected result"));
+            assert!(prompt.contains("next action only for a real remaining need"));
+            assert!(prompt.contains("never invent a cause, time estimate"));
+            assert!(prompt.contains("no fixed list cap or mandatory checklist"));
+        }
+    }
+    #[test]
+    fn project_guidance_offer_uses_actual_presence_and_never_interrupts_plan_mode() {
+        let fixture = Fixture::new();
+        let missing = instructions(&fixture.root, Mode::Build, ApprovalMode::Yolo);
+        assert!(missing.contains("Root AGENTS.md is missing"));
+        assert!(missing.contains("Do not interrupt the current task"));
+        assert!(!instructions(&fixture.root, Mode::Plan, ApprovalMode::Yolo)
+            .contains("Root AGENTS.md is missing"));
+        fs::write(
+            fixture.root.join("AGENTS.md"),
+            "Use existing project checks.",
+        )
+        .unwrap();
+        let present = instructions(&fixture.root, Mode::Build, ApprovalMode::Yolo);
+        assert!(present.contains("Root AGENTS.md is present"));
+        assert!(present.contains("Use existing project checks."));
+        assert!(!present.contains("Root AGENTS.md is missing"));
     }
     #[tokio::test]
     async fn shell_reports_command_output_within_the_project() {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { readChat, retryStatusSchema, turnOptionsSchema } from "./chat";
 import { IPC_PROTOCOL_VERSION } from "@/generated/ipc";
+import { coreIdSchema } from "./core-components";
 
 describe("Chat IPC contract", () => {
   it("preserves model generation measurements while retaining compatibility with older histories", () => {
@@ -31,6 +32,34 @@ describe("Chat IPC contract", () => {
     const payload = { ...emptyChat(), turns: [{ ...turn, steps: [{ ...turn.steps[0], coreActivities: [receipt] }] }] };
     expect(readChat(JSON.parse(JSON.stringify(payload)), "c1").turns[0].steps[0].coreActivities).toEqual([receipt]);
     expect(readChat({ ...emptyChat(), turns: [turn] }, "c1").turns[0].steps[0].coreActivities).toBeUndefined();
+  });
+  it("preserves manual hook diagnostics as activity without adding an installable Core or a tool call", () => {
+    const turn = savedTurn();
+    const receipt = { component: "manual-hooks", action: "PreToolUse", status: "issues", summary: "O hook não concluiu: tempo esgotado.", sources: [], durationMs: 0 };
+    const payload = { ...emptyChat(), turns: [{ ...turn, steps: [{ ...turn.steps[0], tools: [], coreActivities: [receipt] }] }] };
+    const step = readChat(JSON.parse(JSON.stringify(payload)), "c1").turns[0].steps[0];
+    expect(step.coreActivities).toEqual([receipt]);
+    expect(step.tools).toEqual([]);
+    expect(coreIdSchema.safeParse("manual-hooks").success).toBe(false);
+    expect(() => readChat({ ...payload, turns: [{ ...turn, steps: [{ ...turn.steps[0], coreActivities: [{ ...receipt, component: "unknown" }] }] }] }, "c1")).toThrow();
+  });
+  it.each([
+    { component: "plugins", metadata: { resourceId: "skill:workspace-tools:review", resourceName: "Review", pluginId: "workspace-tools" } },
+    { component: "hooks", metadata: { resourceId: "hook:workspace-tools:PreToolUse", resourceName: "Check commands", pluginId: "workspace-tools" } },
+    { component: "hooks", metadata: { resourceId: null, resourceName: null, pluginId: null } },
+    { component: "plugins", metadata: {} },
+  ])("preserves $component resource identity through saved history hydration", ({ component, metadata }) => {
+    const turn = savedTurn();
+    const receipt = { component, action: "resource_used", status: "applied", summary: "Recurso utilizado", sources: [], durationMs: 2, ...metadata };
+    const payload = { ...emptyChat(), turns: [{ ...turn, steps: [{ ...turn.steps[0], coreActivities: [receipt] }] }] };
+    const loaded = readChat(JSON.parse(JSON.stringify(payload)), "c1");
+    expect(loaded.turns[0].steps[0].coreActivities).toEqual([receipt]);
+    expect(loaded.turns[0].steps[0].tools).toEqual(turn.steps[0].tools);
+  });
+  it.each(["resourceId", "resourceName", "pluginId"])("rejects invalid %s metadata instead of accepting a malformed saved turn", field => {
+    const turn = savedTurn();
+    const receipt = { component: "hooks", action: "PreToolUse", status: "applied", summary: "Hook executado", sources: [], durationMs: 0, [field]: 123 };
+    expect(() => readChat({ ...emptyChat(), turns: [{ ...turn, steps: [{ ...turn.steps[0], coreActivities: [receipt] }] }] }, "c1")).toThrow();
   });
   it.each([[1, 1], [2, 5], [6, 8]])("preserves retry %i of %i and remains compatible with older history", (attempt, maxAttempts) => {
     const turn = savedTurn();

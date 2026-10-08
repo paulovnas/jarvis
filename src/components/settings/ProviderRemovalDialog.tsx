@@ -13,7 +13,7 @@ import { libraryError } from "@/core/library";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { compatibleModels, defaultChoice, modelProblem, providerRemovalPlanSchema, providerRemovalResultSchema, type ModelChoice, type ProviderReference, type ProviderRemovalPlan, type ProviderRemovalResult } from "@/core/provider-references";
 import { reasoningLabel, selectableReasoningLevels } from "@/core/reasoning";
-import { executionChoice, executionSelection, executorOf } from "@/core/executors";
+import { executionChoice, executionSelection, executorOf, executionLabel, FAST_USAGE_NOTICE } from "@/core/executors";
 import { ExecutorModelPicker } from "@/components/chat/ExecutorModelPicker";
 
 const UNASSIGNED = "__unassigned__";
@@ -30,7 +30,7 @@ function ReferenceRow({ item, accounts, choice, busy, onChange }: { item: Provid
     <div className="flex flex-wrap items-center gap-2"><Link2 className="size-3.5 shrink-0 text-onedark-cyan" aria-hidden="true" /><span className="text-sm font-medium">{item.label}</span><Badge variant="outline" className={`rounded-md ${choice ? "border-onedark-green/30 text-onedark-green" : "border-onedark-yellow/30 text-onedark-yellow"}`}>{choice ? "Substituição definida" : "Sem substituição"}</Badge></div>
     <p className="text-xs leading-relaxed text-muted-foreground">{item.details.join(" · ")}</p>
     <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1.4fr)] sm:items-center">
-      <div className="min-w-0 rounded-md border border-border bg-sidebar p-3"><p className="micro-label mb-2 text-muted-foreground">De · Atual</p><p className="break-all font-mono text-xs">{item.choice.account}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.choice.model || "Modelo não configurado"}{item.choice.reasoning ? ` · ${item.choice.reasoning}` : ""}</p></div>
+      <div className="min-w-0 rounded-md border border-border bg-sidebar p-3"><p className="micro-label mb-2 text-muted-foreground">De · Atual</p><p className="break-all font-mono text-xs">{item.choice.account}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.choice.serviceTier === "priority" ? executionLabel(item.choice) : item.choice.model || "Modelo não configurado"}{item.choice.reasoning ? ` · ${item.choice.reasoning}` : ""}</p>{item.choice.serviceTier === "priority" && <p className="mt-1 text-xs text-onedark-yellow">{FAST_USAGE_NOTICE}</p>}</div>
       <ArrowRight className="hidden size-4 text-muted-foreground sm:block" aria-hidden="true" />
       <div className="min-w-0 space-y-3"><p className="micro-label text-muted-foreground">Para · Opcional</p>
         <ChoiceField label={`Novo provedor para ${item.label}`} value={executorOf(choice) === "jarvis" ? choice?.account ?? UNASSIGNED : UNASSIGNED} disabled={busy} options={[{ value: UNASSIGNED, label: "Não substituir agora" }, ...available.map(account => ({ value: account.alias, label: account.alias }))]} onChange={alias => { const next = available.find(account => account.alias === alias); if (next) selectModel(defaultChoice(next, compatibleModels(next, item.kind)[0])); else onChange(undefined); }} />

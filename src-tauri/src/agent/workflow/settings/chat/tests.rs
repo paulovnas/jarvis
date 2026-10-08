@@ -11,6 +11,7 @@ fn accepted_queued_choice_preserves_primary_and_secondary_after_a_saved_swap_and
     let state = state(&fixture.root);
     let profile = key(Flow::Standard, Role::Builder);
     let mut accepted = choice("accepted-primary");
+    accepted.service_tier = Some(ServiceTier::Priority);
     accepted.fallback = Some(Box::new(choice("accepted-secondary")));
     let mut submitted = options(ApprovalMode::Yolo);
     submitted.workflow = Some(Flow::Standard);
@@ -25,6 +26,7 @@ fn accepted_queued_choice_preserves_primary_and_secondary_after_a_saved_swap_and
         })
         .unwrap();
     assert_eq!(submitted.model_selection, Some(accepted.clone()));
+    assert_eq!(submitted.service_tier, Some(ServiceTier::Priority));
     let session = crate::agent::tests::session(&fixture);
     let mut executing = options(ApprovalMode::Yolo);
     executing.workflow = Some(Flow::Standard);
@@ -42,6 +44,7 @@ fn accepted_queued_choice_preserves_primary_and_secondary_after_a_saved_swap_and
         .unwrap();
     let queue = journal::load_all(&session.journal).unwrap().1.queue;
     assert_eq!(queue[0].options.model_selection, Some(accepted.clone()));
+    assert_eq!(queue[0].options.service_tier, Some(ServiceTier::Priority));
     let frozen = profiles(&state, &fixture.root, CHAT_A, &queue[0].options).unwrap();
     assert_eq!(frozen[&profile], accepted);
     assert_eq!(
@@ -53,6 +56,7 @@ fn accepted_queued_choice_preserves_primary_and_secondary_after_a_saved_swap_and
     let resumed: TurnOptions =
         serde_json::from_value(serde_json::to_value(resumed).unwrap()).unwrap();
     assert_eq!(resumed.model_selection, Some(accepted));
+    assert_eq!(resumed.service_tier, None);
     assert_eq!(
         profiles(&state, &fixture.root, CHAT_A, &resumed).unwrap()[&profile],
         choice("accepted-secondary")
@@ -192,8 +196,50 @@ fn choice(model: &str) -> ModelChoice {
         account: "provider".into(),
         model: model.into(),
         reasoning: Some("high".into()),
+        service_tier: None,
         fallback: None,
     }
+}
+
+#[test]
+fn fast_choices_are_chat_local_durable_and_do_not_change_agent_defaults() {
+    let fixture = Fixture::new();
+    let state = state(&fixture.root);
+    let profile = key(Flow::Standard, Role::Builder);
+    let normal = choice("same-model");
+    let mut fast = normal.clone();
+    fast.service_tier = Some(ServiceTier::Priority);
+    fs::write(
+        crate::data_dir::root(&fixture.root).join("agents.json"),
+        serde_json::to_vec(&ModelSettings::from([(profile.clone(), normal.clone())])).unwrap(),
+    )
+    .unwrap();
+    state
+        .with_connection(&fixture.root, |db| {
+            write(db, CHAT_A, &profile, &fast)?;
+            write(db, CHAT_B, &profile, &normal)
+        })
+        .unwrap();
+    drop(state);
+    let restarted = AppState::default();
+    let mut chat_a = options(ApprovalMode::Yolo);
+    chat_a.workflow = Some(Flow::Standard);
+    let mut chat_b = chat_a.clone();
+    restarted
+        .with_connection(&fixture.root, |db| {
+            apply_saved(db, CHAT_A, &mut chat_a)?;
+            apply_saved(db, CHAT_B, &mut chat_b)?;
+            assert_eq!(read(db, CHAT_A)?[&profile], fast);
+            assert_eq!(read(db, CHAT_B)?[&profile], normal);
+            Ok::<_, AgentError>(())
+        })
+        .unwrap();
+    assert_eq!(chat_a.service_tier, Some(ServiceTier::Priority));
+    assert_eq!(chat_b.service_tier, None);
+    assert_eq!(
+        super::super::load(&restarted, &fixture.root).unwrap()[&profile],
+        normal
+    );
 }
 
 fn state(home: &Path) -> AppState {
@@ -221,6 +267,7 @@ fn chat_choices_are_isolated_durable_and_do_not_mutate_defaults_or_a_running_man
         account: String::new(),
         model: "sonnet".into(),
         reasoning: Some("high".into()),
+        service_tier: None,
         fallback: None,
     };
     chat_a.fallback = Some(Box::new(choice("backup")));
@@ -268,7 +315,9 @@ fn history_seeds_the_intended_primary_and_keeps_agent_and_flow_choices_separate(
     fs::write(&history, "{}\n").unwrap();
     let mut submitted = options(ApprovalMode::Yolo);
     submitted.workflow = Some(Flow::Standard);
-    choice("requested-primary").apply(&mut submitted);
+    let mut primary = choice("requested-primary");
+    primary.service_tier = Some(ServiceTier::Priority);
+    primary.apply(&mut submitted);
     journal::append_event(
         &history,
         "turn_checkpoint",
@@ -294,18 +343,24 @@ fn history_seeds_the_intended_primary_and_keeps_agent_and_flow_choices_separate(
     submitted.workflow = Some(Flow::Designer);
     submitted.custom_agent_id = None;
     choice("designer-fallback").apply(&mut submitted);
+    let mut designer_primary = choice("designer-primary");
+    designer_primary.service_tier = Some(ServiceTier::Priority);
     journal::append_event(
         &history,
         "turn_checkpoint",
-        &json!({"turn":{"id":"vacuumed-turn","options":submitted},"wire":[{"_jarvis_model_fallback":{"from":choice("designer-primary")}}]}),
+        &json!({"turn":{"id":"vacuumed-turn","options":submitted},"wire":[{"_jarvis_model_fallback":{"from":designer_primary}}]}),
     ).unwrap();
     state
         .with_connection(&fixture.root, |db| {
             seed_history(db, &fixture.root, CHAT_A, &history)?;
             let models = read(db, CHAT_A)?;
             assert_eq!(models["standard/builder"].model, "requested-primary");
+            assert_eq!(
+                models["standard/builder"].service_tier,
+                Some(ServiceTier::Priority)
+            );
             assert_eq!(models["agent:builtin:github"].model, "github-chat-primary");
-            assert_eq!(models["designer/designer"], choice("designer-primary"));
+            assert_eq!(models["designer/designer"], designer_primary);
             write(db, CHAT_A, "standard/builder", &choice("explicit-choice"))?;
             seed_history(db, &fixture.root, CHAT_A, &history)?;
             assert_eq!(

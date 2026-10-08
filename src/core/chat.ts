@@ -4,7 +4,7 @@ import type { PendingQuestion } from "./questions";
 import { attachmentSchema } from "./attachments";
 import { pendingAuthoringSchema } from "./authoring";
 import type { PendingAuthoring } from "./authoring";
-import { executorSchema, type Executor } from "./executors";
+import { executorSchema, serviceTierSchema, type Executor } from "./executors";
 import { coreIdSchema } from "./core-components";
 import { modelChoiceSchema } from "./workflow-catalog";
 import { generationSchema } from "./generation";
@@ -52,6 +52,7 @@ export const turnOptionsSchema = z.object({
   account: z.string(),
   model: z.string(),
   reasoning: z.string().nullable(),
+  serviceTier: serviceTierSchema,
   mode: z.enum(["plan", "build"]),
   workflow: z.enum(["standard", "designer", "video", "image_generator", "planned", "complete", "publication", "custom"]).nullable().optional(),
   customWorkflowId: z.string().nullable().optional(),
@@ -113,10 +114,12 @@ export const usageSchema = z.object({
 });
 export const agentStepSchema = z.object({
   coreActivities: z.array(z.object({
-    component: coreIdSchema,
+    component: z.union([coreIdSchema, z.enum(["manual-hooks", "hooks", "plugins"])]),
     action: z.string(), status: z.enum(["applied", "reused", "unavailable", "pending", "issues"]),
     summary: z.string(), sources: z.array(z.string()), fingerprint: z.string().nullable().optional(),
     durationMs: z.number().nonnegative(),
+    resourceId: z.string().nullable().optional(), resourceName: z.string().nullable().optional(),
+    pluginId: z.string().nullable().optional(),
   })).optional(),
   contextId: z.string().nullable().optional(),
   contextSearches: z.number().int().nonnegative().default(0),

@@ -8,9 +8,13 @@ import type { CoreId } from "@/core/core-components";
 import { readGeneratedImages } from "@/core/image-generation";
 import type { AssistantWorkData, ToolCallItem } from "./types";
 
-const names: Record<CoreId, string> = {
+type ActivityComponent = CoreActivity["component"];
+
+const names: Record<ActivityComponent, string> = {
   "context-mode": "Context-mode", ponytail: "Ponytail", beads: "Beads",
   "open-design": "Open Design", context7: "Context7", lsp: "LSP", hyperframes: "Hyperframes", audiovisual: "Audiovisual", comfyui: "ComfyUI", graft: "Graft",
+  "manual-hooks": "Hooks manuais",
+  hooks: "Hooks", plugins: "Plugins",
 };
 const statuses = { applied: "Aplicado", reused: "Reutilizado", unavailable: "Indisponível", pending: "Aguardando diagnóstico", issues: "Diagnósticos encontrados" };
 
@@ -28,7 +32,7 @@ function componentFor(tool: ToolCallItem): CoreId | undefined {
 }
 
 type DiagnosticState = { current: CoreActivity; warning?: CoreActivity; resolved?: CoreActivity };
-type Resource = { id: CoreId; receipts: CoreActivity[]; tools: ToolCallItem[]; diagnostics: Map<string, DiagnosticState> };
+type Resource = { id: ActivityComponent; receipts: CoreActivity[]; tools: ToolCallItem[]; diagnostics: Map<string, DiagnosticState> };
 
 function hasWarning(status: CoreActivity["status"]) {
   return status === "unavailable" || status === "pending" || status === "issues";
@@ -36,8 +40,8 @@ function hasWarning(status: CoreActivity["status"]) {
 
 export function CoreActivitySummary({ steps }: { steps: AssistantWorkData["steps"] }) {
   const resources = useMemo(() => {
-    const grouped = new Map<CoreId, Resource>();
-    const get = (id: CoreId) => {
+    const grouped = new Map<ActivityComponent, Resource>();
+    const get = (id: ActivityComponent) => {
       let resource = grouped.get(id);
       if (!resource) { resource = { id, receipts: [], tools: [], diagnostics: new Map() }; grouped.set(id, resource); }
       return resource;
@@ -88,8 +92,9 @@ export function CoreActivitySummary({ steps }: { steps: AssistantWorkData["steps
 function ResourceDetails({ resource }: { resource: Resource }) {
   // Keep long runs compact: show the latest state per action, retaining warnings
   // separately so a later success cannot silently erase unavailable checks.
-  const latest = [...new Map(resource.receipts.map(receipt => [`${receipt.action}:${receipt.status}`, receipt])).values()];
-  const actions = [...new Map(latest.map(receipt => [`${receipt.status}:${receipt.summary}`, receipt])).values()];
+  const key = (receipt: CoreActivity, ...state: string[]) => JSON.stringify([receipt.pluginId ?? null, receipt.resourceId ?? receipt.resourceName ?? null, ...state]);
+  const latest = [...new Map(resource.receipts.map(receipt => [key(receipt, receipt.action, receipt.status), receipt])).values()];
+  const actions = [...new Map(latest.map(receipt => [key(receipt, receipt.status, receipt.summary), receipt])).values()];
   const sources = [...new Set(resource.receipts.flatMap(receipt => receipt.sources))].filter(source => !resource.diagnostics.has(source));
   const successful = resource.tools.filter(tool => tool.status === "completed").length;
   const failed = resource.tools.filter(tool => tool.status === "error").length;
@@ -97,11 +102,12 @@ function ResourceDetails({ resource }: { resource: Resource }) {
   return <li className="min-w-0 text-xs leading-relaxed">
     <div className="mb-1 flex flex-wrap items-center gap-2">
       <span className="font-medium text-foreground">{names[resource.id]}</span>
-      {(actions.length > 0 || resource.diagnostics.size > 0) && <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">Automático</Badge>}
+      {resource.id !== "plugins" && (actions.length > 0 || resource.diagnostics.size > 0) && <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">Automático</Badge>}
     </div>
     {resource.diagnostics.size > 0 && <DiagnosticDetails diagnostics={resource.diagnostics} />}
-    {actions.map(receipt => <p key={`${receipt.action}:${receipt.status}`} className={hasWarning(receipt.status) ? "text-onedark-yellow" : "text-muted-foreground"}>
-      <span className="font-medium">{statuses[receipt.status]}: </span>{receipt.summary}
+    {actions.map(receipt => <p key={key(receipt, receipt.action, receipt.status)} className={hasWarning(receipt.status) ? "text-onedark-yellow" : "text-muted-foreground"}>
+      <span className="font-medium wrap-anywhere">{receipt.resourceName ? `${receipt.resourceName} · ` : ""}{statuses[receipt.status]}: </span>{receipt.summary}
+      {receipt.pluginId && <span className="font-mono text-[10px] wrap-anywhere"> · Plugin: {receipt.pluginId}</span>}
     </p>)}
     {resource.tools.length > 0 && <p className="text-muted-foreground">
       Solicitado pelo agente: {successful} {successful === 1 ? "chamada concluída" : "chamadas concluídas"}

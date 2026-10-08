@@ -7,7 +7,7 @@ import { hasValidHistoryWindow, historyWindow, mergeChat, mergeHistory, type His
 import { libraryError } from "@/core/library";
 import type { PendingQuestion, QuestionResponse } from "@/core/questions";
 import { onDesktopResume } from "@/core/desktop-resume";
-import type { PendingAuthoring } from "@/core/authoring";
+import type { McpAuthoringValues, PendingAuthoring } from "@/core/authoring";
 import { agentEventBatchSchema, applyAgentEventBatch, chatSubscriptionSchema, type AgentEventBatch } from "@/core/agent-events";
 import { getChatSnapshot, subscribeChatSnapshot, updateChatSnapshot } from "@/core/chat-store";
 import { IPC_PROTOCOL_VERSION } from "@/generated/ipc";
@@ -302,16 +302,16 @@ export function useChat(conversationId: string | null) {
       return true;
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível pausar a resposta automática. Interaja novamente para tentar pausar.")); return false; }
   };
-  const answerAuthoring = async (proposal: PendingAuthoring, approved: boolean, note: string | null): Promise<boolean> => {
+  const answerAuthoring = async (proposal: PendingAuthoring, approved: boolean, note: string | null, mcpValues?: McpAuthoringValues): Promise<boolean> => {
     if (!conversationId || snapshot?.activeTurnId !== proposal.turnId || snapshot.pendingAuthoring?.toolId !== proposal.toolId) return false;
     const id = conversationId; const request = generation.current;
     try {
-      const result = await invoke<unknown>("answer_agent_authoring", { conversationId: id, decision: { turnId: proposal.turnId, toolId: proposal.toolId, approved, note } });
+      const result = await invoke<unknown>("answer_agent_authoring", { conversationId: id, decision: { turnId: proposal.turnId, toolId: proposal.toolId, approved, note, ...(mcpValues ? { mcpValues } : {}) } });
       if (generation.current === request) accept(result, id);
       if (approved && proposal.target.kind === "publication" && note?.trim()) {
         toast.info("Orientação enviada para revisão", { description: "O agente GitHub apresentará uma nova proposta antes de publicar." });
       } else {
-        toast.success(approved ? proposal.target.kind === "publication" ? "Publicação processada" : "Configuração aprovada e salva" : "Proposta recusada");
+        toast.success(approved ? proposal.target.kind === "publication" ? "Publicação processada" : proposal.target.kind === "mcp" ? "Aprovação do MCP enviada" : "Configuração aprovada e salva" : "Proposta recusada");
       }
       return true;
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível responder à proposta.")); return false; }

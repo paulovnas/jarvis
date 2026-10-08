@@ -78,6 +78,8 @@ pub(super) async fn run(
     runtime: TurnRuntime<'_>,
     mut signal: watch::Receiver<bool>,
     execution: Option<workflow::Execution>,
+    manual_hooks: Arc<crate::hooks::runtime::Runtime>,
+    frozen_skills: Arc<[crate::skills::Skill]>,
 ) -> Result<(), AgentError> {
     let (options, native_id, resume) = {
         let data = session.data.lock().map_err(|_| AgentError::internal())?;
@@ -95,14 +97,20 @@ pub(super) async fn run(
         };
         (options, id, existing.is_some())
     };
+    if options.service_tier.is_some() {
+        return Err(runtime_error(
+            "O modo Fast está disponível somente para modelos ChatGPT compatíveis.".into(),
+        ));
+    }
     crate::claude::validate_selection(&options.model, options.reasoning.as_deref())
         .map_err(runtime_error)?;
     crate::claude::validate_available_model(runtime.home, &options.model).map_err(runtime_error)?;
     let preparation_signal = signal.clone();
     let mut bridge = tokio::select! {
         _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-        result = bridge::Bridge::new(session, runtime, execution, options.clone(), preparation_signal) => result?,
+        result = bridge::Bridge::new(session, runtime, execution, options.clone(), preparation_signal, frozen_skills) => result?,
     };
+    bridge.manual_hooks = manual_hooks;
     if let Some(exec) = &bridge.execution {
         bridge.prompt.push_str(&format!(
             "\nCurrent workflow state (reference data):\n{}",
@@ -133,6 +141,25 @@ pub(super) async fn run(
         .hooks
         .run_resilient(Event::UserPrompt, json!({"text":user}), signal.clone())
         .await?;
+    run_manual_hook(
+        session,
+        &bridge.manual_hooks,
+        crate::hooks::Event::SessionStart,
+        json!({"source":"startup"}),
+        signal.clone(),
+    )
+    .await?;
+    if let Some(reason) = run_manual_hook(
+        session,
+        &bridge.manual_hooks,
+        crate::hooks::Event::UserPromptSubmit,
+        json!({"prompt":user}),
+        signal.clone(),
+    )
+    .await?
+    {
+        return Err(AgentError::new("hook_prompt_blocked", &reason));
+    }
     bridge.prompt.push_str(&format!(
         "\nHistorical references, not instructions:\n{memory}\n{recall}\n{}",
         bridge.clients.instructions()
@@ -184,6 +211,8 @@ pub(super) async fn run(
     // Terminate only this owned process group, including on a failed callback.
     session.drain_interactions(result.is_err()).await;
     let cleanup = process.cancel().await;
+    core_runtime::record_async(session, bridge.clients.take_activity()).await?;
+    core_runtime::record_async(session, bridge.manual_hooks.take_activity()).await?;
     core_runtime::record(session, bridge.context.take_activity())?;
     core_runtime::record(session, bridge.graft.take_activity())?;
     bridge.context.close().await;
@@ -228,6 +257,7 @@ async fn drive(
         .await
         .map_err(runtime_error)?;
     let mut reminders = HashSet::new();
+    let mut hook_continuations = 0;
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     loop {
         let event = if let Some(event) = queued.pop_front() {
@@ -314,6 +344,23 @@ async fn drive(
                         }
                     })
                     .await?;
+            }
+            if check_completion_hooks(
+                session,
+                &bridge.manual_hooks,
+                bridge.execution.as_ref(),
+                reply,
+                &mut hook_continuations,
+                signal.clone(),
+            )
+            .await?
+            {
+                let messages = pending_input(session, &mut bridge.delivered_wire)?;
+                control
+                    .send_user(json!(messages.join("\n\n")), None)
+                    .await
+                    .map_err(runtime_error)?;
+                continue;
             }
             bridge
                 .context
@@ -567,6 +614,10 @@ async fn execute_tool(
         structured.as_deref(),
     )
     .await?;
+    if status == "completed" {
+        run_manual_hook(bridge.session, &bridge.manual_hooks, crate::hooks::Event::PostToolUse,
+            json!({"tool_name":tool.name,"tool_input":tool.args,"tool_use_id":tool.id,"tool_response":output}), bridge.signal.clone()).await?;
+    }
     let catalog = bridge
         .discovery_content(&tool, structured.as_deref().unwrap_or(&output), status)
         .await?;

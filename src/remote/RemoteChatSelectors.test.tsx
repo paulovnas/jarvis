@@ -123,3 +123,44 @@ it("preserves the active flow while allowing the next message model to change", 
   expect(onModelChange).toHaveBeenCalledExactlyOnceWith({ executor: "jarvis", account: "ene", model: "gpt-luna", reasoning: "low", fallback: choice.fallback });
   expect(onFlowChange).not.toHaveBeenCalled();
 });
+
+const fastModels = () => models.map(group => ({ ...group, models: group.models.map(model => ({ ...model, supportsFast: group.providerKind === "openai-codex" && model.value === "ene/gpt-sol" })) }));
+it("stages Fast and reasoning only in this chat, discards on close, and applies after review", async () => {
+  const user = userEvent.setup(), onModelChange = vi.fn();
+  render(<RemoteChatSelectors {...props({ modelGroups: fastModels(), onModelChange })} />);
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  await user.click(await screen.findByRole("button", { name: "Fast" }));
+  expect(screen.getByText("Maior consumo dos limites/créditos")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Fechar seleção" }));
+  expect(onModelChange).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  expect(await screen.findByRole("button", { name: "Normal" })).toHaveAttribute("aria-pressed", "true");
+  await user.click(screen.getByRole("button", { name: "Fast" }));
+  await user.click(screen.getByRole("button", { name: "Baixo" }));
+  expect(onModelChange).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Aplicar modelo" }));
+  expect(onModelChange).toHaveBeenCalledExactlyOnceWith({ ...choice, reasoning: "low", serviceTier: "priority" });
+});
+
+it("shows restored Fast and clears it when choosing an unsupported model", async () => {
+  const user = userEvent.setup(), onModelChange = vi.fn();
+  render(<RemoteChatSelectors {...props({ modelGroups: fastModels(), choice: { ...choice, serviceTier: "priority" }, onModelChange })} />);
+  expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("GPT Sol · Fast");
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  await user.click(await screen.findByRole("option", { name: "ene · GPT Luna" }));
+  await user.click(screen.getByRole("button", { name: "Aplicar modelo" }));
+  expect(onModelChange).toHaveBeenCalledExactlyOnceWith({ executor: "jarvis", account: "ene", model: "gpt-luna", reasoning: "low", fallback: choice.fallback });
+});
+
+it("blocks unsupported saved Fast until Normal is explicitly chosen", async () => {
+  const user = userEvent.setup(), onModelChange = vi.fn();
+  render(<RemoteChatSelectors {...props({ choice: { ...choice, serviceTier: "priority" }, onModelChange })} />);
+  const trigger = screen.getByRole("button", { name: "Selecionar modelo de IA" });
+  expect(trigger).toHaveTextContent("Fast indisponível"); expect(trigger).toHaveAttribute("aria-invalid", "true");
+  await user.click(trigger);
+  expect(await screen.findByRole("button", { name: "Fast" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Aplicar modelo" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Normal" }));
+  await user.click(screen.getByRole("button", { name: "Aplicar modelo" }));
+  expect(onModelChange).toHaveBeenCalledExactlyOnceWith(choice);
+});

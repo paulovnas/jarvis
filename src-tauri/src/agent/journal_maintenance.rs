@@ -419,6 +419,7 @@ mod tests {
             account: "account".into(),
             model: "model".into(),
             reasoning: None,
+            service_tier: None,
             mode: Mode::Build,
             workflow: None,
             custom_workflow_id: None,

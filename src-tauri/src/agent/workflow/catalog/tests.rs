@@ -57,11 +57,13 @@ fn catalog_round_trip_preserves_claude_for_custom_agents_and_flow_steps() {
         account: String::new(),
         model: "sonnet".into(),
         reasoning: Some("high".into()),
+        service_tier: None,
         fallback: Some(Box::new(settings::ModelChoice {
             executor: crate::claude::Executor::Claude,
             account: String::new(),
             model: "opus".into(),
             reasoning: Some("max".into()),
+            service_tier: None,
             fallback: None,
         })),
     };

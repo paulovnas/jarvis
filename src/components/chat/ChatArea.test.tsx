@@ -7,6 +7,7 @@ import { emptyLibrary, populatedLibrary } from "@/test/library-fixtures";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { httpDraft, httpSnapshot } from "@/test/http-fixtures";
 import type { LibrarySnapshot } from "@/core/library";
+import type { PendingAuthoring } from "@/core/authoring";
 import { readChat, type ChatSnapshot } from "@/core/chat";
 import { clearChatStore } from "@/core/chat-store";
 import { useChat } from "@/hooks/use-chat";
@@ -479,6 +480,36 @@ describe("Persistent live conversation", () => {
     await user.click(screen.getByRole("button", { name: "Aprovar e salvar" }));
     expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "c1", decision: { turnId: "turn1", toolId: "author-1", approved: true, note: null } });
     expect(await screen.findByRole("textbox", { name: "Mensagem" })).toBeVisible();
+  });
+
+  it.each(["stdio", "http"] as const)("forwards private MCP %s values through native approval and preserves the composer draft", async transport => {
+    const user = userEvent.setup();
+    const proposal: PendingAuthoring = { turnId: "turn1", toolId: "mcp-1", action: "create", catalogRevision: null, summary: "Adicionar documentação MCP", agentReferences: [], target: { kind: "mcp", server: {
+      name: "docs", transport, command: transport === "stdio" ? "node" : null, args: transport === "stdio" ? ["docs.js"] : [], url: transport === "http" ? "https://docs.example.com/mcp" : null,
+      cwd: null, enabled: true, envKeys: transport === "stdio" ? ["API_KEY"] : [], headerKeys: transport === "http" ? ["Authorization"] : [],
+    } } };
+    const original = JSON.stringify(proposal);
+    const running = { ...emptyChat(), activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running" as const }] };
+    call.mockResolvedValue(running);
+    render(<TestChat />);
+    const composer = await screen.findByRole("textbox", { name: "Mensagem" });
+    await user.type(composer, "Meu rascunho preservado");
+    await update({ ...readChat(running, "c1"), revision: 2, pendingAuthoring: proposal });
+    const dialog = await screen.findByRole("dialog", { name: "Revisar servidor MCP" });
+    const approve = within(dialog).getByRole("button", { name: "Aprovar e adicionar" });
+    expect(approve).toBeDisabled();
+    await user.type(within(dialog).getByLabelText(transport === "stdio" ? "Variável API_KEY" : "Cabeçalho Authorization"), "private-test-value");
+    expect(composer).toHaveTextContent("Meu rascunho preservado");
+    expect(JSON.stringify(proposal)).toBe(original);
+    expect(within(dialog).queryByText("private-test-value")).not.toBeInTheDocument();
+    expect(call.mock.calls.some(([command]) => command === "answer_agent_authoring")).toBe(false);
+    call.mockResolvedValue({ ...running, revision: 3, pendingAuthoring: null });
+    await user.click(approve);
+    expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "c1", decision: { turnId: "turn1", toolId: "mcp-1", approved: true, note: null, mcpValues: {
+      environment: transport === "stdio" ? { API_KEY: "private-test-value" } : {}, headers: transport === "http" ? { Authorization: "private-test-value" } : {},
+    } } });
+    expect(await screen.findByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Meu rascunho preservado");
+    expect(JSON.stringify(proposal)).toBe(original);
   });
   it("answers questions through native IPC while keeping the composer draft and queue independent", async () => {
     const user = userEvent.setup();

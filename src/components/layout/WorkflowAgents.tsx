@@ -18,7 +18,7 @@ import { agentAppearance, flowAppearance } from "@/core/workflow-appearance";
 import { reasoningPreview } from "@/components/chat/reasoning-preview";
 import { executionDuration, formatExecutionDuration, useRunningClock } from "@/hooks/use-running-clock";
 import { Hint } from "@/components/ui/hint";
-import { executionLabel, executorOf } from "@/core/executors";
+import { executionLabel, executorOf, FAST_USAGE_NOTICE } from "@/core/executors";
 import { GenerationRate } from "@/components/chat/GenerationRate";
 
 function presentation(agent: WorkflowAgent) {
@@ -30,6 +30,7 @@ function presentation(agent: WorkflowAgent) {
 function ModelDetails({ agent }: { agent: WorkflowAgent }) {
   return <Hint content={executionLabel(agent.options)}><span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-[9px] text-muted-foreground">
     <span className="max-w-24 truncate text-foreground/75">{executorOf(agent.options) === "claude" ? "Claude Code" : executorOf(agent.options) === "unavailable" ? "Executor removido" : aliasSuffix(agent.options.account)}</span><span aria-hidden="true" className="text-border">/</span><span className="truncate">{agent.options.model}</span>
+    {agent.options.serviceTier === "priority" && <Hint content={`Fast solicitado · ${FAST_USAGE_NOTICE}`}><Badge variant="outline" className="text-[9px] text-primary">Fast</Badge></Hint>}
     {agent.options.reasoning && <><span aria-hidden="true">·</span><span>{reasoningLabel(agent.options.reasoning)}</span></>}
   </span></Hint>;
 }

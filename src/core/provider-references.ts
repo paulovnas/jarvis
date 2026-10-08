@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { modelChoiceSchema } from "./workflow-catalog";
 import { enabledModels, type ProviderAccount, type ProviderModel } from "./provider-accounts";
-import { executorOf, sameExecutionTarget } from "./executors";
+import { executorOf, sameExecutionTarget, supportsFastMode } from "./executors";
 import { defaultReasoning } from "./reasoning";
 
 export type ModelChoice = z.infer<typeof modelChoiceSchema>;
@@ -38,10 +38,12 @@ export function modelProblem(choice: ModelChoice, accounts: ProviderAccount[], k
 
 function modelTargetProblem(choice: ModelChoice, accounts: ProviderAccount[], kind: ReferenceKind): string | null {
   if (executorOf(choice) === "unavailable") return "Este executor foi removido. Escolha outro provedor e modelo.";
+  if (choice.serviceTier === "priority" && executorOf(choice) !== "jarvis") return "Fast não está disponível neste executor. Selecione Normal ou outro modelo.";
   if (executorOf(choice) !== "jarvis") return null;
   const account = accounts.find(account => account.alias === choice.account);
   if (!account) return `O provedor ${choice.account} não existe mais. Escolha outro provedor e modelo.`;
   if (!account.enabled) return `O provedor ${choice.account} está desativado. Ative-o ou escolha outro.`;
+  if (choice.serviceTier === "priority" && !supportsFastMode(account.providerKind, account.models.find(model => model.id === choice.model))) return "Fast não está disponível neste provedor ou modelo. Selecione Normal ou outro modelo.";
   // A local/offline catalog cannot prove that a configured model was removed.
   if (kind !== "image_generation" && account.modelsStale && !account.disabledModels?.includes(choice.model)) return null;
   if (kind !== "image_generation" && !account.modelsAvailable) return `Os modelos de ${choice.account} estão indisponíveis. Revise a conexão do provedor.`;
@@ -52,7 +54,7 @@ function modelTargetProblem(choice: ModelChoice, accounts: ProviderAccount[], ki
 }
 
 export function resolveChatModel(bindings: ModelBinding[], conversationId: string | undefined, choice: ModelChoice, agentKey?: string): ModelChoice {
-  const matches = (binding: ModelBinding) => executorOf(binding.source) === executorOf(choice) && binding.source.account === choice.account && binding.source.model === choice.model && binding.source.reasoning === choice.reasoning;
+  const matches = (binding: ModelBinding) => executorOf(binding.source) === executorOf(choice) && binding.source.account === choice.account && binding.source.model === choice.model && binding.source.reasoning === choice.reasoning && (binding.source.serviceTier ?? null) === (choice.serviceTier ?? null);
   return (agentKey ? bindings.find(binding => binding.itemKey === `chat:${conversationId}:agent:${agentKey}` && matches(binding))?.target : undefined)
     ?? bindings.find(binding => binding.itemKey === `chat:${conversationId}` && matches(binding))?.target ?? choice;
 }

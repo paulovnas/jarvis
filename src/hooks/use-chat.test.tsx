@@ -4,6 +4,7 @@ import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import type { ChatSnapshot } from "@/core/chat";
+import type { PendingAuthoring } from "@/core/authoring";
 import { useChat } from "./use-chat";
 import { toast } from "sonner";
 import { clearChatStore, updateChatSnapshot } from "@/core/chat-store";
@@ -44,6 +45,29 @@ it("acknowledges a paused question and keeps its snapshot reactive", async () =>
   expect(call).toHaveBeenCalledWith("pause_agent_question", {conversationId:"c1",turnId:"turn1",toolId:"ask-1"});
   expect(result.current.snapshot?.pendingQuestion?.deadlineAt).toBeUndefined();
   expect(result.current.snapshot?.activeTurnId).toBe("turn1");
+});
+
+it("sends MCP values only in the native decision while preserving the pending proposal until acceptance", async () => {
+  const proposal: PendingAuthoring = { turnId: "turn1", toolId: "mcp1", action: "create", summary: "Adicionar MCP", catalogRevision: null, agentReferences: [], target: { kind: "mcp", server: {
+    name: "docs", transport: "http", command: null, args: [], url: "https://example.com/mcp", enabled: true, cwd: null, envKeys: [], headerKeys: ["Authorization"],
+  } } };
+  const original = JSON.stringify(proposal);
+  const waiting = { ...running(), pendingAuthoring: proposal };
+  let accept!: (snapshot: ChatSnapshot) => void;
+  const pendingDecision = new Promise<ChatSnapshot>(resolve => { accept = resolve; });
+  call.mockImplementation(async command => command === "answer_agent_authoring" ? pendingDecision : waiting);
+  const { result } = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(result.current.snapshot?.pendingAuthoring).toEqual(proposal));
+  const before = JSON.stringify(result.current.snapshot?.pendingAuthoring);
+  const values = { environment: {}, headers: { Authorization: "Bearer test-only-secret" } };
+  let answered!: Promise<boolean>;
+  act(() => { answered = result.current.answerAuthoring(proposal, true, null, values); });
+  expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "c1", decision: { turnId: "turn1", toolId: "mcp1", approved: true, note: null, mcpValues: values } });
+  expect(JSON.stringify(result.current.snapshot?.pendingAuthoring)).toBe(before);
+  expect(JSON.stringify(result.current.snapshot)).not.toContain("test-only-secret");
+  await act(async () => { accept({ ...waiting, revision: 11, pendingAuthoring: null }); expect(await answered).toBe(true); });
+  expect(result.current.snapshot?.pendingAuthoring).toBeNull();
+  expect(JSON.stringify(proposal)).toBe(original);
 });
 function update(beforeRevision: number, next: ChatSnapshot) {
   const turn = next.turns[next.turns.length - 1];

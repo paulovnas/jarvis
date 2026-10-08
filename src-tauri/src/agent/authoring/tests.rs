@@ -41,6 +41,7 @@ fn reserve() -> (Fixture, Arc<Session>, watch::Receiver<bool>) {
                 account: "account".into(),
                 model: "model".into(),
                 reasoning: None,
+                service_tier: None,
                 mode: Mode::Build,
                 workflow: None,
                 custom_workflow_id: None,
@@ -55,10 +56,328 @@ fn reserve() -> (Fixture, Arc<Session>, watch::Receiver<bool>) {
     (fixture, session, signal)
 }
 
+fn hook_request(action: &str, revision: u64, hook: &crate::hooks::Hook) -> Value {
+    json!({"action":action,"hooksRevision":revision,"summary":"Verificar comandos antes da execução.","hook":hook})
+}
+
+fn manual_hook() -> crate::hooks::Hook {
+    crate::hooks::Hook {
+        id: "a".repeat(32),
+        name: "Verificar comandos".into(),
+        event: crate::hooks::Event::PreToolUse,
+        command: "node hook.js".into(),
+        matcher: "bash".into(),
+        timeout_seconds: 30,
+        enabled: true,
+    }
+}
+
+#[test]
+fn hook_proposals_validate_intent_and_preserve_native_and_stale_configuration() {
+    let fixture = Fixture::new();
+    let state = AppState::default();
+    assert!(hooks_output(&state, &fixture.root).unwrap()["instructions"]
+        .as_str()
+        .unwrap()
+        .contains("hook_event_name"));
+    let original = manual_hook();
+    let create = tool("jarvis_propose_hook", hook_request("create", 0, &original));
+    jsonschema::validate(&hook::definition()["parameters"], &create.args).unwrap();
+    let (proposal, change) = hook::prepare(&state, &fixture.root, &create).unwrap();
+    assert!(matches!(
+        proposal.target,
+        Target::Hook {
+            before: None,
+            after: Some(_)
+        }
+    ));
+    assert!(crate::hooks::load(&state, &fixture.root)
+        .unwrap()
+        .hooks
+        .is_empty());
+    let catalog = hook::apply(&state, &fixture.root, change, 0).unwrap();
+    assert_eq!(catalog.hooks.as_slice(), std::slice::from_ref(&original));
+    assert!(hook::prepare(&state, &fixture.root, &create).is_err());
+    let mut edited = original.clone();
+    edited.enabled = false;
+    let update = tool(
+        "jarvis_propose_hook",
+        hook_request("update", catalog.revision, &edited),
+    );
+    let (proposal, change) = hook::prepare(&state, &fixture.root, &update).unwrap();
+    assert!(matches!(
+        proposal.target,
+        Target::Hook {
+            before: Some(_),
+            after: Some(_)
+        }
+    ));
+    let current = hook::apply(&state, &fixture.root, change, catalog.revision).unwrap();
+    assert_eq!(current.hooks.as_slice(), std::slice::from_ref(&edited));
+    let invalid_delete = tool(
+        "jarvis_propose_hook",
+        hook_request("delete", current.revision, &original),
+    );
+    assert!(hook::prepare(&state, &fixture.root, &invalid_delete).is_err());
+    let delete = tool(
+        "jarvis_propose_hook",
+        hook_request("delete", current.revision, &edited),
+    );
+    let (proposal, change) = hook::prepare(&state, &fixture.root, &delete).unwrap();
+    assert!(matches!(
+        proposal.target,
+        Target::Hook {
+            before: Some(_),
+            after: None
+        }
+    ));
+    let mut native = edited;
+    native.id = current.native_hooks[0].id.clone();
+    assert!(hook::prepare(
+        &state,
+        &fixture.root,
+        &tool(
+            "jarvis_propose_hook",
+            hook_request("update", current.revision, &native)
+        )
+    )
+    .is_err());
+    let final_catalog = hook::apply(&state, &fixture.root, change, current.revision).unwrap();
+    assert!(final_catalog.hooks.is_empty());
+    assert_eq!(final_catalog.native_hooks, catalog.native_hooks);
+}
+
+#[tokio::test]
+async fn hook_changes_wait_for_yolo_approval_and_apply_once_or_preserve_rejection() {
+    for approved in [false, true] {
+        let (fixture, session, signal) = reserve();
+        let state = AppState::default();
+        let oauth = OpenAiCodexState::default();
+        let mcp = crate::mcp::McpState::default();
+        let call = tool(
+            "jarvis_propose_hook",
+            hook_request("create", 0, &manual_hook()),
+        );
+        session
+            .update(true, |data| {
+                data.turns.last_mut().unwrap().turn.steps.push(Step {
+                    tools: vec![call.clone()],
+                    ..Step::default()
+                });
+            })
+            .unwrap();
+        #[cfg(unix)]
+        {
+            // Even an explicit hook allow cannot replace the proposal's human review.
+            let permission_fixture = Fixture::new();
+            let hooks = super::super::tests::manual_hook_runtime(
+                &permission_fixture,
+                &session,
+                crate::hooks::Event::PermissionRequest,
+                "cat >/dev/null; printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}'",
+                "jarvis_propose_hook",
+            );
+            let selected = super::super::tests::options(ApprovalMode::Yolo);
+            assert!(super::super::authorize_declared(
+                super::super::ApprovalRequest {
+                    session: &session,
+                    tool: &call,
+                    options: &selected,
+                    policy: None,
+                    sandbox: None,
+                    project_id: None,
+                    manual_hooks: Some(&hooks),
+                    signal: signal.clone(),
+                },
+                crate::agent::tool_contract::ApprovalPolicy::Never,
+                crate::agent::tool_contract::Handler::JarvisAuthoring,
+            )
+            .await
+            .unwrap());
+        }
+        let execution = execute(
+            &session,
+            &session,
+            &state,
+            &oauth,
+            &mcp,
+            &fixture.root,
+            &call,
+            signal,
+        );
+        tokio::pin!(execution);
+        let pending = tokio::select! {
+            result = &mut execution => panic!("Hook changes must wait for native approval: {result:?}"),
+            result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    if let Some(pending) = session.snapshot().unwrap().pending_authoring { break pending; }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            }) => result.unwrap(),
+        };
+        assert!(crate::hooks::load(&state, &fixture.root)
+            .unwrap()
+            .hooks
+            .is_empty());
+        answer_with(
+            &session,
+            &pending.turn_id,
+            &pending.tool_id,
+            approved,
+            None,
+            |change, revision, _, _| {
+                let Mutation::Hook(change) = change else {
+                    panic!("Expected hook change")
+                };
+                let catalog = hook::apply(&state, &fixture.root, change, revision.unwrap())?;
+                Ok((
+                    json!({"approved":true,"status":"applied","hooksRevision":catalog.revision})
+                        .to_string(),
+                    false,
+                ))
+            },
+        )
+        .unwrap();
+        let result: Value = serde_json::from_str(&execution.await.unwrap()).unwrap();
+        assert_eq!(
+            result["status"],
+            if approved { "applied" } else { "rejected" }
+        );
+        assert_eq!(
+            crate::hooks::load(&state, &fixture.root)
+                .unwrap()
+                .hooks
+                .len(),
+            usize::from(approved)
+        );
+        assert!(answer_with(
+            &session,
+            &pending.turn_id,
+            &pending.tool_id,
+            true,
+            None,
+            |_, _, _, _| panic!("Must never replay")
+        )
+        .is_err());
+    }
+}
+
+#[tokio::test]
+async fn mcp_registration_always_waits_for_native_approval_and_never_replays_or_leaks_private_values(
+) {
+    for (approved, cancel) in [(true, false), (false, false), (true, true)] {
+        let (fixture, session, signal) = reserve();
+        let state = AppState::default();
+        let oauth = OpenAiCodexState::default();
+        let mcp_state = crate::mcp::McpState::default();
+        let call = tool(
+            "jarvis_propose_mcp",
+            json!({"summary":"Conectar o Firebase para este trabalho.","server":{"name":"firebase","transport":"stdio","command":"npx","args":["-y","firebase-tools","mcp"],"url":null,"enabled":true,"cwd":null,"envKeys":["TOKEN"],"headerKeys":[]}}),
+        );
+        jsonschema::validate(&mcp::definition()["parameters"], &call.args).unwrap();
+        session.update(true, |data| {
+            let turn = data.turns.last_mut().unwrap();
+            turn.turn.steps.push(Step { tools: vec![call.clone()], ..Step::default() });
+            turn.wire.push(json!({"type":"function_call","call_id":call.id,"name":call.name,"arguments":call.args.to_string()}));
+        }).unwrap();
+        let execution = execute(
+            &session,
+            &session,
+            &state,
+            &oauth,
+            &mcp_state,
+            &fixture.root,
+            &call,
+            signal.clone(),
+        );
+        tokio::pin!(execution);
+        let pending = tokio::select! {
+            result = &mut execution => panic!("MCP must wait for approval even in YOLO: {result:?}"),
+            pending = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    if let Some(pending) = session.snapshot().unwrap().pending_authoring { break pending; }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            }) => pending.unwrap(),
+        };
+        assert!(matches!(&pending.target, Target::Mcp { .. }));
+        assert!(mcp_state
+            .list(&state, &fixture.root)
+            .unwrap()
+            .iter()
+            .all(|s| s.name != "firebase"));
+        if cancel {
+            session
+                .data
+                .lock()
+                .unwrap()
+                .active
+                .as_ref()
+                .unwrap()
+                .cancel
+                .send_replace(true);
+        }
+        let applied = AtomicBool::new(false);
+        let values = mcp::Values {
+            environment: std::collections::BTreeMap::from([(
+                "TOKEN".into(),
+                "private-test-token".into(),
+            )]),
+            headers: std::collections::BTreeMap::new(),
+        };
+        let decision = answer_with(
+            &session,
+            &pending.turn_id,
+            &pending.tool_id,
+            approved,
+            None,
+            |mutation, revision, _, _| {
+                assert!(revision.is_none());
+                let Mutation::Mcp(draft) = mutation else {
+                    panic!("MCP mutation expected")
+                };
+                assert!(draft
+                    .config(&values)
+                    .unwrap()
+                    .named("firebase")
+                    .contains("private-test-token"));
+                applied.store(true, Ordering::SeqCst);
+                Ok((json!({"approved":true,"status":"applied","kind":"mcp","server":{"name":"firebase"}}).to_string(), false))
+            },
+        );
+        assert_eq!(applied.load(Ordering::SeqCst), approved && !cancel);
+        if cancel {
+            assert_eq!(decision.unwrap_err().code, "stale_authoring_proposal");
+            assert_eq!(execution.await.unwrap_err().code, "cancelled");
+        } else {
+            decision.unwrap();
+            let output: Value = serde_json::from_str(&execution.await.unwrap()).unwrap();
+            assert_eq!(
+                output["status"],
+                if approved { "applied" } else { "rejected" }
+            );
+        }
+        assert!(answer_with(
+            &session,
+            &pending.turn_id,
+            &pending.tool_id,
+            true,
+            None,
+            |_, _, _, _| panic!("must not apply twice")
+        )
+        .is_err());
+        let journal = std::fs::read_to_string(&session.journal).unwrap();
+        assert!(!journal.contains("private-test-token"));
+        assert!(!serde_json::to_string(&session.snapshot().unwrap())
+            .unwrap()
+            .contains("private-test-token"));
+    }
+}
+
 #[test]
 fn catalog_tools_expose_overview_and_typed_proposals() {
     let definitions = definitions();
-    assert_eq!(definitions.len(), 3);
+    assert_eq!(definitions.len(), 7);
     let names: Vec<_> = definitions
         .iter()
         .filter_map(|definition| definition["name"].as_str())
@@ -68,7 +387,11 @@ fn catalog_tools_expose_overview_and_typed_proposals() {
         [
             "jarvis_catalog",
             "jarvis_propose_agent",
-            "jarvis_propose_flow"
+            "jarvis_propose_flow",
+            "jarvis_propose_mcp",
+            "jarvis_propose_hook",
+            "jarvis_propose_plugin",
+            "jarvis_propose_project_instructions"
         ]
     );
     assert!(definitions[1]["parameters"]["properties"]["agent"].is_object());
@@ -140,6 +463,38 @@ fn catalog_tools_expose_overview_and_typed_proposals() {
         .contains("Deliver the requested frontend/design outcome within the authorized scope"));
 }
 
+#[tokio::test]
+async fn raw_executor_arguments_cannot_bypass_mcp_private_input_policy() {
+    let (fixture, session, signal) = reserve();
+    let state = AppState::default();
+    let oauth = OpenAiCodexState::default();
+    let mcp_state = crate::mcp::McpState::default();
+    let call = tool(
+        "jarvis_propose_mcp",
+        json!({"summary":"Adicionar docs","server":{"name":"docs","transport":"stdio","command":"npx","args":["docs-mcp","--token","private-test-token"],"url":null,"enabled":true,"cwd":null,"envKeys":[],"headerKeys":[]}}),
+    );
+    let error = execute(
+        &session,
+        &session,
+        &state,
+        &oauth,
+        &mcp_state,
+        &fixture.root,
+        &call,
+        signal,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "invalid_authoring_proposal");
+    assert!(!error.message.contains("private-test-token"));
+    assert!(session.snapshot().unwrap().pending_authoring.is_none());
+    assert!(mcp_state
+        .list(&state, &fixture.root)
+        .unwrap()
+        .iter()
+        .all(|server| server.name != "docs"));
+}
+
 #[test]
 fn assisted_flow_proposals_can_reference_native_agents() {
     let catalog = workflow::catalog::tests::example();
@@ -172,6 +527,7 @@ fn assisted_agent_proposals_accept_an_external_executor_without_a_provider() {
         account: String::new(),
         model: "sonnet".into(),
         reasoning: Some("high".into()),
+        service_tier: None,
         fallback: None,
     });
     let call = tool(
@@ -192,6 +548,41 @@ fn assisted_agent_proposals_accept_an_external_executor_without_a_provider() {
         )
     )
     .is_err());
+}
+
+#[test]
+fn assisted_agent_model_schema_accepts_explicit_fast_and_null_but_rejects_other_tiers() {
+    let catalog = workflow::catalog::tests::example();
+    let mut agent = serde_json::to_value(&catalog.agents[0]).unwrap();
+    let normal = json!({"account":"chatgpt","model":"selected-model","reasoning":null});
+    let fast = json!({"account":"chatgpt","model":"selected-model","reasoning":null,"serviceTier":"priority"});
+    let backup = json!({"account":"chatgpt","model":"backup-model","reasoning":null,"serviceTier":"priority"});
+    for model in [
+        normal.clone(),
+        fast.clone(),
+        json!({"account":"chatgpt","model":"selected-model","reasoning":null,"serviceTier":null}),
+        json!({"account":"chatgpt","model":"selected-model","reasoning":null,"fallback":backup}),
+    ] {
+        agent["model"] = model;
+        jsonschema::validate(&agent_schema(), &agent).unwrap();
+        serde_json::from_value::<workflow::catalog::AgentDefinition>(agent.clone())
+            .unwrap()
+            .model
+            .unwrap()
+            .validate_shape()
+            .unwrap();
+    }
+    for tier in ["fast", "flex", "default", "auto"] {
+        agent["model"] = normal.clone();
+        agent["model"]["serviceTier"] = json!(tier);
+        assert!(
+            jsonschema::validate(&agent_schema(), &agent).is_err(),
+            "{tier}"
+        );
+    }
+    agent["model"] = json!({"executor":"claude","account":"","model":"sonnet","reasoning":null,"serviceTier":"priority"});
+    let external = serde_json::from_value::<workflow::catalog::AgentDefinition>(agent).unwrap();
+    assert!(external.model.unwrap().validate_shape().is_err());
 }
 
 #[test]
@@ -625,11 +1016,13 @@ async fn publication_without_preview_confirmation_opens_native_review() {
                 turn.turn.steps.push(Step { tools: vec![call.clone()], ..Step::default() });
                 turn.wire.push(json!({"type":"function_call","call_id":call.id,"name":call.name,"arguments":call.args.to_string()}));
             }).unwrap();
+            let mcp_state = crate::mcp::McpState::default();
             let execution = execute(
                 &session,
                 &session,
                 &state,
                 &oauth,
+                &mcp_state,
                 &fixture.root,
                 &call,
                 signal,
@@ -702,6 +1095,7 @@ async fn publication_without_preview_confirmation_opens_native_review() {
             &session,
             &state,
             &oauth,
+            &crate::mcp::McpState::default(),
             &fixture.root,
             &call,
             signal,
@@ -751,7 +1145,17 @@ async fn publication_without_preview_confirmation_opens_native_review() {
         let home = fixture.root.clone();
         let user_signal = signal.clone();
         let execution = tokio::spawn(async move {
-            execute(&worker, &worker, &state, &oauth, &home, &call, signal).await
+            execute(
+                &worker,
+                &worker,
+                &state,
+                &oauth,
+                &crate::mcp::McpState::default(),
+                &home,
+                &call,
+                signal,
+            )
+            .await
         });
         tokio::time::timeout(Duration::from_secs(5), async {
             while !started.exists() {

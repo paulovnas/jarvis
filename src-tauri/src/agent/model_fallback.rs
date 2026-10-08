@@ -65,10 +65,18 @@ fn switch(data: &mut SessionData, choice: &ModelChoice) {
         "O modelo {} esgotou as tentativas de recuperação. Continuando com o modelo secundário {} e preservando o progresso desta tarefa.",
         previous.model, choice.model,
     );
+    let source = ModelChoice {
+        executor: previous.executor,
+        account: previous.account.clone(),
+        model: previous.model.clone(),
+        reasoning: previous.reasoning.clone(),
+        service_tier: previous.service_tier,
+        fallback: None,
+    };
     current.wire.push(json!({
         "role":"user", "_jarvis_runtime":true,
         "_jarvis_model_fallback": {
-            "from": {"executor":previous.executor,"account":previous.account,"model":previous.model,"reasoning":previous.reasoning},
+            "from": source,
             "to": choice,
         },
         "content":"The primary provider exhausted its retries. Continue the same task using the confirmed conversation and tool receipts. Do not repeat completed actions. Verify uncertain effects before retrying them.",
@@ -124,6 +132,7 @@ mod tests {
             account: "backup-account".into(),
             model: "backup-model".into(),
             reasoning: None,
+            service_tier: None,
             fallback: None,
         }
     }
@@ -133,8 +142,10 @@ mod tests {
     {
         let fixture = Fixture::new();
         let session = session(&fixture);
+        let mut primary_options = options(ApprovalMode::Yolo);
+        primary_options.service_tier = Some(workflow::settings::ServiceTier::Priority);
         let _signal = session
-            .reserve("Implementar a tarefa".into(), options(ApprovalMode::Yolo))
+            .reserve("Implementar a tarefa".into(), primary_options)
             .unwrap();
         let receipt =
             json!({"type":"function_call_output", "call_id":"write-1", "output":"Arquivo salvo"});
@@ -180,6 +191,19 @@ mod tests {
         let switched = &persisted[0];
         assert_eq!(switched.turn.id, before.turn.id);
         assert_eq!(switched.turn.options.model, "backup-model");
+        assert_eq!(switched.turn.options.service_tier, None);
+        let marker = switched
+            .wire
+            .iter()
+            .find_map(|item| item.get("_jarvis_model_fallback"))
+            .unwrap();
+        let original: ModelChoice = serde_json::from_value(marker["from"].clone()).unwrap();
+        assert_eq!(
+            original.service_tier,
+            Some(workflow::settings::ServiceTier::Priority)
+        );
+        assert_eq!(original.model, before.turn.options.model);
+        assert!(marker["to"].get("serviceTier").is_none());
         assert_eq!(
             switched.turn.options.approval_mode,
             before.turn.options.approval_mode
@@ -225,5 +249,31 @@ mod tests {
             .unwrap()
             .iter()
             .any(|item| item["encrypted_content"] == "secondary-signature"));
+    }
+
+    #[test]
+    fn fallback_uses_its_own_explicit_speed() {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve("Continuar a tarefa".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        let mut fallback = secondary();
+        fallback.service_tier = Some(workflow::settings::ServiceTier::Priority);
+        session
+            .update(true, |data| switch(data, &fallback))
+            .unwrap();
+        let (persisted, _) = journal::read_only(&session.journal).unwrap();
+        assert_eq!(
+            persisted[0].turn.options.service_tier,
+            fallback.service_tier
+        );
+        let marker = persisted[0]
+            .wire
+            .iter()
+            .find_map(|item| item.get("_jarvis_model_fallback"))
+            .unwrap();
+        assert!(marker["from"].get("serviceTier").is_none());
+        assert_eq!(marker["to"]["serviceTier"], "priority");
     }
 }

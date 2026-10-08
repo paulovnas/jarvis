@@ -73,3 +73,21 @@ it("changes next-turn scope while preserving applicable behavior and removing st
   expect(github).not.toHaveProperty("automaticPublication");
   expect(github).not.toHaveProperty("modelSelection");
 });
+
+it("restores and validates Fast from the account capability and removes it for the next Normal turn", () => {
+  const data = choices();
+  data.models[0].models[0].supportsFast = true;
+  const fast = { ...primary, serviceTier: "priority" as const };
+  data.overrides["standard/builder"] = fast;
+  expect(remoteModelChoice(data, "standard", chatOptions)).toEqual(fast);
+  expect(remoteModelProblem(data, "standard", fast)).toBeNull();
+  const options = remoteTurnOptions("standard", fast, chatOptions);
+  expect(options.serviceTier).toBe("priority");
+  expect(remoteTurnOptions("standard", primary, options)).not.toHaveProperty("serviceTier");
+  expect(data.defaults["standard/builder"]).toEqual(primary);
+  data.models[0].models[0].supportsFast = false;
+  expect(remoteModelProblem(data, "standard", fast)).toContain("Selecione Normal");
+  data.models[0].models[0].supportsFast = true;
+  data.models[0].providerKind = "custom";
+  expect(remoteModelProblem(data, "standard", fast)).toContain("Fast");
+});

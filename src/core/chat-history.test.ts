@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
-import type { ChatSnapshot, HistoryPage } from "./chat";
+import { historyPageSchema, readChat, type ChatSnapshot, type HistoryPage } from "./chat";
 import { mergeChat, mergeHistory } from "./chat-history";
 
 function page(start: number, end: number, total = 500): HistoryPage {
@@ -37,6 +37,23 @@ describe("bounded conversation windows", () => {
     expect(loaded.turns[19].steps[0].text).toBe("Resposta mais recente");
     const history = mergeHistory(loaded, page(490, 500), 499);
     expect(history.turns[9].steps[0].text).toBe("Resposta mais recente");
+  });
+  it("retains plugin and hook identity across paginated history and a late snapshot", () => {
+    const plugin = { component: "plugins" as const, action: "skill_read", status: "applied" as const, summary: "Skill de revisão utilizada", sources: [], durationMs: 1, resourceId: "skill:workspace-tools:review", resourceName: "Review", pluginId: "workspace-tools" };
+    const hook = { component: "hooks" as const, action: "PreToolUse", status: "issues" as const, summary: "Hook de comando falhou", sources: [], durationMs: 3, resourceId: "hook:workspace-tools:PreToolUse", resourceName: "Check commands", pluginId: "workspace-tools" };
+    const live = { ...snapshot(499, 500), revision: 8, activeTurnId: "turn-499" };
+    live.turns[0].steps[0].coreActivities = [hook];
+    const older = page(480, 500);
+    older.turns[0].steps[0].coreActivities = [plugin];
+    const loaded = mergeHistory(readChat(live, "c1"), historyPageSchema.parse(JSON.parse(JSON.stringify(older))), "older");
+    expect(loaded.turns.find(turn => turn.id === "turn-480")?.steps[0].coreActivities).toEqual([plugin]);
+    expect(loaded.turns.find(turn => turn.id === "turn-499")?.steps[0].coreActivities).toEqual([hook]);
+
+    const stale = readChat({ ...snapshot(490, 500), revision: 0 }, "c1");
+    const restored = readChat(JSON.parse(JSON.stringify(mergeChat(loaded, stale))), "c1");
+    expect(restored.turns.find(turn => turn.id === "turn-480")?.steps[0].coreActivities).toEqual([plugin]);
+    expect(restored.turns.find(turn => turn.id === "turn-499")?.steps[0].coreActivities).toEqual([hook]);
+    expect(restored.turns.find(turn => turn.id === "turn-481")?.steps[0].coreActivities).toBeUndefined();
   });
   it("bounds large turns by bytes and restores distant pages and their compactions", () => {
     const large = page(480, 500);

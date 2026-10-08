@@ -209,6 +209,62 @@ pub(super) fn discover_watched(
     walk(&own, "jarvis", false, 0, config, &mut scan)?;
     let builtin = super::builtin::root(home);
     walk(&builtin, "jarvis", true, 0, config, &mut scan)?;
+    let overlay = crate::plugins::load_active_for_project(home, project)
+        .map_err(|cause| error(cause.message))?;
+    scan.watched.push(super::runtime_cache::Stamp::read(
+        &root(home).join("plugins"),
+    ));
+    scan.watched.push(super::runtime_cache::Stamp::read(
+        &root(home).join("plugins/catalog.json"),
+    ));
+    scan.warnings.extend(overlay.warnings);
+    for source in overlay.skill_roots {
+        let source_root = fs::canonicalize(&source.path)?;
+        let start = scan.skills.len();
+        if source.recursive || skill_file(&source.path).is_some() {
+            walk(
+                &source.path,
+                "plugin",
+                true,
+                0,
+                &Config::default(),
+                &mut scan,
+            )?;
+        } else if let Ok(entries) = fs::read_dir(&source.path) {
+            scan.watched
+                .push(super::runtime_cache::Stamp::read(&source.path));
+            let mut children: Vec<_> = entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| skill_file(path).is_some())
+                .collect();
+            children.sort();
+            for path in children {
+                walk(&path, "plugin", true, 0, &Config::default(), &mut scan)?;
+            }
+        }
+        for skill in &mut scan.skills[start..] {
+            let relative = skill
+                .path
+                .strip_prefix(&source_root)
+                .map_err(|_| error("A skill está fora do componente do plugin."))?;
+            skill.id = format!(
+                "{:x}",
+                Sha256::digest(
+                    format!(
+                        "{}\0{}\0{}",
+                        source.plugin_id,
+                        source.component_id,
+                        relative.display()
+                    )
+                    .as_bytes()
+                )
+            );
+            skill.name = format!("{}:{}", source.plugin_id, skill.name);
+            skill.source = Some(source.plugin_id.clone());
+            skill.marketplace_id = Some(source.component_id.clone());
+        }
+    }
     if config.include_agents {
         if let Some(project) = project {
             walk(

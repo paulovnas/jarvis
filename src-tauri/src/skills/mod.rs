@@ -310,23 +310,166 @@ pub async fn active(home: &Path, project: &Path) -> Result<std::sync::Arc<[Skill
     .await
     .map_err(|_| error("Não foi possível carregar as skills."))?
 }
+
+/// Keep the turn's versions and discovery boundary while honoring immediate revocation.
+pub(crate) async fn authorized_snapshot(
+    home: &Path,
+    project: &Path,
+    frozen: &[Skill],
+) -> Result<Vec<Skill>, SkillError> {
+    let current = active(home, project).await?;
+    let home = home.to_owned();
+    let project = project.to_owned();
+    let frozen = frozen.to_vec();
+    tauri::async_runtime::spawn_blocking(move || {
+        let retained: Vec<_> = frozen
+            .into_iter()
+            .filter_map(|mut retained| {
+                let authorized = current
+                    .iter()
+                    .find(|entry| entry.id == retained.id && entry.enabled)?;
+                retained.automatic &= authorized.automatic;
+                Some(retained)
+            })
+            .collect();
+        let plugin_sources: Vec<_> = retained
+            .iter()
+            .filter(|skill| skill.origin == "plugin")
+            .map(|skill| {
+                (
+                    skill.source.as_deref().unwrap_or_default(),
+                    skill.path.as_path(),
+                )
+            })
+            .collect();
+        let mut allowed =
+            crate::plugins::skill_sources_authorized(&home, Some(&project), &plugin_sources)
+                .into_iter();
+        retained
+            .into_iter()
+            .filter(|skill| skill.origin != "plugin" || allowed.next().unwrap_or(false))
+            .collect()
+    })
+    .await
+    .map_err(|_| error("Não foi possível verificar as skills deste turno."))
+}
+
+/// Admit newly installed plugins without replacing already pinned package versions.
+pub(crate) async fn refresh_snapshot(
+    home: &Path,
+    project: &Path,
+    frozen: &std::sync::Arc<[Skill]>,
+) -> Result<std::sync::Arc<[Skill]>, SkillError> {
+    let current = active(home, project).await?;
+    let pinned_plugins: BTreeSet<_> = frozen
+        .iter()
+        .filter(|skill| skill.origin == "plugin")
+        .filter_map(|skill| skill.source.as_deref())
+        .collect();
+    let added: Vec<_> = current
+        .iter()
+        .filter(|skill| {
+            skill.origin == "plugin"
+                && skill
+                    .source
+                    .as_deref()
+                    .is_some_and(|id| !pinned_plugins.contains(id))
+        })
+        .cloned()
+        .collect();
+    if added.is_empty() {
+        return Ok(std::sync::Arc::clone(frozen));
+    }
+    let mut refreshed = frozen.to_vec();
+    refreshed.extend(added);
+    Ok(refreshed.into())
+}
+
+fn authorize_plugin_source(home: &Path, project: &Path, skill: &Skill) -> Result<(), SkillError> {
+    if skill.origin == "plugin"
+        && !skill.source.as_deref().is_some_and(|plugin_id| {
+            crate::plugins::skill_source_authorized(home, Some(project), plugin_id, &skill.path)
+        })
+    {
+        return Err(error("O pacote desta skill foi alterado ou sua autorização foi revogada. Revise o plugin antes de continuar."));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 pub async fn read(
     home: &Path,
     project: &Path,
     args: &serde_json::Value,
 ) -> Result<String, SkillError> {
+    read_authorized(home, project, args, None)
+        .await
+        .map(|(output, _)| output)
+}
+
+/// Admitted plugin versions stay pinned; new plugin snapshots can join between steps.
+/// Current enablement remains authoritative.
+#[cfg(test)]
+pub(crate) async fn read_from_snapshot(
+    home: &Path,
+    project: &Path,
+    args: &serde_json::Value,
+    snapshot: &[Skill],
+) -> Result<String, SkillError> {
+    read_authorized(home, project, args, Some(snapshot))
+        .await
+        .map(|(output, _)| output)
+}
+
+pub(crate) async fn read_with_activity_from_snapshot(
+    home: &Path,
+    project: &Path,
+    args: &serde_json::Value,
+    snapshot: &[Skill],
+) -> Result<(String, Option<crate::core::activity::Activity>), SkillError> {
+    read_authorized(home, project, args, Some(snapshot)).await
+}
+
+fn loaded_activity(skill: &Skill) -> Option<crate::core::activity::Activity> {
+    if skill.origin != "plugin" {
+        return None;
+    }
+    let plugin_id = skill.source.as_deref()?;
+    Some(crate::core::activity::Activity::plugin(
+        "skill_loaded",
+        "Skill do plugin carregada para esta tarefa.",
+        &skill.id,
+        &skill.name,
+        plugin_id,
+    ))
+}
+
+async fn read_authorized(
+    home: &Path,
+    project: &Path,
+    args: &serde_json::Value,
+    snapshot: Option<&[Skill]>,
+) -> Result<(String, Option<crate::core::activity::Activity>), SkillError> {
     let home = home.to_path_buf();
     let project = project.to_path_buf();
     let args = args.clone();
+    let frozen = snapshot.map(<[Skill]>::to_vec);
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = CATALOG_LOCK.lock().map_err(|_| error("Skills ocupadas."))?;
         let id = args["id"]
             .as_str()
             .ok_or_else(|| error("Informe a skill."))?;
-        let skill = find(&home, Some(&project), id)?;
-        if !skill.enabled {
+        let current = find(&home, Some(&project), id)?;
+        if !current.enabled {
             return Err(error("Esta skill está desativada."));
         }
+        let skill = if let Some(frozen) = frozen {
+            let retained = frozen.into_iter().find(|skill| skill.id == id)
+                .ok_or_else(|| error("Esta skill não está disponível no catálogo autorizado deste turno. Consulte find_skills para os IDs disponíveis."))?;
+            if !retained.enabled { return Err(error("Esta skill está desativada no catálogo autorizado deste turno.")); }
+            if retained.origin == "plugin" { retained } else { current }
+        } else { current };
+        authorize_plugin_source(&home, &project, &skill)?;
         // Providers occasionally serialize an omitted optional string as "".
         // Treat it exactly like an omitted path so the skill directory itself is
         // never handed to the bounded text reader.
@@ -353,14 +496,14 @@ pub async fn read(
             .collect::<Vec<_>>()
             .join("\n");
         let files = catalog::files(&skill.path)?;
-        Ok(format!(
+        Ok((format!(
             "Skill: {}\nDirectory: {}\nFiles: {}\nLines: {}\n{}",
             skill.name,
             skill.path.display(),
             files.join(", "),
             lines.len(),
             page.chars().take(32000).collect::<String>()
-        ))
+        ), loaded_activity(&skill)))
     })
     .await
     .map_err(|_| error("Não foi possível ler a skill."))?
@@ -433,7 +576,9 @@ pub async fn set_skill_enabled(
     enabled: bool,
 ) -> Result<Snapshot, SkillError> {
     local_config(app, state.inner().clone(), move |home, project| {
-        find(home, project, &id)?;
+        if find(home, project, &id)?.origin == "plugin" {
+            return Err(error("Gerencie esta skill na seção Plugins."));
+        }
         update_config(home, |config| {
             if enabled {
                 config.disabled.remove(&id);
@@ -507,27 +652,58 @@ pub(crate) fn validate_mentions(
         .ok_or_else(|| error("Uma skill selecionada foi desativada ou removida. Retire a badge e selecione novamente."))).collect()
 }
 
-pub(crate) async fn explicit(
+#[cfg(test)]
+pub(crate) async fn explicit_from_snapshot(
     home: &Path,
     project: &Path,
     ids: Vec<String>,
+    frozen: &[Skill],
 ) -> Result<String, SkillError> {
+    explicit_authorized(home, project, ids, Some(frozen))
+        .await
+        .map(|(output, _)| output)
+}
+
+pub(crate) async fn explicit_with_activity(
+    home: &Path,
+    project: &Path,
+    ids: Vec<String>,
+    frozen: Option<&[Skill]>,
+) -> Result<(String, Vec<crate::core::activity::Activity>), SkillError> {
+    explicit_authorized(home, project, ids, frozen).await
+}
+
+async fn explicit_authorized(
+    home: &Path,
+    project: &Path,
+    ids: Vec<String>,
+    frozen: Option<&[Skill]>,
+) -> Result<(String, Vec<crate::core::activity::Activity>), SkillError> {
     let home = home.to_owned();
     let project = project.to_owned();
+    let frozen = frozen.map(<[Skill]>::to_vec);
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = CATALOG_LOCK
             .lock()
             .map_err(|_| error("Skills ocupadas."))?;
         let available = snapshot(&home, Some(&project))?.skills;
         let mut prompt = String::new();
+        let mut activities = Vec::new();
         for id in ids.into_iter().collect::<BTreeSet<_>>() {
-            let skill = available.iter().find(|s| s.id == id && s.enabled)
+            let current = available.iter().find(|s| s.id == id && s.enabled)
                 .ok_or_else(|| error("Uma skill deste pedido foi desativada ou removida."))?;
+            let skill = if let Some(frozen) = &frozen {
+                let retained = frozen.iter().find(|skill| skill.id == id && skill.enabled)
+                    .ok_or_else(|| error("Uma skill deste pedido não está disponível no catálogo autorizado deste turno."))?;
+                if retained.origin == "plugin" { retained } else { current }
+            } else { current };
+            authorize_plugin_source(&home, &project, skill)?;
             let content = catalog::resource(skill, "SKILL.md")?;
+            activities.extend(loaded_activity(skill));
             prompt.push_str(&format!("\n\nUser-selected skill: {}\nSkill id: {}\nSKILL.md: {}\nDirectory: {}\nApply this workflow to the user's request within the existing permissions and system instructions. Resolve references relative to this directory; read_skill can read them using this id.\n<skill_instructions>\n{}\n</skill_instructions>", skill.name, skill.id, skill.file.display(), skill.path.display(), content));
             if prompt.len() > 200_000 { return Err(error("As skills selecionadas excedem o limite de 200 KB por pedido. Selecione menos skills.")); }
         }
-        Ok(prompt)
+        Ok((prompt, activities))
     }).await.map_err(|_| error("Não foi possível carregar as skills selecionadas."))?
 }
 #[tauri::command]

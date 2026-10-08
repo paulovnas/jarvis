@@ -109,6 +109,7 @@ fn from_options(options: &TurnOptions) -> ModelChoice {
         account: options.account.clone(),
         model: options.model.clone(),
         reasoning: options.reasoning.clone(),
+        service_tier: options.service_tier,
         fallback: None,
     }
 }
@@ -219,6 +220,7 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
                     account,
                     model: model.unwrap_or_default(),
                     reasoning: None,
+                    service_tier: None,
                     fallback: None,
                 },
             )?);
@@ -713,7 +715,8 @@ pub async fn remove(
                 return Err(stale());
             }
             if matches!(item.kind, Kind::WebSearch | Kind::Vision)
-                && replacement.choice.reasoning.is_some()
+                && (replacement.choice.reasoning.is_some()
+                    || replacement.choice.service_tier.is_some())
             {
                 return Err(error(
                     "Esta ferramenta usa apenas a seleção de provedor e modelo.",
@@ -722,6 +725,7 @@ pub async fn remove(
             if item.kind == Kind::ImageGeneration {
                 let valid = replacement.choice.model == super::image_generation::MODEL
                     && replacement.choice.reasoning.is_none()
+                    && replacement.choice.service_tier.is_none()
                     && state
                         .list_provider_accounts(&home)
                         .map_err(storage)?
@@ -737,13 +741,22 @@ pub async fn remove(
                     ));
                 }
             } else {
-                let (credential, _) = oauth.inference_model(
+                let (credential, model) = oauth.inference_model(
                     &state,
                     &home,
                     &replacement.choice.account,
                     &replacement.choice.model,
                     replacement.choice.reasoning.as_deref(),
                 )?;
+                crate::openai_codex::validate_service_tier(
+                    &credential,
+                    &model,
+                    replacement.choice.service_tier,
+                )
+                .map_err(|cause| ProviderError {
+                    code: "provider_dependencies".into(),
+                    message: cause.message,
+                })?;
                 let provider_kind = if credential.custom.is_some() {
                     "custom"
                 } else if credential.project_id.is_some() {

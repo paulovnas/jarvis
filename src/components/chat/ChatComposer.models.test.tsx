@@ -216,3 +216,24 @@ it("preserves the selected model and draft when saving another choice fails", as
   expect(screen.getByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Meu rascunho");
   expect(globalSave).not.toHaveBeenCalled();
 });
+
+it("persists Fast only in the edited chat, restores it, and sends the selected service tier", async () => {
+  const user = userEvent.setup(), sendA = vi.fn().mockResolvedValue(true), sendB = vi.fn().mockResolvedValue(true);
+  const fastModels = models.map(group => ({ ...group, providerKind: "openai-codex" as const, models: group.models.map(model => ({ ...model, supportsFast: true })) }));
+  const view = render(<><Chat id="chat-a" onSendMessage={sendA} modelGroups={fastModels} /><Chat id="chat-b" onSendMessage={sendB} modelGroups={fastModels} /></>);
+  await screen.findAllByRole("textbox", { name: "Mensagem" });
+  const a = screen.getByRole("region", { name: "chat-a" }), b = screen.getByRole("region", { name: "chat-b" });
+  within(a).getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: /Velocidade/ })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitemradio", { name: "Fast" }));
+  await waitFor(() => expect(stored["chat-a"]["standard/builder"]?.serviceTier).toBe("priority"));
+  expect(stored["chat-b"]).toEqual({}); expect(globalSave).not.toHaveBeenCalled();
+  expect(within(b).getByRole("button", { name: "Selecionar modelo de IA" })).not.toHaveTextContent("Fast");
+  await user.type(within(a).getByRole("textbox", { name: "Mensagem" }), "Execute rápido{Enter}");
+  await user.type(within(b).getByRole("textbox", { name: "Mensagem" }), "Execute normal{Enter}");
+  expect(sendA).toHaveBeenCalledWith("Execute rápido", expect.objectContaining({ serviceTier: "priority" }));
+  expect(sendB.mock.calls[0][1]).not.toHaveProperty("serviceTier");
+  view.unmount();
+  render(<Chat id="chat-a" onSendMessage={sendA} modelGroups={fastModels} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Fast"));
+});

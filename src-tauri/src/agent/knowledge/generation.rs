@@ -55,6 +55,8 @@ pub(crate) struct Choice {
     account: String,
     model: String,
     reasoning: Option<String>,
+    #[serde(default)]
+    service_tier: Option<super::super::workflow::settings::ServiceTier>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -378,6 +380,11 @@ async fn claude_text(
     prompt: String,
     input: String,
 ) -> Result<String, AgentError> {
+    if choice.service_tier.is_some() {
+        return Err(error(
+            "O modo Fast está disponível somente para modelos ChatGPT compatíveis.",
+        ));
+    }
     let mut process = crate::claude::ClaudeProcess::spawn(crate::claude::RunOptions {
         cwd: root.into(),
         session_id: crate::claude::new_session_id().map_err(|e| error(&e))?,
@@ -513,6 +520,7 @@ pub(crate) async fn generate_project_knowledge(
                 account: request.choice.account.clone(),
                 model: request.choice.model.clone(),
                 reasoning: request.choice.reasoning.clone(),
+                service_tier: request.choice.service_tier,
                 mode: Mode::Plan,
                 workflow: None,
                 custom_workflow_id: None,
@@ -604,6 +612,7 @@ pub(in crate::agent) async fn synthesize(
                 account: options.account.clone(),
                 model: options.model.clone(),
                 reasoning: Some("low".into()),
+                service_tier: options.service_tier,
             },
             prompt.into(),
             input,
@@ -656,6 +665,23 @@ pub(in crate::agent) async fn synthesize(
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn knowledge_model_choice_defaults_to_normal_and_accepts_only_explicit_priority() {
+        let legacy =
+            json!({"account":"selected-account","model":"selected-model","reasoning":null});
+        let normal: Choice = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(normal.service_tier, None);
+        let mut fast = legacy.clone();
+        fast["serviceTier"] = json!("priority");
+        assert_eq!(
+            serde_json::from_value::<Choice>(fast).unwrap().service_tier,
+            Some(super::super::super::workflow::settings::ServiceTier::Priority)
+        );
+        let mut unsupported = legacy;
+        unsupported["serviceTier"] = json!("auto");
+        assert!(serde_json::from_value::<Choice>(unsupported).is_err());
+    }
 
     #[test]
     fn generation_requests_separate_previous_report_and_routing_from_repository_evidence() {

@@ -140,6 +140,7 @@ mod tests {
             account: "cheap-provider".into(),
             model: "cheap-model".into(),
             reasoning: None,
+            service_tier: None,
             fallback: None,
         };
         let dedicated = options(conversation.clone(), Some(&choice));
@@ -150,5 +151,34 @@ mod tests {
         assert_eq!(conversation.executor, crate::claude::Executor::Claude);
         assert_eq!(conversation.model, "sonnet");
         assert_eq!(conversation.reasoning.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn title_speed_is_inherited_only_without_a_dedicated_model_choice() {
+        use super::super::workflow::settings::{ModelChoice, ServiceTier};
+        let mut conversation = super::super::tests::options(super::super::ApprovalMode::Yolo);
+        conversation.service_tier = Some(ServiceTier::Priority);
+        assert_eq!(
+            options(conversation.clone(), None).service_tier,
+            Some(ServiceTier::Priority)
+        );
+        let mut choice = ModelChoice {
+            executor: crate::claude::Executor::Jarvis,
+            account: "title-provider".into(),
+            model: "title-model".into(),
+            reasoning: None,
+            service_tier: None,
+            fallback: None,
+        };
+        assert_eq!(
+            options(conversation.clone(), Some(&choice)).service_tier,
+            None
+        );
+        choice.service_tier = Some(ServiceTier::Priority);
+        assert_eq!(
+            options(conversation.clone(), Some(&choice)).service_tier,
+            Some(ServiceTier::Priority)
+        );
+        assert_eq!(conversation.service_tier, Some(ServiceTier::Priority));
     }
 }

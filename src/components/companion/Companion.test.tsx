@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CompanionItem, CompanionSnapshot } from "@/core/companion";
+import { companionChatSchema, type CompanionItem, type CompanionSnapshot } from "@/core/companion";
 import type { AccountUsage } from "@/core/provider-usage";
 import { Companion } from "./Companion";
 import type { RobotProps } from "./Robot";
@@ -338,7 +338,7 @@ describe("Desktop companion", () => {
     expect(speech).toBeChecked();
   });
 
-  it("restores voice volume and persists keyboard adjustment independently of both mute switches", async () => {
+  it("hides muted voice volume and restores the saved adjustment when Jarvito is unmuted", async () => {
     measureSliders();
     const original = call.getMockImplementation();
     call.mockImplementation(async (command, args) => command === "get_companion_speech_volume" ? 0.42
@@ -363,9 +363,15 @@ describe("Desktop companion", () => {
     expect(call).not.toHaveBeenCalledWith("set_companion_speech", expect.anything());
     await user.click(speech);
     await waitFor(() => expect(speech).toBeChecked());
-    expect(slider).toHaveAttribute("aria-valuenow", "43");
-    expect(slider).not.toBeDisabled();
+    expect(screen.queryByRole("slider", { name: "Volume da voz" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Volume da voz")).not.toBeInTheDocument();
+    expect(screen.queryByText("43%")).not.toBeInTheDocument();
     expect(sound).not.toBeChecked();
+    await user.click(speech);
+    await waitFor(() => expect(speech).not.toBeChecked());
+    expect(screen.getByRole("slider", { name: "Volume da voz" })).toHaveAttribute("aria-valuenow", "43");
+    expect(screen.getByText("43%")).toBeVisible();
+    expect(call.mock.calls.filter(([command]) => command === "set_companion_speech_volume")).toHaveLength(1);
   });
 
   it("restores the confirmed volume and shows feedback if saving fails", async () => {
@@ -700,6 +706,51 @@ describe("Desktop companion", () => {
     expect(call.mock.calls.some(([command]) => command === "companion_open_conversation")).toBe(false);
     await user.click(screen.getByRole("tab", { name: "Atividade" }));
     expect(screen.getByRole("heading", { name: "Tudo tranquilo por aqui" })).toBeVisible();
+  });
+
+  it.each([true, false])("reviews a global MCP in the real island and submits only explicit decision %s", async approved => {
+    snapshot.items = [{ ...base, global: true, conversationId: "global-chat", title: "Jarvito", projectName: "Chat geral", status: "waiting", requiresConversation: true }];
+    let chat = companionChatSchema.parse({
+      conversationId: "global-chat", projectId: null, projectName: null, global: true, proposal: null,
+      chat: { conversationId: "global-chat", revision: 1, activeTurnId: "mcp-turn", pendingApproval: null, turns: [], pendingAuthoring: {
+        turnId: "mcp-turn", toolId: "mcp-add", action: "create", summary: "Adicionar MCP Monday", catalogRevision: null, agentReferences: [],
+        target: { kind: "mcp", server: { name: "Monday", transport: "http", command: null, args: [], url: "https://mcp.example.com/monday", enabled: true, cwd: null, envKeys: [], headerKeys: ["Authorization"] } },
+      } },
+    });
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => {
+      if (command === "get_companion_chat") return chat;
+      if (command === "get_companion_models" || command === "get_companion_conversations") return [];
+      if (command === "ack_companion_item") return snapshot;
+      if (command === "answer_agent_authoring") {
+        chat = { ...chat, chat: { ...chat.chat, revision: 2, pendingAuthoring: null } };
+        return chat.chat;
+      }
+      return original?.(command, args);
+    });
+    const user = userEvent.setup(); render(<Companion />);
+    await user.click(await screen.findByRole("button", { name: /Abrir assistente Jarvis/ }));
+    await user.click(await screen.findByRole("button", { name: "Continuar no Jarvis" }));
+    expect(await screen.findByRole("dialog", { name: "Revisar servidor MCP" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Continuar no Jarvis" })).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("Cabeçalho Authorization"), "private-island-token");
+    call.mockClear();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Revisar servidor MCP" })).toBeVisible();
+    expect(call).not.toHaveBeenCalledWith("set_companion_expanded", { expanded: false });
+    expect(call).not.toHaveBeenCalledWith("answer_agent_authoring", expect.anything());
+    const overlay = document.querySelector("[data-slot=sheet-overlay]");
+    if (!overlay) throw new Error("Approval overlay missing");
+    fireEvent.pointerDown(overlay); fireEvent.click(overlay);
+    expect(screen.getByRole("dialog", { name: "Revisar servidor MCP" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: approved ? "Aprovar e adicionar" : "Recusar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Revisar servidor MCP" })).not.toBeInTheDocument());
+    expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "global-chat", decision: {
+      turnId: "mcp-turn", toolId: "mcp-add", approved, note: null,
+      ...(approved ? { mcpValues: { environment: {}, headers: { Authorization: "private-island-token" } } } : {}),
+    } });
+    expect(JSON.stringify(chat)).not.toContain("private-island-token");
+    expect(call.mock.calls.some(([command]) => command === "companion_open_conversation")).toBe(false);
   });
 
   it("keeps an unseen result in the inbox when navigation fails", async () => {

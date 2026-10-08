@@ -1,5 +1,6 @@
 pub mod config;
 pub(crate) mod executable;
+pub(crate) mod oauth;
 pub mod runtime;
 mod stdio;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -14,6 +15,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tauri::Manager as _;
+
+type PluginConfigs = std::collections::HashMap<String, (Server, Config)>;
+type PluginOwners = std::collections::HashMap<String, String>;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -138,6 +142,9 @@ pub struct Check {
 
 pub(crate) trait Secrets: Send + Sync {
     fn load(&self, key: &str) -> Result<String, McpError>;
+    fn load_optional(&self, key: &str) -> Result<Option<String>, McpError> {
+        self.load(key).map(Some)
+    }
     fn store(&self, key: &str, value: &str) -> Result<(), McpError>;
     fn delete(&self, key: &str) -> Result<(), McpError>;
 }
@@ -148,6 +155,15 @@ fn keychain_service() -> &'static str {
 }
 #[cfg(target_os = "macos")]
 impl Secrets for Keychain {
+    fn load_optional(&self, key: &str) -> Result<Option<String>, McpError> {
+        match security_framework::passwords::get_generic_password(keychain_service(), key) {
+            Ok(bytes) => String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|_| storage_error()),
+            Err(error) if error.code() == -25300 => Ok(None),
+            Err(_) => Err(storage_error()),
+        }
+    }
     fn load(&self, key: &str) -> Result<String, McpError> {
         let bytes = security_framework::passwords::get_generic_password(keychain_service(), key)
             .map_err(|_| error("Não foi possível ler a configuração no Keychain."))?;
@@ -173,6 +189,9 @@ impl Secrets for Keychain {
 }
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 impl Secrets for Keychain {
+    fn load_optional(&self, key: &str) -> Result<Option<String>, McpError> {
+        vault_secrets::load_optional(key)
+    }
     fn load(&self, key: &str) -> Result<String, McpError> {
         vault_secrets::load(key)
     }
@@ -205,6 +224,7 @@ impl Secrets for Keychain {
 struct Manager {
     guard: Mutex<()>,
     secrets: Arc<dyn Secrets>,
+    apps_context: Mutex<Option<crate::plugins::apps::Context>>,
 }
 #[derive(Clone)]
 pub struct McpState(Arc<Manager>);
@@ -213,6 +233,7 @@ impl Default for McpState {
         Self(Arc::new(Manager {
             guard: Mutex::new(()),
             secrets: Arc::new(Keychain),
+            apps_context: Mutex::new(None),
         }))
     }
 }
@@ -243,10 +264,126 @@ fn find(connection: &Connection, id: &str) -> Result<Server, McpError> {
         .ok_or_else(|| error("Este MCP não está mais cadastrado."))
 }
 impl McpState {
-    pub fn list(&self, state: &AppState, home: &Path) -> Result<Vec<Server>, McpError> {
-        state.with_connection(home, |connection| rows(connection))
+    pub(crate) fn configure_apps(&self, context: crate::plugins::apps::Context) {
+        if let Ok(mut stored) = self.0.apps_context.lock() {
+            *stored = Some(context);
+        }
     }
-    fn config(&self, server: &Server) -> Result<Config, McpError> {
+    pub(crate) fn apps_context(&self) -> Option<crate::plugins::apps::Context> {
+        self.0
+            .apps_context
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
+    }
+
+    pub fn list(&self, state: &AppState, home: &Path) -> Result<Vec<Server>, McpError> {
+        self.list_for_project(state, home, None)
+    }
+    pub(crate) fn list_for_project(
+        &self,
+        state: &AppState,
+        home: &Path,
+        project: Option<&Path>,
+    ) -> Result<Vec<Server>, McpError> {
+        let mut servers = state.with_connection(home, |connection| rows(connection))?;
+        let overlay =
+            crate::plugins::load_active_for_project(home, project).map_err(|_| storage_error())?;
+        for contribution in overlay.mcp_servers {
+            let configured = self
+                .plugin_config(&contribution)
+                .is_ok_and(|value| value.configured());
+            servers.push(plugin_server(&contribution, configured));
+        }
+        servers.extend(
+            crate::plugins::apps::servers(home, project)?
+                .into_iter()
+                .map(|(server, _)| server),
+        );
+        Ok(servers)
+    }
+    #[cfg(test)]
+    pub(crate) fn plugin_configs(
+        &self,
+        home: &Path,
+        project: &Path,
+    ) -> Result<std::collections::HashMap<String, (Server, Config)>, McpError> {
+        self.plugin_configs_with_owners(home, project)
+            .map(|(configs, _)| configs)
+    }
+    pub(crate) fn plugin_configs_with_owners(
+        &self,
+        home: &Path,
+        project: &Path,
+    ) -> Result<(PluginConfigs, PluginOwners), McpError> {
+        let overlay = crate::plugins::load_active_for_project(home, Some(project))
+            .map_err(|_| storage_error())?;
+        let mut owners: std::collections::HashMap<_, _> = overlay
+            .mcp_servers
+            .iter()
+            .map(|source| {
+                (
+                    plugin_server_id(&source.plugin_id, &source.component_id),
+                    source.plugin_id.clone(),
+                )
+            })
+            .collect();
+        owners.extend(overlay.apps.iter().map(|source| {
+            (
+                crate::plugins::apps::server_id(&source.plugin_id),
+                source.plugin_id.clone(),
+            )
+        }));
+        let mut configs: std::collections::HashMap<_, _> = overlay
+            .mcp_servers
+            .into_iter()
+            .filter_map(|source| {
+                self.plugin_config(&source).ok().map(|config| {
+                    let server = plugin_server(&source, config.configured());
+                    (server.id.clone(), (server, config))
+                })
+            })
+            .collect();
+        configs.extend(
+            crate::plugins::apps::servers(home, Some(project))?
+                .into_iter()
+                .map(|(server, config)| (server.id.clone(), (server, config))),
+        );
+        Ok((configs, owners))
+    }
+
+    fn plugin_config(&self, source: &crate::plugins::McpContribution) -> Result<Config, McpError> {
+        let key = plugin_values_key(source);
+        let values = match self.0.secrets.load_optional(&key)? {
+            Some(raw) if raw.len() <= 64 * 1024 => {
+                serde_json::from_str(&raw).map_err(|_| storage_error())?
+            }
+            Some(_) => return Err(storage_error()),
+            None => std::collections::BTreeMap::new(),
+        };
+        config::from_plugin_with_values(source, &values)
+    }
+    fn config(&self, home: &Path, server: &Server) -> Result<Config, McpError> {
+        if server.id.starts_with("plugin-app:") {
+            return crate::plugins::apps::servers(home, None)?
+                .into_iter()
+                .find(|(entry, _)| entry.id == server.id)
+                .map(|(_, config)| config)
+                .ok_or_else(|| {
+                    error("O aplicativo deste plugin está desativado ou foi removido.")
+                });
+        }
+        if server.id.starts_with("plugin-mcp:") {
+            let source = crate::plugins::load_active(home)
+                .map_err(|_| storage_error())?
+                .mcp_servers
+                .into_iter()
+                .find(|source| {
+                    plugin_server_id(&source.plugin_id, &source.component_id) == server.id
+                })
+                .ok_or_else(|| error("O plugin deste MCP está desativado ou foi removido."))?;
+            return self.plugin_config(&source);
+        }
         let raw = if server.id == "builtin-context7" && server.revision == 0 {
             config::TEMPLATE.into()
         } else {
@@ -257,9 +394,27 @@ impl McpState {
         Ok(config)
     }
     fn edit(&self, state: &AppState, home: &Path, id: &str) -> Result<String, McpError> {
+        if id.starts_with("plugin-") {
+            return Err(coded_error(
+                "plugin_owned_mcp",
+                "Gerencie este MCP na seção Plugins.",
+            ));
+        }
         let _guard = self.0.guard.lock().map_err(|_| storage_error())?;
         let server = state.with_connection(home, |connection| find(connection, id))?;
-        Ok(self.config(&server)?.named(&server.name))
+        Ok(self.config(home, &server)?.named(&server.name))
+    }
+    pub(crate) fn add(
+        &self,
+        state: &AppState,
+        home: &Path,
+        name: &str,
+        config: &Config,
+    ) -> Result<Server, McpError> {
+        self.save(state, home, None, &config.named(name))?
+            .into_iter()
+            .find(|server| server.name == name)
+            .ok_or_else(storage_error)
     }
     fn save(
         &self,
@@ -268,6 +423,12 @@ impl McpState {
         id: Option<&str>,
         raw: &str,
     ) -> Result<Vec<Server>, McpError> {
+        if id.is_some_and(|id| id.starts_with("plugin-")) {
+            return Err(coded_error(
+                "plugin_owned_mcp",
+                "Gerencie este MCP na seção Plugins.",
+            ));
+        }
         let (name, config) = config::parse(raw)?;
         let _guard = self.0.guard.lock().map_err(|_| storage_error())?;
         state.with_connection(home, |connection| {
@@ -304,6 +465,12 @@ impl McpState {
         id: &str,
         enabled: bool,
     ) -> Result<Vec<Server>, McpError> {
+        if id.starts_with("plugin-") {
+            return Err(coded_error(
+                "plugin_owned_mcp",
+                "Gerencie este MCP na seção Plugins.",
+            ));
+        }
         let _guard = self.0.guard.lock().map_err(|_| storage_error())?;
         state.with_connection(home, |connection| {
             if connection.execute(
@@ -318,6 +485,12 @@ impl McpState {
         self.list(state, home)
     }
     fn remove(&self, state: &AppState, home: &Path, id: &str) -> Result<Vec<Server>, McpError> {
+        if id.starts_with("plugin-") {
+            return Err(coded_error(
+                "plugin_owned_mcp",
+                "Gerencie este MCP na seção Plugins.",
+            ));
+        }
         let _guard = self.0.guard.lock().map_err(|_| storage_error())?;
         let server = state.with_connection(home, |connection| {
             let transaction = connection.transaction()?;
@@ -348,7 +521,7 @@ impl McpState {
             .into_iter()
             .filter(|server| server.enabled && server.configured)
         {
-            match self.config(&server) {
+            match self.config(home, &server) {
                 Ok(config) => active.push((server, config)),
                 Err(err) => self.record_check(
                     state,
@@ -381,7 +554,7 @@ impl McpState {
         }) else {
             return Ok(None);
         };
-        let config = self.config(&server)?;
+        let config = self.config(home, &server)?;
         Ok(Some((server, config)))
     }
 
@@ -394,7 +567,10 @@ impl McpState {
         let servers = state.with_connection(home, |connection| rows(connection))?;
         servers
             .iter()
-            .map(|server| self.config(server).map(|config| config.named(&server.name)))
+            .map(|server| {
+                self.config(home, server)
+                    .map(|config| config.named(&server.name))
+            })
             .collect()
     }
 
@@ -491,14 +667,83 @@ impl McpState {
         self.list(state, home)
     }
 
+    pub(crate) fn current_for_project(
+        &self,
+        state: &AppState,
+        home: &Path,
+        project: &Path,
+        server: &Server,
+    ) -> bool {
+        if server.id.starts_with("plugin-") {
+            return self
+                .list_for_project(state, home, Some(project))
+                .is_ok_and(|servers| {
+                    servers
+                        .iter()
+                        .any(|item| item.id == server.id && item.enabled && item.configured)
+                });
+        }
+        self.current(state, home, server)
+    }
     pub fn current(&self, state: &AppState, home: &Path, server: &Server) -> bool {
+        if server.id.starts_with("plugin-") {
+            return self.list(state, home).is_ok_and(|servers| {
+                servers
+                    .iter()
+                    .any(|item| item.id == server.id && item.enabled && item.configured)
+            });
+        }
         state
             .with_connection(home, |connection| find(connection, &server.id))
             .is_ok_and(|current| {
                 current.enabled && current.configured && current.revision == server.revision
             })
     }
+    pub(crate) fn frozen_config_current(
+        &self,
+        state: &AppState,
+        home: &Path,
+        project: &Path,
+        server: &Server,
+        config: &Config,
+    ) -> bool {
+        if !self.current_for_project(state, home, project, server) {
+            return false;
+        }
+        if !server.id.starts_with("plugin-mcp:") {
+            return true;
+        }
+        let Config::Local { environment, .. } = config else {
+            return true;
+        };
+        let Some(root) = environment.get("CODEX_PLUGIN_ROOT").map(Path::new) else {
+            return false;
+        };
+        let Some(hash) = root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.get(..64))
+        else {
+            return false;
+        };
+        let Some((plugin, name)) = server.name.split_once(": ") else {
+            return false;
+        };
+        let component = format!("mcp:{name}");
+        plugin_server_id(plugin, &component) == server.id
+            && crate::plugins::frozen_component_authorized(
+                home,
+                Some(project),
+                plugin,
+                &component,
+                hash,
+                root,
+            )
+    }
     pub fn record_check(&self, state: &AppState, home: &Path, server: &Server, check: Check) {
+        if server.id.starts_with("plugin-") {
+            return;
+        }
         let Ok(raw) = serde_json::to_string(&check) else {
             return;
         };
@@ -586,3 +831,117 @@ pub async fn delete_mcp_server(
 
 #[cfg(test)]
 mod tests;
+
+/// Stable logical IDs; changing a version changes the revision, not user selection.
+pub(crate) fn plugin_server_id(plugin: &str, component: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!(
+        "plugin-mcp:{:x}",
+        Sha256::digest(format!("{plugin}\0{component}").as_bytes())
+    )
+}
+fn plugin_server(source: &crate::plugins::McpContribution, configured: bool) -> Server {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(source.plugin_hash.as_bytes());
+    let revision = i64::from_le_bytes(digest[..8].try_into().unwrap_or_default()) & i64::MAX;
+    Server {
+        id: plugin_server_id(&source.plugin_id, &source.component_id),
+        name: format!("{}: {}", source.plugin_id, source.name),
+        kind: if source.definition.get("url").is_some() {
+            "remote"
+        } else {
+            "local"
+        }
+        .into(),
+        enabled: true,
+        configured,
+        revision,
+        last_check: None,
+    }
+}
+
+fn plugin_values_key(source: &crate::plugins::McpContribution) -> String {
+    format!(
+        "plugin-values:{}:{}",
+        plugin_server_id(&source.plugin_id, &source.component_id),
+        source.plugin_hash
+    )
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginMcpRequirements {
+    fields: Vec<String>,
+    configured: bool,
+}
+fn contribution(home: &Path, id: &str) -> Result<crate::plugins::McpContribution, McpError> {
+    crate::plugins::load_active(home)
+        .map_err(|_| storage_error())?
+        .mcp_servers
+        .into_iter()
+        .find(|source| plugin_server_id(&source.plugin_id, &source.component_id) == id)
+        .ok_or_else(|| {
+            coded_error(
+                "plugin_mcp_unavailable",
+                "Ative o componente MCP do plugin antes de configurá-lo.",
+            )
+        })
+}
+#[tauri::command]
+pub(crate) async fn plugin_mcp_requirements(
+    app: tauri::AppHandle,
+    mcp: tauri::State<'_, McpState>,
+    id: String,
+) -> Result<PluginMcpRequirements, McpError> {
+    let home = app.path().home_dir().map_err(|_| storage_error())?;
+    let mcp = mcp.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let source = contribution(&home, &id)?;
+        Ok(PluginMcpRequirements {
+            fields: config::plugin_fields(&source),
+            configured: mcp.plugin_config(&source).is_ok(),
+        })
+    })
+    .await
+    .map_err(|_| storage_error())?
+}
+#[tauri::command]
+pub(crate) async fn configure_plugin_mcp(
+    app: tauri::AppHandle,
+    mcp: tauri::State<'_, McpState>,
+    id: String,
+    values: std::collections::BTreeMap<String, String>,
+) -> Result<PluginMcpRequirements, McpError> {
+    let home = app.path().home_dir().map_err(|_| storage_error())?;
+    let mcp = mcp.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let _guard = mcp.0.guard.lock().map_err(|_| storage_error())?;
+        let source = contribution(&home, &id)?;
+        let fields = config::plugin_fields(&source);
+        if values.len() > 64
+            || values.keys().any(|name| !fields.contains(name))
+            || values
+                .values()
+                .any(|value| value.len() > 16 * 1024 || value.contains('\0'))
+        {
+            return Err(coded_error(
+                "plugin_mcp_configuration",
+                "As variáveis privadas são inválidas ou não pertencem a este componente.",
+            ));
+        }
+        let _ = config::from_plugin_with_values(&source, &values)?;
+        let raw = serde_json::to_string(&values).map_err(|_| storage_error())?;
+        if raw.len() > 64 * 1024 {
+            return Err(coded_error(
+                "plugin_mcp_configuration",
+                "A configuração privada excedeu 64 KiB.",
+            ));
+        }
+        mcp.0.secrets.store(&plugin_values_key(&source), &raw)?;
+        Ok(PluginMcpRequirements {
+            fields,
+            configured: true,
+        })
+    })
+    .await
+    .map_err(|_| storage_error())?
+}

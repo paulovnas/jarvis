@@ -114,6 +114,45 @@ pub(super) fn record(session: &Session, activities: Vec<Activity>) -> Result<(),
     })
 }
 
+/// Resource use can precede inference or finish while another call is cancelled.
+pub(super) async fn record_async(
+    session: &Session,
+    activities: Vec<Activity>,
+) -> Result<(), AgentError> {
+    if activities.is_empty() {
+        return Ok(());
+    }
+    session
+        .update_async(|data| {
+            if let Some(turn) = data.turns.last_mut() {
+                if turn.turn.steps.is_empty() {
+                    turn.turn.steps.push(super::Step::default());
+                }
+                turn.turn
+                    .steps
+                    .last_mut()
+                    .unwrap()
+                    .core_activities
+                    .extend(activities);
+            }
+        })
+        .await
+}
+
+pub(super) async fn read_skill(
+    session: &Session,
+    home: &std::path::Path,
+    args: &Value,
+    snapshot: &[crate::skills::Skill],
+) -> Result<String, AgentError> {
+    let (output, activity) =
+        crate::skills::read_with_activity_from_snapshot(home, &session.root, args, snapshot)
+            .await
+            .map_err(|cause| AgentError::new("skill_error", &cause.message))?;
+    record_async(session, activity.into_iter().collect()).await?;
+    Ok(output)
+}
+
 /// Compare to history as well as this inference loop. References are refreshed
 /// from local files before inference and explicitly replayed after compaction.
 pub(super) fn prepare_design(
@@ -136,7 +175,7 @@ pub(super) fn prepare_design(
             .flat_map(|turn| &turn.turn.steps)
             .flat_map(|step| &step.core_activities)
             .any(|activity| {
-                activity.component == ComponentId::OpenDesign
+                activity.component == ComponentId::OpenDesign.into()
                     && activity.fingerprint == prepared.activity.fingerprint
             });
     if was_used {
@@ -245,6 +284,72 @@ mod tests {
         tests::{options, session, Fixture},
         ApprovalMode, Step,
     };
+
+    #[tokio::test]
+    async fn plugin_skill_reads_emit_durable_receipts_without_counting_discovery_or_local_skills() {
+        let fixture = Fixture::new();
+        let home = fixture.root.as_path();
+        let prepared = crate::plugins::preview(home, 0, crate::plugins::Operation::Create {
+            draft: serde_json::from_value(json!({"name":"usage-skill","description":"Usage fixture","skills":[{"name":"guide","content":"---\nname: guide\ndescription: Fixture guide\n---\nPRIVATE_GUIDANCE_BODY"}]})).unwrap(),
+        }).await.unwrap();
+        crate::plugins::apply(home, &prepared).unwrap();
+        let local = crate::data_dir::root(home).join("skills/local");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::write(
+            local.join("SKILL.md"),
+            "---\nname: local\ndescription: Local fixture\n---\nLocal guidance",
+        )
+        .unwrap();
+        let available = crate::skills::active(home, home).await.unwrap();
+        let plugin = available
+            .iter()
+            .find(|skill| skill.origin == "plugin")
+            .unwrap();
+        let local = available
+            .iter()
+            .find(|skill| skill.name == "local")
+            .unwrap();
+        let session = session(&fixture);
+        session
+            .reserve("Ler orientação".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        let _ = crate::skills::prompt(&available);
+        crate::skills::search(&available, &json!({"query":"guide"})).unwrap();
+        assert!(session.snapshot().unwrap().turns[0].steps.is_empty());
+        read_skill(&session, home, &json!({"id":local.id}), &available)
+            .await
+            .unwrap();
+        assert!(session.snapshot().unwrap().turns[0].steps.is_empty());
+        assert!(read_skill(
+            &session,
+            home,
+            &json!({"id":plugin.id,"path":"missing.md"}),
+            &available
+        )
+        .await
+        .is_err());
+        assert!(session.snapshot().unwrap().turns[0].steps.is_empty());
+        let args = json!({"id":plugin.id});
+        let (left, right) = tokio::join!(
+            read_skill(&session, home, &args, &available),
+            read_skill(&session, home, &args, &available)
+        );
+        assert!(left.unwrap().contains("PRIVATE_GUIDANCE_BODY"));
+        right.unwrap();
+        let (stored, _) = journal::read_only(&session.journal).unwrap();
+        let activities = &stored[0].turn.steps[0].core_activities;
+        assert_eq!(activities.len(), 2);
+        assert!(activities
+            .iter()
+            .all(
+                |activity| activity.plugin_id.as_deref() == Some("usage-skill@local")
+                    && activity.resource_id.as_deref() == Some(plugin.id.as_str())
+                    && activity.action == "skill_loaded"
+            ));
+        assert!(!serde_json::to_string(activities)
+            .unwrap()
+            .contains("PRIVATE_GUIDANCE_BODY"));
+    }
 
     #[tokio::test]
     async fn structural_hints_are_bounded_durable_references_without_replacing_user_intent() {

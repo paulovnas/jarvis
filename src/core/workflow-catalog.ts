@@ -1,13 +1,13 @@
 import { z } from "zod";
 import type { TurnOptions } from "./chat";
 import { workflowAppearanceSchema } from "./workflow-appearance";
-import { executorSchema } from "./executors";
+import { executorSchema, serviceTierSchema } from "./executors";
 
 const id = z.string().regex(/^[a-f0-9]{32}$/i);
 const builtinRoleSchema = z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "video", "image_generator", "builder", "reviewer", "github"]);
 const builtinAgentIdSchema = z.string().regex(/^builtin:(planner|investigator|writer|orchestrator|designer|video|image_generator|builder|reviewer|github)$/);
 const agentReferenceIdSchema = z.union([id, builtinAgentIdSchema]);
-const modelTargetSchema = z.object({ executor: executorSchema.optional(), account: z.string(), model: z.string(), reasoning: z.string().nullable() });
+const modelTargetSchema = z.object({ executor: executorSchema.optional(), account: z.string(), model: z.string(), reasoning: z.string().nullable(), serviceTier: serviceTierSchema });
 export const modelChoiceSchema = modelTargetSchema.extend({ fallback: modelTargetSchema.strict().nullish() });
 export const customAgentSchema = z.object({
   id, name: z.string().min(1).max(100), description: z.string().max(500), instructions: z.string().min(1).max(16000),

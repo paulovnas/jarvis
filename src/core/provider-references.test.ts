@@ -81,3 +81,17 @@ it("keeps explicit chat agent replacements scoped and stronger than legacy chat 
   const edited = { ...source, model: "explicit" };
   expect(resolveChatModel(bindings, "c1", edited, "standard/builder")).toEqual(edited);
 });
+
+it("rejects unsupported saved Fast choices and scopes replacement bindings by requested tier", () => {
+  const account = referenceAccount();
+  account.models[0] = { ...account.models[0], supportsFast: true };
+  const fast = { account: account.alias, model: account.models[0].id, reasoning: "high", serviceTier: "priority" as const };
+  expect(modelProblem(fast, [account])).toBeNull();
+  expect(modelProblem(fast, [{ ...account, models: [{ ...account.models[0], supportsFast: false }] }])).toContain("Selecione Normal");
+  expect(modelProblem(fast, [{ ...account, providerKind: "custom" }])).toContain("Fast");
+  const source = { account: fast.account, model: fast.model, reasoning: fast.reasoning };
+  const target = { account: "new", model: "other", reasoning: null };
+  const bindings = [{ itemKey: "chat:c1", source, target }];
+  expect(resolveChatModel(bindings, "c1", source)).toEqual(target);
+  expect(resolveChatModel(bindings, "c1", fast)).toEqual(fast);
+});

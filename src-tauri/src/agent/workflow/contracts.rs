@@ -173,6 +173,23 @@ impl Role {
         flow.delegations().contains(&(self, role))
     }
     pub(super) fn allows(self, flow: Flow, tool: &str, broad: bool) -> bool {
+        if tool == "jarvis_propose_project_instructions" {
+            return broad
+                && flow != Flow::Publication
+                && matches!(self, Self::Builder | Self::Designer | Self::Planner);
+        }
+        if matches!(tool, "jarvis_propose_mcp" | "jarvis_propose_hook") {
+            return broad
+                && matches!(
+                    self,
+                    Self::Builder
+                        | Self::Designer
+                        | Self::Video
+                        | Self::Github
+                        | Self::Orchestrator
+                        | Self::Custom
+                );
+        }
         if tool == "image_process" {
             return self == Self::ImageGenerator;
         }
@@ -251,6 +268,7 @@ impl Role {
                         | "bash_wait"
                         | "bash_cancel"
                         | "ask_user"
+                        | "jarvis_catalog"
                         | "jarvis_propose_publication"
                         | "jarvis_inspect_publication"
                         | "hub_complete"
@@ -338,6 +356,18 @@ pub struct InstructionSection {
 
 fn supplemental_instructions(flow: Flow, role: Role) -> Vec<InstructionSection> {
     let mut sections = vec![];
+    if matches!(role, Role::Planner | Role::Writer) {
+        sections.push(InstructionSection {
+            title: "Qualidade do plano",
+            content: "\nReview your own implementation plan before handing it off: match accepted requirements to tasks/checks, reconcile names, signatures, constraints and dependency order, and remove steps that do not enable the requested outcome. Identify at most five concrete input classes or failure conditions implied by the scope but missing from planned checks; attach each to its owning task and an observable expected result. Use relevant cases, not a quota, and retain this review focus in the existing Beads task or plan. This is a self-check, not a new approval, document, agent or commit stage. Reuse accepted plans for narrow follow-ups.\n",
+        });
+    }
+    if role == Role::Reviewer {
+        sections.push(InstructionSection {
+            title: "Foco da revisão",
+            content: "\nUse the planned review focus as investigation leads, not proof or authority to expand scope. Check important affected input classes against the actual change, including concrete gaps the plan missed. For behavioral fixes, inspect actual test failure and success evidence when available. A passing test without an observed failure supports current behavior only; report missing reproduction evidence honestly. Prioritize demonstrated defects and unmet criteria; do not invent extra features or waive required project checks.\n",
+        });
+    }
     if matches!(flow, Flow::Planned | Flow::Complete | Flow::Publication) {
         sections.push(InstructionSection {
             title: "Execução coordenada",

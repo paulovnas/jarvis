@@ -26,6 +26,7 @@ pub(super) fn resolve(
                 account: choice.account,
                 model: choice.model,
                 reasoning: choice.reasoning,
+                service_tier: choice.service_tier,
                 fallback: agent
                     .model
                     .as_ref()
@@ -84,6 +85,7 @@ pub(super) fn resolve_agent(
             account: choice.account,
             model: choice.model,
             reasoning: choice.reasoning,
+            service_tier: choice.service_tier,
             fallback: (!preserve_model)
                 .then(|| {
                     agent
@@ -111,6 +113,12 @@ pub(super) fn apply_model(options: &mut TurnOptions, agent: &catalog::AgentDefin
 pub(super) fn allowed(agent: &catalog::AgentDefinition, name: &str) -> bool {
     if catalog::permissions::required(name) {
         return true;
+    }
+    if name == "jarvis_propose_project_instructions"
+        && (!capability_allows(agent.capability, name)
+            || agent.denied_tools.iter().any(|denied| denied == name))
+    {
+        return false;
     }
     if let Some(role) = agent.native_role {
         if name.starts_with("hub_") {
@@ -164,7 +172,10 @@ pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
     if matches!(name, "validation_publish" | "design_brief") {
         return false;
     }
-    if matches!(name, "write" | "edit" | "apply_patch" | "generate_image") {
+    if matches!(
+        name,
+        "write" | "edit" | "apply_patch" | "generate_image" | "jarvis_propose_project_instructions"
+    ) {
         return capability != Capability::ReadOnly;
     }
     if matches!(
@@ -176,6 +187,9 @@ pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
             | "terminal_close"
             | "workflow_check"
             | "jarvis_propose_publication"
+            | "jarvis_propose_mcp"
+            | "jarvis_propose_hook"
+            | "jarvis_propose_plugin"
     ) || crate::core::context::needs_approval(name)
     {
         return capability == Capability::Commands;

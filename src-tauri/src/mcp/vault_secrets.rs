@@ -23,6 +23,16 @@ pub(super) fn load(key: &str) -> Result<String, McpError> {
     String::from_utf8(bytes).map_err(|_| storage_error())
 }
 
+pub(super) fn load_optional(key: &str) -> Result<Option<String>, McpError> {
+    match crate::secrets::load(NAMESPACE, key) {
+        Ok(bytes) => String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|_| storage_error()),
+        Err(crate::secrets::VaultError::NotFound) => Ok(None),
+        Err(error) => Err(translate(error)),
+    }
+}
+
 pub(super) fn store(key: &str, value: &str) -> Result<(), McpError> {
     crate::secrets::store(NAMESPACE, key, value.as_bytes()).map_err(translate)
 }

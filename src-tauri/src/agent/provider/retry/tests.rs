@@ -65,6 +65,7 @@ fn antigravity_timeouts_allow_one_retry_while_other_failures_keep_the_shared_bud
 
 fn options() -> TurnOptions {
     TurnOptions {
+        service_tier: None,
         executor: crate::claude::Executor::Jarvis,
         account: "synthetic".into(),
         model: "test-model".into(),

@@ -673,3 +673,144 @@ fn skill_paths_serialize_without_the_windows_verbatim_prefix() {
         crate::library::strip_verbatim(&stored.to_string_lossy()).as_ref()
     );
 }
+#[tokio::test]
+async fn frozen_empty_catalog_does_not_discover_new_plugin_skills_mid_turn() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path();
+    let frozen = active(home, home).await.unwrap();
+    let draft = serde_json::from_value(serde_json::json!({"name":"late-plugin","description":"Late package","skills":[{"name":"late","content":"---\nname: late\ndescription: Added during a turn\n---\nUse only next turn."}]})).unwrap();
+    let prepared = crate::plugins::preview(home, 0, crate::plugins::Operation::Create { draft })
+        .await
+        .unwrap();
+    crate::plugins::apply(home, &prepared).unwrap();
+    let fresh = active(home, home).await.unwrap();
+    assert!(!fresh.is_empty());
+    let visible = authorized_snapshot(home, home, &frozen).await.unwrap();
+    assert!(visible.is_empty());
+    assert!(prompt(&visible).is_empty());
+    let id = &fresh
+        .iter()
+        .find(|skill| skill.origin == "plugin")
+        .unwrap()
+        .id;
+    assert!(
+        read_from_snapshot(home, home, &serde_json::json!({"id":id}), &frozen)
+            .await
+            .is_err()
+    );
+    assert!(read(home, home, &serde_json::json!({"id":id}))
+        .await
+        .unwrap()
+        .contains("Use only next turn"));
+}
+
+#[tokio::test]
+async fn frozen_skill_discovery_reads_and_mentions_reject_modified_retired_package() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path();
+    let create = |guidance: &str| {
+        crate::plugins::Operation::Create {
+        draft: serde_json::from_value(serde_json::json!({
+            "name":"retained-fixture","description":"Retained package",
+            "skills":[{"name":"design","content":format!("---\nname: design\ndescription: Product design guidance\n---\n{guidance}")}]
+        })).unwrap()
+    }
+    };
+    let prepared = crate::plugins::preview(home, 0, create("Original guidance"))
+        .await
+        .unwrap();
+    let catalog = crate::plugins::apply(home, &prepared).unwrap();
+    let frozen = active(home, home).await.unwrap();
+    let original = frozen
+        .iter()
+        .find(|skill| skill.origin == "plugin")
+        .unwrap();
+    let args = serde_json::json!({"id":original.id});
+    let prepared = crate::plugins::preview(home, catalog.revision, create("Updated guidance"))
+        .await
+        .unwrap();
+    crate::plugins::apply(home, &prepared).unwrap();
+    assert!(read_from_snapshot(home, home, &args, &frozen)
+        .await
+        .unwrap()
+        .contains("Original guidance"));
+    assert!(
+        explicit_from_snapshot(home, home, vec![original.id.clone()], &frozen)
+            .await
+            .unwrap()
+            .contains("Original guidance")
+    );
+
+    fs::write(
+        &original.file,
+        "---\nname: design\ndescription: Product design guidance\n---\nUnreviewed instructions",
+    )
+    .unwrap();
+    assert!(authorized_snapshot(home, home, &frozen)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(read_from_snapshot(home, home, &args, &frozen)
+        .await
+        .unwrap_err()
+        .message
+        .contains("pacote desta skill"));
+    assert!(
+        explicit_from_snapshot(home, home, vec![original.id.clone()], &frozen)
+            .await
+            .is_err()
+    );
+    assert!(read(home, home, &args)
+        .await
+        .unwrap()
+        .contains("Updated guidance"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn plugin_skills_keep_identity_across_home_aliases_and_package_updates() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let alias = temp.path().join("home-alias");
+    fs::create_dir_all(&home).unwrap();
+    std::os::unix::fs::symlink(&home, &alias).unwrap();
+    let create = |guidance: &str| {
+        crate::plugins::Operation::Create {
+        draft: serde_json::from_value(serde_json::json!({
+            "name":"aliased-fixture","description":"Aliased package",
+            "skills":[{"name":"design","content":format!("---\nname: design\ndescription: Product design guidance\n---\n{guidance}")}]
+        })).unwrap()
+    }
+    };
+    let prepared = crate::plugins::preview(&alias, 0, create("Original guidance"))
+        .await
+        .unwrap();
+    let catalog = crate::plugins::apply(&alias, &prepared).unwrap();
+    let frozen = active(&alias, &alias).await.unwrap();
+    let original = frozen
+        .iter()
+        .find(|skill| skill.origin == "plugin")
+        .unwrap();
+    let args = serde_json::json!({"id":original.id});
+    assert!(read_from_snapshot(&alias, &alias, &args, &frozen)
+        .await
+        .unwrap()
+        .contains("Original guidance"));
+
+    let prepared = crate::plugins::preview(&alias, catalog.revision, create("Updated guidance"))
+        .await
+        .unwrap();
+    crate::plugins::apply(&alias, &prepared).unwrap();
+    for root in [&home, &alias] {
+        let current = active(root, root).await.unwrap();
+        assert!(current.iter().any(|skill| skill.id == original.id));
+        assert!(read(root, root, &args)
+            .await
+            .unwrap()
+            .contains("Updated guidance"));
+        assert!(read_from_snapshot(root, root, &args, &frozen)
+            .await
+            .unwrap()
+            .contains("Original guidance"));
+    }
+}

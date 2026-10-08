@@ -7,7 +7,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-const MAX_INSTRUCTION_FILE: u64 = 64 * 1024;
+pub(super) const MAX_INSTRUCTION_FILE: u64 = 64 * 1024;
 const MAX_INSTRUCTIONS_PER_TURN: usize = 256 * 1024;
 
 struct LoadedInstruction {

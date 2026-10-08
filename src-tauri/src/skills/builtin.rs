@@ -5,6 +5,8 @@ use std::{
 };
 
 const AUTHORING: &str = include_str!("builtin/jarvis-authoring.md");
+const HOOKS: &str = include_str!("builtin/jarvis-hooks.md");
+const PLUGINS: &str = include_str!("builtin/jarvis-plugins.md");
 
 pub(super) fn root(home: &Path) -> PathBuf {
     crate::data_dir::root(home).join("builtin-skills")
@@ -12,24 +14,28 @@ pub(super) fn root(home: &Path) -> PathBuf {
 
 pub(super) fn sync(home: &Path) -> Result<(), SkillError> {
     let root = root(home);
-    let directory = root.join("jarvis-authoring");
-    fs::create_dir_all(&directory)?;
-    for path in [&root, &directory] {
-        let metadata = fs::symlink_metadata(path)?;
-        if !metadata.is_dir() || metadata.is_symlink() {
-            return Err(error("A pasta das skills nativas do Jarvis não é segura."));
+    for (name, content) in [
+        ("jarvis-authoring", AUTHORING),
+        ("jarvis-hooks", HOOKS),
+        ("jarvis-plugins", PLUGINS),
+    ] {
+        let directory = root.join(name);
+        fs::create_dir_all(&directory)?;
+        for path in [&root, &directory] {
+            let metadata = fs::symlink_metadata(path)?;
+            if !metadata.is_dir() || metadata.is_symlink() {
+                return Err(error("A pasta das skills nativas do Jarvis não é segura."));
+            }
         }
-    }
-    let path = directory.join("SKILL.md");
-    let current = fs::read(&path).ok();
-    if current.as_deref() != Some(AUTHORING.as_bytes()) {
-        store::atomic_file(&path, AUTHORING.as_bytes())?;
-    }
-    let metadata = fs::symlink_metadata(&path)?;
-    if !metadata.is_file() || metadata.is_symlink() {
-        return Err(error(
-            "A skill nativa de autoria do Jarvis está indisponível.",
-        ));
+        let path = directory.join("SKILL.md");
+        let current = fs::read(&path).ok();
+        if current.as_deref() != Some(content.as_bytes()) {
+            store::atomic_file(&path, content.as_bytes())?;
+        }
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.is_file() || metadata.is_symlink() {
+            return Err(error("Uma skill nativa do Jarvis está indisponível."));
+        }
     }
     Ok(())
 }
@@ -49,6 +55,15 @@ mod tests {
         fs::write(&file, "stale").unwrap();
         sync(home.path()).unwrap();
         assert_eq!(fs::read_to_string(file).unwrap(), AUTHORING);
+        let hooks = root(home.path()).join("jarvis-hooks/SKILL.md");
+        assert_eq!(fs::read_to_string(&hooks).unwrap(), HOOKS);
+        fs::write(&hooks, "stale").unwrap();
+        sync(home.path()).unwrap();
+        assert_eq!(fs::read_to_string(hooks).unwrap(), HOOKS);
+        assert_eq!(
+            fs::read_to_string(root(home.path()).join("jarvis-plugins/SKILL.md")).unwrap(),
+            PLUGINS
+        );
     }
 
     #[cfg(unix)]

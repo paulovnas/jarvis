@@ -94,3 +94,69 @@ it("keeps a model selectable with provider defaults when Ultra was its only list
   await user.click(await screen.findByRole("menuitem", { name: "Modelo" }));
   expect(select).toHaveBeenCalledWith({ model: "account/model", reasoning: null });
 });
+
+const fastGroups = [{ provider: "Trabalho", providerKind: "openai-codex" as const, models: [{ value: "work/sol", label: "Sol", reasoningLevels: ["low", "high"], defaultReasoningLevel: "high", supportsFast: true }] }, { provider: "Outro", providerKind: "custom" as const, models: [{ value: "other/sol", label: "Outro modelo", reasoningLevels: [], defaultReasoningLevel: null, supportsFast: true }] }];
+async function openSpeed(user: ReturnType<typeof userEvent.setup>) {
+  screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: /Velocidade/ })).focus(); await user.keyboard("{ArrowRight}");
+}
+
+it("offers Normal and Fast only in opted-in chats and discloses higher consumption", async () => {
+  const user = userEvent.setup(), select = vi.fn();
+  const selection = { model: "work/sol", reasoning: "high" };
+  const view = render(<ModelPicker modelGroups={fastGroups} selection={selection} onSelect={select} allowFastMode />);
+  await openSpeed(user);
+  expect(await screen.findByRole("menuitemradio", { name: "Normal" })).toHaveAttribute("aria-checked", "true");
+  expect(screen.getByText("Maior consumo dos limites/créditos")).toBeVisible();
+  await user.click(screen.getByRole("menuitemradio", { name: "Fast" }));
+  expect(select).toHaveBeenLastCalledWith({ ...selection, serviceTier: "priority" });
+  view.rerender(<ModelPicker modelGroups={fastGroups} selection={{ ...selection, serviceTier: "priority" }} onSelect={select} allowFastMode />);
+  expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Sol · Alto · Fast");
+  await openSpeed(user);
+  await user.click(await screen.findByRole("menuitemradio", { name: "Normal" }));
+  expect(select).toHaveBeenLastCalledWith(selection);
+});
+
+it("allows a saved Fast choice to return to Normal globally without activating Fast", async () => {
+  const user = userEvent.setup(), select = vi.fn();
+  render(<ModelPicker modelGroups={fastGroups} selection={{ model: "work/sol", reasoning: "high", serviceTier: "priority" }} onSelect={select} />);
+  expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Fast");
+  await openSpeed(user);
+  expect(await screen.findByRole("menuitemradio", { name: "Fast" })).toHaveAttribute("aria-disabled", "true");
+  await user.click(screen.getByRole("menuitemradio", { name: "Normal" }));
+  expect(select).toHaveBeenCalledExactlyOnceWith({ model: "work/sol", reasoning: "high" });
+});
+
+it("requires an advertised capability and lets unsupported saved Fast return to Normal", async () => {
+  const user = userEvent.setup(), select = vi.fn();
+  const groups = [{ ...fastGroups[0], models: [{ ...fastGroups[0].models[0], supportsFast: undefined }] }];
+  render(<ModelPicker modelGroups={groups} selection={{ model: "work/sol", reasoning: "high", serviceTier: "priority" }} onSelect={select} allowFastMode />);
+  const trigger = screen.getByRole("button", { name: "Selecionar modelo de IA" });
+  expect(trigger).toHaveTextContent("Fast indisponível"); expect(trigger).toHaveAttribute("aria-invalid", "true");
+  await openSpeed(user);
+  expect(await screen.findByRole("menuitemradio", { name: "Fast" })).toHaveAttribute("aria-disabled", "true");
+  await user.click(screen.getByRole("menuitemradio", { name: "Normal" }));
+  expect(select).toHaveBeenCalledExactlyOnceWith({ model: "work/sol", reasoning: "high" });
+});
+
+it("keeps Fast on an effort change and clears it on an incompatible provider switch", async () => {
+  const user = userEvent.setup(), select = vi.fn();
+  render(<ModelPicker modelGroups={fastGroups} selection={{ model: "work/sol", reasoning: "high", serviceTier: "priority" }} onSelect={select} allowFastMode />);
+  screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: "Trabalho" })).focus(); await user.keyboard("{ArrowRight}");
+  (await screen.findByRole("menuitem", { name: /Sol/ })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Baixo" }));
+  expect(select).toHaveBeenLastCalledWith({ model: "work/sol", reasoning: "low", serviceTier: "priority" });
+  screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: "Outro" })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Outro modelo" }));
+  expect(select).toHaveBeenLastCalledWith({ model: "other/sol", reasoning: null });
+});
+
+it("does not expose Fast activation outside chat even when the catalog advertises it", async () => {
+  const user = userEvent.setup();
+  render(<ModelPicker modelGroups={fastGroups} selection={{ model: "work/sol", reasoning: "high" }} onSelect={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  expect(await screen.findByRole("menuitem", { name: "Trabalho" })).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: /Velocidade/ })).not.toBeInTheDocument();
+});

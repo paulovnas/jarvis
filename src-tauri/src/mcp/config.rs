@@ -109,6 +109,12 @@ impl Config {
         serde_json::to_string_pretty(&json!({name: self})).unwrap_or_default()
     }
     pub fn secrets(&self) -> Vec<String> {
+        self.secret_values(false)
+    }
+    pub(crate) fn plugin_secrets(&self) -> Vec<String> {
+        self.secret_values(true)
+    }
+    fn secret_values(&self, plugin_owned: bool) -> Vec<String> {
         let values = match self {
             Self::Local {
                 command,
@@ -117,7 +123,21 @@ impl Config {
             } => command
                 .iter()
                 .skip(1)
-                .chain(environment.values())
+                .chain(environment.iter().filter_map(|(name, value)| {
+                    // These six paths are overwritten by the native plugin
+                    // adapter. All user-supplied values still redact, regardless
+                    // of whether their names resemble credentials.
+                    let native_path = matches!(
+                        name.as_str(),
+                        "CODEX_PLUGIN_ROOT"
+                            | "CLAUDE_PLUGIN_ROOT"
+                            | "CODEX_PLUGIN_DATA"
+                            | "CLAUDE_PLUGIN_DATA"
+                            | "CODEX_HOME"
+                            | "CLAUDE_CONFIG_DIR"
+                    );
+                    (!plugin_owned || !native_path).then_some(value)
+                }))
                 .cloned()
                 .collect(),
             Self::Remote { url, headers, .. } => {
@@ -161,7 +181,7 @@ pub fn parse(raw: &str) -> Result<(String, Config), McpError> {
             "O nome deve ter até 48 letras, números, hífens ou sublinhados.",
         ));
     }
-    let config: Config = serde_json::from_value(value.clone()).map_err(|_| error("Configuração inválida. Use type local com command (lista), ou remote com url. OAuth ainda não é suportado; use headers para autenticação."))?;
+    let config: Config = serde_json::from_value(value.clone()).map_err(|_| error("Configuração inválida. Use type local com command (lista), ou remote com url e OAuth ou headers para autenticação."))?;
     if !(1000..=120_000).contains(&(config.startup_timeout().as_millis() as u64)) {
         return Err(error(
             "timeout deve estar entre 1000 e 120000 milissegundos.",
@@ -211,9 +231,13 @@ pub fn parse(raw: &str) -> Result<(String, Config), McpError> {
                     "Use uma URL HTTP ou HTTPS sem usuário, senha ou fragmento.",
                 ));
             }
-            if *oauth == Some(true) {
+            if *oauth == Some(true)
+                && headers
+                    .keys()
+                    .any(|key| key.eq_ignore_ascii_case("authorization"))
+            {
                 return Err(error(
-                    "OAuth de MCPs ainda não está disponível. Use headers ou oauth: false.",
+                    "Remova o header Authorization para usar OAuth neste MCP.",
                 ));
             }
             for (key, value) in headers {
@@ -275,6 +299,7 @@ mod tests {
         for raw in [
             r#"{"docs":{"type":"local","command":["node","server.js"],"environment":{"KEY":"secret"},"enabled":false}}"#,
             r#"{"docs":{"type":"remote","url":"https://example.test/mcp","headers":{"Authorization":"Bearer secret"},"oauth":false}}"#,
+            r#"{"docs":{"type":"remote","url":"https://example.test/mcp","oauth":true}}"#,
         ] {
             assert!(parse(raw).is_ok());
         }
@@ -284,10 +309,425 @@ mod tests {
             r#"{"a":{},"b":{}}"#,
             r#"{"x":{"type":"local","command":[]}}"#,
             r#"{"x":{"type":"remote","url":"file:///tmp/test"}}"#,
-            r#"{"x":{"type":"remote","url":"https://example.test","oauth":true}}"#,
+            r#"{"x":{"type":"remote","url":"https://example.test","oauth":true,"headers":{"Authorization":"Bearer secret"}}}"#,
             r#"{"x":{"type":"local","command":["node"],"typo":true}}"#,
         ] {
             assert!(parse(raw).is_err());
+        }
+    }
+
+    #[test]
+    fn plugin_redaction_preserves_native_paths_and_masks_every_private_value() {
+        let paths = [
+            ("CODEX_PLUGIN_ROOT", "/native/plugin-root"),
+            ("CLAUDE_PLUGIN_ROOT", "/native/plugin-root"),
+            ("CODEX_PLUGIN_DATA", "/native/plugin-data"),
+            ("CLAUDE_PLUGIN_DATA", "/native/plugin-data"),
+            ("CODEX_HOME", "/native/plugin-data/codex"),
+            ("CLAUDE_CONFIG_DIR", "/native/plugin-data/claude"),
+        ];
+        let raw = json!({"docs":{"type":"local","command":["node","server.mjs","--api-key","command-secret"],"environment":paths.into_iter().chain([("DOCS_TOKEN","private-token"),("TENANT","private-tenant"),("CUSTOM_PATH","/private/account")]).collect::<BTreeMap<_,_>>()}}).to_string();
+        let (_, config) = parse(&raw).unwrap();
+        let plugin = config.plugin_secrets();
+        let ordinary = config.secrets();
+        for (_, path) in paths {
+            assert!(!plugin.iter().any(|value| value == path));
+            assert!(ordinary.iter().any(|value| value == path));
+        }
+        for secret in [
+            "command-secret",
+            "private-token",
+            "private-tenant",
+            "/private/account",
+        ] {
+            assert!(plugin.iter().any(|value| value == secret));
+            assert!(ordinary.iter().any(|value| value == secret));
+        }
+    }
+}
+
+/// Adapt plugin-owned Codex/Claude declarations without storing ordinary MCP settings.
+#[cfg(test)]
+pub(crate) fn from_plugin(source: &crate::plugins::McpContribution) -> Result<Config, McpError> {
+    from_plugin_with_values(source, &BTreeMap::new())
+}
+pub(crate) fn from_plugin_with_values(
+    source: &crate::plugins::McpContribution,
+    values: &BTreeMap<String, String>,
+) -> Result<Config, McpError> {
+    fn expand(
+        raw: &str,
+        source: &crate::plugins::McpContribution,
+        values: &BTreeMap<String, String>,
+    ) -> Result<String, McpError> {
+        let mut result = raw.to_owned();
+        for (name, path) in [
+            ("CODEX_PLUGIN_ROOT", &source.root),
+            ("CLAUDE_PLUGIN_ROOT", &source.root),
+            ("CODEX_PLUGIN_DATA", &source.data_path),
+            ("CLAUDE_PLUGIN_DATA", &source.data_path),
+        ] {
+            result = result.replace(&format!("${{{name}}}"), &path.to_string_lossy());
+        }
+        for (name, value) in values {
+            result = result
+                .replace(&format!("${{{name}}}"), value)
+                .replace(&format!("${{env:{name}}}"), value);
+        }
+        if result.contains("${") {
+            return Err(super::coded_error("plugin_mcp_configuration", "O MCP do plugin contém uma variável não configurada. Configure-a antes de conectar."));
+        }
+        Ok(result)
+    }
+    let definition = source
+        .definition
+        .as_object()
+        .ok_or_else(|| error("Configuração MCP inválida no plugin."))?;
+    let enabled = true;
+    let config = if let Some(url) = definition.get("url").and_then(Value::as_str) {
+        let mut headers = BTreeMap::new();
+        if let Some(entries) = definition
+            .get("http_headers")
+            .or_else(|| definition.get("headers"))
+        {
+            for (key, value) in entries
+                .as_object()
+                .ok_or_else(|| error("Headers MCP inválidos no plugin."))?
+            {
+                headers.insert(
+                    key.clone(),
+                    expand(
+                        value
+                            .as_str()
+                            .ok_or_else(|| error("Header MCP inválido no plugin."))?,
+                        source,
+                        values,
+                    )?,
+                );
+            }
+        }
+        if let Some(name) = definition
+            .get("bearer_token_env_var")
+            .and_then(Value::as_str)
+        {
+            let value = values
+                .get(name)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    super::coded_error(
+                        "plugin_mcp_configuration",
+                        &format!("Configure a variável privada {name} deste MCP."),
+                    )
+                })?;
+            headers.insert("Authorization".into(), format!("Bearer {value}"));
+        }
+        if let Some(names) = definition
+            .get("env_http_headers")
+            .and_then(Value::as_object)
+        {
+            for (header, name) in names {
+                let name = name
+                    .as_str()
+                    .ok_or_else(|| error("Variável de header inválida."))?;
+                headers.insert(
+                    header.clone(),
+                    values
+                        .get(name)
+                        .filter(|value| !value.is_empty())
+                        .cloned()
+                        .ok_or_else(|| {
+                            super::coded_error(
+                                "plugin_mcp_configuration",
+                                &format!("Configure a variável privada {name} deste MCP."),
+                            )
+                        })?,
+                );
+            }
+        }
+        let oauth = Some(
+            definition.get("oauth").and_then(Value::as_bool).unwrap_or(
+                !headers
+                    .keys()
+                    .any(|key| key.eq_ignore_ascii_case("authorization")),
+            ),
+        );
+        Config::Remote {
+            url: expand(url, source, values)?,
+            headers,
+            oauth,
+            enabled,
+            timeout: startup_timeout(),
+            request_timeout: request_timeout(),
+        }
+    } else {
+        let mut command = match definition.get("command") {
+            Some(Value::String(program)) => vec![expand(program, source, values)?],
+            Some(Value::Array(parts)) => parts
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .ok_or_else(|| error("Comando MCP inválido no plugin."))
+                        .and_then(|value| expand(value, source, values))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            _ => return Err(error("O MCP do plugin não contém um programa válido.")),
+        };
+        if let Some(arguments) = definition.get("args") {
+            command.extend(
+                arguments
+                    .as_array()
+                    .ok_or_else(|| error("Argumentos MCP inválidos no plugin."))?
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .ok_or_else(|| error("Argumento MCP inválido no plugin."))
+                            .and_then(|value| expand(value, source, values))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+        }
+        let mut environment = BTreeMap::new();
+        if let Some(entries) = definition
+            .get("env")
+            .or_else(|| definition.get("environment"))
+        {
+            for (key, value) in entries
+                .as_object()
+                .ok_or_else(|| error("Ambiente MCP inválido no plugin."))?
+            {
+                environment.insert(
+                    key.clone(),
+                    expand(
+                        value
+                            .as_str()
+                            .ok_or_else(|| error("Variável MCP inválida no plugin."))?,
+                        source,
+                        values,
+                    )?,
+                );
+            }
+        }
+        if let Some(names) = definition.get("env_vars").and_then(Value::as_array) {
+            for value in names {
+                let name = value
+                    .as_str()
+                    .or_else(|| value.get("name").and_then(Value::as_str))
+                    .ok_or_else(|| error("Variável MCP inválida."))?;
+                environment.insert(
+                    name.into(),
+                    values
+                        .get(name)
+                        .filter(|value| !value.is_empty())
+                        .cloned()
+                        .ok_or_else(|| {
+                            super::coded_error(
+                                "plugin_mcp_configuration",
+                                &format!("Configure a variável privada {name} deste MCP."),
+                            )
+                        })?,
+                );
+            }
+        }
+        for (name, path) in [
+            ("CODEX_PLUGIN_ROOT", &source.root),
+            ("CLAUDE_PLUGIN_ROOT", &source.root),
+            ("CODEX_PLUGIN_DATA", &source.data_path),
+            ("CLAUDE_PLUGIN_DATA", &source.data_path),
+        ] {
+            environment.insert(name.into(), path.to_string_lossy().into_owned());
+        }
+        environment.insert(
+            "CODEX_HOME".into(),
+            source
+                .data_path
+                .join("codex")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        environment.insert(
+            "CLAUDE_CONFIG_DIR".into(),
+            source
+                .data_path
+                .join("claude")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let cwd = definition
+            .get("cwd")
+            .and_then(Value::as_str)
+            .map(|value| {
+                let expanded = expand(value, source, values)?;
+                let path = std::path::Path::new(&expanded);
+                Ok::<_, McpError>(if path.is_absolute() {
+                    expanded
+                } else {
+                    source.root.join(path).to_string_lossy().into_owned()
+                })
+            })
+            .transpose()?;
+        Config::Local {
+            command,
+            cwd,
+            environment,
+            enabled,
+            timeout: startup_timeout(),
+            request_timeout: request_timeout(),
+        }
+    };
+    Ok(parse(&config.named("plugin"))?.1)
+}
+
+pub(crate) fn plugin_fields(source: &crate::plugins::McpContribution) -> Vec<String> {
+    let mut fields = std::collections::BTreeSet::new();
+    let expression =
+        regex::Regex::new(r"\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\}").expect("constant expression");
+    for capture in expression.captures_iter(&source.definition.to_string()) {
+        if ![
+            "CODEX_PLUGIN_ROOT",
+            "CLAUDE_PLUGIN_ROOT",
+            "CODEX_PLUGIN_DATA",
+            "CLAUDE_PLUGIN_DATA",
+        ]
+        .contains(&&capture[1])
+        {
+            fields.insert(capture[1].to_owned());
+        }
+    }
+    if let Some(name) = source.definition["bearer_token_env_var"].as_str() {
+        fields.insert(name.into());
+    }
+    for value in source.definition["env_http_headers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(_, value)| value)
+    {
+        if let Some(name) = value.as_str() {
+            fields.insert(name.into());
+        }
+    }
+    for value in source.definition["env_vars"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        if let Some(name) = value.as_str().or_else(|| value["name"].as_str()) {
+            fields.insert(name.into());
+        }
+    }
+    fields.into_iter().collect()
+}
+
+#[cfg(test)]
+mod plugin_tests {
+    use super::*;
+    #[test]
+    fn explicit_plugin_cwd_is_package_relative_and_default_remains_project_scoped() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("bundle");
+        let absolute = temporary
+            .path()
+            .join("explicit-folder")
+            .to_string_lossy()
+            .into_owned();
+        let mut source = crate::plugins::McpContribution {
+            plugin_id: "context-mode@local".into(),
+            plugin_hash: "reviewed".into(),
+            component_id: "mcp:context-mode".into(),
+            name: "context-mode".into(),
+            definition: json!({"command":"node","args":["./start.mjs"],"cwd":"."}),
+            root: root.clone(),
+            data_path: temporary.path().join("private"),
+        };
+        for (raw, expected) in [
+            (
+                Some("."),
+                Some(root.join(".").to_string_lossy().into_owned()),
+            ),
+            (
+                Some("runtime"),
+                Some(root.join("runtime").to_string_lossy().into_owned()),
+            ),
+            (
+                Some("${CODEX_PLUGIN_ROOT}"),
+                Some(root.to_string_lossy().into_owned()),
+            ),
+            (Some(absolute.as_str()), Some(absolute.clone())),
+            (None, None),
+        ] {
+            match raw {
+                Some(cwd) => source.definition["cwd"] = json!(cwd),
+                None => {
+                    source.definition.as_object_mut().unwrap().remove("cwd");
+                }
+            }
+            let Config::Local { cwd, command, .. } = from_plugin(&source).unwrap() else {
+                panic!("local fixture")
+            };
+            assert_eq!(cwd, expected);
+            assert_eq!(command, vec!["node", "./start.mjs"]);
+        }
+    }
+
+    #[test]
+    fn private_plugin_variables_are_declared_scoped_and_redacted() {
+        let source = crate::plugins::McpContribution {
+            plugin_id: "docs@local".into(),
+            plugin_hash: "reviewed".into(),
+            component_id: "mcp:docs".into(),
+            name: "docs".into(),
+            definition: json!({"url":"https://example.test/mcp","bearer_token_env_var":"DOCS_TOKEN","env_http_headers":{"X-Tenant":"TENANT"}}),
+            root: "/bundle/docs".into(),
+            data_path: "/private/docs".into(),
+        };
+        assert_eq!(plugin_fields(&source), vec!["DOCS_TOKEN", "TENANT"]);
+        assert!(from_plugin(&source).is_err());
+        let config = from_plugin_with_values(
+            &source,
+            &BTreeMap::from([
+                ("DOCS_TOKEN".into(), "private-test-token".into()),
+                ("TENANT".into(), "account".into()),
+            ]),
+        )
+        .unwrap();
+        match &config {
+            Config::Remote { headers, oauth, .. } => {
+                assert_eq!(headers["Authorization"], "Bearer private-test-token");
+                assert_eq!(*oauth, Some(false));
+            }
+            _ => panic!("wrong transport"),
+        }
+        assert!(config
+            .secrets()
+            .iter()
+            .any(|value| value.contains("private-test-token")));
+        let local = crate::plugins::McpContribution {
+            definition: json!({"command":"node","args":["${CODEX_PLUGIN_ROOT}/server.js"],"env_vars":["DOCS_TOKEN"],"env":{"PROJECT":"${env:TENANT}"}}),
+            ..source
+        };
+        let config = from_plugin_with_values(
+            &local,
+            &BTreeMap::from([
+                ("DOCS_TOKEN".into(), "private-test-token".into()),
+                ("TENANT".into(), "account".into()),
+            ]),
+        )
+        .unwrap();
+        match config {
+            Config::Local {
+                command,
+                environment,
+                ..
+            } => {
+                assert_eq!(command[1], "/bundle/docs/server.js");
+                assert_eq!(environment["DOCS_TOKEN"], "private-test-token");
+                assert_eq!(environment["PROJECT"], "account");
+                assert_eq!(environment["CODEX_HOME"], "/private/docs/codex");
+                assert_eq!(environment["CLAUDE_CONFIG_DIR"], "/private/docs/claude");
+            }
+            _ => panic!("wrong transport"),
         }
     }
 }

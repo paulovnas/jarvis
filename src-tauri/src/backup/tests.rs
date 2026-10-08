@@ -181,6 +181,7 @@ fn sanitized_catalog_and_targets_never_serialize_provider_assignments() {
         account: "openai-codex-private".into(),
         model: "private-model".into(),
         reasoning: Some("high".into()),
+        service_tier: None,
         fallback: None,
     };
     let catalog = clean_catalog(workflow::catalog::Catalog {
@@ -241,11 +242,13 @@ fn backup_preserves_external_executors_without_provider_mapping_or_credentials()
         account: String::new(),
         model: "sonnet".into(),
         reasoning: Some("high".into()),
+        service_tier: None,
         fallback: Some(Box::new(workflow::settings::ModelChoice {
             executor: crate::claude::Executor::Claude,
             account: String::new(),
             model: "opus".into(),
             reasoning: Some("max".into()),
+            service_tier: None,
             fallback: None,
         })),
     };
@@ -293,6 +296,7 @@ fn validation_rejects_embedded_agent_models_and_invalid_paths() {
         account: "provider".into(),
         model: "model".into(),
         reasoning: None,
+        service_tier: None,
         fallback: None,
     });
 

@@ -1,6 +1,363 @@
 use super::*;
 use std::fs;
 
+#[cfg(unix)]
+#[tokio::test]
+async fn completion_hook_can_request_work_then_release_without_replaying_startup() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let signal = session
+        .reserve("Entregar resultado".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    let hooks = manual_hook_runtime(&fixture,&session,crate::hooks::Event::Stop,
+        "if grep -q '\"stop_hook_active\":false'; then printf '%s' '{\"decision\":\"block\",\"reason\":\"Validate the result before completion.\"}'; else printf '%s' '{}'; fi","");
+    let mut continuations = 0;
+    assert!(check_completion_hooks(
+        &session,
+        &hooks,
+        None,
+        "Primeiro resultado",
+        &mut continuations,
+        signal.clone()
+    )
+    .await
+    .unwrap());
+    assert!(session
+        .data
+        .lock()
+        .unwrap()
+        .turns
+        .last()
+        .unwrap()
+        .wire
+        .iter()
+        .any(
+            |message| message["content"].as_str().is_some_and(|text| text
+                .contains("Validate the result before completion.")
+                && text.contains("grants no permissions"))
+        ));
+    assert!(!check_completion_hooks(
+        &session,
+        &hooks,
+        None,
+        "Resultado validado",
+        &mut continuations,
+        signal
+    )
+    .await
+    .unwrap());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn completion_hook_cannot_loop_without_limit() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let signal = session
+        .reserve("Entregar resultado".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    let hooks = manual_hook_runtime(
+        &fixture,
+        &session,
+        crate::hooks::Event::Stop,
+        "cat >/dev/null; printf '%s' '{\"decision\":\"block\",\"reason\":\"More work.\"}'",
+        "",
+    );
+    let mut continuations = 0;
+    for _ in 0..3 {
+        assert!(check_completion_hooks(
+            &session,
+            &hooks,
+            None,
+            "Resultado",
+            &mut continuations,
+            signal.clone()
+        )
+        .await
+        .unwrap());
+    }
+    let failure = check_completion_hooks(
+        &session,
+        &hooks,
+        None,
+        "Resultado",
+        &mut continuations,
+        signal,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(failure.code, "hook_completion_limit");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn interrupted_turn_runs_interrupt_but_session_end_waits_for_shutdown() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    session
+        .reserve("Teste de interrupção".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    let interrupted = fixture.root.join("interrupted");
+    let ended = fixture.root.join("ended");
+    manual_hook_runtime(
+        &fixture,
+        &session,
+        crate::hooks::Event::Interrupt,
+        &format!("cat >/dev/null; touch '{}'", interrupted.display()),
+        "",
+    );
+    let state = AppState::default();
+    crate::hooks::upsert(
+        &state,
+        &fixture.root,
+        crate::hooks::Hook {
+            id: "f".repeat(32),
+            name: "Encerrar sessão".into(),
+            event: crate::hooks::Event::SessionEnd,
+            command: format!("cat >/dev/null; touch '{}'", ended.display()),
+            matcher: String::new(),
+            timeout_seconds: 5,
+            enabled: true,
+        },
+        1,
+    )
+    .unwrap();
+    let agent = AgentState::default();
+    let oauth = OpenAiCodexState::default();
+    let mcp = crate::mcp::McpState::default();
+    let (_sender, signal) = watch::channel(true);
+    assert!(run_turn(
+        &session,
+        TurnRuntime {
+            grants: &agent.grants,
+            state: &state,
+            oauth: &oauth,
+            mcp: &mcp,
+            home: &fixture.root
+        },
+        signal,
+        None
+    )
+    .await
+    .is_err());
+    assert!(interrupted.exists());
+    assert!(!ended.exists());
+    agent
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(session.id.clone(), session);
+    agent.finish_hook_sessions(&fixture.root);
+    assert!(ended.exists());
+}
+
+#[cfg(unix)]
+pub(super) fn manual_hook_runtime(
+    fixture: &Fixture,
+    session: &Session,
+    event: crate::hooks::Event,
+    command: &str,
+    matcher: &str,
+) -> crate::hooks::runtime::Runtime {
+    crate::hooks::upsert(
+        &AppState::default(),
+        &fixture.root,
+        crate::hooks::Hook {
+            id: "0123456789abcdef0123456789abcdef".into(),
+            name: "Teste".into(),
+            event,
+            command: command.into(),
+            matcher: matcher.into(),
+            timeout_seconds: 5,
+            enabled: true,
+        },
+        0,
+    )
+    .unwrap();
+    let turn_id = session
+        .data
+        .lock()
+        .unwrap()
+        .turns
+        .last()
+        .unwrap()
+        .turn
+        .id
+        .clone();
+    crate::hooks::runtime::Runtime::load(&fixture.root, &fixture.root, &session.id, &turn_id)
+        .unwrap()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn permission_hook_can_deny_without_creating_or_approving_a_human_request() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let approval_options = options(ApprovalMode::Manual);
+    let signal = session
+        .reserve("Publicar".into(), approval_options.clone())
+        .unwrap();
+    let hooks = manual_hook_runtime(
+        &fixture,
+        &session,
+        crate::hooks::Event::PermissionRequest,
+        "cat >/dev/null; printf '%s' 'hook bloqueou' >&2; exit 2",
+        "bash",
+    );
+    assert!(hooks.has_blocking_tool_hooks("bash"));
+    assert!(!hooks.has_blocking_tool_hooks("read"));
+    let tool = ToolCall {
+        id: "publish".into(),
+        name: "bash".into(),
+        args: json!({"command":"touch forbidden"}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    let error = authorize_declared(
+        ApprovalRequest {
+            session: &session,
+            tool: &tool,
+            options: &approval_options,
+            policy: None,
+            sandbox: None,
+            project_id: None,
+            manual_hooks: Some(&hooks),
+            signal,
+        },
+        tool_contract::ApprovalPolicy::AccordingToTurn,
+        tool_contract::Handler::Native,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "hook_denied");
+    assert!(error.message.contains("hook bloqueou"));
+    assert!(session.snapshot().unwrap().pending_approval.is_none());
+    assert!(!fixture.root.join("forbidden").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mandatory_authoring_reviews_emit_permission_hooks_even_in_yolo() {
+    for approval_mode in [ApprovalMode::Manual, ApprovalMode::Yolo] {
+        for name in [
+            "jarvis_propose_agent",
+            "jarvis_propose_flow",
+            "jarvis_propose_mcp",
+            "jarvis_propose_hook",
+            "jarvis_propose_plugin",
+            "jarvis_propose_project_instructions",
+        ] {
+            let fixture = Fixture::new();
+            let session = session(&fixture);
+            let selected = options(approval_mode);
+            let signal = session
+                .reserve("Configurar o Jarvis".into(), selected.clone())
+                .unwrap();
+            let hooks = manual_hook_runtime(
+                &fixture,
+                &session,
+                crate::hooks::Event::PermissionRequest,
+                "printf '%s' 'review blocked' >&2; exit 2",
+                name,
+            );
+            let tool = ToolCall {
+                id: "proposal".into(),
+                name: name.into(),
+                args: json!({"summary":"x".repeat(512 * 1024)}),
+                status: "pending".into(),
+                output: String::new(),
+                duration_ms: 0,
+            };
+            let error = authorize_declared(
+                ApprovalRequest {
+                    session: &session,
+                    tool: &tool,
+                    options: &selected,
+                    policy: None,
+                    sandbox: None,
+                    project_id: None,
+                    manual_hooks: Some(&hooks),
+                    signal,
+                },
+                tool_contract::ApprovalPolicy::Never,
+                tool_contract::Handler::JarvisAuthoring,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.code, "hook_denied");
+            assert_eq!(error.message, "review blocked");
+            let snapshot = session.snapshot().unwrap();
+            assert!(snapshot.pending_approval.is_none());
+            assert!(snapshot.pending_authoring.is_none());
+            assert!(snapshot.turns[0]
+                .steps
+                .iter()
+                .all(|step| step.tools.is_empty()));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn post_hook_failure_preserves_checkpoint_and_context_is_untrusted() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let signal = session
+        .reserve("Implementar".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    let hooks = manual_hook_runtime(
+        &fixture,
+        &session,
+        crate::hooks::Event::PostToolUse,
+        "cat >/dev/null; printf '%s' 'diagnóstico' >&2; exit 1",
+        "write",
+    );
+    let tool = ToolCall {
+        id: "write-1".into(),
+        name: "write".into(),
+        args: json!({"path":"saved.txt"}),
+        status: "running".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    session
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().turn.steps.push(Step {
+                tools: vec![tool.clone()],
+                ..Step::default()
+            })
+        })
+        .unwrap();
+    core_runtime::checkpoint_tool(&session, &tool, "Arquivo salvo.", "completed", 3, None)
+        .await
+        .unwrap();
+    assert!(run_manual_hook(&session, &hooks, crate::hooks::Event::PostToolUse, json!({"tool_name":tool.name,"tool_input":tool.args,"tool_response":"Arquivo salvo.","tool_use_id":tool.id}), signal).await.unwrap().is_none());
+    session.flush().unwrap();
+    let (loaded, _) = journal::read_only(&session.journal).unwrap();
+    let turn = &loaded[0];
+    assert_eq!(turn.turn.steps[0].tools[0].status, "completed");
+    assert_eq!(turn.turn.steps[0].tools[0].output, "Arquivo salvo.");
+    assert!(turn
+        .wire
+        .iter()
+        .any(|entry| entry["_jarvis_manual_hook"] == "PostToolUse"
+            && entry["content"]
+                .as_str()
+                .unwrap()
+                .contains("untrusted reference data")));
+    assert!(journal::uncertain_tool_names(turn).is_empty());
+    assert!(journal::safe_to_resume(turn));
+    assert_eq!(turn.turn.steps[0].tools.len(), 1);
+    assert!(turn.turn.steps[0].core_activities.iter().any(|activity| {
+        activity.action == "PostToolUse"
+            && activity.status == crate::core::activity::Status::Unavailable
+            && activity.component == crate::core::activity::ActivityComponent::Hooks
+            && activity.resource_id.is_some()
+            && activity.resource_name.is_some()
+    }));
+}
+
 pub(super) struct Fixture {
     pub root: PathBuf,
 }
@@ -26,6 +383,7 @@ pub(super) fn options(approval_mode: ApprovalMode) -> TurnOptions {
         account: "account".into(),
         model: "model".into(),
         reasoning: None,
+        service_tier: None,
         mode: Mode::Build,
         workflow: None,
         custom_workflow_id: None,
@@ -34,6 +392,55 @@ pub(super) fn options(approval_mode: ApprovalMode) -> TurnOptions {
         manual_validation: false,
         automatic_publication: None,
         model_selection: None,
+    }
+}
+
+#[test]
+fn publication_authoring_catalog_exposes_only_metadata_and_build_mcp_registration() {
+    for (mode, expected) in [
+        (Mode::Build, vec!["jarvis_catalog", "jarvis_propose_mcp"]),
+        (Mode::Plan, vec!["jarvis_catalog"]),
+    ] {
+        let definitions = authoring_tools_for_turn(mode, true);
+        let names: Vec<_> = definitions
+            .iter()
+            .map(|definition| definition["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, expected);
+    }
+}
+
+#[test]
+fn normal_authoring_preserves_agent_and_flow_tools_with_build_only_mcp_registration() {
+    for mode in [Mode::Plan, Mode::Build] {
+        let definitions = authoring_tools_for_turn(mode, false);
+        for name in [
+            "jarvis_catalog",
+            "jarvis_propose_agent",
+            "jarvis_propose_flow",
+        ] {
+            assert!(definitions
+                .iter()
+                .any(|definition| definition["name"] == name));
+        }
+        assert_eq!(
+            definitions
+                .iter()
+                .any(|definition| definition["name"] == "jarvis_propose_mcp"),
+            mode == Mode::Build
+        );
+        assert_eq!(
+            definitions
+                .iter()
+                .any(|definition| definition["name"] == "jarvis_propose_hook"),
+            mode == Mode::Build
+        );
+        assert_eq!(
+            definitions
+                .iter()
+                .any(|definition| { definition["name"] == "jarvis_propose_project_instructions" }),
+            mode == Mode::Build
+        );
     }
 }
 
@@ -1462,6 +1869,7 @@ async fn an_approved_decision_creates_a_reusable_project_grant() {
                 policy: Some(policy),
                 sandbox: None,
                 project_id: Some("project"),
+                manual_hooks: None,
                 signal,
             },
             tool_contract::ApprovalPolicy::AccordingToTurn,
@@ -1605,6 +2013,7 @@ async fn yolo_executes_native_sandbox_recovery_without_waiting_for_permission() 
                     policy: Some(policy),
                     sandbox: Some(&sandbox),
                     project_id: Some("project"),
+                    manual_hooks: None,
                     signal: signal.clone(),
                 },
                 prepared,
@@ -1810,6 +2219,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                         account: "account-alias".into(),
                         model: "model".into(),
                         reasoning: None,
+                        service_tier: None,
                         mode: Mode::Build,
                         workflow: None,
                         custom_workflow_id: None,

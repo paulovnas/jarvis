@@ -138,3 +138,11 @@ it("shows the frozen custom identity and opens the correct step transcript", asy
   expect(await screen.findByRole("dialog")).toHaveTextContent("Analista de segurança");
   expect(invoke).toHaveBeenCalledWith("get_workflow_transcript", { conversationId: "c1", agentId: "worker1" });
 });
+
+it("shows Fast only when the worker's actual turn options request priority", () => {
+  const workflow = { data: { conversationId: "c1", revision: 1, flow: "planned" as const, agents: [agent] }, error: null, loading: false, retry: vi.fn() };
+  const view = render(<WorkflowAgents conversationId="c1" workflow={workflow} />);
+  expect(screen.queryByText("Fast")).not.toBeInTheDocument();
+  view.rerender(<WorkflowAgents conversationId="c1" workflow={{ ...workflow, data: { ...workflow.data, agents: [{ ...agent, options: { ...agent.options, serviceTier: "priority" } }] } }} />);
+  expect(within(screen.getByRole("button", { name: "Abrir agente Construtor: Implementar busca" })).getByText("Fast")).toBeVisible();
+});

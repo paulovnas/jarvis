@@ -28,6 +28,7 @@
     "Attachment",
     "MessagePart",
     "AutomaticPublication",
+    "ServiceTier",
     "ModelChoice",
     "TurnOptions",
     "TaskStatus",

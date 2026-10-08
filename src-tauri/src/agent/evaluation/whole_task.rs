@@ -335,6 +335,42 @@ async fn harness_evaluation_whole_task_checks_artifacts_and_pairs_actual_samples
 }
 
 #[test]
+fn harness_evaluation_corpus_requires_each_observable_outcome() {
+    let mut ids = std::collections::BTreeSet::new();
+    for task in corpus() {
+        assert!(!task.id.is_empty() && ids.insert(task.id.clone()));
+        assert!(!task.prompt.is_empty() && !task.checks.is_empty());
+        let checks: BTreeMap<_, _> = task.checks.iter().map(|name| (name, true)).collect();
+        assert_eq!(checks.len(), task.checks.len());
+        assert!(checks.keys().all(|name| !name.is_empty()));
+
+        // Synthetic records exercise the comparator, never provider behavior or speed.
+        let mut record = serde_json::json!({
+            "identity": {
+                "task": task.id, "model": "contract-test", "reasoning": "none",
+                "configuration": "corpus-validation", "sample": 0
+            },
+            "variant": "baseline", "source": "live", "runtimeCompleted": true,
+            "checks": checks, "wallMs": 1, "humanWaitMs": 0, "calls": 0,
+            "errors": 0, "recoveries": 0, "lostEvents": 0, "phases": {}
+        });
+        let baseline: Run = serde_json::from_value(record.clone()).unwrap();
+        record["variant"] = serde_json::json!("candidate");
+        let candidate: Run = serde_json::from_value(record).unwrap();
+        let mut runs = vec![baseline, candidate];
+        assert_eq!(compare(&runs, Source::Live).unwrap().candidate_successes, 1);
+
+        for name in task.checks {
+            runs[1].checks.insert(name.clone(), false);
+            assert_eq!(compare(&runs, Source::Live).unwrap().candidate_successes, 0);
+            runs[1].checks.remove(&name);
+            assert!(compare(&runs, Source::Live).is_err());
+            runs[1].checks.insert(name, true);
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires paired observations from explicitly authorized real-provider runs"]
 fn harness_evaluation_whole_task_live_pairs() {
     let path =

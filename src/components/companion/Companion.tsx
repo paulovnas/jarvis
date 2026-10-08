@@ -407,7 +407,7 @@ export function Companion() {
             <PopoverContent align="end" className="w-60">
               <PopoverHeader><PopoverTitle>Sons e fala</PopoverTitle></PopoverHeader>
               <FieldGroup className="gap-3">
-                <Field data-disabled={!speeches.volumeReady || speeches.volumeSaving}>
+                {speeches.enabled && <Field data-disabled={!speeches.volumeReady || speeches.volumeSaving}>
                   <div className="flex items-center justify-between gap-2">
                     <FieldLabel id="jarvito-speech-volume-label">Volume da voz</FieldLabel>
                     <span aria-hidden="true" className="font-mono text-xs tabular-nums text-muted-foreground">{speeches.volumeReady ? `${speechVolumePercent}%` : "—"}</span>
@@ -417,7 +417,7 @@ export function Companion() {
                       disabled={!speeches.volumeReady || speeches.volumeSaving} className="cursor-pointer"
                       onValueChange={value => setSpeechVolumeDraft(typeof value === "number" ? value : value[0] ?? null)} onValueCommitted={commitSpeechVolume} />}
                   {speeches.volumeError && <FieldError className="text-xs">{speeches.volumeError}</FieldError>}
-                </Field>
+                </Field>}
                 <Field orientation="horizontal"><FieldLabel htmlFor="jarvito-mute-sounds" className="cursor-pointer">Silenciar sons</FieldLabel><Switch id="jarvito-mute-sounds" aria-label="Silenciar sons" checked={!sounds.enabled} disabled={!sounds.ready} className="cursor-pointer" onCheckedChange={toggleSound} /></Field>
                 <Field orientation="horizontal"><FieldLabel htmlFor="jarvito-mute-speech" className="cursor-pointer">Silenciar Jarvito</FieldLabel><Switch id="jarvito-mute-speech" aria-label="Silenciar Jarvito" checked={!speeches.enabled} disabled={!speeches.ready} className="cursor-pointer" onCheckedChange={toggleSpeech} /></Field>
               </FieldGroup>

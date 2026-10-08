@@ -36,6 +36,30 @@ it("routes a supervised catalog decision to the exact worker", async () => {
     pendingAuthoring:{turnId:"child-turn",toolId:"author-1",action:"create",catalogRevision:3,summary:"Criar um agente.",agentReferences:[],target:{kind:"agent",before:null,after:{id:"a".repeat(32),name:"Especialista",description:"",instructions:"Investigue.",usage:"mixed",capability:"read_only",deniedTools:[],model:null,appearance:null}}},
   };
   render(<WorkerRequests conversationId="root" projectPath="/project" agents={[agent]} drafts={new Map()} />);
-  await user.click(screen.getByRole("button", { name: "Aprovar e salvar" }));
+  await user.click(await screen.findByRole("button", { name: "Aprovar e salvar" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("answer_workflow_authoring", { conversationId:"root",agentId:"child",decision:{turnId:"child-turn",toolId:"author-1",approved:true,note:null} }));
+});
+
+it("forwards user-entered MCP credentials only in the exact worker approval decision", async () => {
+  const user = userEvent.setup();
+  vi.mocked(invoke).mockClear();
+  const agent: WorkflowAgent = {
+    id: "child", parentId: "main", role: "builder", title: "Configurar ferramentas", status: "waiting", createdAt: 1, updatedAt: 2, startedAt: 1, durationMs: 1_000, currentThought: null, attempts: 1,
+    options: { account: "personal", model: "model", reasoning: null, mode: "build", approvalMode: "yolo" }, beadId: null, handoff: null, error: null, activeTurnId: "child-turn", pendingQuestion: null, pendingApproval: null,
+    pendingAuthoring: { turnId: "child-turn", toolId: "mcp-child", action: "create", catalogRevision: null, summary: "Adicionar servidor MCP", agentReferences: [], target: { kind: "mcp", server: {
+      name: "docs", transport: "http", command: null, args: [], url: "https://docs.example.com/mcp", cwd: null, enabled: true, envKeys: [], headerKeys: ["Authorization"],
+    } } },
+  };
+  const original = JSON.stringify(agent.pendingAuthoring);
+  render(<WorkerRequests conversationId="root" projectPath="/project" agents={[agent]} drafts={new Map()} />);
+  const approval = await screen.findByRole("button", { name: "Aprovar e adicionar" });
+  expect(approval).toBeDisabled();
+  await user.type(screen.getByLabelText("Cabeçalho Authorization"), "Bearer worker-test-secret");
+  expect(invoke).not.toHaveBeenCalled();
+  expect(JSON.stringify(agent.pendingAuthoring)).toBe(original);
+  await user.click(approval);
+  await waitFor(() => expect(invoke).toHaveBeenCalledExactlyOnceWith("answer_workflow_authoring", { conversationId: "root", agentId: "child", decision: {
+    turnId: "child-turn", toolId: "mcp-child", approved: true, note: null, mcpValues: { environment: {}, headers: { Authorization: "Bearer worker-test-secret" } },
+  } }));
+  expect(JSON.stringify(agent.pendingAuthoring)).toBe(original);
 });

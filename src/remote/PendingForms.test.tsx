@@ -9,6 +9,19 @@ import { PendingForms, type RemoteAction } from "./PendingForms";
 const emptyBundle = (): RemoteChat => ({ chat: emptyChat(), workflow: null, options: null });
 const action = () => vi.fn<RemoteAction>().mockResolvedValue(true);
 
+it("reviews creating project instructions remotely before forwarding approval", async () => {
+  const user = userEvent.setup(); const onAction = action(); const bundle = emptyBundle();
+  bundle.chat.pendingAuthoring = { turnId: "instructions-turn", toolId: "instructions-tool", action: "create", catalogRevision: null, summary: "Criar instruções do projeto", agentReferences: [], target: { kind: "project_instructions", path: "AGENTS.md", before: null, after: "# Instruções\nUse os testes do projeto." } };
+  render(<PendingForms bundle={bundle} projectPath="/projeto" busy={false} onAction={onAction} focused />);
+  expect(screen.getByRole("region", { name: "Aprovação das instruções do projeto" })).toBeVisible();
+  expect(screen.getByLabelText("Conteúdo proposto do AGENTS.md")).toHaveValue("# Instruções\nUse os testes do projeto.");
+  await user.click(screen.getByRole("tab", { name: "Arquivo atual" }));
+  expect(screen.getByText("Este projeto ainda não possui AGENTS.md.")).toBeVisible();
+  expect(onAction).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Aprovar e salvar" }));
+  expect(onAction).toHaveBeenCalledExactlyOnceWith("authoring", { conversationId: "c1", agentId: "main", decision: { turnId: "instructions-turn", toolId: "instructions-tool", approved: true, note: null } });
+});
+
 it("renders the root decision once and routes a separate subagent decision to its owner", async () => {
   const user = userEvent.setup(); const onAction = action(); const bundle = emptyBundle();
   const question = { turnId: "t1", toolId: "q1", questions: [{ id: "detail", question: "Qual detalhe?", options: [] }] };
@@ -45,6 +58,96 @@ it.each([true, false])("sends tool authorization %s with its original turn/tool 
 });
 
 const proposal = (): PendingAuthoring => ({ turnId: "t1", toolId: "github1", action: "publish", summary: "Publicar correção", catalogRevision: null, agentReferences: [], target: { kind: "publication", after: { summary: "Publicar correção", authorization: null, repositories: [{ path: ".", files: ["src/main.ts"], reset: null, branch: "codex/mobile", commitMessage: "fix: mobile", sync: "none", push: "normal", pullRequest: { base: "main", title: "Correção móvel", body: "Descrição completa do PR", draft: true, merge: { method: "squash", deleteBranch: true } } }] } } });
+
+const mcpProposal = (): PendingAuthoring => ({ turnId: "mcp-turn", toolId: "mcp-tool", action: "create", summary: "Adicionar MCP de documentação", catalogRevision: null, agentReferences: [], target: { kind: "mcp", server: {
+  name: "docs", transport: "http", command: null, args: [], url: "https://docs.example.com/mcp", cwd: null, enabled: true, envKeys: [], headerKeys: ["Authorization"],
+} } });
+
+it("reviews the exact hook being removed and forwards a single explicit remote decision", async () => {
+  const user = userEvent.setup(); const onAction = action(); const bundle = emptyBundle();
+  bundle.chat.pendingAuthoring = { turnId: "hook-turn", toolId: "hook-delete", action: "delete", catalogRevision: 4, summary: "Remover diagnóstico antigo", agentReferences: [], target: { kind: "hook", after: null, before: {
+    id: "a".repeat(32), name: "Diagnóstico antigo", event: "PreToolUse", command: "node check.js", matcher: "bash", timeoutSeconds: 20, enabled: true,
+  } } };
+  render(<PendingForms bundle={bundle} projectPath="/projeto" busy={false} onAction={onAction} focused />);
+  expect(screen.getByText("node check.js")).toBeVisible();
+  expect(screen.getByText("20 s")).toBeVisible();
+  expect(onAction).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Aprovar e remover" }));
+  expect(onAction).toHaveBeenCalledExactlyOnceWith("authoring", { conversationId: "c1", agentId: "main", decision: { turnId: "hook-turn", toolId: "hook-delete", approved: true, note: null } });
+});
+
+it.each([true, false])("reviews MCP scope and sends credential values only for approval %s", async approved => {
+  const user = userEvent.setup(); const onAction = action(); const bundle = emptyBundle();
+  const request = mcpProposal(); const original = JSON.stringify(request); const formDrafts = new Map<string, string>();
+  bundle.chat.pendingAuthoring = request;
+  render(<PendingForms bundle={bundle} projectPath="/projeto" busy={false} onAction={onAction} formDrafts={formDrafts} focused />);
+  expect(screen.getByRole("region", { name: "Aprovação de servidor MCP" })).toBeVisible();
+  expect(screen.getByText("https://docs.example.com/mcp")).toBeVisible();
+  expect(screen.getByText("Global · disponível nos projetos e chats do Jarvis")).toBeVisible();
+  const approve = screen.getByRole("button", { name: "Aprovar e adicionar" });
+  expect(approve).toBeDisabled();
+  const credential = screen.getByLabelText("Cabeçalho Authorization");
+  expect(credential).toHaveAttribute("type", "password");
+  await user.type(credential, "Bearer remote-test-secret");
+  expect(approve).toBeEnabled();
+  expect(screen.queryByText("Bearer remote-test-secret")).not.toBeInTheDocument();
+  expect(JSON.stringify(request)).toBe(original);
+  expect(formDrafts.size).toBe(0);
+  expect(onAction).not.toHaveBeenCalled();
+  await user.click(approved ? approve : screen.getByRole("button", { name: "Recusar" }));
+  expect(onAction).toHaveBeenCalledExactlyOnceWith("authoring", { conversationId: "c1", agentId: "main", decision: {
+    turnId: "mcp-turn", toolId: "mcp-tool", approved, note: null,
+    ...(approved ? { mcpValues: { environment: {}, headers: { Authorization: "Bearer remote-test-secret" } } } : {}),
+  } });
+});
+
+it("does not retain MCP credentials in remote draft storage after leaving approval", async () => {
+  const user = userEvent.setup(); const onAction = action(); const bundle = emptyBundle(); const formDrafts = new Map<string, string>();
+  bundle.chat.pendingAuthoring = mcpProposal();
+  const view = render(<PendingForms bundle={bundle} projectPath="/projeto" busy={false} onAction={onAction} formDrafts={formDrafts} />);
+  await user.type(screen.getByLabelText("Cabeçalho Authorization"), "temporary-secret");
+  view.unmount();
+  render(<PendingForms bundle={bundle} projectPath="/projeto" busy={false} onAction={onAction} formDrafts={formDrafts} />);
+  expect(screen.getByLabelText("Cabeçalho Authorization")).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Aprovar e adicionar" })).toBeDisabled();
+  expect(formDrafts.size).toBe(0);
+  expect(onAction).not.toHaveBeenCalled();
+});
+
+it("requires fresh MCP credentials when the same tool ID is reused in another turn", async () => {
+  const user = userEvent.setup(); const onAction = action(); const bundle = emptyBundle();
+  bundle.chat.pendingAuthoring = mcpProposal();
+  const view = render(<PendingForms bundle={bundle} projectPath="/projeto" busy={false} onAction={onAction} />);
+  await user.type(screen.getByLabelText("Cabeçalho Authorization"), "first-turn-private");
+  expect(screen.getByRole("button", { name: "Aprovar e adicionar" })).toBeEnabled();
+  const next = { ...bundle, chat: { ...bundle.chat, pendingAuthoring: { ...mcpProposal(), turnId: "second-turn" } } };
+  view.rerender(<PendingForms bundle={next} projectPath="/projeto" busy={false} onAction={onAction} />);
+  expect(screen.getByLabelText("Cabeçalho Authorization")).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Aprovar e adicionar" })).toBeDisabled();
+  expect(onAction).not.toHaveBeenCalled();
+  await user.type(screen.getByLabelText("Cabeçalho Authorization"), "second-turn-private");
+  await user.click(screen.getByRole("button", { name: "Aprovar e adicionar" }));
+  expect(onAction).toHaveBeenCalledExactlyOnceWith("authoring", { conversationId: "c1", agentId: "main", decision: {
+    turnId: "second-turn", toolId: "mcp-tool", approved: true, note: null,
+    mcpValues: { environment: {}, headers: { Authorization: "second-turn-private" } },
+  } });
+});
+
+it("reviews a local MCP without credentials and permits an explicit add decision", async () => {
+  const user = userEvent.setup(); const onAction = action(); const bundle = emptyBundle();
+  bundle.chat.pendingAuthoring = { ...mcpProposal(), target: { kind: "mcp", server: {
+    name: "local-docs", transport: "stdio", command: "node", args: ["servidor MCP.js"], url: null, cwd: "/documentacao", enabled: false, envKeys: [], headerKeys: [],
+  } } };
+  render(<PendingForms bundle={bundle} projectPath="/projeto" busy={false} onAction={onAction} />);
+  expect(screen.getByText("node")).toBeVisible(); expect(screen.getByText('["servidor MCP.js"]')).toBeVisible();
+  expect(screen.getByText("/documentacao")).toBeVisible(); expect(screen.getByText("Desativado")).toBeVisible();
+  expect(screen.queryByText("Valores para configurar o servidor")).not.toBeInTheDocument();
+  const approve = screen.getByRole("button", { name: "Aprovar e adicionar" });
+  expect(approve).toBeEnabled(); await user.click(approve);
+  expect(onAction).toHaveBeenCalledExactlyOnceWith("authoring", { conversationId: "c1", agentId: "main", decision: {
+    turnId: "mcp-turn", toolId: "mcp-tool", approved: true, note: null, mcpValues: { environment: {}, headers: {} },
+  } });
+});
 
 it.each([true, false])("shows complete GitHub operations before approval %s", async approved => {
   const user = userEvent.setup(); const onAction = action(); const bundle = emptyBundle(); bundle.chat.pendingAuthoring = proposal();

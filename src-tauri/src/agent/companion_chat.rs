@@ -137,6 +137,19 @@ pub(crate) struct ModelOption {
     label: String,
     reasoning_levels: Vec<String>,
     default_reasoning_level: Option<String>,
+    supports_fast: bool,
+}
+
+impl ModelOption {
+    fn provider(alias: &str, model: crate::openai_codex::ProviderModel) -> Self {
+        Self {
+            value: format!("{alias}/{}", model.id),
+            label: model.name,
+            reasoning_levels: model.reasoning_levels,
+            default_reasoning_level: model.default_reasoning_level,
+            supports_fast: model.supports_fast,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -186,6 +199,9 @@ pub(super) fn allowed_tool(name: &str) -> bool {
             | "jarvito_set_agent_model"
             | "jarvito_read_knowledge"
             | "jarvito_save_knowledge"
+            | "jarvis_propose_mcp"
+            | "jarvis_propose_hook"
+            | "jarvis_propose_plugin"
     )
 }
 
@@ -208,6 +224,25 @@ pub(crate) fn tools() -> Vec<Value> {
         schema("jarvito_propose_project", "Propose explicit user confirmation before entering a project. Select execution from jarvito_list_executors; configured models are applied at confirmation. Set conversationId only when the user intends to continue an existing chat; omit it or use null for a new task. Never invent a conversation ID. Omitting execution preserves an existing chat's configuration. Active/recoverable chats keep their execution: omit conversationId to start a new chat for a different agent or workflow. A new chat defaults to the configured Builder if execution is omitted. Confirmation silently sends message to the project chat. This tool never starts work or grants scope.", json!({"projectId":id,"conversationId":conversation_id,"execution":execution,"reason":{"type":"string","minLength":1,"maxLength":MAX_REASON},"message":{"type":"string","minLength":1,"maxLength":MAX_TASK}}), &["projectId","reason","message"]),
     ];
     definitions.extend(management::definitions());
+    let mut mcp = super::authoring::mcp_definition();
+    if let Some(description) = mcp["description"].as_str() {
+        mcp["description"] = json!(description
+            .replace("jarvis_catalog", "jarvito_catalog")
+            .replace(
+                "use mcp_activate afterwards to discover its tools",
+                "connect in a scoped project conversation afterwards"
+            ));
+    }
+    definitions.push(mcp);
+    definitions.push(super::authoring::hook_definition());
+    let mut plugin = super::authoring::plugin_definition();
+    if let Some(description) = plugin["description"].as_str() {
+        plugin["description"] = json!(description.replace(
+            "jarvis_catalog view=plugins (jarvito_catalog in global chat)",
+            "jarvito_catalog view=plugins"
+        ));
+    }
+    definitions.push(plugin);
     definitions
 }
 
@@ -365,6 +400,7 @@ fn base_options() -> TurnOptions {
         account: String::new(),
         model: String::new(),
         reasoning: None,
+        service_tier: None,
         mode: Mode::Build,
         workflow: Some(workflow::Flow::Standard),
         custom_workflow_id: None,
@@ -640,12 +676,7 @@ pub(crate) async fn get_companion_models(
                 .models
                 .into_iter()
                 .filter(|model| !account.disabled_models.contains(&model.id))
-                .map(|model| ModelOption {
-                    value: format!("{}/{}", account.alias, model.id),
-                    label: model.name,
-                    reasoning_levels: model.reasoning_levels,
-                    default_reasoning_level: model.default_reasoning_level,
-                })
+                .map(|model| ModelOption::provider(&account.alias, model))
                 .collect(),
             empty_message: Some(
                 "Nenhum modelo disponível. Atualize o catálogo em Configurações → Provedores."
@@ -679,6 +710,7 @@ pub(crate) async fn get_companion_models(
                     label: model.name,
                     reasoning_levels: model.reasoning_levels,
                     default_reasoning_level: model.default_reasoning,
+                    supports_fast: false,
                 })
                 .collect(),
             empty_message: Some(
@@ -1183,6 +1215,22 @@ pub(super) async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn companion_and_remote_model_options_preserve_fast_catalog_capability() {
+        let legacy = json!({"id":"selected","name":"Modelo","reasoningLevels":["high"],"defaultReasoningLevel":"high"});
+        let normal: crate::openai_codex::ProviderModel =
+            serde_json::from_value(legacy.clone()).unwrap();
+        let normal = serde_json::to_value(ModelOption::provider("account", normal)).unwrap();
+        assert_eq!(normal["supportsFast"], false);
+        let mut advertised = legacy;
+        advertised["supportsFast"] = json!(true);
+        let model = serde_json::from_value(advertised).unwrap();
+        let option = serde_json::to_value(ModelOption::provider("account", model)).unwrap();
+        assert_eq!(option["supportsFast"], true);
+        assert_eq!(option["value"], "account/selected");
+        assert_eq!(option["defaultReasoningLevel"], "high");
+    }
     use std::collections::BTreeMap;
 
     fn configured_catalog() -> workflow::catalog::Catalog {
@@ -1673,7 +1721,7 @@ mod tests {
     #[test]
     fn global_catalog_never_advertises_project_or_confirmation_tools() {
         let definitions = tools();
-        assert_eq!(definitions.len(), 12);
+        assert_eq!(definitions.len(), 15);
         for definition in definitions {
             assert!(allowed_tool(definition["name"].as_str().unwrap()));
         }
@@ -1686,10 +1734,40 @@ mod tests {
             "hub_dispatch",
             "terminal_open",
             "http_send",
+            "jarvis_propose_project_instructions",
         ] {
             assert!(!allowed_tool(name));
         }
         assert!(allowed_tool("ask_user"));
+        assert!(allowed_tool("jarvis_propose_mcp"));
+        assert!(allowed_tool("jarvis_propose_plugin"));
+        let catalog = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "jarvito_catalog")
+            .unwrap();
+        assert!(!catalog["parameters"]["properties"]["view"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("project_instructions")));
+        let plugin = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "jarvis_propose_plugin")
+            .unwrap();
+        let description = plugin["description"].as_str().unwrap();
+        assert!(description.contains("jarvito_catalog view=plugins"));
+        assert!(!description.contains("jarvis_catalog"));
+        let proposal = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "jarvis_propose_mcp")
+            .unwrap();
+        assert!(proposal["description"]
+            .as_str()
+            .unwrap()
+            .contains("jarvito_catalog"));
+        assert!(!proposal["description"]
+            .as_str()
+            .unwrap()
+            .contains("mcp_activate"));
     }
 
     #[test]

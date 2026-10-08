@@ -6,6 +6,7 @@ export type ProviderModel = {
   reasoningLevels: string[];
   defaultReasoningLevel: string | null;
   contextWindow?: number | null;
+  supportsFast?: boolean;
 };
 
 export type ProviderUsageAlert = {
@@ -49,6 +50,7 @@ function isProviderModel(value: unknown): value is ProviderModel {
   return (
     typeof model.id === "string" &&
     typeof model.name === "string" &&
+    (model.supportsFast === undefined || typeof model.supportsFast === "boolean") &&
     (model.contextWindow == null || (Number.isSafeInteger(model.contextWindow) && model.contextWindow > 0)) &&
     Array.isArray(model.reasoningLevels) &&
     model.reasoningLevels.every(

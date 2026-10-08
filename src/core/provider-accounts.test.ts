@@ -116,3 +116,10 @@ describe("model catalog refresh", () => {
     expect(fresh.accounts[0].modelsStale).toBe(false);
   });
 });
+
+it("preserves explicit Fast capability and accepts legacy catalogs without it", () => {
+  expect(accountList([account])).toEqual([account]);
+  const fast = { ...account, models: [{ ...account.models[0], supportsFast: true }] };
+  expect(accountList([fast])).toEqual([fast]);
+  expect(accountList([{ ...fast, models: [{ ...fast.models[0], supportsFast: "true" }] }])).toEqual([]);
+});

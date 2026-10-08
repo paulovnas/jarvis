@@ -410,6 +410,25 @@ mod tests {
     }
 
     #[test]
+    fn mcp_registration_uses_native_authoring_and_waits_serially_for_approval() {
+        let catalog = Catalog::new(&super::super::authoring::definitions());
+        let proposal = catalog.specs.get("jarvis_propose_mcp").unwrap();
+        assert_eq!(proposal.handler, Handler::JarvisAuthoring);
+        assert_eq!(proposal.capabilities.effect, Effect::Interactive);
+        assert_eq!(proposal.capabilities.approval, ApprovalPolicy::Never);
+        assert!(!proposal.capabilities.parallel_safe);
+        let hook = catalog.specs.get("jarvis_propose_hook").unwrap();
+        assert_eq!(hook.handler, Handler::JarvisAuthoring);
+        assert_eq!(hook.capabilities.effect, Effect::Interactive);
+        assert_eq!(hook.capabilities.approval, ApprovalPolicy::Never);
+        assert!(!hook.capabilities.parallel_safe);
+        assert_eq!(
+            catalog.capabilities("jarvis_catalog").unwrap().effect,
+            Effect::ReadOnly
+        );
+    }
+
+    #[test]
     fn private_diagnostics_are_read_only_and_cannot_be_guessed_in_normal_catalogs() {
         let normal =
             Orchestrator::new(&super::super::tools::definitions(super::super::Mode::Build));

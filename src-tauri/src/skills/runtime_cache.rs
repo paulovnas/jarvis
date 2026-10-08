@@ -79,12 +79,16 @@ struct Entry {
     home: PathBuf,
     project: PathBuf,
     config: Config,
+    plugin_revision: u64,
     watched: Vec<Stamp>,
     skills: Arc<[Skill]>,
 }
 
 pub(super) fn active(home: &Path, project: &Path) -> Result<Arc<[Skill]>, SkillError> {
     let config = read_config(home)?;
+    let plugin_revision = crate::plugins::load_active_for_project(home, Some(project))
+        .map_err(|cause| error(cause.message))?
+        .revision;
     let mut cache = CACHE
         .lock()
         .map_err(|_| error("Catálogo de skills ocupado."))?;
@@ -93,7 +97,10 @@ pub(super) fn active(home: &Path, project: &Path) -> Result<Arc<[Skill]>, SkillE
         .position(|e| e.home == home && e.project == project)
     {
         let entry = cache.remove(index);
-        if entry.config == config && entry.watched.iter().all(Stamp::valid) {
+        if entry.config == config
+            && entry.plugin_revision == plugin_revision
+            && entry.watched.iter().all(Stamp::valid)
+        {
             let result = Arc::clone(&entry.skills);
             cache.push(entry);
             return Ok(result);
@@ -112,6 +119,7 @@ pub(super) fn active(home: &Path, project: &Path) -> Result<Arc<[Skill]>, SkillE
             home: home.into(),
             project: project.into(),
             config,
+            plugin_revision,
             watched,
             skills: Arc::clone(&skills),
         });
@@ -166,5 +174,56 @@ mod tests {
         fs::remove_dir_all(&new).unwrap();
         suppress_metadata_change(home, new.parent().unwrap());
         assert!(active(home, home).unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn plugin_skill_cache_refreshes_and_reads_authorized_frozen_version() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let create = |body: &str| {
+            crate::plugins::Operation::Create { draft: serde_json::from_value(serde_json::json!({"name":"design-fixture","description":"Plugin skills fixture","skills":[{"name":"design","content":format!("---\nname: design\ndescription: Design a product\n---\n{body}")}],"files":[],"mcpServers":{},"apps":{}})).unwrap() }
+        };
+        let prepared = crate::plugins::preview(home, 0, create("Original guidance"))
+            .await
+            .unwrap();
+        let catalog = crate::plugins::apply(home, &prepared).unwrap();
+        let frozen = active(home, home).unwrap();
+        let skill = frozen
+            .iter()
+            .find(|skill| skill.origin == "plugin")
+            .unwrap();
+        assert!(skill.managed && skill.enabled);
+        assert!(skill.name.ends_with(":design"));
+        let id = skill.id.clone();
+        let prepared = crate::plugins::preview(home, catalog.revision, create("Updated guidance"))
+            .await
+            .unwrap();
+        let catalog = crate::plugins::apply(home, &prepared).unwrap();
+        let fresh = active(home, home).unwrap();
+        assert!(fresh.iter().any(|skill| skill.id == id));
+        assert!(!Arc::ptr_eq(&frozen, &fresh));
+        let args = serde_json::json!({"id":id});
+        let old = super::super::read_from_snapshot(home, home, &args, &frozen)
+            .await
+            .unwrap();
+        assert!(old.contains("Original guidance") && !old.contains("Updated guidance"));
+        assert!(super::super::read(home, home, &args)
+            .await
+            .unwrap()
+            .contains("Updated guidance"));
+        let prepared = crate::plugins::preview(
+            home,
+            catalog.revision,
+            crate::plugins::Operation::SetEnabled {
+                plugin_id: catalog.installed[0].id.clone(),
+                enabled: false,
+                project_path: None,
+            },
+        )
+        .await
+        .unwrap();
+        crate::plugins::apply(home, &prepared).unwrap();
+        assert!(super::super::read_from_snapshot(home, home, &args, &frozen)
+            .await
+            .is_err());
     }
 }

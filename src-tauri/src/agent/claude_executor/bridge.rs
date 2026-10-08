@@ -9,6 +9,8 @@ pub(in crate::agent) struct Bridge<'a> {
     pub options: TurnOptions,
     pub signal: watch::Receiver<bool>,
     pub context: crate::core::context::ContextMode,
+    pub manual_hooks: Arc<crate::hooks::runtime::Runtime>,
+    frozen_skills: Arc<[crate::skills::Skill]>,
     pub graft: crate::core::graft::Graft,
     pub clients: crate::mcp::runtime::TurnClients,
     beads: Option<crate::core::beads::Beads>,
@@ -35,6 +37,7 @@ impl<'a> Bridge<'a> {
         execution: Option<workflow::Execution>,
         options: TurnOptions,
         signal: watch::Receiver<bool>,
+        frozen_skills: Arc<[crate::skills::Skill]>,
     ) -> Result<Self, AgentError> {
         let owner = execution.as_ref().map_or(session, |exec| exec.root());
         let global_companion = companion_chat::is_global_session(&owner.id);
@@ -178,14 +181,21 @@ impl<'a> Bridge<'a> {
                 owner.project_id()?,
             )?));
         }
+        if publication && !global_companion {
+            prompt.push_str(MCP_REGISTRATION_INSTRUCTIONS);
+        }
         if !publication && !global_companion {
             prompt.push_str(authoring::INSTRUCTIONS);
+            prompt.push_str(
+                &crate::plugins::runtime_prompt(home, &session.root)
+                    .map_err(|cause| AgentError::new(cause.code, &cause.message))?,
+            );
             prompt.push_str(web_search::instructions(web_search::enabled(
                 runtime.state,
                 home,
                 &options,
             )));
-            let skills = crate::skills::active(home, &session.root)
+            let skills = crate::skills::authorized_snapshot(home, &session.root, &frozen_skills)
                 .await
                 .map_err(|error| AgentError::new("skill_error", &error.message))?;
             prompt.push_str(&crate::skills::prompt(&skills));
@@ -285,6 +295,8 @@ impl<'a> Bridge<'a> {
             options,
             signal,
             context,
+            manual_hooks: Arc::new(crate::hooks::runtime::Runtime::inactive()),
+            frozen_skills,
             graft,
             clients,
             beads,
@@ -371,8 +383,22 @@ impl<'a> Bridge<'a> {
         }
         definitions.extend(self.context.definitions(self.restricted));
         definitions.extend(self.graft.definitions());
+        definitions.extend(authoring_tools_for_turn(
+            if self.restricted {
+                Mode::Plan
+            } else {
+                self.options.mode
+            },
+            self.publication,
+        ));
         if !self.publication {
-            definitions.extend(authoring::definitions());
+            self.frozen_skills = crate::skills::refresh_snapshot(
+                self.runtime.home,
+                &self.session.root,
+                &self.frozen_skills,
+            )
+            .await
+            .map_err(|cause| AgentError::new("skill_error", &cause.message))?;
             if self_development::available(
                 self.runtime.state,
                 self.runtime.home,
@@ -509,6 +535,17 @@ impl<'a> Bridge<'a> {
                         plan.requires_informed_approval(&policy.outcome.effects)
                     }));
         }
+        if let Some(reason) = run_manual_hook(
+            self.session,
+            &self.manual_hooks,
+            crate::hooks::Event::PreToolUse,
+            json!({"tool_name":tool.name,"tool_input":tool.args,"tool_use_id":tool.id}),
+            self.signal.clone(),
+        )
+        .await?
+        {
+            return Err(AgentError::new("hook_denied", &reason));
+        }
         let terminal_ask = self
             .execution
             .as_ref()
@@ -523,6 +560,7 @@ impl<'a> Bridge<'a> {
                 policy,
                 sandbox: sandbox.as_ref(),
                 project_id: Some(&project_id),
+                manual_hooks: Some(&self.manual_hooks),
                 signal: self.signal.clone(),
             },
             prepared,
@@ -587,7 +625,13 @@ impl<'a> Bridge<'a> {
         output: &str,
         status: &str,
     ) -> Result<Option<Value>, AgentError> {
-        if !tool.name.starts_with("mcp_") {
+        let registered = matches!(
+            tool.name.as_str(),
+            "jarvis_propose_mcp" | "jarvis_propose_plugin"
+        ) && status == "completed"
+            && serde_json::from_str::<Value>(output)
+                .is_ok_and(|result| result["approved"] == true && result["status"] == "applied");
+        if !tool.name.starts_with("mcp_") && !registered {
             return Ok(None);
         }
         let discovery = matches!(
@@ -601,7 +645,7 @@ impl<'a> Bridge<'a> {
                     Some("tool_unavailable" | "mcp_scope_violation")
                 )
             });
-        if !(discovery && status != "error" || unavailable) {
+        if !(discovery && status != "error" || unavailable || registered) {
             return Ok(None);
         }
         let definitions = self.definitions().await?;
@@ -611,7 +655,25 @@ impl<'a> Bridge<'a> {
             output,
             &definitions,
         );
-        if schemas.is_empty() {
+        let capability_context = if (registered || unavailable)
+            && !self.publication
+            && !companion_chat::is_global_session(&self.owner().id)
+        {
+            let mut context = crate::plugins::runtime_prompt(self.runtime.home, &self.session.root)
+                .map_err(|cause| AgentError::new(cause.code, &cause.message))?;
+            let skills = crate::skills::authorized_snapshot(
+                self.runtime.home,
+                &self.session.root,
+                &self.frozen_skills,
+            )
+            .await
+            .map_err(|cause| AgentError::new("skill_error", &cause.message))?;
+            context.push_str(&crate::skills::prompt(&skills));
+            context
+        } else {
+            String::new()
+        };
+        if schemas.is_empty() && capability_context.is_empty() {
             return Ok(None);
         }
         let call_with = json!("mcp__jarvis__call_mcp_tool");
@@ -621,6 +683,7 @@ impl<'a> Bridge<'a> {
                 "availableTools":schemas,
                 "callWith":call_with,
                 "catalogChanged":true,
+                "capabilityContext":capability_context,
             }).to_string(),
         })))
     }
@@ -713,6 +776,7 @@ impl<'a> Bridge<'a> {
                     self.owner(),
                     state,
                     self.runtime.oauth,
+                    self.runtime.mcp,
                     home,
                     tool,
                     signal,
@@ -770,19 +834,22 @@ impl<'a> Bridge<'a> {
             )
             .await
             .map_err(AgentError::from),
-            Handler::Mcp => self
-                .clients
-                .execute(
-                    self.runtime.mcp,
-                    state,
-                    home,
-                    &tool.name,
-                    &tool.args,
-                    self.restricted,
-                    signal,
-                )
-                .await
-                .map_err(AgentError::from),
+            Handler::Mcp => {
+                let result = self
+                    .clients
+                    .execute(
+                        self.runtime.mcp,
+                        state,
+                        home,
+                        &tool.name,
+                        &tool.args,
+                        self.restricted,
+                        signal,
+                    )
+                    .await;
+                core_runtime::record_async(self.session, self.clients.take_activity()).await?;
+                result.map_err(AgentError::from)
+            }
             Handler::Lsp => self.lsp.execute(tool, signal).await,
             Handler::Attachment => attachments::read_tool_with_project(
                 home,
@@ -827,13 +894,17 @@ impl<'a> Bridge<'a> {
                 )
                 .await
             }
-            Handler::SkillRead => crate::skills::read(home, &self.session.root, &tool.args)
-                .await
-                .map_err(|error| AgentError::new("skill_error", &error.message)),
+            Handler::SkillRead => {
+                core_runtime::read_skill(self.session, home, &tool.args, &self.frozen_skills).await
+            }
             Handler::SkillSearch => {
-                let skills = crate::skills::active(home, &self.session.root)
-                    .await
-                    .map_err(|error| AgentError::new("skill_error", &error.message))?;
+                let skills = crate::skills::authorized_snapshot(
+                    home,
+                    &self.session.root,
+                    &self.frozen_skills,
+                )
+                .await
+                .map_err(|error| AgentError::new("skill_error", &error.message))?;
                 crate::skills::search(&skills, &tool.args)
                     .map_err(|error| AgentError::new("skill_error", &error.message))
             }
@@ -970,5 +1041,407 @@ impl<'a> Bridge<'a> {
             }
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_bridge<'a>(
+        session: &'a Arc<Session>,
+        runtime: TurnRuntime<'a>,
+        options: TurnOptions,
+        signal: watch::Receiver<bool>,
+    ) -> Bridge<'a> {
+        Bridge {
+            session,
+            runtime,
+            execution: None,
+            options,
+            signal,
+            context: crate::core::context::ContextMode::without_project(&session.root, &session.id),
+            manual_hooks: Arc::new(crate::hooks::runtime::Runtime::inactive()),
+            frozen_skills: Arc::from([]),
+            graft: crate::core::graft::Graft::inactive(),
+            clients: crate::mcp::runtime::TurnClients::default(),
+            beads: None,
+            project_beads: None,
+            design: None,
+            lsp: lsp::Registry::new(runtime.home, &session.root).unwrap(),
+            commands: command_sessions::CommandSessions::default(),
+            video_jobs: video::Jobs::default(),
+            instructions: instructions::Resolver::new(&session.root).unwrap(),
+            repeated: tool_loop::Guard::default(),
+            diagnostics: vec![],
+            direct_tasks: true,
+            restricted: false,
+            publication: false,
+            prompt: String::new(),
+            delivered_wire: 0,
+            request_scope: "gateway-test".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn project_instruction_gateway_routes_native_review_only_in_build_mode() {
+        let fixture = crate::agent::tests::Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        let state = AppState::default();
+        let oauth = OpenAiCodexState::default();
+        let mcp = crate::mcp::McpState::default();
+        let grants = execution_grants::GrantStore::default();
+        let options = crate::agent::tests::options(ApprovalMode::Yolo);
+        let signal = session
+            .reserve("Preparar AGENTS.md".into(), options.clone())
+            .unwrap();
+        let mut bridge = fixture_bridge(
+            &session,
+            TurnRuntime {
+                grants: &grants,
+                state: &state,
+                oauth: &oauth,
+                mcp: &mcp,
+                home: &fixture.root,
+            },
+            options,
+            signal,
+        );
+        for mode in [Mode::Build, Mode::Plan] {
+            bridge.options.mode = mode;
+            bridge.restricted = mode == Mode::Plan;
+            let definitions = bridge.definitions().await.unwrap();
+            assert_eq!(
+                definitions
+                    .iter()
+                    .any(|definition| definition["name"] == "jarvis_propose_project_instructions"),
+                mode == Mode::Build
+            );
+            if mode == Mode::Build {
+                let contract = Orchestrator::new(&definitions);
+                let proposed = ToolCall {
+                    id: "instructions".into(),
+                    name: "jarvis_propose_project_instructions".into(),
+                    args: json!({"revision":"missing","summary":"Convenções verificadas","content":"Use confirmed project checks."}),
+                    status: "pending".into(),
+                    output: String::new(),
+                    duration_ms: 0,
+                };
+                assert_eq!(
+                    contract.preflight(&proposed).unwrap().handler,
+                    Handler::JarvisAuthoring
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn skill_gateway_admits_new_plugins_keeps_turn_versions_and_honors_revocation() {
+        let fixture = crate::agent::tests::Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        let home = fixture.root.as_path();
+        let create = |name: &str, body: &str| {
+            crate::plugins::Operation::Create {
+            draft: serde_json::from_value(json!({"name":name,"description":"Gateway fixture","skills":[{"name":"guidance","content":format!("---\nname: guidance\ndescription: {body}\n---\n{body}")}]})).unwrap(),
+        }
+        };
+        let prepared = crate::plugins::preview(home, 0, create("original", "Original guidance"))
+            .await
+            .unwrap();
+        let catalog = crate::plugins::apply(home, &prepared).unwrap();
+        let frozen = crate::skills::active(home, &session.root).await.unwrap();
+        let original = frozen
+            .iter()
+            .find(|skill| skill.origin == "plugin")
+            .unwrap()
+            .id
+            .clone();
+        let plugin_id = catalog.installed[0].id.clone();
+        let options = crate::agent::tests::options(ApprovalMode::Yolo);
+        let signal = session
+            .reserve("Use a orientação original".into(), options.clone())
+            .unwrap();
+        let state = AppState::default();
+        let oauth = OpenAiCodexState::default();
+        let mcp = crate::mcp::McpState::default();
+        let grants = execution_grants::GrantStore::default();
+        let mut bridge = fixture_bridge(
+            &session,
+            TurnRuntime {
+                grants: &grants,
+                state: &state,
+                oauth: &oauth,
+                mcp: &mcp,
+                home,
+            },
+            options,
+            signal,
+        );
+        bridge.frozen_skills = frozen;
+        let prepared = crate::plugins::preview(
+            home,
+            catalog.revision,
+            create("original", "Updated guidance"),
+        )
+        .await
+        .unwrap();
+        let catalog = crate::plugins::apply(home, &prepared).unwrap();
+        let prepared =
+            crate::plugins::preview(home, catalog.revision, create("late", "Late guidance"))
+                .await
+                .unwrap();
+        let catalog = crate::plugins::apply(home, &prepared).unwrap();
+        let late = crate::skills::active(home, &session.root)
+            .await
+            .unwrap()
+            .iter()
+            .find(|skill| skill.description == "Late guidance")
+            .unwrap()
+            .id
+            .clone();
+        let local = crate::data_dir::root(home).join("skills/late-local");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::write(
+            local.join("SKILL.md"),
+            "---\nname: late-local\ndescription: Local guidance\n---\nLocal guidance",
+        )
+        .unwrap();
+        bridge.definitions().await.unwrap();
+        let tool = |name: &str, args| ToolCall {
+            id: "skill-test".into(),
+            name: name.into(),
+            args,
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        let found = bridge
+            .dispatch(
+                &tool("find_skills", json!({"query":"Late"})),
+                Handler::SkillSearch,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&found).unwrap()["total"], 1);
+        assert!(session.snapshot().unwrap().turns[0]
+            .steps
+            .iter()
+            .all(|step| step.core_activities.is_empty()));
+        let original_text = bridge
+            .dispatch(
+                &tool("read_skill", json!({"id":original})),
+                Handler::SkillRead,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(original_text.contains("Original guidance"));
+        assert!(!original_text.contains("Updated guidance"));
+        let added = bridge
+            .dispatch(
+                &tool("read_skill", json!({"id":late})),
+                Handler::SkillRead,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(added.contains("Late guidance"));
+        let activities: Vec<_> = session.snapshot().unwrap().turns[0]
+            .steps
+            .iter()
+            .flat_map(|step| &step.core_activities)
+            .cloned()
+            .collect();
+        assert_eq!(activities.len(), 2);
+        assert_eq!(activities[0].plugin_id.as_deref(), Some("original@local"));
+        assert_eq!(activities[1].plugin_id.as_deref(), Some("late@local"));
+        assert!(activities
+            .iter()
+            .all(|activity| activity.action == "skill_loaded"));
+        let local = bridge
+            .dispatch(
+                &tool("find_skills", json!({"query":"Local guidance"})),
+                Handler::SkillSearch,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&local).unwrap()["total"], 0);
+        let content = bridge
+            .discovery_content(
+                &tool("jarvis_propose_plugin", json!({})),
+                &json!({"approved":true,"status":"applied"}).to_string(),
+                "completed",
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let receipt: Value = serde_json::from_str(content["text"].as_str().unwrap()).unwrap();
+        assert!(receipt["capabilityContext"]
+            .as_str()
+            .unwrap()
+            .contains("late@local"));
+        assert!(receipt["capabilityContext"]
+            .as_str()
+            .unwrap()
+            .contains("Original guidance"));
+        assert!(!receipt["capabilityContext"]
+            .as_str()
+            .unwrap()
+            .contains("Updated guidance"));
+        let prepared = crate::plugins::preview(
+            home,
+            catalog.revision,
+            crate::plugins::Operation::SetEnabled {
+                plugin_id,
+                enabled: false,
+                project_path: None,
+            },
+        )
+        .await
+        .unwrap();
+        crate::plugins::apply(home, &prepared).unwrap();
+        assert!(bridge
+            .dispatch(
+                &tool("read_skill", json!({"id":original})),
+                Handler::SkillRead,
+                None
+            )
+            .await
+            .is_err());
+        let found = bridge
+            .dispatch(
+                &tool("find_skills", json!({"query":"Original"})),
+                Handler::SkillSearch,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&found).unwrap()["total"], 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn large_unread_event_denial_prevents_native_file_action() {
+        let fixture = crate::agent::tests::Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        let options = crate::agent::tests::options(ApprovalMode::Yolo);
+        let signal = session
+            .reserve("Salvar um arquivo".into(), options.clone())
+            .unwrap();
+        let hooks = crate::agent::tests::manual_hook_runtime(
+            &fixture,
+            &session,
+            crate::hooks::Event::PreToolUse,
+            "printf '%s' 'file action blocked' >&2; exit 2",
+            "write",
+        );
+        let state = AppState::default();
+        let oauth = OpenAiCodexState::default();
+        let mcp = crate::mcp::McpState::default();
+        let grants = execution_grants::GrantStore::default();
+        let mut bridge = fixture_bridge(
+            &session,
+            TurnRuntime {
+                grants: &grants,
+                state: &state,
+                oauth: &oauth,
+                mcp: &mcp,
+                home: &fixture.root,
+            },
+            options,
+            signal,
+        );
+        bridge.manual_hooks = Arc::new(hooks);
+        bridge.direct_tasks = false;
+        let tool = ToolCall {
+            id: "write-blocked".into(),
+            name: "write".into(),
+            args: json!({"path":"forbidden.txt", "content":"x".repeat(512 * 1024)}),
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        let error = bridge.call(&tool).await.unwrap_err();
+        assert_eq!(error.code, "hook_denied");
+        assert_eq!(error.message, "file action blocked");
+        assert!(!fixture.root.join("forbidden.txt").exists());
+        assert!(session.snapshot().unwrap().pending_approval.is_none());
+    }
+
+    #[tokio::test]
+    async fn approved_mcp_registration_refreshes_the_stable_gateway_without_connecting() {
+        let fixture = crate::agent::tests::Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        let options = crate::agent::tests::options(ApprovalMode::Yolo);
+        let signal = session
+            .reserve("Adicionar um MCP".into(), options.clone())
+            .unwrap();
+        let state = AppState::default();
+        let oauth = OpenAiCodexState::default();
+        let mcp = crate::mcp::McpState::default();
+        let grants = execution_grants::GrantStore::default();
+        let mut bridge = fixture_bridge(
+            &session,
+            TurnRuntime {
+                grants: &grants,
+                state: &state,
+                oauth: &oauth,
+                mcp: &mcp,
+                home: &fixture.root,
+            },
+            options,
+            signal,
+        );
+        bridge.definitions().await.unwrap();
+        // Only public metadata is needed to refresh discovery; credentials and
+        // transport startup must remain untouched until mcp_activate.
+        state.with_connection(&fixture.root, |db| {
+            db.execute("INSERT INTO mcp_servers (id,name,kind,enabled,configured,revision) VALUES ('new-server','added-server','local',1,1,1)", [])?;
+            Ok::<_, crate::mcp::McpError>(())
+        }).unwrap();
+        let tool = ToolCall {
+            id: "proposal".into(),
+            name: "jarvis_propose_mcp".into(),
+            args: json!({}),
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        for (output, status) in [
+            (json!({"approved":false,"status":"rejected"}), "completed"),
+            (json!({"approved":true,"status":"failed"}), "completed"),
+            (json!({"approved":false,"status":"applied"}), "completed"),
+            (json!({"approved":true,"status":"applied"}), "error"),
+        ] {
+            assert!(bridge
+                .discovery_content(&tool, &output.to_string(), status)
+                .await
+                .unwrap()
+                .is_none());
+        }
+        let output = json!({"approved":true,"status":"applied"}).to_string();
+        let content = bridge
+            .discovery_content(&tool, &output, "completed")
+            .await
+            .unwrap()
+            .unwrap();
+        let receipt: Value = serde_json::from_str(content["text"].as_str().unwrap()).unwrap();
+        assert_eq!(receipt["callWith"], "mcp__jarvis__call_mcp_tool");
+        let activate = receipt["availableTools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "mcp_activate")
+            .unwrap();
+        assert!(activate["inputSchema"]["properties"]["server"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("added-server")));
+        assert!(bridge
+            .clients
+            .tool_metadata("mcp_added-server_lookup")
+            .is_none());
     }
 }

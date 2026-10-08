@@ -358,6 +358,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shared_fast_request_preserves_priority_and_routing_over_websocket() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut options = crate::agent::tests::options(crate::agent::ApprovalMode::Yolo);
+        options.service_tier = Some(crate::agent::workflow::settings::ServiceTier::Priority);
+        let model = serde_json::from_value(json!({
+            "id":options.model, "name":"Model", "reasoningLevels":[],
+            "defaultReasoningLevel":null, "supportsFast":true
+        }))
+        .unwrap();
+        let mut credential = crate::openai_codex::CodexCredential::new(
+            "fixture",
+            "",
+            i64::MAX,
+            "account",
+            None,
+            None,
+        );
+        credential.inference_model = Some(model);
+        let capabilities =
+            super::super::ModelCapabilities::resolve_for_options(&credential, &options);
+        let body = super::super::request_body(
+            &options,
+            &capabilities,
+            "Instructions",
+            vec![],
+            vec![],
+            "session",
+        );
+        let expected_hint = format!("model={};tier=priority", options.model);
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            #[allow(clippy::result_large_err)]
+            // tungstenite fixes the callback error to an HTTP response.
+            let verify =
+                move |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                      response| {
+                    assert_eq!(request.headers()["x-codex-routing-hint"], expected_hint);
+                    Ok(response)
+                };
+            let mut socket = tokio_tungstenite::accept_hdr_async(tcp, verify)
+                .await
+                .unwrap();
+            let frame: Value =
+                serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap())
+                    .unwrap();
+            assert_eq!(frame["type"], "response.create");
+            assert_eq!(frame["service_tier"], "priority");
+            socket
+                .send(Message::Text(done("fast-response").to_string().into()))
+                .await
+                .unwrap();
+        });
+        let mut request = super::super::authenticated_request(
+            &credential,
+            "session",
+            &body,
+            Duration::from_secs(5),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+        *request.url_mut() = format!("http://127.0.0.1:{port}/responses")
+            .parse()
+            .unwrap();
+        let (_tx, signal) = watch::channel(false);
+        let result = Transport::default()
+            .attempt(request, signal, &mut |_| Ok(()))
+            .await
+            .unwrap();
+        assert_eq!(result.unwrap().text, "OK");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn reuses_connection_and_only_sends_new_input_after_a_verified_prefix() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -403,6 +478,20 @@ mod tests {
     }
 
     #[test]
+    fn turning_fast_off_invalidates_prior_response_chain() {
+        let mut fast = body();
+        fast["service_tier"] = json!("priority");
+        let previous = Previous {
+            request: fast.clone(),
+            expected_input: fast["input"].as_array().unwrap().clone(),
+            response_id: "fast-response".into(),
+        };
+        assert!(previous.delta(&fast).is_some());
+        fast.as_object_mut().unwrap().remove("service_tier");
+        assert!(previous.delta(&fast).is_none());
+    }
+
+    #[test]
     fn compaction_model_and_catalog_changes_invalidate_incremental_state() {
         let original = body();
         let previous = Previous {
@@ -415,6 +504,7 @@ mod tests {
             ("tools", json!([{"name":"new_tool"}])),
             ("instructions", json!("new instructions")),
             ("input", json!([])),
+            ("service_tier", json!("priority")),
         ] {
             let mut changed = original.clone();
             changed[field] = value;
@@ -602,6 +692,7 @@ mod tests {
         let mut credential = CodexCredential::new("synthetic-token", "", 0, "account", None, None);
         credential.custom = Some(config);
         let model = ProviderModel {
+            supports_fast: false,
             id: "model".into(),
             name: "Model".into(),
             reasoning_levels: vec![],

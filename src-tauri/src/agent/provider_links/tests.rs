@@ -7,6 +7,7 @@ fn choice(account: &str, model: &str) -> ModelChoice {
         account: account.into(),
         model: model.into(),
         reasoning: None,
+        service_tier: None,
         fallback: None,
     }
 }
@@ -221,6 +222,7 @@ fn chat_title_model_cannot_be_remapped_to_a_second_claude_session() {
         account: String::new(),
         model: "sonnet".into(),
         reasoning: None,
+        service_tier: None,
         fallback: None,
     };
     assert!(apply(
@@ -248,6 +250,7 @@ fn remaps_primary_and_secondary_independently_and_clears_both_on_explicit_edit()
         account: String::new(),
         model: "sonnet".into(),
         reasoning: None,
+        service_tier: None,
         fallback: Some(Box::new(choice("openai-codex-old", "old-model"))),
     };
     std::fs::write(
@@ -355,6 +358,7 @@ fn external_executor_choices_do_not_require_or_reference_a_jarvis_provider() {
         account: String::new(),
         model: "sonnet".into(),
         reasoning: Some("high".into()),
+        service_tier: None,
         fallback: None,
     };
     let preview = plan(&db, home.path(), "openai-codex-old").unwrap();

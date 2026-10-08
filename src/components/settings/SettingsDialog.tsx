@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import { ProviderRemovalDialog } from "./ProviderRemovalDialog";
 import type { ProviderRemovalResult } from "@/core/provider-references";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { readResource } from "@/core/resource-request";
 import { WebSearchSettings } from "./WebSearchSettings";
 import { McpSettings } from "./McpSettings";
+import { HooksSettings } from "./HooksSettings";
+import { PluginsSettings } from "./PluginsSettings";
 import { SkillsSettings } from "./SkillsSettings";
 import { CoreSettings } from "./CoreSettings";
 import { ChatCleanupSettings } from "./ChatCleanupSettings";
@@ -19,6 +22,7 @@ import { skillsSnapshotSchema } from "@/core/skills";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
+  Anchor,
   Users,
   Layers,
   BookOpen,
@@ -27,6 +31,7 @@ import {
   Mic,
   Plus,
   Plug,
+  Package,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -73,6 +78,8 @@ const SETTINGS_SECTIONS = [
               { value: "providers", label: "Provedores", Icon: Sparkles, description: "Contas, modelos e recursos de inteligência artificial." },
               { value: "skills", label: "Skills", Icon: BookOpen, description: "Instruções especializadas disponíveis para os agentes." },
               { value: "mcps", label: "MCPs", Icon: Plug, description: "Conecte ferramentas e serviços aos seus agentes." },
+              { value: "hooks", label: "Hooks", Icon: Anchor, description: "Comandos automáticos nos eventos das conversas." },
+              { value: "plugins", label: "Plugins", Icon: Package, description: "Pacotes de skills, MCPs, hooks e apps para os agentes." },
             ];
 
 const ALIAS_SUFFIX_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -153,7 +160,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   const activeTab = standalone ? windowTab : layout.settingsTab;
   const [workflowInitialTab, setWorkflowInitialTab] = useState<"flows" | "agents">("flows");
   const setActiveTab = (value: string) => {
-    if (value !== "general" && value !== "terminal" && value !== "browser" && value !== "voice" && value !== "tools" && value !== "providers" && value !== "agents" && value !== "skills" && value !== "mcps" && value !== "workspaces") return;
+    if (value !== "general" && value !== "terminal" && value !== "browser" && value !== "voice" && value !== "tools" && value !== "providers" && value !== "agents" && value !== "skills" && value !== "mcps" && value !== "hooks" && value !== "plugins" && value !== "workspaces") return;
     if (standalone) { setWindowTab(value); try { localStorage.setItem("jarvis:settings-window-tab", value); } catch { /* Keep navigation usable without persistent storage. */ } }
     else updateLayout({ settingsTab: value });
   };
@@ -197,7 +204,9 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   const preloadedAccounts = useRef(bootstrap?.resources.loaded.accounts ?? false);
   const [searchBusy, setSearchBusy] = useState(false);
   const [visionBusy, setVisionBusy] = useState(false);
-  const operationBusy = savingCustom || (starting && view !== "waiting") || cancelling || toggling || refreshingAlias !== null || disconnecting !== null || searchBusy || visionBusy;
+  const [hooksBusy, setHooksBusy] = useState(false);
+  const [pluginsBusy, setPluginsBusy] = useState(false);
+  const operationBusy = hooksBusy || pluginsBusy || savingCustom || (starting && view !== "waiting") || cancelling || toggling || refreshingAlias !== null || disconnecting !== null || searchBusy || visionBusy;
   useEffect(() => { onBusyChange?.(standalone ? operationBusy : operationBusy || view !== "list" || editingCustom !== null || listState !== "ready"); }, [view, editingCustom, listState, operationBusy, standalone, onBusyChange]);
   useEffect(() => {
     closeRequestedRef.current = false;
@@ -255,14 +264,20 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
 
   useEffect(() => {
     if (!open || embeddedProviders) return;
-    if (bootstrap?.resources.loaded.skills) return;
     let active = true;
-    const version = mcpCountVersion.current;
-    void invoke<unknown>("list_mcp_servers").then((value) => {
-      if (active && version === mcpCountVersion.current) setMcpCount(mcpServersSchema.parse(value).length);
-    }).catch(() => { if (active && version === mcpCountVersion.current) setMcpCount(null); });
-    return () => { active = false; };
-  }, [open, embeddedProviders, bootstrap?.resources.loaded.skills]);
+    let dispose: (() => void) | undefined;
+    const refresh = () => {
+      if (!active) return;
+      const version = ++mcpCountVersion.current;
+      void invoke<unknown>("list_mcp_servers").then((value) => {
+        if (active && version === mcpCountVersion.current) setMcpCount(mcpServersSchema.parse(value).length);
+      }).catch(() => { if (active && version === mcpCountVersion.current) setMcpCount(null); });
+    };
+    void listen("mcp-servers:changed", refresh).then(stop => {
+      if (active) { dispose = stop; refresh(); } else stop();
+    }).catch(refresh);
+    return () => { active = false; dispose?.(); };
+  }, [open, embeddedProviders]);
 
   useEffect(() => {
     if (!open || embeddedProviders) return;
@@ -427,7 +442,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
   );
 
   const handleDialogOpenChange = useCallback((nextOpen: boolean, closeSettings = true) => {
-    if (savingCustom && !nextOpen) return;
+    if ((savingCustom || hooksBusy || pluginsBusy) && !nextOpen) return;
     if (nextOpen) {
       onOpenChange(true);
       return;
@@ -451,7 +466,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
 
     setView("list");
     if (closeSettings) onOpenChange(false);
-  }, [savingCustom, onOpenChange, cancelActiveConnection]);
+  }, [savingCustom, hooksBusy, pluginsBusy, onOpenChange, cancelActiveConnection]);
 
   useEffect(() => {
     onCloseRequestChange?.(() => handleDialogOpenChange(false));
@@ -791,7 +806,7 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
           <SettingsTabs.Root orientation="vertical" value={activeTab} onValueChange={value => { if (typeof value === "string") setActiveTab(value); }} className="group/tabs flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden">
             <div className="settings-navigation w-14 shrink-0 overflow-y-auto border-r border-border bg-sidebar p-2 sm:w-48 sm:p-3">
               <TabsList aria-label="Configurações" className="h-auto w-full flex-col items-stretch justify-start gap-1 rounded-none bg-transparent p-0">
-                {SETTINGS_SECTIONS.map(section => <Hint key={section.value} content={section.label} disabled={!compactSettingsNavigation}><TabsTrigger value={section.value} className="h-10 flex-none cursor-pointer justify-center gap-2.5 px-2 text-xs sm:justify-start">
+                {SETTINGS_SECTIONS.map(section => <Hint key={section.value} content={section.label} disabled={!compactSettingsNavigation}><TabsTrigger value={section.value} disabled={hooksBusy || pluginsBusy} className="h-10 flex-none cursor-pointer justify-center gap-2.5 px-2 text-xs sm:justify-start">
                   <section.Icon aria-hidden="true" className="size-4" />
                   <span className="sr-only min-w-0 flex-1 text-left sm:not-sr-only">{section.label}</span>
                   <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">{section.value === "providers" && listState === "ready" ? accounts.length + 1 : section.value === "skills" ? visibleSkillCount : section.value === "mcps" ? mcpCount : null}</span>
@@ -813,6 +828,8 @@ export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedP
               <TabsContent value="skills" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</TabsContent>
               <TabsContent value="providers" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{renderList()}</TabsContent>
               <TabsContent value="mcps" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "mcps" && <div className="w-full"><McpSettings onCountChange={updateMcpCount} /></div>}</TabsContent>
+              <TabsContent value="hooks" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "hooks" && <HooksSettings onBusyChange={setHooksBusy} />}</TabsContent>
+              <TabsContent value="plugins" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "plugins" && <PluginsSettings accounts={accounts} onBusyChange={setPluginsBusy} />}</TabsContent>
             </div>
           </SettingsTabs.Root></>}
           <Dialog open={open && view !== "list"} onOpenChange={(nextOpen) => { if (!nextOpen && !savingCustom) handleDialogOpenChange(false, false); }}>

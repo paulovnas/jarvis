@@ -69,6 +69,22 @@ fn ids(parts: &[MessagePart]) -> Vec<String> {
 }
 
 pub(super) async fn load(session: &Session, home: &std::path::Path) -> Result<(), AgentError> {
+    load_authorized(session, home, None).await
+}
+
+pub(super) async fn load_from_snapshot(
+    session: &Session,
+    home: &std::path::Path,
+    snapshot: &[crate::skills::Skill],
+) -> Result<(), AgentError> {
+    load_authorized(session, home, Some(snapshot)).await
+}
+
+async fn load_authorized(
+    session: &Session,
+    home: &std::path::Path,
+    snapshot: Option<&[crate::skills::Skill]>,
+) -> Result<(), AgentError> {
     let (content, parts) = {
         let data = session.data.lock().map_err(|_| AgentError::internal())?;
         let turn = &data.turns.last().ok_or_else(AgentError::internal)?.turn;
@@ -77,9 +93,22 @@ pub(super) async fn load(session: &Session, home: &std::path::Path) -> Result<()
     if ids(&parts).is_empty() && attachments::prompt(&parts).is_empty() {
         return Ok(());
     }
-    let rendered = render(home, &session.root, &content, &parts).await?;
+    let (rendered, activities) =
+        render_authorized(home, &session.root, &content, &parts, snapshot).await?;
     session.update(true, |data| {
-        data.turns.last_mut().unwrap().wire[0] = json!({"role":"user", "content": rendered});
+        let turn = data.turns.last_mut().unwrap();
+        turn.wire[0] = json!({"role":"user", "content": rendered});
+        if !activities.is_empty() {
+            if turn.turn.steps.is_empty() {
+                turn.turn.steps.push(Step::default());
+            }
+            turn.turn
+                .steps
+                .last_mut()
+                .unwrap()
+                .core_activities
+                .extend(activities);
+        }
     })
 }
 
@@ -88,23 +117,90 @@ pub(super) async fn render(
     project: &std::path::Path,
     content: &str,
     parts: &[MessagePart],
-) -> Result<String, AgentError> {
+) -> Result<(String, Vec<crate::core::activity::Activity>), AgentError> {
+    render_authorized(home, project, content, parts, None).await
+}
+
+async fn render_authorized(
+    home: &std::path::Path,
+    project: &std::path::Path,
+    content: &str,
+    parts: &[MessagePart],
+    snapshot: Option<&[crate::skills::Skill]>,
+) -> Result<(String, Vec<crate::core::activity::Activity>), AgentError> {
     let ids = ids(parts);
     let attached = attachments::prompt(parts);
-    let expanded = if ids.is_empty() {
-        String::new()
+    let (expanded, activities) = if ids.is_empty() {
+        (String::new(), Vec::new())
     } else {
-        crate::skills::explicit(home, project, ids)
+        crate::skills::explicit_with_activity(home, project, ids, snapshot)
             .await
             .map_err(|cause| AgentError::new("skill_error", &cause.message))?
     };
-    Ok(format!("{content}{expanded}{attached}"))
+    Ok((format!("{content}{expanded}{attached}"), activities))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[tokio::test]
+    async fn selected_plugin_skills_record_only_delivered_content_and_survive_queue_recovery() {
+        let fixture = super::super::tests::Fixture::new();
+        let home = fixture.root.as_path();
+        let prepared = crate::plugins::preview(home, 0, crate::plugins::Operation::Create {
+            draft: serde_json::from_value(json!({"name":"selected-usage","description":"Selected fixture","skills":[{"name":"guide","content":"---\nname: guide\ndescription: Selected fixture\n---\nSELECTED_BODY"}]})).unwrap(),
+        }).await.unwrap();
+        crate::plugins::apply(home, &prepared).unwrap();
+        let available = crate::skills::active(home, home).await.unwrap();
+        let selected = available
+            .iter()
+            .find(|skill| skill.origin == "plugin")
+            .unwrap();
+        let parts = vec![MessagePart::Skill {
+            id: selected.id.clone(),
+            name: selected.name.clone(),
+        }];
+        let session = super::super::tests::session(&fixture);
+        let options = super::super::tests::options(ApprovalMode::Yolo);
+        session
+            .submit_message("Use a skill".into(), options.clone(), parts.clone())
+            .unwrap();
+        assert!(session.snapshot().unwrap().turns[0].steps.is_empty());
+        load_from_snapshot(&session, home, &available)
+            .await
+            .unwrap();
+        session
+            .submit_message("Use novamente".into(), options, parts)
+            .unwrap();
+        finish(&session, Ok(()));
+        session.reserve_next().unwrap().unwrap();
+        load_from_snapshot(&session, home, &available)
+            .await
+            .unwrap();
+        let (stored, extras) = journal::read_only(&session.journal).unwrap();
+        let activities: Vec<_> = stored
+            .iter()
+            .flat_map(|turn| &turn.turn.steps)
+            .flat_map(|step| &step.core_activities)
+            .collect();
+        assert_eq!(activities.len(), 2);
+        assert!(activities
+            .iter()
+            .all(
+                |activity| activity.plugin_id.as_deref() == Some("selected-usage@local")
+                    && activity.resource_id.as_deref() == Some(selected.id.as_str())
+            ));
+        assert!(!serde_json::to_string(&activities)
+            .unwrap()
+            .contains("SELECTED_BODY"));
+        assert!(stored[0].wire[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("SELECTED_BODY"));
+        assert!(extras.queue.is_empty());
+    }
 
     #[tokio::test]
     async fn explicit_skills_are_user_input_keep_badges_and_survive_queue_restart() {
@@ -134,6 +230,7 @@ mod tests {
             account: "test".into(),
             model: "test".into(),
             reasoning: None,
+            service_tier: None,
             mode: Mode::Plan,
             workflow: None,
             custom_workflow_id: None,

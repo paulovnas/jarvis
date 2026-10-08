@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { companionChatSchema, type CompanionChat } from "@/core/companion";
+import type { PendingAuthoring } from "@/core/authoring";
 import { CompanionChatPane } from "./CompanionChatPane";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -23,8 +24,29 @@ const makeChat = (conversationId = "global-chat", project = false): CompanionCha
 });
 let globalChat: CompanionChat;
 let projectChat: CompanionChat;
+const mcpProposal = (): PendingAuthoring => ({ turnId: "turn-1", toolId: "mcp-add", action: "create", summary: "Adicionar Monday ao Jarvis", catalogRevision: null, agentReferences: [], target: { kind: "mcp", server: {
+  name: "Monday", transport: "http", command: null, args: [], url: "https://mcp.example.com/monday", cwd: null, enabled: true, envKeys: [], headerKeys: ["Authorization"],
+} } });
 
 describe("Jarvito chat", () => {
+  it("reviews a global hook directly in the island without requesting project scope", async () => {
+    const user = userEvent.setup(); const onQuestionChange = vi.fn();
+    const original = call.getMockImplementation()!;
+    call.mockImplementation(async (command, args, invokeOptions) => command === "answer_agent_authoring"
+      ? { ...globalChat.chat, revision: 3, pendingAuthoring: null }
+      : original(command, args, invokeOptions));
+    globalChat.chat.activeTurnId = "turn-1";
+    globalChat.chat.pendingAuthoring = { turnId: "turn-1", toolId: "hook-add", action: "create", catalogRevision: 0, summary: "Adicionar diagnóstico dos comandos", agentReferences: [], target: { kind: "hook", before: null, after: {
+      id: "a".repeat(32), name: "Diagnóstico", event: "PreToolUse", command: "node hooks/check.js", matcher: "bash", timeoutSeconds: 30, enabled: true,
+    } } };
+    render(<CompanionChatPane externalQuestions onQuestionChange={onQuestionChange} />);
+    expect(await screen.findByText("node hooks/check.js")).toBeVisible();
+    expect(onQuestionChange).toHaveBeenLastCalledWith(null);
+    expect(screen.queryByRole("button", { name: "Continuar no Jarvis" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Aprovar e salvar" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "global-chat", decision: { turnId: "turn-1", toolId: "hook-add", approved: true, note: null } }));
+    expect(call.mock.calls.some(([command]) => command === "companion_open_conversation")).toBe(false);
+  });
   it("persists its model choice only for the selected conversation", async () => {
     const user = userEvent.setup(); render(<CompanionChatPane />);
     await screen.findByText("Oi, eu sou o Jarvito.");
@@ -132,6 +154,83 @@ describe("Jarvito chat", () => {
     });
   });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it.each([false, true])("approves a global MCP directly in Jarvito with externalQuestions=%s without opening a project conversation", async externalQuestions => {
+    const user = userEvent.setup(); const onQuestionChange = vi.fn();
+    const original = call.getMockImplementation()!;
+    call.mockImplementation(async (command, args, invokeOptions) => {
+      if (command === "answer_agent_authoring") {
+        globalChat = { ...globalChat, chat: { ...globalChat.chat, revision: 3, pendingAuthoring: null } };
+        return globalChat.chat;
+      }
+      return original(command, args, invokeOptions);
+    });
+    render(<CompanionChatPane externalQuestions={externalQuestions} onQuestionChange={onQuestionChange} />);
+    await screen.findByText("Oi, eu sou o Jarvito.");
+    await user.type(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }), "Orientação preservada");
+    const request = mcpProposal(); const serialized = JSON.stringify(request);
+    globalChat = { ...globalChat, chat: { ...globalChat.chat, revision: 2, activeTurnId: "turn-1", pendingAuthoring: request } };
+    act(() => events.get("companion:chat_changed")?.({ conversationId: "global-chat" }));
+    expect(await screen.findByRole("dialog", { name: "Revisar servidor MCP" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Continuar no Jarvis" })).not.toBeInTheDocument();
+    expect(onQuestionChange).toHaveBeenLastCalledWith(null);
+    expect(screen.getByText("https://mcp.example.com/monday")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Aprovar e adicionar" })).toBeDisabled();
+    const password = screen.getByLabelText("Cabeçalho Authorization");
+    expect(password).toHaveAttribute("type", "password");
+    await user.type(password, "Bearer private-jarvito-test");
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Revisar servidor MCP" })).toBeVisible();
+    expect(call).not.toHaveBeenCalledWith("answer_agent_authoring", expect.anything());
+    expect(JSON.stringify(request)).toBe(serialized);
+    await user.click(screen.getByRole("button", { name: "Aprovar e adicionar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Revisar servidor MCP" })).not.toBeInTheDocument());
+    expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "global-chat", decision: {
+      turnId: "turn-1", toolId: "mcp-add", approved: true, note: null,
+      mcpValues: { environment: {}, headers: { Authorization: "Bearer private-jarvito-test" } },
+    } });
+    expect(screen.getByRole("textbox", { name: "Mensagem para Jarvito" })).toHaveValue("Orientação preservada");
+    expect(JSON.stringify(globalChat)).not.toContain("private-jarvito-test");
+    expect(call.mock.calls.some(([command]) => command === "companion_open_conversation")).toBe(false);
+  });
+
+  it("keeps a global MCP pending when the island closes and explicitly refuses it without forwarding entered credentials", async () => {
+    const user = userEvent.setup();
+    globalChat.chat.activeTurnId = "turn-1"; globalChat.chat.pendingAuthoring = mcpProposal();
+    const request = JSON.stringify(globalChat.chat.pendingAuthoring);
+    const original = call.getMockImplementation()!;
+    call.mockImplementation(async (command, args, invokeOptions) => command === "answer_agent_authoring"
+      ? { ...globalChat.chat, revision: 2, pendingAuthoring: null }
+      : original(command, args, invokeOptions));
+    const view = render(<CompanionChatPane active externalQuestions />);
+    await screen.findByRole("dialog", { name: "Revisar servidor MCP" });
+    await user.type(screen.getByLabelText("Cabeçalho Authorization"), "do-not-retain");
+    view.rerender(<CompanionChatPane active={false} externalQuestions />);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(JSON.stringify(globalChat.chat.pendingAuthoring)).toBe(request);
+    expect(call).not.toHaveBeenCalledWith("answer_agent_authoring", expect.anything());
+    view.rerender(<CompanionChatPane active externalQuestions />);
+    await screen.findByRole("dialog", { name: "Revisar servidor MCP" });
+    expect(screen.getByLabelText("Cabeçalho Authorization")).toHaveValue("");
+    await user.type(screen.getByLabelText("Cabeçalho Authorization"), "never-send-on-refusal");
+    await user.click(screen.getByRole("button", { name: "Recusar" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "global-chat", decision: {
+      turnId: "turn-1", toolId: "mcp-add", approved: false, note: null,
+    } }));
+  });
+
+  it("keeps project MCP approval in the existing full-conversation route", async () => {
+    const user = userEvent.setup();
+    projectChat.chat.activeTurnId = "turn-1"; projectChat.chat.pendingAuthoring = mcpProposal();
+    render(<CompanionChatPane />);
+    await screen.findByText("Oi, eu sou o Jarvito.");
+    await user.click(screen.getByRole("combobox", { name: "Conversa do Jarvito" }));
+    await user.click(await screen.findByRole("option", { name: /Ajustar relatório/ }));
+    await user.click(await screen.findByRole("button", { name: "Continuar no Jarvis" }));
+    expect(call).toHaveBeenCalledWith("companion_open_conversation", { conversationId: "project-chat" });
+    expect(screen.queryByRole("dialog", { name: "Revisar servidor MCP" })).not.toBeInTheDocument();
+    expect(call).not.toHaveBeenCalledWith("answer_agent_authoring", expect.anything());
+  });
 
   it("opens a passive global chat without a project or opening the main app", async () => {
     render(<CompanionChatPane />);
@@ -538,4 +637,23 @@ describe("Jarvito chat", () => {
     expect(call.mock.calls.filter(([name]) => name === "confirm_companion_project")).toHaveLength(1);
     expect(call.mock.calls.some(([name]) => name === "send_companion_message")).toBe(false);
   });
+});
+
+it("persists Fast in Jarvito's chat and removes the prior tier when returning to Normal", async () => {
+  globalChat.options = { ...options, serviceTier: "priority" };
+  const original = call.getMockImplementation()!;
+  call.mockImplementation(async (command, args, invokeOptions) => command === "get_companion_models" ? [{ provider: "codex", providerKind: "openai-codex", models: [{ value: "codex/gpt-6", label: "GPT-6", reasoningLevels: ["high"], defaultReasoningLevel: "high", supportsFast: true }] }] : original(command, args, invokeOptions));
+  const user = userEvent.setup(); render(<CompanionChatPane />);
+  await screen.findByText("Oi, eu sou o Jarvito.");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Modelo do Jarvito" })).toHaveTextContent("Fast"));
+  screen.getByRole("button", { name: "Modelo do Jarvito" }).focus(); await user.keyboard("{Enter}");
+  (await screen.findByRole("menuitem", { name: /Velocidade/ })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitemradio", { name: "Normal" }));
+  await waitFor(() => expect(call).toHaveBeenCalledWith("set_chat_agent_model", { conversationId: "global-chat", key: "standard/builder", choice: { executor: "jarvis", account: "codex", model: "gpt-6", reasoning: "high" } }));
+  await user.type(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }), "Continue normal{Enter}");
+  await waitFor(() => expect(call.mock.calls.some(([command]) => command === "send_companion_message")).toBe(true));
+  const sent = call.mock.calls.find(([command]) => command === "send_companion_message");
+  expect(sent?.[1]).toMatchObject({ content: "Continue normal", options: { account: "codex", model: "gpt-6" } });
+  expect(sent?.[1]).toHaveProperty("options");
+  expect((sent?.[1] as { options: object }).options).not.toHaveProperty("serviceTier");
 });

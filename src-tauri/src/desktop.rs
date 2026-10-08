@@ -83,6 +83,8 @@ pub enum SettingsTab {
     Agents,
     Skills,
     Mcps,
+    Hooks,
+    Plugins,
     Workspaces,
 }
 
@@ -149,6 +151,23 @@ impl LayoutPreferences {
 #[cfg(test)]
 mod ordering_tests {
     use super::*;
+    #[test]
+    fn hooks_settings_tab_round_trips() {
+        let layout: LayoutPreferences = serde_json::from_str(r#"{"settingsTab":"hooks"}"#).unwrap();
+        assert_eq!(layout.settings_tab, SettingsTab::Hooks);
+        let restored: LayoutPreferences =
+            serde_json::from_slice(&serde_json::to_vec(&layout).unwrap()).unwrap();
+        assert_eq!(restored.settings_tab, SettingsTab::Hooks);
+    }
+    #[test]
+    fn plugins_settings_tab_round_trips() {
+        let layout: LayoutPreferences =
+            serde_json::from_str(r#"{"settingsTab":"plugins"}"#).unwrap();
+        assert_eq!(layout.settings_tab, SettingsTab::Plugins);
+        let restored: LayoutPreferences =
+            serde_json::from_slice(&serde_json::to_vec(&layout).unwrap()).unwrap();
+        assert_eq!(restored.settings_tab, SettingsTab::Plugins);
+    }
     #[test]
     fn item_order_and_workspace_settings_round_trip_and_reject_duplicates() {
         let mut layout: LayoutPreferences = serde_json::from_value(serde_json::json!({

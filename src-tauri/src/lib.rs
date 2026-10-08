@@ -12,6 +12,7 @@ mod core;
 mod data_dir;
 mod desktop;
 mod diagnostics;
+mod hooks;
 mod http_client;
 mod library;
 mod mcp;
@@ -19,6 +20,7 @@ mod model_bindings;
 mod openai_codex;
 mod optional_tools;
 mod persistence;
+mod plugins;
 mod remote;
 #[cfg_attr(target_os = "linux", path = "secrets_linux.rs")]
 mod secrets;
@@ -220,6 +222,7 @@ pub fn run() {
         .manage(http_client::HttpState::default())
         .manage(agent::dashboard::DashboardState::default())
         .manage(mcp::McpState::default())
+        .manage(plugins::commands::PluginsState::default())
         .manage(updater::UpdateState::default())
         .manage(app_exit::ExitState::default())
         .manage(system::SystemState::default())
@@ -251,6 +254,15 @@ pub fn run() {
                 );
             }
             desktop::setup(app)?;
+            app.state::<mcp::McpState>()
+                .configure_apps(plugins::apps::Context {
+                    state: app.state::<persistence::AppState>().inner().clone(),
+                    oauth: app
+                        .state::<openai_codex::OpenAiCodexState>()
+                        .inner()
+                        .clone(),
+                    home: home.clone(),
+                });
             skills::setup(&home).map_err(|error| std::io::Error::other(error.message))?;
             core::health::start_monitor(app.handle());
             system::setup(app.handle())?;
@@ -421,6 +433,20 @@ pub fn run() {
                 mcp::set_mcp_enabled,
                 mcp::delete_mcp_server,
                 mcp::runtime::test_mcp_server,
+                hooks::list_hooks,
+                hooks::save_hook,
+                hooks::delete_hook,
+                plugins::commands::list_plugins,
+                plugins::commands::preview_plugin_change,
+                plugins::commands::apply_plugin_change,
+                plugins::commands::cancel_plugin_change,
+                mcp::oauth::start_mcp_oauth,
+                mcp::oauth::wait_mcp_oauth,
+                mcp::oauth::cancel_mcp_oauth,
+                mcp::oauth::mcp_oauth_status,
+                mcp::oauth::disconnect_mcp_oauth,
+                mcp::plugin_mcp_requirements,
+                mcp::configure_plugin_mcp,
                 persistence::get_app_config,
                 persistence::complete_onboarding,
                 agent::web_search::get_web_search_config,
@@ -581,6 +607,9 @@ fn prepare_exit_with_reason(
 ) -> Result<(), String> {
     use tauri::Manager;
     desktop::flush(app);
+    if let Ok(home) = app.path().home_dir() {
+        app.state::<agent::AgentState>().finish_hook_sessions(&home);
+    }
     shutdown_services(
         &app.state::<system::SystemState>(),
         &app.state::<agent::AgentState>(),

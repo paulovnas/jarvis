@@ -1,15 +1,16 @@
 import { Check, ChevronDown, RefreshCw } from "lucide-react";
-import { executorOf, type ExecutionSelection } from "@/core/executors";
+import { executorOf, FAST_USAGE_NOTICE, supportsFastMode, type ExecutionSelection } from "@/core/executors";
 import type { ProviderAccount, ProviderModel } from "@/core/provider-accounts";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { aliasSuffix } from "@/core/provider-usage";
 import { reasoningLabel, selectableReasoningLevels } from "@/core/reasoning";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Hint } from "@/components/ui/hint";
 
 export interface ModelOptionDef extends Pick<ProviderModel, "reasoningLevels" | "defaultReasoningLevel"> {
   value: string;
   label: string;
+  supportsFast?: boolean;
 }
 
 export interface ProviderModelGroup {
@@ -22,19 +23,23 @@ export interface ProviderModelGroup {
 
 
 export type ModelSelection = ExecutionSelection;
-export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLabel = "Nenhum", disabled = false, invalid = false, ariaLabel = "Selecionar modelo de IA", showProviderIdentity = false, onRefresh, refreshing = false, emptyMessage = "Conecte um provedor em Configurações." }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; onClear?: () => void; clearLabel?: string; disabled?: boolean; invalid?: boolean; ariaLabel?: string; showProviderIdentity?: boolean; onRefresh?: () => void; refreshing?: boolean; emptyMessage?: string }) {
+export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLabel = "Nenhum", disabled = false, invalid = false, ariaLabel = "Selecionar modelo de IA", showProviderIdentity = false, allowFastMode = false, onRefresh, refreshing = false, emptyMessage = "Conecte um provedor em Configurações." }: { modelGroups: ProviderModelGroup[]; selection?: ModelSelection | null; onSelect: (selection: ModelSelection) => void; onClear?: () => void; clearLabel?: string; disabled?: boolean; invalid?: boolean; ariaLabel?: string; showProviderIdentity?: boolean; allowFastMode?: boolean; onRefresh?: () => void; refreshing?: boolean; emptyMessage?: string }) {
   const currentGroup = modelGroups.find(group => executorOf(group) === executorOf(selection) && group.models.some(model => model.value === selection?.model));
   const currentModelDef = currentGroup?.models.find(model => model.value === selection?.model);
   const reasoning = selection?.reasoning;
+  const fastAvailable = supportsFastMode(currentGroup?.providerKind, currentModelDef, executorOf(selection));
+  const fastRequested = selection?.serviceTier === "priority";
+  const fastUnavailable = fastRequested && !fastAvailable;
   const displayModelLabel = currentModelDef ? `${currentModelDef.label}${reasoning ? ` · ${reasoningLabel(reasoning)}` : ""}` : selection ? `${selection.model.split("/").pop()} · Indisponível` : onClear ? clearLabel : modelGroups.some(group => group.models.length) ? "Escolher modelo" : "Nenhum modelo conectado";
   const providerLabel = showProviderIdentity && currentGroup ? aliasSuffix(currentGroup.provider) : null;
-  const displayLabel = providerLabel ? `${providerLabel} · ${displayModelLabel}` : displayModelLabel;
+  const displayLabel = `${providerLabel ? `${providerLabel} · ${displayModelLabel}` : displayModelLabel}${fastRequested ? fastUnavailable ? " · Fast indisponível" : " · Fast" : ""}`;
+  const select = (group: ProviderModelGroup, model: ModelOptionDef, reasoning: string | null) => onSelect({ ...(group.executor ? { executor: group.executor } : {}), model: model.value, reasoning, ...(fastRequested && supportsFastMode(group.providerKind, model, group.executor) ? { serviceTier: "priority" as const } : {}) });
   return (<DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={ariaLabel}
-                aria-invalid={invalid || undefined}
+                aria-invalid={invalid || fastUnavailable || undefined}
                 disabled={disabled}
-                className={`composer-model flex h-7.5 max-w-full cursor-pointer items-center gap-1 rounded-md px-2 font-mono text-[10px] font-medium shadow-none transition-colors focus-visible:ring-1 focus-visible:ring-ring ${invalid ? "border border-destructive bg-destructive/10 text-destructive hover:bg-destructive/15" : "border-0 bg-transparent text-foreground hover:bg-secondary hover:text-foreground"}`}
+                className={`composer-model flex h-7.5 max-w-full cursor-pointer items-center gap-1 rounded-md px-2 font-mono text-[10px] font-medium shadow-none transition-colors focus-visible:ring-1 focus-visible:ring-ring ${invalid || fastUnavailable ? "border border-destructive bg-destructive/10 text-destructive hover:bg-destructive/15" : "border-0 bg-transparent text-foreground hover:bg-secondary hover:text-foreground"}`}
               >
                 {providerLabel && <ProviderIcon kind={currentGroup?.executor === "claude" ? "claude-code" : currentGroup?.providerKind ?? "custom"} className="size-3.5 text-onedark-cyan" />}
                 <Hint content={showProviderIdentity ? displayLabel : selection?.model} whenTruncated><span className="min-w-0 truncate">{displayLabel}</span></Hint>
@@ -47,6 +52,16 @@ export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLa
                 sideOffset={8}
                 className="min-w-[220px] border-border bg-card p-1.5 text-foreground"
               >
+                {selection && (allowFastMode && fastAvailable || fastRequested) && <><DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="cursor-pointer text-xs">Velocidade<span className="ml-auto text-muted-foreground">{fastRequested ? "Fast" : "Normal"}</span></DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-60">
+                    <DropdownMenuRadioGroup aria-label="Velocidade" value={fastRequested ? "priority" : "normal"} onValueChange={value => { if (value !== "normal" && (value !== "priority" || !allowFastMode || !fastAvailable)) return; const next = { ...selection }; delete next.serviceTier; if (value === "priority") next.serviceTier = "priority"; onSelect(next); }}>
+                      <DropdownMenuRadioItem closeOnClick value="normal" className="cursor-pointer">Normal</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem closeOnClick value="priority" disabled={!allowFastMode || !fastAvailable} className="cursor-pointer">Fast</DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                    <DropdownMenuGroup><DropdownMenuLabel className="max-w-60 whitespace-normal text-xs font-normal text-muted-foreground">{fastUnavailable ? "Fast não está disponível neste provedor ou modelo. Selecione Normal ou outro modelo." : FAST_USAGE_NOTICE}</DropdownMenuLabel></DropdownMenuGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub><DropdownMenuSeparator /></>}
                 {onClear && <><DropdownMenuItem className="cursor-pointer justify-between text-xs" onClick={onClear}>{clearLabel}{!selection && <Check className="size-3 text-primary" />}</DropdownMenuItem><DropdownMenuSeparator /></>}
                 {modelGroups.length === 0 ? (
                   <DropdownMenuGroup>
@@ -93,7 +108,7 @@ export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLa
                                       <DropdownMenuItem
                                         key={level}
                                         onClick={() => {
-                                          onSelect({ ...(group.executor ? { executor: group.executor } : {}), model: option.value, reasoning: level });
+                                          select(group, option, level);
                                         }}
                                         className={`flex cursor-pointer items-center justify-between px-2.5 py-1.5 text-xs hover:bg-secondary ${
                                           isSelected && reasoning === level
@@ -117,7 +132,7 @@ export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLa
                             <DropdownMenuItem
                               key={option.value}
                               onClick={() => {
-                                onSelect({ ...(group.executor ? { executor: group.executor } : {}), model: option.value, reasoning: null });
+                                select(group, option, null);
                               }}
                               className={`flex cursor-pointer items-center justify-between py-1.5 pl-3 pr-2 text-xs hover:bg-secondary ${
                                 isSelected

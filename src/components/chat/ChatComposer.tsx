@@ -10,9 +10,9 @@ import { attachmentSchema, uploadFile } from "@/core/attachments";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { FlowPicker } from "./FlowPicker";
 import { ComposerSkeleton } from "@/components/layout/LoadingSkeletons";
-import { type ProviderModelGroup, type ModelSelection } from "./ModelPicker";
+import { type ProviderModelGroup, type ModelSelection, type ModelOptionDef } from "./ModelPicker";
 import { ExecutorModelPicker } from "./ExecutorModelPicker";
-import { claudeModels, executionChoice, executionSelection, executorOf, selectModelChoice } from "@/core/executors";
+import { claudeModels, executionChoice, executionSelection, executorOf, selectModelChoice, supportsFastMode } from "@/core/executors";
 import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
 export type { ProviderModelGroup } from "./ModelPicker";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
@@ -184,7 +184,7 @@ export function ChatComposer({
     const trimmed = submitted.content.trim() || (submitted.parts?.some(part => part.type === "attachment") ? "Analise os anexos." : "");
     if (modelError) { toast.error("Revise o modelo antes de enviar", { description: modelError }); return false; }
     if (!trimmed || disabled || !selectionReady || customUnavailable || compacting || importing.current || chatModels?.saving || choosingModelLock.current || sendLock.current || !currentModelDef) return false;
-    const choice = executionChoice({ executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning });
+    const choice = executionChoice({ executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning, ...(effectiveSelection?.serviceTier === "priority" ? { serviceTier: "priority" } : {}) });
     if (choice.executor === "jarvis" && !choice.account) return false;
     sendLock.current = true;
     setSending(true);
@@ -234,7 +234,7 @@ export function ChatComposer({
   const claudeRequired = executorOf(effectiveSelection) === "claude" || configuredAgents.some(agent => executorOf(agent.choice) === "claude" || executorOf(agent.choice.fallback) === "claude");
   const claude = useClaudeRuntime(claudeRequired);
   const runtimeModels = claudeModels(claude.data);
-  const modelsFor = (choice: ModelSelection | null) => executorOf(choice) === "claude" ? runtimeModels : executorOf(choice) === "unavailable" ? [] : nativeModels;
+  const modelsFor = (choice: ModelSelection | null): ModelOptionDef[] => executorOf(choice) === "claude" ? runtimeModels : executorOf(choice) === "unavailable" ? [] : nativeModels;
   const availableModels = modelsFor(effectiveSelection);
   const selectionReady = (!chatModels || chatModels.data !== null && !chatModels.error) && (executorOf(effectiveSelection) !== "jarvis" || modelsReady) && (!claudeRequired || Boolean(claude.data) && !claude.loading);
   const currentModelDef =
@@ -243,12 +243,14 @@ export function ChatComposer({
   const invalidSelection = (choice: ModelSelection) => {
     if (executorOf(choice) === "claude" && !claude.data) return false;
     const model = modelsFor(choice).find(item => item.value === choice.model);
-    return !model || Boolean(choice.reasoning && !model.reasoningLevels.includes(choice.reasoning));
+    const group = modelGroups.find(group => executorOf(group) === executorOf(choice) && group.models.some(item => item.value === choice.model));
+    return !model || Boolean(choice.reasoning && !model.reasoningLevels.includes(choice.reasoning)) || choice.serviceTier === "priority" && !supportsFastMode(group?.providerKind, model, choice.executor);
   };
   const invalidAgent = configuredAgents.find(agent => invalidSelection(executionSelection(agent.choice)!) || Boolean(agent.choice.fallback && invalidSelection(executionSelection(agent.choice.fallback)!)))?.name;
   const claudeProblem = !claudeRequired || claude.loading ? null : claude.error ?? (claude.data?.preferences?.enabled === false ? "Ative o Claude Code em Configurações → Provedores." : claude.data && !claude.data.installed ? "Instale o Claude Code em Configurações → Provedores e atualize o status." : claude.data && !claude.data.authenticated ? "Entre na sua conta com claude auth login e atualize o status do Claude Code." : null);
   const removedExecutor = executorOf(effectiveSelection) === "unavailable" || configuredAgents.some(agent => executorOf(agent.choice) === "unavailable" || executorOf(agent.choice.fallback) === "unavailable");
-  const modelError = chatModels?.error ?? (removedExecutor ? "Este executor foi removido. Escolha um provedor e modelo disponíveis para continuar." : null) ?? claudeProblem ?? (!selectionReady ? null : invalidAgent
+  const fastProblem = selectionReady && effectiveSelection?.serviceTier === "priority" && !supportsFastMode(modelGroups.find(group => group.models.some(item => item.value === effectiveSelection.model))?.providerKind, currentModelDef, effectiveSelection.executor) ? "Fast não está disponível neste provedor ou modelo. Selecione Normal ou outro modelo." : null;
+  const modelError = chatModels?.error ?? (removedExecutor ? "Este executor foi removido. Escolha um provedor e modelo disponíveis para continuar." : null) ?? claudeProblem ?? fastProblem ?? (!selectionReady ? null : invalidAgent
     ? `O agente ${invalidAgent} usa um modelo indisponível. Selecione um modelo válido para este chat.`
     : effectiveSelection && invalidSelection(effectiveSelection) ? `O modelo ${effectiveSelection.model} está indisponível. Revise o provedor e o modelo deste chat.` : null);
   useModelProblemNotice("Chat", modelError, `chat:${draftKey ?? "new"}`);
@@ -351,7 +353,7 @@ export function ChatComposer({
             <ChatBehaviorSettings manualAvailable={manualValidationAvailable} manualValidation={manualValidation} onManualChange={setManualValidation} publication={githubSelected ? null : automaticPublication} onPublicationChange={setAutomaticPublication} disabled={running || sending || compacting} githubSelected={githubSelected} />
             <FlowPicker customFlows={catalog.data?.flows} customAgents={catalog.data?.agents} builtinAgents={catalog.data?.builtinAgents} value={workflow} onChange={chooseWorkflow} disabled={running || sending || compacting} />
 
-            <ExecutorModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning } : effectiveSelection} onSelect={chooseModel} nativeDisabled={!modelsReady} disabled={running || sending || compacting || choosingModel || chatModels?.saving} invalid={Boolean(modelError)} showProviderIdentity onRefresh={onRefreshModels ? () => setRefreshDialogOpen(true) : undefined} refreshing={refreshingModels} />
+            <ExecutorModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning, ...(effectiveSelection?.serviceTier === "priority" ? { serviceTier: "priority" as const } : {}) } : effectiveSelection} onSelect={chooseModel} nativeDisabled={!modelsReady} disabled={running || sending || compacting || choosingModel || chatModels?.saving} invalid={Boolean(modelError)} showProviderIdentity allowFastMode onRefresh={onRefreshModels ? () => setRefreshDialogOpen(true) : undefined} refreshing={refreshingModels} />
 
             {/* Botão redondo com seta pra cima no canto inferior direito */}
             {running && !compacting && <Hint content="Interromper execução"><Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button></Hint>}

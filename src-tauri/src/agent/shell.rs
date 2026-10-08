@@ -435,11 +435,49 @@ pub(super) fn spawn(
     spawn_process(process)
 }
 
+/// Hooks receive a bounded JSON event through stdin in the same managed shell.
+pub(crate) fn spawn_hook_with_environment(
+    command: &str,
+    root: &Path,
+    environment: &std::collections::BTreeMap<String, String>,
+) -> std::io::Result<Box<dyn ChildWrapper>> {
+    let mut process = crate::background::tokio_command(&SHELL.program);
+    // Launcher credentials are private host context, never hook configuration.
+    process
+        .env_clear()
+        .envs(std::env::vars_os().filter(|(key, _)| !hook_private_environment(key)));
+    crate::mcp::executable::configure(&mut process, false);
+    process
+        .envs(environment)
+        .args(arguments(command))
+        .current_dir(root);
+    spawn_process_with_stdin(process, Stdio::piped())
+}
+
+fn hook_private_environment(key: &OsStr) -> bool {
+    matches!(
+        key.to_string_lossy().to_ascii_uppercase().as_str(),
+        "CODEX_EXEC_SERVER_NOISE_AUTH_TOKEN"
+            | "NODE_REPL_AUTH_TOKEN"
+            | "CODEX_GUARDIAN_DECISIONS_API_KEY"
+            | "OPENAI_FEDERATION_RULE_ID"
+            | "OPENAI_IDENTITY_TOKEN_FILE"
+            | "OPENAI_WORKLOAD_IDENTITY_CONTEXT"
+    )
+}
+
 pub(crate) fn spawn_process(
+    process: tokio::process::Command,
+) -> std::io::Result<Box<dyn ChildWrapper>> {
+    spawn_process_with_stdin(process, Stdio::null())
+}
+
+fn spawn_process_with_stdin(
     mut process: tokio::process::Command,
+    stdin: Stdio,
 ) -> std::io::Result<Box<dyn ChildWrapper>> {
     process
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut wrapped = CommandWrap::from(process);
@@ -594,6 +632,18 @@ fn process_snapshot() -> Vec<ProcessIdentity> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hook_environment_excludes_host_credentials_case_insensitively() {
+        assert!(hook_private_environment(OsStr::new(
+            "codex_exec_server_noise_auth_token"
+        )));
+        assert!(hook_private_environment(OsStr::new(
+            "OPENAI_IDENTITY_TOKEN_FILE"
+        )));
+        assert!(!hook_private_environment(OsStr::new("PATH")));
+        assert!(!hook_private_environment(OsStr::new("HOME")));
+    }
 
     #[test]
     fn discovered_terminal_shells_can_be_selected_on_every_platform() {

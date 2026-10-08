@@ -406,16 +406,19 @@ fn custom_capabilities_models_and_instructions_cannot_escape_configured_scope() 
     assert!(!allowed(&agent, "hub_spawn"));
     let (_fixture, hub) = super::super::tests::hub();
     let mut options = hub.manifest.lock().unwrap().options.clone();
+    options.service_tier = Some(settings::ServiceTier::Priority);
     agent.model = Some(settings::ModelChoice {
         executor: crate::claude::Executor::Jarvis,
         account: "chosen".into(),
         model: "chosen-model".into(),
         reasoning: Some("high".into()),
+        service_tier: None,
         fallback: None,
     });
     apply_model(&mut options, &agent);
     assert_eq!(options.account, "chosen");
     assert_eq!(options.model, "chosen-model");
+    assert_eq!(options.service_tier, None);
     assert!(instructions(&agent).contains(&agent.instructions));
     assert!(!instructions(&agent).contains("immutable role"));
 }

@@ -412,6 +412,7 @@ fn model_list(models: &std::collections::BTreeMap<String, Value>) -> Vec<Provide
             levels.last().cloned()
         };
         result.push(ProviderModel {
+            supports_fast: false,
             id: id.clone(),
             name: value["displayName"]
                 .as_str()

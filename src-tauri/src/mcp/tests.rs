@@ -13,12 +13,19 @@ use tokio::{
 };
 
 #[derive(Default)]
-struct MemorySecrets {
+pub(super) struct MemorySecrets {
     values: Mutex<HashMap<String, String>>,
-    fail: AtomicBool,
+    pub(super) fail: AtomicBool,
     loads: AtomicU64,
 }
 impl Secrets for MemorySecrets {
+    fn load_optional(&self, key: &str) -> Result<Option<String>, McpError> {
+        if self.fail.load(Ordering::Relaxed) {
+            return Err(storage_error());
+        }
+        Ok(self.values.lock().unwrap().get(key).cloned())
+    }
+
     fn load(&self, key: &str) -> Result<String, McpError> {
         self.loads.fetch_add(1, Ordering::Relaxed);
         self.values
@@ -65,6 +72,7 @@ impl Fixture {
             mcp: McpState(Arc::new(Manager {
                 guard: Mutex::new(()),
                 secrets: secrets.clone(),
+                apps_context: Mutex::new(None),
             })),
             secrets,
         }
@@ -110,6 +118,449 @@ impl Drop for Fixture {
 }
 fn fixture_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/mcp/fixtures/server.mjs")
+}
+
+#[tokio::test]
+async fn hook_mcp_core_call_preserves_structured_content_and_redacts_before_bounding() {
+    let fixture = Fixture::new();
+    let server = fixture.local("hook-docs");
+    let config = fixture.mcp.config(&fixture.home, &server).unwrap();
+    let (_sender, signal) = watch::channel(false);
+    let mut client =
+        runtime::connect_with_state(&fixture.mcp, server, config, &fixture.home, signal.clone())
+            .await
+            .unwrap();
+    let output = client
+        .core_call("lookup", &json!({"query":"hook brief"}), signal.clone())
+        .await
+        .unwrap();
+    assert!(output.contains("Documentation: hook brief"));
+    assert!(output.contains("\"source\":\"fixture\""));
+    assert!(output.contains(&fixture.home.to_string_lossy().to_string()));
+    assert!(!output.contains("fixture-sensitive-value"));
+    let long = client
+        .core_call(
+            "lookup",
+            &json!({"query":"mirrored-long-description"}),
+            signal,
+        )
+        .await
+        .unwrap();
+    assert_eq!(long.matches("fixture-task").count(), 1);
+    assert!(long.ends_with("[Resultado abreviado pelo Jarvis]"));
+    assert!(long.chars().count() <= 48_050);
+    client.close().await;
+}
+
+#[tokio::test]
+async fn new_registrations_refresh_the_current_turn_without_connecting_or_restarting_clients() {
+    let f = Fixture::new();
+    let database = f.local("database");
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &McpIntent::default(),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &json!({"server":"database"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    let starts = fs::read_to_string(f.home.join("starts")).unwrap();
+    let secret_loads = f.secrets.loads.load(Ordering::Relaxed);
+    f.local("later");
+
+    let refreshed = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(refreshed
+        .iter()
+        .any(|definition| definition["name"] == runtime::wire_name(&database, "lookup")));
+    let receipt = clients.discovery_schemas("jarvis_propose_mcp", &json!({}), "", &refreshed);
+    let activate = receipt
+        .iter()
+        .find(|tool| tool["name"] == "mcp_activate")
+        .unwrap();
+    let names = activate["inputSchema"]["properties"]["server"]["enum"]
+        .as_array()
+        .unwrap();
+    assert!(names.contains(&json!("later")));
+    assert!(!names.contains(&json!("database")));
+    assert_eq!(fs::read_to_string(f.home.join("starts")).unwrap(), starts);
+    assert_eq!(f.secrets.loads.load(Ordering::Relaxed), secret_loads);
+    assert!(!f.home.join("later-pid").exists());
+}
+
+#[tokio::test]
+async fn newly_installed_plugin_mcp_refreshes_without_starting_or_replacing_frozen_versions() {
+    let f = Fixture::new();
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &McpIntent::default(),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(clients
+        .definitions(&f.mcp, &f.state, &f.home, false)
+        .await
+        .is_empty());
+    let create = |version: &str| {
+        crate::plugins::Operation::Create {
+        draft: serde_json::from_value(json!({
+            "name":"firebase", "description":"Firebase fixture",
+            "mcpServers":{"firebase":{"command":"node","args":[fixture_script()],"env":{"STARTS_FILE":f.home.join("plugin-starts"),"SERVER_NAME":version}}}
+        })).unwrap(),
+    }
+    };
+    let prepared = crate::plugins::preview(&f.home, 0, create("frozen"))
+        .await
+        .unwrap();
+    let installed = crate::plugins::apply(&f.home, &prepared).unwrap();
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(
+        definitions[0]["parameters"]["properties"]["server"]["enum"],
+        json!(["firebase@local: firebase"])
+    );
+    assert!(!f.home.join("plugin-starts").exists());
+    let error = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &json!({"server":"firebase"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.message.contains("firebase@local: firebase"));
+    assert!(!f.home.join("plugin-starts").exists());
+    let prepared = crate::plugins::preview(&f.home, installed.revision, create("updated"))
+        .await
+        .unwrap();
+    let updated = crate::plugins::apply(&f.home, &prepared).unwrap();
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &json!({"server":"firebase@local: firebase"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(f.home.join("plugin-starts")).unwrap(),
+        "frozen\n"
+    );
+    let prepared = crate::plugins::preview(
+        &f.home,
+        updated.revision,
+        crate::plugins::Operation::SetEnabled {
+            plugin_id: "firebase@local".into(),
+            enabled: false,
+            project_path: Some(f.home.to_string_lossy().into_owned()),
+        },
+    )
+    .await
+    .unwrap();
+    crate::plugins::apply(&f.home, &prepared).unwrap();
+    assert!(clients
+        .definitions(&f.mcp, &f.state, &f.home, false)
+        .await
+        .is_empty());
+    assert!(f
+        .mcp
+        .list_for_project(&f.state, &f.home, None)
+        .unwrap()
+        .iter()
+        .any(|server| server.name == "firebase@local: firebase"));
+    drop(clients);
+}
+
+#[tokio::test]
+async fn plugin_mcp_activity_tracks_real_calls_errors_parallelism_and_cancellation() {
+    let f = Fixture::new();
+    let prepared = crate::plugins::preview(&f.home, 0, crate::plugins::Operation::Create {
+        draft: serde_json::from_value(json!({"name":"usage","description":"Usage fixture","mcpServers":{"docs":{"command":"node","args":[fixture_script()],"env":{"CALLS_FILE":f.home.join("plugin-calls"),"TEST_SECRET":"receipt-secret"}}}})).unwrap(),
+    }).await.unwrap();
+    crate::plugins::apply(&f.home, &prepared).unwrap();
+    let (sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &McpIntent::default(),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(clients.take_activity().is_empty());
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &json!({"server":"usage@local: docs"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(clients.take_activity().is_empty());
+    let server = f
+        .mcp
+        .list_for_project(&f.state, &f.home, Some(&f.home))
+        .unwrap()
+        .into_iter()
+        .find(|server| server.name == "usage@local: docs")
+        .unwrap();
+    let tool = runtime::wire_name(&server, "lookup");
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &tool,
+            &json!({}),
+            false,
+            signal.clone()
+        )
+        .await
+        .is_err());
+    assert!(clients.take_activity().is_empty());
+    assert!(!f.home.join("plugin-calls").exists());
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &tool,
+            &json!({"query":"normal"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &tool,
+            &json!({"query":"fail"}),
+            false,
+            signal.clone()
+        )
+        .await
+        .is_err());
+    let calls = clients.take_activity();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].status, crate::core::activity::Status::Applied);
+    assert_eq!(calls[1].status, crate::core::activity::Status::Issues);
+    assert!(calls.iter().all(
+        |activity| activity.plugin_id.as_deref() == Some("usage@local")
+            && activity.resource_id.as_deref() == Some(server.id.as_str())
+            && activity.resource_name.as_deref() == Some(server.name.as_str())
+    ));
+    assert!(!serde_json::to_string(&calls)
+        .unwrap()
+        .contains("receipt-secret"));
+    let left_args = json!({"query":"barrier:left"});
+    let right_args = json!({"query":"barrier:right"});
+    let (left, right) = tokio::join!(
+        clients.execute_parallel_read(&f.mcp, &f.state, &f.home, &tool, &left_args, signal.clone()),
+        clients.execute_parallel_read(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &tool,
+            &right_args,
+            signal.clone()
+        ),
+    );
+    left.unwrap();
+    right.unwrap();
+    assert_eq!(clients.take_activity().len(), 2);
+    let (_cancelled_sender, cancelled_signal) = watch::channel(true);
+    let calls_before = fs::read_to_string(f.home.join("plugin-calls")).unwrap();
+    assert!(clients
+        .execute_parallel_read(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &tool,
+            &json!({"query":"not-sent"}),
+            cancelled_signal
+        )
+        .await
+        .is_err());
+    assert!(clients.take_activity().is_empty());
+    assert_eq!(
+        fs::read_to_string(f.home.join("plugin-calls")).unwrap(),
+        calls_before
+    );
+    // Closing a cancelled peer refreshes schemas before a later call is allowed.
+    assert!(clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &tool,
+            &json!({"query":"after-reconnect"}),
+            false,
+            signal.clone()
+        )
+        .await
+        .is_err());
+    assert!(clients.take_activity().is_empty());
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &tool,
+            &json!({"query":"confirmed"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    let cancel = async {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        sender.send(true).unwrap();
+    };
+    let args = json!({"query":"hang"});
+    let (interrupted, _) = tokio::join!(
+        clients.execute_parallel_read(&f.mcp, &f.state, &f.home, &tool, &args, signal),
+        cancel
+    );
+    assert!(interrupted.is_err());
+    let calls = clients.take_activity();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].status, crate::core::activity::Status::Applied);
+    assert_eq!(calls[1].status, crate::core::activity::Status::Issues);
+    assert!(clients.take_activity().is_empty());
+    let context =
+        crate::hooks::mcp_dispatch::Context::new(f.mcp.clone(), f.state.clone(), &f.home, &f.home)
+            .unwrap();
+    assert!(context.take_activity().is_empty());
+    let (_hook_sender, hook_signal) = watch::channel(false);
+    crate::hooks::mcp_dispatch::execute(
+        &context,
+        &server.id,
+        "lookup",
+        &json!({"query":"hook-call"}),
+        std::time::Duration::from_secs(2),
+        hook_signal.clone(),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("unexpected cancellation"))
+    .unwrap();
+    let hooks = context.take_activity();
+    assert_eq!(hooks.len(), 1);
+    assert_eq!(hooks[0].plugin_id.as_deref(), Some("usage@local"));
+    assert_eq!(hooks[0].status, crate::core::activity::Status::Applied);
+    assert!(crate::hooks::mcp_dispatch::execute(
+        &context,
+        &server.id,
+        "lookup",
+        &json!({}),
+        std::time::Duration::from_secs(2),
+        hook_signal
+    )
+    .await
+    .unwrap_or_else(|_| panic!("unexpected cancellation"))
+    .is_err());
+    assert!(context.take_activity().is_empty());
+}
+
+#[tokio::test]
+async fn registration_refresh_preserves_disabled_explicit_and_excluded_mcp_scopes() {
+    for mode in [
+        McpIntentMode::Disabled,
+        McpIntentMode::Explicit,
+        McpIntentMode::OnDemand,
+    ] {
+        let f = Fixture::new();
+        let selected = f.local("selected");
+        let identity = McpIntentServer {
+            id: selected.id.clone(),
+            name: selected.name.clone(),
+        };
+        let intent = McpIntent {
+            mode,
+            servers: if mode == McpIntentMode::Explicit {
+                vec![identity.clone()]
+            } else {
+                vec![]
+            },
+            excluded_servers: if mode == McpIntentMode::OnDemand {
+                vec![identity]
+            } else {
+                vec![]
+            },
+        };
+        let (_sender, signal) = watch::channel(false);
+        let mut clients = runtime::TurnClients::discover_for_intent(
+            &f.mcp, &f.state, &f.home, &f.home, &intent, signal,
+        )
+        .await
+        .unwrap();
+        f.local("later");
+        let prepared = crate::plugins::preview(&f.home, 0, crate::plugins::Operation::Create {
+            draft: serde_json::from_value(json!({"name":"scope-fixture","description":"MCP scope fixture","mcpServers":{"later":{"command":"node","args":[fixture_script()]}}})).unwrap(),
+        }).await.unwrap();
+        crate::plugins::apply(&f.home, &prepared).unwrap();
+        let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+        let activate = definitions
+            .iter()
+            .find(|tool| tool["name"] == "mcp_activate");
+        if mode == McpIntentMode::OnDemand {
+            let names = activate.unwrap()["parameters"]["properties"]["server"]["enum"]
+                .as_array()
+                .unwrap();
+            assert!(names.contains(&json!("later")));
+            assert!(names.contains(&json!("scope-fixture@local: later")));
+            assert!(!names.contains(&json!("selected")));
+            assert!(!f.home.join("starts").exists());
+        } else {
+            assert!(activate.is_none());
+            assert!(!definitions
+                .iter()
+                .any(|tool| tool.to_string().contains("later")));
+            if mode == McpIntentMode::Disabled {
+                assert!(definitions.is_empty());
+                assert!(!f.home.join("starts").exists());
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -372,6 +823,7 @@ async fn discovery_names_survive_restart_and_stale_checks_do_not_overwrite_new_c
     let reopened = McpState(Arc::new(Manager {
         guard: Mutex::new(()),
         secrets: f.secrets.clone(),
+        apps_context: Mutex::new(None),
     }));
     let check = reopened
         .list(&AppState::default(), &f.home)
@@ -491,6 +943,74 @@ fn invalid_backup_mcp_set_preserves_the_current_catalog() {
         .is_err());
     assert_eq!(f.mcp.list(&f.state, &f.home).unwrap().len(), 1);
     assert_eq!(f.mcp.list(&f.state, &f.home).unwrap()[0].id, server.id);
+}
+
+#[test]
+fn adding_a_server_returns_metadata_without_loading_or_exposing_secrets() {
+    let f = Fixture::new();
+    let (_, config) = config::parse(
+        r#"{"docs":{"type":"remote","url":"https://example.test/mcp","headers":{"Authorization":"Bearer fixture-sensitive-value"}}}"#,
+    )
+    .unwrap();
+
+    let server = f.mcp.add(&f.state, &f.home, "docs", &config).unwrap();
+
+    assert_eq!(server.name, "docs");
+    assert_eq!(server.kind, "remote");
+    assert_eq!(server.revision, 1);
+    assert!(server.enabled && server.configured);
+    assert_eq!(f.secrets.loads.load(Ordering::Relaxed), 0);
+    let metadata = serde_json::to_string(&server).unwrap();
+    assert!(!metadata.contains("fixture-sensitive-value"));
+    assert!(!metadata.contains("Authorization"));
+    assert!(f
+        .mcp
+        .edit(&f.state, &f.home, &server.id)
+        .unwrap()
+        .contains("fixture-sensitive-value"));
+}
+
+#[test]
+fn adding_a_duplicate_cannot_update_the_existing_server() {
+    let f = Fixture::new();
+    let server = f.local("docs");
+    let original = f.mcp.edit(&f.state, &f.home, &server.id).unwrap();
+    let (_, replacement) =
+        config::parse(r#"{"docs":{"type":"remote","url":"https://replacement.test/mcp"}}"#)
+            .unwrap();
+
+    assert!(f.mcp.add(&f.state, &f.home, "docs", &replacement).is_err());
+
+    let catalog = f.mcp.list(&f.state, &f.home).unwrap();
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].id, server.id);
+    assert_eq!(catalog[0].revision, 1);
+    assert_eq!(f.mcp.edit(&f.state, &f.home, &server.id).unwrap(), original);
+    assert_eq!(f.secrets.values.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn adding_an_invalid_typed_config_does_not_register_or_store_it() {
+    let f = Fixture::new();
+    let config: Config = serde_json::from_value(json!({
+        "type": "remote",
+        "url": "file:///tmp/server"
+    }))
+    .unwrap();
+    assert!(f.mcp.add(&f.state, &f.home, "docs", &config).is_err());
+    assert!(f.mcp.list(&f.state, &f.home).unwrap().is_empty());
+    assert!(f.secrets.values.lock().unwrap().is_empty());
+}
+
+#[test]
+fn adding_a_server_with_unavailable_secret_storage_leaves_no_registration() {
+    let f = Fixture::new();
+    let (_, config) = config::parse(config::TEMPLATE).unwrap();
+    f.secrets.fail.store(true, Ordering::Relaxed);
+
+    assert!(f.mcp.add(&f.state, &f.home, "docs", &config).is_err());
+    assert!(f.mcp.list(&f.state, &f.home).unwrap().is_empty());
+    assert!(f.secrets.values.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -1915,7 +2435,7 @@ async fn stdio_discovery_dispatch_policy_redaction_and_stale_config() {
 #[tokio::test]
 async fn failed_server_is_isolated_and_cancellation_stops_stdio_process() {
     let f = Fixture::new();
-    f.local("docs");
+    let docs = f.local("docs");
     f.mcp
         .save(
             &f.state,
@@ -1930,7 +2450,17 @@ async fn failed_server_is_isolated_and_cancellation_stops_stdio_process() {
             .await
             .unwrap();
     let definitions = clients.definitions(&f.mcp, &f.state, &f.home, true).await;
-    assert_eq!(definitions.len(), 1);
+    let lookup = runtime::wire_name(&docs, "lookup");
+    // Failed registrations remain selectable for recovery, but contribute no
+    // connected tool. Discovery controls do not change that isolation.
+    assert_eq!(
+        definitions
+            .iter()
+            .filter(|definition| definition["name"] != "mcp_activate")
+            .map(|definition| definition["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [lookup.as_str()]
+    );
     assert!(f
         .mcp
         .list(&f.state, &f.home)
@@ -1943,14 +2473,13 @@ async fn failed_server_is_isolated_and_cancellation_stops_stdio_process() {
         .unwrap()
         .error
         .is_some());
-    let lookup = definitions[0]["name"].as_str().unwrap();
     let cancel = async {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         sender.send(true).unwrap();
     };
     let args = json!({"query":"hang"});
     let (result, _) = tokio::join!(
-        clients.execute(&f.mcp, &f.state, &f.home, lookup, &args, false, signal),
+        clients.execute(&f.mcp, &f.state, &f.home, &lookup, &args, false, signal),
         cancel
     );
     assert!(result.unwrap_err().message.contains("interrompida"));
@@ -2031,7 +2560,7 @@ async fn live_context7_with_gui_runtime_path() {
         .into_iter()
         .find(|server| server.name == "context7")
         .unwrap();
-    let mut config = fixture.mcp.config(&server).unwrap();
+    let mut config = fixture.mcp.config(&fixture.home, &server).unwrap();
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
     if let Config::Local { environment, .. } = &mut config {
         let path = executable::search_path(
@@ -2048,4 +2577,167 @@ async fn live_context7_with_gui_runtime_path() {
     assert!(client.tool_count() > 0);
     println!("Context7 discovery passed: {} tools", client.tool_count());
     client.close().await;
+}
+
+#[tokio::test]
+async fn plugin_relative_entrypoint_runs_in_package_cwd_with_canonical_project_environment() {
+    let fixture = Fixture::new();
+    let project = fixture.home.join("actual-project");
+    fs::create_dir_all(&project).unwrap();
+    let peer = r#"import { createInterface } from 'node:readline';
+const input = createInterface({ input:process.stdin });
+input.on('line', line => {
+  const request = JSON.parse(line);
+  if (!Object.hasOwn(request,'id')) return;
+  let result;
+  if (request.method === 'initialize') result = { protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'relative-plugin',version:'1'} };
+  else if (request.method === 'tools/list') result = { tools:[{ name:'where',inputSchema:{type:'object',properties:{},additionalProperties:false} }] };
+  else if (request.method === 'tools/call') result = { content:[],structuredContent:{ cwd:process.cwd(),contextProject:process.env.CONTEXT_MODE_PROJECT_DIR,claudeProject:process.env.CLAUDE_PROJECT_DIR,codexProject:process.env.CODEX_PROJECT_DIR,codexHome:process.env.CODEX_HOME,tenant:process.env.TENANT } };
+  else result = {};
+  process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:request.id,result})+'\n');
+});
+input.on('close',()=>process.exit(0));"#;
+    let draft = serde_json::from_value(json!({"name":"relative-context","description":"Context-mode manifest shape fixture","mcpServers":{"context-mode":{"command":"node","args":["./start.mjs"],"cwd":".","env":{"CLAUDE_PROJECT_DIR":"wrong-workspace","TENANT":"private-tenant-fixture"}}},"files":[{"path":"start.mjs","content":peer}]})).unwrap();
+    let prepared = crate::plugins::preview(
+        &fixture.home,
+        0,
+        crate::plugins::Operation::Create { draft },
+    )
+    .await
+    .unwrap();
+    crate::plugins::apply(&fixture.home, &prepared).unwrap();
+    let configs = fixture.mcp.plugin_configs(&fixture.home, &project).unwrap();
+    let (server, config) = configs.into_values().next().unwrap();
+    let Config::Local { environment, .. } = &config else {
+        panic!("local plugin")
+    };
+    let package_root = PathBuf::from(&environment["CODEX_PLUGIN_ROOT"])
+        .canonicalize()
+        .unwrap();
+    let codex_home = environment["CODEX_HOME"].clone();
+    let (_sender, signal) = watch::channel(false);
+    let mut client = runtime::connect_with_state(
+        &fixture.mcp,
+        server,
+        config,
+        &project.join("."),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    let result: Value =
+        serde_json::from_str(&client.core_call("where", &json!({}), signal).await.unwrap())
+            .unwrap();
+    let canonical_project = project
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        Path::new(result["cwd"].as_str().unwrap())
+            .canonicalize()
+            .unwrap(),
+        package_root
+    );
+    for key in ["contextProject", "claudeProject", "codexProject"] {
+        assert_eq!(result[key], canonical_project);
+    }
+    assert_ne!(result["cwd"], result["contextProject"]);
+    assert_eq!(result["codexHome"], codex_home);
+    assert_eq!(result["tenant"], "[redigido]");
+    client.close().await;
+}
+
+#[tokio::test]
+async fn plugin_mcp_overlay_preserves_manual_configs_and_frozen_versions() {
+    let fixture = Fixture::new();
+    let manual = fixture.local("documentation");
+    let initial_raw = fixture
+        .mcp
+        .config(&fixture.home, &manual)
+        .unwrap()
+        .named(&manual.name);
+    let create = |argument: &str| {
+        crate::plugins::Operation::Create { draft: serde_json::from_value(json!({
+        "name":"plugin-fixture", "description":"Runtime fixture", "mcpServers":{"documentation":{"command":"node","args":[argument]}}, "skills":[], "files":[], "apps":{}
+    })).unwrap() }
+    };
+    let prepared = crate::plugins::preview(&fixture.home, 0, create("first.js"))
+        .await
+        .unwrap();
+    let installed = crate::plugins::apply(&fixture.home, &prepared).unwrap();
+    let pinned = fixture
+        .mcp
+        .plugin_configs(&fixture.home, &fixture.home)
+        .unwrap();
+    assert_eq!(pinned.len(), 1);
+    let (id, (old, config)) = pinned.iter().next().unwrap();
+    assert!(id.starts_with("plugin-mcp:"));
+    assert_ne!(old.name, manual.name);
+    assert!(config.named("plugin").contains("first.js"));
+    assert_eq!(
+        fixture
+            .mcp
+            .config(&fixture.home, &manual)
+            .unwrap()
+            .named(&manual.name),
+        initial_raw
+    );
+    assert_eq!(
+        fixture
+            .mcp
+            .edit(&fixture.state, &fixture.home, id)
+            .unwrap_err()
+            .code,
+        "plugin_owned_mcp"
+    );
+    let prepared = crate::plugins::preview(&fixture.home, installed.revision, create("second.js"))
+        .await
+        .unwrap();
+    let updated = crate::plugins::apply(&fixture.home, &prepared).unwrap();
+    let fresh = fixture
+        .mcp
+        .plugin_configs(&fixture.home, &fixture.home)
+        .unwrap();
+    assert_eq!(fresh.keys().next(), Some(id));
+    assert_ne!(fresh[id].0.revision, old.revision);
+    assert!(config.named("plugin").contains("first.js"));
+    assert!(fixture
+        .mcp
+        .current_for_project(&fixture.state, &fixture.home, &fixture.home, old));
+    assert!(fixture.mcp.frozen_config_current(
+        &fixture.state,
+        &fixture.home,
+        &fixture.home,
+        old,
+        config
+    ));
+    let Config::Local { environment, .. } = config else {
+        panic!("local fixture")
+    };
+    let frozen_root = Path::new(environment.get("CODEX_PLUGIN_ROOT").unwrap());
+    fs::write(frozen_root.join("tampered.txt"), "unexpected script").unwrap();
+    assert!(!fixture.mcp.frozen_config_current(
+        &fixture.state,
+        &fixture.home,
+        &fixture.home,
+        old,
+        config
+    ));
+    let prepared = crate::plugins::preview(
+        &fixture.home,
+        updated.revision,
+        crate::plugins::Operation::SetEnabled {
+            plugin_id: updated.installed[0].id.clone(),
+            enabled: false,
+            project_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    crate::plugins::apply(&fixture.home, &prepared).unwrap();
+    assert!(!fixture
+        .mcp
+        .current_for_project(&fixture.state, &fixture.home, &fixture.home, old));
+    assert!(fixture.mcp.current(&fixture.state, &fixture.home, &manual));
 }

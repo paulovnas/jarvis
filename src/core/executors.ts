@@ -4,11 +4,17 @@ import type { ModelChoice } from "./provider-references";
 // Retired executors remain readable in saved history without becoming runnable.
 export const executorSchema = z.string().transform(value => value === "jarvis" ? "jarvis" as const : value === "claude" ? "claude" as const : "unavailable" as const);
 export type Executor = z.infer<typeof executorSchema>;
-export type ExecutionChoice = { executor?: Executor; account: string; model: string; reasoning: string | null };
-export type ExecutionSelection = { executor?: Executor; model: string; reasoning: string | null };
+export const serviceTierSchema = z.literal("priority").nullable().transform(value => value ?? undefined).optional();
+export type ServiceTier = z.infer<typeof serviceTierSchema>;
+export type ExecutionChoice = { executor?: Executor; account: string; model: string; reasoning: string | null; serviceTier?: ServiceTier };
+export type ExecutionSelection = { executor?: Executor; model: string; reasoning: string | null; serviceTier?: ServiceTier };
 export const executorOf = (choice?: { executor?: Executor } | null): Executor => choice?.executor ?? "jarvis";
-export const executionLabel = (choice: ExecutionChoice) => `${executorOf(choice) === "claude" ? "Claude Code" : executorOf(choice) === "unavailable" ? "Executor removido" : choice.account} / ${choice.model}`;
+export const executionLabel = (choice: ExecutionChoice) => `${executorOf(choice) === "claude" ? "Claude Code" : executorOf(choice) === "unavailable" ? "Executor removido" : choice.account} / ${choice.model}${choice.serviceTier === "priority" ? " · Fast" : ""}`;
 export const sameExecutionTarget = (first: ExecutionChoice, second: ExecutionChoice) => executorOf(first) === executorOf(second) && first.account === second.account && first.model === second.model;
+export const FAST_USAGE_NOTICE = "Maior consumo dos limites/créditos";
+export function supportsFastMode(providerKind: string | undefined, model: { supportsFast?: boolean } | null | undefined, executor?: Executor): boolean {
+  return executorOf({ executor }) === "jarvis" && providerKind === "openai-codex" && model?.supportsFast === true;
+}
 
 export function selectModelChoice(current: ModelChoice | null | undefined, next: ExecutionChoice, slot: "primary" | "secondary"): ModelChoice {
   if (!current) return next;
@@ -18,17 +24,21 @@ export function selectModelChoice(current: ModelChoice | null | undefined, next:
     // Without a secondary, there is no alternate primary to swap in.
     return fallback ? { ...fallback, fallback: primary } : current;
   }
-  return slot === "primary" ? { ...current, ...next } : { ...current, fallback: next };
+  if (slot === "secondary") return { ...current, fallback: next };
+  const updated = { ...current, ...next };
+  if (next.serviceTier !== "priority") delete updated.serviceTier;
+  return updated;
 }
 
 export function executionSelection(choice?: ExecutionChoice | null): ExecutionSelection | null {
-  return choice ? { executor: executorOf(choice), model: executorOf(choice) !== "jarvis" ? choice.model : `${choice.account}/${choice.model}`, reasoning: choice.reasoning } : null;
+  return choice ? { executor: executorOf(choice), model: executorOf(choice) !== "jarvis" ? choice.model : `${choice.account}/${choice.model}`, reasoning: choice.reasoning, ...(choice.serviceTier === "priority" ? { serviceTier: choice.serviceTier } : {}) } : null;
 }
 
 export function executionChoice(selection: ExecutionSelection): ExecutionChoice {
-  if (executorOf(selection) !== "jarvis") return { executor: executorOf(selection), account: "", model: selection.model, reasoning: selection.reasoning };
+  const tier = selection.serviceTier === "priority" ? { serviceTier: selection.serviceTier } : {};
+  if (executorOf(selection) !== "jarvis") return { executor: executorOf(selection), account: "", model: selection.model, reasoning: selection.reasoning, ...tier };
   const split = selection.model.indexOf("/");
-  return { executor: "jarvis", account: split < 0 ? "" : selection.model.slice(0, split), model: split < 0 ? selection.model : selection.model.slice(split + 1), reasoning: selection.reasoning };
+  return { executor: "jarvis", account: split < 0 ? "" : selection.model.slice(0, split), model: split < 0 ? selection.model : selection.model.slice(split + 1), reasoning: selection.reasoning, ...tier };
 }
 
 export const claudeProviderPreferencesSchema = z.object({

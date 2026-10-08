@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { turnOptionsSchema } from "./chat";
 import { modelChoiceSchema } from "./workflow-catalog";
 import { modelProblem, resolveChatModel } from "./provider-references";
-import { claudeModels, claudeRuntimeSchema, executionChoice, executionSelection, executorOf, executionLabel, executorSchema, selectModelChoice } from "./executors";
+import { claudeModels, claudeRuntimeSchema, executionChoice, executionSelection, executorOf, executionLabel, executorSchema, selectModelChoice, supportsFastMode } from "./executors";
 
 describe("execution choices", () => {
   it.each(["primary", "secondary"] as const)("swaps complete assignments when %s selects the opposite model", slot => {
@@ -55,4 +55,23 @@ describe("execution choices", () => {
     expect(claudeModels({ ...runtime, preferences: { enabled: false, disabledModels: [] } })).toEqual([]);
     expect(claudeModels({ ...runtime, preferences: { enabled: true, disabledModels: ["removed-model"] } })).toHaveLength(1);
   });
+});
+
+it("round-trips Fast in persisted choices and selections while Normal remains absent", () => {
+  const fast = { executor: "jarvis" as const, account: "work", model: "model", reasoning: "high", serviceTier: "priority" as const };
+  expect(executionChoice(executionSelection(modelChoiceSchema.parse(fast))!)).toEqual(fast);
+  expect(turnOptionsSchema.parse({ ...fast, mode: "build", approvalMode: "manual" })).toMatchObject(fast);
+  expect(executionLabel(fast)).toBe("work / model · Fast");
+  const normal = { executor: fast.executor, account: fast.account, model: fast.model, reasoning: fast.reasoning };
+  expect(executionChoice(executionSelection(normal)!)).not.toHaveProperty("serviceTier");
+  expect(selectModelChoice(fast, normal, "primary")).not.toHaveProperty("serviceTier");
+  expect(selectModelChoice(fast, { ...fast, reasoning: "low" }, "primary")).toMatchObject({ serviceTier: "priority", reasoning: "low" });
+});
+
+it("requires the account catalog capability for Fast regardless of model name", () => {
+  expect(supportsFastMode("openai-codex", { supportsFast: true })).toBe(true);
+  expect(supportsFastMode("openai-codex", {})).toBe(false);
+  expect(supportsFastMode("openai-codex", { supportsFast: false })).toBe(false);
+  expect(supportsFastMode("custom", { supportsFast: true })).toBe(false);
+  expect(supportsFastMode("openai-codex", { supportsFast: true }, "claude")).toBe(false);
 });

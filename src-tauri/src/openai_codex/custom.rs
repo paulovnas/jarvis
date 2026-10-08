@@ -234,6 +234,7 @@ impl Config {
         self.models
             .iter()
             .map(|m| ProviderModel {
+                supports_fast: false,
                 id: m.id.clone(),
                 name: m.name.clone(),
                 reasoning_levels: m.reasoning_levels.clone(),

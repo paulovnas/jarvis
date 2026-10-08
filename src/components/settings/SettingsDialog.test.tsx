@@ -1,4 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
@@ -8,12 +9,14 @@ import SettingsDialog from "./SettingsDialog";
 import { coreFixture } from "@/test/core-fixtures";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
-const { invokeMock, usageMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), usageMock: vi.fn() }));
+const { invokeMock, usageMock, mcpListMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), usageMock: vi.fn(), mcpListMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => command === "get_web_search_config" || command === "get_vision_config" || command === "get_image_generation_config"
     ? Promise.resolve({ accountAlias: null })
-    : command === "list_mcp_servers" ? Promise.resolve([])
+    : command === "list_mcp_servers" ? mcpListMock()
     : command === "list_skills" ? Promise.resolve({ includeAgents: false, directory: "/home/.jarvis/skills", skills: [], warnings: [] })
+    : command === "list_hooks" ? Promise.resolve({ revision: 0, hooks: [], nativeHooks: [] })
+    : command === "list_plugins" ? Promise.resolve({ revision: 0, marketplaces: [], available: [], installed: [], issues: [], appsAccountId: null })
     : command === "get_skill_cache_status" ? Promise.resolve({ bytes: 0, repositories: 0, residues: 0 })
     : command === "get_claude_runtime" ? Promise.resolve({ installed: false, authenticated: false, version: null, models: [], error: null })
     : command === "get_journal_maintenance_status" ? Promise.resolve({ files: 0, conversationJournals: 0, workerJournals: 0, protectedFiles: 0, invalidFiles: 0, candidates: 0, currentBytes: 0, liveBytes: 0, recoverableBytes: 0, obsoleteRecords: 0, maxAmplificationBps: 100 })
@@ -27,6 +30,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 vi.mock("@/hooks/use-provider-usage", () => ({ useProviderUsage: usageMock }));
 
 const openUrlMock = vi.mocked(openUrl);
+const listeners = new Map<string, Set<EventCallback<unknown>>>();
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -102,6 +106,71 @@ describe("SettingsDialog provider accounts", () => {
     render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
     expect(screen.getByRole("tab", { name: /Provedores/ })).toHaveAttribute("aria-selected", "true");
     expect(invokeMock).not.toHaveBeenCalledWith("save_desktop_layout", expect.anything());
+  });
+
+  it("opens and restores Hooks in the native settings window", async () => {
+    invokeMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    const { unmount } = render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
+    await user.click(screen.getByRole("tab", { name: "Hooks" }));
+    expect(await screen.findByRole("button", { name: "Adicionar hook" })).toBeEnabled();
+    unmount();
+    render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
+    expect(screen.getByRole("tab", { name: "Hooks" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("button", { name: "Adicionar hook" })).toBeEnabled();
+    expect(invokeMock).not.toHaveBeenCalledWith("save_desktop_layout", expect.anything());
+  });
+
+  it("waits for a hook mutation before accepting native window close", async () => {
+    const pending = deferred<unknown>();
+    const requestClose: { current: (() => void) | null } = { current: null };
+    const closed = vi.fn();
+    invokeMock.mockImplementation(command => command === "save_hook" ? pending.promise : Promise.resolve([]));
+    const user = userEvent.setup();
+    render(<SettingsDialog standalone open onOpenChange={closed} onCloseRequestChange={handler => { requestClose.current = handler; }} />);
+    await user.click(screen.getByRole("tab", { name: "Hooks" }));
+    await user.click(await screen.findByRole("button", { name: "Adicionar hook" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome do hook" }), { target: { value: "Validar" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Comando" }), { target: { value: "node validate.mjs" } });
+    await user.click(screen.getByRole("button", { name: "Salvar hook" }));
+    act(() => requestClose.current?.());
+    expect(closed).not.toHaveBeenCalled();
+    await act(async () => { pending.resolve({ revision: 1, hooks: [], nativeHooks: [] }); });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    act(() => requestClose.current?.());
+    expect(closed).toHaveBeenCalledWith(false);
+  });
+
+  it("opens and restores Plugins in the native settings window", async () => {
+    invokeMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    const { unmount } = render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
+    await user.click(screen.getByRole("tab", { name: "Plugins" }));
+    expect(await screen.findByRole("textbox", { name: "Buscar plugins" })).toBeVisible();
+    unmount();
+    render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
+    expect(screen.getByRole("tab", { name: "Plugins" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("textbox", { name: "Buscar plugins" })).toBeVisible();
+    expect(invokeMock).not.toHaveBeenCalledWith("save_desktop_layout", expect.anything());
+  });
+
+  it("waits for a prepared plugin apply before accepting native window close", async () => {
+    const pending = deferred<unknown>();
+    const requestClose: { current: (() => void) | null } = { current: null };
+    const closed = vi.fn();
+    invokeMock.mockImplementation(command => command === "apply_plugin_change" ? pending.promise : command === "preview_plugin_change" ? Promise.resolve({ receiptId: "plugin-review", revision: 0, preview: { title: "Revisar marketplace", description: "Adicionar origem", source: "https://github.com/org/repo.git", hash: "", components: [], commands: [], requirements: [], warnings: [], affectedIds: [] } }) : Promise.resolve([]));
+    const user = userEvent.setup();
+    render(<SettingsDialog standalone open onOpenChange={closed} onCloseRequestChange={handler => { requestClose.current = handler; }} />);
+    await user.click(screen.getByRole("tab", { name: "Plugins" }));
+    const add = await screen.findByRole("button", { name: "Adicionar" }); await waitFor(() => expect(add).toBeEnabled()); await user.click(add);
+    await user.click(await screen.findByRole("menuitem", { name: "Marketplace" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Origem do marketplace" }), { target: { value: "org/repo" } });
+    await user.click(screen.getByRole("button", { name: "Revisar marketplace" }));
+    await user.click(await screen.findByRole("button", { name: "Confirmar alteração" }));
+    act(() => requestClose.current?.()); expect(closed).not.toHaveBeenCalled();
+    await act(async () => { pending.resolve({ revision: 1, marketplaces: [], available: [], installed: [], issues: [], appsAccountId: null }); });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    act(() => requestClose.current?.()); expect(closed).toHaveBeenCalledWith(false);
   });
 
   it("cancels pending OAuth before accepting a native window close request", async () => {
@@ -272,7 +341,7 @@ describe("SettingsDialog provider accounts", () => {
     expect(skills).toHaveAttribute("aria-selected", "true");
     expect(providers).not.toHaveAttribute("data-active");
     expect(navigation).toBeVisible();
-    expect(screen.getAllByRole("tab")).toHaveLength(10);
+    expect(screen.getAllByRole("tab")).toHaveLength(12);
     await user.click(screen.getByRole("tab", { name: "Geral" }));
     expect(screen.queryByRole("region", { name: "Core" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Ferramentas" }));
@@ -355,6 +424,12 @@ describe("SettingsDialog provider accounts", () => {
     localStorage.removeItem("jarvis:settings-window-tab");
     vi.restoreAllMocks();
     invokeMock.mockReset();
+    mcpListMock.mockReset().mockResolvedValue([]);
+    listeners.clear();
+    vi.mocked(listen).mockImplementation(async (name, callback) => {
+      const callbacks = listeners.get(name) ?? new Set(); callbacks.add(callback); listeners.set(name, callbacks);
+      return () => { callbacks.delete(callback); };
+    });
     usageMock.mockReset().mockReturnValue({ data: null, error: false });
     openUrlMock.mockReset();
     openUrlMock.mockResolvedValue(undefined);
@@ -365,7 +440,7 @@ describe("SettingsDialog provider accounts", () => {
     const user = userEvent.setup();
     render(<SettingsDialog open onOpenChange={vi.fn()} />);
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Terminal", "Navegador", "Jarvis Voice", "Espaços", "Ferramentas", "Fluxos", "Provedores", "Skills", "MCPs"]);
+    expect(tabs.map(tab => tab.textContent?.replace(/\\d/g, ""))).toEqual(["Geral", "Terminal", "Navegador", "Jarvis Voice", "Espaços", "Ferramentas", "Fluxos", "Provedores", "Skills", "MCPs", "Hooks", "Plugins"]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
     expect(within(screen.getByRole("tabpanel", { name: "Geral" })).queryByRole("heading", { name: "Core" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Ferramentas" }));
@@ -375,6 +450,36 @@ describe("SettingsDialog provider accounts", () => {
     await waitFor(() => expect(screen.getByRole("tab", { name: /Skills/ })).toHaveTextContent("0"));
     await waitFor(() => expect(screen.getByRole("tab", { name: /MCPs/ })).toHaveTextContent("0"));
     expect(screen.getByRole("tab", { name: /Provedores/ })).toHaveTextContent("2");
+  });
+
+  it("refreshes the MCP navigation count after an agent adds a server while the MCP tab is closed", async () => {
+    invokeMock.mockResolvedValue([]);
+    const server = { id: "docs", name: "docs", kind: "remote", enabled: false, configured: true, revision: 1, lastCheck: null };
+    mcpListMock.mockResolvedValueOnce([server]).mockResolvedValue([server, { ...server, id: "docs-2", name: "docs-2" }]);
+    const { unmount } = render(<SettingsDialog open onOpenChange={vi.fn()} />);
+    const tab = screen.getByRole("tab", { name: /MCPs/ });
+    await waitFor(() => expect(tab).toHaveTextContent("1"));
+    expect(tab).toHaveAttribute("aria-selected", "false");
+    await act(async () => { listeners.get("mcp-servers:changed")?.forEach(callback => callback({ event: "mcp-servers:changed", id: 1, payload: null })); });
+    await waitFor(() => expect(tab).toHaveTextContent("2"));
+    expect(tab).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tabpanel", { name: "Geral" })).toBeVisible();
+    unmount();
+    await waitFor(() => expect(listeners.get("mcp-servers:changed")?.size).toBe(0));
+  });
+
+  it("keeps the latest MCP count when an older list request finishes after a change event", async () => {
+    invokeMock.mockResolvedValue([]);
+    const initial = deferred<unknown>();
+    const server = { id: "docs", name: "docs", kind: "remote", enabled: false, configured: true, revision: 1, lastCheck: null };
+    mcpListMock.mockReturnValueOnce(initial.promise).mockResolvedValue([server, { ...server, id: "docs-2", name: "docs-2" }]);
+    render(<SettingsDialog open onOpenChange={vi.fn()} />);
+    await waitFor(() => expect(mcpListMock).toHaveBeenCalledOnce());
+    await act(async () => { listeners.get("mcp-servers:changed")?.forEach(callback => callback({ event: "mcp-servers:changed", id: 1, payload: null })); });
+    const tab = screen.getByRole("tab", { name: /MCPs/ });
+    await waitFor(() => expect(tab).toHaveTextContent("2"));
+    await act(async () => { initial.resolve([server]); });
+    expect(tab).toHaveTextContent("2");
   });
 
   it("fecha o formulário sem fechar o drawer e restaura o foco", async () => {

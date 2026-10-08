@@ -31,10 +31,10 @@ fn invalid(message: &str) -> AgentError {
 
 fn manual_validation_instructions(flow: Flow, enabled: bool) -> &'static str {
     match (flow, enabled) {
-        (Flow::Planned | Flow::Complete, true) => "\nFinal manual validation is ENABLED for this run. Preserve concrete user-checkable steps in worker handoffs. The root Planner must publish the final checklist with validation_publish and wait for the user's decisions before closing the epic.\n",
+        (Flow::Planned | Flow::Complete, true) => "\nFinal manual validation is ENABLED for this run. Complete authorized implementation and automated checks before requesting acceptance. Preserve concrete user-checkable steps in worker handoffs. The root Planner must publish the final checklist with validation_publish: a short title naming each behavior, bounded steps using verified project paths or controls, any known prerequisite, and an observable expected result. Do not delegate available agent-owned work or substitute automated check commands for manual acceptance. Report actual checks and remaining limitations separately; never invent a cause or claim unobserved success. Return control to the user after publishing, without polling or duplicating the checklist in chat, and wait for their decisions before closing the epic.\n",
         (Flow::Planned | Flow::Complete, false) => "\nFinal manual validation is DISABLED for this run. Do not call validation_publish or wait for user acceptance. Finish from technical evidence and close eligible Beads. Follow the active execution approval mode; YOLO preauthorizes tool execution. Ask only for unresolved user decisions.\n",
-        (Flow::Custom, true) => "\nFinal manual validation is ENABLED for this custom workflow. Include concise user-checkable steps in hub_complete.validation. The runtime will aggregate them and present the final checklist after the graph finishes.\n",
-        (Flow::Custom, false) => "\nFinal manual validation is DISABLED for this custom workflow. Finish the assigned step normally. Follow the active execution approval mode; YOLO preauthorizes tool execution. Ask only for unresolved user decisions.\n",
+        (Flow::Custom, true) => "\nFinal manual validation is ENABLED for this custom workflow. Complete authorized implementation and automated checks before requesting acceptance. Include concise user-checkable steps using verified project paths or controls and any known prerequisite in hub_complete.validation; put observable expected behavior in outcomes, actual checks and results in evidence, and remaining uncertainty in limitations. Do not delegate available agent-owned work or substitute automated check commands for manual acceptance. The runtime will aggregate them and present the final checklist after the graph finishes.\n",
+        (Flow::Custom, false) => "\nFinal manual validation is DISABLED for this custom workflow. Finish the assigned step normally. Do not publish a manual checklist or wait for user acceptance. Follow the active execution approval mode; YOLO preauthorizes tool execution. Ask only for unresolved user decisions.\n",
         _ => "",
     }
 }
@@ -570,6 +570,9 @@ impl Execution {
     pub(super) fn root(&self) -> &Arc<Session> {
         &self.hub.root
     }
+    pub(super) fn hook_agent_type(&self) -> &'static str {
+        self.role.id()
+    }
     pub(super) fn secondary_model(&self) -> Result<Option<settings::ModelChoice>, AgentError> {
         if super::companion_chat::is_global_session(&self.hub.root.id) && !self.image_generator() {
             return Ok(None);
@@ -872,6 +875,13 @@ impl Execution {
         if self.id == "main" && self.role == Role::Planner && !direct && self.manual_validation() {
             definitions.push(validation::definition());
         }
+        if self.allowed("jarvis_propose_project_instructions")
+            && !definitions
+                .iter()
+                .any(|definition| definition["name"] == "jarvis_propose_project_instructions")
+        {
+            definitions.push(super::authoring::project_instructions_definition());
+        }
         definitions.retain(|d| d["name"].as_str().is_some_and(|name| self.allowed(name)));
         if self.recovery_inspection_pending().unwrap_or(false) {
             definitions.push(recovery::definition());
@@ -896,6 +906,19 @@ impl Execution {
         if self.flow == Flow::Publication
             && self.role == Role::Builder
             && name == "jarvis_propose_publication"
+        {
+            return false;
+        }
+        if name == "jarvis_propose_project_instructions"
+            && (self.discovery()
+                || self.flow == Flow::Publication
+                || !self.scope.iter().any(|path| path == ".")
+                || self.role == Role::Planner && self.id != "main"
+                || !self
+                    .hub
+                    .manifest
+                    .lock()
+                    .is_ok_and(|state| state.options.mode == Mode::Build))
         {
             return false;
         }
@@ -1411,6 +1434,7 @@ pub(super) fn validate_options(
                 account: options.account.clone(),
                 model: options.model.clone(),
                 reasoning: options.reasoning.clone(),
+                service_tier: options.service_tier,
                 fallback: None,
             },
         );
@@ -1842,6 +1866,7 @@ pub(super) fn awaiting_validation(home: &Path, id: &str, turn: &str) -> bool {
         .flatten()
         .is_some_and(|state| {
             !state.flow.direct()
+                && state.options.manual_validation()
                 && state.run_id == turn
                 && state
                     .validation

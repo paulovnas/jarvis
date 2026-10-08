@@ -23,11 +23,62 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::Duration,
 };
 use tokio::sync::watch;
+
+/// Attribution comes from verified runtime contributions, never wire-name aliases.
+pub(crate) fn plugin_activity(
+    server: &Server,
+    tool: &str,
+    plugin_id: &str,
+) -> crate::core::activity::Activity {
+    crate::core::activity::Activity::plugin(
+        &format!("mcp:{tool}"),
+        "Ferramenta MCP do plugin chamada.",
+        &server.id,
+        &server.name,
+        plugin_id,
+    )
+}
+
+/// Record only calls that crossed validation and reached the MCP peer. Drop also
+/// retains an interrupted call without interpreting uncertain effects as success.
+struct PluginCall<'a> {
+    activity: crate::core::activity::Activity,
+    sink: &'a Mutex<Vec<crate::core::activity::Activity>>,
+    started: std::time::Instant,
+}
+impl<'a> PluginCall<'a> {
+    fn new(
+        mut activity: crate::core::activity::Activity,
+        sink: &'a Mutex<Vec<crate::core::activity::Activity>>,
+    ) -> Self {
+        activity.status = crate::core::activity::Status::Issues;
+        activity.summary =
+            "A chamada MCP do plugin não concluiu; confira o resultado antes de repetir a ação."
+                .into();
+        Self {
+            activity,
+            sink,
+            started: std::time::Instant::now(),
+        }
+    }
+    fn completed(&mut self) {
+        self.activity.status = crate::core::activity::Status::Applied;
+        self.activity.summary = "Ferramenta MCP do plugin concluída.".into();
+    }
+}
+impl Drop for PluginCall<'_> {
+    fn drop(&mut self) {
+        self.activity.duration_ms = self.started.elapsed().as_millis() as u64;
+        if let Ok(mut activity) = self.sink.lock() {
+            activity.push(self.activity.clone());
+        }
+    }
+}
 
 const MAX_TOOLS: usize = 96;
 const MAX_OUTPUT: usize = 48_000;
@@ -126,6 +177,8 @@ pub struct Client {
     config: Config,
     tools: Vec<RegisteredTool>,
     reconnect_required: AtomicBool,
+    app_connector_ids: Option<HashSet<String>>,
+    app_binding: Option<crate::plugins::apps::AppBinding>,
 }
 struct RegisteredTool {
     definition: Value,
@@ -133,6 +186,12 @@ struct RegisteredTool {
     description: String,
     validator: jsonschema::Validator,
     read_only: bool,
+    _meta: Option<rmcp::model::MetaObject>,
+}
+impl RegisteredTool {
+    fn connector_id(&self) -> Option<&str> {
+        self._meta.as_ref()?.get("connector_id")?.as_str()
+    }
 }
 
 enum CallFailure {
@@ -329,7 +388,28 @@ pub async fn connect(
     server: Server,
     config: Config,
     root: &Path,
+    signal: watch::Receiver<bool>,
+) -> Result<Client, McpError> {
+    connect_with_state(&McpState::default(), server, config, root, signal).await
+}
+pub(crate) async fn connect_with_state(
+    mcp: &McpState,
+    server: Server,
+    config: Config,
+    root: &Path,
+    signal: watch::Receiver<bool>,
+) -> Result<Client, McpError> {
+    connect_with_state_bound(mcp, server, config, root, signal, None, None).await
+}
+#[allow(clippy::too_many_arguments)] // Reconnection carries frozen credentials and connector scope explicitly.
+async fn connect_with_state_bound(
+    mcp: &McpState,
+    server: Server,
+    config: Config,
+    root: &Path,
     mut signal: watch::Receiver<bool>,
+    binding: Option<crate::plugins::apps::AppBinding>,
+    frozen_connectors: Option<HashSet<String>>,
 ) -> Result<Client, McpError> {
     if !server.enabled || !server.configured || !config.configured() {
         return Err(error("Ative e configure o MCP antes de testar."));
@@ -337,6 +417,7 @@ pub async fn connect(
     let server_name = server.name.clone();
     let task = async {
         let handler = Handler::default();
+        let mut app_binding = binding;
         let service = match &config {
             Config::Local {
                 command,
@@ -347,7 +428,23 @@ pub async fn connect(
                 let directory = cwd
                     .as_ref()
                     .map_or_else(|| root.to_path_buf(), |cwd| root.join(cwd));
-                let mut cmd = super::executable::local_command(command, environment, &directory)?;
+                let mut process_environment = environment.clone();
+                if server.id.starts_with("plugin-mcp:") {
+                    let project = root
+                        .canonicalize()
+                        .unwrap_or_else(|_| root.to_path_buf())
+                        .to_string_lossy()
+                        .into_owned();
+                    for name in [
+                        "CONTEXT_MODE_PROJECT_DIR",
+                        "CLAUDE_PROJECT_DIR",
+                        "CODEX_PROJECT_DIR",
+                    ] {
+                        process_environment.insert(name.into(), project.clone());
+                    }
+                }
+                let mut cmd =
+                    super::executable::local_command(command, &process_environment, &directory)?;
                 crate::background::prepare_node(&mut cmd)
                     .map_err(|_| error("Não foi possível preparar o runtime do MCP."))?;
                 let transport = super::stdio::spawn(cmd).map_err(|_| {
@@ -360,7 +457,12 @@ pub async fn connect(
                     .await
                     .map_err(|_| protocol_error())?
             }
-            Config::Remote { url, headers, .. } => {
+            Config::Remote {
+                url,
+                headers,
+                oauth,
+                ..
+            } => {
                 let mut custom_headers = HashMap::new();
                 for (key, value) in headers {
                     custom_headers.insert(
@@ -375,18 +477,48 @@ pub async fn connect(
                     .connect_timeout(Duration::from_secs(10))
                     .build()
                     .map_err(|_| protocol_error())?;
-                let transport = StreamableHttpClientTransport::with_client(
-                    client,
-                    StreamableHttpClientTransportConfig::with_uri(url.clone())
-                        .custom_headers(custom_headers)
-                        .max_sse_event_size(1024 * 1024)
-                        .reinit_on_expired_session(false),
-                );
-                handler
-                    .serve(transport)
-                    .await
-                    .map_err(|_| protocol_error())?
+                let transport_config = StreamableHttpClientTransportConfig::with_uri(url.clone())
+                    .custom_headers(custom_headers)
+                    .max_sse_event_size(1024 * 1024)
+                    .reinit_on_expired_session(false);
+                if server.id.starts_with("plugin-app:") {
+                    let context = mcp.apps_context().ok_or_else(|| {
+                        coded_error(
+                            "app_account_required",
+                            "Conecte uma conta OpenAI Codex nas configurações do plugin.",
+                        )
+                    })?;
+                    let client = crate::plugins::apps::http_client_bound(
+                        context,
+                        server.clone(),
+                        app_binding.clone(),
+                        Some(root),
+                    )
+                    .await?;
+                    app_binding = Some(client.binding());
+                    handler.serve(StreamableHttpClientTransport::with_client(client, transport_config)).await.map_err(|_| named_error("app_auth_required", &server_name, None, "reconecte o aplicativo ou atualize sua conta nas configurações do plugin."))?
+                } else if *oauth == Some(true) {
+                    let client = super::oauth::client(mcp, &server, &config).await?;
+                    handler.serve(StreamableHttpClientTransport::with_client(client, transport_config)).await.map_err(|_| named_error("mcp_auth_required", &server_name, None, "a autenticação expirou ou foi recusada. Reconecte sua conta nas configurações deste MCP."))?
+                } else {
+                    handler
+                        .serve(StreamableHttpClientTransport::with_client(
+                            client,
+                            transport_config,
+                        ))
+                        .await
+                        .map_err(|_| protocol_error())?
+                }
             }
+        };
+        let app_connector_ids = if server.id.starts_with("plugin-app:") {
+            let context = mcp.apps_context().ok_or_else(protocol_error)?;
+            Some(match frozen_connectors {
+                Some(ids) => ids,
+                None => crate::plugins::apps::connector_ids(&context.home, &server, Some(root))?,
+            })
+        } else {
+            None
         };
         let mut client = Client {
             server,
@@ -394,6 +526,8 @@ pub async fn connect(
             config: config.clone(),
             tools: Vec::new(),
             reconnect_required: AtomicBool::new(false),
+            app_connector_ids,
+            app_binding,
         };
         client.refresh().await?;
         Ok(client)
@@ -594,7 +728,19 @@ impl Client {
         &self,
         name: &str,
         args: &Value,
+        signal: watch::Receiver<bool>,
+    ) -> Result<String, McpError> {
+        self.core_call_with_activity(name, args, signal, None).await
+    }
+    pub(crate) async fn core_call_with_activity(
+        &self,
+        name: &str,
+        args: &Value,
         mut signal: watch::Receiver<bool>,
+        usage: Option<(
+            crate::core::activity::Activity,
+            &Mutex<Vec<crate::core::activity::Activity>>,
+        )>,
     ) -> Result<String, McpError> {
         let tool = self
             .tools
@@ -604,28 +750,42 @@ impl Client {
         if !tool.validator.is_valid(args) || args.to_string().len() > 256 * 1024 {
             return Err(error("Argumentos inválidos para a ferramenta do Core."));
         }
-        let request = self.service.call_tool(
-            CallToolRequestParams::new(tool.original.clone())
-                .with_arguments(args.as_object().cloned().ok_or_else(protocol_error)?),
-        );
+        let arguments = args.as_object().cloned().ok_or_else(protocol_error)?;
+        let mut observed = None;
+        let request = async {
+            observed = usage.map(|(activity, sink)| PluginCall::new(activity, sink));
+            self.service
+                .call_tool(
+                    CallToolRequestParams::new(tool.original.clone()).with_arguments(arguments),
+                )
+                .await
+        };
         let response = tokio::select! {
             _ = cancelled(&mut signal) => { self.service.cancellation_token().cancel(); return Err(error("Ferramenta do Core interrompida; confira o resultado antes de repetir a ação.")); },
             result = tokio::time::timeout(self.config.request_timeout(), request) => result.map_err(|_| error("A ferramenta do Core excedeu o tempo limite; confira o resultado antes de repetir a ação."))?.map_err(|_| protocol_error())?,
         };
         let value = serde_json::to_value(&response).map_err(|_| protocol_error())?;
-        let text = value["content"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|item| item["text"].as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let text: String = redact_core(text, &self.config)
-            .chars()
-            .take(MAX_OUTPUT)
-            .collect();
+        if self.app_connector_ids.is_some() {
+            if let Some(message) = crate::plugins::apps::auth_failure(&value, tool.connector_id()) {
+                return Err(named_error(
+                    "app_connector_auth_required",
+                    &self.server.name,
+                    Some(name),
+                    &message,
+                ));
+            }
+        }
+        let text = self.redact(redact_core(result_text(&value), &self.config));
+        let abbreviated = text.chars().count() > MAX_OUTPUT;
+        let mut text: String = text.chars().take(MAX_OUTPUT).collect();
+        if abbreviated {
+            text.push_str("\n[Resultado abreviado pelo Jarvis]");
+        }
         if response.is_error == Some(true) {
             return Err(error(&text));
+        }
+        if let Some(usage) = &mut observed {
+            usage.completed();
         }
         Ok(text)
     }
@@ -645,7 +805,11 @@ impl Client {
                 .list_tools(Some(params))
                 .await
                 .map_err(|_| protocol_error())?;
-            tools.extend(page.tools);
+            tools.extend(page.tools.into_iter().filter(|tool| {
+                self.app_connector_ids
+                    .as_ref()
+                    .is_none_or(|ids| crate::plugins::apps::allows_tool(ids, tool))
+            }));
             if tools.len() > MAX_TOOLS {
                 return Err(error("O MCP excedeu o limite de 96 ferramentas."));
             }
@@ -695,6 +859,7 @@ impl Client {
                 description,
                 validator,
                 read_only,
+                _meta: tool.meta,
             });
         }
         self.tools = registered;
@@ -710,8 +875,12 @@ impl Client {
             .collect()
     }
     fn redact(&self, text: String) -> String {
-        self.config
-            .secrets()
+        let secrets = if self.server.id.starts_with("plugin-mcp:") {
+            self.config.plugin_secrets()
+        } else {
+            self.config.secrets()
+        };
+        secrets
             .iter()
             .fold(text, |text, secret| text.replace(secret, "[redigido]"))
     }
@@ -732,6 +901,7 @@ impl Client {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Exposure {
+    Disabled,
     #[default]
     OnDemand,
     Explicit,
@@ -741,6 +911,11 @@ enum Exposure {
 pub struct TurnClients {
     clients: Vec<Client>,
     pending: Vec<Server>,
+    plugin_configs: HashMap<String, (Server, Config)>,
+    plugin_owners: HashMap<String, String>,
+    app_bindings: HashMap<String, crate::plugins::apps::AppBinding>,
+    app_scopes: HashMap<String, HashSet<String>>,
+    excluded_servers: HashSet<String>,
     visible_tools: HashSet<String>,
     deferred_tools: HashSet<String>,
     loaded_tools: VecDeque<String>,
@@ -750,6 +925,7 @@ pub struct TurnClients {
     exposure: Exposure,
     explicit_names: Vec<String>,
     explicit_attempted: AtomicBool,
+    activity: Mutex<Vec<crate::core::activity::Activity>>,
 }
 
 fn registered_name(tool: &RegisteredTool) -> Option<&str> {
@@ -898,6 +1074,12 @@ fn activate_definition(pending: &[Server]) -> Value {
 }
 
 impl TurnClients {
+    pub(crate) fn take_activity(&self) -> Vec<crate::core::activity::Activity> {
+        self.activity
+            .lock()
+            .map(|mut activity| std::mem::take(&mut *activity))
+            .unwrap_or_default()
+    }
     /// Eager discovery remains available for settings probes and integration tests.
     /// Agent turns use `discover_for_user` so irrelevant MCP schemas stay out of
     /// the provider request until the user or model selects an integration.
@@ -910,7 +1092,7 @@ impl TurnClients {
         signal: watch::Receiver<bool>,
     ) -> Result<Self, McpError> {
         let configs = active_configs(mcp, state, home).await?;
-        let clients = connect_all(mcp, state, home, root, configs, signal, false).await?;
+        let clients = connect_all(mcp, state, home, root, configs, signal, false, None).await?;
         let visible_tools = client_tool_names(&clients);
         Ok(Self {
             clients,
@@ -945,30 +1127,51 @@ impl TurnClients {
         intent: &McpIntent,
         signal: watch::Receiver<bool>,
     ) -> Result<Self, McpError> {
-        let servers = list_servers(mcp, state, home).await?;
+        let servers = list_servers_for_project(mcp, state, home, Some(root)).await?;
+        let (plugin_configs, plugin_owners) = mcp.plugin_configs_with_owners(home, root)?;
+        let mut app_bindings = HashMap::new();
+        let mut app_scopes = HashMap::new();
+        if let Some(context) = mcp.apps_context() {
+            for (id, (server, _)) in plugin_configs
+                .iter()
+                .filter(|(id, _)| id.starts_with("plugin-app:"))
+            {
+                if let Ok(binding) = crate::plugins::apps::binding(&context, server, Some(root)) {
+                    app_bindings.insert(id.clone(), binding);
+                }
+                if let Ok(ids) = crate::plugins::apps::connector_ids(home, server, Some(root)) {
+                    app_scopes.insert(id.clone(), ids);
+                }
+            }
+        }
         if intent.mode == McpIntentMode::Disabled {
             return Ok(Self {
                 catalog_ready: true,
                 root: root.to_path_buf(),
-                exposure: Exposure::OnDemand,
+                exposure: Exposure::Disabled,
                 ..Self::default()
             });
         }
         if intent.mode == McpIntentMode::OnDemand {
-            let excluded: HashSet<_> = intent
+            let excluded_servers: HashSet<_> = intent
                 .excluded_servers
                 .iter()
-                .map(|server| server.id.as_str())
+                .map(|server| server.id.clone())
                 .collect();
             let mut pending: Vec<_> = servers
                 .into_iter()
                 .filter(|server| {
-                    server.enabled && server.configured && !excluded.contains(server.id.as_str())
+                    server.enabled && server.configured && !excluded_servers.contains(&server.id)
                 })
                 .collect();
             pending.sort_by(|left, right| left.name.cmp(&right.name));
             return Ok(Self {
                 pending,
+                plugin_configs,
+                plugin_owners,
+                app_bindings,
+                app_scopes,
+                excluded_servers,
                 catalog_ready: true,
                 root: root.to_path_buf(),
                 exposure: Exposure::OnDemand,
@@ -1010,7 +1213,12 @@ impl TurnClients {
         }
         let mut configs = Vec::with_capacity(requested.len());
         for server in &requested {
-            match active_config(mcp, state, home, server).await {
+            let resolved = if server.id.starts_with("plugin-") {
+                Ok(plugin_configs.get(&server.id).cloned())
+            } else {
+                active_config(mcp, state, home, server).await
+            };
+            match resolved {
                 Ok(Some(config)) => configs.push(config),
                 Ok(None) => {}
                 Err(cause) => mcp.record_check(
@@ -1037,7 +1245,17 @@ impl TurnClients {
             ));
         }
         let explicit_names = requested.iter().map(|server| server.name.clone()).collect();
-        let clients = connect_all(mcp, state, home, root, configs, signal, true).await?;
+        let clients = connect_all(
+            mcp,
+            state,
+            home,
+            root,
+            configs,
+            signal,
+            true,
+            Some((&app_bindings, &app_scopes)),
+        )
+        .await?;
         if clients.iter().all(|client| client.tools.is_empty()) {
             return Err(coded_error(
                 "mcp_requested_unavailable",
@@ -1047,6 +1265,10 @@ impl TurnClients {
         let visible_tools = client_tool_names(&clients);
         Ok(Self {
             clients,
+            plugin_configs,
+            plugin_owners,
+            app_bindings,
+            app_scopes,
             visible_tools,
             catalog_ready: true,
             root: root.to_path_buf(),
@@ -1055,6 +1277,25 @@ impl TurnClients {
             explicit_attempted: AtomicBool::new(false),
             ..Self::default()
         })
+    }
+
+    async fn pinned_config(
+        &self,
+        mcp: &McpState,
+        state: &AppState,
+        home: &Path,
+        server: &Server,
+    ) -> Result<Option<(Server, Config)>, McpError> {
+        if server.id.starts_with("plugin-") {
+            return Ok(self
+                .plugin_configs
+                .get(&server.id)
+                .filter(|(server, config)| {
+                    mcp.frozen_config_current(state, home, &self.root, server, config)
+                })
+                .cloned());
+        }
+        active_config(mcp, state, home, server).await
     }
 
     pub fn instructions(&self) -> String {
@@ -1198,7 +1439,8 @@ impl TurnClients {
             .reconnect_required
             .store(true, Ordering::Relaxed);
         self.clients[client_index].close().await;
-        let (current, config) = active_config(mcp, state, home, &server)
+        let (current, config) = self
+            .pinned_config(mcp, state, home, &server)
             .await
             .map_err(|cause| {
                 named_error(
@@ -1219,7 +1461,7 @@ impl TurnClients {
                     "foi desativado, editado ou removido antes da reconexão.",
                 )
             })?;
-        let replacement = connect(current.clone(), config, &self.root, signal)
+        let replacement = connect_with_state_bound(mcp, current.clone(), config, &self.root, signal, self.clients[client_index].app_binding.clone(), self.clients[client_index].app_connector_ids.clone())
             .await
             .map_err(|cause| {
                 named_error(
@@ -1290,10 +1532,54 @@ impl TurnClients {
     where
         F: Fn(&str) -> bool,
     {
+        // Accepted registrations become selectable without starting processes or
+        // expanding an explicitly selected/disabled MCP scope.
+        if self.exposure == Exposure::OnDemand {
+            if let Ok(servers) = list_servers_for_project(mcp, state, home, Some(&self.root)).await
+            {
+                if servers.iter().any(|server| {
+                    server.id.starts_with("plugin-mcp:")
+                        && !self.plugin_configs.contains_key(&server.id)
+                }) {
+                    if let Ok((configs, owners)) = mcp.plugin_configs_with_owners(home, &self.root)
+                    {
+                        for (id, config) in configs {
+                            if id.starts_with("plugin-mcp:") {
+                                self.plugin_configs.entry(id).or_insert(config);
+                            }
+                        }
+                        for (id, owner) in owners {
+                            self.plugin_owners.entry(id).or_insert(owner);
+                        }
+                    }
+                }
+                self.pending = servers
+                    .into_iter()
+                    .filter(|server| {
+                        server.enabled
+                            && server.configured
+                            && (!server.id.starts_with("plugin-")
+                                || self.plugin_configs.contains_key(&server.id))
+                            && !self.excluded_servers.contains(&server.id)
+                            && !self
+                                .clients
+                                .iter()
+                                .any(|client| client.server.id == server.id)
+                    })
+                    .map(|server| {
+                        self.plugin_configs
+                            .get(&server.id)
+                            .map_or(server.clone(), |(pinned, _)| pinned.clone())
+                    })
+                    .collect();
+                self.pending
+                    .sort_by(|left, right| left.name.cmp(&right.name));
+            }
+        }
         self.pending
-            .retain(|server| mcp.current(state, home, server));
+            .retain(|server| mcp.current_for_project(state, home, &self.root, server));
         for client in &mut self.clients {
-            if !mcp.current(state, home, &client.server) {
+            if !mcp.frozen_config_current(state, home, &self.root, &client.server, &client.config) {
                 client.tools.clear();
                 client.close().await;
                 continue;
@@ -1725,7 +2011,7 @@ impl TurnClients {
                 || self.loaded_tools.iter().any(|loaded| loaded == name));
         let client_index = self.clients.iter().position(|client| {
             visible
-                && mcp.current(state, home, &client.server)
+                && mcp.current_for_project(state, home, &self.root, &client.server)
                 && client.tools.iter().any(|tool| {
                     tool.definition["name"] == name
                         && (!read_only || tool.read_only)
@@ -1850,7 +2136,7 @@ impl TurnClients {
         {
             let client = &self.clients[client_index];
             let tool = &client.tools[initial_tool_index];
-            if !mcp.current(state, home, &client.server) {
+            if !mcp.frozen_config_current(state, home, &self.root, &client.server, &client.config) {
                 return Err(named_error("mcp_requested_unavailable", &client.server.name, Some(&tool.original), "foi desativado, editado ou removido. Envie uma nova mensagem para atualizar as ferramentas."));
             }
             if read_only && !tool.read_only {
@@ -1911,11 +2197,22 @@ impl TurnClients {
                 args,
             )
         })?;
+        let activity = self
+            .plugin_owners
+            .get(&server.id)
+            .map(|plugin_id| plugin_activity(&server, &original, plugin_id));
+        let mut usage = None;
         let call = {
             let client = &self.clients[client_index];
-            let request = client
-                .service
-                .call_tool(CallToolRequestParams::new(original.clone()).with_arguments(arguments));
+            let request = async {
+                usage = activity.map(|activity| PluginCall::new(activity, &self.activity));
+                client
+                    .service
+                    .call_tool(
+                        CallToolRequestParams::new(original.clone()).with_arguments(arguments),
+                    )
+                    .await
+            };
             tokio::select! {
                 biased;
                 _ = cancelled(&mut signal) => {
@@ -2046,6 +2343,18 @@ impl TurnClients {
         let client = &self.clients[client_index];
         let tool = &client.tools[tool_index];
         let value = serde_json::to_value(&result).map_err(|_| protocol_error())?;
+        if client.app_connector_ids.is_some() {
+            if let Some(message) = crate::plugins::apps::auth_failure(&value, tool.connector_id()) {
+                let mut failure = named_error(
+                    "app_connector_auth_required",
+                    &client.server.name,
+                    Some(&tool.original),
+                    &message,
+                );
+                failure.metadata.retryable = false;
+                return Err(failure);
+            }
+        }
         // Preserve successful redacted results for the durable receipt and Core
         // indexing. Clipping here loses data before either can retain it.
         let mut content = client.redact(result_text(&value));
@@ -2064,6 +2373,9 @@ impl TurnClients {
                 Some(&tool.original),
                 &format!("o servidor retornou um erro:\n{content}"),
             ));
+        }
+        if let Some(usage) = &mut usage {
+            usage.completed();
         }
         Ok(content)
     }
@@ -2101,11 +2413,15 @@ impl TurnClients {
             .ok_or_else(|| {
                 coded_error(
                     "mcp_scope_violation",
-                    "O servidor informado não está disponível para ativação nesta interação.",
+                    &format!(
+                        "O servidor informado não está disponível para ativação nesta interação. Servidores atuais: {}. Use o nome exato do catálogo atual; MCPs de plugins têm nomes próprios e não desaparecem porque o registro manual foi removido.",
+                        self.pending.iter().map(|server| server.name.as_str()).collect::<Vec<_>>().join(", "),
+                    ),
                 )
             })?;
         let server = self.pending.remove(index);
-        let (server, config) = active_config(mcp, state, home, &server)
+        let (server, config) = self
+            .pinned_config(mcp, state, home, &server)
             .await
             .map_err(|cause| {
                 mcp.record_check(
@@ -2133,7 +2449,20 @@ impl TurnClients {
                     "foi desativado, editado ou removido antes da ativação.",
                 )
             })?;
-        match connect(server.clone(), config.clone(), &self.root, signal).await {
+        if server.id.starts_with("plugin-app:") && !self.app_bindings.contains_key(&server.id) {
+            return Err(named_error("app_account_required", &server.name, None, "a conta não estava disponível no início deste turno. Reconecte e envie uma nova mensagem."));
+        }
+        match connect_with_state_bound(
+            mcp,
+            server.clone(),
+            config.clone(),
+            &self.root,
+            signal,
+            self.app_bindings.get(&server.id).cloned(),
+            self.app_scopes.get(&server.id).cloned(),
+        )
+        .await
+        {
             Ok(client) => {
                 let count = client.tool_count();
                 let tools = client.tool_names();
@@ -2197,10 +2526,25 @@ async fn list_servers(
     state: &AppState,
     home: &Path,
 ) -> Result<Vec<Server>, McpError> {
-    let (mcp, state, home) = (mcp.clone(), state.clone(), home.to_path_buf());
-    tauri::async_runtime::spawn_blocking(move || mcp.list(&state, &home))
-        .await
-        .map_err(|_| protocol_error())?
+    list_servers_for_project(mcp, state, home, None).await
+}
+async fn list_servers_for_project(
+    mcp: &McpState,
+    state: &AppState,
+    home: &Path,
+    project: Option<&Path>,
+) -> Result<Vec<Server>, McpError> {
+    let (mcp, state, home, project) = (
+        mcp.clone(),
+        state.clone(),
+        home.to_path_buf(),
+        project.map(Path::to_path_buf),
+    );
+    tauri::async_runtime::spawn_blocking(move || {
+        mcp.list_for_project(&state, &home, project.as_deref())
+    })
+    .await
+    .map_err(|_| protocol_error())?
 }
 
 #[cfg(test)]
@@ -2232,6 +2576,11 @@ async fn active_config(
         .map_err(|_| protocol_error())?
 }
 
+type FrozenApps<'a> = (
+    &'a HashMap<String, crate::plugins::apps::AppBinding>,
+    &'a HashMap<String, HashSet<String>>,
+);
+#[allow(clippy::too_many_arguments)] // Explicit discovery carries the account/scope snapshot from turn start.
 async fn connect_all(
     mcp: &McpState,
     state: &AppState,
@@ -2240,12 +2589,25 @@ async fn connect_all(
     configs: Vec<(Server, Config)>,
     signal: watch::Receiver<bool>,
     strict: bool,
+    apps: Option<FrozenApps<'_>>,
 ) -> Result<Vec<Client>, McpError> {
     let mut jobs = tokio::task::JoinSet::new();
+    let frozen_apps = apps.is_some();
     for (server, config) in configs {
-        let (root, signal) = (root.to_path_buf(), signal.clone());
+        let authorized = mcp.frozen_config_current(state, home, root, &server, &config);
+        let binding = apps
+            .and_then(|(bindings, _)| bindings.get(&server.id))
+            .cloned();
+        let connectors = apps.and_then(|(_, scopes)| scopes.get(&server.id)).cloned();
+        let (root, signal, mcp) = (root.to_path_buf(), signal.clone(), mcp.clone());
         jobs.spawn(async move {
-            let result = connect(server.clone(), config, &root, signal).await;
+            let result = if !authorized {
+                Err(named_error("mcp_requested_unavailable",&server.name,None,"foi desativado, removido ou alterado; nenhuma ação foi executada."))
+            } else if server.id.starts_with("plugin-app:") && frozen_apps && binding.is_none() {
+                Err(named_error("app_account_required", &server.name, None, "a conta não estava disponível no início deste turno. Reconecte e envie uma nova mensagem."))
+            } else {
+                connect_with_state_bound(&mcp, server.clone(), config, &root, signal, binding, connectors).await
+            };
             (server, result)
         });
     }
@@ -2265,7 +2627,7 @@ async fn connect_all(
                             error: None,
                         },
                     );
-                    if mcp.current(state, home, &server) {
+                    if mcp.current_for_project(state, home, root, &server) {
                         clients.push(client);
                     }
                 }
@@ -2621,14 +2983,18 @@ pub async fn test_mcp_server(
     let (s, m, h) = (state.clone(), mcp.clone(), home.clone());
     let (server, config) = tauri::async_runtime::spawn_blocking(move || {
         let _guard = m.0.guard.lock().map_err(|_| protocol_error())?;
-        let server = s.with_connection(&h, |connection| super::find(connection, &id))?;
-        let config = m.config(&server)?;
+        let server = m
+            .list(&s, &h)?
+            .into_iter()
+            .find(|server| server.id == id)
+            .ok_or_else(|| super::error("Este MCP não está disponível."))?;
+        let config = m.config(&h, &server)?;
         Ok::<_, McpError>((server, config))
     })
     .await
     .map_err(|_| protocol_error())??;
     let (_sender, signal) = watch::channel(false);
-    let check = match connect(server.clone(), config, &home, signal).await {
+    let check = match connect_with_state(&mcp, server.clone(), config, &home, signal).await {
         Ok(mut client) => {
             let count = client.tool_count();
             let tools = client.tool_names();

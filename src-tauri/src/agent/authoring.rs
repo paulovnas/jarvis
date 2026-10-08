@@ -17,10 +17,26 @@ use std::{
 use tauri::{Emitter, Manager};
 use tokio::sync::{oneshot, watch};
 
+mod hook;
+mod mcp;
+mod plugin;
+mod project_instructions;
+mod redaction;
+pub(super) use mcp::Values as McpValues;
+pub(in crate::agent) use redaction::sanitize_mcp_args;
+
 pub const INSTRUCTIONS: &str = r#"
 Jarvis product capabilities: Jarvis is a local desktop coding-agent environment organized as workspaces, projects and durable conversations. It provides direct, planned, complete and user-defined workflows; native direct-task tracking; Beads planning for delegated work; Context-mode retrieval and compaction; Context7 documentation; Open Design resources; skills; MCP tools; attachments, Vision and image generation when configured; web search; persistent processes, terminals and an integrated browser; project validation and user notifications. Only capabilities whose tools are present in the current turn are actually available.
 
 Users own custom agents and custom workflows. Custom agents declare where they can run: solo as the primary chat agent, flow_only as a workflow step, or mixed in both contexts. Built-in Jarvis agents may be referenced as immutable steps in custom workflows; built-in flows are immutable templates whose real topology is available in the catalog. When the user asks to create or edit an agent or workflow, inspect the current catalog with jarvis_catalog, clarify only material missing choices with ask_user, then submit the smallest complete proposal with jarvis_propose_agent or jarvis_propose_flow. Never write Jarvis configuration files with filesystem or shell tools. A proposal does not change settings until the user explicitly approves it in Jarvis. After rejection, respect the user's note and do not resubmit an unchanged proposal. Re-read the catalog before a dependent or revised proposal because every accepted change advances its revision.
+
+When asked to configure an MCP, inspect the public mcpServers metadata in jarvis_catalog and use jarvis_propose_mcp. The native panel always asks the user to approve this global registration, even in YOLO. Never include credentials in a proposal, arguments, URL or summary: list envKeys/headerKeys and let the user supply their values privately in that panel. Do not request existing stored credentials. Registration does not install, connect or authorize every operation of the MCP. After approval, use the MCP discovery tools to find and activate it in this conversation; report actual connection/authentication failures and preserve the saved registration.
+
+When asked to configure hooks, read the hooks catalog with jarvis_catalog view=hooks and the native jarvis-hooks skill. Use jarvis_propose_hook for create/update/delete at its exact hooks revision. Native hooks are immutable. Command hooks run locally in project conversations; never write their settings through shell/filesystem tools. Every proposal requires explicit native approval, even in YOLO. Preserve unrelated hooks, use bounded matchers/timeouts and never include credentials in commands. Saved changes apply to subsequent turns, not the running turn.
+
+When asked to manage plugins or marketplaces, read jarvis_catalog view=plugins and the native jarvis-plugins skill, then use jarvis_propose_plugin at the exact pluginsRevision. Review the actual package, dependencies and native component conflicts. Installation and hook trust are separate approvals. Never edit plugin registries through shell/filesystem tools, include credentials in drafts, promise unavailable Apps or repeat an uncertain mutation. Newly approved plugin skills and MCP servers become discoverable on the next model step; versions already pinned in this turn update on the next turn. Disabling a plugin/component or revoking its authorization takes effect immediately. Hook configuration and trust changes keep their existing subsequent-turn contract.
+
+When asked to create or update a project's AGENTS.md, read jarvis_catalog view=project_instructions and the native jarvis-authoring skill. Inspect the relevant project conventions and confirmed validation commands, then propose a short project-specific section with jarvis_propose_project_instructions at the exact file revision. The native review always requires explicit approval, including YOLO, and only changes Jarvis's own section in the project root. Preserve user rules, managed sections and nested instruction files. Never overwrite the complete file or bypass review through shell/filesystem tools. If AGENTS.md is missing and persistent project guidance would help, offer creation once at a natural completion or project-setup moment; keep the current task moving, do not repeat the offer on unrelated turns, and wait for a request before drafting. Do not install a global behavior plugin or copy third-party guidance wholesale. Changes apply to subsequent turns.
 "#;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -29,6 +45,7 @@ pub enum Action {
     Create,
     Update,
     Publish,
+    Delete,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,6 +68,21 @@ pub enum Target {
     },
     Publication {
         after: publication::Proposal,
+    },
+    Mcp {
+        server: mcp::Draft,
+    },
+    Hook {
+        before: Option<crate::hooks::Hook>,
+        after: Option<crate::hooks::Hook>,
+    },
+    Plugin {
+        preview: crate::plugins::Preview,
+    },
+    ProjectInstructions {
+        path: String,
+        before: Option<String>,
+        after: String,
     },
 }
 
@@ -79,6 +111,17 @@ pub(super) struct Pending {
 enum Mutation {
     Catalog(workflow::catalog::Mutation),
     Publication(publication::Proposal),
+    Mcp(mcp::Draft),
+    Hook(hook::Change),
+    Plugin(Box<crate::plugins::Prepared>),
+    ProjectInstructions(project_instructions::Change),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct McpRequest {
+    summary: String,
+    server: mcp::Draft,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,13 +142,15 @@ struct FlowRequest {
     flow: workflow::catalog::FlowDefinition,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Decision {
-    turn_id: String,
-    tool_id: String,
-    approved: bool,
-    note: Option<String>,
+    pub(super) turn_id: String,
+    pub(super) tool_id: String,
+    pub(super) approved: bool,
+    pub(super) note: Option<String>,
+    #[serde(default)]
+    pub(super) mcp_values: Option<mcp::Values>,
 }
 
 fn invalid(message: &str) -> AgentError {
@@ -123,7 +168,7 @@ fn bounded_summary(summary: String) -> Result<String, AgentError> {
 }
 
 pub(in crate::agent) fn agent_schema() -> Value {
-    let primary = json!({"type":"object","additionalProperties":false,"required":["account","model","reasoning"],"properties":{"executor":{"type":"string","enum":["jarvis","claude"],"description":"Defaults to jarvis. Claude uses the official local CLI and an empty account."},"account":{"type":"string","maxLength":200},"model":{"type":"string","minLength":1,"maxLength":200},"reasoning":{"anyOf":[{"type":"null"},{"type":"string","minLength":1,"maxLength":40}]}}});
+    let primary = json!({"type":"object","additionalProperties":false,"required":["account","model","reasoning"],"properties":{"executor":{"type":"string","enum":["jarvis","claude"],"description":"Defaults to jarvis. Claude uses the official local CLI and an empty account."},"account":{"type":"string","maxLength":200},"model":{"type":"string","minLength":1,"maxLength":200},"reasoning":{"anyOf":[{"type":"null"},{"type":"string","minLength":1,"maxLength":40}]},"serviceTier":{"anyOf":[{"type":"null"},{"type":"string","enum":["priority"]}],"description":"Use priority only when the selected ChatGPT model advertises Fast. Omit or null keeps Normal."}}});
     let mut model = primary.clone();
     model["properties"]["fallback"] = json!({"anyOf":[{"type":"null"},primary]});
     json!({
@@ -180,10 +225,56 @@ fn proposal_definition(name: &str, description: &str, field: &str, schema: Value
 
 pub(super) fn definitions() -> Vec<Value> {
     vec![
-        json!({"type":"function","name":"jarvis_catalog","description":"Inspect Jarvis capabilities and the current user-owned agent/workflow catalog before proposing a creation or edit. Use overview first; request one custom agent or flow by its ID for full editable details. Built-in agents and flows are listed as immutable and can never be edited.","parameters":{"type":"object","additionalProperties":false,"required":["view"],"properties":{"view":{"type":"string","enum":["overview","agent","flow"]},"id":{"type":"string","description":"Required for agent or flow detail."}}}}),
+        json!({"type":"function","name":"jarvis_catalog","description":"Inspect Jarvis capabilities and configured agents, flows, hooks and plugins before proposing changes. Use overview first; agent/flow by ID for editable details; hooks or plugins for their separate exact revisions and component definitions; project_instructions for the current project's root AGENTS.md and exact file revision. Native entries are immutable.","parameters":{"type":"object","additionalProperties":false,"required":["view"],"properties":{"view":{"type":"string","enum":["overview","agent","flow","hooks","plugins","project_instructions"]},"id":{"type":"string","description":"Required for agent or flow detail."}}}}),
         proposal_definition("jarvis_propose_agent", "Propose creating or editing one user-owned Jarvis agent. The call waits for explicit approval in a Jarvis drawer; it never changes built-in agents. Call jarvis_catalog immediately beforehand and use its exact revision. For create, generate a new 32-character hexadecimal ID. For update, preserve the existing ID. Choose whether it runs solo, only in flows, or both. A null model inherits the current chat model.", "agent", agent_schema()),
         proposal_definition("jarvis_propose_flow", "Propose creating or editing one user-owned Jarvis workflow. The call waits for explicit approval in a Jarvis drawer; it never changes built-in flows. Call jarvis_catalog immediately beforehand and use its exact revision. A flow may reference immutable builtin:* agents or mixed/flow_only custom agents from that revision. Generate stable 32-character hexadecimal IDs for a new flow and its steps; preserve existing IDs when editing.", "flow", flow_schema()),
+        mcp::definition(),
+        hook::definition(),
+        plugin::definition(),
+        project_instructions::definition(),
     ]
+}
+
+pub(in crate::agent) fn mcp_definition() -> Value {
+    mcp::definition()
+}
+
+pub(in crate::agent) fn hook_definition() -> Value {
+    hook::definition()
+}
+
+pub(in crate::agent) fn plugin_definition() -> Value {
+    plugin::definition()
+}
+
+pub(in crate::agent) fn project_instructions_definition() -> Value {
+    project_instructions::definition()
+}
+
+pub(in crate::agent) fn plugins_output(home: &Path) -> Result<Value, AgentError> {
+    let mut output =
+        serde_json::to_value(crate::plugins::catalog(home)?).map_err(|_| AgentError::internal())?;
+    output["instructions"] = json!(include_str!("../skills/builtin/jarvis-plugins.md"));
+    Ok(output)
+}
+
+pub(in crate::agent) fn hooks_output(state: &AppState, home: &Path) -> Result<Value, AgentError> {
+    let mut output = serde_json::to_value(crate::hooks::load(state, home)?)
+        .map_err(|_| AgentError::internal())?;
+    // The global companion has no project skill reader or filesystem access.
+    output["instructions"] = json!(include_str!("../skills/builtin/jarvis-hooks.md"));
+    Ok(output)
+}
+
+pub(in crate::agent) fn mcp_metadata(
+    mcp_state: &crate::mcp::McpState,
+    state: &AppState,
+    home: &Path,
+) -> Result<Value, AgentError> {
+    let servers: Vec<_> = mcp_state.list(state, home)?.into_iter().map(|server|
+        json!({"id":server.id,"name":server.name,"kind":server.kind,"enabled":server.enabled,"configured":server.configured,"revision":server.revision})
+    ).collect();
+    Ok(json!(servers))
 }
 
 fn overview(catalog: &workflow::catalog::Catalog) -> Value {
@@ -399,9 +490,16 @@ fn prepare(
     let exists = match &target {
         Target::Agent { before, .. } => before.is_some(),
         Target::Flow { before, .. } => before.is_some(),
-        Target::Publication { .. } => false,
+        Target::Publication { .. }
+        | Target::Mcp { .. }
+        | Target::Hook { .. }
+        | Target::Plugin { .. }
+        | Target::ProjectInstructions { .. } => false,
     };
     match (action, exists) {
+        (Action::Delete | Action::Publish, _) => {
+            return Err(invalid("Esta ferramenta somente cria ou edita agentes e fluxos."));
+        }
         (Action::Create, true) => {
             return Err(invalid(
                 "Este ID já pertence a um item customizado. Consulte o catálogo e gere outro ID.",
@@ -430,11 +528,14 @@ fn prepare(
     ))
 }
 
+// Keep the caller-owned runtime services explicit across native/CLI executors.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn execute(
     session: &Arc<Session>,
     owner: &Session,
     state: &AppState,
     oauth: &OpenAiCodexState,
+    mcp_state: &crate::mcp::McpState,
     home: &Path,
     tool: &ToolCall,
     mut signal: watch::Receiver<bool>,
@@ -566,11 +667,68 @@ pub(super) async fn execute(
             },
             Mutation::Publication(proposal),
         )
+    } else if tool.name == "jarvis_propose_project_instructions" {
+        let (request, change) = project_instructions::prepare(&session.root, tool)?;
+        (request, Mutation::ProjectInstructions(change))
+    } else if tool.name == "jarvis_propose_plugin" {
+        let (request, prepared) = plugin::prepare(home, tool).await?;
+        (request, Mutation::Plugin(Box::new(prepared)))
+    } else if tool.name == "jarvis_propose_hook" {
+        let (request, change) = hook::prepare(state, home, tool)?;
+        (request, Mutation::Hook(change))
+    } else if tool.name == "jarvis_propose_mcp" {
+        if sanitize_mcp_args(&tool.name, tool.args.clone()) != tool.args {
+            return Err(invalid("A proposta deve conter apenas a configuração pública. Use envKeys/headerKeys para preencher credenciais privadamente no painel de aprovação."));
+        }
+        let draft: McpRequest = serde_json::from_value(tool.args.clone())
+            .map_err(|_| invalid("Proposta de MCP inválida."))?;
+        draft.server.validate()?;
+        if mcp_state
+            .list(state, home)?
+            .iter()
+            .any(|server| server.name == draft.server.name)
+        {
+            return Err(invalid("Este MCP já está cadastrado. Consulte jarvis_catalog; esta ferramenta apenas adiciona servidores."));
+        }
+        (
+            PendingProposal {
+                turn_id: String::new(),
+                tool_id: tool.id.clone(),
+                action: Action::Create,
+                summary: bounded_summary(draft.summary)?,
+                catalog_revision: None,
+                target: Target::Mcp {
+                    server: draft.server.clone(),
+                },
+                agent_references: vec![],
+            },
+            Mutation::Mcp(draft.server),
+        )
     } else {
+        if tool.name == "jarvis_catalog" && tool.args["view"] == "project_instructions" {
+            return Ok(project_instructions::catalog(&session.root)?.to_string());
+        }
+        if tool.name == "jarvis_catalog" && tool.args["view"] == "plugins" {
+            return Ok(plugins_output(home)?.to_string());
+        }
+        if tool.name == "jarvis_catalog" && tool.args["view"] == "hooks" {
+            return Ok(hooks_output(state, home)?.to_string());
+        }
         let catalog =
             state.with_connection(home, |db| workflow::catalog::read_configured(db, home))?;
         if tool.name == "jarvis_catalog" {
-            return catalog_output(&catalog, &tool.args);
+            let output = catalog_output(&catalog, &tool.args)?;
+            if tool.args["view"] == "overview" {
+                let mut value: Value =
+                    serde_json::from_str(&output).map_err(|_| AgentError::internal())?;
+                value["mcpServers"] = mcp_metadata(mcp_state, state, home)?;
+                let hooks = crate::hooks::load(state, home)?;
+                value["hooks"] = json!({"revision":hooks.revision,"manualCount":hooks.hooks.len(),"detailView":"hooks","nativeMutable":false});
+                let plugins = crate::plugins::catalog(home)?;
+                value["plugins"] = json!({"revision":plugins.revision,"installedCount":plugins.installed.len(),"detailView":"plugins","authoringTool":"jarvis_propose_plugin","requiresNativeApproval":true});
+                return Ok(value.to_string());
+            }
+            return Ok(output);
         }
         let (request, mutation) = prepare(&catalog, tool)?;
         (request, Mutation::Catalog(mutation))
@@ -739,7 +897,26 @@ pub(super) fn answer(
         tool_id,
         approved,
         note,
+        mcp_values,
     } = decision;
+    // Invalid/missing private inputs leave the proposal pending for correction.
+    // They are never included in the durable decision, snapshot or tool result.
+    if approved {
+        let data = session.data.lock().map_err(|_| AgentError::internal())?;
+        if let Some(pending) = data
+            .active
+            .as_ref()
+            .filter(|active| active.id == turn_id)
+            .and_then(|active| active.pending_authoring())
+            .filter(|pending| pending.request.tool_id == tool_id)
+        {
+            if let Mutation::Mcp(draft) = &pending.mutation {
+                draft.config(mcp_values.as_ref().unwrap_or(&mcp::Values::default()))?;
+            } else if mcp_values.is_some() {
+                return Err(invalid("Valores de MCP não pertencem a esta proposta."));
+            }
+        }
+    }
     let (snapshot, changed) = answer_with(
         session,
         &turn_id,
@@ -766,6 +943,30 @@ pub(super) fn answer(
                 ),
                 false,
             )),
+            Mutation::Mcp(draft) => {
+                let config =
+                    draft.config(mcp_values.as_ref().unwrap_or(&mcp::Values::default()))?;
+                let server =
+                    app.state::<crate::mcp::McpState>()
+                        .add(state, home, &draft.name, &config)?;
+                let _ = app.emit("mcp-servers:changed", ());
+                Ok((json!({"approved":true,"status":"applied","kind":"mcp","server":{"id":server.id,"name":server.name,"kind":server.kind,"enabled":server.enabled,"configured":server.configured},"next":"Use MCP discovery/activation in a project conversation where those tools are available to connect this registered server. Registration does not grant approval for every MCP operation."}).to_string(), false))
+            }
+            Mutation::Hook(change) => {
+                let revision = catalog_revision.ok_or_else(AgentError::internal)?;
+                let catalog = hook::apply(state, home, change, revision)?;
+                let _ = app.emit("hooks:changed", ());
+                Ok((json!({"approved":true,"status":"applied","kind":"hook","hooksRevision":catalog.revision,"next":"This change applies to subsequent project turns. The current turn keeps its frozen hook configuration."}).to_string(), false))
+            }
+            Mutation::Plugin(prepared) => {
+                let catalog = crate::plugins::apply(home, &prepared)?;
+                crate::plugins::commands::emit_changed(app);
+                Ok((json!({"approved":true,"status":"applied","kind":"plugin","pluginsRevision":catalog.revision,"next":"Inspect view=plugins for the actual components, requirements and authentication status. Newly approved plugin skills and MCP servers become discoverable on the next model step; already pinned versions update on the next turn. Disablement and authorization revocation apply immediately. Installation does not trust hooks; hook configuration and trust changes apply to subsequent turns."}).to_string(), false))
+            }
+            Mutation::ProjectInstructions(change) => {
+                let revision = project_instructions::apply(&session.root, change)?;
+                Ok((json!({"approved":true,"status":"applied","kind":"project_instructions","path":"AGENTS.md","revision":revision,"next":"Only the reviewed Jarvis section changed. These project instructions apply to subsequent turns."}).to_string(), false))
+            }
         },
     )?;
     if changed {

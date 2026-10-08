@@ -2,6 +2,13 @@ use super::*;
 use std::fs;
 pub(crate) mod chat;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceTier {
+    Priority,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -14,12 +21,20 @@ pub struct ModelChoice {
     pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
+    pub service_tier: Option<ServiceTier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub fallback: Option<Box<ModelChoice>>,
 }
 pub type ModelSettings = BTreeMap<String, ModelChoice>;
 
 impl ModelChoice {
     pub(crate) fn validate_shape(&self) -> Result<(), AgentError> {
+        if self.service_tier.is_some() && self.executor != crate::claude::Executor::Jarvis {
+            return Err(invalid(
+                "O modo Fast está disponível somente para modelos ChatGPT compatíveis.",
+            ));
+        }
         let valid = |value: &str, max: usize| {
             !value.trim().is_empty() && value.len() <= max && !value.chars().any(char::is_control)
         };
@@ -62,6 +77,7 @@ impl ModelChoice {
         options.account.clone_from(&self.account);
         options.model.clone_from(&self.model);
         options.reasoning.clone_from(&self.reasoning);
+        options.service_tier = self.service_tier;
     }
 }
 
@@ -78,12 +94,17 @@ pub(crate) fn validate_choice(
             crate::claude::validate_available_model(home, &selection.model)
                 .map_err(|message| AgentError::new("claude_provider", &message))?;
         } else {
-            oauth.inference_model(
+            let (credential, model) = oauth.inference_model(
                 state,
                 home,
                 &selection.account,
                 &selection.model,
                 selection.reasoning.as_deref(),
+            )?;
+            crate::openai_codex::validate_service_tier(
+                &credential,
+                &model,
+                selection.service_tier,
             )?;
         }
     }
@@ -325,6 +346,7 @@ mod instruction_tests {
         let legacy = json!({"account":"existing","model":"existing-model","reasoning":null});
         let native: ModelChoice = serde_json::from_value(legacy.clone()).unwrap();
         assert_eq!(native.executor, crate::claude::Executor::Jarvis);
+        assert_eq!(native.service_tier, None);
         assert!(native.fallback.is_none());
         assert_eq!(serde_json::to_value(&native).unwrap(), legacy);
         let choice = ModelChoice {
@@ -332,6 +354,7 @@ mod instruction_tests {
             account: String::new(),
             model: "sonnet".into(),
             reasoning: Some("high".into()),
+            service_tier: None,
             fallback: None,
         };
         let home = tempfile::tempdir().unwrap();
@@ -363,6 +386,45 @@ mod instruction_tests {
         invalid_choice.account.clear();
         invalid_choice.reasoning = Some("invalid-effort".into());
         assert!(invalid_choice.validate_shape().is_err());
+    }
+
+    #[test]
+    fn fast_is_explicit_and_a_configured_choice_replaces_the_inherited_tier() {
+        let legacy = r#"{"account":"existing","model":"existing-model","reasoning":null}"#;
+        let normal: ModelChoice = serde_json::from_str(legacy).unwrap();
+        assert_eq!(serde_json::to_string(&normal).unwrap(), legacy);
+        let mut fast = normal.clone();
+        fast.service_tier = Some(ServiceTier::Priority);
+        assert_eq!(
+            serde_json::to_value(&fast).unwrap()["serviceTier"],
+            "priority"
+        );
+        assert_eq!(
+            serde_json::from_value::<ModelChoice>(json!(fast)).unwrap(),
+            fast
+        );
+        let mut options = crate::agent::tests::options(ApprovalMode::Manual);
+        fast.apply(&mut options);
+        assert_eq!(options.service_tier, Some(ServiceTier::Priority));
+        assert_eq!(options.clone().service_tier, Some(ServiceTier::Priority));
+        normal.apply(&mut options);
+        assert_eq!(options.service_tier, None);
+        assert_eq!(options.approval_mode, ApprovalMode::Manual);
+        for unsupported in ["fast", "flex", "default", "auto"] {
+            let mut value = json!(normal);
+            value["serviceTier"] = json!(unsupported);
+            assert!(
+                serde_json::from_value::<ModelChoice>(value).is_err(),
+                "{unsupported}"
+            );
+        }
+        let mut external = fast;
+        external.executor = crate::claude::Executor::Claude;
+        external.account.clear();
+        external.model = "sonnet".into();
+        assert!(external.validate_shape().is_err());
+        external.service_tier = None;
+        external.validate_shape().unwrap();
     }
 
     #[test]

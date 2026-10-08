@@ -14,6 +14,35 @@ function stateChanged(snapshot: ChatSnapshot) {
 }
 
 describe("agent event protocol", () => {
+  it("keeps plugin and hook identity in the live turn through later deltas and snapshot recovery", () => {
+    const plugin = { component: "plugins" as const, action: "skill_read", status: "applied" as const, summary: "Skill de revisão utilizada", sources: [], durationMs: 1, resourceId: "skill:workspace-tools:review", resourceName: "Review", pluginId: "workspace-tools" };
+    const hook = { component: "hooks" as const, action: "PreToolUse", status: "issues" as const, summary: "Hook de comando falhou", sources: [], durationMs: 3, resourceId: "hook:workspace-tools:PreToolUse", resourceName: "Check commands", pluginId: "workspace-tools" };
+    const current = { ...history(0, 1), activeTurnId: "turn-0" };
+    current.turns[0].status = "running";
+    const delta = { type: "itemDelta", stepIndex: 0, textAppend: "Novo trecho", summaryAppend: "", durationMs: 3, retry: null, usage: null };
+    const activity = agentEventBatchSchema.parse({ conversationId: "c1", baseRevision: 4, revision: 5, events: [{ ...delta, coreActivities: [plugin, hook] }] });
+    const applied = applyAgentEventBatch(current, activity);
+    expect(applied.needsResync).toBe(false);
+    expect(applied.snapshot?.turns[0].steps[0].coreActivities).toEqual([plugin, hook]);
+
+    const legacyDelta = agentEventBatchSchema.parse({ conversationId: "c1", baseRevision: 5, revision: 6, events: [delta] });
+    const continued = applyAgentEventBatch(applied.snapshot, legacyDelta);
+    expect(continued.needsResync).toBe(false);
+    expect(continued.snapshot?.turns[0].steps[0].coreActivities).toEqual([plugin, hook]);
+    const gap = agentEventBatchSchema.parse({ conversationId: "c1", baseRevision: 7, revision: 8, events: [delta] });
+    const missing = applyAgentEventBatch(continued.snapshot, gap);
+    expect(missing.needsResync).toBe(true);
+
+    const recoveredHook = { ...hook, status: "applied" as const, summary: "Hook de comando concluído" };
+    const recovery = { ...history(0, 1), revision: 8 };
+    recovery.turns[0].steps[0].coreActivities = [plugin, recoveredHook];
+    const recovered = readChat(JSON.parse(JSON.stringify(recovery)), "c1");
+    const restored = mergeChat(missing.snapshot, recovered);
+    expect(restored.turns[0].id).toBe("turn-0");
+    expect(restored.turns[0].steps[0].coreActivities).toEqual([plugin, recoveredHook]);
+    expect(restored.turns[0].steps[0].tools).toEqual(current.turns[0].steps[0].tools);
+    expect(restored.revision).toBe(8);
+  });
   it("updates live generation without dropping prior measurements on older deltas and clears a retried sample", () => {
     const turn = { ...savedTurn(), status: "running" as const };
     let current: ChatSnapshot = { ...emptyChat(), revision: 4, turns: [turn], activeTurnId: turn.id, history: { start: 0, total: 1 } };

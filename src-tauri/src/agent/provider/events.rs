@@ -36,7 +36,7 @@ enum ProviderOutputEvent {
 }
 
 impl ProviderOutputEvent {
-    fn parse(wire: Value) -> Result<Self, AgentError> {
+    fn parse(mut wire: Value) -> Result<Self, AgentError> {
         match wire["type"].as_str() {
             Some("message") => {
                 if wire["role"]
@@ -97,6 +97,20 @@ impl ProviderOutputEvent {
             }
             Some("function_call") => {
                 let call = parse_tool_call(&wire)?;
+                if call.name == "jarvis_propose_mcp" {
+                    wire["arguments"] = Value::String(call.args.to_string());
+                    if call.args.get("_jarvisMcpRejected").is_some() {
+                        // A signed original cannot be replayed with changed
+                        // arguments. The adapter can reconstruct this rejected
+                        // call from its sanitized public envelope instead.
+                        if let Some(object) = wire.as_object_mut() {
+                            object.remove("_antigravity_model");
+                            object.remove("_antigravity_part");
+                        }
+                    } else if wire["_antigravity_part"]["functionCall"].is_object() {
+                        wire["_antigravity_part"]["functionCall"]["args"] = call.args.clone();
+                    }
+                }
                 Ok(Self::ToolCall { wire, call })
             }
             Some("web_search_call") if wire.is_object() => Ok(Self::WebSearch { wire }),
@@ -210,6 +224,7 @@ pub(super) fn parse_tool_call(item: &Value) -> Result<ToolCall, AgentError> {
             )),
         ),
     };
+    let args = crate::agent::authoring::sanitize_mcp_args(name, args);
     Ok(ToolCall {
         id: id.into(),
         name: name.into(),
@@ -229,6 +244,36 @@ pub(super) fn parse_tool_call(item: &Value) -> Result<ToolCall, AgentError> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn mcp_credentials_are_rejected_before_public_and_private_wire_projection() {
+        let args = json!({"summary":"Adicionar documentação","server":{"name":"docs","transport":"http","command":null,"args":[],"url":"https://example.test/mcp?token=private-test-value","enabled":true,"cwd":null,"envKeys":[],"headerKeys":[]}});
+        let call = json!({"type":"function_call","call_id":"mcp-secret","name":"jarvis_propose_mcp","arguments":args.to_string(),"_antigravity_model":"gemini","_antigravity_part":{"functionCall":{"name":"jarvis_propose_mcp","args":args},"thoughtSignature":"opaque-signature"}});
+        let normalized = NormalizedOutput::parse(vec![call], None).unwrap();
+        let safe = &normalized.calls[0].args;
+        assert!(safe.get("_jarvisMcpRejected").is_some());
+        let wire = normalized.wire_output();
+        assert!(!json!({"wire":wire,"calls":normalized.calls})
+            .to_string()
+            .contains("private-test-value"));
+        assert!(wire[0].get("_antigravity_part").is_none());
+        assert!(wire[0].get("_antigravity_model").is_none());
+        let catalog =
+            crate::agent::tool_contract::Catalog::new(&crate::agent::authoring::definitions());
+        assert!(catalog.validate(&normalized.calls[0]).is_err());
+    }
+
+    #[test]
+    fn supported_mcp_drafts_and_unrelated_signed_calls_keep_original_replay_metadata() {
+        let args = json!({"summary":"Adicionar documentação","server":{"name":"docs","transport":"http","command":null,"args":[],"url":"https://example.test/mcp","enabled":true,"cwd":null,"envKeys":[],"headerKeys":["Authorization"]}});
+        let wire = vec![
+            json!({"type":"function_call","call_id":"mcp-safe","name":"jarvis_propose_mcp","arguments":args.to_string(),"_antigravity_model":"gemini","_antigravity_part":{"functionCall":{"name":"jarvis_propose_mcp","args":args},"thoughtSignature":"mcp-signature"}}),
+            json!({"type":"function_call","call_id":"read-safe","name":"read","arguments":"{ \"path\" : \"README.md\" }","_antigravity_model":"gemini","_antigravity_part":{"functionCall":{"name":"read","args":{"path":"README.md"}},"thoughtSignature":"read-signature"}}),
+        ];
+        let normalized = NormalizedOutput::parse(wire.clone(), None).unwrap();
+        assert_eq!(normalized.wire_output(), wire);
+        assert_eq!(normalized.calls[0].args, args);
+    }
 
     #[test]
     fn preserves_order_ids_usage_and_opaque_replay() {

@@ -22,6 +22,8 @@ pub(super) fn definitions() -> Vec<Value> {
     let kind = json!({"type":"string","enum":["product","technical","rules","design"]});
     let mut catalog = super::super::authoring::definitions().remove(0);
     catalog["name"] = json!("jarvito_catalog");
+    catalog["parameters"]["properties"]["view"]["enum"] =
+        json!(["overview", "agent", "flow", "hooks", "plugins"]);
     catalog["strict"] = json!(false);
     catalog["description"] = json!("Read the current custom/built-in agents and flows, exact catalog revision and editable details. Read before a save; built-ins remain immutable. Tool capability labels describe project execution, not tools granted to this global conversation.");
     let mut library = definition("jarvito_library", "List workspaces/projects or apply an explicitly requested product change. Reuse exact IDs from list. add_project registers an existing absolute directory without opening a picker; it never creates arbitrary project files. update_project requires the complete current name/path/icon/color, preserving unspecified user intent. This manages Jarvis settings, without starting project work or changing its execution scope.", json!({}), &[]);
@@ -203,6 +205,12 @@ pub(super) async fn execute(
             value
         }
         "jarvito_catalog" => {
+            if tool.args["view"] == "plugins" {
+                return super::super::authoring::plugins_output(home);
+            }
+            if tool.args["view"] == "hooks" {
+                return super::super::authoring::hooks_output(state, home);
+            }
             let catalog =
                 state.with_connection(home, |db| workflow::catalog::read_configured(db, home))?;
             let mut value: Value = serde_json::from_str(&super::super::authoring::catalog_output(
@@ -210,7 +218,17 @@ pub(super) async fn execute(
             )?)
             .map_err(|_| AgentError::internal())?;
             if tool.args["view"] == "overview" {
+                value["mcpServers"] = super::super::authoring::mcp_metadata(
+                    &app.state::<crate::mcp::McpState>(),
+                    state,
+                    home,
+                )?;
                 value["rules"] = json!(["Built-in prompts and topology are immutable; configure their role models with jarvito_set_agent_model.","Save only a change explicitly requested by the user; no redundant proposal is required.","Read the latest revision before a dependent save; preserve unrelated settings."]);
+                value["mcpRegistration"] = json!("Use jarvis_propose_mcp to prepare a global registration with mandatory native approval. Supply only env/header key names; the user enters private values in the panel. Project MCP execution still requires a scoped project conversation.");
+                let hooks = crate::hooks::load(state, home)?;
+                value["hooks"] = json!({"revision":hooks.revision,"manualCount":hooks.hooks.len(),"detailView":"hooks","nativeMutable":false,"authoringTool":"jarvis_propose_hook","requiresNativeApproval":true});
+                let plugins = crate::plugins::catalog(home)?;
+                value["plugins"] = json!({"revision":plugins.revision,"installedCount":plugins.installed.len(),"detailView":"plugins","authoringTool":"jarvis_propose_plugin","requiresNativeApproval":true});
                 value["models"] =
                     serde_json::to_value(super::get_companion_models(app.clone()).await?)
                         .map_err(|_| AgentError::internal())?;

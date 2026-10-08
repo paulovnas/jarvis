@@ -86,6 +86,18 @@ fn description(name: &str) -> &'static str {
         "jarvis_propose_flow" => {
             "Propor a criação ou edição supervisionada de um fluxo customizado."
         }
+        "jarvis_propose_mcp" => {
+            "Propor o cadastro global de um servidor MCP para aprovação explícita."
+        }
+        "jarvis_propose_hook" => {
+            "Propor a criação, edição ou remoção de hooks manuais para aprovação explícita."
+        }
+        "jarvis_propose_plugin" => {
+            "Propor plugins e marketplaces para revisão e aprovação explícita."
+        }
+        "jarvis_propose_project_instructions" => {
+            "Propor a seção Jarvis no AGENTS.md do projeto para aprovação explícita."
+        }
         "jarvis_propose_publication" => {
             "Propor operações Git e GitHub para aprovação e execução supervisionadas."
         }
@@ -340,10 +352,21 @@ mod tests {
             "http_cancel",
             "beads_show",
             "hub_complete",
+            "jarvis_propose_project_instructions",
         ] {
             assert!(tools.iter().any(|p| p.id == id), "{id}");
         }
         let mut agent = super::super::tests::example().agents[0].clone();
+        let project_instructions = tools
+            .iter()
+            .find(|tool| tool.id == "jarvis_propose_project_instructions")
+            .unwrap();
+        assert_eq!(
+            project_instructions.capabilities,
+            vec![Capability::WriteFiles, Capability::Commands]
+        );
+        assert!(project_instructions.description.contains("AGENTS.md"));
+        assert!(!project_instructions.required);
         agent.capability = Capability::Commands;
         for tool in tools {
             agent.denied_tools = vec![tool.id.clone()];

@@ -131,6 +131,7 @@ mod tests {
             account: String::new(),
             model: "sonnet".into(),
             reasoning: None,
+            service_tier: None,
             fallback: None,
         };
         assert_eq!(encode(&source).unwrap(), legacy);
@@ -142,5 +143,23 @@ mod tests {
         assert_eq!(resolve(&db, "chat:existing", &source).unwrap(), target);
         replace(&db, "chat:existing", &target, &source).unwrap();
         assert_eq!(resolve(&db, "chat:existing", &target).unwrap(), target);
+    }
+
+    #[test]
+    fn a_speed_change_does_not_inherit_a_stale_provider_replacement() {
+        let mut db = Connection::open_in_memory().unwrap();
+        crate::persistence::initialize_database(&mut db).unwrap();
+        let normal: ModelChoice =
+            serde_json::from_str(r#"{"account":"old","model":"old-model","reasoning":null}"#)
+                .unwrap();
+        let mut fast = normal.clone();
+        fast.service_tier = Some(crate::agent::workflow::settings::ServiceTier::Priority);
+        let mut replacement = normal.clone();
+        replacement.model = "replacement".into();
+        replace(&db, "chat:existing", &normal, &replacement).unwrap();
+        assert_eq!(resolve(&db, "chat:existing", &normal).unwrap(), replacement);
+        assert_eq!(resolve(&db, "chat:existing", &fast).unwrap(), fast);
+        replace(&db, "chat:existing", &fast, &normal).unwrap();
+        assert_eq!(resolve(&db, "chat:existing", &fast).unwrap(), normal);
     }
 }

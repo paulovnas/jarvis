@@ -56,9 +56,11 @@ export type MessagePart = { "type": "text", text: string, } | { "type": "skill",
 
 export type AutomaticPublication = { commit: boolean, push: boolean, pullRequest: boolean, };
 
-export type ModelChoice = { executor?: Executor, account: string, model: string, reasoning: string | null, fallback?: ModelChoice, };
+export type ServiceTier = "priority";
 
-export type TurnOptions = { executor?: Executor, account: string, model: string, reasoning: string | null, modelSelection?: ModelChoice, mode: Mode, workflow?: Flow | null, customWorkflowId?: string | null, customAgentId?: string | null, approvalMode: ApprovalMode, manualValidation?: boolean, automaticPublication?: AutomaticPublication, };
+export type ModelChoice = { executor?: Executor, account: string, model: string, reasoning: string | null, serviceTier?: ServiceTier, fallback?: ModelChoice, };
+
+export type TurnOptions = { executor?: Executor, account: string, model: string, reasoning: string | null, serviceTier?: ServiceTier, modelSelection?: ModelChoice, mode: Mode, workflow?: Flow | null, customWorkflowId?: string | null, customAgentId?: string | null, approvalMode: ApprovalMode, manualValidation?: boolean, automaticPublication?: AutomaticPublication, };
 
 export type TaskStatus = "pending" | "in_progress" | "completed" | "blocked";
 
@@ -76,7 +78,7 @@ export type ContextReduction = { callId: string, originalBytes: number, retained
 
 export type CoreActivityStatus = "applied" | "reused" | "unavailable" | "pending" | "issues";
 
-export type CoreActivity = { component: "context-mode" | "ponytail" | "beads" | "open-design" | "context7" | "lsp" | "hyperframes" | "audiovisual" | "comfyui" | "graft", action: string, status: CoreActivityStatus, summary: string, sources: Array<string>, fingerprint?: string | null, durationMs: number, };
+export type CoreActivity = { component: "context-mode" | "ponytail" | "beads" | "open-design" | "context7" | "lsp" | "hyperframes" | "audiovisual" | "comfyui" | "graft" | "manual-hooks" | "hooks" | "plugins", action: string, status: CoreActivityStatus, summary: string, sources: Array<string>, fingerprint?: string | null, durationMs: number, resourceId?: string | null, resourceName?: string | null, pluginId?: string | null, };
 
 export type AgentStep = { generation?: GenerationMetrics, coreActivities?: Array<CoreActivity>, contextId?: string | null, contextSearches: number, contextReductions?: Array<ContextReduction>, readReuses?: Array<ContextReduction>, loopSteers?: number, loopAvoidedCalls?: number, progressEvents?: number, evidenceEvents?: number, progressCheckpoints?: number, progressPauses?: number, retry?: RetryStatus | null, durationMs: number, text: string, summary: string, tools: Array<AgentTool>, usage: Usage | null, };
 

@@ -4,14 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
 import { CommandInput } from "@/components/TextInput";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { BUILTIN_FLOWS } from "@/components/agents/workflow-presentation";
 import { workflowAppearance } from "@/components/agents/workflow-appearance";
 import type { ProviderModelGroup } from "@/components/chat/ModelPicker";
 import { agentAppearance, flowAppearance } from "@/core/workflow-appearance";
-import { executionChoice, executionSelection, executorOf, sameExecutionTarget, selectModelChoice, type ExecutionChoice } from "@/core/executors";
+import { executionChoice, executionSelection, executorOf, sameExecutionTarget, selectModelChoice, supportsFastMode, FAST_USAGE_NOTICE, type ExecutionChoice } from "@/core/executors";
 import { defaultReasoning, reasoningLabel, selectableReasoningLevels } from "@/core/reasoning";
 import type { ModelChoice } from "@/core/provider-references";
 import type { FlowSelection, WorkflowCatalog } from "@/core/workflow-catalog";
@@ -62,10 +62,12 @@ export function RemoteChatSelectors({ catalog, modelGroups, flow, choice, modelP
   const current = findModel(modelGroups, choice);
   const activeChoice = slot === "primary" ? draft : draft?.fallback;
   const active = findModel(modelGroups, activeChoice);
+  const fastAvailable = supportsFastMode(active.group?.providerKind, active.model, activeChoice?.executor);
+  const fastUnavailable = choice?.serviceTier === "priority" && !supportsFastMode(current.group?.providerKind, current.model, choice.executor);
   const levels = selectableReasoningLevels(active.model?.reasoningLevels ?? []);
   const validTarget = (target: ExecutionChoice) => {
-    const { model } = findModel(modelGroups, target);
-    return Boolean(model && (!target.reasoning || selectableReasoningLevels(model.reasoningLevels).includes(target.reasoning)));
+    const { group, model } = findModel(modelGroups, target);
+    return Boolean(model && (!target.reasoning || selectableReasoningLevels(model.reasoningLevels).includes(target.reasoning)) && (target.serviceTier !== "priority" || supportsFastMode(group?.providerKind, model, target.executor)));
   };
   const validDraft = draft && validTarget(draft) && (!draft.fallback || (validTarget(draft.fallback) && !sameExecutionTarget(draft, draft.fallback)));
   const apply = async (action: () => ReturnType<RemoteChatSelectorsProps["onModelChange"]>) => {
@@ -79,14 +81,21 @@ export function RemoteChatSelectors({ catalog, modelGroups, flow, choice, modelP
     setDraft(slot === "primary" ? { ...draft, reasoning } : { ...draft, fallback: { ...activeChoice, reasoning } });
   };
 
+  const setSpeed = (speed: string) => {
+    if (!draft || !activeChoice || unavailable || speed !== "normal" && (speed !== "priority" || !fastAvailable)) return;
+    const target = { ...activeChoice }; delete target.serviceTier;
+    if (speed === "priority") target.serviceTier = "priority";
+    setDraft(slot === "primary" ? { ...target, fallback: draft.fallback } : { ...draft, fallback: target });
+  };
+
   return <>
     <div className="remote-chat-selectors flex min-w-0 items-center gap-1">
       <Button type="button" variant="ghost" size="sm" disabled={unavailable || flowDisabled} aria-label="Selecionar fluxo ou agente" className="h-11 min-w-0 flex-1 cursor-pointer justify-start" onClick={() => setPanel("flow")}>
         <FlowIcon data-icon="inline-start" /><span className="truncate">{currentFlow?.title ?? "Opção indisponível"}</span><ChevronDown data-icon="inline-end" />
       </Button>
-      <Button type="button" variant="ghost" size="sm" disabled={unavailable} aria-label="Selecionar modelo de IA" aria-invalid={Boolean(modelProblem) || !current.model || undefined} className={cn("h-11 min-w-0 flex-1 cursor-pointer justify-start font-mono", (modelProblem || !current.model) && "border border-destructive text-destructive")} onClick={() => { setDraft(choice); setSlot("primary"); setPanel("model"); }}>
+      <Button type="button" variant="ghost" size="sm" disabled={unavailable} aria-label="Selecionar modelo de IA" aria-invalid={Boolean(modelProblem) || fastUnavailable || !current.model || undefined} className={cn("h-11 min-w-0 flex-1 cursor-pointer justify-start font-mono", (modelProblem || fastUnavailable || !current.model) && "border border-destructive text-destructive")} onClick={() => { setDraft(choice); setSlot("primary"); setPanel("model"); }}>
         {current.group && <RemoteProviderIcon kind={current.group.executor === "claude" ? "claude-code" : current.group.providerKind ?? "custom"} />}
-        <span className="truncate">{current.model?.label ?? "Selecionar modelo"}</span><ChevronDown data-icon="inline-end" />
+        <span className="truncate">{current.model?.label ?? "Selecionar modelo"}{choice?.serviceTier === "priority" ? fastUnavailable ? " · Fast indisponível" : " · Fast" : ""}</span><ChevronDown data-icon="inline-end" />
       </Button>
     </div>
     <Sheet open={panel !== null} onOpenChange={open => { if (!open && !saving) setPanel(null); }}>
@@ -114,7 +123,7 @@ export function RemoteChatSelectors({ catalog, modelGroups, flow, choice, modelP
                 <ToggleGroupItem value="primary" className="min-h-11 flex-1 cursor-pointer">Principal</ToggleGroupItem>
                 <ToggleGroupItem value="secondary" disabled={!draft} className="min-h-11 flex-1 cursor-pointer">Secundário</ToggleGroupItem>
               </ToggleGroup>
-              <FieldLabel className="min-w-0 truncate font-mono text-xs">{active.model ? `${aliasSuffix(active.group?.provider ?? "")} · ${active.model.label}` : slot === "secondary" ? "Nenhum modelo secundário" : "Escolha um modelo"}</FieldLabel>
+              <FieldLabel className="min-w-0 truncate font-mono text-xs">{active.model ? `${aliasSuffix(active.group?.provider ?? "")} · ${active.model.label}${activeChoice?.serviceTier === "priority" ? " · Fast" : ""}` : slot === "secondary" ? "Nenhum modelo secundário" : "Escolha um modelo"}</FieldLabel>
             </Field>
           </FieldGroup>
           <Command key={slot} label="Buscar modelo" className="h-auto! w-full rounded-none!">
@@ -124,12 +133,15 @@ export function RemoteChatSelectors({ catalog, modelGroups, flow, choice, modelP
               <CommandEmpty>Nenhum modelo encontrado.</CommandEmpty>
               {slot === "secondary" && <CommandGroup><CommandItem value="none" disabled={unavailable} data-checked={!draft?.fallback} className="min-h-11 cursor-pointer" onSelect={() => setDraft(current => current ? { ...current, fallback: null } : current)}>Nenhum</CommandItem></CommandGroup>}
               {modelGroups.map(group => <CommandGroup key={`${group.executor ?? "jarvis"}:${group.provider}`} heading={group.provider}>
-                {group.models.map(model => <CommandItem key={model.value} aria-label={`${group.provider} · ${model.label}`} value={`${group.executor ?? "jarvis"} ${model.value}`} keywords={[group.provider, model.label]} disabled={unavailable} data-checked={active.group === group && active.model?.value === model.value} className="min-h-11 cursor-pointer" onSelect={() => setDraft(current => selectModelChoice(current, executionChoice({ executor: group.executor, model: model.value, reasoning: defaultReasoning(model) }), slot))}>
+                {group.models.map(model => <CommandItem key={model.value} aria-label={`${group.provider} · ${model.label}`} value={`${group.executor ?? "jarvis"} ${model.value}`} keywords={[group.provider, model.label]} disabled={unavailable} data-checked={active.group === group && active.model?.value === model.value} className="min-h-11 cursor-pointer" onSelect={() => setDraft(current => selectModelChoice(current, executionChoice({ executor: group.executor, model: model.value, reasoning: defaultReasoning(model), ...(activeChoice?.serviceTier === "priority" && supportsFastMode(group.providerKind, model, group.executor) ? { serviceTier: "priority" } : {}) }), slot))}>
                   <RemoteProviderIcon kind={group.executor === "claude" ? "claude-code" : group.providerKind ?? "custom"} /><span className="min-w-0 flex-1 truncate">{model.label}</span>
                 </CommandItem>)}
               </CommandGroup>)}
             </CommandList>
           </Command>
+            {activeChoice && (fastAvailable || activeChoice.serviceTier === "priority") && <FieldGroup className="px-4 pt-4"><Field><FieldLabel>Velocidade</FieldLabel><ToggleGroup aria-label="Velocidade" value={[activeChoice.serviceTier === "priority" ? "priority" : "normal"]} disabled={unavailable} onValueChange={values => { if (values[0]) setSpeed(values[0]); }} className="justify-start">
+              <ToggleGroupItem value="normal" className="min-h-11 cursor-pointer px-3">Normal</ToggleGroupItem><ToggleGroupItem value="priority" disabled={!fastAvailable} className="min-h-11 cursor-pointer px-3">Fast</ToggleGroupItem>
+            </ToggleGroup><FieldDescription>{FAST_USAGE_NOTICE}</FieldDescription>{!fastAvailable && <FieldDescription className="text-destructive">Fast não está disponível neste provedor ou modelo. Selecione Normal ou outro modelo.</FieldDescription>}</Field></FieldGroup>}
             {levels.length > 0 && <FieldGroup className="px-4 pt-4"><Field><FieldLabel>Raciocínio</FieldLabel><ToggleGroup aria-label="Nível de raciocínio" value={activeChoice?.reasoning ? [activeChoice.reasoning] : []} disabled={unavailable} onValueChange={values => { if (values[0]) setReasoning(values[0]); }} className="flex flex-wrap justify-start">
               {levels.map(level => <ToggleGroupItem key={level} value={level} className="min-h-11 cursor-pointer px-3">{reasoningLabel(level)}</ToggleGroupItem>)}
             </ToggleGroup></Field></FieldGroup>}

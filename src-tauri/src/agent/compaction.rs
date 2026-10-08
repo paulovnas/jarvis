@@ -476,6 +476,7 @@ pub(super) async fn ensure(
     force: bool,
     signal: watch::Receiver<bool>,
     hooks: Option<&crate::core::hooks::Hooks>,
+    manual_hooks: Option<&crate::hooks::runtime::Runtime>,
     trace: Option<&super::telemetry::TraceContext>,
 ) -> Result<bool, AgentError> {
     let (turn_id, source_items, source_bytes, manual) = {
@@ -521,6 +522,16 @@ pub(super) async fn ensure(
         first = false;
         async move {
             if prepare {
+                if let Some(manual_hooks) = manual_hooks {
+                    run_manual_hook(
+                        session,
+                        manual_hooks,
+                        crate::hooks::Event::PreCompact,
+                        json!({"trigger":if manual { "manual" } else { "auto" }}),
+                        signal.clone(),
+                    )
+                    .await?;
+                }
                 if let Some(hooks) = hooks {
                     hooks
                         .run_resilient(
@@ -602,9 +613,19 @@ pub(super) async fn ensure(
                 .run_resilient(
                     crate::core::hooks::Event::PostCompact,
                     json!({"text":summary}),
-                    summary_signal,
+                    summary_signal.clone(),
                 )
                 .await?;
+        }
+        if let Some(manual_hooks) = manual_hooks {
+            run_manual_hook(
+                session,
+                manual_hooks,
+                crate::hooks::Event::PostCompact,
+                json!({"trigger":if manual { "manual" } else { "auto" }}),
+                summary_signal.clone(),
+            )
+            .await?;
         }
     }
     Ok(result)
@@ -845,6 +866,7 @@ mod tests {
             account: "test".into(),
             model: "gemini-3.8-flash".into(),
             reasoning: Some("high".into()),
+            service_tier: None,
             mode: Mode::Build,
             workflow: None,
             custom_workflow_id: None,
@@ -926,6 +948,7 @@ mod tests {
             account,
             model: "gpt-5.6-luna".into(),
             reasoning: Some("low".into()),
+            service_tier: None,
             mode: Mode::Plan,
             workflow: None,
             custom_workflow_id: None,
@@ -967,6 +990,7 @@ mod tests {
                 signal.clone(),
                 None,
                 None,
+                None,
             )
         )
         .await
@@ -996,6 +1020,7 @@ mod tests {
                     account: "test".into(),
                     model: "model".into(),
                     reasoning: None,
+                    service_tier: None,
                     mode: Mode::Build,
                     workflow: None,
                     custom_workflow_id: None,
@@ -1472,6 +1497,7 @@ mod tests {
             .clone();
         let credential = CodexCredential::new("fixture", "", 0, "account", None, None);
         let model = crate::openai_codex::ProviderModel {
+            supports_fast: false,
             id: options.model.clone(),
             name: "Fixture".into(),
             reasoning_levels: vec![],

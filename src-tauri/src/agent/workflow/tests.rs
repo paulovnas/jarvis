@@ -260,6 +260,7 @@ fn global_companion_preserves_explicit_model_while_project_chat_uses_its_profile
         account: "configured-account".into(),
         model: "configured-model".into(),
         reasoning: None,
+        service_tier: None,
         fallback: None,
     };
     let profiles = BTreeMap::from([(settings::key(Flow::Standard, Role::Builder), profile)]);
@@ -298,6 +299,7 @@ fn global_companion_workflow_never_adds_project_tools() {
         account: String::new(),
         model: "sonnet".into(),
         reasoning: None,
+        service_tier: None,
         fallback: None,
     }));
     hub_mut
@@ -317,10 +319,23 @@ fn global_companion_workflow_never_adds_project_tools() {
     let mut definitions = crate::agent::tools::definitions(Mode::Build);
     definitions.extend(crate::agent::companion_chat::tools());
     execution.filter(&mut definitions);
-    assert_eq!(definitions.len(), 13);
-    assert!(definitions
+    let mut expected_names: Vec<_> = crate::agent::companion_chat::tools()
         .iter()
-        .any(|definition| definition["name"] == "jarvito_list_executors"));
+        .map(|definition| definition["name"].as_str().unwrap().to_owned())
+        .collect();
+    expected_names.push("ask_user".into());
+    expected_names.sort();
+    let mut advertised_names: Vec<_> = definitions
+        .iter()
+        .map(|definition| definition["name"].as_str().unwrap().to_owned())
+        .collect();
+    advertised_names.sort();
+    assert_eq!(advertised_names, expected_names);
+    for name in ["jarvito_list_executors", "jarvis_propose_mcp"] {
+        assert!(definitions
+            .iter()
+            .any(|definition| definition["name"] == name));
+    }
     assert!(definitions.iter().all(|definition| {
         crate::agent::companion_chat::allowed_tool(definition["name"].as_str().unwrap())
     }));
@@ -365,6 +380,7 @@ async fn secondary_model_is_optional_switches_once_and_updates_native_and_custom
             account: "secondary-account".into(),
             model: "secondary-model".into(),
             reasoning: None,
+            service_tier: None,
             fallback: None,
         };
         let primary = settings::ModelChoice {
@@ -372,6 +388,7 @@ async fn secondary_model_is_optional_switches_once_and_updates_native_and_custom
             account: task.options.account.clone(),
             model: task.options.model.clone(),
             reasoning: task.options.reasoning.clone(),
+            service_tier: None,
             fallback: Some(Box::new(secondary.clone())),
         };
         if custom {
@@ -758,6 +775,7 @@ pub(super) fn hub() -> (Fixture, Arc<Hub>) {
         account: "root-account".into(),
         model: "root-model".into(),
         reasoning: Some("high".into()),
+        service_tier: None,
         mode: Mode::Build,
         workflow: Some(Flow::Complete),
         custom_workflow_id: None,
@@ -922,6 +940,7 @@ fn custom_direct_agent_uses_its_primary_contract_model_and_permissions() {
         account: "specialist-account".into(),
         model: "specialist-model".into(),
         reasoning: Some("high".into()),
+        service_tier: None,
         fallback: None,
     });
     let mut options = hub.manifest.lock().unwrap().options.clone();
@@ -989,11 +1008,141 @@ fn fixed_topology_has_no_standard_delegation_and_no_worker_escape() {
 }
 
 #[test]
+fn project_instruction_proposals_require_build_access_to_the_project_root() {
+    let (_fixture, hub) = hub();
+    for (role, flow, id, available) in [
+        (Role::Builder, Flow::Standard, "main", true),
+        (Role::Designer, Flow::Designer, "main", true),
+        (Role::Planner, Flow::Planned, "main", true),
+        (Role::Planner, Flow::Complete, "main", true),
+        (Role::Planner, Flow::Complete, "child", false),
+        (Role::Investigator, Flow::Complete, "main", false),
+        (Role::Reviewer, Flow::Complete, "main", false),
+        (Role::Writer, Flow::Complete, "main", false),
+        (Role::Github, Flow::Publication, "main", false),
+    ] {
+        for mode in [Mode::Build, Mode::Plan] {
+            hub.manifest.lock().unwrap().options.mode = mode;
+            for scope in [".", "src"] {
+                let exec = Execution {
+                    hub: hub.clone(),
+                    id: id.into(),
+                    role,
+                    flow,
+                    scope: vec![scope.into()],
+                };
+                let permitted = available && mode == Mode::Build && scope == ".";
+                let mut definitions = super::super::authoring_tools_for_turn(Mode::Plan, false);
+                exec.filter(&mut definitions);
+                assert_eq!(
+                    exec.allowed("jarvis_propose_project_instructions"),
+                    permitted,
+                    "{role:?} {mode:?} {scope}"
+                );
+                assert_eq!(
+                    definitions
+                        .iter()
+                        .filter(|definition| definition["name"]
+                            == "jarvis_propose_project_instructions")
+                        .count(),
+                    usize::from(permitted)
+                );
+            }
+        }
+    }
+    hub.manifest.lock().unwrap().options.mode = Mode::Build;
+    let mut child = job(&hub, Role::Designer, ".");
+    child.phase = Phase::Discovery;
+    let id = child.id.clone();
+    hub.manifest.lock().unwrap().jobs.insert(id.clone(), child);
+    let exec = Execution {
+        hub,
+        id,
+        role: Role::Designer,
+        flow: Flow::Complete,
+        scope: vec![".".into()],
+    };
+    assert!(!exec.allowed("jarvis_propose_project_instructions"));
+}
+
+#[test]
+fn custom_project_instruction_proposals_respect_capability_denial_and_root_scope() {
+    let (_fixture, hub) = hub();
+    for capability in [
+        catalog::Capability::ReadOnly,
+        catalog::Capability::WriteFiles,
+        catalog::Capability::Commands,
+    ] {
+        for denied in [false, true] {
+            let mut agent = catalog::tests::example().agents.remove(0);
+            agent.capability = capability;
+            if denied {
+                agent
+                    .denied_tools
+                    .push("jarvis_propose_project_instructions".into());
+            }
+            hub.manifest.lock().unwrap().custom_agent = Some(agent);
+            for scope in [".", "src"] {
+                let exec = Execution {
+                    hub: hub.clone(),
+                    id: "main".into(),
+                    role: Role::Custom,
+                    flow: Flow::Custom,
+                    scope: vec![scope.into()],
+                };
+                let mut definitions = super::super::authoring::definitions();
+                exec.filter(&mut definitions);
+                assert_eq!(
+                    definitions
+                        .iter()
+                        .any(|definition| definition["name"]
+                            == "jarvis_propose_project_instructions"),
+                    capability != catalog::Capability::ReadOnly && !denied && scope == "."
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn manual_delivery_contract_survives_compaction_without_creating_an_off_acceptance_gate() {
+    let (fixture, hub) = hub();
+    let mut options = hub.manifest.lock().unwrap().options.clone();
+    for flow in [Flow::Planned, Flow::Complete, Flow::Custom] {
+        options.workflow = Some(flow);
+        options.custom_workflow_id = (flow == Flow::Custom).then(|| "custom-flow".into());
+        for enabled in [false, true] {
+            options.manual_validation = enabled;
+            let (prompt, _) = compaction_context(&fixture.root, &hub.root.id, &options).unwrap();
+            if enabled {
+                assert!(prompt.contains("Final manual validation is ENABLED"));
+                assert!(prompt.contains("Complete authorized implementation and automated checks"));
+                assert!(prompt.contains("observable expected"));
+                assert!(prompt.contains("Do not delegate available agent-owned work"));
+                if flow == Flow::Custom {
+                    assert!(prompt.contains("hub_complete.validation"));
+                    assert!(prompt.contains("actual checks and results in evidence"));
+                    assert!(prompt.contains("remaining uncertainty in limitations"));
+                } else {
+                    assert!(prompt.contains("short title naming each behavior"));
+                    assert!(prompt.contains("without polling or duplicating the checklist"));
+                }
+            } else {
+                assert!(prompt.contains("Final manual validation is DISABLED"));
+                assert!(prompt.contains("or wait for user acceptance"));
+                assert!(!prompt.contains("Final manual validation is ENABLED"));
+            }
+        }
+    }
+}
+
+#[test]
 fn validation_notifications_only_include_the_current_pending_flow_round() {
     let (fixture, hub) = hub();
     let directory = storage::path(&fixture.root, &hub.root.id).unwrap();
     std::fs::create_dir_all(&directory).unwrap();
     let mut manifest = hub.manifest.lock().unwrap().clone();
+    manifest.options.manual_validation = true;
     manifest.validation = Some(validation::Batch {
         id: "batch".into(),
         flow: Flow::Complete,
@@ -1011,6 +1160,10 @@ fn validation_notifications_only_include_the_current_pending_flow_round() {
         &hub.root.id,
         "other-run"
     ));
+    manifest.options.manual_validation = false;
+    storage::save(&directory, &manifest).unwrap();
+    assert!(!awaiting_validation(&fixture.root, &hub.root.id, "run"));
+    manifest.options.manual_validation = true;
     for flow in [Flow::Standard, Flow::Designer] {
         manifest.flow = flow;
         storage::save(&directory, &manifest).unwrap();
@@ -1023,6 +1176,81 @@ fn validation_notifications_only_include_the_current_pending_flow_round() {
         batch.stale = stale;
         storage::save(&directory, &manifest).unwrap();
         assert!(!awaiting_validation(&fixture.root, &hub.root.id, "run"));
+    }
+}
+
+#[test]
+fn planning_guidance_reaches_native_planners_and_writers_without_extra_stages() {
+    for (flow, role) in [
+        (Flow::Planned, Role::Planner),
+        (Flow::Complete, Role::Planner),
+        (Flow::Complete, Role::Writer),
+        (Flow::Custom, Role::Planner),
+    ] {
+        let sections = contracts::instruction_sections(flow, role);
+        let guidance = sections
+            .iter()
+            .find(|section| section.title == "Qualidade do plano")
+            .expect("planning instructions must be visible in the agent settings");
+        for id in ["main", "child"] {
+            let prompt = contracts::prompt(flow, role, id);
+            assert!(prompt.contains(guidance.content));
+            for required in [
+                "names, signatures, constraints and dependency order",
+                "at most five concrete input classes or failure conditions",
+                "owning task and an observable expected result",
+                "not a new approval, document, agent or commit stage",
+            ] {
+                assert!(prompt.contains(required), "{flow:?} {role:?}: {required}");
+            }
+        }
+    }
+    for role in [Role::Builder, Role::Reviewer, Role::Investigator] {
+        assert!(!contracts::instruction_sections(Flow::Complete, role)
+            .iter()
+            .any(|section| section.title == "Qualidade do plano"));
+    }
+}
+
+#[test]
+fn reviewers_receive_risk_based_focus_without_treating_it_as_proof() {
+    let prompt = contracts::prompt(Flow::Complete, Role::Reviewer, "child");
+    for required in [
+        "planned review focus as investigation leads",
+        "important affected input classes",
+        "test failure and success evidence",
+        "A passing test without an observed failure",
+    ] {
+        assert!(
+            prompt.contains(required),
+            "missing reviewer guidance: {required}"
+        );
+    }
+    assert!(
+        !contracts::instruction_sections(Flow::Complete, Role::Builder)
+            .iter()
+            .any(|section| section.title == "Foco da revisão")
+    );
+}
+
+#[test]
+fn behavioral_bug_regression_guidance_covers_direct_and_delegated_implementers() {
+    for (flow, role, id) in [
+        (Flow::Standard, Role::Builder, "main"),
+        (Flow::Designer, Role::Designer, "main"),
+        (Flow::Planned, Role::Builder, "child"),
+        (Flow::Complete, Role::Designer, "child"),
+    ] {
+        let prompt = contracts::prompt(flow, role, id);
+        for required in [
+            "When your role changes product behavior to fix a bug",
+            "observe it fail for the reported cause before the fix",
+            "keep the regression check and observe it pass",
+            "Preserve unrelated working-tree changes",
+            "report the exact limitation",
+        ] {
+            assert!(prompt.contains(required), "{flow:?} {role:?}: {required}");
+        }
     }
 }
 
@@ -1220,6 +1448,55 @@ fn brag_prompt_requires_traceable_product_evidence_and_verified_deliverables() {
         "A composition, plan or passing check alone does not satisfy a request for a rendered video",
     ] {
         assert!(instructions.contains(requirement), "missing {requirement}");
+    }
+}
+
+#[test]
+fn publication_github_can_inspect_and_propose_mcp_without_agent_or_flow_authoring() {
+    for broad in [false, true] {
+        assert!(Role::Github.allows(Flow::Publication, "jarvis_catalog", broad));
+        assert_eq!(
+            Role::Github.allows(Flow::Publication, "jarvis_propose_mcp", broad),
+            broad
+        );
+        for name in ["jarvis_propose_agent", "jarvis_propose_flow"] {
+            assert!(!Role::Github.allows(Flow::Publication, name, broad));
+        }
+    }
+}
+
+#[test]
+fn mcp_registration_requires_command_capability_and_honors_denied_tools() {
+    for capability in [
+        catalog::Capability::ReadOnly,
+        catalog::Capability::WriteFiles,
+        catalog::Capability::Commands,
+    ] {
+        let mut agent = catalog::AgentDefinition {
+            id: "agent".into(),
+            name: "Agent".into(),
+            description: String::new(),
+            instructions: String::new(),
+            native_role: None,
+            usage: catalog::AgentUsage::Mixed,
+            capability,
+            denied_tools: vec![],
+            model: None,
+            appearance: None,
+        };
+        assert!(custom::allowed(&agent, "jarvis_catalog"));
+        assert_eq!(
+            custom::allowed(&agent, "jarvis_propose_mcp"),
+            capability == catalog::Capability::Commands
+        );
+        agent.denied_tools.push("jarvis_propose_mcp".into());
+        assert!(!custom::allowed(&agent, "jarvis_propose_mcp"));
+        assert_eq!(
+            custom::allowed(&agent, "jarvis_propose_hook"),
+            capability == catalog::Capability::Commands
+        );
+        agent.denied_tools.push("jarvis_propose_hook".into());
+        assert!(!custom::allowed(&agent, "jarvis_propose_hook"));
     }
 }
 
@@ -2023,6 +2300,7 @@ async fn child_manual_approval_cannot_be_answered_by_the_parent_or_another_worke
 fn model_preferences_are_per_flow_and_never_change_tool_authorization() {
     let (_fixture, hub) = hub();
     let mut options = hub.manifest.lock().unwrap().options.clone();
+    options.service_tier = Some(settings::ServiceTier::Priority);
     let mut profiles = BTreeMap::new();
     profiles.insert(
         settings::key(Flow::Complete, Role::Reviewer),
@@ -2031,18 +2309,27 @@ fn model_preferences_are_per_flow_and_never_change_tool_authorization() {
             account: "review-account".into(),
             model: "gpt-5.6-sol".into(),
             reasoning: Some("xhigh".into()),
+            service_tier: None,
             fallback: None,
         },
     );
     settings::apply(&mut options, &profiles, Flow::Planned, Role::Builder);
     assert_eq!(options.model, "root-model");
+    assert_eq!(options.service_tier, Some(settings::ServiceTier::Priority));
     settings::apply(&mut options, &profiles, Flow::Complete, Role::Reviewer);
     assert_eq!(options.account, "review-account");
     assert_eq!(options.model, "gpt-5.6-sol");
     assert_eq!(options.reasoning.as_deref(), Some("xhigh"));
+    assert_eq!(options.service_tier, None);
     assert_eq!(options.approval_mode, ApprovalMode::Manual);
     assert!(settings::validate(Flow::Complete, &profiles).is_err());
     assert!(settings::validate(Flow::Standard, &profiles).is_ok());
+    profiles
+        .get_mut(&settings::key(Flow::Complete, Role::Reviewer))
+        .unwrap()
+        .service_tier = Some(settings::ServiceTier::Priority);
+    settings::apply(&mut options, &profiles, Flow::Complete, Role::Reviewer);
+    assert_eq!(options.service_tier, Some(settings::ServiceTier::Priority));
 }
 
 #[test]

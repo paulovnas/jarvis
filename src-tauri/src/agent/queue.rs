@@ -341,7 +341,7 @@ impl Session {
     fn inject_auxiliary(
         &self,
         turn_id: &str,
-        rendered: Vec<(String, String)>,
+        rendered: Vec<(String, String, Vec<crate::core::activity::Activity>)>,
     ) -> Result<(), AgentError> {
         if rendered.is_empty() {
             return Ok(());
@@ -363,20 +363,20 @@ impl Session {
             .collect();
         let delivered: Vec<_> = rendered
             .into_iter()
-            .filter(|(id, _)| available.contains(id.as_str()))
+            .filter(|(id, _, _)| available.contains(id.as_str()))
             .collect();
         if delivered.is_empty() {
             return Ok(());
         }
         let delivered_ids: std::collections::HashSet<_> =
-            delivered.iter().map(|(id, _)| id.as_str()).collect();
+            delivered.iter().map(|(id, _, _)| id.as_str()).collect();
         let mut current = data
             .turns
             .last()
             .filter(|turn| turn.turn.id == turn_id)
             .cloned()
             .ok_or_else(AgentError::internal)?;
-        for (id, content) in &delivered {
+        for (id, content, activities) in &delivered {
             current.wire.push(json!({
                 "role": "user",
                 "_jarvis_auxiliary": true,
@@ -385,6 +385,18 @@ impl Session {
                     "Orientação adicional do usuário recebida enquanto esta execução estava em andamento. Incorpore-a ao trabalho atual sem descartar o contexto nem repetir ações já concluídas:\n{content}"
                 ),
             }));
+            if !activities.is_empty() {
+                if current.turn.steps.is_empty() {
+                    current.turn.steps.push(Step::default());
+                }
+                current
+                    .turn
+                    .steps
+                    .last_mut()
+                    .unwrap()
+                    .core_activities
+                    .extend(activities.clone());
+            }
         }
         current.turn.auxiliary_messages.extend(
             data.extras
@@ -462,9 +474,9 @@ pub(super) async fn inject_pending_auxiliary(
     let (turn_id, messages) = session.pending_auxiliary()?;
     let mut rendered = Vec::with_capacity(messages.len());
     for message in messages {
-        let content =
+        let (content, activities) =
             skill_input::render(home, &session.root, &message.content, &message.parts).await?;
-        rendered.push((message.id, content));
+        rendered.push((message.id, content, activities));
     }
     session.inject_auxiliary(&turn_id, rendered)
 }
@@ -751,6 +763,7 @@ mod tests {
             account: "test".into(),
             model: "model".into(),
             reasoning: None,
+            service_tier: None,
             mode: Mode::Build,
             workflow: None,
             custom_workflow_id: None,

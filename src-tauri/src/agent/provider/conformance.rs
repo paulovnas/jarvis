@@ -21,6 +21,7 @@ const PROVIDERS: [FixtureProvider; 5] = [
 
 fn options(model: &str) -> TurnOptions {
     TurnOptions {
+        service_tier: None,
         executor: crate::claude::Executor::Jarvis,
         account: "fixture".into(),
         model: model.into(),
@@ -163,6 +164,7 @@ async fn interrupted_turn_compacts_reloads_and_continues_through_the_transport()
     let mut credential = CodexCredential::new("fixture", "", 0, "fixture", None, None);
     credential.custom = Some(config);
     let model = ProviderModel {
+        supports_fast: false,
         id: "fixture-model".into(),
         name: "Fixture".into(),
         reasoning_levels: vec![],

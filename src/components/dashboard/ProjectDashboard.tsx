@@ -12,13 +12,13 @@ import { useCore } from "@/hooks/use-core";
 import { DashboardOverview } from "./DashboardOverview";
 import { BeadsBoard } from "./BeadsBoard";
 import { DashboardSkeleton } from "./DashboardSkeleton";
-import { ProjectOptions } from "./ProjectOptions";
 import { DocumentSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Hint } from "@/components/ui/hint";
 import type { LibraryController } from "@/hooks/use-library";
 import "./dashboard.css";
 
 const TerminalWorkspace = lazy(() => import("@/components/chat/TerminalWorkspace").then(module => ({ default: module.TerminalWorkspace })));
+const ProjectOptions = lazy(() => import("./ProjectOptions").then(module => ({ default: module.ProjectOptions })));
 
 export function ProjectDashboard({ project, projectUpdater, onSelectSession, navigation, initialTab = "general", terminalCount = 0 }: { project: Project; projectUpdater: Pick<LibraryController, "pending" | "error" | "clearError" | "updateProject">; onSelectSession: (id: string) => void; navigation?: ReactNode; initialTab?: "general" | "beads" | "terminals" | "options"; terminalCount?: number }) {
   const [tab, setTab] = useState<string>(initialTab);
@@ -44,7 +44,7 @@ export function ProjectDashboard({ project, projectUpdater, onSelectSession, nav
         {!board.data ? !board.error && <DashboardSkeleton board /> : <BeadsBoard projectName={project.name} projectId={project.id} issues={board.data} onChanged={board.refresh} />}
       </TabsContent>
       <TabsContent value="terminals" className="min-h-0 overflow-hidden"><Suspense fallback={<DocumentSkeleton label="Carregando terminais do projeto" />}><TerminalWorkspace projectId={project.id} /></Suspense></TabsContent>
-      <TabsContent value="options" className="min-h-0 overflow-hidden"><ProjectOptions key={project.id} project={project} projectUpdater={projectUpdater} /></TabsContent>
+      <TabsContent value="options" className="min-h-0 overflow-hidden"><Suspense fallback={<DocumentSkeleton label="Carregando opções do projeto" />}><ProjectOptions key={project.id} project={project} projectUpdater={projectUpdater} /></Suspense></TabsContent>
     </Tabs>
   </main>;
 }

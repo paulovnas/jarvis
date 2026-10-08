@@ -1,6 +1,7 @@
 use super::*;
 fn options(model: &str) -> TurnOptions {
     TurnOptions {
+        service_tier: None,
         executor: crate::claude::Executor::Jarvis,
         account: "antigravity-test".into(),
         model: model.into(),

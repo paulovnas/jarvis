@@ -269,7 +269,7 @@ pub(in crate::agent) fn mapped_call(name: &str, args: Value) -> (String, Value) 
             return (external.into(), args["arguments"].clone());
         }
     }
-    (name.into(), args)
+    (name.into(), authoring::sanitize_mcp_args(name, args))
 }
 
 impl Projection {
@@ -604,6 +604,64 @@ pub(super) async fn start_tool(session: &Session, tool: &ToolCall) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn project_instruction_proposals_preserve_native_review_identity_and_draft() {
+        let fixture = crate::agent::tests::Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        session
+            .reserve(
+                "Revisar AGENTS.md".into(),
+                crate::agent::tests::options(ApprovalMode::Yolo),
+            )
+            .unwrap();
+        let args = json!({"revision":"missing","summary":"Registrar convenções","content":"Use confirmed project checks."});
+        let mut projection = Projection::default();
+        projection.apply(&session, &json!({"type":"assistant","uuid":"instructions-envelope","message":{"id":"instructions-message","content":[{"type":"tool_use","id":"instructions-tool","name":"mcp__jarvis__jarvis_propose_project_instructions","input":args}]}})).unwrap();
+        let tool = projection
+            .take_tool(
+                "mcp__jarvis__jarvis_propose_project_instructions",
+                args.clone(),
+                Some("instructions-tool"),
+            )
+            .unwrap();
+        assert_eq!(tool.name, "jarvis_propose_project_instructions");
+        assert_eq!(tool.id, "instructions-tool");
+        assert_eq!(tool.args, args);
+        let snapshot = session.snapshot().unwrap();
+        assert_eq!(snapshot.turns[0].steps[0].tools[0].args, args);
+    }
+    #[tokio::test]
+    async fn mcp_credentials_are_rejected_before_the_first_projected_checkpoint() {
+        use crate::agent::tests::{options, session, Fixture};
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve("Adicionar MCP".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        let args = json!({"summary":"Adicionar documentação","server":{"name":"docs","transport":"stdio","command":"npx","args":["docs-mcp","--token","private-test-value"],"url":null,"enabled":true,"cwd":null,"envKeys":[],"headerKeys":[]}});
+        let mut projection = Projection::default();
+        projection.apply(&session, &json!({"type":"assistant","uuid":"secret-envelope","message":{"id":"message-secret","content":[{"type":"tool_use","id":"mcp-secret","name":"mcp__jarvis__jarvis_propose_mcp","input":args}]}})).unwrap();
+        let snapshot = session.snapshot().unwrap();
+        let call = &snapshot.turns[0].steps[0].tools[0];
+        assert!(call.args.get("_jarvisMcpRejected").is_some());
+        assert!(!serde_json::to_string(&snapshot)
+            .unwrap()
+            .contains("private-test-value"));
+        assert!(!std::fs::read_to_string(&session.journal)
+            .unwrap()
+            .contains("private-test-value"));
+        let tool = projection
+            .take_tool("mcp__jarvis__jarvis_propose_mcp", args, Some("mcp-secret"))
+            .unwrap();
+        start_tool(&session, &tool).await.unwrap();
+        let wire = session.data.lock().unwrap().turns[0].wire.clone();
+        assert!(!serde_json::to_string(&wire)
+            .unwrap()
+            .contains("private-test-value"));
+        assert!(!std::fs::read_to_string(&session.journal)
+            .unwrap()
+            .contains("private-test-value"));
+    }
     #[test]
     fn split_envelopes_do_not_stop_the_stream_or_add_cumulative_usage() {
         use crate::agent::tests::{options, session, Fixture};

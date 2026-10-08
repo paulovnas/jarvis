@@ -60,6 +60,79 @@ it("does not invent activity for legacy or empty histories", () => {
   expect(container).toBeEmptyDOMElement();
 });
 
+it("shows manual hook diagnostics on demand without presenting them as agent tool calls", async () => {
+  const user = userEvent.setup();
+  const warning: CoreActivity = { component: "manual-hooks", action: "PreToolUse", status: "issues", summary: "O hook não concluiu: tempo esgotado.", sources: [], durationMs: 0 };
+  render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [], coreActivities: [warning] }]} />);
+  expect(screen.getByLabelText("Há recursos com avisos")).toBeVisible();
+  expect(screen.queryByText(/O hook não concluiu/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  expect(screen.getByText("Hooks manuais")).toBeVisible();
+  expect(screen.getByText("Automático")).toBeVisible();
+  expect(screen.getByText(/O hook não concluiu/)).toHaveTextContent("Diagnósticos encontrados: O hook não concluiu: tempo esgotado.");
+  expect(screen.queryByText(/Solicitado pelo agente/)).not.toBeInTheDocument();
+});
+
+it("keeps named plugin and hook activity inside the single Core disclosure", async () => {
+  const user = userEvent.setup();
+  const hook: CoreActivity = { component: "hooks", action: "PreToolUse", status: "applied", summary: "Hook concluído.", sources: [], durationMs: 4, resourceId: "quality", resourceName: "Qualidade" };
+  const plugin: CoreActivity = { component: "plugins", action: "mcp_call", status: "applied", summary: "Ferramenta MCP executada.", sources: [], durationMs: 15, resourceId: "firebase-mcp", resourceName: "Firebase", pluginId: "firebase@official" };
+  render(<CoreActivitySummary steps={[{ ...step, coreActivities: [prepared, hook, plugin] }]} />);
+  expect(screen.getAllByRole("button", { name: /Recursos do Core/ })).toHaveLength(1);
+  expect(screen.getByRole("button", { name: /Recursos do Core/ })).toHaveTextContent("· 3");
+  expect(screen.queryByText("Plugins")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Hook concluído/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  const list = screen.getByRole("list", { name: "Uso dos recursos do Core" });
+  expect(list.children).toHaveLength(3);
+  const plugins = screen.getByText("Plugins").closest("li")!;
+  expect(within(plugins).getByText(/Firebase · Aplicado:/)).toBeVisible();
+  expect(within(plugins).getByText(/Plugin: firebase@official/)).toBeVisible();
+  expect(within(plugins).queryByText("Automático")).not.toBeInTheDocument();
+  expect(screen.getByText("Hooks")).toBeVisible();
+  expect(screen.getByText(/Qualidade · Aplicado:/)).toBeVisible();
+});
+
+it("preserves different hooks, compacts repeated executions and retains an earlier plugin failure", async () => {
+  const user = userEvent.setup();
+  const hook: CoreActivity = { component: "hooks", action: "PreToolUse", status: "applied", summary: "Hook concluído.", sources: [], durationMs: 4, resourceId: "quality", resourceName: "Qualidade" };
+  const plugin: CoreActivity = { component: "plugins", action: "mcp_call", status: "unavailable", summary: "Ferramenta MCP indisponível.", sources: [], durationMs: 15, resourceId: "firebase-mcp", resourceName: "Firebase", pluginId: "firebase@official" };
+  render(<CoreActivitySummary steps={[{ ...step, coreActivities: [
+    ...Array.from({ length: 50 }, () => hook),
+    { ...hook, resourceId: "git", resourceName: "Proteção Git" },
+    { ...hook, resourceId: "plugin-hook", resourceName: "Contexto", pluginId: "helper@local" },
+    plugin, { ...plugin, status: "applied", summary: "Ferramenta MCP executada." },
+  ] }]} />);
+  expect(screen.getByLabelText("Há recursos com avisos")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  expect(screen.getAllByText(/Qualidade · Aplicado:/)).toHaveLength(1);
+  expect(screen.getByText(/Proteção Git · Aplicado:/)).toBeVisible();
+  expect(screen.getByText(/Contexto · Aplicado:/)).toBeVisible();
+  expect(screen.getByText(/Plugin: helper@local/)).toBeVisible();
+  expect(screen.getByText(/Firebase · Indisponível:/)).toBeVisible();
+  expect(screen.getByText(/Firebase · Aplicado:/)).toBeVisible();
+});
+
+it("does not infer plugin usage from a tool name or its output", () => {
+  const { container } = render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [{ id: "legacy", name: "mcp__plugin_firebase_list_projects", status: "completed", output: "Plugin firebase@official available" }] }]} />);
+  expect(container).toBeEmptyDOMElement();
+});
+
+it("keeps resources with missing IDs separate by name and plugin owner", async () => {
+  const user = userEvent.setup();
+  const hook: CoreActivity = { component: "hooks", action: "PreToolUse", status: "applied", summary: "Hook concluído.", sources: [], durationMs: 4, resourceName: "Qualidade" };
+  const plugin: CoreActivity = { ...hook, component: "plugins", action: "skill_loaded", summary: "Skill carregada.", resourceName: "Design", pluginId: "first@local" };
+  render(<CoreActivitySummary steps={[{ ...step, coreActivities: [hook,
+    { ...hook, resourceId: null, resourceName: "Proteção Git" }, plugin,
+    { ...plugin, resourceId: null, pluginId: "second@local" },
+  ] }]} />);
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  expect(screen.getByText(/Qualidade · Aplicado:/)).toBeVisible();
+  expect(screen.getByText(/Proteção Git · Aplicado:/)).toBeVisible();
+  expect(screen.getByText(/Plugin: first@local/)).toBeVisible();
+  expect(screen.getByText(/Plugin: second@local/)).toBeVisible();
+});
+
 it("shows video tool calls under the managed Hyperframes resource", async () => {
   const user = userEvent.setup();
   render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [{ id: "video", name: "video_render", status: "completed" }] }]} />);

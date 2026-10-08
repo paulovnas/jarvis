@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type EventCallback } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MCP_TEMPLATE, type McpServer } from "@/core/mcp";
@@ -10,17 +11,33 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const mocked = vi.mocked(invoke);
+let changed: EventCallback<unknown> | undefined;
 const server: McpServer = { id: "builtin-context7", name: "context7", kind: "local", enabled: true, configured: false, revision: 0, lastCheck: null };
 
 describe("McpSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    changed = undefined;
+    vi.mocked(listen).mockImplementation(async (name, callback) => {
+      if (name === "mcp-servers:changed") changed = callback;
+      return () => { changed = undefined; };
+    });
     mocked.mockReset().mockImplementation(async (command) => {
       if (command === "list_mcp_servers") return [server];
       if (command === "get_mcp_config") return MCP_TEMPLATE;
       if (command === "test_mcp_server") return { toolCount: 2, tools: ["resolve-library-id", "query-docs"], error: null };
       throw new Error("Unexpected command");
     });
+  });
+
+  it("refreshes an open MCP settings panel when an approved registration changes the catalog", async () => {
+    render(<McpSettings />);
+    await screen.findByRole("button", { name: "Detalhes do MCP context7" });
+    mocked.mockImplementation(async command => command === "list_mcp_servers"
+      ? [server, { ...server, id: "new", name: "firebase", enabled: false }]
+      : { toolCount: 0, tools: [], error: null });
+    act(() => changed?.({ event: "mcp-servers:changed", id: 1, payload: null }));
+    expect(await screen.findByRole("button", { name: "Detalhes do MCP firebase" })).toBeVisible();
   });
 
   it("mantém o Context7 compacto e não conecta enquanto a chave é um exemplo", async () => {

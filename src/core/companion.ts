@@ -50,7 +50,7 @@ export const companionConversationsSchema = z.array(z.object({
 }));
 export const companionModelsSchema = z.array(z.object({
   provider: z.string(), providerKind: z.string().optional(), executor: z.literal("claude").optional(),
-  models: z.array(z.object({ value: z.string(), label: z.string(), reasoningLevels: z.array(z.string()), defaultReasoningLevel: z.string().nullable() })),
+  models: z.array(z.object({ value: z.string(), label: z.string(), reasoningLevels: z.array(z.string()), defaultReasoningLevel: z.string().nullable(), supportsFast: z.boolean().optional() })),
   emptyMessage: z.string().optional(),
 }));
 export type CompanionItem = z.infer<typeof companionItemSchema>;

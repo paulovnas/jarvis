@@ -239,6 +239,7 @@ async fn attachment_references_survive_queue_and_journal_and_never_inline_binary
         account: "test".into(),
         model: "test".into(),
         reasoning: None,
+        service_tier: None,
         mode: Mode::Build,
         workflow: None,
         custom_workflow_id: None,

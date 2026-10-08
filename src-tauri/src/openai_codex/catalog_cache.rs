@@ -100,6 +100,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_model_cache_defaults_to_normal_then_accepts_refreshed_fast_capability() {
+        let home = tempfile::tempdir().unwrap();
+        let state = persistence::AppState::default();
+        let records = state.with_connection(home.path(), |db| {
+            db.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('openai-codex-local','openai-codex','id')", []).unwrap();
+            persistence::list_provider_accounts(db)
+        }).unwrap();
+        let model: ProviderModel = serde_json::from_value(serde_json::json!({
+            "id":"model", "name":"Model", "reasoningLevels":[], "defaultReasoningLevel":null,
+            "supportsFast":true
+        }))
+        .unwrap();
+        let account = ProviderAccount::from_record(records[0].clone(), None, vec![model], true);
+        remember(home.path(), &records, std::slice::from_ref(&account));
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path(home.path())).unwrap()).unwrap();
+        legacy["openai-codex-local"]["account"]["models"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("supportsFast");
+        std::fs::write(path(home.path()), serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let cached = list(&state, home.path()).unwrap();
+        assert!(cached[0].models_stale);
+        assert!(!cached[0].models[0].supports_fast);
+        remember(home.path(), &records, &[account]);
+        assert!(list(&state, home.path()).unwrap()[0].models[0].supports_fast);
+    }
+
+    #[test]
     fn local_catalog_survives_failed_refresh_and_respects_current_account_settings() {
         let home = tempfile::tempdir().unwrap();
         let state = persistence::AppState::default();
@@ -111,6 +140,7 @@ mod tests {
             records[0].clone(),
             None,
             vec![ProviderModel {
+                supports_fast: false,
                 id: "test-model".into(),
                 name: "Test model".into(),
                 reasoning_levels: vec![],

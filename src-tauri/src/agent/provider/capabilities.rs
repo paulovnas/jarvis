@@ -213,6 +213,7 @@ impl ModelCapabilities {
                 .find(|item| item.id == options.model)
                 .map_or(
                     ProviderModel {
+                        supports_fast: false,
                         id: options.model.clone(),
                         name: options.model.clone(),
                         reasoning_levels: Vec::new(),
@@ -221,6 +222,7 @@ impl ModelCapabilities {
                         context_window: None,
                     },
                     |item| ProviderModel {
+                        supports_fast: false,
                         id: item.id.clone(),
                         name: item.name.clone(),
                         reasoning_levels: item.reasoning_levels.clone(),
@@ -235,6 +237,7 @@ impl ModelCapabilities {
                 .get(&options.model)
                 .unwrap_or(&Value::Null);
             ProviderModel {
+                supports_fast: false,
                 id: options.model.clone(),
                 name: options.model.clone(),
                 reasoning_levels: if metadata["supportsThinking"] == true {
@@ -248,6 +251,7 @@ impl ModelCapabilities {
             }
         } else {
             ProviderModel {
+                supports_fast: false,
                 id: options.model.clone(),
                 name: options.model.clone(),
                 reasoning_levels: options.reasoning.iter().cloned().collect(),
@@ -287,6 +291,7 @@ mod tests {
 
     fn model() -> ProviderModel {
         ProviderModel {
+            supports_fast: false,
             id: "model".into(),
             name: "Model".into(),
             reasoning_levels: vec!["low".into(), "high".into()],

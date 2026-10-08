@@ -203,6 +203,7 @@ mod tests {
             "access", "refresh", 1, "account", None, None,
         );
         let model = crate::openai_codex::ProviderModel {
+            supports_fast: false,
             id: "model".into(),
             name: "Model".into(),
             reasoning_levels: vec!["medium".into()],

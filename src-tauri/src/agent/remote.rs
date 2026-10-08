@@ -232,6 +232,8 @@ struct ReviewDecision {
     tool_id: String,
     approved: bool,
     note: Option<String>,
+    #[serde(default, skip_serializing)]
+    mcp_values: Option<authoring::McpValues>,
 }
 
 #[derive(Deserialize)]
@@ -731,7 +733,13 @@ async fn library_result(app: &tauri::AppHandle) -> Result<Value, AgentError> {
 }
 
 async fn review(app: &tauri::AppHandle, params: Authoring) -> Result<(), AgentError> {
-    let decision = decode(encode(params.decision)?)?;
+    let decision = authoring::Decision {
+        turn_id: params.decision.turn_id,
+        tool_id: params.decision.tool_id,
+        approved: params.decision.approved,
+        note: params.decision.note,
+        mcp_values: params.decision.mcp_values,
+    };
     if params.agent_id == "main" {
         authoring::answer_agent_authoring(
             app.clone(),

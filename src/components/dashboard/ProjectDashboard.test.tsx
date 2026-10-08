@@ -79,11 +79,12 @@ describe("Project Dashboard", () => {
     render(<ProjectDashboard project={project} projectUpdater={projectUpdater} onSelectSession={vi.fn()} />);
     expect(screen.getByRole("main", { name: "Detalhes de Jarvis" })).toBeVisible();
     expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Geral", "Kanban", "Terminais0", "Opções"]);
+    expect(screen.queryByRole("textbox", { name: "Nome do projeto" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: /^Terminais/ }));
     expect(await screen.findByText("Nenhum terminal aberto")).toBeVisible();
     expect(call).toHaveBeenCalledWith("list_project_terminals", { projectId: "p1" });
     await user.click(screen.getByRole("tab", { name: "Opções" }));
-    expect(screen.getByRole("textbox", { name: "Nome do projeto" })).toHaveValue("Jarvis");
+    expect(await screen.findByRole("textbox", { name: "Nome do projeto" })).toHaveValue("Jarvis");
     await user.click(screen.getByRole("tab", { name: "Commit" }));
     expect(await screen.findByRole("textbox", { name: "Instrução de publicação" })).toHaveTextContent("Review changes");
     expect(call).toHaveBeenCalledWith("get_project_publication_settings", { projectId: "p1" });

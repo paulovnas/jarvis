@@ -1235,7 +1235,10 @@ pub(super) fn interrupt_tools(turn: &mut StoredTurn) {
                     tool.output = super::questions::cancelled_output();
                 } else if matches!(
                     tool.name.as_str(),
-                    "jarvis_propose_agent" | "jarvis_propose_flow"
+                    "jarvis_propose_agent"
+                        | "jarvis_propose_flow"
+                        | "jarvis_propose_mcp"
+                        | "jarvis_propose_hook"
                 ) {
                     tool.output = super::authoring::cancelled_output();
                 }
@@ -1333,7 +1336,10 @@ pub(super) fn safe_to_resume(turn: &StoredTurn) -> bool {
                         && tool.output == super::questions::cancelled_output())
                     || (matches!(
                         tool.name.as_str(),
-                        "jarvis_propose_agent" | "jarvis_propose_flow"
+                        "jarvis_propose_agent"
+                            | "jarvis_propose_flow"
+                            | "jarvis_propose_mcp"
+                            | "jarvis_propose_hook"
                     ) && tool.output == super::authoring::cancelled_output())
             })
         && !turn.wire.iter().any(|item| {
@@ -1375,6 +1381,7 @@ mod tests {
                     account: "test".into(),
                     model: "model".into(),
                     reasoning: None,
+                    service_tier: None,
                     mode: Mode::Build,
                     workflow: None,
                     custom_workflow_id: None,
@@ -1781,6 +1788,32 @@ mod tests {
 
         assert!(result.is_none());
         assert!(!visited);
+    }
+
+    #[test]
+    fn interrupted_mcp_registration_requires_a_new_explicit_decision_on_resume() {
+        let mut item = turn();
+        item.turn.steps.push(Step {
+            tools: vec![ToolCall {
+                id: "mcp-proposal".into(),
+                name: "jarvis_propose_mcp".into(),
+                args: json!({"summary":"Adicionar um MCP"}),
+                status: "pending".into(),
+                output: String::new(),
+                duration_ms: 0,
+            }],
+            ..Step::default()
+        });
+        interrupt_tools(&mut item);
+        assert_eq!(
+            item.turn.steps[0].tools[0].output,
+            crate::agent::authoring::cancelled_output()
+        );
+        assert!(all_tool_results_durable(&item));
+        assert!(!safe_to_resume(&item));
+        let wire = item.wire.clone();
+        interrupt_tools(&mut item);
+        assert_eq!(item.wire, wire);
     }
 
     #[test]

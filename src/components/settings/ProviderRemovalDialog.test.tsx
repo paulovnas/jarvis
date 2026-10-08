@@ -93,3 +93,11 @@ it.each(["web_search", "vision", "image_generation", "chat_title"] as const)("ke
   await screen.findByLabelText("Vínculo: Analista");
   expect(screen.queryByRole("button", { name: "Modelo CLI para Analista" })).not.toBeInTheDocument();
 });
+
+it("discloses a retained Fast choice and its higher consumption in removal review", async () => {
+  const fastItem = { ...item, choice: { ...item.choice, serviceTier: "priority" } };
+  call.mockResolvedValue({ ...plan, items: [fastItem] });
+  setup();
+  expect(await screen.findByText(/ · Fast/)).toBeVisible();
+  expect(screen.getByText("Maior consumo dos limites/créditos")).toBeVisible();
+});

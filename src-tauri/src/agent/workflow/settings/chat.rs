@@ -171,6 +171,7 @@ pub(in crate::agent) fn effective_choice(
         account: options.account.clone(),
         model: options.model.clone(),
         reasoning: options.reasoning.clone(),
+        service_tier: options.service_tier,
         fallback: options
             .model_selection
             .as_ref()

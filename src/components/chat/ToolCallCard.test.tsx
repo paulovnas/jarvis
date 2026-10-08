@@ -35,6 +35,11 @@ describe("ToolCallCard Web Search", () => {
     render(<ToolCallCard tool={{ id: "tasks", name: "update_tasks", status: "completed", args: { tasks: [{ id: "build", title: "Implementar", status: "in_progress" }] }, output: "{\"updated\":1}" }} />);
     expect(screen.getByRole("button", { name: /Atualizar tarefas.*Concluída/ })).toBeVisible();
   });
+  it("identifies an MCP registration waiting for explicit user approval", () => {
+    render(<ToolCallCard tool={{ id: "mcp-proposal", name: "jarvis_propose_mcp", status: "pending", args: { name: "Monday" }, output: "" }} />);
+    expect(screen.getByRole("button", { name: /MCP · Proposta de servidor.*Aguardando autorização/ })).toBeVisible();
+    expect(screen.queryByText("jarvis_propose_mcp")).not.toBeInTheDocument();
+  });
   it("shows the direct-task preflight as attention instead of an execution failure", () => {
     const reminder = "Atualize a lista com update_tasks e mantenha uma tarefa em andamento antes de executar alterações.";
     render(<ToolCallCard tool={{ id: "task-reminder", name: "ctx_execute", status: "error", args: {}, output: reminder, error: reminder }} />);
@@ -57,6 +62,7 @@ describe("ToolCallCard Web Search", () => {
     ["graft_check_freshness", "Graft · Verificar índice"],
     ["jarvis_inspect_publication", "Git · Inspecionar repositórios"],
     ["jarvis_propose_publication", "GitHub · Proposta de publicação"],
+    ["jarvis_propose_hook", "Hooks · Proposta de configuração"],
     ["progress_checkpoint", "Reorganizar próxima ação"],
     ["bash_wait", "Aguardar comando"],
     ["bash_cancel", "Encerrar comando"],

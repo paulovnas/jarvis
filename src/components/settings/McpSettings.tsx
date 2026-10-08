@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { readResource, ResourceTimeoutError } from "@/core/resource-request";
 import { Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -67,6 +68,15 @@ export function McpSettings({ onCountChange }: { onCountChange?: (count: number)
     }).catch(() => { if (active) setError("Não foi possível carregar os MCPs."); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; mounted.current = false; };
   }, [reload, onCountChange, checkServer]);
+
+  useEffect(() => {
+    let active = true;
+    let dispose: (() => void) | undefined;
+    void listen("mcp-servers:changed", () => { if (active) setReload(value => value + 1); }).then(stop => {
+      if (active) dispose = stop; else stop();
+    }).catch(() => {});
+    return () => { active = false; dispose?.(); };
+  }, []);
 
   async function perform(operation: () => Promise<void>, failed: (error: unknown) => void = (err) => toast.error(message(err))) {
     if (pending.current) return;

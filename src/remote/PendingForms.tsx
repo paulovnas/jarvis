@@ -10,7 +10,11 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { QuestionCard } from "@/components/chat/QuestionCard";
 import { ToolApproval } from "@/components/chat/ToolApproval";
-import type { PendingAuthoring } from "@/core/authoring";
+import { McpProposalFields } from "@/components/chat/McpProposalFields";
+import { hasMcpAuthoringValues, type McpAuthoringValues, type PendingAuthoring } from "@/core/authoring";
+import { HookProposalFields } from "@/components/chat/HookProposalFields";
+import { PluginChangeReview } from "@/components/settings/PluginChangeReview";
+import { ProjectInstructionsReview } from "@/components/chat/ProjectInstructionsReview";
 import type { QuestionDraft } from "@/core/questions";
 import type { ValidationBatch, ValidationItem } from "@/core/workflow";
 import type { Mutation, RemoteChat } from "./client";
@@ -23,13 +27,17 @@ function ReviewProposal({ request, agentId, conversationId, onAction, busy, form
 }) {
   const draftKey = JSON.stringify([conversationId, agentId, request.turnId, request.toolId]);
   const [note, setNote] = useState(() => formDrafts.get(draftKey) ?? "");
+  const [mcpValues, setMcpValues] = useState<McpAuthoringValues>({ environment: {}, headers: {} });
   const publication = request.target.kind === "publication";
-  const decision = (approved: boolean) => onAction(publication ? "validation" : "authoring", {
+  const projectInstructions = request.target.kind === "project_instructions";
+  const mcpServer = request.target.kind === "mcp" ? request.target.server : null;
+  const credentialsReady = !mcpServer || hasMcpAuthoringValues(mcpServer, mcpValues);
+  const decision = (approved: boolean) => approved && !credentialsReady ? Promise.resolve(false) : onAction(publication ? "validation" : "authoring", {
     conversationId, agentId, ...(publication ? { kind: "publication" } : {}),
-    decision: { turnId: request.turnId, toolId: request.toolId, approved, note: note.trim() || null },
+    decision: { turnId: request.turnId, toolId: request.toolId, approved, note: note.trim() || null, ...(approved && mcpServer ? { mcpValues } : {}) },
   });
-  return <Card role="region" aria-label={publication ? "Aprovação Git e GitHub" : "Aprovação de configuração"} className={cn("remote-review-panel", focused && "remote-review-focused")}>
-    <CardHeader className="remote-review-header"><CardTitle>{publication ? "Revisar Git e GitHub" : "Revisar configuração"}</CardTitle></CardHeader>
+  return <Card role="region" aria-label={projectInstructions ? "Aprovação das instruções do projeto" : publication ? "Aprovação Git e GitHub" : mcpServer ? "Aprovação de servidor MCP" : "Aprovação de configuração"} className={cn("remote-review-panel", focused && "remote-review-focused")}>
+    <CardHeader className="remote-review-header"><CardTitle>{projectInstructions ? "Revisar instruções do projeto" : publication ? "Revisar Git e GitHub" : mcpServer ? "Revisar servidor MCP" : "Revisar configuração"}</CardTitle></CardHeader>
     <CardContent className="remote-review-content flex min-w-0 flex-col gap-4">
       <CardDescription className="whitespace-pre-wrap break-words">{request.summary}</CardDescription>
       {request.target.kind === "publication" ? request.target.after.repositories.map(repository => <Card key={repository.path} size="sm">
@@ -54,11 +62,11 @@ function ReviewProposal({ request, agentId, conversationId, onAction, busy, form
             {repository.pullRequest.merge && <Alert><AlertTitle>Merge após criar ou localizar</AlertTitle><AlertDescription>{repository.pullRequest.merge.method}{repository.pullRequest.merge.deleteBranch ? " · Excluir branch após o merge" : ""}</AlertDescription></Alert>}
           </section>}
         </CardContent>
-      </Card>) : <section><p className="micro-label">Proposta completa</p><pre className="remote-code">{JSON.stringify(request.target, null, 2)}</pre></section>}
+      </Card>) : request.target.kind === "project_instructions" ? <ProjectInstructionsReview target={request.target} /> : request.target.kind === "hook" ? <HookProposalFields target={request.target} /> : request.target.kind === "plugin" ? <PluginChangeReview preview={request.target.preview} /> : mcpServer ? <McpProposalFields server={mcpServer} values={mcpValues} disabled={busy} onChange={(group, key, value) => setMcpValues(current => ({ ...current, [group]: { ...current[group], [key]: value } }))} /> : <section><p className="micro-label">Proposta completa</p><pre className="remote-code">{JSON.stringify(request.target, null, 2)}</pre></section>}
       <FieldGroup><Field><FieldLabel htmlFor={`note-${agentId}-${request.toolId}`}>Orientação para o agente (opcional)</FieldLabel><Textarea id={`note-${agentId}-${request.toolId}`} maxLength={2000} disabled={busy} value={note} onChange={event => { formDrafts.set(draftKey, event.target.value); setNote(event.target.value); }} /></Field></FieldGroup>
       {publication && note.trim() && <Alert><AlertTitle>Solicitar revisão</AlertTitle><AlertDescription>O agente incorporará sua orientação e apresentará outra proposta antes de executar as ações.</AlertDescription></Alert>}
     </CardContent>
-    <CardFooter className="remote-review-actions flex-wrap gap-2"><Button variant="outline" className="min-w-0 cursor-pointer" disabled={busy} onClick={() => { void decision(false); }}>Recusar</Button><Button className="min-w-0 cursor-pointer" disabled={busy} onClick={() => { void decision(true); }}>{publication ? note.trim() ? "Enviar para revisão" : "Aprovar e executar" : "Aprovar e salvar"}</Button></CardFooter>
+    <CardFooter className="remote-review-actions flex-wrap gap-2"><Button variant="outline" className="min-w-0 cursor-pointer" disabled={busy} onClick={() => { void decision(false); }}>Recusar</Button><Button className="min-w-0 cursor-pointer" disabled={busy || !credentialsReady} onClick={() => { void decision(true); }}>{publication ? note.trim() ? "Enviar para revisão" : "Aprovar e executar" : mcpServer ? "Aprovar e adicionar" : request.action === "delete" ? "Aprovar e remover" : "Aprovar e salvar"}</Button></CardFooter>
   </Card>;
 }
 
@@ -95,7 +103,7 @@ export function PendingForms({ bundle, projectPath, busy, onAction, questionDraf
         onAnswer={(request, response) => onAction("question", { conversationId: chat.conversationId, agentId: owner.id, turnId: request.turnId, toolId: request.toolId, response })}
         onInteract={request => onAction("question", { conversationId: chat.conversationId, agentId: owner.id, turnId: request.turnId, toolId: request.toolId, pause: true })} /></div>}
       {owner.pendingApproval && owner.activeTurnId && <ToolApproval key={`${owner.activeTurnId}-${owner.pendingApproval.tool.id}`} request={owner.pendingApproval} projectPath={projectPath} onAnswer={decision => onAction("approval", { conversationId: chat.conversationId, agentId: owner.id, turnId: owner.activeTurnId, toolId: owner.pendingApproval?.tool.id, decision })} />}
-      {owner.pendingAuthoring && <ReviewProposal key={`${chat.conversationId}-${owner.id}-${owner.pendingAuthoring.toolId}`} request={owner.pendingAuthoring} agentId={owner.id} conversationId={chat.conversationId} onAction={onAction} busy={busy} formDrafts={formDrafts} focused={focused} />}
+      {owner.pendingAuthoring && <ReviewProposal key={`${chat.conversationId}-${owner.id}-${owner.pendingAuthoring.turnId}-${owner.pendingAuthoring.toolId}`} request={owner.pendingAuthoring} agentId={owner.id} conversationId={chat.conversationId} onAction={onAction} busy={busy} formDrafts={formDrafts} focused={focused} />}
     </section>)}
     {validation && <section className="flex min-w-0 flex-col gap-3" aria-label="Validação manual"><Separator /><p className="micro-label">Validação manual</p>
       {validation.stale && <Alert><AlertTitle>Aguardando nova rodada</AlertTitle><AlertDescription>Esta validação já não corresponde à execução atual.</AlertDescription></Alert>}

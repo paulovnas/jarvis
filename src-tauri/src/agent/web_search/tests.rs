@@ -8,6 +8,7 @@ fn options(account: &str, model: &str) -> TurnOptions {
         account: account.into(),
         model: model.into(),
         reasoning: None,
+        service_tier: None,
         mode: super::super::Mode::Plan,
         workflow: None,
         custom_workflow_id: None,
@@ -276,6 +277,7 @@ fn plain_completions_failed_searches_and_missing_sources_are_not_search_results(
 #[test]
 fn search_requests_the_configured_model_independently_of_the_chat() {
     let catalog = ["gpt-5.5", "gpt-5.6-luna"].map(|id| ProviderModel {
+        supports_fast: false,
         id: id.into(),
         name: id.into(),
         context_window: None,
@@ -302,6 +304,7 @@ fn search_requests_the_configured_model_independently_of_the_chat() {
 #[test]
 fn missing_selected_model_is_an_error_instead_of_silent_fallback() {
     let catalog = [ProviderModel {
+        supports_fast: false,
         id: "gpt-5.5".into(),
         name: "GPT-5.5".into(),
         context_window: None,

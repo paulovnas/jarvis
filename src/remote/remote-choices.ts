@@ -1,5 +1,5 @@
 import { chatAgentModelKey } from "@/core/chat-models";
-import { executionChoice, executionSelection, executorOf } from "@/core/executors";
+import { executionChoice, executionSelection, executorOf, supportsFastMode } from "@/core/executors";
 import { defaultReasoning, selectableReasoningLevels } from "@/core/reasoning";
 import type { TurnOptions } from "@/core/chat";
 import type { ModelChoice } from "@/core/provider-references";
@@ -33,9 +33,11 @@ export function remoteModelProblem(choices: RemoteChoices, flow: FlowSelection, 
   if (selected.customWorkflowId && !choices.catalog.flows.some(item => item.id === selected.customWorkflowId)) return "Este fluxo não está disponível. Selecione outro fluxo.";
   const available = (target: ModelChoice) => {
     const selection = executionSelection(target)!;
-    const model = choices.models.filter(group => executorOf(group) === executorOf(selection)).flatMap(group => group.models).find(item => item.value === selection.model);
-    return model && (!target.reasoning || selectableReasoningLevels(model.reasoningLevels).includes(target.reasoning));
+    const group = choices.models.find(group => executorOf(group) === executorOf(selection) && group.models.some(item => item.value === selection.model));
+    const model = group?.models.find(item => item.value === selection.model);
+    return model && (!target.reasoning || selectableReasoningLevels(model.reasoningLevels).includes(target.reasoning)) && (target.serviceTier !== "priority" || supportsFastMode(group?.providerKind, model, target.executor));
   };
+  if (choice?.serviceTier === "priority" && !available(choice)) return "Fast não está disponível neste provedor ou modelo. Selecione Normal ou outro modelo.";
   if (!choice || !available(choice)) return "O modelo deste chat não está disponível. Selecione um provedor e modelo.";
   if (choice.fallback && !available(choice.fallback)) return "O modelo secundário não está disponível. Revise a seleção deste chat.";
   const customFlow = choices.catalog.flows.find(item => item.id === selected.customWorkflowId);
@@ -51,9 +53,11 @@ export function remoteModelProblem(choices: RemoteChoices, flow: FlowSelection, 
 }
 
 export function remoteTurnOptions(flow: FlowSelection, choice: ModelChoice, previous: TurnOptions | null): TurnOptions {
-  const { executor, account, model, reasoning } = choice;
+  const { executor, account, model, reasoning, serviceTier } = choice;
   const selected = flowOptions(flow);
   const options: TurnOptions = { ...previous, executor, account, model, reasoning, ...selected, customWorkflowId: selected.customWorkflowId ?? null, customAgentId: selected.customAgentId ?? null, mode: previous?.mode ?? "build", approvalMode: previous?.approvalMode ?? "yolo" };
+  if (serviceTier === "priority") options.serviceTier = serviceTier;
+  else delete options.serviceTier;
   delete options.modelSelection;
   if (!["planned", "complete"].includes(selected.workflow ?? "") && !selected.customWorkflowId) delete options.manualValidation;
   if (selected.customAgentId === "builtin:github") delete options.automaticPublication;

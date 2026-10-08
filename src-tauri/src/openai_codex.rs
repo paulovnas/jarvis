@@ -27,6 +27,8 @@ const OPENAI_CODEX_PROFILE_CLAIM: &str = "https://api.openai.com/profile";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct ProviderModel {
+    #[serde(default, rename = "supportsFast")]
+    pub(crate) supports_fast: bool,
     pub(crate) id: String,
     pub(crate) name: String,
     #[serde(rename = "reasoningLevels")]
@@ -41,6 +43,25 @@ pub(crate) struct ProviderModel {
     pub(crate) multi_agent_reasoning_effort: Option<String>,
     #[serde(default, rename = "contextWindow")]
     pub(crate) context_window: Option<u64>,
+}
+
+/// Fast is an explicit per-chat choice, never inferred from a model slug or plan.
+/// Validate against this account's catalog before selecting any transport.
+pub(crate) fn validate_service_tier(
+    credential: &CodexCredential,
+    model: &ProviderModel,
+    tier: Option<crate::agent::workflow::settings::ServiceTier>,
+) -> Result<(), ProviderError> {
+    if tier.is_none() {
+        return Ok(());
+    }
+    if credential.custom.is_some() || credential.project_id.is_some() || !model.supports_fast {
+        return Err(ProviderError::new(
+            "invalid_service_tier",
+            "O modo Fast não está disponível para este modelo nesta conta. Selecione Normal ou outro modelo ChatGPT compatível. Atualize os modelos do provedor se necessário.",
+        ));
+    }
+    Ok(())
 }
 
 impl ProviderModel {
@@ -985,6 +1006,43 @@ mod tests {
     }
 
     #[test]
+    fn fast_capability_uses_only_the_selected_accounts_advertised_tiers() {
+        for (metadata, expected) in [
+            (
+                serde_json::json!({"service_tiers":[{"id":"priority"}]}),
+                true,
+            ),
+            (serde_json::json!({"service_tiers":[{"id":"fast"}]}), true),
+            (serde_json::json!({"additional_speed_tiers":["fast"]}), true),
+            (
+                serde_json::json!({"service_tiers":[],"additional_speed_tiers":["fast"]}),
+                false,
+            ),
+            (
+                serde_json::json!({"service_tiers":null,"additional_speed_tiers":["fast"]}),
+                false,
+            ),
+            (serde_json::json!({"service_tiers":[{"id":"flex"}]}), false),
+            (serde_json::json!({"service_tiers":["priority"]}), false),
+            (serde_json::json!({}), false),
+        ] {
+            let mut entry = metadata.clone();
+            entry["slug"] = serde_json::json!("gpt-6.1-sol");
+            let models = normalize_codex_models(&serde_json::json!({"models":[entry]})).unwrap();
+            assert_eq!(models[0].supports_fast, expected, "{metadata}");
+            assert_eq!(
+                serde_json::to_value(&models[0]).unwrap()["supportsFast"],
+                expected
+            );
+        }
+        let legacy: ProviderModel = serde_json::from_value(serde_json::json!({
+            "id":"gpt-6.1-sol", "name":"Model", "reasoningLevels":[], "defaultReasoningLevel":null
+        }))
+        .unwrap();
+        assert!(!legacy.supports_fast);
+    }
+
+    #[test]
     fn codex_model_list_is_filtered_sorted_and_normalized() {
         let payload = serde_json::json!({
             "models": [
@@ -1013,6 +1071,7 @@ mod tests {
             normalize_codex_models(&payload),
             Some(vec![
                 ProviderModel {
+                    supports_fast: false,
                     id: "gpt-first".to_owned(),
                     name: "GPT First".to_owned(),
                     context_window: None,
@@ -1021,6 +1080,7 @@ mod tests {
                     multi_agent_reasoning_effort: None,
                 },
                 ProviderModel {
+                    supports_fast: false,
                     id: "gpt-later".to_owned(),
                     name: "GPT Later".to_owned(),
                     context_window: None,
@@ -1110,6 +1170,7 @@ mod tests {
             serde_json::to_value(models).expect("IPC JSON"),
             serde_json::json!([{
                 "id": "model-one", "name": "model-one",
+                "supportsFast": false,
                 "reasoningLevels": ["low", "medium", "xhigh", "future"],
                 "defaultReasoningLevel": "medium", "contextWindow": null
             }])
@@ -1805,6 +1866,64 @@ impl Default for OpenAiCodexState {
 }
 
 impl OpenAiCodexState {
+    /// Resolve app gateway credentials without selecting or rediscovering a model.
+    /// Only an explicitly bound, enabled OpenAI Codex account is eligible.
+    pub(crate) fn app_credential(
+        &self,
+        state: &persistence::AppState,
+        home: &std::path::Path,
+        alias: &str,
+    ) -> Result<CodexCredential, ProviderError> {
+        custom::validate_alias(alias)?;
+        let _guard = self
+            .manager
+            .credentials_guard
+            .lock()
+            .map_err(|_| ProviderError::internal())?;
+        let record = state
+            .list_provider_accounts(home)
+            .map_err(|_| ProviderError::database())?
+            .into_iter()
+            .find(|record| {
+                record.alias == alias && record.enabled && record.provider_kind == "openai-codex"
+            })
+            .ok_or_else(|| {
+                ProviderError::new(
+                    "app_account_required",
+                    "Selecione uma conta OpenAI Codex ativa para conectar o aplicativo.",
+                )
+            })?;
+        let mut credential = self.manager.secret_store.load(alias).map_err(|_| {
+            ProviderError::new(
+                "credential_missing",
+                "Reconecte a conta OpenAI Codex nas configurações.",
+            )
+        })?;
+        if credential.account_id != record.account_id
+            || credential.project_id.is_some()
+            || credential.custom.is_some()
+        {
+            return Err(ProviderError::new(
+                "account_mismatch",
+                "Reconecte a conta OpenAI Codex selecionada.",
+            ));
+        }
+        if credential.needs_refresh()? {
+            credential = refresh_credential(&self.manager.endpoints, &credential)?;
+            if credential.account_id != record.account_id || credential.project_id.is_some() {
+                return Err(ProviderError::new(
+                    "account_mismatch",
+                    "A renovação retornou outra conta. Reconecte a conta desejada.",
+                ));
+            }
+            self.manager
+                .secret_store
+                .store(alias, &credential)
+                .map_err(|_| ProviderError::internal())?;
+        }
+        Ok(credential)
+    }
+
     pub(crate) fn remove_with_updates<T>(
         &self,
         state: &persistence::AppState,
@@ -2813,6 +2932,29 @@ fn model_reasoning(
     )
 }
 
+fn model_supports_fast(entry: &serde_json::Map<String, serde_json::Value>) -> bool {
+    // The account catalog is authoritative. An explicit empty/invalid tier list
+    // must not fall back to deprecated metadata or a model-name guess.
+    if let Some(tiers) = entry.get("service_tiers") {
+        return tiers.as_array().is_some_and(|tiers| {
+            tiers.iter().any(|tier| {
+                matches!(
+                    tier.get("id").and_then(serde_json::Value::as_str),
+                    Some("priority" | "fast")
+                )
+            })
+        });
+    }
+    entry
+        .get("additional_speed_tiers")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|tiers| {
+            tiers
+                .iter()
+                .any(|tier| matches!(tier.as_str(), Some("fast" | "priority")))
+        })
+}
+
 fn normalize_codex_models(payload: &serde_json::Value) -> Option<Vec<ProviderModel>> {
     let payload = payload.as_object()?;
     let entries = payload
@@ -2850,6 +2992,7 @@ fn normalize_codex_models(payload: &serde_json::Value) -> Option<Vec<ProviderMod
         models.push((
             priority,
             ProviderModel {
+                supports_fast: model_supports_fast(entry),
                 id: id.to_owned(),
                 name: name.to_owned(),
                 reasoning_levels,
@@ -3506,6 +3649,80 @@ mod oauth_tests {
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(serde_json::to_vec(&payload).expect("JWT payload"));
         format!("header.{payload}.signature")
+    }
+
+    #[test]
+    fn app_credentials_require_enabled_bound_codex_identity_without_model_discovery() {
+        let home = tempfile::tempdir().unwrap();
+        let state = persistence::AppState::default();
+        let store = Arc::new(InMemorySecretStore::default());
+        let alias = "openai-codex-apps";
+        let credential = CodexCredential::new(
+            "app-access",
+            "app-refresh",
+            i64::MAX,
+            "bound-account",
+            None,
+            None,
+        );
+        state
+            .with_connection(home.path(), |db| {
+                commit_provider_account(db, store.as_ref(), alias, &credential).unwrap();
+                Ok::<_, PersistenceError>(())
+            })
+            .unwrap();
+        // Invalid endpoints prove that resolving a valid credential never queries models.
+        let oauth = OpenAiCodexState {
+            manager: new_manager(
+                "http://127.0.0.1:1/token".into(),
+                Duration::from_millis(100),
+                store.clone(),
+                vec![],
+            ),
+        };
+        assert_eq!(
+            oauth
+                .app_credential(&state, home.path(), alias)
+                .unwrap()
+                .access,
+            "app-access"
+        );
+        state
+            .with_connection(home.path(), |db| {
+                db.execute(
+                    "UPDATE provider_accounts SET enabled=0 WHERE alias=?1",
+                    [alias],
+                )
+                .unwrap();
+                Ok::<_, PersistenceError>(())
+            })
+            .unwrap();
+        assert!(oauth.app_credential(&state, home.path(), alias).is_err());
+        state
+            .with_connection(home.path(), |db| {
+                db.execute(
+                    "UPDATE provider_accounts SET enabled=1 WHERE alias=?1",
+                    [alias],
+                )
+                .unwrap();
+                Ok::<_, PersistenceError>(())
+            })
+            .unwrap();
+        store
+            .store(
+                alias,
+                &CodexCredential::new(
+                    "other-access",
+                    "other-refresh",
+                    i64::MAX,
+                    "another-account",
+                    None,
+                    None,
+                ),
+            )
+            .unwrap();
+        assert!(oauth.app_credential(&state, home.path(), alias).is_err());
+        state.close();
     }
 
     #[test]

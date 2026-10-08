@@ -151,14 +151,20 @@ pub async fn compact_agent_context(
     let overhead = compaction::estimate(
         &json!({"instructions": instructions, "tools": definitions, "runtime_state": runtime_state}),
     );
-    let trace = {
+    let (trace, turn_id) = {
         let data = session.data.lock().map_err(|_| AgentError::internal())?;
         let turn_id = data
             .turns
             .last()
-            .map(|turn| turn.turn.id.as_str())
-            .unwrap_or("manual_compaction");
-        super::telemetry::trace(&session.id, turn_id)
+            .map(|turn| turn.turn.id.clone())
+            .unwrap_or_else(|| "manual_compaction".into());
+        (super::telemetry::trace(&session.id, &turn_id), turn_id)
+    };
+    let manual_hooks = if companion_chat::is_global_session(&session.id) {
+        crate::hooks::runtime::Runtime::inactive()
+    } else {
+        crate::hooks::runtime::Runtime::load(&skill_home, &session.root, &session.id, &turn_id)
+            .map_err(|cause| AgentError::new("hook_config", &cause.message))?
     };
     let result = tokio::time::timeout(
         Duration::from_secs(600),
@@ -170,6 +176,7 @@ pub async fn compact_agent_context(
             true,
             signal,
             Some(&hooks),
+            Some(&manual_hooks),
             Some(&trace),
         ),
     )
@@ -217,6 +224,7 @@ mod tests {
             account: "test".into(),
             model: "model".into(),
             reasoning: None,
+            service_tier: None,
             mode: Mode::Plan,
             workflow: None,
             custom_workflow_id: None,

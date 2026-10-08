@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Bot, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, GitCompareArrows, GitMerge, GitPullRequest, LockKeyhole, MessageSquareText, RefreshCw, RotateCcw, Route, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
+import { Anchor, Bot, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, GitCompareArrows, GitMerge, GitPullRequest, LockKeyhole, MessageSquareText, Plug, RefreshCw, RotateCcw, Route, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,18 +11,28 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { WorkflowIdentityIcon } from "@/components/agents/WorkflowIdentityIcon";
 import { LazyChatMarkdown } from "./LazyChatMarkdown";
+import { McpProposalFields } from "./McpProposalFields";
+import { HookProposalFields } from "./HookProposalFields";
+import { PluginChangeReview } from "@/components/settings/PluginChangeReview";
+import { ProjectInstructionsReview } from "./ProjectInstructionsReview";
 import { AGENT_USAGE_LABELS, CAPABILITY_LABELS, type CustomAgent, type CustomFlow } from "@/core/workflow-catalog";
 import { agentAppearance, flowAppearance } from "@/core/workflow-appearance";
-import type { PendingAuthoring } from "@/core/authoring";
+import { hasMcpAuthoringValues, type McpAuthoringValues, type PendingAuthoring } from "@/core/authoring";
 import type { PublicationProposal } from "@/core/publication";
 import { Hint } from "@/components/ui/hint";
-import { executionLabel } from "@/core/executors";
+import { executionLabel, FAST_USAGE_NOTICE } from "@/core/executors";
 
-type Decision = (approved: boolean, note: string | null) => Promise<boolean>;
+type Decision = (approved: boolean, note: string | null, mcpValues?: McpAuthoringValues) => Promise<boolean>;
 
 function changedFields(request: PendingAuthoring): string[] {
   const target = request.target;
-  if (target.kind === "publication") return [];
+  if (target.kind === "project_instructions") return target.before === target.after ? [] : ["content"];
+  if (target.kind === "publication" || target.kind === "mcp" || target.kind === "plugin") return [];
+  if (target.kind === "hook") {
+    if (!target.before || !target.after) return [];
+    const fields = ["name", "event", "command", "matcher", "timeoutSeconds", "enabled"] as const;
+    return fields.filter(field => target.before?.[field] !== target.after?.[field]);
+  }
   if (target.kind === "agent") {
     if (!target.before) return [];
     const before = target.before;
@@ -41,12 +51,16 @@ const fieldLabels: Record<string, string> = {
   name: "Nome", description: "Descrição", instructions: "Instruções", usage: "Uso", capability: "Capacidade",
   deniedTools: "Permissões", model: "Modelo", appearance: "Aparência", entry: "Entrada",
   maxSteps: "Limite", steps: "Etapas",
+  event: "Evento", command: "Comando", matcher: "Matcher", timeoutSeconds: "Tempo limite", enabled: "Ativação",
+  content: "Instruções do projeto",
 };
 
 function ModelSummary({ agent }: { agent: CustomAgent }) {
   return <div className="rounded-md border border-border bg-sidebar/70 p-3">
     <p className="micro-label mb-1.5 text-muted-foreground">Modelo</p>
     <p className="break-words font-mono text-xs text-foreground">{agent.model ? `${executionLabel(agent.model)}${agent.model.reasoning ? ` / ${agent.model.reasoning}` : ""}` : "Herdar do chat"}</p>
+    {agent.model?.fallback && <p className="mt-1 break-words font-mono text-xs text-muted-foreground">Secundário: {executionLabel(agent.model.fallback)}</p>}
+    {(agent.model?.serviceTier === "priority" || agent.model?.fallback?.serviceTier === "priority") && <p className="mt-1 text-xs text-onedark-yellow">{FAST_USAGE_NOTICE}</p>}
   </div>;
 }
 
@@ -154,47 +168,53 @@ function PublicationReview({ proposal }: { proposal: PublicationProposal }) {
 export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request: PendingAuthoring; owner?: string; onAnswer: Decision }) {
   const [note, setNote] = useState("");
   const [pending, setPending] = useState(false);
+  const [mcpValues, setMcpValues] = useState<McpAuthoringValues>({ environment: {}, headers: {} });
   const changes = useMemo(() => changedFields(request), [request]);
   const isAgent = request.target.kind === "agent";
   const isPublication = request.target.kind === "publication";
+  const isMcp = request.target.kind === "mcp";
+  const isHook = request.target.kind === "hook";
+  const isPlugin = request.target.kind === "plugin";
+  const isProjectInstructions = request.target.kind === "project_instructions";
+  const credentialsReady = request.target.kind !== "mcp" || hasMcpAuthoringValues(request.target.server, mcpValues);
   const requestsRevision = isPublication && note.trim().length > 0;
-  const action = request.action === "create" ? "Criar" : request.action === "update" ? "Editar" : "Executar";
-  const target = isPublication ? "ações" : isAgent ? "agente" : "fluxo";
+  const action = isMcp ? "Adicionar" : request.action === "delete" ? "Remover" : request.action === "create" ? "Criar" : request.action === "update" ? "Editar" : "Executar";
+  const target = isProjectInstructions ? "AGENTS.md" : isPublication ? "ações" : isMcp ? "MCP" : isHook ? "hook" : isPlugin ? "plugin" : isAgent ? "agente" : "fluxo";
   const answer = async (approved: boolean) => {
-    if (pending) return;
+    if (pending || (approved && !credentialsReady)) return;
     setPending(true);
-    const accepted = await onAnswer(approved, note.trim() || null);
+    const accepted = approved && isMcp ? await onAnswer(approved, note.trim() || null, mcpValues) : await onAnswer(approved, note.trim() || null);
     if (!accepted) setPending(false);
   };
   return <Sheet open disablePointerDismissal onOpenChange={(_, details) => details.cancel()}>
     <SheetContent showCloseButton={false} className="dark gap-0 border-border bg-background data-[side=right]:w-[min(720px,94vw)] data-[side=right]:sm:max-w-[720px]">
       <SheetHeader className="shrink-0 border-b border-border bg-card/55 p-5 pr-6">
-        <div className="mb-3 flex items-center gap-2"><Badge variant="outline" className="gap-1.5 border-primary/30 text-primary">{isPublication ? <Sparkles className="size-3" /> : isAgent ? <Bot className="size-3" /> : <Route className="size-3" />}{action} {target}</Badge>{request.catalogRevision !== null && <Badge variant="secondary" className="font-mono text-[9px]">revisão {request.catalogRevision}</Badge>}{owner && <span className="ml-auto truncate text-xs text-muted-foreground">Solicitado por {owner}</span>}</div>
-        <SheetTitle className="text-xl">{isPublication ? "Revisar ações Git e GitHub" : "Revisar alteração no Jarvis"}</SheetTitle>
+        <div className="mb-3 flex items-center gap-2"><Badge variant="outline" className="gap-1.5 border-primary/30 text-primary">{isPublication ? <Sparkles className="size-3" /> : isMcp ? <Plug className="size-3" /> : isHook ? <Anchor className="size-3" /> : isAgent ? <Bot className="size-3" /> : <Route className="size-3" />}{action} {target}</Badge>{request.catalogRevision !== null && <Badge variant="secondary" className="font-mono text-[9px]">revisão {request.catalogRevision}</Badge>}{owner && <span className="ml-auto truncate text-xs text-muted-foreground">Solicitado por {owner}</span>}</div>
+        <SheetTitle className="text-xl">{isProjectInstructions ? "Revisar instruções do projeto" : isPublication ? "Revisar ações Git e GitHub" : isMcp ? "Revisar servidor MCP" : "Revisar alteração no Jarvis"}</SheetTitle>
         <SheetDescription className="mt-1 max-w-2xl leading-5">{request.summary}</SheetDescription>
       </SheetHeader>
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
         <Alert className="mb-5 border-onedark-green/25 bg-onedark-green/5 text-onedark-green">
           <ShieldCheck aria-hidden="true" />
           <AlertTitle>Você mantém o controle</AlertTitle>
-          <AlertDescription className="text-foreground">{isPublication ? "Nenhuma operação Git ou GitHub foi executada. O Jarvis realizará somente as ações exibidas após sua aprovação." : "A configuração ainda não foi alterada. O Jarvis salvará esta proposta somente se você aprovar."}</AlertDescription>
+          <AlertDescription className="text-foreground">{isProjectInstructions ? "O AGENTS.md ainda não foi alterado. Confira o arquivo atual e a proposta antes de aprovar." : isPublication ? "Nenhuma operação Git ou GitHub foi executada. O Jarvis realizará somente as ações exibidas após sua aprovação." : "A configuração ainda não foi alterada. O Jarvis salvará esta proposta somente se você aprovar."}</AlertDescription>
         </Alert>
-        {request.action === "update" && <section className="mb-5 rounded-md border border-border bg-card/60 p-4">
+        {request.action === "update" && !isPlugin && <section className="mb-5 rounded-md border border-border bg-card/60 p-4">
           <p className="micro-label mb-2 flex items-center gap-2 text-muted-foreground"><GitCompareArrows className="size-3.5" />Campos alterados</p>
           <div className="flex flex-wrap gap-1.5">{changes.length ? changes.map(field => <Badge key={field} variant="outline" className="text-[10px] text-onedark-yellow">{fieldLabels[field] ?? field}</Badge>) : <span className="text-xs text-muted-foreground">A proposta não altera nenhum campo.</span>}</div>
         </section>}
-        {request.target.kind === "agent" ? <AgentReview agent={request.target.after} /> : request.target.kind === "flow" ? <FlowReview flow={request.target.after} references={request.agentReferences} /> : <PublicationReview proposal={request.target.after} />}
+        {request.target.kind === "project_instructions" ? <ProjectInstructionsReview target={request.target} /> : request.target.kind === "agent" ? <AgentReview agent={request.target.after} /> : request.target.kind === "flow" ? <FlowReview flow={request.target.after} references={request.agentReferences} /> : request.target.kind === "hook" ? <HookProposalFields target={request.target} /> : request.target.kind === "plugin" ? <PluginChangeReview preview={request.target.preview} /> : request.target.kind === "mcp" ? <McpProposalFields server={request.target.server} values={mcpValues} disabled={pending} onChange={(group, key, value) => setMcpValues(current => ({ ...current, [group]: { ...current[group], [key]: value } }))} /> : <PublicationReview proposal={request.target.after} />}
         <Separator className="my-5" />
         <div className="space-y-2">
           <Label htmlFor={`authoring-note-${request.toolId}`}>Orientação para o agente <span className="font-normal text-muted-foreground">(opcional)</span></Label>
           <Textarea id={`authoring-note-${request.toolId}`} value={note} onChange={event => setNote(event.target.value)} maxLength={2000} disabled={pending} placeholder={isPublication ? "Descreva o ajuste que o agente deve incorporar antes de apresentar uma nova proposta." : "Explique um ajuste se preferir recusar ou deixe uma observação para a aprovação."} className="min-h-20 resize-y" />
           {isPublication && <p className="text-xs leading-5 text-muted-foreground">Ao adicionar uma orientação, nenhuma ação será executada agora. O agente GitHub revisará a proposta e pedirá sua aprovação novamente.</p>}
         </div>
-        <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-sidebar/55 p-3 text-xs leading-5 text-muted-foreground"><LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-yellow" /><span>{isPublication ? "A autorização vale uma vez e somente para os repositórios, arquivos e operações exibidos. Uma falha parcial precisa ser revisada antes de qualquer nova tentativa." : "Agentes e fluxos nativos permanecem protegidos. Esta autorização vale apenas para a proposta exibida, neste turno."}</span></div>
+        <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-sidebar/55 p-3 text-xs leading-5 text-muted-foreground"><LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-yellow" /><span>{isProjectInstructions ? "A autorização vale apenas para o AGENTS.md deste projeto. Se o arquivo mudar durante a revisão, será necessário preparar outra proposta." : isPublication ? "A autorização vale uma vez e somente para os repositórios, arquivos e operações exibidos. Uma falha parcial precisa ser revisada antes de qualquer nova tentativa." : isMcp ? "A autorização vale apenas para adicionar este novo servidor MCP. Configurações existentes não serão substituídas." : "Agentes e fluxos nativos permanecem protegidos. Esta autorização vale apenas para a proposta exibida, neste turno."}</span></div>
       </div>
       <SheetFooter className="shrink-0 flex-row items-center justify-end gap-3 border-t border-border bg-card/70 p-4">
         <Button variant="outline" className="cursor-pointer" disabled={pending} onClick={() => { void answer(false); }}><X />Recusar</Button>
-        <Button className="cursor-pointer" disabled={pending || (request.action === "update" && changes.length === 0)} onClick={() => { void answer(true); }}>{pending ? <Spinner /> : requestsRevision ? <MessageSquareText /> : <Sparkles />}{requestsRevision ? "Enviar para revisão" : isPublication ? "Aprovar e executar" : "Aprovar e salvar"}</Button>
+        <Button className="cursor-pointer" disabled={pending || !credentialsReady || (!isPlugin && request.action === "update" && changes.length === 0)} onClick={() => { void answer(true); }}>{pending ? <Spinner /> : requestsRevision ? <MessageSquareText /> : <Sparkles />}{requestsRevision ? "Enviar para revisão" : isPublication ? "Aprovar e executar" : isMcp ? "Aprovar e adicionar" : request.action === "delete" ? "Aprovar e remover" : "Aprovar e salvar"}</Button>
       </SheetFooter>
     </SheetContent>
   </Sheet>;

@@ -25,6 +25,136 @@ function agentRequest(): PendingAuthoring {
   };
 }
 
+it("compares project instructions and waits for an explicit approval", async () => {
+  const user = userEvent.setup(); const answer = vi.fn().mockResolvedValue(true);
+  const before = "# Existing rules\nUse bun.\n";
+  const after = `${before}\n<!-- BEGIN JARVIS PROJECT INSTRUCTIONS -->\nRun bun run check.\n<!-- END JARVIS PROJECT INSTRUCTIONS -->\n`;
+  const request: PendingAuthoring = { turnId: "instructions-turn", toolId: "instructions-tool", action: "update", catalogRevision: null, summary: "Registrar a verificação do projeto", agentReferences: [], target: { kind: "project_instructions", path: "AGENTS.md", before, after } };
+  render(<AuthoringApprovalDrawer request={request} onAnswer={answer} />);
+  const dialog = screen.getByRole("dialog", { name: "Revisar instruções do projeto" });
+  expect(within(dialog).getByLabelText("Conteúdo proposto do AGENTS.md")).toHaveValue(after);
+  await user.click(within(dialog).getByRole("tab", { name: "Arquivo atual" }));
+  expect(within(dialog).getByLabelText("Conteúdo atual do AGENTS.md")).toHaveValue(before);
+  const overlay = document.querySelector('[data-slot="sheet-overlay"]');
+  if (!(overlay instanceof HTMLElement)) throw new Error("Missing approval overlay");
+  await user.click(overlay); await user.keyboard("{Escape}");
+  expect(answer).not.toHaveBeenCalled(); expect(dialog).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Aprovar e salvar" }));
+  expect(answer).toHaveBeenCalledExactlyOnceWith(true, null);
+});
+
+it("reviews an updated plugin with exact commands and preserves approval on outside clicks", async () => {
+  const user = userEvent.setup(); const answer = vi.fn().mockResolvedValue(true);
+  const command = 'node "${PLUGIN_ROOT}/hooks/check.mjs" --validate';
+  const request: PendingAuthoring = { turnId: "plugin-turn", toolId: "plugin-update", action: "update", catalogRevision: 8, summary: "Atualizar o plugin de produção", agentReferences: [], target: { kind: "plugin", preview: { title: "Atualizar produção", description: "Revisar o pacote antes de atualizar", source: "https://github.com/org/production.git", hash: "sha256:verified-package", components: [{ id: "hooks:start", name: "Preparar produção", kind: "hooks", enabled: true, supported: true, trusted: false, detail: "Executa antes da tarefa." }], commands: [command], requirements: ["Node.js 22"], warnings: ["O core nativo já oferece este recurso."], affectedIds: ["production@community"] } } };
+  render(<AuthoringApprovalDrawer request={request} onAnswer={answer} />);
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByText(command)).toBeVisible();
+  expect(within(dialog).getByText("Node.js 22")).toBeVisible();
+  expect(within(dialog).getByText("O core nativo já oferece este recurso.")).toBeVisible();
+  const approve = within(dialog).getByRole("button", { name: "Aprovar e salvar" });
+  expect(approve).toBeEnabled();
+  const overlay = document.querySelector('[data-slot="sheet-overlay"]');
+  if (!(overlay instanceof HTMLElement)) throw new Error("Missing approval overlay");
+  await user.click(overlay); await user.keyboard("{Escape}");
+  expect(answer).not.toHaveBeenCalled(); expect(dialog).toBeVisible(); expect(approve).toBeEnabled();
+  await user.click(approve); expect(answer).toHaveBeenCalledExactlyOnceWith(true, null);
+});
+
+function mcpRequest(transport: "stdio" | "http" = "stdio"): PendingAuthoring {
+  return {
+    turnId: "turn-mcp", toolId: "tool-mcp", action: "create", catalogRevision: null,
+    summary: "Adicionar um servidor de documentação ao Jarvis.", agentReferences: [],
+    target: { kind: "mcp", server: {
+      name: "documentacao", transport, enabled: transport === "stdio",
+      command: transport === "stdio" ? "node" : null,
+      args: transport === "stdio" ? ["/docs/servidor MCP.js", "--modo", "consulta"] : [],
+      url: transport === "http" ? "https://docs.example.com/mcp" : null,
+      cwd: transport === "stdio" ? "/projetos/documentacao" : null,
+      envKeys: transport === "stdio" ? ["API_KEY", "REGION"] : [],
+      headerKeys: transport === "http" ? ["Authorization", "X-Workspace"] : [],
+    } },
+  };
+}
+
+it("reviews exact MCP process scope without connecting before explicit approval", async () => {
+  const user = userEvent.setup();
+  const answer = vi.fn().mockResolvedValue(true);
+  render(<AuthoringApprovalDrawer request={mcpRequest()} onAnswer={answer} />);
+  const dialog = screen.getByRole("dialog", { name: "Revisar servidor MCP" });
+  expect(within(dialog).getByText("documentacao")).toBeVisible();
+  expect(within(dialog).getByText("Local · stdio")).toBeVisible();
+  expect(within(dialog).getByText("Global · disponível nos projetos e chats do Jarvis")).toBeVisible();
+  expect(within(dialog).getByText("node")).toBeVisible();
+  expect(within(dialog).getByText('["/docs/servidor MCP.js","--modo","consulta"]')).toBeVisible();
+  expect(within(dialog).getByText("/projetos/documentacao")).toBeVisible();
+  expect(within(dialog).getByText("API_KEY")).toBeVisible();
+  expect(within(dialog).getByText("REGION")).toBeVisible();
+  expect(within(dialog).getByText("Ativado")).toBeVisible();
+  expect(within(dialog).getByText(/iniciar o processo.*após sua aprovação/)).toBeVisible();
+  const approval = within(dialog).getByRole("button", { name: "Aprovar e adicionar" });
+  const key = within(dialog).getByLabelText("Variável API_KEY");
+  expect(key).toHaveAttribute("type", "password");
+  expect(approval).toBeDisabled();
+  await user.type(key, "   ");
+  expect(approval).toBeDisabled();
+  await user.clear(key);
+  await user.type(key, "local-test-secret");
+  expect(approval).toBeDisabled();
+  await user.type(within(dialog).getByLabelText("Variável REGION"), "global");
+  expect(approval).toBeEnabled();
+  expect(within(dialog).queryByText("local-test-secret")).not.toBeInTheDocument();
+  expect(answer).not.toHaveBeenCalled();
+  await user.click(approval);
+  expect(answer).toHaveBeenCalledWith(true, null, { environment: { API_KEY: "local-test-secret", REGION: "global" }, headers: {} });
+});
+
+it("reviews an inactive remote MCP with header names and preserves it on outside clicks and Escape", async () => {
+  const user = userEvent.setup();
+  const answer = vi.fn().mockResolvedValue(true);
+  render(<AuthoringApprovalDrawer request={mcpRequest("http")} onAnswer={answer} />);
+  const dialog = screen.getByRole("dialog", { name: "Revisar servidor MCP" });
+  expect(within(dialog).getByText("Remoto · HTTP")).toBeVisible();
+  expect(within(dialog).getByText("https://docs.example.com/mcp")).toBeVisible();
+  expect(within(dialog).getByText("Authorization")).toBeVisible();
+  expect(within(dialog).getByText("X-Workspace")).toBeVisible();
+  expect(within(dialog).getByText("Desativado")).toBeVisible();
+  expect(within(dialog).getByText(/permanecerá desativado.*sem iniciar processos ou conexões/)).toBeVisible();
+  expect(within(dialog).queryByText("Programa")).not.toBeInTheDocument();
+  await user.type(within(dialog).getByLabelText("Cabeçalho Authorization"), "Bearer test-secret");
+  await user.type(within(dialog).getByLabelText(/Orientação para o agente/), "Use o servidor de homologação");
+  const overlay = document.querySelector('[data-slot="sheet-overlay"]');
+  expect(overlay).toBeInstanceOf(HTMLElement);
+  await user.click(overlay as HTMLElement);
+  await user.keyboard("{Escape}");
+  expect(answer).not.toHaveBeenCalled();
+  expect(dialog).toBeVisible();
+  expect(within(dialog).getByLabelText(/Orientação para o agente/)).toHaveValue("Use o servidor de homologação");
+  expect(within(dialog).getByLabelText("Cabeçalho Authorization")).toHaveValue("Bearer test-secret");
+  await user.click(within(dialog).getByRole("button", { name: "Recusar" }));
+  expect(answer).toHaveBeenCalledWith(false, "Use o servidor de homologação");
+});
+
+it("sends remote MCP credentials only with explicit approval and keeps the pending preview free of values", async () => {
+  const user = userEvent.setup();
+  const answer = vi.fn().mockResolvedValue(true);
+  const request = mcpRequest("http");
+  const original = JSON.stringify(request);
+  render(<AuthoringApprovalDrawer request={request} onAnswer={answer} />);
+  const dialog = screen.getByRole("dialog", { name: "Revisar servidor MCP" });
+  const approval = within(dialog).getByRole("button", { name: "Aprovar e adicionar" });
+  expect(approval).toBeDisabled();
+  await user.type(within(dialog).getByLabelText("Cabeçalho Authorization"), "Bearer remote-test-secret");
+  expect(approval).toBeDisabled();
+  await user.type(within(dialog).getByLabelText("Cabeçalho X-Workspace"), "test-workspace");
+  expect(approval).toBeEnabled();
+  expect(within(dialog).queryByText("Bearer remote-test-secret")).not.toBeInTheDocument();
+  expect(JSON.stringify(request)).toBe(original);
+  expect(answer).not.toHaveBeenCalled();
+  await user.click(approval);
+  expect(answer).toHaveBeenCalledWith(true, null, { environment: {}, headers: { Authorization: "Bearer remote-test-secret", "X-Workspace": "test-workspace" } });
+});
+
 it("reviews an agent proposal and only saves after explicit approval", async () => {
   const user = userEvent.setup();
   const answer = vi.fn().mockResolvedValue(true);
@@ -155,4 +285,13 @@ it("shows local remote synchronization separately from push", () => {
   expect(within(dialog).getByText("Atualizar branch local com origin")).toBeVisible();
   expect(within(dialog).getByText(/reaplica commits locais/)).toBeVisible();
   expect(within(dialog).queryByText("Push para origin")).not.toBeInTheDocument();
+});
+
+it("discloses requested Fast and consumption before saving an authored agent", () => {
+  const request = agentRequest();
+  if (request.target.kind !== "agent") throw new Error("Expected agent request");
+  request.target.after = { ...request.target.after, model: { account: "work", model: "sol", reasoning: "high", serviceTier: "priority" } };
+  render(<AuthoringApprovalDrawer request={request} onAnswer={vi.fn()} />);
+  expect(screen.getByText("work / sol · Fast / high")).toBeVisible();
+  expect(screen.getByText("Maior consumo dos limites/créditos")).toBeVisible();
 });

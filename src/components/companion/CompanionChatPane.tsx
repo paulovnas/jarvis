@@ -1,26 +1,31 @@
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ArrowUp, Check, Eraser, MessageCircle, Square, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DocumentSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Textarea } from "@/components/ui/textarea";
 import { Hint } from "@/components/ui/hint";
 import { LazyChatMarkdown } from "@/components/chat/LazyChatMarkdown";
 import { CompanionQuestion, type CompanionQuestionContext } from "./CompanionQuestion";
 import { ModelPicker, type ModelSelection, type ProviderModelGroup } from "@/components/chat/ModelPicker";
-import { executionChoice, executionSelection, executorOf, selectModelChoice } from "@/core/executors";
+import { executionChoice, executionSelection, executorOf, selectModelChoice, supportsFastMode } from "@/core/executors";
 import type { ModelChoice } from "@/core/provider-references";
 import { flowSelection } from "@/core/workflow-catalog";
 import { chatAgentModelKey } from "@/core/chat-models";
 import { companionChatSchema, companionConversationsSchema, companionModelsSchema, type CompanionChat, type CompanionConversation } from "@/core/companion";
 import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/questions";
+import type { McpAuthoringValues, PendingAuthoring } from "@/core/authoring";
+import { readChat } from "@/core/chat";
 import { libraryError } from "@/core/library";
 
 const errorMessage = (cause: unknown) => typeof cause === "string" ? cause : libraryError(cause, "Não foi possível conversar com o Jarvito.");
+const AuthoringApprovalDrawer = lazy(() => import("@/components/chat/AuthoringApprovalDrawer").then(module => ({ default: module.AuthoringApprovalDrawer })));
 export interface CompanionChatHandle {
   startGeneral: () => void;
   openGeneral: (conversationId: string, revision?: number) => Promise<boolean>;
@@ -142,6 +147,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
         ...(chat?.options ?? { account: "", model: "", reasoning: null, mode: "build" as const, workflow: "standard" as const, approvalMode: "yolo" as const }),
         ...executionChoice(modelOverride.selection),
       } : undefined;
+      if (selectedOptions && modelOverride?.selection.serviceTier !== "priority") delete selectedOptions.serviceTier;
       const result = companionChatSchema.parse(await invoke("send_companion_message", { conversationId: selected === "global" ? null : selected, content, ...(selectedOptions ? { options: selectedOptions } : {}) }));
       applyChat(result); onSend?.(); setDraft(current => {
         if (current.trim() !== content) return current;
@@ -210,13 +216,31 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
       return await invoke("companion_pause_question", { conversationId: chat.conversationId, agentId: null, turnId: question.turnId, toolId: question.toolId }) !== false;
     } catch (cause) { setActionError(errorMessage(cause)); return false; }
   };
+  const answerGlobalProposal = async (proposal: PendingAuthoring, approved: boolean, note: string | null, values?: McpAuthoringValues): Promise<boolean> => {
+    if (!active || !chat?.global || busy || !["mcp", "hook", "plugin"].includes(proposal.target.kind) || chat.chat.activeTurnId !== proposal.turnId || chat.chat.pendingAuthoring?.turnId !== proposal.turnId || chat.chat.pendingAuthoring.toolId !== proposal.toolId) return false;
+    setBusy(true); setActionError(null);
+    try {
+      const next = readChat(await invoke("answer_agent_authoring", { conversationId: chat.conversationId, decision: {
+        turnId: proposal.turnId, toolId: proposal.toolId, approved, note,
+        ...(approved && values ? { mcpValues: values } : {}),
+      } }), chat.conversationId);
+      if (currentConversation.current === chat.conversationId) applyChat({ ...chat, chat: next });
+      return true;
+    } catch (cause) {
+      const message = libraryError(cause, "Não foi possível responder à proposta de configuração.");
+      setActionError(message);
+      toast.error(message, { toasterId: "companion-sound-feedback" });
+      return false;
+    } finally { setBusy(false); }
+  };
   const running = Boolean(chat?.chat.activeTurnId);
   const clearBlocked = running || Boolean(chat?.chat.queuedMessages?.length || chat?.chat.compacting || chat?.chat.context?.compacting);
   const selectedModel = modelOverride?.conversation === selected ? modelOverride.selection : executionSelection(chat?.options);
   const selectedChoice = modelOverride?.conversation === selected ? modelOverride.choice ?? chat?.options?.modelSelection : chat?.options?.modelSelection;
   const invalidSelection = (selection: ModelSelection | null) => {
-    const definition = models.filter(group => executorOf(group) === executorOf(selection)).flatMap(group => group.models).find(model => model.value === selection?.model);
-    return Boolean(selection && (!definition || selection.reasoning && !definition.reasoningLevels.includes(selection.reasoning)));
+    const group = models.find(group => executorOf(group) === executorOf(selection) && group.models.some(model => model.value === selection?.model));
+    const definition = group?.models.find(model => model.value === selection?.model);
+    return Boolean(selection && (!definition || selection.reasoning && !definition.reasoningLevels.includes(selection.reasoning) || selection.serviceTier === "priority" && !supportsFastMode(group?.providerKind, definition, selection.executor)));
   };
   const modelInvalid = modelsLoaded && (invalidSelection(selectedModel) || invalidSelection(executionSelection(selectedChoice?.fallback)));
   const chooseModel = async (selection: ModelSelection) => {
@@ -231,25 +255,31 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
     finally { setBusy(false); }
   };
   const selectedTitle = selected === "global" ? "Conversar com Jarvito" : conversations.find(item => item.id === selected)?.title ?? chat?.projectName ?? "Conversa do projeto";
+  const globalProposal = chat?.global && chat.chat.pendingAuthoring && ["mcp", "hook", "plugin"].includes(chat.chat.pendingAuthoring.target.kind) ? chat.chat.pendingAuthoring : null;
 
   useEffect(() => {
     if (!onQuestionChange) return;
-    onQuestionChange(active && chat && (chat.chat.pendingQuestion || chat.chat.pendingApproval || chat.chat.pendingAuthoring) ? {
+    onQuestionChange(active && chat && !globalProposal && (chat.chat.pendingQuestion || chat.chat.pendingApproval || chat.chat.pendingAuthoring) ? {
       conversationId: chat.conversationId, agentId: null, title: selectedTitle,
       projectName: chat.projectName ?? "Conversa com Jarvito", request: chat.chat.pendingQuestion,
       requiresConversation: Boolean(chat.chat.pendingApproval || chat.chat.pendingAuthoring),
     } : null);
-  }, [active, chat, selectedTitle, onQuestionChange]);
+  }, [active, chat, globalProposal, selectedTitle, onQuestionChange]);
   useEffect(() => {
     if (active && chat && !chat.chat.activeTurnId && !chat.chat.compacting && !chat.chat.pendingQuestion && !chat.chat.pendingApproval && !chat.chat.pendingAuthoring) onView?.(chat.conversationId, chat.chat.revision);
   }, [active, chat, onView]);
 
-  if (active && chat && (chat.chat.pendingQuestion || chat.chat.pendingApproval || chat.chat.pendingAuthoring) && !externalQuestions) return <CompanionQuestion context={{
+  if (active && chat && !globalProposal && (chat.chat.pendingQuestion || chat.chat.pendingApproval || chat.chat.pendingAuthoring) && !externalQuestions) return <CompanionQuestion context={{
     conversationId: chat.conversationId, agentId: null, title: selectedTitle, projectName: chat.projectName ?? "Conversa com Jarvito",
     request: chat.chat.pendingQuestion, requiresConversation: Boolean(chat.chat.pendingApproval || chat.chat.pendingAuthoring),
   }} drafts={questionDrafts} onAnswer={answer} onInteract={pause} onOpenConversation={() => { void invoke("companion_open_conversation", { conversationId: chat.conversationId }).catch(cause => setActionError(errorMessage(cause))); }} error={actionError || error} />;
 
   return <div role="region" aria-label="Conversa e controles do Jarvito" className="companion-chat flex h-full min-h-0 flex-col gap-2">
+    {active && chat && globalProposal && <div onKeyDown={event => { if (event.key === "Escape") event.stopPropagation(); }} onPointerDownCapture={() => { void invoke("companion_set_interacting", { active: true }).catch(() => {}); }}>
+      <Suspense fallback={<DocumentSkeleton label="Carregando aprovação de MCP" />}>
+        <AuthoringApprovalDrawer key={`${chat.conversationId}:${globalProposal.turnId}:${globalProposal.toolId}`} request={globalProposal} onAnswer={(approved, note, values) => answerGlobalProposal(globalProposal, approved, note, values)} />
+      </Suspense>
+    </div>}
     <div className="flex items-center gap-1">
     <Select key={active ? "active-conversation-menu" : "inactive-conversation-menu"} value={selected} onValueChange={value => { if (typeof value === "string") chooseConversation(value); }}>
       <SelectTrigger aria-label="Conversa do Jarvito" size="sm" disabled={busy} className="min-w-0 flex-1 cursor-pointer text-[11px]"><SelectValue>{selectedTitle}</SelectValue></SelectTrigger>
@@ -295,7 +325,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
       </div>
     </form>
     <div className="-mx-1 flex shrink-0 items-center overflow-hidden">
-      <ModelPicker key={active ? "active-model-menu" : "inactive-model-menu"} modelGroups={models} selection={selectedModel} onSelect={selection => { void chooseModel(selection); }} disabled={busy || loading || running} invalid={modelInvalid} showProviderIdentity ariaLabel="Modelo do Jarvito" />
+      <ModelPicker key={active ? "active-model-menu" : "inactive-model-menu"} modelGroups={models} selection={selectedModel} onSelect={selection => { void chooseModel(selection); }} disabled={busy || loading || running} invalid={modelInvalid} showProviderIdentity allowFastMode ariaLabel="Modelo do Jarvito" />
     </div>
   </div>;
 }

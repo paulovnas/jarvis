@@ -81,11 +81,12 @@ pub(super) struct TurnSession {
 
 impl TurnSession {
     pub(super) fn new(
-        credential: CodexCredential,
+        mut credential: CodexCredential,
         model: &ProviderModel,
         session_id: String,
         telemetry: super::telemetry::TraceContext,
     ) -> Result<Self, AgentError> {
+        credential.inference_model = Some(model.clone());
         let capabilities = std::sync::Arc::new(ModelCapabilities::resolve(&credential, model));
         let incremental = incremental::Transport::traced(
             telemetry.clone(),
@@ -142,6 +143,7 @@ impl TurnSession {
         mut on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
     ) -> Result<Response, AgentError> {
         debug_assert!(!step.authorization().values.is_empty());
+        validate_requested_service_tier(&self.credential, step.options())?;
         if step.capabilities() != self.capabilities.as_ref() {
             return Err(AgentError::internal());
         }
@@ -728,6 +730,25 @@ fn event_failure(value: &Value) -> AgentError {
         request_parameter(value).as_deref(),
     )
 }
+fn validate_requested_service_tier(
+    credential: &CodexCredential,
+    options: &TurnOptions,
+) -> Result<(), AgentError> {
+    if options.service_tier.is_none() {
+        return Ok(());
+    }
+    let model = credential
+        .inference_model
+        .as_ref()
+        .filter(|model| model.id == options.model)
+        .ok_or_else(|| AgentError::new(
+            "invalid_service_tier",
+            "Não foi possível confirmar o modo Fast para este modelo nesta conta. Selecione Normal ou atualize os modelos do provedor.",
+        ))?;
+    crate::openai_codex::validate_service_tier(credential, model, options.service_tier)?;
+    Ok(())
+}
+
 fn request_body(
     options: &TurnOptions,
     capabilities: &ModelCapabilities,
@@ -754,6 +775,11 @@ fn request_body(
         "model":options.model, "instructions":instructions, "input":input,
         "stream":true, "store":false, "prompt_cache_key":session_id,
     });
+    if capabilities.family == capabilities::ProviderFamily::OpenAiCodex {
+        if let Some(tier) = options.service_tier {
+            body["service_tier"] = json!(tier);
+        }
+    }
     if capabilities.replay.opaque_state {
         body["include"] = json!(["reasoning.encrypted_content"]);
     }
@@ -952,6 +978,7 @@ async fn stream_once(
     telemetry: &super::telemetry::TraceContext,
     on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
 ) -> Result<Response, AgentError> {
+    validate_requested_service_tier(credential, options)?;
     let provider = if credential.custom.is_some() {
         "custom"
     } else if credential.project_id.is_some() {
@@ -1047,7 +1074,14 @@ fn authenticated_request_with_client(
         .header("session_id", session_id)
         .header(
             "x-codex-routing-hint",
-            format!("model={}", body["model"].as_str().unwrap_or_default()),
+            if body["service_tier"] == "priority" {
+                format!(
+                    "model={};tier=priority",
+                    body["model"].as_str().unwrap_or_default()
+                )
+            } else {
+                format!("model={}", body["model"].as_str().unwrap_or_default())
+            },
         )
         .header("accept", "text/event-stream")
         .header("content-type", "application/json")
@@ -1284,6 +1318,142 @@ pub(super) fn tool_calls(output: &[Value]) -> Result<Vec<ToolCall>, AgentError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fast_fixture() -> (CodexCredential, TurnOptions) {
+        let mut options = super::super::tests::options(super::super::ApprovalMode::Yolo);
+        options.service_tier = Some(super::super::workflow::settings::ServiceTier::Priority);
+        let mut credential = CodexCredential::new("fixture", "", i64::MAX, "account", None, None);
+        credential.inference_model = Some(
+            serde_json::from_value(json!({
+                "id":options.model, "name":"Model", "reasoningLevels":["high"],
+                "defaultReasoningLevel":"high", "supportsFast":true
+            }))
+            .unwrap(),
+        );
+        (credential, options)
+    }
+
+    #[test]
+    fn fast_uses_priority_wire_and_routing_without_changing_reasoning() {
+        let (credential, mut options) = fast_fixture();
+        options.reasoning = Some("high".into());
+        let capabilities = ModelCapabilities::resolve_for_options(&credential, &options);
+        for tier in [options.service_tier, None] {
+            options.service_tier = tier;
+            validate_requested_service_tier(&credential, &options).unwrap();
+            let body = request_body(
+                &options,
+                &capabilities,
+                "Instructions",
+                vec![],
+                vec![],
+                "session",
+            );
+            assert_eq!(body["reasoning"]["effort"], "high");
+            let request =
+                authenticated_request(&credential, "session", &body, Duration::from_secs(5))
+                    .unwrap()
+                    .build()
+                    .unwrap();
+            if tier.is_some() {
+                assert_eq!(body["service_tier"], "priority");
+                assert_eq!(
+                    request.headers()["x-codex-routing-hint"],
+                    format!("model={};tier=priority", options.model)
+                );
+            } else {
+                assert!(body.get("service_tier").is_none());
+                assert_eq!(
+                    request.headers()["x-codex-routing-hint"],
+                    format!("model={}", options.model)
+                );
+            }
+            assert_eq!(
+                serde_json::from_slice::<Value>(request.body().unwrap().as_bytes().unwrap())
+                    .unwrap(),
+                body
+            );
+        }
+    }
+
+    #[test]
+    fn fast_requires_account_catalog_and_first_party_chatgpt_provider() {
+        let (mut credential, mut options) = fast_fixture();
+        validate_requested_service_tier(&credential, &options).unwrap();
+        credential.inference_model.as_mut().unwrap().supports_fast = false;
+        let error = validate_requested_service_tier(&credential, &options).unwrap_err();
+        assert_eq!(error.code, "invalid_service_tier");
+        assert!(error.message.contains("Normal"));
+        credential.inference_model.as_mut().unwrap().supports_fast = true;
+        credential.project_id = Some("project".into());
+        assert_eq!(
+            validate_requested_service_tier(&credential, &options)
+                .unwrap_err()
+                .code,
+            "invalid_service_tier"
+        );
+        credential.project_id = None;
+        credential.custom = Some(crate::openai_codex::custom::Config {
+            base_url: "https://example.com/v1".into(),
+            protocol: crate::openai_codex::custom::Protocol::OpenaiResponses,
+            auth_mode: crate::openai_codex::custom::AuthMode::Bearer,
+            token_field: crate::openai_codex::custom::TokenField::MaxTokens,
+            replay_unsigned_thinking: false,
+            models: vec![],
+        });
+        assert_eq!(
+            validate_requested_service_tier(&credential, &options)
+                .unwrap_err()
+                .code,
+            "invalid_service_tier"
+        );
+        let custom = ModelCapabilities::resolve_for_options(&credential, &options);
+        assert!(
+            request_body(&options, &custom, "Instructions", vec![], vec![], "s")
+                .get("service_tier")
+                .is_none()
+        );
+        credential.custom = None;
+        options.model = "other-account-model".into();
+        assert_eq!(
+            validate_requested_service_tier(&credential, &options)
+                .unwrap_err()
+                .code,
+            "invalid_service_tier"
+        );
+        credential.inference_model = None;
+        assert_eq!(
+            validate_requested_service_tier(&credential, &options)
+                .unwrap_err()
+                .code,
+            "invalid_service_tier"
+        );
+        options.service_tier = None;
+        validate_requested_service_tier(&credential, &options).unwrap();
+    }
+
+    #[tokio::test]
+    async fn unsupported_fast_is_rejected_before_request_dispatch() {
+        let (mut credential, options) = fast_fixture();
+        credential.inference_model.as_mut().unwrap().supports_fast = false;
+        let capabilities = ModelCapabilities::resolve_for_options(&credential, &options);
+        let (_tx, signal) = watch::channel(false);
+        let result = stream_once(
+            &reqwest::Client::new(),
+            &credential,
+            "fixture",
+            &options,
+            &capabilities,
+            "Instructions",
+            vec![],
+            vec![],
+            signal,
+            &super::super::telemetry::trace("fixture", "turn"),
+            |_| Ok(()),
+        )
+        .await;
+        assert_eq!(result.unwrap_err().code, "invalid_service_tier");
+    }
 
     #[test]
     fn go_region_refusal_explains_workspace_setting_without_echoing_provider_data() {
@@ -1678,6 +1848,7 @@ mod tests {
         let options = original_turns.last().unwrap().turn.options.clone();
         let credential = CodexCredential::new("fixture", "", 0, "fixture", None, None);
         let model = ProviderModel {
+            supports_fast: false,
             id: options.model.clone(),
             name: "Fixture".into(),
             reasoning_levels: vec![],
@@ -1725,6 +1896,7 @@ mod tests {
             .expect("Set JARVIS_LIVE_ACCOUNT to a connected alias");
         let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
         let options = TurnOptions {
+            service_tier: None,
             executor: crate::claude::Executor::Jarvis,
             account,
             model: "gpt-5.6-luna".into(),
@@ -1795,6 +1967,7 @@ mod tests {
     #[test]
     fn selected_model_reasoning_and_stateless_history_are_sent() {
         let options = TurnOptions {
+            service_tier: None,
             executor: crate::claude::Executor::Jarvis,
             account: "a".into(),
             model: "chosen-model".into(),
@@ -1918,12 +2091,12 @@ mod tests {
                 .find(|sent| sent["name"] == tool["name"])
                 .unwrap();
             assert_eq!(sent_tool, &tool);
-            assert_eq!(sent_tool["strict"], false);
         }
         let proposal = sent
             .iter()
             .find(|tool| tool["name"] == "jarvito_propose_project")
             .unwrap();
+        assert_eq!(proposal["strict"], false);
         assert_eq!(
             proposal["parameters"]["required"],
             json!(["projectId", "reason", "message"])
@@ -1986,6 +2159,7 @@ mod tests {
     #[test]
     fn optional_codex_fields_are_omitted_when_the_step_does_not_use_them() {
         let mut options = TurnOptions {
+            service_tier: None,
             executor: crate::claude::Executor::Jarvis,
             account: "a".into(),
             model: "text-model".into(),
