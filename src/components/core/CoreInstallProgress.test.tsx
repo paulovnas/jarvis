@@ -3,16 +3,16 @@ import { expect, it, vi } from "vitest";
 import { coreFixture } from "@/test/core-fixtures";
 import { CoreInstallProgress } from "./CoreInstallProgress";
 
-const item = { ...coreFixture().items.find(item => item.id === "audiovisual")!, stage: "Baixando modelos de voz e música", download: { receivedBytes: 1048576, totalBytes: null } };
+const item = { ...coreFixture().items.find(item => item.id === "openmontage")!, stage: "Baixando recursos do OpenMontage", download: { receivedBytes: 1048576, totalBytes: null } };
 
 it("offers cancellation for a running update while retaining real transfer progress", () => {
   const cancel = vi.fn();
   const view = render(<CoreInstallProgress item={item} operation="Atualização" onCancel={cancel} />);
-  fireEvent.click(screen.getByRole("button", { name: "Cancelar atualização de Audiovisual" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancelar atualização de OpenMontage" }));
   expect(cancel).toHaveBeenCalledOnce();
   expect(screen.getByText("1 MB")).toBeVisible();
   view.rerender(<CoreInstallProgress item={item} operation="Atualização" onCancel={cancel} cancelling />);
-  const button = screen.getByRole("button", { name: "Cancelar atualização de Audiovisual" });
+  const button = screen.getByRole("button", { name: "Cancelar atualização de OpenMontage" });
   expect(button).toBeDisabled();
   expect(button).toHaveTextContent("Cancelando…");
   fireEvent.click(button);

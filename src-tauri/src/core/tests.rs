@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn requires_structural_discovery_video_and_audio_without_requiring_optional_documentation() {
+fn requires_structural_discovery_openmontage_without_requiring_legacy_video_packages() {
     let home = tempfile::tempdir().unwrap();
     let mut manifest = Manifest::default();
     assert!(require_ready(home.path()).is_err());
@@ -27,6 +27,9 @@ fn requires_structural_discovery_video_and_audio_without_requiring_optional_docu
         }
         if id == ComponentId::Graft {
             graft::fixture(&path);
+        }
+        if id == ComponentId::Openmontage {
+            openmontage::tests::fixture(&path);
         }
         manifest.installations.insert(
             id,
@@ -86,11 +89,11 @@ fn requires_structural_discovery_video_and_audio_without_requiring_optional_docu
     save_manifest(home.path(), &manifest).unwrap();
     assert!(require_ready(home.path()).is_err());
     manifest.installations.insert(ComponentId::Graft, graft);
-    manifest.installations.remove(&ComponentId::Hyperframes);
+    manifest.installations.remove(&ComponentId::Openmontage);
     save_manifest(home.path(), &manifest).unwrap();
     assert!(require_ready(home.path()).is_err());
     assert!(!state.snapshot(home.path()).unwrap().ready);
-    assert!(hyperframes::runtime(home.path()).is_err());
+    assert!(openmontage::runtime(home.path()).is_err());
     fs::remove_file(root(home.path()).join("ponytail/test/verified")).unwrap();
     assert!(!state.snapshot(home.path()).unwrap().ready);
     assert!(require_ready(home.path()).is_err());

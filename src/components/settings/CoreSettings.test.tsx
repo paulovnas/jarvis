@@ -134,21 +134,20 @@ it("offers Open Design installation alongside the other Core resources", async (
   render(<CoreSettings />);
   fireEvent.click(await screen.findByRole("button", { name: "Instalar Open Design" }));
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "open-design" }));
-  expect(screen.getByText("8/9 essenciais")).toBeInTheDocument();
+  expect(screen.getByText("7/8 essenciais")).toBeInTheDocument();
 });
 
-it("presents Brag as an included HyperFrames resource with a usable video request", async () => {
+it("presents one OpenMontage production core for video, narration and music", async () => {
   invokeMock.mockResolvedValue(coreFixture());
   render(<CoreSettings />);
-  const resource = await screen.findByLabelText("Brag incluído no HyperFrames");
-  expect(within(resource).getByText("Brag incluído")).toBeVisible();
-  expect(resource).toHaveTextContent("faça um brag");
-  expect(resource).toHaveTextContent("Gerador de Vídeos");
-  expect(resource).toHaveTextContent("fontes reais");
+  expect(await screen.findByRole("heading", { name: "OpenMontage" })).toBeVisible();
+  expect(screen.getByText(/Produção completa com OpenMontage/)).toHaveTextContent("narração, música, composição e revisão");
+  expect(screen.queryByRole("heading", { name: "Hyperframes" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Audiovisual" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Instalar Brag" })).not.toBeInTheDocument();
 });
 
-it.each(["hyperframes", "audiovisual", "comfyui", "graft"] as const)("offers required %s installation in the essential Core", async id => {
+it.each(["openmontage", "comfyui", "graft"] as const)("offers required %s installation in the essential Core", async id => {
   const state = coreFixture();
   const video = state.items.find(item => item.id === id)!;
   video.installed = false; video.configured = false; video.installedVersion = null;
@@ -157,89 +156,84 @@ it.each(["hyperframes", "audiovisual", "comfyui", "graft"] as const)("offers req
   render(<CoreSettings />);
   fireEvent.click(await screen.findByRole("button", { name: `Instalar ${video.name}` }));
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id }));
-  expect(screen.getByText("8/9 essenciais")).toBeVisible();
+  expect(screen.getByText("7/8 essenciais")).toBeVisible();
   expect(screen.queryByText("Opcional")).not.toBeInTheDocument();
 });
 
-it("explains local audiovisual downloads, hardware variation and soundtrack licensing before installation", async () => {
+it("distinguishes the production package from optional local resources and API integrations", async () => {
   invokeMock.mockResolvedValue(coreFixture(false));
   render(<CoreSettings />);
-  expect(await screen.findByText(/Gera narração em PT-BR com Kokoro e música com MusicGen localmente/)).toHaveTextContent("A instalação inicial baixa vários GB");
-  expect(screen.getByText(/Gera narração em PT-BR/)).toHaveTextContent("CPU/GPU");
-  expect(screen.getByText(/Gera narração em PT-BR/)).toHaveTextContent("macOS 13 ou superior");
-  expect(screen.getByText(/Gera narração em PT-BR/)).toHaveTextContent("glibc 2.27 ou superior");
-  expect(screen.getByText(/Gera narração em PT-BR/)).toHaveTextContent("CC-BY-NC, para uso não comercial");
-  expect(screen.getByText(/Gera narração em PT-BR/)).toHaveTextContent("Em projetos comerciais, forneça uma trilha com licença adequada");
+  expect(await screen.findByText(/Produção completa com OpenMontage/)).toHaveTextContent("conforme as dependências e credenciais configuradas");
 });
 
-it("shows audiovisual model downloads through the existing progress events", async () => {
+it("shows openmontage model downloads through the existing progress events", async () => {
   const state = coreFixture();
   state.ready = false;
-  const audiovisual = state.items.find(item => item.id === "audiovisual")!;
-  audiovisual.installed = false;
-  audiovisual.configured = false;
-  audiovisual.stage = "Baixando modelos de voz e música";
-  audiovisual.download = { receivedBytes: 1048576, totalBytes: null };
+  const openmontage = state.items.find(item => item.id === "openmontage")!;
+  openmontage.installed = false;
+  openmontage.configured = false;
+  openmontage.stage = "Baixando recursos do OpenMontage";
+  openmontage.download = { receivedBytes: 1048576, totalBytes: null };
   invokeMock.mockResolvedValue(state);
   render(<CoreSettings />);
   await screen.findByText("1 MB");
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
-  await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: "audiovisual", download: { receivedBytes: 2097152, totalBytes: null } } }));
+  await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: "openmontage", download: { receivedBytes: 2097152, totalBytes: null } } }));
   expect(screen.getByText("2 MB")).toBeVisible();
-  expect(screen.getByText("Baixando modelos de voz e música")).toBeVisible();
+  expect(screen.getByText("Baixando recursos do OpenMontage")).toBeVisible();
 });
 
-it("cancels an audiovisual download once, keeps progress until cleanup, and permits installation again", async () => {
+it("cancels an openmontage download once, keeps progress until cleanup, and permits installation again", async () => {
   const state = coreFixture();
-  const item = state.items.find(item => item.id === "audiovisual")!;
+  const item = state.items.find(item => item.id === "openmontage")!;
   item.installed = false; item.configured = false; item.installedVersion = null;
-  item.stage = "Baixando modelos de voz e música";
+  item.stage = "Baixando recursos do OpenMontage";
   item.download = { receivedBytes: 1048576, totalBytes: null };
   state.ready = false;
   let finishCancel!: (value: unknown) => void;
   invokeMock.mockImplementation(command => command === "cancel_core_installation" ? new Promise(resolve => { finishCancel = resolve; }) : Promise.resolve(state));
   render(<CoreSettings />);
-  const cancel = await screen.findByRole("button", { name: "Cancelar instalação de Audiovisual" });
+  const cancel = await screen.findByRole("button", { name: "Cancelar instalação de OpenMontage" });
   fireEvent.click(cancel); fireEvent.click(cancel);
-  expect(invokeMock.mock.calls.filter(([command]) => command === "cancel_core_installation")).toEqual([["cancel_core_installation", { id: "audiovisual" }]]);
+  expect(invokeMock.mock.calls.filter(([command]) => command === "cancel_core_installation")).toEqual([["cancel_core_installation", { id: "openmontage" }]]);
   expect(cancel).toBeDisabled();
   expect(cancel).toHaveTextContent("Cancelando…");
   await act(async () => finishCancel(state));
-  expect(screen.getByRole("progressbar", { name: "Instalação de Audiovisual" })).toBeVisible();
+  expect(screen.getByRole("progressbar", { name: "Instalação de OpenMontage" })).toBeVisible();
   expect(cancel).toBeDisabled();
   const stopped = structuredClone(state);
-  stopped.items.find(item => item.id === "audiovisual")!.stage = null;
+  stopped.items.find(item => item.id === "openmontage")!.stage = null;
   await act(async () => events.get("core:changed")?.({ event: "core:changed", id: 1, payload: stopped }));
-  expect(screen.queryByRole("button", { name: "Cancelar instalação de Audiovisual" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("progressbar", { name: "Instalação de Audiovisual" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Instalar Audiovisual" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Cancelar instalação de OpenMontage" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("progressbar", { name: "Instalação de OpenMontage" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Instalar OpenMontage" })).toBeEnabled();
 });
 
 it("does not resurrect download progress when cancellation returns after the cleanup event", async () => {
   const state = coreFixture();
-  state.items.find(item => item.id === "audiovisual")!.stage = "Baixando modelos";
+  state.items.find(item => item.id === "openmontage")!.stage = "Baixando modelos";
   let finishCancel!: (value: unknown) => void;
   invokeMock.mockImplementation(command => command === "cancel_core_installation" ? new Promise(resolve => { finishCancel = resolve; }) : Promise.resolve(state));
   render(<CoreSettings />);
-  fireEvent.click(await screen.findByRole("button", { name: "Cancelar instalação de Audiovisual" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Cancelar instalação de OpenMontage" }));
   const stopped = structuredClone(state);
-  stopped.items.find(item => item.id === "audiovisual")!.stage = null;
+  stopped.items.find(item => item.id === "openmontage")!.stage = null;
   await act(async () => events.get("core:changed")?.({ event: "core:changed", id: 1, payload: stopped }));
   await act(async () => finishCancel(state));
-  expect(screen.queryByRole("progressbar", { name: "Instalação de Audiovisual" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("progressbar", { name: "Instalação de OpenMontage" })).not.toBeInTheDocument();
 });
 
 it("reports cancellation failures and leaves the cancel action available for retry", async () => {
   const state = coreFixture();
-  state.items.find(item => item.id === "audiovisual")!.stage = "Baixando modelos";
+  state.items.find(item => item.id === "openmontage")!.stage = "Baixando modelos";
   invokeMock.mockImplementation(async command => {
     if (command === "cancel_core_installation") throw { message: "Não foi possível cancelar agora" };
     return state;
   });
   render(<CoreSettings />);
-  fireEvent.click(await screen.findByRole("button", { name: "Cancelar instalação de Audiovisual" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Cancelar instalação de OpenMontage" }));
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Não foi possível cancelar agora"));
-  expect(screen.getByRole("button", { name: "Cancelar instalação de Audiovisual" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Cancelar instalação de OpenMontage" })).toBeEnabled();
 });
 
 it("mostra versões e só oferece atualização quando há release maior", async () => {
@@ -282,7 +276,7 @@ it("mantém a versão instalada quando uma atualização falha e permite nova te
   render(<CoreSettings />);
   fireEvent.click(await screen.findByRole("button", { name: "Atualizar Context-mode" }));
   expect(await screen.findByText("Download interrompido")).toBeInTheDocument();
-  expect(screen.getAllByText("v1.0.0")).toHaveLength(10);
+  expect(screen.getAllByText("v1.0.0")).toHaveLength(9);
   await waitFor(() => expect(screen.getByRole("button", { name: "Atualizar Context-mode" })).toBeEnabled());
 });
 

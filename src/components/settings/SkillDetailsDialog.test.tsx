@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +13,26 @@ const call = vi.mocked(invoke);
 const detail = (name: string) => ({ name, description: `${name} description`, content: `# ${name}\nInstructions`, path: null, source: "owner/repo", files: ["SKILL.md"] });
 
 describe("SkillDetailsDialog", () => {
-  beforeEach(() => { call.mockReset(); });
+  beforeEach(() => { call.mockReset(); vi.mocked(openUrl).mockReset().mockResolvedValue(undefined); });
+
+  it("mostra a origem do plugin sem criar um link GitHub inválido", async () => {
+    call.mockResolvedValue({ ...detail("Deploy"), source: "firebase@firebase" });
+    const user = userEvent.setup();
+    render(<SkillDetailsDialog selection={{ name: "Deploy", id: "plugin-skill" }} onClose={vi.fn()} />);
+    const source = await screen.findByText("firebase@firebase");
+    expect(source).toBeVisible();
+    expect(screen.queryByRole("button", { name: "firebase@firebase" })).not.toBeInTheDocument();
+    await user.click(source);
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("preserva o link da origem de skills em repositórios GitHub", async () => {
+    call.mockResolvedValue(detail("Skill"));
+    const user = userEvent.setup();
+    render(<SkillDetailsDialog selection={{ name: "Skill", id: "local-skill" }} onClose={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "owner/repo" }));
+    expect(openUrl).toHaveBeenCalledExactlyOnceWith("https://github.com/owner/repo");
+  });
 
   it("shows a structural loading state until Marketplace details arrive", async () => {
     let resolveDetail: (value: unknown) => void = () => {};

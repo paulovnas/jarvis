@@ -107,7 +107,7 @@ function slashQuery(editor: Editor): Query | null {
   const match = /(?:^|\s)\/([^\s/\ufffc]*)$/.exec(before);
   return match ? { from: from - match[1].length - 1, to: from, text: match[1] } : null;
 }
-const origins = { jarvis: "Jarvis", agents: ".agents", project: "Projeto" };
+const origins = { jarvis: "Jarvis", agents: ".agents", project: "Projeto", plugin: "Plugin" };
 const editorProps = {
   attributes: (state: Editor["state"]) => ({ role: "textbox", "aria-label": "Mensagem", "aria-multiline": "true", spellcheck: "true", autocorrect: "on", autocapitalize: "sentences", "data-empty": String(state.doc.childCount === 1 && state.doc.firstChild?.content.size === 0), "data-placeholder": "Mensagem… / para skills", class: "skill-editor min-h-[84px] max-h-64 w-full overflow-y-auto px-5 pt-4 pb-2 text-[14.5px] leading-relaxed text-foreground outline-none" }),
   handlePaste: (view: Editor["view"], event: ClipboardEvent) => {

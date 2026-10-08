@@ -1279,6 +1279,89 @@ impl TurnClients {
         })
     }
 
+    pub(crate) async fn refresh_intent(
+        &mut self,
+        mcp: &McpState,
+        state: &AppState,
+        home: &Path,
+        intent: &McpIntent,
+        signal: watch::Receiver<bool>,
+    ) -> Result<(), McpError> {
+        let requested: HashSet<_> = intent
+            .servers
+            .iter()
+            .map(|server| server.id.as_str())
+            .collect();
+        self.excluded_servers = intent
+            .excluded_servers
+            .iter()
+            .map(|server| server.id.clone())
+            .collect();
+        // Called between model steps after completed effects. Retain connected
+        // clients and loaded schemas rather than restarting the selected MCP.
+        for mut client in std::mem::take(&mut self.clients) {
+            let keep = match intent.mode {
+                McpIntentMode::Disabled => false,
+                McpIntentMode::Explicit => requested.contains(client.server.id.as_str()),
+                McpIntentMode::OnDemand => !self.excluded_servers.contains(&client.server.id),
+            };
+            if keep {
+                self.clients.push(client);
+            } else {
+                client.close().await;
+            }
+        }
+        self.exposure = if intent.mode == McpIntentMode::Disabled {
+            Exposure::Disabled
+        } else {
+            Exposure::OnDemand
+        };
+        self.explicit_names.clear();
+        self.explicit_attempted.store(false, Ordering::Relaxed);
+        self.catalog_ready = false;
+        if intent.mode == McpIntentMode::Disabled {
+            self.pending.clear();
+            self.visible_tools.clear();
+            self.deferred_tools.clear();
+            self.loaded_tools.clear();
+            self.last_search_tools.clear();
+            return Ok(());
+        }
+        // Reuse the normal catalog refresh, including frozen plugin bindings and
+        // revocation checks. This does not call any integration tool.
+        self.definitions_with(mcp, state, home, false, |_| true)
+            .await;
+        if intent.mode == McpIntentMode::Explicit {
+            if requested.is_empty() {
+                return Err(coded_error(
+                    "mcp_requested_unavailable",
+                    "A preferência MCP não contém um servidor válido.",
+                ));
+            }
+            for selected in &intent.servers {
+                if let Some(client) = self
+                    .clients
+                    .iter()
+                    .find(|client| client.server.id == selected.id)
+                {
+                    if client.tools.is_empty() {
+                        return Err(named_error("mcp_requested_unavailable", &selected.name, None, "não tem ferramentas disponíveis; nenhuma integração alternativa foi usada."));
+                    }
+                    self.explicit_names.push(client.server.name.clone());
+                    continue;
+                }
+                let server = self.pending.iter().find(|server| server.id == selected.id).ok_or_else(|| named_error("mcp_requested_unavailable", &selected.name, None, "foi desativado, editado ou removido; nenhuma integração alternativa foi usada."))?;
+                let name = server.name.clone();
+                self.activate(mcp, state, home, &json!({"server":name}), signal.clone())
+                    .await?;
+                self.explicit_names.push(name);
+            }
+            self.pending.clear();
+            self.exposure = Exposure::Explicit;
+        }
+        Ok(())
+    }
+
     async fn pinned_config(
         &self,
         mcp: &McpState,

@@ -25,6 +25,9 @@ fn fixture(home: &Path) -> Manifest {
         if id == ComponentId::Graft {
             graft::fixture(&path);
         }
+        if id == ComponentId::Openmontage {
+            openmontage::tests::fixture(&path);
+        }
         let record = Installation {
             version: if id == ComponentId::OpenDesign {
                 "1.2.3"

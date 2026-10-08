@@ -1133,6 +1133,124 @@ async fn harness_evaluation_explicit_mcp_connects_only_the_named_server() {
 }
 
 #[tokio::test]
+async fn live_mcp_selection_preserves_the_peer_loaded_schema_and_confirmed_effects() {
+    let f = Fixture::new();
+    let voice = f.local_with_tools("voicestudio", 2000, 6);
+    let other = f.local("unrelated");
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &McpIntent::default(),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &json!({"server":"voicestudio"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let lookup = runtime::wire_name(&voice, "lookup");
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_search_tools",
+            &json!({"query":"lookup"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    let before = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(before.iter().any(|definition| definition["name"] == lookup));
+    let starts = fs::read_to_string(f.home.join("starts")).unwrap();
+    let intent = runtime::resolve_user_intent(&f.mcp, &f.state, &f.home, &McpIntent::default(), &["Se puder usar a narração usando mcp do voicestudio por favor, la o audio vem melhor e mais bonito".into()]).await.unwrap();
+    assert_eq!(intent.mode, McpIntentMode::Explicit);
+    clients
+        .refresh_intent(&f.mcp, &f.state, &f.home, &intent, signal.clone())
+        .await
+        .unwrap();
+    let after = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(after.iter().any(|definition| definition["name"] == lookup));
+    assert!(!after
+        .iter()
+        .any(|definition| definition["name"] == "mcp_activate"));
+    assert!(clients.requires_explicit_attempt());
+    assert_eq!(fs::read_to_string(f.home.join("starts")).unwrap(), starts);
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":"narration"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(!clients.requires_explicit_attempt());
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\n"
+    );
+    let excluded = McpIntent {
+        excluded_servers: vec![McpIntentServer {
+            id: voice.id.clone(),
+            name: voice.name.clone(),
+        }],
+        ..McpIntent::default()
+    };
+    clients
+        .refresh_intent(&f.mcp, &f.state, &f.home, &excluded, signal.clone())
+        .await
+        .unwrap();
+    let choices = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(!choices
+        .iter()
+        .any(|definition| definition["name"] == lookup));
+    assert_eq!(
+        choices[0]["parameters"]["properties"]["server"]["enum"],
+        json!([other.name])
+    );
+    let disabled = McpIntent {
+        mode: McpIntentMode::Disabled,
+        ..McpIntent::default()
+    };
+    clients
+        .refresh_intent(&f.mcp, &f.state, &f.home, &disabled, signal.clone())
+        .await
+        .unwrap();
+    assert!(clients
+        .definitions(&f.mcp, &f.state, &f.home, false)
+        .await
+        .is_empty());
+    clients
+        .refresh_intent(&f.mcp, &f.state, &f.home, &intent, signal)
+        .await
+        .unwrap();
+    assert!(clients.requires_explicit_attempt());
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\n"
+    );
+}
+
+#[tokio::test]
 async fn harness_evaluation_invalid_mcp_arguments_are_precise_and_recoverable() {
     let f = Fixture::new();
     let server = f.local("docs");
@@ -2673,6 +2791,7 @@ async fn plugin_mcp_overlay_preserves_manual_configs_and_frozen_versions() {
     assert_eq!(pinned.len(), 1);
     let (id, (old, config)) = pinned.iter().next().unwrap();
     assert!(id.starts_with("plugin-mcp:"));
+    assert!((0..=(1_i64 << 53) - 1).contains(&old.revision));
     assert_ne!(old.name, manual.name);
     assert!(config.named("plugin").contains("first.js"));
     assert_eq!(
@@ -2701,6 +2820,7 @@ async fn plugin_mcp_overlay_preserves_manual_configs_and_frozen_versions() {
         .unwrap();
     assert_eq!(fresh.keys().next(), Some(id));
     assert_ne!(fresh[id].0.revision, old.revision);
+    assert!((0..=(1_i64 << 53) - 1).contains(&fresh[id].0.revision));
     assert!(config.named("plugin").contains("first.js"));
     assert!(fixture
         .mcp

@@ -1582,6 +1582,8 @@ mod tests {
         StoredTurn {
             excluded_queue_ms: 0,
             mcp_intent: None,
+            mcp_parent_intent: None,
+            mcp_intent_auxiliary_count: 0,
             turn: Turn {
                 id: format!("t{index}"),
                 active_since: None,

@@ -22,6 +22,18 @@ async function renderComposer(element: React.ReactElement) {
 
 describe("Explicit skill input", () => {
   beforeEach(() => { vi.mocked(invoke).mockReset().mockResolvedValue(snapshot); });
+  it("permite selecionar uma skill de plugin sem impedir o carregamento das demais", async () => {
+    const plugin = { ...react, id: "firebase-plugin", name: "firebase@firebase:deploy", origin: "plugin", managed: true };
+    vi.mocked(invoke).mockResolvedValue({ ...snapshot, skills: [react, plugin] });
+    const user = userEvent.setup();
+    await renderComposer(<ChatComposer modelGroups={models} onSendMessage={vi.fn()} />);
+    await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "/");
+    const option = await screen.findByRole("option", { name: /firebase@firebase:deploy/ });
+    expect(within(option).getByText("Plugin")).toBeVisible();
+    expect(screen.getByRole("option", { name: /react-expert/ })).toBeVisible();
+    await user.click(option);
+    expect(screen.getByRole("button", { name: "Remover skill firebase@firebase:deploy" })).toBeVisible();
+  });
   it("filtra skills ativas por /, seleciona com teclado e envia a badge como referência", async () => {
     const user = userEvent.setup(); const send = vi.fn().mockResolvedValue(true);
     await renderComposer(<ChatComposer modelGroups={models} onSendMessage={send} />);

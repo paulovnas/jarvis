@@ -46,13 +46,14 @@ export function SkillDetailsDialog({ selection, onClose }: { selection: SkillSel
   }, [selection, key, attempt]);
   const current = result?.key === key ? result : key ? { key, status: "loading" as const } : null;
   const detail = current?.status === "ready" ? current.detail : undefined;
+  const sourceUrl = detail?.source && /^[A-Za-z0-9-]+\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(detail.source) ? `https://github.com/${detail.source}` : null;
   return <Dialog open={selection !== null} onOpenChange={open => { if (!open) onClose(); }}>
     <DialogContent className="dark flex max-h-[88vh] flex-col gap-4 sm:max-w-3xl">
       <DialogHeader className="pr-8"><DialogTitle className="break-words leading-snug">{selection?.name}</DialogTitle><DialogDescription className="sr-only">Detalhes da skill</DialogDescription></DialogHeader>
       {current?.status === "error" ? <div className="flex min-h-48 flex-col items-center justify-center gap-3 text-center"><p role="alert" className="text-sm text-destructive">{current.error}</p><Button variant="outline" size="sm" className="cursor-pointer" onClick={() => setAttempt(value => value + 1)}>Tentar novamente</Button></div> : !detail ? <div className="min-h-64"><p className="mb-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Carregando arquivos e instruções…</p><DocumentSkeleton label="Carregando skill" /></div> : <>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Badge variant="secondary"><FileText className="size-3" aria-hidden="true" />{detail.files.length} {detail.files.length === 1 ? "arquivo" : "arquivos"}</Badge>
-          {detail.source && <Button variant="link" size="sm" className="h-auto cursor-pointer p-0 text-xs" onClick={() => { void openUrl(`https://github.com/${detail.source}`).catch(() => toast.error("Não foi possível abrir a origem")); }}><ExternalLink aria-hidden="true" />{detail.source}</Button>}
+          {detail.source && (sourceUrl ? <Button variant="link" size="sm" className="h-auto cursor-pointer p-0 text-xs" onClick={() => { void openUrl(sourceUrl).catch(() => toast.error("Não foi possível abrir a origem")); }}><ExternalLink aria-hidden="true" />{detail.source}</Button> : <Badge variant="outline">{detail.source}</Badge>)}
           {detail.path && <Hint content={detail.path} whenTruncated><span className="w-full truncate font-mono text-[11px] text-muted-foreground">{detail.path}</span></Hint>}
         </div>
         <ScrollArea className="min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:max-h-[60vh]">

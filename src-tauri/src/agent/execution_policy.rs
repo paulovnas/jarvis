@@ -205,19 +205,18 @@ pub(super) fn inspect_tool(
         ),
         "terminal_close" => ExecutionOperation::ProcessControl,
         "http_send" => ExecutionOperation::Network,
-        "video_run" | "video_audio" => {
-            ExecutionOperation::Command(parse_or_dynamic("hyperframes native-video-task"))
-        }
-        "video_brag_asset" => {
-            let output = tool.args["output"].as_str().unwrap_or(".");
-            ExecutionOperation::Filesystem {
-                read_paths: vec![],
-                write_paths: vec![
-                    PathBuf::from(output),
-                    PathBuf::from(format!("{output}.credits.md")),
-                ],
-            }
-        }
+        "video_run" => ExecutionOperation::Declared {
+            read_paths: vec![PathBuf::from(tool.args["path"].as_str().unwrap_or("."))],
+            write_paths: if tool.args["action"] == "status" {
+                vec![]
+            } else {
+                vec![PathBuf::from(tool.args["path"].as_str().unwrap_or("."))]
+            },
+            // Network access is added only after trusted OpenMontage preflight.
+            network: false,
+            persistent_process: false,
+            destructive: false,
+        },
         "image_process" => ExecutionOperation::Declared {
             read_paths: vec![PathBuf::from(".")],
             write_paths: vec![PathBuf::from(".")],
@@ -239,10 +238,8 @@ pub(super) fn inspect_tool(
         // Its argv is host-owned; do not infer opaque-shell network privileges.
         outcome.command = Some(parse_or_dynamic("comfyui native-image-task"));
     }
-    if tool.name == "video_brag_asset" && outcome.decision != ExecutionDecision::Deny {
-        // The closed import contract validates both project outputs first.
-        // Decoding uses host-owned FFmpeg argv and needs the native sandbox.
-        outcome.command = Some(parse_or_dynamic("hyperframes native-audio-import"));
+    if tool.name == "video_run" && outcome.decision != ExecutionDecision::Deny {
+        outcome.command = Some(parse_or_dynamic("openmontage native-video-task"));
     }
     let native_requested = tool.args["sandboxPermissions"] == "require_escalated";
     let external_command = outcome.command.is_some()
@@ -275,6 +272,27 @@ pub(super) fn inspect_tool(
         project_root: project_root.to_path_buf(),
         working_directory,
     }))
+}
+
+pub(super) fn apply_video_preflight(
+    policy: &mut ToolPolicy,
+    tool: &ToolCall,
+    preflight: &super::video::ApprovalPreflight,
+) {
+    if tool.name == "video_run"
+        && preflight.required
+        && policy.outcome.decision != ExecutionDecision::Deny
+    {
+        policy.outcome.decision = ExecutionDecision::Ask;
+        if tool.args["action"] == "tool" {
+            policy.outcome.effects.uses_network = true;
+            policy.outcome.code = "video_service_approval_required".into();
+            policy.outcome.reason = format!("A ferramenta do OpenMontage acessa um serviço externo, pode gerar custos ou baixar modelos. {} Revise o provedor e os parâmetros antes de autorizar esta execução.", preflight.description);
+        } else {
+            policy.outcome.code = "video_stage_approval_required".into();
+            policy.outcome.reason = preflight.description.clone();
+        }
+    }
 }
 
 fn parse_or_dynamic(command: &str) -> CommandPlan {
@@ -1054,32 +1072,34 @@ mod tests {
     }
 
     #[test]
-    fn brag_import_declares_audio_and_credits_writes_without_network() {
+    fn openmontage_writes_are_scoped_and_network_requires_trusted_preflight() {
         let root = Path::new("/workspace/project");
-        let policy = inspect_tool(
-            root,
-            &tool(
-                "video_brag_asset",
-                serde_json::json!({"asset":"music/track.mp3","output":"videos/track.wav"}),
-            ),
-            capabilities(Effect::Mutating),
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(
-            policy.outcome.write_paths,
-            [
-                root.join("videos/track.wav"),
-                root.join("videos/track.wav.credits.md")
-            ]
+        let call = tool(
+            "video_run",
+            serde_json::json!({"action":"tool","path":"videos/demo","tool":"video_encode","arguments":{"output_path":"ready.mp4"}}),
         );
+        let mut policy = inspect_tool(root, &call, capabilities(Effect::Mutating))
+            .unwrap()
+            .unwrap();
+        assert_eq!(policy.outcome.write_paths, [root.join("videos/demo")]);
         assert!(policy.outcome.effects.writes_filesystem);
         assert!(!policy.outcome.effects.uses_network);
         assert!(policy.outcome.command.is_some());
         assert!(super::super::execution_sandbox::prepare(&policy).is_some());
+        apply_video_preflight(
+            &mut policy,
+            &call,
+            &super::super::video::ApprovalPreflight {
+                required: true,
+                description: "Custo estimado: US$ 0.042.".into(),
+            },
+        );
+        assert!(policy.outcome.effects.uses_network);
+        assert_eq!(policy.outcome.decision, ExecutionDecision::Ask);
+        assert!(policy.outcome.reason.contains("US$ 0.042"));
         assert!(inspect_tool(
             root,
-            &tool("video_brag_assets", serde_json::json!({})),
+            &tool("video_tools", serde_json::json!({})),
             capabilities(Effect::ReadOnly)
         )
         .unwrap()
@@ -1087,8 +1107,8 @@ mod tests {
         let escape = inspect_tool(
             root,
             &tool(
-                "video_brag_asset",
-                serde_json::json!({"output":"../outside.wav"}),
+                "video_run",
+                serde_json::json!({"action":"init","path":"../outside"}),
             ),
             capabilities(Effect::Mutating),
         )

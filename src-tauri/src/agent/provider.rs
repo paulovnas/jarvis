@@ -2062,7 +2062,7 @@ mod tests {
         let sent = body["tools"].as_array().unwrap();
         for (name, optional, required) in [
             ("video_docs", "file", json!(["topic"])),
-            ("video_run", "resolution", json!(["action", "path"])),
+            ("video_run", "pipeline", json!(["action", "path"])),
             ("read", "offset", json!(["path"])),
         ] {
             let tool = sent.iter().find(|tool| tool["name"] == name).unwrap();

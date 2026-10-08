@@ -233,18 +233,14 @@ impl Role {
             || tool == crate::agent::knowledge::TOOL
             || tool == crate::agent::learning::TOOL
             || tool == "video_docs"
-            || tool == "video_presentation"
-            || tool == "video_brag_assets"
+            || tool == "video_tools"
         {
             return true;
         }
         if matches!(tool, "http_requests" | "http_result") {
             return true;
         }
-        if matches!(
-            tool,
-            "video_run" | "video_audio" | "video_wait" | "video_cancel" | "video_brag_asset"
-        ) {
+        if matches!(tool, "video_run" | "video_wait" | "video_cancel") {
             return matches!(self, Self::Builder | Self::Designer | Self::Video);
         }
         if crate::agent::http::mutating(tool) {

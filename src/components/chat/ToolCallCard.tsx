@@ -63,6 +63,7 @@ const tools = {
   generate_image: { label: "Geração de imagem", icon: ImagePlus },
   image_process: { label: "Processar imagem", icon: ImagePlus },
   video_docs: { label: "Vídeo · Documentação", icon: BookOpen },
+  video_tools: { label: "OpenMontage · Ferramentas", icon: Film },
   video_brag_assets: { label: "Brag · Trilhas e efeitos", icon: AudioLines },
   video_brag_asset: { label: "Brag · Importar áudio", icon: AudioLines },
   video_run: { label: "Vídeo · Executar etapa", icon: Film },
@@ -154,7 +155,7 @@ export function ToolCallCard({ tool, detailContext }: { tool: ToolCallItem; deta
   const label = projectImage ? "Imagem do projeto" : current.name === "video_audio" && current.args?.action === "narrate" ? "Gerar narração" : current.name === "video_audio" && current.args?.action === "music" ? "Gerar música" : presentation.label;
   const detail = current.name === "read_skill" ? current.output?.match(/^Skill: (.+)/)?.[1] ?? current.args?.path
     : current.name.startsWith("graft_") ? current.args?.query ?? current.args?.file ?? current.args?.symbol ?? current.args?.pattern ?? current.args?.in
-      : current.args?.title ?? current.args?.path ?? current.args?.output ?? current.args?.command ?? current.args?.query ?? current.args?.question ?? current.args?.url;
+      : current.args?.title ?? current.args?.path ?? current.args?.output ?? current.args?.command ?? current.args?.query ?? current.args?.question ?? current.args?.url ?? (current.name.startsWith("video_") ? current.args?.tool ?? current.args?.topic : undefined);
   const searchResult = current.name === "web_search" && current.output ? readWebSearchResult(current.output) : null;
   const visionResult = current.name === "vision" && current.output ? readVisionResult(current.output) : null;
   const warning = isTaskReminder(current);

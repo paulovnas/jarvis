@@ -65,12 +65,13 @@ pub(crate) fn servers(
                 )
                 .as_bytes(),
             );
-            let revision =
-                i64::from_be_bytes(digest[..8].try_into().unwrap_or_default()) & i64::MAX;
+            // Keep the revision exact when the MCP list is decoded in JavaScript.
+            let revision = i64::from_be_bytes(digest[..8].try_into().unwrap_or_default())
+                & ((1_i64 << 53) - 1);
             let server = Server {
                 id: server_id(&plugin),
                 name: format!("{plugin} · Apps"),
-                kind: "http".into(),
+                kind: "remote".into(),
                 enabled: true,
                 configured: catalog.apps_account_id.is_some(),
                 revision,
@@ -485,6 +486,8 @@ mod tests {
         }
         assert!(servers(home.path(), None).unwrap().is_empty());
         let server = servers(home.path(), Some(&project)).unwrap().remove(0).0;
+        assert_eq!(server.kind, "remote");
+        assert!((0..=(1_i64 << 53) - 1).contains(&server.revision));
         let context = Context {
             state: state.clone(),
             oauth: OpenAiCodexState::default(),

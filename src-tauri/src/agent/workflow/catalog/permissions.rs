@@ -109,14 +109,9 @@ fn description(name: &str) -> &'static str {
         "vision" => "Analisar imagens usando Vision.",
         "generate_image" => "Delegar imagens ao especialista com a conta e pipeline configuradas.",
         "image_process" => "Refinar anexos de imagem com a pipeline nativa do ComfyUI.",
-        "video_docs" => "Consultar contratos e guias de composição do Hyperframes.",
-        "video_brag_assets" => "Consultar trilhas e efeitos licenciados do Brag.",
-        "video_brag_asset" => "Importar um áudio Brag e seus créditos para o projeto.",
-        "video_run" => "Criar, verificar ou renderizar uma composição de vídeo.",
-        "video_audio" => "Gerar narração PT-BR por cena ou música instrumental local.",
-        "video_presentation" => {
-            "Verificar a apresentação e sincronizar a timeline com a narração real."
-        }
+        "video_docs" => "Consultar pipelines, direção e documentação do OpenMontage.",
+        "video_tools" => "Consultar ferramentas, provedores, requisitos e custos do OpenMontage.",
+        "video_run" => "Produzir e revisar vídeos, mídia, narração e música com o OpenMontage.",
         "video_wait" => "Aguardar o resultado de uma operação de vídeo.",
         "video_cancel" => "Cancelar uma operação de vídeo em andamento.",
         "read_skill" => "Ler instruções de uma skill ativa.",
@@ -256,7 +251,7 @@ pub(crate) fn builtin_permissions() -> Vec<Permission> {
             crate::core::beads::project_definitions(),
         ),
         ("Open Design · Core", crate::core::design::definitions()),
-        ("Hyperframes · Core", video::definitions(Mode::Build)),
+        ("OpenMontage · Core", video::definitions(Mode::Build)),
         ("ComfyUI · Core", image_tasks::definitions()),
         ("Context7 · Core", crate::core::context7::definitions()),
         ("Graft · Core", crate::core::graft::definitions()),

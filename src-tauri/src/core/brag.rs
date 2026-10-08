@@ -1,5 +1,5 @@
 //! Reviewed Brag creative package, embedded and cached inside managed HyperFrames.
-use super::{error, installed, ComponentId, CoreError};
+use super::{error, CoreError};
 use flate2::read::GzDecoder;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -224,13 +224,6 @@ fn extract(archive: &[u8], directory: &Path, manifest: &Manifest) -> Result<(), 
     validate(directory, manifest)
 }
 
-/// Existing HyperFrames installations remain valid without this optional package.
-/// Provisioning is local and only requested by Brag tools or new installation.
-pub(crate) fn directory(home: &Path) -> Result<PathBuf, CoreError> {
-    let package = installed(home, ComponentId::Hyperframes)?.path(home)?;
-    install(&package)
-}
-
 pub(super) fn install(package: &Path) -> Result<PathBuf, CoreError> {
     let _guard = PROVISION
         .lock()
@@ -301,31 +294,13 @@ pub(super) fn install(package: &Path) -> Result<PathBuf, CoreError> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::core::{installed, ComponentId};
 
     fn cache_generation_count(package: &Path) -> usize {
         fs::read_dir(package.join(CACHE))
             .unwrap()
             .filter(|entry| entry.as_ref().unwrap().file_type().unwrap().is_dir())
             .count()
-    }
-
-    pub(crate) fn fixture_home(home: &Path) -> PathBuf {
-        let package = super::super::root(home).join("packages/hyperframes/test");
-        fs::create_dir_all(&package).unwrap();
-        super::super::hyperframes::tests::fixture(&package, "1.0.0");
-        let installation = super::super::Installation {
-            version: "1.0.0".into(),
-            directory: "packages/hyperframes/test".into(),
-            files: super::super::hyperframes::required_files(&package).unwrap(),
-        };
-        super::super::save_manifest(
-            home,
-            &super::super::Manifest {
-                installations: BTreeMap::from([(ComponentId::Hyperframes, installation)]),
-            },
-        )
-        .unwrap();
-        package
     }
 
     #[test]
@@ -417,7 +392,7 @@ pub(crate) mod tests {
         let original = fs::read(super::super::root(home.path()).join("manifest.json")).unwrap();
         assert!(!package.join(CACHE).exists());
         installed(home.path(), ComponentId::Hyperframes).unwrap();
-        let directory = directory(home.path()).unwrap();
+        let directory = install(&package).unwrap();
         assert!(directory.starts_with(&package));
         assert_eq!(
             original,

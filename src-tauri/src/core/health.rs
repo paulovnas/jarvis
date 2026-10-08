@@ -75,7 +75,7 @@ fn recover_manifest(home: &Path) -> Result<(), CoreError> {
     let mut recovered = Manifest::default();
     // Preserve individually parseable entries when one entry broke the whole manifest.
     if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-        for id in ComponentId::ALL {
+        for id in ComponentId::ALL.into_iter().chain(ComponentId::LEGACY) {
             if let Ok(record) =
                 serde_json::from_value::<Installation>(value["installations"][id.key()].clone())
             {
@@ -83,7 +83,7 @@ fn recover_manifest(home: &Path) -> Result<(), CoreError> {
             }
         }
     }
-    for id in ComponentId::ALL {
+    for id in ComponentId::ALL.into_iter().chain(ComponentId::LEGACY) {
         if recovered.installations.contains_key(&id) {
             continue;
         }
@@ -161,6 +161,7 @@ fn repair_local(home: &Path, id: ComponentId) -> Result<(), CoreError> {
         ComponentId::Lsp => vec![install::node_path(&path)],
         ComponentId::Graft => vec![install::node_path(&path)],
         ComponentId::Hyperframes => hyperframes::executable_paths(&path)?,
+        ComponentId::Openmontage => openmontage::executable_paths(&path)?,
         ComponentId::Audiovisual => vec![audiovisual::python_path(&path)],
         ComponentId::Comfyui => vec![comfyui::python_path(&path)],
         ComponentId::Beads => vec![path.join("bd"), path.join("dolt/bin/dolt")],
@@ -184,6 +185,9 @@ fn repair_local(home: &Path, id: ComponentId) -> Result<(), CoreError> {
     if id == ComponentId::Graft {
         graft::install_assets(&path)?;
     }
+    if id == ComponentId::Openmontage {
+        openmontage::repair_bridge(&path)?;
+    }
     record.validate(home, id)?;
     save_receipt(home, id, record)
 }
@@ -196,6 +200,7 @@ async fn runtime(home: &Path, id: ComponentId, record: &Installation) -> Result<
         ComponentId::Lsp => lsp::verify(&path).await,
         ComponentId::Hyperframes => hyperframes::verify(&path, &record.version).await,
         ComponentId::Audiovisual => audiovisual::verify(&path, &record.version).await,
+        ComponentId::Openmontage => openmontage::verify(&path, &record.version).await,
         ComponentId::Comfyui => comfyui::verify(&path, &record.version).await,
         ComponentId::Graft => graft::verify(&path).await,
         ComponentId::Beads => {

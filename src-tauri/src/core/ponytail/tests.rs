@@ -47,6 +47,9 @@ fn install_fixture(home: &Path) -> Manifest {
         if id == ComponentId::Graft {
             crate::core::graft::fixture(&path);
         }
+        if id == ComponentId::Openmontage {
+            crate::core::openmontage::tests::fixture(&path);
+        }
         manifest.installations.insert(
             id,
             Installation {
@@ -58,6 +61,8 @@ fn install_fixture(home: &Path) -> Manifest {
                     crate::core::comfyui::VERSION
                 } else if id == ComponentId::Graft {
                     crate::core::install::GRAFT_VERSION
+                } else if id == ComponentId::Openmontage {
+                    crate::core::openmontage::VERSION
                 } else {
                     "4.9.0"
                 }
@@ -135,7 +140,12 @@ fn invalid_or_incompatible_rules_are_rejected_before_enabling_core() {
         assert!(item.error.as_deref().unwrap().contains("Reinstale"));
     }
     fixture_package(&path, "4.9.0");
-    assert!(CoreState::default().snapshot(home.path()).unwrap().ready);
+    let status = CoreState::default().snapshot(home.path()).unwrap();
+    assert!(
+        status.ready,
+        "Core fixture is not ready: {}",
+        serde_json::to_string(&status).unwrap()
+    );
     fs::remove_file(path.join(SKILL_PATH)).unwrap();
     assert!(Hooks::new(home.path(), home.path(), "session").is_err());
 }

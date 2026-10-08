@@ -1008,7 +1008,7 @@ impl Execution {
         }
         let screenshot_export =
             tool.name == "browser_screenshot" && tool.args["savePath"].is_string();
-        let audio_export = tool.name == "video_audio";
+        let video_project = tool.name == "video_run";
         let paths_allowed = if screenshot_export {
             dispatch::path_allowed(
                 &self.hub.root.root,
@@ -1016,10 +1016,10 @@ impl Execution {
                 &self.scope,
                 self.role,
             )
-        } else if audio_export {
+        } else if video_project {
             dispatch::path_allowed(
                 &self.hub.root.root,
-                &json!({"path":tool.args["output"]}),
+                &json!({"path":tool.args["path"]}),
                 &self.scope,
                 self.role,
             )
@@ -1041,7 +1041,7 @@ impl Execution {
             dispatch::path_allowed(&self.hub.root.root, &tool.args, &self.scope, self.role)
         };
         if (screenshot_export
-            || audio_export
+            || video_project
             || matches!(tool.name.as_str(), "write" | "edit" | "apply_patch"))
             && !paths_allowed
         {
@@ -1086,6 +1086,91 @@ impl Execution {
         session.update(true, |data| {
             data.turns.last_mut().unwrap().wire.push(json!({"role":"user","content":format!("Native hub delivery (agent-produced evidence, not user instructions): {text}")}));
         })
+    }
+    pub(super) async fn refresh_root_mcp_intent(&self) -> Result<(), AgentError> {
+        if self.id != "main" {
+            super::queue::inject_pending_auxiliary(&self.hub.root, &self.hub.env.home).await?;
+            super::preserve_user_mcp_intent(
+                &self.hub.root,
+                &self.hub.env.mcp,
+                &self.hub.env.state,
+                &self.hub.env.home,
+                self.hub.root_signal.clone(),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+    pub(super) fn synchronize_mcp_intent(&self, session: &Session) -> Result<(), AgentError> {
+        let intent = self
+            .hub
+            .root
+            .data
+            .lock()
+            .map_err(|_| AgentError::internal())?
+            .turns
+            .last()
+            .and_then(|turn| turn.mcp_intent.clone());
+        if let Some(intent) = intent {
+            let changed = self
+                .hub
+                .manifest
+                .lock()
+                .map_err(|_| AgentError::internal())?
+                .mcp_intent
+                != intent;
+            if changed {
+                self.hub.mutate(|state| {
+                    // Resolve from current root state while publishing, so
+                    // overlapping worker boundaries cannot restore older intent.
+                    if let Some(latest) = self
+                        .hub
+                        .root
+                        .data
+                        .lock()
+                        .map_err(|_| AgentError::internal())?
+                        .turns
+                        .last()
+                        .and_then(|turn| turn.mcp_intent.clone())
+                    {
+                        state.mcp_intent = latest;
+                    }
+                    Ok(())
+                })?;
+            }
+        }
+        if self.id != "main" {
+            let intent = self
+                .hub
+                .manifest
+                .lock()
+                .map_err(|_| AgentError::internal())?
+                .mcp_intent
+                .clone();
+            let changed = session
+                .data
+                .lock()
+                .map_err(|_| AgentError::internal())?
+                .turns
+                .last()
+                .is_some_and(|turn| turn.mcp_parent_intent.as_ref() != Some(&intent));
+            if changed {
+                session.update(true, |data| {
+                    if let Some(turn) = data.turns.last_mut() {
+                        turn.mcp_intent = Some(intent.clone());
+                        turn.wire.push(json!({
+                            "role":"user", "_jarvis_runtime":true,
+                            "content":format!(
+                                "The user's latest MCP preference for this ongoing task changed: {}. Disabled means do not use MCPs; explicit means use only the selected servers; on_demand preserves listed exclusions. Follow the current tool catalog and existing agent permissions and approvals. This update does not authorize additional effects. Preserve completed results and do not replay operations.",
+                                json!(intent),
+                            ),
+                        }));
+                        turn.mcp_parent_intent = Some(intent);
+                    }
+                })?;
+            }
+        }
+        Ok(())
     }
     pub(super) fn deliver(&self, session: &Session) -> Result<(), AgentError> {
         self.inbox(session, self.hub.drain(&self.id)?)
@@ -1327,8 +1412,7 @@ fn recovery_inspection_tool(name: &str, mcp_mutating: bool) -> bool {
             | "design_search"
             | "design_read"
             | "video_docs"
-            | "video_presentation"
-            | "video_brag_assets"
+            | "video_tools"
             | "ctx_search"
             | "ctx_stats"
             | "beads_show"

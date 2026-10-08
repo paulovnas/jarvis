@@ -381,6 +381,10 @@ struct StoredTurn {
     excluded_queue_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mcp_intent: Option<crate::mcp::McpIntent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mcp_parent_intent: Option<crate::mcp::McpIntent>,
+    #[serde(default)]
+    mcp_intent_auxiliary_count: usize,
 }
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -878,6 +882,8 @@ impl Session {
             wire: vec![json!({"role":"user", "content":content})],
             excluded_queue_ms: 0,
             mcp_intent: None,
+            mcp_parent_intent: None,
+            mcp_intent_auxiliary_count: 0,
             turn: Turn {
                 id: id.clone(),
                 created_at: now(),
@@ -2544,6 +2550,7 @@ struct ApprovalRequest<'a> {
     sandbox: Option<&'a execution_sandbox::SandboxPlan>,
     project_id: Option<&'a str>,
     manual_hooks: Option<&'a crate::hooks::runtime::Runtime>,
+    explicit_video_approval: bool,
     signal: watch::Receiver<bool>,
 }
 
@@ -2593,6 +2600,7 @@ async fn authorize_with_policy(
             sandbox: None,
             project_id: None,
             manual_hooks: None,
+            explicit_video_approval: false,
             signal,
         },
         approval,
@@ -2643,10 +2651,11 @@ async fn authorize_declared(
     // YOLO preauthorizes execution, including native fallback and terminal control.
     // Tool validation and explicit workflow reviews are enforced separately.
     let execution_preauthorized = request.options.approval_mode == ApprovalMode::Yolo
-        || approval == tool_contract::ApprovalPolicy::Never
-        || (approval != tool_contract::ApprovalPolicy::Always
-            && request.options.mode == Mode::Plan
-            && !mutating_mcp);
+        || (!request.explicit_video_approval
+            && (approval == tool_contract::ApprovalPolicy::Never
+                || (approval != tool_contract::ApprovalPolicy::Always
+                    && request.options.mode == Mode::Plan
+                    && !mutating_mcp)));
     if let Some(hooks) = request
         .manual_hooks
         .filter(|_| authoring_review || !execution_preauthorized)
@@ -2709,10 +2718,21 @@ fn settle_tool_result(
 fn pending_mcp_intent_resolution(
     turns: &[StoredTurn],
     inherited_mcp_intent: &crate::mcp::McpIntent,
-) -> Option<(String, crate::mcp::McpIntent, Vec<String>)> {
+) -> Option<(String, crate::mcp::McpIntent, Vec<String>, usize)> {
     let current = turns.last()?;
-    if current.mcp_intent.is_some() {
-        return None;
+    let auxiliary_count = current.turn.auxiliary_messages.len();
+    if let Some(intent) = &current.mcp_intent {
+        return (current.mcp_intent_auxiliary_count < auxiliary_count).then(|| {
+            (
+                current.turn.id.clone(),
+                intent.clone(),
+                current.turn.auxiliary_messages[current.mcp_intent_auxiliary_count..]
+                    .iter()
+                    .map(|message| message.content.clone())
+                    .collect(),
+                auxiliary_count,
+            )
+        });
     }
     let previous = turns[..turns.len() - 1]
         .iter()
@@ -2723,9 +2743,21 @@ fn pending_mcp_intent_resolution(
     let start = previous.map_or(0, |index| index + 1);
     let messages = turns[start..]
         .iter()
-        .map(|turn| turn.turn.user.clone())
+        .flat_map(|turn| {
+            std::iter::once(turn.turn.user.clone()).chain(
+                turn.turn
+                    .auxiliary_messages
+                    .iter()
+                    .map(|message| message.content.clone()),
+            )
+        })
         .collect();
-    Some((current.turn.id.clone(), inherited, messages))
+    Some((
+        current.turn.id.clone(),
+        inherited,
+        messages,
+        auxiliary_count,
+    ))
 }
 
 async fn preserve_user_mcp_intent(
@@ -2735,26 +2767,77 @@ async fn preserve_user_mcp_intent(
     home: &Path,
     mut signal: watch::Receiver<bool>,
 ) -> Result<(), AgentError> {
-    let pending = {
-        let data = session.data.lock().map_err(|_| AgentError::internal())?;
-        pending_mcp_intent_resolution(&data.turns, &data.inherited_mcp_intent)
-    };
-    let Some((turn_id, inherited, messages)) = pending else {
-        return Ok(());
-    };
-    let intent = tokio::select! {
-        _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-        result = crate::mcp::runtime::resolve_user_intent(mcp, state, home, &inherited, &messages) => result.map_err(AgentError::from)?,
-    };
-    session.update(true, |data| {
-        if let Some(current) = data
-            .turns
-            .last_mut()
-            .filter(|turn| turn.turn.id == turn_id && turn.mcp_intent.is_none())
-        {
-            current.mcp_intent = Some(intent);
-        }
-    })
+    loop {
+        let (pending, previous_intent, previous_auxiliary_count) = {
+            let data = session.data.lock().map_err(|_| AgentError::internal())?;
+            let current = data.turns.last();
+            (
+                pending_mcp_intent_resolution(&data.turns, &data.inherited_mcp_intent),
+                current.and_then(|turn| turn.mcp_intent.clone()),
+                current.map_or(0, |turn| turn.mcp_intent_auxiliary_count),
+            )
+        };
+        let Some((turn_id, inherited, messages, auxiliary_count)) = pending else {
+            return Ok(());
+        };
+        let intent = tokio::select! {
+            _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
+            result = crate::mcp::runtime::resolve_user_intent(mcp, state, home, &inherited, &messages) => result.map_err(AgentError::from)?,
+        };
+        session.update(true, |data| {
+            if let Some(current) = data.turns.last_mut().filter(|turn| {
+                turn.turn.id == turn_id
+                    && turn.mcp_intent == previous_intent
+                    && turn.mcp_intent_auxiliary_count == previous_auxiliary_count
+            }) {
+                current.mcp_intent = Some(intent);
+                current.mcp_intent_auxiliary_count = auxiliary_count;
+            }
+        })?;
+        // Another boundary may have committed an older batch first. Resolve
+        // any remaining suffix before returning the catalog for this step.
+    }
+}
+
+async fn refresh_user_mcp_intent(
+    session: &Arc<Session>,
+    runtime: TurnRuntime<'_>,
+    clients: &mut crate::mcp::runtime::TurnClients,
+    previous: &mut crate::mcp::McpIntent,
+    execution: Option<&workflow::Execution>,
+    signal: watch::Receiver<bool>,
+) -> Result<bool, AgentError> {
+    if let Some(exec) = execution {
+        exec.refresh_root_mcp_intent().await?;
+        exec.synchronize_mcp_intent(session)?;
+    }
+    preserve_user_mcp_intent(
+        session,
+        runtime.mcp,
+        runtime.state,
+        runtime.home,
+        signal.clone(),
+    )
+    .await?;
+    if let Some(exec) = execution {
+        exec.synchronize_mcp_intent(session)?;
+    }
+    let intent = session
+        .data
+        .lock()
+        .map_err(|_| AgentError::internal())?
+        .turns
+        .last()
+        .and_then(|turn| turn.mcp_intent.clone())
+        .unwrap_or_default();
+    if intent != *previous {
+        clients
+            .refresh_intent(runtime.mcp, runtime.state, runtime.home, &intent, signal)
+            .await?;
+        *previous = intent;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 #[derive(Clone, Copy)]
@@ -2994,7 +3077,7 @@ fn run_turn_once<'a>(
             .turn
             .user
             .clone();
-        let mcp_intent = session
+        let mut mcp_intent = session
             .data
             .lock()
             .map_err(|_| AgentError::internal())?
@@ -3238,6 +3321,23 @@ fn run_turn_once<'a>(
             // correction that is still only queued in memory.
             session.flush_async().await?;
             queue::inject_pending_auxiliary(session, home).await?;
+            if !publication_agent && !global_companion {
+                refresh_user_mcp_intent(
+                    session,
+                    TurnRuntime {
+                        grants,
+                        state,
+                        oauth,
+                        mcp,
+                        home,
+                    },
+                    &mut mcp_clients,
+                    &mut mcp_intent,
+                    execution.as_ref(),
+                    signal.clone(),
+                )
+                .await?;
+            }
             if let Some(exec) = &execution {
                 exec.deliver(session)?;
                 exec.refresh_recovery_catalog(
@@ -4031,6 +4131,18 @@ fn run_turn_once<'a>(
                 let contract_preflight = prepared.as_ref().err().cloned();
                 let prepared = prepared.ok();
                 let mut policy_preflight = None;
+                let video_preflight = if contract_preflight.is_none() {
+                    match video::approval_preflight(home, &session.root, &tool).await {
+                        Ok(required) => required,
+                        Err(error) => {
+                            policy_preflight = Some(error.message);
+                            video::ApprovalPreflight::default()
+                        }
+                    }
+                } else {
+                    video::ApprovalPreflight::default()
+                };
+                let explicit_video_approval = video_preflight.required;
                 let mut policy_requires_approval = false;
                 let mut sandbox_requires_approval = false;
                 let mut sandbox_plan = None;
@@ -4042,7 +4154,12 @@ fn run_turn_once<'a>(
                         &tool,
                         prepared.capabilities,
                     ) {
-                        Ok(Some(policy)) => {
+                        Ok(Some(mut policy)) => {
+                            execution_policy::apply_video_preflight(
+                                &mut policy,
+                                &tool,
+                                &video_preflight,
+                            );
                             sandbox_plan = execution_sandbox::prepare(&policy);
                             let grant = if policy.outcome.decision
                                 == execution_policy::ExecutionDecision::Ask
@@ -4171,6 +4288,7 @@ fn run_turn_once<'a>(
                                     sandbox: sandbox_plan.as_ref(),
                                     project_id: Some(&project_id),
                                     manual_hooks: Some(&manual_hooks),
+                                    explicit_video_approval,
                                     signal: signal.clone(),
                                 },
                                 prepared,
@@ -4496,6 +4614,8 @@ fn run_turn_once<'a>(
                                             video::Context {
                                                 session: owner,
                                                 home,
+                                                approved: options.approval_mode == ApprovalMode::Yolo
+                                                    || explicit_video_approval,
                                                 app: execution.as_ref().and_then(workflow::Execution::native_app),
                                             },
                                             &tool,

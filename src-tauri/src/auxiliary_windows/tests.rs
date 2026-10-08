@@ -97,6 +97,9 @@ fn settings_can_configure_the_app_but_cannot_execute_chats() {
         "set_agent_model",
         "mutate_workflow_catalog",
         "configure_context7",
+        "get_openmontage_configuration",
+        "save_openmontage_configuration",
+        "install_openmontage_optional_package",
         "list_hooks",
         "save_hook",
         "delete_hook",
@@ -118,6 +121,7 @@ fn settings_can_configure_the_app_but_cannot_execute_chats() {
     ] {
         assert!(command_allowed("settings", command), "{command}");
         assert!(!command_allowed("browser-1", command), "{command}");
+        assert!(!command_allowed("openmontage-board", command), "{command}");
     }
     for command in [
         "start_agent_turn",

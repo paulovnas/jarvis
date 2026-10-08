@@ -97,7 +97,7 @@ it("não confunde uma consulta de atualização sem rede com Core quebrado", asy
   expect(screen.queryByRole("button", { name: "Solucionar" })).not.toBeInTheDocument();
 });
 
-it.each(["hyperframes", "audiovisual", "comfyui", "graft"] as const)("requires the %s runtime before starting a chat", async id => {
+it.each(["openmontage", "comfyui", "graft"] as const)("requires the %s runtime before starting a chat", async id => {
   const state = coreFixture();
   const video = state.items.find(item => item.id === id)!;
   video.installed = false; video.configured = false; video.installedVersion = null;
@@ -126,44 +126,44 @@ it("installs required Graft from upgrade diagnostics before releasing the chat",
   expect(await screen.findByText("Chat liberado")).toBeVisible();
 });
 
-it("installs missing audiovisual resources from upgrade diagnostics and releases the chat", async () => {
+it("installs missing openmontage resources from upgrade diagnostics and releases the chat", async () => {
   const state = coreFixture();
-  const audiovisual = state.items.find(item => item.id === "audiovisual")!;
-  audiovisual.installed = false;
-  audiovisual.configured = false;
-  audiovisual.installedVersion = null;
+  const openmontage = state.items.find(item => item.id === "openmontage")!;
+  openmontage.installed = false;
+  openmontage.configured = false;
+  openmontage.installedVersion = null;
   state.ready = false;
   invokeMock.mockImplementation(async name => name === "install_core_component" ? coreFixture() : state);
   render(<CoreGate><div>Chat liberado</div></CoreGate>);
   fireEvent.click(await screen.findByRole("button", { name: "Solucionar" }));
-  const install = await screen.findByRole("button", { name: "Instalar Audiovisual" });
+  const install = await screen.findByRole("button", { name: "Instalar OpenMontage" });
   await waitFor(() => expect(install).toBeEnabled());
-  expect(screen.getByText(/CC-BY-NC, para uso não comercial/)).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Reparar Audiovisual" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Reinstalar Audiovisual" })).not.toBeInTheDocument();
+  expect(screen.getByText(/conforme as dependências e credenciais configuradas/)).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Reparar OpenMontage" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reinstalar OpenMontage" })).not.toBeInTheDocument();
   fireEvent.click(install);
-  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "audiovisual" }));
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "openmontage" }));
   fireEvent.click(await screen.findByRole("button", { name: "Voltar ao Jarvis" }));
   expect(await screen.findByText("Chat liberado")).toBeVisible();
 });
 
-it("allows an audiovisual download to be canceled from upgrade diagnostics", async () => {
+it("allows an openmontage download to be canceled from upgrade diagnostics", async () => {
   let state = coreFixture();
   state.ready = false;
-  const audio = state.items.find(item => item.id === "audiovisual")!;
+  const audio = state.items.find(item => item.id === "openmontage")!;
   audio.installed = false; audio.configured = false; audio.installedVersion = null;
   audio.stage = "Baixando modelos de voz e música";
   invokeMock.mockImplementation(async command => {
     if (command === "cancel_core_installation") {
       state = structuredClone(state);
-      state.items.find(item => item.id === "audiovisual")!.stage = null;
+      state.items.find(item => item.id === "openmontage")!.stage = null;
     }
     return state;
   });
   render(<CoreGate><div>Chat liberado</div></CoreGate>);
   fireEvent.click(await screen.findByRole("button", { name: "Solucionar" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Cancelar instalação de Audiovisual" }));
-  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("cancel_core_installation", { id: "audiovisual" }));
-  await waitFor(() => expect(screen.queryByRole("progressbar", { name: "Instalação de Audiovisual" })).not.toBeInTheDocument());
+  fireEvent.click(await screen.findByRole("button", { name: "Cancelar instalação de OpenMontage" }));
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("cancel_core_installation", { id: "openmontage" }));
+  await waitFor(() => expect(screen.queryByRole("progressbar", { name: "Instalação de OpenMontage" })).not.toBeInTheDocument());
   expect(screen.queryByText("Chat liberado")).not.toBeInTheDocument();
 });

@@ -209,6 +209,7 @@ pub fn run() {
         .manage(companion::CompanionState::default())
         .manage(voice::VoiceState::default())
         .manage(core::CoreState::default())
+        .manage(core::openmontage::BacklotState::default())
         .manage(persistence::AppState::default())
         .manage(openai_codex::OpenAiCodexState::default())
         .manage(claude::ClaudeState::default())
@@ -399,6 +400,10 @@ pub fn run() {
                 core::check_core_updates,
                 core::install_core_component,
                 core::cancel_core_installation,
+                core::openmontage::configuration::get_openmontage_configuration,
+                core::openmontage::configuration::save_openmontage_configuration,
+                core::openmontage::configuration::install_openmontage_optional_package,
+                core::openmontage::board::open_openmontage_board,
                 core::health::diagnose_core,
                 core::health::repair_core_component,
                 diagnostics::get_diagnostic_summary,

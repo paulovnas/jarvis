@@ -9,6 +9,10 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 describe("ToolCallCard Web Search", () => {
+  it("identifies the OpenMontage tool used in a production step without expanding arguments", () => {
+    render(<ToolCallCard tool={{ id: "production", name: "video_run", status: "running", args: { tool: "video_compose", arguments: { output: "renders/demo.mp4" } }, output: "" }} />);
+    expect(screen.getByRole("button", { name: /Vídeo · Executar etapa.*video_compose.*Executando/ })).toBeVisible();
+  });
   it("identifies a project image reference and keeps its source path visible", async () => {
     const user = userEvent.setup();
     const output = JSON.stringify({ kind: "project_image_reference", path: "public/assets/logo.png", attachment: { id: "owned-logo" }, image_ids: ["owned-logo"] });
@@ -77,6 +81,7 @@ describe("ToolCallCard Web Search", () => {
     ["http_result", "HTTP · Analisar resultado"],
     ["http_cancel", "HTTP · Cancelar requisição"],
     ["video_docs", "Vídeo · Documentação"],
+    ["video_tools", "OpenMontage · Ferramentas"],
     ["video_brag_assets", "Brag · Trilhas e efeitos"],
     ["video_brag_asset", "Brag · Importar áudio"],
     ["image_process", "Processar imagem"],

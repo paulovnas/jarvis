@@ -56,7 +56,6 @@ struct Metadata {
 
 pub(crate) struct Runtime {
     pub python: PathBuf,
-    pub entry: PathBuf,
     pub package: PathBuf,
     pub models: PathBuf,
     pub lock: PathBuf,
@@ -98,7 +97,6 @@ impl Runtime {
     fn at(package: &Path) -> Self {
         Self {
             python: python_path(package),
-            entry: package.join(ENTRY),
             models: package.join("models"),
             lock: package.parent().unwrap_or(package).join(".inference.lock"),
             package: package.into(),

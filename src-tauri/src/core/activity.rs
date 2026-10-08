@@ -40,7 +40,7 @@ pub struct Activity {
     #[cfg_attr(
         test,
         ts(
-            type = "\"context-mode\" | \"ponytail\" | \"beads\" | \"open-design\" | \"context7\" | \"lsp\" | \"hyperframes\" | \"audiovisual\" | \"comfyui\" | \"graft\" | \"manual-hooks\" | \"hooks\" | \"plugins\""
+            type = "\"context-mode\" | \"ponytail\" | \"beads\" | \"open-design\" | \"context7\" | \"lsp\" | \"hyperframes\" | \"audiovisual\" | \"openmontage\" | \"comfyui\" | \"graft\" | \"manual-hooks\" | \"hooks\" | \"plugins\""
         )
     )]
     pub component: ActivityComponent,

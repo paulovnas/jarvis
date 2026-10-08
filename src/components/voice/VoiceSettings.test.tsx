@@ -39,7 +39,7 @@ describe("local voice setup", () => {
     mock.settings = voiceSettings({ speechReady: false });
     render(<VoiceSettings />);
     expect(screen.getByRole("button", { name: "Testar voz" })).toBeDisabled();
-    expect(screen.getByText(/O ditado funciona/)).toBeVisible();
+    expect(screen.getByText(/o ditado funciona/)).toHaveTextContent("Os áudios de notificação e o ditado continuam disponíveis");
     expect(screen.getByText(/O microfone só abre ao iniciar um ditado\./)).toBeVisible();
     expect(screen.queryByText(/ligaç/)).not.toBeInTheDocument();
   });

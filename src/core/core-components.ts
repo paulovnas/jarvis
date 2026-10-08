@@ -1,7 +1,9 @@
 import { z } from "zod";
 
-export const coreIdSchema = z.enum(["context-mode", "ponytail", "beads", "open-design", "context7", "lsp", "hyperframes", "audiovisual", "comfyui", "graft"]);
+export const ACTIVE_CORE_IDS = ["context-mode", "ponytail", "beads", "open-design", "context7", "lsp", "openmontage", "comfyui", "graft"] as const;
+export const coreIdSchema = z.enum([...ACTIVE_CORE_IDS, "hyperframes", "audiovisual"]);
 export type CoreId = z.infer<typeof coreIdSchema>;
+export const activeCore = (id: CoreId) => id !== "hyperframes" && id !== "audiovisual";
 export const optionalCore = (id: CoreId) => id === "context7";
 export const coreDownloadSchema = z.object({
   receivedBytes: z.number().int().nonnegative(), totalBytes: z.number().int().positive().nullable(),
@@ -16,7 +18,12 @@ export const coreSnapshotSchema = z.object({
     download: coreDownloadSchema.nullable(),
     healthError: z.string().nullable().default(null),
     diagnostics: z.array(z.object({ label: z.string(), passed: z.boolean(), message: z.string() })).default([]),
-  })).length(coreIdSchema.options.length).refine(items => new Set(items.map(item => item.id)).size === coreIdSchema.options.length),
+  })).refine(items => {
+    const ids = new Set(items.map(item => item.id));
+    if (ids.size !== items.length) return false;
+    const expected = ids.has("openmontage") ? ACTIVE_CORE_IDS : [...ACTIVE_CORE_IDS.filter(id => id !== "openmontage"), "hyperframes", "audiovisual"];
+    return ids.size === expected.length && expected.every(id => ids.has(id as CoreId));
+  }),
 }).refine(value => value.ready === value.items.every(item => optionalCore(item.id) || (item.installed && item.configured && !item.healthError)));
 export type CoreSnapshot = z.infer<typeof coreSnapshotSchema>;
 export function coreError(cause: unknown): string {

@@ -25,6 +25,18 @@ const ARGUMENT_LABELS: Record<string, string> = {
   reason: "Motivo",
 };
 
+const VIDEO_ARGUMENT_LABELS: Record<string, string> = {
+  action: "Ação",
+  path: "Produção",
+  pipeline: "Fluxo de produção",
+  tool: "Ferramenta",
+  arguments: "Parâmetros da ferramenta",
+  provider: "Provedor",
+  model: "Modelo",
+  costQuoteUsd: "Estimativa informada (USD)",
+  yieldTimeMs: "Espera inicial (milissegundos)",
+};
+
 const SCOPE_LABELS: Record<GrantScope, string> = {
   conversation: "Esta conversa",
   project: "Este projeto",
@@ -65,6 +77,7 @@ function subject(name: string) {
   if (name === "terminal_close") return "fechamento de terminal";
   if (name === "terminal_start") return "abertura de terminal";
   if (name === "process_start") return "processo persistente";
+  if (name === "video_run") return "etapa da produção de vídeo";
   return "alteração de arquivo";
 }
 
@@ -81,6 +94,7 @@ function effectLabels(effects: NonNullable<PendingApproval["policy"]>["effects"]
 }
 
 function formattedCommand(request: PendingApproval) {
+  if (request.tool.name === "video_run") return null;
   const command = request.policy?.command;
   if (!command) return null;
   return command.invocations.map(invocation => invocation.argv.join(" ")).join(" | ");
@@ -143,7 +157,7 @@ export function ToolApproval({ request, projectPath, onAnswer }: {
       </div>}
 
       {!command && Object.entries(request.tool.args).map(([key, value]) => <div key={key} className="space-y-1.5">
-        <p className="micro-label">{ARGUMENT_LABELS[key] ?? key}</p>
+        <p className="micro-label">{(request.tool.name === "video_run" ? VIDEO_ARGUMENT_LABELS[key] : ARGUMENT_LABELS[key]) ?? key}</p>
         <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-background p-2 font-mono text-xs">{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre>
       </div>)}
 

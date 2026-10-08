@@ -16,6 +16,25 @@ beforeEach(() => {
 });
 async function ready(payload: unknown) { await act(async () => { listener?.({ event: "video:ready", id: 1, payload }); }); }
 
+it("recovers verified OpenMontage videos while rejecting incomplete outputs and other media", () => {
+  const controller = files();
+  const turn = savedTurn();
+  const receipt = { sessionId: "production-1", resource: "openmontage", action: "tool", status: "completed", exitCode: 0, result: { success: true, videos: [{ path: "renders/demo.mp4", verified: true }, { path: "renders/unverified.mp4", verified: false }, { path: "audio/voice.wav", verified: true }, { path: "renders/demo.mp4", verified: true }] } };
+  turn.steps[0].tools[0] = { ...turn.steps[0].tools[0], name: "video_run", output: JSON.stringify({ ...receipt, exitCode: 1 }) };
+  const snapshot = { ...emptyChat("chat-1"), turns: [turn] };
+  const { rerender } = renderHook(({ data }) => useVideoReady("project-1", "chat-1", controller, data), { initialProps: { data: snapshot } });
+  expect(controller.open).not.toHaveBeenCalled();
+  turn.steps[0].tools[0].output = JSON.stringify({ ...receipt, result: { ...receipt.result, success: false } });
+  rerender({ data: { ...snapshot, revision: 2 } });
+  expect(controller.open).not.toHaveBeenCalled();
+  turn.steps[0].tools[0].output = JSON.stringify(receipt);
+  rerender({ data: { ...snapshot, revision: 3 } });
+  expect(controller.open).toHaveBeenCalledExactlyOnceWith("renders/demo.mp4", true);
+  turn.steps[0].tools.push({ ...turn.steps[0].tools[0], id: "wait-1", name: "video_wait" });
+  rerender({ data: { ...snapshot, revision: 4 } });
+  expect(controller.open).toHaveBeenCalledTimes(1);
+});
+
 it("only opens a completed render from the current project and conversation", async () => {
   const controller = files();
   const { unmount } = renderHook(() => useVideoReady("project-1", "chat-1", controller));

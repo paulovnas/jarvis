@@ -37,6 +37,30 @@ describe("SkillsSettings", () => {
     expect(mocked).toHaveBeenCalledWith("set_skills_agents", { enabled: true });
     expect(count).toHaveBeenLastCalledWith(2);
   });
+  it("carrega skills de plugins junto das demais e mantém seu gerenciamento em Plugins", async () => {
+    const pluginSkill = { ...own, id: "plugin-skill", name: "firebase@official:deploy", origin: "plugin", managed: true, source: "firebase@official", marketplaceId: "skills:deploy" };
+    mocked.mockImplementation(async command => {
+      if (command === "list_skills") return { ...state, skills: [own, pluginSkill] };
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const count = vi.fn();
+    const user = userEvent.setup();
+    render(<SkillsSettings onCountChange={count} />);
+
+    expect(await screen.findByRole("button", { name: `Detalhes de ${pluginSkill.name}` })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Detalhes de react-expert" })).toBeVisible();
+    expect(screen.getByText("Plugin")).toBeVisible();
+    expect(screen.getByText("Gerenciada em Plugins")).toBeVisible();
+    const pluginToggle = screen.getByRole("switch", { name: `Ativar ${pluginSkill.name}` });
+    expect(pluginToggle).toHaveAttribute("aria-disabled", "true");
+    await user.click(pluginToggle);
+    expect(mocked).not.toHaveBeenCalledWith("set_skill_enabled", expect.anything());
+    expect(screen.getByRole("switch", { name: "Ativar react-expert" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: `Excluir ${pluginSkill.name}` })).not.toBeInTheDocument();
+    expect(count).toHaveBeenLastCalledWith(2);
+    expect(mocked).not.toHaveBeenCalledWith("check_skill_updates");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
   it("abre instruções na modal e desativa sem remover a skill", async () => {
     const user = userEvent.setup(); render(<SkillsSettings />);
     await user.click(await screen.findByRole("button", { name: "Detalhes de react-expert" }));

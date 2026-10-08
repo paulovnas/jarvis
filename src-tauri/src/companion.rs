@@ -1687,6 +1687,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn companion_file_links_can_reveal_files_without_opening_or_executing_them() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/companion.json")).unwrap();
+        assert_eq!(capability["webviews"], serde_json::json!(["companion"]));
+        assert!(capability.get("remote").is_none());
+        let permissions = capability["permissions"].as_array().unwrap();
+        assert!(permissions.contains(&serde_json::json!("opener:allow-reveal-item-in-dir")));
+        assert!(!permissions.iter().any(|permission| permission
+            .as_str()
+            .is_some_and(|name| name == "opener:default"
+                || name == "opener:allow-open-path"
+                || name.starts_with("shell:"))));
+    }
+
+    #[test]
     fn dom_blur_does_not_change_native_focus_and_interaction_errors_are_reported() {
         interaction_focus(false, || panic!("Portal blur must not change native focus")).unwrap();
         let mut focused = false;

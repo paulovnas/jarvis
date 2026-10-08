@@ -554,6 +554,8 @@ mod tests {
             },
             wire: vec![serde_json::json!({"role":"user","content":"hello"})],
             mcp_intent: None,
+            mcp_parent_intent: None,
+            mcp_intent_auxiliary_count: 0,
         };
         writer.append_turn(turn).unwrap();
         writer.flush().unwrap();

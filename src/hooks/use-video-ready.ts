@@ -7,6 +7,10 @@ import type { ProjectFilesController } from "./use-project-files";
 
 const readySchema = z.object({ projectId: z.string(), conversationId: z.string(), path: z.string().min(1) });
 const renderSchema = z.object({ sessionId: z.string().min(1), status: z.literal("completed"), exitCode: z.literal(0), action: z.literal("render"), path: z.string().min(1) });
+const productionSchema = z.object({
+  sessionId: z.string().min(1), resource: z.literal("openmontage"), status: z.literal("completed"), exitCode: z.literal(0), action: z.literal("tool"),
+  result: z.object({ success: z.literal(true), videos: z.array(z.object({ path: z.string().min(1), verified: z.boolean() })) }),
+});
 
 function firstPresentation(processed: Set<string>, key: string) {
   if (processed.has(key)) return false;
@@ -29,11 +33,16 @@ export function useVideoReady(projectId: string, conversationId: string, files?:
     for (const turn of snapshot.turns) for (const step of turn.steps) for (const tool of step.tools) {
       if (tool.status !== "completed" || !["video_run", "video_wait", "bash_wait"].includes(tool.name)) continue;
       try {
-        const receipt = renderSchema.safeParse(JSON.parse(tool.output));
-        if (!receipt.success || !isVideoFile(receipt.data.path)) continue;
-        const key = JSON.stringify([projectId, conversationId, receipt.data.path]);
-        if (!firstPresentation(processed, key)) continue;
-        if (!controller.current?.tabs.paths.includes(receipt.data.path)) controller.current?.open(receipt.data.path, true);
+        const value: unknown = JSON.parse(tool.output);
+        const receipt = renderSchema.safeParse(value);
+        const production = productionSchema.safeParse(value);
+        const paths = receipt.success ? [receipt.data.path] : production.success ? production.data.result.videos.filter(video => video.verified).map(video => video.path) : [];
+        for (const path of paths) {
+          if (!isVideoFile(path)) continue;
+          const key = JSON.stringify([projectId, conversationId, path]);
+          if (!firstPresentation(processed, key)) continue;
+          if (!controller.current?.tabs.paths.includes(path)) controller.current?.open(path, true);
+        }
       } catch { /* Other video actions and malformed tool output are not render receipts. */ }
     }
   }, [projectId, conversationId, snapshot, enabled, processed]);

@@ -3,5 +3,5 @@
   "identifier": "companion",
   "description": "Event subscriptions for the local desktop companion",
   "webviews": ["companion"],
-  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "opener:allow-reveal-item-in-dir"]
 }

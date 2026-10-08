@@ -54,7 +54,7 @@ async fn image_specialists_can_inspect_real_project_evidence_without_unrelated_m
             "terminal_start",
             "beads_update",
             "jarvis_propose_publication",
-            "video_audio",
+            "video_run",
             "http_send",
         ] {
             assert!(
@@ -1345,8 +1345,7 @@ fn video_flow_has_native_commands_and_tasks_without_coordinated_agents() {
         "write",
         "video_docs",
         "video_run",
-        "video_audio",
-        "video_presentation",
+        "video_tools",
         "video_wait",
         "video_cancel",
         "update_tasks",
@@ -1371,84 +1370,42 @@ fn video_flow_has_native_commands_and_tasks_without_coordinated_agents() {
 }
 
 #[test]
-fn video_prompt_keeps_brag_opt_in_without_replacing_ordinary_video_direction() {
+fn video_contract_uses_one_complete_openmontage_production_process() {
     let instructions = Role::Video.contract();
     for requirement in [
-        "enabled only when the user explicitly requests /brag",
-        "faça um brag",
-        "An ordinary request for a video, presentation or promotion does not enable Brag",
-        "video_docs(topic=\"brag\")",
-        "Always use the full managed Hyperframes workflow, regardless of the selected model",
-        "never switch to brag-slim",
-        "For an underspecified new video, including a bare \"faça um brag\"",
-        "Choose pacing from content and measured speech rather than a fixed scene count",
-    ] {
-        assert!(instructions.contains(requirement), "missing {requirement}");
-    }
-    assert_eq!(Flow::Video.root(), Role::Video);
-    assert!(Flow::Video.delegations().is_empty());
-}
-
-#[test]
-fn brag_prompt_preserves_explicit_choices_and_professional_native_production() {
-    let instructions = Role::Video.contract();
-    for requirement in [
-        "preserve explicit format, duration, language, title, tone and audio choices",
-        "Use 15–25 seconds only when duration is unspecified",
-        "polished, confident, professional product film",
-        "Humor, parody or satire requires an explicit user request",
-        "Narration is off by default for Brag",
-        "--voice or an explicit narration request enables it",
-        "native PT-BR video_audio",
-        "measured video_presentation timeline",
-        "Honor --no-music and --no-sfx",
-        "video_brag_assets(category=",
-        "video_brag_asset(asset=",
-        "without overwriting",
-        "Do not assume external assets, scripts or packages are installed",
-    ] {
-        assert!(instructions.contains(requirement), "missing {requirement}");
-    }
-}
-
-#[test]
-fn brag_prompt_uses_licensed_music_with_credits_and_native_wav_conversion() {
-    let instructions = Role::Video.contract();
-    for requirement in [
-        "\"casino\"|\"music\"",
-        "five bundled music tracks by Sascha Ende are verified CC BY 4.0",
-        "usable commercially with attribution",
-        "through video_brag_asset to a new .wav output for music.path",
-        "managed importer converts it to PCM WAV with FFmpeg",
-        "returned attribution, source URL and license link into share-copy.txt",
-        "disclose any trimming, mixing or format conversion",
-        "Reusing this licensed music requires no noncommercial confirmation",
-        "Generating new MusicGen audio still requires the explicit noncommercial consent",
-        "Preserve user-selected music or silence",
-    ] {
-        assert!(instructions.contains(requirement), "missing {requirement}");
-    }
-    assert!(!instructions.contains("Bundled music is unavailable"));
-}
-
-#[test]
-fn brag_prompt_requires_traceable_product_evidence_and_verified_deliverables() {
-    let instructions = Role::Video.contract();
-    for requirement in [
-        "real user journey from entry through its key action to the result",
-        "evidence ledger in brag-plan.md",
-        "source path or verified URL to the supported claim and scene ID",
-        "Distinguish implemented behavior from marketing copy or planned functionality",
-        "Never fabricate statistics, testimonials, UI states, successful interactions or screen recordings",
-        "faithful source-based reconstruction and disclose that limitation",
-        "composition-brief.md",
-        "presentation.json with stable scene IDs",
-        "Deliver share-copy.txt alongside the actual verified MP4",
-        "not an approval gate unless the user requests review",
+        "complete managed OpenMontage Core",
+        "video_docs(topic=\"pipelines\")",
+        "Use video_tools to discover exact tools",
+        "By default, narration, music, sound effects, footage analysis, captions and composition use the same package",
+        "An explicit user request for an MCP overrides the default source-media provider",
+        "including when received during production",
+        "it does not need to appear in the OpenMontage registry or tts_selector",
+        "save or import successful media into videos/<name>/assets",
+        "video_run(action=\"checkpoint\")",
+        "video_run(action=\"approve\")",
+        "video_run(action=\"review\")",
+        "Never forge human_approved",
+        "Jarvis's effective execution approval policy is authoritative",
+        "YOLO preauthorizes the full video production within the requested scope",
+        "do not ask permission again or end the turn because an upstream document says to wait",
+        "In manual mode, call the tools and let Jarvis present native approval",
+        "Record the active policy in decision_log with category approval_policy",
+        "does not mean a human reviewed the output",
+        "choose an installed compatible default autonomously",
+        "This presentation is a progress update",
+        "Respect hard denies, provider-paid-disabled settings, budgets and input constraints",
         "A composition, plan or passing check alone does not satisfy a request for a rendered video",
     ] {
         assert!(instructions.contains(requirement), "missing {requirement}");
     }
+    assert!(!instructions.contains("video_audio"));
+    assert!(!instructions.contains("video_brag_asset"));
+    assert!(!instructions.contains("required Hyperframes and Audiovisual"));
+    assert!(!instructions.contains("native pipeline review gates and paid-service authorization still require genuine user approval"));
+    assert!(!instructions.contains("A user quote is an estimate requiring native approval"));
+    assert_eq!(Flow::Video.root(), Role::Video);
+    assert!(Flow::Video.delegations().is_empty());
+    assert!(Role::Video.allows(Flow::Video, "mcp_voicestudio_generate_speech", true));
 }
 
 #[test]
@@ -1516,8 +1473,8 @@ fn video_commands_require_command_capability_while_docs_allow_every_role() {
         Role::Custom,
     ] {
         assert!(role.allows(Flow::Custom, "video_docs", false));
-        assert!(role.allows(Flow::Custom, "video_presentation", false));
-        for name in ["video_run", "video_audio", "video_wait", "video_cancel"] {
+        assert!(role.allows(Flow::Custom, "video_tools", false));
+        for name in ["video_run", "video_wait", "video_cancel"] {
             assert_eq!(
                 role.allows(Flow::Custom, name, true),
                 matches!(role, Role::Builder | Role::Designer | Role::Video)
@@ -1530,8 +1487,8 @@ fn video_commands_require_command_capability_while_docs_allow_every_role() {
         Capability::Commands,
     ] {
         assert!(custom::capability_allows(capability, "video_docs"));
-        assert!(custom::capability_allows(capability, "video_presentation"));
-        for name in ["video_run", "video_audio", "video_wait", "video_cancel"] {
+        assert!(custom::capability_allows(capability, "video_tools"));
+        for name in ["video_run", "video_wait", "video_cancel"] {
             assert_eq!(
                 custom::capability_allows(capability, name),
                 capability == Capability::Commands
@@ -1539,7 +1496,7 @@ fn video_commands_require_command_capability_while_docs_allow_every_role() {
         }
     }
     assert!(recovery_inspection_tool("video_docs", false));
-    assert!(recovery_inspection_tool("video_presentation", false));
+    assert!(recovery_inspection_tool("video_tools", false));
 }
 
 #[test]
@@ -1902,6 +1859,33 @@ fn legacy_options_remain_readable_and_flow_is_explicit() {
 }
 
 #[test]
+fn newly_delegated_work_inherits_the_latest_live_root_mcp_preference() {
+    let (_fixture, hub) = hub();
+    let intent = crate::mcp::McpIntent {
+        mode: crate::mcp::McpIntentMode::Explicit,
+        servers: vec![crate::mcp::McpIntentServer {
+            id: "voice-id".into(),
+            name: "voicestudio".into(),
+        }],
+        ..crate::mcp::McpIntent::default()
+    };
+    hub.root
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().mcp_intent = Some(intent.clone())
+        })
+        .unwrap();
+    let execution = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::Video,
+        flow: Flow::Video,
+        scope: vec![".".into()],
+    };
+    execution.synchronize_mcp_intent(&hub.root).unwrap();
+    assert_eq!(hub.manifest.lock().unwrap().mcp_intent, intent);
+}
+
+#[test]
 fn isolated_worker_journals_keep_role_context_and_permissions_on_recovery() {
     let (_fixture, hub) = hub();
     let mcp_intent = crate::mcp::McpIntent {
@@ -1962,6 +1946,150 @@ fn isolated_worker_journals_keep_role_context_and_permissions_on_recovery() {
         .wire
         .iter()
         .all(|item| item["type"] != "function_call"));
+}
+
+#[tokio::test]
+async fn active_workers_adopt_live_mcp_revocations_and_new_selection_without_replaying_effects() {
+    let (_fixture, hub) = hub();
+    hub.env.state.with_connection(&hub.env.home, |db| {
+        db.execute("INSERT INTO mcp_servers (id,name,kind,enabled,configured,revision) VALUES ('voice-id','voicestudio','local',1,1,1)", [])?;
+        Ok::<_, crate::mcp::McpError>(())
+    }).unwrap();
+    let worker_job = job(&hub, Role::Investigator, ".");
+    let (session, _) = storage::worker(&hub, &worker_job, None).unwrap();
+    let execution = Execution {
+        hub: hub.clone(),
+        id: worker_job.id.clone(),
+        role: worker_job.role,
+        flow: Flow::Complete,
+        scope: worker_job.scope.clone(),
+    };
+    session
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().wire.push(
+                json!({"type":"function_call_output", "call_id":"confirmed", "output":"preserved"}),
+            );
+        })
+        .unwrap();
+    let disabled = crate::mcp::McpIntent {
+        mode: crate::mcp::McpIntentMode::Disabled,
+        ..crate::mcp::McpIntent::default()
+    };
+    hub.mutate(|state| {
+        state.root_status = Status::Waiting;
+        Ok(())
+    })
+    .unwrap();
+    let options = hub
+        .root
+        .data
+        .lock()
+        .unwrap()
+        .turns
+        .last()
+        .unwrap()
+        .turn
+        .options
+        .clone();
+    hub.root
+        .submit("Continue sem nenhum MCP.".into(), options.clone())
+        .unwrap();
+    let id = hub.root.snapshot().unwrap().queued_messages[0].id.clone();
+    assert!(hub.root.promote_queued(&id).unwrap());
+    let (first, concurrent) = tokio::join!(
+        execution.refresh_root_mcp_intent(),
+        execution.refresh_root_mcp_intent()
+    );
+    first.unwrap();
+    concurrent.unwrap();
+    execution.synchronize_mcp_intent(&session).unwrap();
+    assert_eq!(hub.manifest.lock().unwrap().root_status, Status::Waiting);
+    assert_eq!(hub.manifest.lock().unwrap().mcp_intent, disabled);
+    assert_eq!(
+        session
+            .data
+            .lock()
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .mcp_intent,
+        Some(disabled)
+    );
+    assert!(session
+        .data
+        .lock()
+        .unwrap()
+        .turns
+        .last()
+        .unwrap()
+        .wire
+        .last()
+        .unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .contains("\"mode\":\"disabled\""));
+    let selected = crate::mcp::McpIntent {
+        mode: crate::mcp::McpIntentMode::Explicit,
+        servers: vec![crate::mcp::McpIntentServer {
+            id: "voice-id".into(),
+            name: "voicestudio".into(),
+        }],
+        ..crate::mcp::McpIntent::default()
+    };
+    let guidance = "Se puder usar a narração usando mcp do voicestudio por favor, la o audio vem melhor e mais bonito";
+    hub.root.submit(guidance.into(), options).unwrap();
+    let id = hub.root.snapshot().unwrap().queued_messages[0].id.clone();
+    assert!(hub.root.promote_queued(&id).unwrap());
+    execution.refresh_root_mcp_intent().await.unwrap();
+    execution.synchronize_mcp_intent(&session).unwrap();
+    assert_eq!(hub.manifest.lock().unwrap().mcp_intent, selected);
+    assert_eq!(
+        hub.root
+            .data
+            .lock()
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .mcp_intent_auxiliary_count,
+        2
+    );
+    let (turns, _) = journal::load_all(&session.journal).unwrap();
+    let current = turns.last().unwrap();
+    assert_eq!(current.mcp_intent, Some(selected.clone()));
+    assert_eq!(current.mcp_parent_intent, Some(selected.clone()));
+    assert!(current
+        .wire
+        .iter()
+        .any(|item| item["call_id"] == "confirmed" && item["output"] == "preserved"));
+    assert!(current.wire.last().unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .contains("voicestudio"));
+    // A restored worker remembers which parent preference it adopted; unchanged
+    // parent state does not override later local guidance or rewrite the journal.
+    let local = crate::mcp::McpIntent::default();
+    session
+        .update(true, |data| {
+            data.turns = turns;
+            data.turns.last_mut().unwrap().mcp_intent = Some(local.clone());
+        })
+        .unwrap();
+    let revision = session.snapshot().unwrap().revision;
+    execution.synchronize_mcp_intent(&session).unwrap();
+    assert_eq!(session.snapshot().unwrap().revision, revision);
+    assert_eq!(
+        session
+            .data
+            .lock()
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .mcp_intent,
+        Some(local)
+    );
 }
 
 #[tokio::test]

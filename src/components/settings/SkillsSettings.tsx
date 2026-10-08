@@ -20,7 +20,7 @@ import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Hint } from "@/components/ui/hint";
 
-const ORIGINS = { jarvis: "Jarvis", agents: ".agents · Global", project: ".agents · Projeto" };
+const ORIGINS = { jarvis: "Jarvis", agents: ".agents · Global", project: ".agents · Projeto", plugin: "Plugin" };
 export function SkillsSettings({ onCountChange }: { onCountChange?: (count: number) => void }) {
   const bootstrap = useBootstrapResources();
   const updateBootstrapSkills = bootstrap?.updateSkills;
@@ -78,7 +78,7 @@ export function SkillsSettings({ onCountChange }: { onCountChange?: (count: numb
     mounted.current = true;
     if (!loadInitially.current) {
       onCountChange?.(initialSnapshot.current?.skills.length ?? 0);
-      if (checkInitially.current && initialSnapshot.current?.skills.some(skill => skill.marketplaceId)) {
+      if (checkInitially.current && initialSnapshot.current?.skills.some(skill => skill.origin !== "plugin" && skill.marketplaceId)) {
         checkInitially.current = false;
         void checkUpdates();
       }
@@ -89,7 +89,7 @@ export function SkillsSettings({ onCountChange }: { onCountChange?: (count: numb
     void readResource("list_skills").then(async value => {
       if (!active) return;
       const parsed = update(value);
-      if (checkInitially.current && parsed.skills.some(skill => skill.marketplaceId)) {
+      if (checkInitially.current && parsed.skills.some(skill => skill.origin !== "plugin" && skill.marketplaceId)) {
         checkInitially.current = false;
         if (active) void checkUpdates();
       } else if (active) update(parsed, true);
@@ -110,7 +110,7 @@ export function SkillsSettings({ onCountChange }: { onCountChange?: (count: numb
       for (const error of result.errors) toast.error(error);
     });
   }
-  const upgrades = snapshot?.skills.filter(skill => skill.updateAvailable) ?? [];
+  const upgrades = snapshot?.skills.filter(skill => skill.origin !== "plugin" && skill.updateAvailable) ?? [];
   const visible = snapshot?.skills.filter(skill => `${skill.name} ${skill.description} ${skill.source ?? ""}`.toLowerCase().includes(query.toLowerCase().trim())) ?? [];
   return <div className="flex flex-col gap-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -137,11 +137,11 @@ export function SkillsSettings({ onCountChange }: { onCountChange?: (count: numb
       <div className="flex items-center gap-2 p-3">
         <Button variant="ghost" className="h-auto min-w-0 flex-1 cursor-pointer justify-start gap-3 p-0 text-left hover:bg-transparent" aria-label={`Detalhes de ${skill.name}`} onClick={() => setSelection({ id: skill.id, name: skill.name })}>
           <BookOpen aria-hidden="true" className="size-4 shrink-0 text-primary" />
-          <span className="flex min-w-0 flex-1 flex-col gap-1"><span className="truncate text-sm font-medium">{skill.name}</span><span className="line-clamp-2 whitespace-normal text-xs font-normal text-muted-foreground">{skill.description}</span><span className="mt-1 flex flex-wrap gap-1"><Badge variant="outline" className="text-[10px]">{ORIGINS[skill.origin]}</Badge>{skill.managed && <Badge variant="outline" className="border-primary/30 text-primary">Nativa</Badge>}<Badge variant="outline" className={skill.enabled ? "border-[#98c379]/30 text-[#98c379]" : "text-muted-foreground"}>{skill.enabled ? "Ativa" : "Inativa"}</Badge>{skill.updateError && <Hint content={skill.updateError}><Badge variant="outline" className="border-[#e5c07b]/30 text-[#e5c07b]">Verificação pendente</Badge></Hint>}</span></span>
+          <span className="flex min-w-0 flex-1 flex-col gap-1"><span className="truncate text-sm font-medium">{skill.name}</span><span className="line-clamp-2 whitespace-normal text-xs font-normal text-muted-foreground">{skill.description}</span><span className="mt-1 flex flex-wrap gap-1"><Badge variant="outline" className="text-[10px]">{ORIGINS[skill.origin]}</Badge>{(skill.managed || skill.origin === "plugin") && <Badge variant="outline" className="border-primary/30 text-primary">{skill.origin === "plugin" ? "Gerenciada em Plugins" : "Nativa"}</Badge>}<Badge variant="outline" className={skill.enabled ? "border-[#98c379]/30 text-[#98c379]" : "text-muted-foreground"}>{skill.enabled ? "Ativa" : "Inativa"}</Badge>{skill.updateError && <Hint content={skill.updateError}><Badge variant="outline" className="border-[#e5c07b]/30 text-[#e5c07b]">Verificação pendente</Badge></Hint>}</span></span>
         </Button>
-        {skill.updateAvailable && <Hint content={`Atualizar ${skill.name}`}><Button variant="ghost" size="icon-sm" aria-label={`Atualizar ${skill.name}`} className="cursor-pointer text-primary" disabled={!!busy || checkingUpdates} onClick={() => { void upgrade([skill.id]); }}><ArrowUpCircle /></Button></Hint>}
-        <Switch aria-label={`Ativar ${skill.name}`} className="cursor-pointer" checked={skill.enabled} disabled={!!busy} onCheckedChange={enabled => { void perform(skill.id, async () => { update(await invoke("set_skill_enabled", { id: skill.id, enabled })); toast.success(enabled ? "Skill ativada" : "Skill desativada"); }); }} />
-        {!skill.managed && <Hint content={`Excluir ${skill.name}`}><Button variant="ghost" size="icon-sm" className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive" aria-label={`Excluir ${skill.name}`} disabled={!!busy || checkingUpdates} onClick={() => setDeleting(skill)}><Trash2 /></Button></Hint>}
+        {skill.origin !== "plugin" && skill.updateAvailable && <Hint content={`Atualizar ${skill.name}`}><Button variant="ghost" size="icon-sm" aria-label={`Atualizar ${skill.name}`} className="cursor-pointer text-primary" disabled={!!busy || checkingUpdates} onClick={() => { void upgrade([skill.id]); }}><ArrowUpCircle /></Button></Hint>}
+        <Switch aria-label={`Ativar ${skill.name}`} className="cursor-pointer" checked={skill.enabled} disabled={!!busy || skill.origin === "plugin"} onCheckedChange={enabled => { void perform(skill.id, async () => { update(await invoke("set_skill_enabled", { id: skill.id, enabled })); toast.success(enabled ? "Skill ativada" : "Skill desativada"); }); }} />
+        {!skill.managed && skill.origin !== "plugin" && <Hint content={`Excluir ${skill.name}`}><Button variant="ghost" size="icon-sm" className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive" aria-label={`Excluir ${skill.name}`} disabled={!!busy || checkingUpdates} onClick={() => setDeleting(skill)}><Trash2 /></Button></Hint>}
       </div>
     </Card>)}</div>}
     {snapshot?.warnings.map(warning => <p key={warning} role="alert" className="text-xs text-[#e5c07b]">{warning}</p>)}

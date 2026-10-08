@@ -599,6 +599,7 @@ pub(super) fn worker(
             if !super::super::model_fallback::used(current) {
                 current.turn.options = job.options.clone();
             }
+            current.mcp_parent_intent = Some(mcp_intent.clone());
             current.mcp_intent = Some(mcp_intent);
             current.wire.push(json!({
                 "role":"user", "_jarvis_runtime":true,
@@ -615,6 +616,7 @@ pub(super) fn worker(
     session.update(true, |data| {
         let current = data.turns.last_mut().unwrap();
         current.wire = vec![json!({"role":"user","_jarvis_worker_dispatch":true,"content":wire})];
+        current.mcp_parent_intent = Some(mcp_intent.clone());
         current.mcp_intent = Some(mcp_intent);
     })?;
     Ok((session, signal))

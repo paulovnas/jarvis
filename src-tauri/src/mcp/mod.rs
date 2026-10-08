@@ -843,7 +843,9 @@ pub(crate) fn plugin_server_id(plugin: &str, component: &str) -> String {
 fn plugin_server(source: &crate::plugins::McpContribution, configured: bool) -> Server {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(source.plugin_hash.as_bytes());
-    let revision = i64::from_le_bytes(digest[..8].try_into().unwrap_or_default()) & i64::MAX;
+    // Revisions cross the JSON bridge and must remain exact JavaScript integers.
+    let revision =
+        i64::from_le_bytes(digest[..8].try_into().unwrap_or_default()) & ((1_i64 << 53) - 1);
     Server {
         id: plugin_server_id(&source.plugin_id, &source.component_id),
         name: format!("{}: {}", source.plugin_id, source.name),

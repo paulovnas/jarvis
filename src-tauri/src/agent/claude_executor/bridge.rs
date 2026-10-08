@@ -13,6 +13,7 @@ pub(in crate::agent) struct Bridge<'a> {
     frozen_skills: Arc<[crate::skills::Skill]>,
     pub graft: crate::core::graft::Graft,
     pub clients: crate::mcp::runtime::TurnClients,
+    mcp_intent: crate::mcp::McpIntent,
     beads: Option<crate::core::beads::Beads>,
     project_beads: Option<crate::core::beads::ProjectBeads>,
     design: Option<crate::core::design::Pack>,
@@ -299,6 +300,7 @@ impl<'a> Bridge<'a> {
             frozen_skills,
             graft,
             clients,
+            mcp_intent: intent,
             beads,
             project_beads,
             design,
@@ -324,6 +326,7 @@ impl<'a> Bridge<'a> {
     }
 
     pub async fn definitions(&mut self) -> Result<Vec<Value>, AgentError> {
+        self.refresh_mcp_intent().await?;
         let image_specialist = self
             .execution
             .as_ref()
@@ -500,8 +503,14 @@ impl<'a> Bridge<'a> {
                 "Use update_tasks para manter uma tarefa em andamento antes de alterar o projeto.",
             ));
         }
-        let policy =
+        let mut policy =
             execution_policy::inspect_tool(&self.session.root, tool, prepared.capabilities)?;
+        let video_preflight =
+            video::approval_preflight(self.runtime.home, &self.session.root, tool).await?;
+        let explicit_video_approval = video_preflight.required;
+        if let Some(policy) = &mut policy {
+            execution_policy::apply_video_preflight(policy, tool, &video_preflight);
+        }
         let sandbox = policy.as_ref().and_then(execution_sandbox::prepare);
         let project_id = self.owner().project_id()?.to_owned();
         let mut policy_ask = false;
@@ -561,6 +570,7 @@ impl<'a> Bridge<'a> {
                 sandbox: sandbox.as_ref(),
                 project_id: Some(&project_id),
                 manual_hooks: Some(&self.manual_hooks),
+                explicit_video_approval,
                 signal: self.signal.clone(),
             },
             prepared,
@@ -595,7 +605,12 @@ impl<'a> Bridge<'a> {
             None => None,
         };
         let result = self
-            .dispatch(tool, prepared.handler, sandbox.as_ref())
+            .dispatch(
+                tool,
+                prepared.handler,
+                sandbox.as_ref(),
+                explicit_video_approval,
+            )
             .await;
         let _ = self.repeated.observe(
             tool,
@@ -693,6 +708,7 @@ impl<'a> Bridge<'a> {
         tool: &ToolCall,
         handler: Handler,
         sandbox: Option<&execution_sandbox::SandboxPlan>,
+        explicit_video_approval: bool,
     ) -> Result<String, AgentError> {
         let home = self.runtime.home;
         let state = self.runtime.state;
@@ -952,6 +968,8 @@ impl<'a> Bridge<'a> {
                             video::Context {
                                 session: &owner,
                                 home,
+                                approved: self.options.approval_mode == ApprovalMode::Yolo
+                                    || explicit_video_approval,
                                 app: self
                                     .execution
                                     .as_ref()
@@ -1009,7 +1027,55 @@ impl<'a> Bridge<'a> {
         super::native_vision::content(self.runtime.home, &self.owner().id, args)
     }
 
+    pub async fn refresh_mcp_intent(&mut self) -> Result<(), AgentError> {
+        if !self.publication && !companion_chat::is_global_session(&self.owner().id) {
+            let changed = refresh_user_mcp_intent(
+                self.session,
+                self.runtime,
+                &mut self.clients,
+                &mut self.mcp_intent,
+                self.execution.as_ref(),
+                self.signal.clone(),
+            )
+            .await?;
+            if changed {
+                let definitions = self
+                    .clients
+                    .definitions_with(
+                        self.runtime.mcp,
+                        self.runtime.state,
+                        self.runtime.home,
+                        self.restricted,
+                        |name| {
+                            self.execution
+                                .as_ref()
+                                .is_none_or(|exec| exec.allowed(name))
+                        },
+                    )
+                    .await;
+                self.clients.ensure_scope_visible(&definitions)?;
+                let instructions = self.clients.instructions();
+                let content = format!(
+                    "The latest user guidance updated the MCP scope for this execution. {instructions}\nCurrent MCP schemas, callable through the stable Jarvis gateway:\n{}",
+                    json!({"callWith":"mcp__jarvis__call_mcp_tool", "availableTools":definitions}),
+                );
+                self.session
+                    .update_async(|data| {
+                        data.turns.last_mut().unwrap().wire.push(json!({
+                            "role":"user", "_jarvis_runtime":true, "content":content,
+                        }));
+                    })
+                    .await?;
+            }
+            if let Some(exec) = &self.execution {
+                exec.deliver(self.session)?;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn completion_feedback(&mut self) -> Result<Option<String>, AgentError> {
+        self.refresh_mcp_intent().await?;
         if !self.commands.running_ids().is_empty() {
             return Ok(Some("Commands are still running. Use bash_wait to obtain their results or bash_cancel before finishing.".into()));
         }
@@ -1065,6 +1131,7 @@ mod tests {
             frozen_skills: Arc::from([]),
             graft: crate::core::graft::Graft::inactive(),
             clients: crate::mcp::runtime::TurnClients::default(),
+            mcp_intent: crate::mcp::McpIntent::default(),
             beads: None,
             project_beads: None,
             design: None,
@@ -1133,6 +1200,64 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn live_mcp_scope_change_reaches_the_stable_cli_gateway_without_replaying_tools() {
+        let fixture = crate::agent::tests::Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        let state = AppState::default();
+        let oauth = OpenAiCodexState::default();
+        let mcp = crate::mcp::McpState::default();
+        let grants = execution_grants::GrantStore::default();
+        let options = crate::agent::tests::options(ApprovalMode::Yolo);
+        let signal = session
+            .reserve("Continuar".into(), options.clone())
+            .unwrap();
+        session
+            .update(true, |data| {
+                data.turns.last_mut().unwrap().mcp_intent = Some(crate::mcp::McpIntent {
+                    mode: crate::mcp::McpIntentMode::Disabled,
+                    ..crate::mcp::McpIntent::default()
+                });
+            })
+            .unwrap();
+        let mut bridge = fixture_bridge(
+            &session,
+            TurnRuntime {
+                grants: &grants,
+                state: &state,
+                oauth: &oauth,
+                mcp: &mcp,
+                home: &fixture.root,
+            },
+            options,
+            signal,
+        );
+        bridge.refresh_mcp_intent().await.unwrap();
+        {
+            let data = session.data.lock().unwrap();
+            let wire = &data.turns.last().unwrap().wire;
+            assert_eq!(wire.len(), 2);
+            assert!(wire[1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("\"availableTools\":[]"));
+        }
+        assert_eq!(bridge.delivered_wire, 0);
+        bridge.refresh_mcp_intent().await.unwrap();
+        assert_eq!(
+            session
+                .data
+                .lock()
+                .unwrap()
+                .turns
+                .last()
+                .unwrap()
+                .wire
+                .len(),
+            2
+        );
     }
 
     #[tokio::test]
@@ -1220,6 +1345,7 @@ mod tests {
                 &tool("find_skills", json!({"query":"Late"})),
                 Handler::SkillSearch,
                 None,
+                false,
             )
             .await
             .unwrap();
@@ -1233,6 +1359,7 @@ mod tests {
                 &tool("read_skill", json!({"id":original})),
                 Handler::SkillRead,
                 None,
+                false,
             )
             .await
             .unwrap();
@@ -1243,6 +1370,7 @@ mod tests {
                 &tool("read_skill", json!({"id":late})),
                 Handler::SkillRead,
                 None,
+                false,
             )
             .await
             .unwrap();
@@ -1264,6 +1392,7 @@ mod tests {
                 &tool("find_skills", json!({"query":"Local guidance"})),
                 Handler::SkillSearch,
                 None,
+                false,
             )
             .await
             .unwrap();
@@ -1306,7 +1435,8 @@ mod tests {
             .dispatch(
                 &tool("read_skill", json!({"id":original})),
                 Handler::SkillRead,
-                None
+                None,
+                false,
             )
             .await
             .is_err());
@@ -1315,6 +1445,7 @@ mod tests {
                 &tool("find_skills", json!({"query":"Original"})),
                 Handler::SkillSearch,
                 None,
+                false,
             )
             .await
             .unwrap();

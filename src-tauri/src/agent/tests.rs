@@ -223,6 +223,7 @@ async fn permission_hook_can_deny_without_creating_or_approving_a_human_request(
             sandbox: None,
             project_id: None,
             manual_hooks: Some(&hooks),
+            explicit_video_approval: false,
             signal,
         },
         tool_contract::ApprovalPolicy::AccordingToTurn,
@@ -278,6 +279,7 @@ async fn mandatory_authoring_reviews_emit_permission_hooks_even_in_yolo() {
                     sandbox: None,
                     project_id: None,
                     manual_hooks: Some(&hooks),
+                    explicit_video_approval: false,
                     signal,
                 },
                 tool_contract::ApprovalPolicy::Never,
@@ -519,12 +521,13 @@ fn a_new_user_turn_inherits_the_latest_durable_mcp_intent() {
         .unwrap();
 
     let data = session.data.lock().unwrap();
-    let (turn_id, inherited, unresolved) =
+    let (turn_id, inherited, unresolved, auxiliary_count) =
         pending_mcp_intent_resolution(&data.turns, &data.inherited_mcp_intent)
             .expect("new turn needs resolution");
     assert_eq!(turn_id, data.turns.last().unwrap().turn.id);
     assert_eq!(inherited, intent);
     assert_eq!(unresolved, vec!["Continue e confirme a informação."]);
+    assert_eq!(auxiliary_count, 0);
 }
 
 #[test]
@@ -539,6 +542,59 @@ fn global_jarvito_chat_keeps_its_title() {
         .unwrap();
 
     assert!(title_request(&session).is_none());
+}
+
+#[tokio::test]
+async fn live_user_mcp_guidance_updates_durable_intent_once_without_replaying_results() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let state = AppState::default();
+    let mcp = crate::mcp::McpState::default();
+    state.with_connection(&fixture.root, |db| {
+        db.execute("INSERT INTO mcp_servers (id,name,kind,enabled,configured,revision) VALUES ('voice-id','voicestudio','local',1,1,1)", [])?;
+        Ok::<_, crate::mcp::McpError>(())
+    }).unwrap();
+    let signal = session
+        .reserve("Criar a apresentação".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    preserve_user_mcp_intent(&session, &mcp, &state, &fixture.root, signal.clone())
+        .await
+        .unwrap();
+    session
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().wire.push(
+                json!({"type":"function_call_output", "call_id":"confirmed", "output":"preserved"}),
+            );
+        })
+        .unwrap();
+    let guidance = "Se puder usar a narração usando mcp do voicestudio por favor, la o audio vem melhor e mais bonito";
+    session
+        .submit(guidance.into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    let id = session.snapshot().unwrap().queued_messages[0].id.clone();
+    session.promote_queued(&id).unwrap();
+    queue::inject_pending_auxiliary(&session, &fixture.root)
+        .await
+        .unwrap();
+    preserve_user_mcp_intent(&session, &mcp, &state, &fixture.root, signal.clone())
+        .await
+        .unwrap();
+    let (turns, _) = journal::load_all(&session.journal).unwrap();
+    let current = turns.last().unwrap();
+    let intent = current.mcp_intent.as_ref().unwrap();
+    assert_eq!(intent.mode, crate::mcp::McpIntentMode::Explicit);
+    assert_eq!(intent.servers[0].id, "voice-id");
+    assert_eq!(current.mcp_intent_auxiliary_count, 1);
+    assert_eq!(current.turn.auxiliary_messages[0].content, guidance);
+    assert!(current
+        .wire
+        .iter()
+        .any(|item| item["call_id"] == "confirmed" && item["output"] == "preserved"));
+    let revision = session.snapshot().unwrap().revision;
+    preserve_user_mcp_intent(&session, &mcp, &state, &fixture.root, signal)
+        .await
+        .unwrap();
+    assert_eq!(session.snapshot().unwrap().revision, revision);
 }
 
 #[test]
@@ -831,6 +887,8 @@ fn harness_evaluation_direct_recovery_preserves_durable_results_and_new_messages
     let recovered = StoredTurn {
         excluded_queue_ms: 0,
         mcp_intent: None,
+        mcp_parent_intent: None,
+        mcp_intent_auxiliary_count: 0,
         turn: Turn {
             id: "recovered-turn".into(),
             active_since: None,
@@ -991,6 +1049,8 @@ fn explicit_retry_continues_failed_direct_turn_without_replaying_uncertain_tools
     let mut failed = StoredTurn {
         excluded_queue_ms: 0,
         mcp_intent: None,
+        mcp_parent_intent: None,
+        mcp_intent_auxiliary_count: 0,
         turn: Turn {
             id: "failed-turn".into(),
             active_since: None,
@@ -1087,6 +1147,8 @@ fn explicit_retry_restarts_workflow_preparation_when_no_manifest_was_created() {
     let failed = StoredTurn {
         excluded_queue_ms: 0,
         mcp_intent: None,
+        mcp_parent_intent: None,
+        mcp_intent_auxiliary_count: 0,
         turn: Turn {
             id: "planned-turn".into(),
             active_since: None,
@@ -1129,6 +1191,8 @@ fn explicit_retry_restarts_publication_with_current_repository_state() {
     let failed = StoredTurn {
         excluded_queue_ms: 0,
         mcp_intent: None,
+        mcp_parent_intent: None,
+        mcp_intent_auxiliary_count: 0,
         turn: Turn {
             id: "publication-turn".into(),
             active_since: None,
@@ -1173,6 +1237,8 @@ fn harness_evaluation_coordinated_recovery_pairs_uncertain_tools_without_replay(
     let turn = StoredTurn {
         excluded_queue_ms: 0,
         mcp_intent: None,
+        mcp_parent_intent: None,
+        mcp_intent_auxiliary_count: 0,
         turn: Turn {
             id: "workflow-turn".into(),
             active_since: None,
@@ -1870,6 +1936,7 @@ async fn an_approved_decision_creates_a_reusable_project_grant() {
                 sandbox: None,
                 project_id: Some("project"),
                 manual_hooks: None,
+                explicit_video_approval: false,
                 signal,
             },
             tool_contract::ApprovalPolicy::AccordingToTurn,
@@ -2014,6 +2081,7 @@ async fn yolo_executes_native_sandbox_recovery_without_waiting_for_permission() 
                     sandbox: Some(&sandbox),
                     project_id: Some("project"),
                     manual_hooks: None,
+                    explicit_video_approval: false,
                     signal: signal.clone(),
                 },
                 prepared,
@@ -2063,6 +2131,132 @@ async fn yolo_does_not_override_cancellation() {
         .unwrap_err();
     assert_eq!(error.code, "cancelled");
     assert!(session.snapshot().unwrap().pending_approval.is_none());
+}
+
+fn openmontage_approval_arguments() -> impl Iterator<Item = Value> {
+    std::iter::once(
+        json!({"action":"tool","path":"videos/demo","tool":"remote-media","arguments":{}}),
+    )
+    .chain(
+        ["idea", "script", "scene_plan", "assets"].map(
+            |stage| json!({"action":"approve","path":"videos/demo","arguments":{"stage":stage}}),
+        ),
+    )
+}
+
+#[tokio::test]
+async fn openmontage_execution_and_stages_are_preapproved_in_yolo() {
+    for executor in [
+        crate::claude::Executor::Jarvis,
+        crate::claude::Executor::Claude,
+    ] {
+        for args in openmontage_approval_arguments() {
+            let fixture = Fixture::new();
+            let session = session(&fixture);
+            let mut automatic = options(ApprovalMode::Yolo);
+            automatic.executor = executor;
+            let signal = session
+                .reserve("Produzir o vídeo".into(), automatic.clone())
+                .unwrap();
+            let call = ToolCall {
+                id: "video-approval".into(),
+                name: "video_run".into(),
+                args,
+                status: "pending".into(),
+                output: String::new(),
+                duration_ms: 0,
+            };
+            assert!(tokio::time::timeout(
+                Duration::from_secs(1),
+                authorize_declared(
+                    ApprovalRequest {
+                        session: &session,
+                        tool: &call,
+                        options: &automatic,
+                        policy: None,
+                        sandbox: None,
+                        project_id: None,
+                        manual_hooks: None,
+                        explicit_video_approval: true,
+                        signal,
+                    },
+                    tool_contract::ApprovalPolicy::Always,
+                    tool_contract::Handler::Native,
+                ),
+            )
+            .await
+            .expect("YOLO must not wait for OpenMontage execution approval")
+            .unwrap());
+            assert!(session.snapshot().unwrap().pending_approval.is_none());
+        }
+    }
+}
+
+#[tokio::test]
+async fn openmontage_execution_and_stages_wait_for_manual_acceptance_or_denial() {
+    for executor in [
+        crate::claude::Executor::Jarvis,
+        crate::claude::Executor::Claude,
+    ] {
+        for args in openmontage_approval_arguments() {
+            for approved in [false, true] {
+                let fixture = Fixture::new();
+                let session = session(&fixture);
+                let mut manual = options(ApprovalMode::Manual);
+                manual.executor = executor;
+                let signal = session
+                    .reserve("Produzir o vídeo".into(), manual.clone())
+                    .unwrap();
+                let call = ToolCall {
+                    id: "video-approval".into(),
+                    name: "video_run".into(),
+                    args: args.clone(),
+                    status: "pending".into(),
+                    output: String::new(),
+                    duration_ms: 0,
+                };
+                let task_session = session.clone();
+                let task_call = call.clone();
+                let pending = tokio::spawn(async move {
+                    authorize_declared(
+                        ApprovalRequest {
+                            session: &task_session,
+                            tool: &task_call,
+                            options: &manual,
+                            policy: None,
+                            sandbox: None,
+                            project_id: None,
+                            manual_hooks: None,
+                            explicit_video_approval: true,
+                            signal,
+                        },
+                        tool_contract::ApprovalPolicy::AccordingToTurn,
+                        tool_contract::Handler::Native,
+                    )
+                    .await
+                });
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while session.snapshot().unwrap().pending_approval.is_none() {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .unwrap();
+                assert!(!pending.is_finished());
+                let snapshot = session.snapshot().unwrap();
+                assert_eq!(snapshot.pending_approval.unwrap().tool.name, "video_run");
+                answer_approval(
+                    &session,
+                    &snapshot.active_turn_id.unwrap(),
+                    &call.id,
+                    approved,
+                )
+                .unwrap();
+                assert_eq!(pending.await.unwrap().unwrap(), approved);
+                assert!(session.snapshot().unwrap().pending_approval.is_none());
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -2205,6 +2399,8 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
                 excluded_queue_ms: 0,
                 wire: vec![json!({"encrypted_content":"private-replay"})],
                 mcp_intent: None,
+                mcp_parent_intent: None,
+                mcp_intent_auxiliary_count: 0,
                 turn: Turn {
                     active_since: None,
                     id: "turn".into(),

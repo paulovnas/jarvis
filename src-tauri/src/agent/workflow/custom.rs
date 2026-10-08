@@ -154,10 +154,7 @@ pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
     if name == "generate_image" {
         return true;
     }
-    if matches!(
-        name,
-        "video_run" | "video_audio" | "video_wait" | "video_cancel" | "video_brag_asset"
-    ) {
+    if matches!(name, "video_run" | "video_wait" | "video_cancel") {
         return capability == Capability::Commands;
     }
     if crate::agent::http::mutating(name) {

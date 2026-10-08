@@ -13,6 +13,7 @@ pub mod hooks;
 pub(crate) mod hyperframes;
 mod install;
 pub mod lsp;
+pub mod openmontage;
 pub mod ponytail;
 
 use serde::{Deserialize, Serialize};
@@ -36,22 +37,23 @@ pub enum ComponentId {
     Lsp,
     Hyperframes,
     Audiovisual,
+    Openmontage,
     Comfyui,
     Graft,
 }
 impl ComponentId {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 9] = [
         Self::ContextMode,
         Self::Ponytail,
         Self::Beads,
         Self::OpenDesign,
         Self::Context7,
         Self::Lsp,
-        Self::Hyperframes,
-        Self::Audiovisual,
+        Self::Openmontage,
         Self::Comfyui,
         Self::Graft,
     ];
+    pub(super) const LEGACY: [Self; 2] = [Self::Hyperframes, Self::Audiovisual];
     pub fn key(self) -> &'static str {
         match self {
             Self::ContextMode => "context-mode",
@@ -62,6 +64,7 @@ impl ComponentId {
             Self::Lsp => "lsp",
             Self::Hyperframes => "hyperframes",
             Self::Audiovisual => "audiovisual",
+            Self::Openmontage => "openmontage",
             Self::Comfyui => "comfyui",
             Self::Graft => "graft",
         }
@@ -79,6 +82,7 @@ impl ComponentId {
             Self::Lsp => "Servidores LSP",
             Self::Hyperframes => "Hyperframes",
             Self::Audiovisual => "Audiovisual",
+            Self::Openmontage => "OpenMontage",
             Self::Comfyui => "ComfyUI",
             Self::Graft => "Graft",
         }
@@ -93,6 +97,7 @@ impl ComponentId {
             Self::Lsp => "typescript-language-server/typescript-language-server",
             Self::Hyperframes => "heygen-com/hyperframes",
             Self::Audiovisual => "facebookresearch/audiocraft",
+            Self::Openmontage => "calesthio/OpenMontage",
             Self::Comfyui => "Comfy-Org/ComfyUI",
             Self::Graft => "trailhq/Graft",
         }
@@ -178,6 +183,9 @@ impl Installation {
         }
         if id == ComponentId::Audiovisual {
             audiovisual::validate(&path, &self.version)?;
+        }
+        if id == ComponentId::Openmontage {
+            openmontage::validate(&path, &self.version)?;
         }
         if id == ComponentId::Comfyui {
             comfyui::validate(&path, &self.version)?;

@@ -27,7 +27,7 @@ fn image_generator_is_a_mixed_native_agent_available_solo_and_in_custom_flows() 
     ] {
         assert!(custom::allowed(&solo, name), "{name}");
     }
-    for name in ["bash", "http_send", "write", "video_audio", "beads_update"] {
+    for name in ["bash", "http_send", "write", "video_run", "beads_update"] {
         assert!(!custom::allowed(&solo, name), "{name}");
     }
     let mut catalog = example();
@@ -340,7 +340,7 @@ fn video_generator_labels_preserve_native_identity_and_user_owned_names() {
 }
 
 #[test]
-fn video_director_contract_reaches_native_selection_and_existing_custom_flows() {
+fn video_director_contract_reaches_native_and_existing_custom_flows() {
     let mut catalog = example();
     for step in &mut catalog.flows[0].steps {
         step.agent_id = "builtin:video".into();
@@ -349,29 +349,26 @@ fn video_director_contract_reaches_native_selection_and_existing_custom_flows() 
     let restored: Catalog = serde_json::from_slice(&serde_json::to_vec(&catalog).unwrap()).unwrap();
     let direct = restored.resolve_agent("builtin:video").unwrap();
     let run = restored.resolve(&restored.flows[0].id).unwrap();
-    let prompts = [
+    for instructions in [
         contracts::prompt(Flow::Video, Role::Video, "builtin:video"),
         custom::direct_instructions(&direct),
         custom::instructions(&run.agents[0]),
-    ];
-    for prompt in prompts {
-        for requirement in [
-            "creative marketing director and video producer",
+    ] {
+        let research = instructions.find("Research autonomously").unwrap();
+        let briefing = instructions
+            .find("For an underspecified new video")
+            .unwrap();
+        let storyboard = instructions.find("Before production").unwrap();
+        assert!(research < briefing && briefing < storyboard);
+        for required in [
+            "complete managed OpenMontage Core",
             "project_knowledge product/design/learning",
-            "real navigation and clicks",
             "Group at most three concise questions",
-            "script/storyboard",
-            "without redundant approvals",
-            "Native voice generation supports PT-BR only",
-            "New padding does not alter existing WAVs",
-            "first/last syllables and natural pauses",
-            "reuse confirmed music without asking the same question again",
-            "enabled only when the user explicitly requests /brag",
-            "evidence ledger in brag-plan.md",
-            "returned attribution, source URL and license link into share-copy.txt",
+            "dismissal or cancellation is not acceptance",
+            "Reuse answers and an accepted brief",
             "static checks alone do not prove that speech sounds natural",
         ] {
-            assert!(prompt.contains(requirement), "Missing: {requirement}");
+            assert!(instructions.contains(required), "{required}");
         }
     }
     for tool in [
@@ -385,53 +382,21 @@ fn video_director_contract_reaches_native_selection_and_existing_custom_flows() 
         "browser_snapshot",
         "browser_click",
         "browser_screenshot",
-        "video_audio",
+        "video_tools",
+        "video_run",
     ] {
         assert!(custom::allowed(&direct, tool), "{tool}");
         assert!(custom::allowed(&run.agents[0], tool), "{tool}");
     }
-}
-
-#[test]
-fn video_briefing_guards_survive_native_selection_and_serialized_custom_nodes() {
-    let mut catalog = example();
-    for step in &mut catalog.flows[0].steps {
-        step.agent_id = "builtin:video".into();
-    }
-    let restored: Catalog = serde_json::from_slice(&serde_json::to_vec(&catalog).unwrap()).unwrap();
-    let direct = restored.resolve_agent("builtin:video").unwrap();
-    let run = restored.resolve(&restored.flows[0].id).unwrap();
-    for instructions in [
-        contracts::prompt(Flow::Video, Role::Video, "builtin:video"),
-        custom::direct_instructions(&direct),
-        custom::instructions(&run.agents[0]),
-    ] {
-        let research = instructions.find("Research autonomously").unwrap();
-        let briefing = instructions
-            .find("For an underspecified new video")
-            .unwrap();
-        let storyboard = instructions
-            .find("Before production, show a compact script/storyboard")
-            .unwrap();
-        let production = instructions
-            .find("Direct the visual production deliberately")
-            .unwrap();
-        assert!(research < briefing && briefing < storyboard && storyboard < production);
-        assert!(instructions
-            .contains("one collaborative creative process for every new video, including Brag"));
-        assert!(instructions.contains(
-            "For an underspecified new video, including a bare \"faça um brag\", use ask_user"
-        ));
-        assert!(instructions.contains("Ask only material unanswered choices"));
-        assert!(instructions.contains("dismissal or cancellation is not acceptance"));
-        assert!(instructions.contains("Reuse answers and an accepted brief on follow-up turns"));
-        assert!(instructions.contains("an explicit request to decide and execute is sufficient"));
-        assert!(instructions.contains("do not produce a final film based on unanswered questions"));
-        assert!(instructions.contains("Never claim a live screen was observed"));
-        assert!(instructions.contains("compact claim-to-source and scene mapping"));
-        assert!(instructions.contains("choreograph interactions, callouts and camera movement"));
-        assert!(instructions.contains("retain the actual product's identity"));
-    }
+    let permissions = serde_json::to_value(permissions::builtin_permissions()).unwrap();
+    let permissions = permissions.as_array().unwrap();
+    assert!(permissions
+        .iter()
+        .any(|p| p["id"] == "video_tools" && p["group"] == "OpenMontage · Core"));
+    assert!(!permissions.iter().any(|p| matches!(
+        p["id"].as_str(),
+        Some("video_audio" | "video_presentation" | "video_brag_asset")
+    )));
 }
 
 #[test]

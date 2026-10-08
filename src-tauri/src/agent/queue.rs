@@ -282,7 +282,7 @@ impl Session {
         Ok(())
     }
 
-    fn promote_queued(&self, id: &str) -> Result<bool, AgentError> {
+    pub(super) fn promote_queued(&self, id: &str) -> Result<bool, AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
         if data.compacting || data.manual_compaction {
             return Err(AgentError::new(

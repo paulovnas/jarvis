@@ -1,5 +1,5 @@
 //! Private runtime used by Hyperframes commands and local health checks.
-use super::{error, install, installed, relative, ComponentId, CoreError};
+use super::{error, install, relative, CoreError};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -135,10 +135,6 @@ pub(crate) struct Runtime {
     pub entry: PathBuf,
     pub package: PathBuf,
     pub environment: BTreeMap<String, String>,
-}
-
-pub(crate) fn runtime(home: &Path) -> Result<Runtime, CoreError> {
-    Runtime::at(&installed(home, ComponentId::Hyperframes)?.path(home)?)
 }
 
 impl Runtime {

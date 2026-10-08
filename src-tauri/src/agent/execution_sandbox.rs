@@ -116,25 +116,6 @@ impl SandboxPlan {
         }
     }
 
-    /// Only the host supplies this path: managed inference shares one OS lock,
-    /// while project data and model weights retain their existing protections.
-    pub(super) fn with_host_writable_file(&self, path: &Path) -> Self {
-        let mut plan = self.clone();
-        match &mut plan.launcher {
-            Launcher::Seatbelt { profile, .. } => profile.push_str(&format!(
-                "(allow file-write* (literal \"{}\"))\n",
-                seatbelt_string(path)
-            )),
-            Launcher::Bubblewrap { arguments, .. } => arguments.extend([
-                OsString::from("--bind"),
-                path.as_os_str().to_owned(),
-                path.as_os_str().to_owned(),
-            ]),
-            Launcher::Native => {}
-        }
-        plan
-    }
-
     /// A trusted native task owns this temporary directory. Model and runtime
     /// directories remain read-only; model arguments cannot add grants.
     pub(super) fn with_host_writable_directory(&self, path: &Path) -> Self {
@@ -154,13 +135,14 @@ impl SandboxPlan {
         plan
     }
 
-    /// Managed Hyperframes lowers its own worker priority; headless Chromium
-    /// subscribes to system-power notifications during startup. Neither grant
-    /// broadens filesystem, networking or arbitrary IOKit device access.
+    /// OpenMontage's managed renderer lowers its own worker priority; Chromium
+    /// subscribes to system-power notifications during startup. Local preview
+    /// servers may use loopback; external networking and host writes stay denied.
     pub(super) fn with_managed_video_runtime(&self) -> Self {
         let mut plan = self.clone();
         if let Launcher::Seatbelt { profile, .. } = &mut plan.launcher {
             profile.push_str("(allow system-sched (target same-sandbox))\n(allow iokit-open (iokit-user-client-class \"RootDomainUserClient\"))\n(allow mach-register (global-name-regex #\"^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$\"))\n");
+            profile.push_str("(allow network-bind (local ip \"localhost:*\"))\n(allow network-inbound (local ip \"localhost:*\"))\n(allow network-outbound (remote ip \"localhost:*\"))\n");
         }
         plan
     }
@@ -290,15 +272,7 @@ pub(super) fn command_failure(
 pub(super) fn add_permission_parameters(definition: &mut serde_json::Value) {
     if !matches!(
         definition["name"].as_str(),
-        Some(
-            "bash"
-                | "process_start"
-                | "terminal_start"
-                | "video_run"
-                | "video_audio"
-                | "video_brag_asset"
-                | "image_process"
-        )
+        Some("bash" | "process_start" | "terminal_start" | "video_run" | "image_process")
     ) {
         return;
     }
@@ -511,6 +485,16 @@ mod tests {
         #[cfg(target_os = "macos")]
         if std::env::var_os("JARVIS_TEST_VIDEO_PRIORITY_SANDBOX").is_some() {
             assert_eq!(unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 19) }, 0);
+            for address in ["127.0.0.1:0", "[::1]:0"] {
+                let listener = std::net::TcpListener::bind(address).unwrap();
+                std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            }
+            let external = std::net::TcpStream::connect_timeout(
+                &"1.1.1.1:443".parse().unwrap(),
+                std::time::Duration::from_secs(1),
+            )
+            .unwrap_err();
+            assert_eq!(external.raw_os_error(), Some(libc::EPERM));
             return;
         }
         let plan = prepare_for(
@@ -531,6 +515,9 @@ mod tests {
         assert!(!policy.contains("(allow iokit-open)"));
         assert!(!policy.contains("(allow mach-register)"));
         assert!(!policy.contains("(allow network*)"));
+        assert!(policy.contains("(allow network-bind (local ip \"localhost:*\"))"));
+        assert!(policy.contains("(allow network-outbound (remote ip \"localhost:*\"))"));
+        assert!(!policy.contains("(local ip \"*:*\")"));
         assert!(!policy.contains("(subpath \"/private/core\")"));
         assert_eq!(native.report(), plan.report());
         let (_, original) = plan.wrap(Path::new("/private/core/node"), []);
@@ -576,15 +563,7 @@ mod tests {
         for (name, args) in [
             (
                 "video_run",
-                serde_json::json!({"action":"render","path":"videos/demo","output":"videos/demo/ready.mp4","quality":"looks"}),
-            ),
-            (
-                "video_audio",
-                serde_json::json!({"action":"narrate","text":"Olá","output":"voice.wav"}),
-            ),
-            (
-                "video_brag_asset",
-                serde_json::json!({"asset":"music/track.mp3","output":"videos/demo/music.wav"}),
+                serde_json::json!({"action":"tool","path":"videos/demo","tool":"video_encode","arguments":{"output_path":"ready.mp4"}}),
             ),
             (
                 "image_process",
@@ -668,29 +647,6 @@ mod tests {
             String::from_utf8_lossy(&result.stdout),
             String::from_utf8_lossy(&result.stderr)
         );
-    }
-
-    #[test]
-    fn managed_inference_grants_only_its_host_lock_file() {
-        let plan = prepare_for(
-            Platform::Macos,
-            AdapterAvailability {
-                seatbelt: Some("/usr/bin/sandbox-exec".into()),
-                bubblewrap: None,
-            },
-            Path::new("/project"),
-            &ExecutionEffects::default(),
-        );
-        let granted =
-            plan.with_host_writable_file(Path::new("/private/core/audio/.inference.lock"));
-        let (_, arguments) = granted.wrap(
-            Path::new("/private/core/python"),
-            [OsString::from("--request")],
-        );
-        let profile = arguments[1].to_string_lossy();
-        assert!(profile.contains("(literal \"/private/core/audio/.inference.lock\")"));
-        assert!(!profile.contains("(subpath \"/private/core\")"));
-        assert_eq!(granted.report(), plan.report());
     }
 
     #[test]

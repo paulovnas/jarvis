@@ -61,7 +61,7 @@ it("requires essential Core tools but leaves Context7 optional before providers"
   render(<Onboarding saving={false} onComplete={complete} />);
   expect(screen.getByRole("heading", { name: "Bem-vindo ao Jarvis" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Avançar" }));
-  await screen.findByText("9/9 essenciais");
+  await screen.findByText("8/8 essenciais");
   expect(screen.getByRole("heading", { name: "Graft" })).toBeVisible();
   expect(screen.getByText(/Índice local atualizado sob demanda, sem modelo nem chave/)).toBeVisible();
   expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled();
@@ -75,20 +75,20 @@ it("requires essential Core tools but leaves Context7 optional before providers"
   expect(complete).not.toHaveBeenCalled();
 });
 
-it("offers audiovisual download cancellation during guided setup", async () => {
+it("offers openmontage download cancellation during guided setup", async () => {
   const state = coreFixture();
-  const audio = state.items.find(item => item.id === "audiovisual")!;
+  const audio = state.items.find(item => item.id === "openmontage")!;
   audio.installed = false; audio.configured = false; audio.installedVersion = null;
-  audio.stage = "Baixando modelos de voz e música";
+  audio.stage = "Baixando recursos do OpenMontage";
   state.ready = false;
   const stopped = structuredClone(state);
-  stopped.items.find(item => item.id === "audiovisual")!.stage = null;
+  stopped.items.find(item => item.id === "openmontage")!.stage = null;
   invokeMock.mockImplementation(async command => command === "cancel_core_installation" ? stopped : state);
   const user = userEvent.setup();
   render(<Onboarding saving={false} onComplete={vi.fn()} />);
   await user.click(screen.getByRole("button", { name: "Avançar" }));
-  await user.click(await screen.findByRole("button", { name: "Cancelar instalação de Audiovisual" }));
-  expect(invokeMock).toHaveBeenCalledWith("cancel_core_installation", { id: "audiovisual" });
+  await user.click(await screen.findByRole("button", { name: "Cancelar instalação de OpenMontage" }));
+  expect(invokeMock).toHaveBeenCalledWith("cancel_core_installation", { id: "openmontage" });
   expect(screen.getByRole("button", { name: "Avançar" })).toBeDisabled();
 });
 it("keeps tool settings visible after connection and sends the named workspace on completion", async () => {

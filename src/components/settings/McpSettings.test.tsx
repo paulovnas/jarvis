@@ -40,6 +40,21 @@ describe("McpSettings", () => {
     expect(await screen.findByRole("button", { name: "Detalhes do MCP firebase" })).toBeVisible();
   });
 
+  it("carrega MCPs locais, de plugins e apps remotos na mesma lista", async () => {
+    const plugin = { ...server, id: "plugin:firebase@firebase", name: "firebase", revision: 8_134_910_661_641_560 };
+    const app = { ...server, id: "plugin-app:firebase@official", name: "firebase@official · Apps", kind: "remote", revision: Number.MAX_SAFE_INTEGER };
+    mocked.mockResolvedValue([server, plugin, app]);
+    const count = vi.fn();
+    render(<McpSettings onCountChange={count} />);
+
+    expect(await screen.findByRole("button", { name: `Detalhes do MCP ${app.name}` })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Detalhes do MCP context7" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Detalhes do MCP firebase" })).toBeVisible();
+    expect(screen.getByText("Remoto · HTTP")).toBeVisible();
+    expect(count).toHaveBeenLastCalledWith(3);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("mantém o Context7 compacto e não conecta enquanto a chave é um exemplo", async () => {
     const user = userEvent.setup();
     render(<McpSettings />);

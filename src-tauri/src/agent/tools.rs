@@ -129,6 +129,7 @@ pub(super) fn instructions(root: &Path, mode: Mode, approval_mode: ApprovalMode)
     instructions.push_str("For code navigation, prefer lsp_definition, lsp_references and lsp_symbols over repeated text searches when a project language server is installed. Use lsp_diagnostics for focused compiler feedback; if a server is unavailable, report it once and use the smallest text-based fallback.\n");
     instructions.push_str("Keep progress updates concise: what the evidence established or ruled out, what remains unresolved and the next concrete action. Continue working after an update. When a tool rejects arguments, correct the indicated fields and continue. Runtime recovery guidance is not a new task, approval request or reason to stop. A tool-level failure does not erase completed work or the user's current authorization. Before the final response, compare the result with the user's requested outcome. Unknown cause is work to investigate while a useful authorized check remains, not an external blocker. If relevant available checks are exhausted and no evidence justifies a next probe, report the inconclusive result, ruled-out causes and exact evidence still needed; do not repeat checks indefinitely or claim a repair. Report a blocker only with evidence of the specific unavailable dependency and the smallest user action actually required. Never weaken an acceptance criterion to make an unfinished outcome look complete.\n");
     instructions.push_str("For the final response, lead with the concrete result or direct answer in plain language. Briefly report relevant checks actually run and their results, plus material limitations or uncertainty. Automated checks, observed runtime behavior, deployment and user acceptance are separate evidence; never claim one from another. Complete authorized agent-owned work before handing anything back to the user. When manual verification is useful, give bounded numbered actions using verified project paths, controls or commands and an observable expected result; identify any known prerequisite. Offer a next action only for a real remaining need, and never invent a cause, time estimate, prerequisite or verification result. Match detail to the request; no fixed list cap or mandatory checklist for a simple answer.\n");
+    instructions.push_str("When referencing or delivering a confirmed local file or generated artifact, use a descriptive Markdown link to its absolute filesystem path, such as [Report](/absolute/path/report.pdf). For paths containing spaces, wrap the target in angle brackets: [Report](</absolute/path/My Report.pdf>). URL-encode literal percent signs as %25 and backslashes as %5C, including UNC prefixes. Use forward slashes for Windows drive paths, such as C:/project/.env. Keep links outside inline code and code fences; do not use file:// URLs. Keep line numbers in the label or prose, outside the link target. Link only to files confirmed by tool results.\n");
     instructions.push_str(super::browser::EFFICIENCY);
     instructions.push_str(&format!("{}\n", super::shell::prompt()));
     if mode == Mode::Build {
@@ -951,6 +952,29 @@ mod tests {
         assert!(prompt.contains("Use English for user-facing prose"));
         assert!(!prompt.contains("Respond in Brazilian Portuguese"));
         assert!(prompt.ends_with("unless the user explicitly requests another language.\n"));
+    }
+    #[test]
+    fn instructions_deliver_confirmed_files_as_descriptive_markdown_links() {
+        let fixture = Fixture::new();
+        for mode in [Mode::Plan, Mode::Build] {
+            let prompt = instructions(&fixture.root, mode, ApprovalMode::Manual);
+            for required in [
+                "descriptive Markdown link to its absolute filesystem path",
+                "[Report](/absolute/path/report.pdf)",
+                "[Report](</absolute/path/My Report.pdf>)",
+                "literal percent signs as %25 and backslashes as %5C, including UNC prefixes",
+                "Use forward slashes for Windows drive paths, such as C:/project/.env",
+                "Keep links outside inline code and code fences",
+                "do not use file:// URLs",
+                "Keep line numbers in the label or prose, outside the link target",
+                "Link only to files confirmed by tool results",
+            ] {
+                assert!(
+                    prompt.contains(required),
+                    "missing link instruction: {required}"
+                );
+            }
+        }
     }
     #[test]
     fn instructions_keep_the_active_execution_approval_mode_explicit() {

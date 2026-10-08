@@ -634,6 +634,7 @@ async fn execute_tool(
         .await;
     let (replay, _) = core_runtime::captured_result(&tool.name, &output, structured, &captured);
     queue::inject_pending_auxiliary(bridge.session, bridge.runtime.home).await?;
+    bridge.refresh_mcp_intent().await?;
     if let Some(exec) = &bridge.execution {
         exec.deliver(bridge.session)?;
     }

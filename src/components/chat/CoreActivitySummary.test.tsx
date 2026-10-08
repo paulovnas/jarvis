@@ -11,6 +11,21 @@ const prepared: CoreActivity = {
 };
 const step = { thinking: "", commentary: "Vou ajustar o layout.", tools: [], coreActivities: [prepared] };
 
+it("groups the whole OpenMontage production under one Core resource", async () => {
+  const user = userEvent.setup();
+  render(<CoreActivitySummary steps={[{ ...step, coreActivities: [{ ...prepared, component: "openmontage", action: "production", summary: "Roteiro e mídia preparados", sources: ["project:video/checkpoint.json"] }], tools: [
+    { id: "tools", name: "video_tools", status: "completed" },
+    { id: "narration", name: "video_run", args: { tool: "tts" }, status: "completed" },
+    { id: "music", name: "video_run", args: { tool: "music" }, status: "running" },
+  ] }]} />);
+  expect(screen.getByRole("button", { name: /Recursos do Core/ })).toHaveTextContent("· 1");
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  expect(screen.getByText("OpenMontage")).toBeVisible();
+  expect(screen.getByText("Solicitado pelo agente: 2 chamadas concluídas · 1 em andamento.")).toBeVisible();
+  expect(screen.queryByText("Hyperframes")).not.toBeInTheDocument();
+  expect(screen.queryByText("Audiovisual")).not.toBeInTheDocument();
+});
+
 it("shows real automatic work separately from model calls, with sources on demand", async () => {
   const user = userEvent.setup();
   render(<CoreActivitySummary steps={[{ ...step, tools: [{ id: "d1", name: "design_read", status: "completed" }] }]} />);
@@ -133,11 +148,11 @@ it("keeps resources with missing IDs separate by name and plugin owner", async (
   expect(screen.getByText(/Plugin: second@local/)).toBeVisible();
 });
 
-it("shows video tool calls under the managed Hyperframes resource", async () => {
+it("shows video tool calls under the managed OpenMontage resource", async () => {
   const user = userEvent.setup();
-  render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [{ id: "video", name: "video_render", status: "completed" }] }]} />);
+  render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [{ id: "video", name: "video_run", status: "completed" }] }]} />);
   await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
-  expect(screen.getByText("Hyperframes")).toBeVisible();
+  expect(screen.getByText("OpenMontage")).toBeVisible();
   expect(screen.getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();
 });
 

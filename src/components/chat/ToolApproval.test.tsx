@@ -104,3 +104,41 @@ it("shows network access before authorizing a project test command", async () =>
   await user.click(screen.getByRole("button", { name: "Autorizar uma vez" }));
   expect(answer).toHaveBeenCalledWith({ approved: true, grant: null });
 });
+
+it("shows the actual video tool, provider, model and estimate before approval", async () => {
+  const user = userEvent.setup();
+  const answer = vi.fn(async () => true);
+  const request = commandRequest({
+    reason: "Esta etapa usa um serviço pago. Estimativa do provedor: US$ 0,25.",
+    command: { invocations: [{ argv: ["openmontage", "native-video-task"] }], redirections: [], dynamic: false },
+    commandPrefixAvailable: false,
+  });
+  request.tool.name = "video_run";
+  request.tool.args = {
+    action: "tool",
+    path: "videos/lancamento",
+    tool: "video_generate",
+    arguments: { provider: "fal", model: "kling-video", prompt: "Uma apresentação do produto." },
+    costQuoteUsd: 0.25,
+  };
+  render(<ToolApproval request={request} projectPath="/projeto" onAnswer={answer} />);
+
+  expect(screen.getByText("Autorizar etapa da produção de vídeo?")).toBeVisible();
+  expect(screen.getByText("Produção")).toBeVisible();
+  expect(screen.getByText("videos/lancamento")).toBeVisible();
+  expect(screen.getByText("Ferramenta")).toBeVisible();
+  expect(screen.getByText("video_generate")).toBeVisible();
+  expect(screen.getByText("Parâmetros da ferramenta")).toBeVisible();
+  expect(screen.getByText(/"provider": "fal"/)).toBeVisible();
+  expect(screen.getByText(/"model": "kling-video"/)).toBeVisible();
+  expect(screen.getByText("Estimativa informada (USD)")).toBeVisible();
+  expect(screen.getByText("0.25")).toBeVisible();
+  expect(screen.getByText(/Estimativa do provedor: US\$ 0,25/)).toBeVisible();
+  expect(screen.queryByText("Comando interpretado")).not.toBeInTheDocument();
+  expect(screen.queryByText("openmontage native-video-task")).not.toBeInTheDocument();
+  expect(screen.queryByText("Autorizar alteração de arquivo?")).not.toBeInTheDocument();
+  expect(answer).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole("button", { name: "Autorizar uma vez" }));
+  expect(answer).toHaveBeenCalledWith({ approved: true, grant: null });
+});

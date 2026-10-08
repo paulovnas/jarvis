@@ -12,13 +12,13 @@ type ActivityComponent = CoreActivity["component"];
 
 const names: Record<ActivityComponent, string> = {
   "context-mode": "Context-mode", ponytail: "Ponytail", beads: "Beads",
-  "open-design": "Open Design", context7: "Context7", lsp: "LSP", hyperframes: "Hyperframes", audiovisual: "Audiovisual", comfyui: "ComfyUI", graft: "Graft",
+  "open-design": "Open Design", context7: "Context7", lsp: "LSP", openmontage: "OpenMontage", hyperframes: "Hyperframes", audiovisual: "Audiovisual", comfyui: "ComfyUI", graft: "Graft",
   "manual-hooks": "Hooks manuais",
   hooks: "Hooks", plugins: "Plugins",
 };
 const statuses = { applied: "Aplicado", reused: "Reutilizado", unavailable: "Indisponível", pending: "Aguardando diagnóstico", issues: "Diagnósticos encontrados" };
 
-function componentFor(tool: ToolCallItem): CoreId | undefined {
+function componentFor(tool: ToolCallItem, activities?: CoreActivity[]): CoreId | undefined {
   if (tool.name.startsWith("ctx_")) return "context-mode";
   if (tool.name.startsWith("graft_")) return "graft";
   if (tool.name.startsWith("design_")) return "open-design";
@@ -28,7 +28,11 @@ function componentFor(tool: ToolCallItem): CoreId | undefined {
   if (tool.name === "video_audio") return "audiovisual";
   if (tool.name === "image_process") return "comfyui";
   if (tool.name === "generate_image" && tool.status === "completed" && readGeneratedImages(tool.output)?.processing?.engine === "comfyui") return "comfyui";
-  if (tool.name.startsWith("video_")) return "hyperframes";
+  if (["video_presentation", "video_brag_assets", "video_brag_asset"].includes(tool.name)) return "hyperframes";
+  if (tool.name.startsWith("video_")) {
+    const engine = activities?.find(activity => activity.component === "openmontage" || activity.component === "hyperframes");
+    return engine?.component === "hyperframes" ? "hyperframes" : "openmontage";
+  }
 }
 
 type DiagnosticState = { current: CoreActivity; warning?: CoreActivity; resolved?: CoreActivity };
@@ -66,7 +70,7 @@ export function CoreActivitySummary({ steps }: { steps: AssistantWorkData["steps
         }
         resource.diagnostics.set(path, { current: activity, warning, resolved });
       });
-      step.tools.forEach(tool => { const id = componentFor(tool); if (id) get(id).tools.push(tool); });
+      step.tools.forEach(tool => { const id = componentFor(tool, step.coreActivities); if (id) get(id).tools.push(tool); });
     }
     return [...grouped.values()];
   }, [steps]);

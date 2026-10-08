@@ -7,8 +7,7 @@ export function coreFixture(installed = true): CoreSnapshot {
     { id: "open-design", name: "Open Design", repository: "https://github.com/nexu-io/open-design" },
     { id: "context7", name: "Context7", repository: "https://github.com/upstash/context7" },
     { id: "lsp", name: "Servidores LSP", repository: "https://github.com/typescript-language-server/typescript-language-server" },
-    { id: "hyperframes", name: "Hyperframes", repository: "https://github.com/heygen-com/hyperframes" },
-    { id: "audiovisual", name: "Audiovisual", repository: "https://github.com/facebookresearch/audiocraft" },
+    { id: "openmontage", name: "OpenMontage", repository: "https://github.com/calesthio/OpenMontage" },
     { id: "comfyui", name: "ComfyUI", repository: "https://github.com/Comfy-Org/ComfyUI" },
     { id: "graft", name: "Graft", repository: "https://github.com/trailhq/Graft" },
   ].map(item => ({ ...item, id: item.id as CoreSnapshot["items"][number]["id"], installed, configured: installed, installedVersion: installed ? "1.0.0" : null, latestVersion: "1.0.0", updateAvailable: false, stage: null, download: null, error: null, healthError: null, diagnostics: [] })) };

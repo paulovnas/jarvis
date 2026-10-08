@@ -187,6 +187,7 @@ async fn hook_changes_wait_for_yolo_approval_and_apply_once_or_preserve_rejectio
                     sandbox: None,
                     project_id: None,
                     manual_hooks: Some(&hooks),
+                    explicit_video_approval: false,
                     signal: signal.clone(),
                 },
                 crate::agent::tool_contract::ApprovalPolicy::Never,
