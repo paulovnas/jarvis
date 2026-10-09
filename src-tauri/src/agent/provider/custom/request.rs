@@ -1,5 +1,7 @@
 use super::*;
 use crate::openai_codex::custom::{Reasoning, TokenField};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 pub(super) fn scope(config: &Config, options: &TurnOptions) -> Value {
     json!({"account":options.account,"model":options.model,"endpoint":config.base_url,"protocol":config.protocol})
@@ -114,6 +116,46 @@ fn blocks(message: &mut Value) -> &mut Vec<Value> {
         .expect("constructed content array")
 }
 
+fn anthropic_tool_ids(input: &[Value]) -> BTreeMap<&str, Value> {
+    let ids: BTreeSet<_> = input
+        .iter()
+        .filter(|item| {
+            matches!(
+                item["type"].as_str(),
+                Some("function_call" | "function_call_output")
+            )
+        })
+        .filter_map(|item| item["call_id"].as_str())
+        .collect();
+    let valid = |id: &str| {
+        !id.is_empty()
+            && id.len() <= 64
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    };
+    let mut used: BTreeSet<String> = ids
+        .iter()
+        .filter(|id| valid(id))
+        .map(|id| (*id).to_owned())
+        .collect();
+    let mut mapped = BTreeMap::new();
+    // Preserve saved IDs and native valid IDs; adapt only the provider projection.
+    // Hash the full foreign ID so shared prefixes never merge confirmed outcomes.
+    for id in ids.into_iter().filter(|id| !valid(id)) {
+        let digest = format!("{:x}", Sha256::digest(id.as_bytes()));
+        let base = format!("toolu_{}", &digest[..32]);
+        let mut candidate = base.clone();
+        let mut suffix = 1usize;
+        while !used.insert(candidate.clone()) {
+            candidate = format!("{base}_{suffix}");
+            suffix += 1;
+        }
+        mapped.insert(id, json!(candidate));
+    }
+    mapped
+}
+
 fn messages(
     input: &[Value],
     scope: &Value,
@@ -121,8 +163,17 @@ fn messages(
     anthropic: bool,
     replay_unsigned: bool,
 ) -> Result<Vec<Value>, AgentError> {
+    let tool_ids = if anthropic {
+        anthropic_tool_ids(input)
+    } else {
+        BTreeMap::new()
+    };
     let mut result = vec![];
     for item in input {
+        let call_id = item["call_id"]
+            .as_str()
+            .and_then(|id| tool_ids.get(id))
+            .unwrap_or(&item["call_id"]);
         match item["type"].as_str() {
             Some("reasoning") => {
                 if let Some(meta) = metadata(item, scope) {
@@ -161,7 +212,7 @@ fn messages(
                         item["arguments"].as_str().ok_or_else(protocol_error)?,
                     )
                     .map_err(|_| protocol_error())?;
-                    blocks(message).push(json!({"type":"tool_use","id":item["call_id"],"name":item["name"],"input":arguments}));
+                    blocks(message).push(json!({"type":"tool_use","id":call_id,"name":item["name"],"input":arguments}));
                 } else {
                     if !message["tool_calls"].is_array() {
                         message["tool_calls"] = json!([]);
@@ -171,7 +222,7 @@ fn messages(
             }
             Some("function_call_output") => {
                 if anthropic {
-                    let block = json!({"type":"tool_result","tool_use_id":item["call_id"],"content":item["output"]});
+                    let block = json!({"type":"tool_result","tool_use_id":call_id,"content":item["output"]});
                     if let Some(last) = result
                         .last_mut()
                         .filter(|m| m["role"] == "user" && m["content"].is_array())

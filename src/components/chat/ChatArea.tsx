@@ -5,6 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { ConversationSkeleton } from "@/components/layout/LoadingSkeletons";
 import type { ChatDraft } from "@/core/chat";
+import type { ExecutionChoice } from "@/core/executors";
 import type { ModelBinding } from "@/core/provider-references";
 import type { ModelCatalogRefresh } from "@/core/provider-accounts";
 import { questionKey, type QuestionDraft } from "@/core/questions";
@@ -34,6 +35,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
   const previousQuestion = useRef<string | undefined>(undefined);
   const snapshot = chat.snapshot;
   const chatModels = useChatAgentModels(context.conversation.id);
+  const [retryChoice, setRetryChoice] = useState<ExecutionChoice | null>(null);
   useVideoReady(context.project.id, context.conversation.id, files, snapshot);
   const http = useHttpClient(context.conversation.id, context.project.id, !!snapshot, httpDrafts);
   const [draftInsertion, setDraftInsertion] = useState<{ id: string; text: string }>();
@@ -86,14 +88,14 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} onInteract={chat.pauseQuestion} />}
     {snapshot.pendingAuthoring && <AuthoringApprovalDrawer key={`${snapshot.pendingAuthoring.turnId}:${snapshot.pendingAuthoring.toolId}`} request={snapshot.pendingAuthoring} onAnswer={(approved, note, values) => chat.answerAuthoring(snapshot.pendingAuthoring!, approved, note, values)} />}
     <WorkerRequests conversationId={context.conversation.id} projectPath={context.project.path} agents={workflow?.data?.agents ?? []} drafts={questionDrafts} />
-    <ChatComposer draftInsertion={draftInsertion} onOpenBrowser={embeddedBrowser ? () => void browser.open() : undefined} browserBusy={browser.busy} onOpenHttp={openHttp} httpBusy={!!http.busy} agentModels={agentModels} chatModels={chatModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
+    <ChatComposer draftInsertion={draftInsertion} onOpenBrowser={embeddedBrowser ? () => void browser.open() : undefined} browserBusy={browser.busy} onOpenHttp={openHttp} httpBusy={!!http.busy} agentModels={agentModels} chatModels={chatModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} onExecutionChoiceChange={setRetryChoice} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
     {modelGroups.length === 0 && <p className="mt-2 text-center text-xs text-muted-foreground">Conecte uma conta em Configurações para enviar mensagens.</p>}
   </footer>;
   return <FileWorkspace files={files} browser={browser} http={http} onAnalyzeHttp={run => { http.select(null); browser.select(null); files?.select(null); setDraftInsertion({ id: crypto.randomUUID(), text: httpAnalysisPrompt(run) }); }} terminalLauncher={outsideChat ? <>{browserLauncher}{httpLauncher}</> : undefined}>
     <section aria-label={isNewConversation ? "Nova conversa" : undefined} data-empty={isNewConversation} className="new-conversation-stage relative isolate grid min-h-0 flex-1 overflow-hidden">
       <div aria-hidden="true" className="new-conversation-glow pointer-events-none absolute left-1/2 top-1/2 h-64 w-[min(90%,56rem)] -translate-x-1/2 -translate-y-1/2" />
       <div className="conversation-transcript-slot relative z-10 flex min-h-0 overflow-hidden">
-        {!isNewConversation && <Transcript snapshot={snapshot} chat={chat} projectId={context.project.id} onLatestVisibility={onLatestVisibility} />}
+        {!isNewConversation && <Transcript snapshot={snapshot} chat={chat} retryChoice={retryChoice} projectId={context.project.id} onLatestVisibility={onLatestVisibility} />}
       </div>
       <div className="new-conversation-brand-slot relative z-10 min-h-0 overflow-hidden" aria-hidden={!isNewConversation}>
         <div className="new-conversation-brand flex flex-col items-center gap-1 pb-5 text-center">

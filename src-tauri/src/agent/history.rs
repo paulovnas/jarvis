@@ -15,7 +15,7 @@ const INDEX_CACHE_ENTRIES: usize = 16;
 const INDEX_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SINGLE_INDEX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SIDECAR_BYTES: usize = 32 * 1024 * 1024;
-const SIDECAR_VERSION: u8 = 5;
+const SIDECAR_VERSION: u8 = 6;
 const MAX_CACHED_PREVIEW_BYTES: usize = 256 * 1024;
 const DEFERRED_DETAIL_KEY: &str = "_jarvisHistoryDetailsDeferred";
 
@@ -114,7 +114,11 @@ pub(super) fn excerpt(turn: &Turn, index: usize) -> Excerpt {
         index,
         created_at: turn.created_at,
         user: snippet(&turn.user),
-        assistant: snippet(turn.steps.last().map_or("", |step| &step.text)),
+        assistant: snippet(
+            turn.lsp_final_response()
+                .as_deref()
+                .unwrap_or_else(|| turn.steps.last().map_or("", |step| &step.text)),
+        ),
     }
 }
 
@@ -1621,6 +1625,72 @@ mod tests {
                 json!({"role":"assistant", "content":format!("Resposta {index}")}),
             ],
         }
+    }
+
+    #[test]
+    fn lsp_final_report_survives_history_cache_without_promoting_old_work() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("lsp-delivery.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        let mut current = stored(0);
+        let work = Step {
+            text: "Vou investigar o problema.".into(),
+            tools: vec![ToolCall {
+                id: "read".into(),
+                name: "read".into(),
+                args: json!({"path":"app.ts"}),
+                status: "completed".into(),
+                output: "source".into(),
+                duration_ms: 1,
+            }],
+            ..Step::default()
+        };
+        current.turn.steps = vec![
+            work.clone(),
+            Step {
+                text: "Corrigi a transferência; testes passaram. Validação em HML pendente.".into(),
+                core_activities: vec![crate::core::activity::Activity::new(
+                    crate::core::ComponentId::Lsp,
+                    "file_diagnostics",
+                    "Nenhum diagnóstico novo",
+                )],
+                ..Step::default()
+            },
+            Step {
+                text: "O aviso só cita scripts temporários removidos.".into(),
+                ..Step::default()
+            },
+        ];
+        journal::append(&path, &current).unwrap();
+        let expected = "Corrigi a transferência; testes passaram. Validação em HML pendente. O aviso só cita scripts temporários removidos.";
+        for _ in 0..2 {
+            let mut index = Index::default();
+            index.refresh(&path).unwrap();
+            assert_eq!(index.navigation()[0].assistant, expected);
+        }
+
+        current.turn.status = TurnStatus::Running;
+        assert_eq!(
+            excerpt(&current.turn, 0).assistant,
+            current.turn.steps[2].text
+        );
+        current.turn.status = TurnStatus::Error;
+        assert_eq!(
+            excerpt(&current.turn, 0).assistant,
+            current.turn.steps[2].text
+        );
+        current.turn.status = TurnStatus::Completed;
+        current.turn.steps.push(work);
+        current.turn.steps.push(Step {
+            text: "Entrega atualizada após outra correção.".into(),
+            ..Step::default()
+        });
+        assert_eq!(
+            excerpt(&current.turn, 0).assistant,
+            "Entrega atualizada após outra correção."
+        );
+        current.turn.steps.clear();
+        assert!(excerpt(&current.turn, 0).assistant.is_empty());
     }
 
     #[test]

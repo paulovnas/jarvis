@@ -29,6 +29,22 @@ describe("bounded conversation windows", () => {
     expect(result.navigation?.[0].index).toBe(499);
     expect(result.latestOptions).toEqual(update.turns[0].options);
   });
+  it("previews the preserved delivery report after automatic LSP feedback instead of only its acknowledgement", () => {
+    const turn = savedTurn();
+    const step = turn.steps[0];
+    turn.steps = [
+      { ...step, text: "Vou investigar a transferência." },
+      { ...step, tools: [], text: "Corrigi o descarte da transferência. Homologação pendente.", coreActivities: [{ component: "lsp", action: "file_diagnostics", status: "applied", summary: "Sem diagnósticos novos", sources: ["app.ts"], durationMs: 1 }] },
+      { ...step, tools: [], text: "O LSP não reportou diagnósticos novos." },
+    ];
+    const update = { ...emptyChat(), history: { start: 0, total: 1 }, turns: [turn] };
+    const result = mergeChat(emptyChat(), update);
+    expect(result.navigation?.[0].assistant).toBe("Corrigi o descarte da transferência. Homologação pendente.\n\nO LSP não reportou diagnósticos novos.");
+    for (const status of ["running", "error", "cancelled", "interrupted"] as const) {
+      turn.status = status;
+      expect(mergeChat(emptyChat(), update).navigation?.[0].assistant).toBe("O LSP não reportou diagnósticos novos.");
+    }
+  });
   it("does not lose the current response when initial history or a page finishes later", () => {
     const live = { ...snapshot(499, 500), revision: 8, activeTurnId: "turn-499" };
     live.turns[0].steps[0] = { ...live.turns[0].steps[0], text: "Resposta mais recente" };

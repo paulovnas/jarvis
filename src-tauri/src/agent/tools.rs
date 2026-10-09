@@ -124,9 +124,10 @@ pub(super) fn instructions(root: &Path, mode: Mode, approval_mode: ApprovalMode)
     instructions.push_str("For libraries and frameworks, prefer Context7 or official project documentation before installed dependency source. Do not recursively explore node_modules, vendor, build output, caches or generated trees. An explicit dependency file remains readable only when a concrete unresolved behavior requires the exact installed implementation.\n");
     instructions.push_str("Reuse Context-mode recall and excerpts already read while their inputs remain valid. Batch independent discovery when available; do not reread unchanged ranges. For a recurring failure, separate confirmed facts from hypotheses, identify the failing request/code path and effective environment, then run the smallest check that distinguishes the remaining causes. A successful check at one boundary does not prove the next boundary works. Change a disproven hypothesis instead of repeating the same checks or patching symptoms. Once evidence establishes a concrete root cause and patch scope, stop broad exploration; when implementation is authorized, implement the focused change and verify the originally failing behavior within scope.\n");
     if mode == Mode::Build {
-        instructions.push_str("Prefer apply_patch for one coherent change spanning multiple files; it validates the complete patch before writing and returns bounded LSP diagnostics. Keep write/edit for isolated changes.\n");
+        instructions.push_str("Prefer apply_patch for one coherent change spanning multiple files; it validates the complete patch before writing and the host collects code diagnostics internally. Keep write/edit for isolated changes.\n");
     }
-    instructions.push_str("For code navigation, prefer lsp_definition, lsp_references and lsp_symbols over repeated text searches when a project language server is installed. Use lsp_diagnostics for focused compiler feedback; if a server is unavailable, report it once and use the smallest text-based fallback.\n");
+    instructions.push_str("For code navigation, prefer lsp_definition, lsp_references and lsp_symbols over repeated text searches when a project language server is installed. Use lsp_diagnostics for focused compiler feedback; if a server is unavailable, use the smallest text-based fallback.\n");
+    instructions.push_str("Treat automatic code diagnostics as internal evidence. Keep LSP mechanics and routine operational warnings in Core resources; mention them to the user only when explicitly asked for LSP diagnosis or technical details. When implementation is authorized, fix errors introduced by this work within scope. A newly observed diagnostic does not prove this change caused it; distinguish verified pre-existing issues from introduced errors. If a material code problem remains, describe its effect and affected location, then give a concrete corrective or preventive action supported by the actual diagnostic. Do not invent dependencies or repairs or add warning checklists. An unavailable diagnostic server alone is not a task blocker: continue relevant checks and focused fallbacks; report a validation limitation only when it affects the requested outcome.\n");
     instructions.push_str("Keep progress updates concise: what the evidence established or ruled out, what remains unresolved and the next concrete action. Continue working after an update. When a tool rejects arguments, correct the indicated fields and continue. Runtime recovery guidance is not a new task, approval request or reason to stop. A tool-level failure does not erase completed work or the user's current authorization. Before the final response, compare the result with the user's requested outcome. Unknown cause is work to investigate while a useful authorized check remains, not an external blocker. If relevant available checks are exhausted and no evidence justifies a next probe, report the inconclusive result, ruled-out causes and exact evidence still needed; do not repeat checks indefinitely or claim a repair. Report a blocker only with evidence of the specific unavailable dependency and the smallest user action actually required. Never weaken an acceptance criterion to make an unfinished outcome look complete.\n");
     instructions.push_str("For the final response, lead with the concrete result or direct answer in plain language. Briefly report relevant checks actually run and their results, plus material limitations or uncertainty. Automated checks, observed runtime behavior, deployment and user acceptance are separate evidence; never claim one from another. Complete authorized agent-owned work before handing anything back to the user. When manual verification is useful, give bounded numbered actions using verified project paths, controls or commands and an observable expected result; identify any known prerequisite. Offer a next action only for a real remaining need, and never invent a cause, time estimate, prerequisite or verification result. Match detail to the request; no fixed list cap or mandatory checklist for a simple answer.\n");
     instructions.push_str("When referencing or delivering a confirmed local file or generated artifact, use a descriptive Markdown link to its absolute filesystem path, such as [Report](/absolute/path/report.pdf). For paths containing spaces, wrap the target in angle brackets: [Report](</absolute/path/My Report.pdf>). URL-encode literal percent signs as %25 and backslashes as %5C, including UNC prefixes. Use forward slashes for Windows drive paths, such as C:/project/.env. Keep links outside inline code and code fences; do not use file:// URLs. Keep line numbers in the label or prose, outside the link target. Link only to files confirmed by tool results.\n");
@@ -952,6 +953,30 @@ mod tests {
         assert!(prompt.contains("Use English for user-facing prose"));
         assert!(!prompt.contains("Respond in Brazilian Portuguese"));
         assert!(prompt.ends_with("unless the user explicitly requests another language.\n"));
+    }
+    #[test]
+    fn diagnostic_guidance_keeps_operational_noise_out_of_delivery_and_requires_real_actions() {
+        let fixture = Fixture::new();
+        for mode in [Mode::Plan, Mode::Build] {
+            let prompt = instructions(&fixture.root, mode, ApprovalMode::Manual);
+            for required in [
+                "Keep LSP mechanics and routine operational warnings in Core resources",
+                "explicitly asked for LSP diagnosis or technical details",
+                "When implementation is authorized, fix errors introduced by this work within scope",
+                "A newly observed diagnostic does not prove this change caused it",
+                "distinguish verified pre-existing issues from introduced errors",
+                "describe its effect and affected location",
+                "corrective or preventive action supported by the actual diagnostic",
+                "Do not invent dependencies or repairs or add warning checklists",
+                "An unavailable diagnostic server alone is not a task blocker",
+            ] {
+                assert!(
+                    prompt.contains(required),
+                    "missing diagnostic guidance: {required}"
+                );
+            }
+            assert!(!prompt.contains("report it once"));
+        }
     }
     #[test]
     fn instructions_deliver_confirmed_files_as_descriptive_markdown_links() {

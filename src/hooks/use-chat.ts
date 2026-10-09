@@ -11,7 +11,7 @@ import type { McpAuthoringValues, PendingAuthoring } from "@/core/authoring";
 import { agentEventBatchSchema, applyAgentEventBatch, chatSubscriptionSchema, type AgentEventBatch } from "@/core/agent-events";
 import { getChatSnapshot, subscribeChatSnapshot, updateChatSnapshot } from "@/core/chat-store";
 import { IPC_PROTOCOL_VERSION } from "@/generated/ipc";
-import { executorOf } from "@/core/executors";
+import { executorOf, type ExecutionChoice } from "@/core/executors";
 
 function eventConversationId(payload: unknown): string | null {
   if (typeof payload === "string") return payload;
@@ -337,13 +337,13 @@ export function useChat(conversationId: string | null) {
       return false;
     }
   };
-  const retryTurn = async (turnId: string): Promise<boolean> => {
+  const retryTurn = async (turnId: string, choice: ExecutionChoice): Promise<boolean> => {
     if (!conversationId || snapshot?.activeTurnId) return false;
     const id = conversationId; const request = generation.current; const key = `${id}:${turnId}`;
     if (retryLocks.current.has(key)) return false;
     retryLocks.current.add(key); setRetryingTurns(new Set(retryLocks.current));
     try {
-      const result = await invoke<unknown>("retry_agent_turn", { conversationId: id, turnId });
+      const result = await invoke<unknown>("retry_agent_turn", { conversationId: id, turnId, choice });
       if (generation.current === request) accept(result, id);
       toast.success("Execução retomada", { description: "O Jarvis continuará do último estado salvo sem repetir ações automaticamente." });
       return true;

@@ -353,13 +353,16 @@ fn project(snapshot: &ChatSnapshot) -> Option<Record> {
             tasks: turn.tasks.clone(),
             result: (status == Status::Completed)
                 .then(|| {
-                    turn.steps
-                        .iter()
-                        .rev()
-                        .find(|step| !step.text.trim().is_empty())
+                    turn.lsp_final_response().or_else(|| {
+                        turn.steps
+                            .iter()
+                            .rev()
+                            .find(|step| !step.text.trim().is_empty())
+                            .map(|step| step.text.clone())
+                    })
                 })
                 .flatten()
-                .map(|step| short(&step.text, 320)),
+                .map(|text| short(&text, 320)),
             duration_ms: turn.duration_ms,
             active_since: if active(status) && !waiting {
                 turn.active_since

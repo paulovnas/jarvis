@@ -1105,6 +1105,34 @@ fn custom_project_instruction_proposals_respect_capability_denial_and_root_scope
 }
 
 #[test]
+fn diagnostic_delivery_guidance_reaches_native_and_custom_agents() {
+    let agent = catalog::tests::example().agents.remove(0);
+    for prompt in [
+        contracts::prompt(Flow::Standard, Role::Builder, "main"),
+        contracts::prompt(Flow::Complete, Role::Reviewer, "child"),
+        custom::instructions(&agent),
+        custom::direct_instructions(&agent),
+    ] {
+        for required in [
+            "Keep LSP mechanics and routine operational warnings in Core resources",
+            "explicitly asked for LSP diagnosis or technical details",
+            "When implementation is authorized, fix errors introduced by this work within scope",
+            "A newly observed diagnostic does not prove this change caused it",
+            "distinguish verified pre-existing issues from introduced errors",
+            "describe its effect and affected location",
+            "corrective or preventive action supported by the actual diagnostic",
+            "Do not invent dependencies or repairs or add warning checklists",
+            "An unavailable diagnostic server alone is not a task blocker",
+        ] {
+            assert!(
+                prompt.contains(required),
+                "missing diagnostic guidance: {required}"
+            );
+        }
+    }
+}
+
+#[test]
 fn manual_delivery_contract_survives_compaction_without_creating_an_off_acceptance_gate() {
     let (fixture, hub) = hub();
     let mut options = hub.manifest.lock().unwrap().options.clone();
@@ -1419,6 +1447,49 @@ fn publication_github_can_inspect_and_propose_mcp_without_agent_or_flow_authorin
         for name in ["jarvis_propose_agent", "jarvis_propose_flow"] {
             assert!(!Role::Github.allows(Flow::Publication, name, broad));
         }
+    }
+}
+
+#[test]
+fn github_mcp_discovery_and_operations_keep_supported_flow_and_scope_limits() {
+    for flow in [Flow::Publication, Flow::Custom] {
+        for broad in [false, true] {
+            for name in [
+                "mcp_activate",
+                "mcp_search_tools",
+                "mcp_load_tool",
+                "mcp_database_fixture_connect",
+                "mcp_database_fixture_query",
+            ] {
+                assert_eq!(
+                    Role::Github.allows(flow, name, broad),
+                    broad,
+                    "{flow:?}: {name}"
+                );
+            }
+        }
+    }
+    for flow in [Flow::Standard, Flow::Planned, Flow::Complete] {
+        assert!(!Role::Github.allows(flow, "mcp_activate", true));
+    }
+    let mut agent = catalog::tests::example().agents.remove(0);
+    agent.capability = catalog::Capability::Commands;
+    for name in [
+        "mcp_activate",
+        "mcp_search_tools",
+        "mcp_load_tool",
+        "mcp_database_fixture_query",
+    ] {
+        assert!(custom::allowed(&agent, name));
+    }
+    agent.denied_tools.push("mcp_*".into());
+    for name in [
+        "mcp_activate",
+        "mcp_search_tools",
+        "mcp_load_tool",
+        "mcp_database_fixture_query",
+    ] {
+        assert!(!custom::allowed(&agent, name));
     }
 }
 
@@ -2519,3 +2590,9 @@ fn complete_closure_requires_independent_approval_for_the_exact_bead() {
     .unwrap();
     assert!(exec.preflight(&tool).is_some());
 }
+
+#[path = "tests/github_mcp.rs"]
+mod github_mcp;
+
+#[path = "tests/mcp_handoff.rs"]
+mod mcp_handoff;

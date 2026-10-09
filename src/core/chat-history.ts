@@ -1,4 +1,4 @@
-import type { AgentTurn, ChatSnapshot, CompactionEvent, HistoryExcerpt, HistoryPage } from "./chat";
+import { finalTurnResponse, type AgentTurn, type ChatSnapshot, type CompactionEvent, type HistoryExcerpt, type HistoryPage } from "./chat";
 
 const MAX_TURNS = 60;
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -40,7 +40,7 @@ function navigation(current: HistoryExcerpt[] | undefined, next: ChatSnapshot) {
   const result = [...(current ?? [])];
   const last = next.turns[next.turns.length - 1];
   if (last) {
-    const item = { id: last.id, index: historyWindow(next).total - 1, createdAt: last.createdAt, user: last.user.slice(0, 160), assistant: (last.steps[last.steps.length - 1]?.text ?? "").slice(0, 160) };
+    const item = { id: last.id, index: historyWindow(next).total - 1, createdAt: last.createdAt, user: last.user.slice(0, 160), assistant: finalTurnResponse(last).text.slice(0, 160) };
     const index = result.findIndex(entry => entry.id === last.id);
     if (index >= 0) result[index] = item;
     else result.push(item);

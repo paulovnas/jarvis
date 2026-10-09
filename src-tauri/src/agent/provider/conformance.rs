@@ -259,7 +259,7 @@ async fn interrupted_turn_compacts_reloads_and_continues_through_the_transport()
     let after_reload =
         StepContext::capture(&session, &options, "Continue", &[], provider.capabilities()).unwrap();
     assert_eq!(after_reload.input(), before_reload.input());
-    let (signal, _) = session.retry_failed_turn(&turn_id).unwrap();
+    let (signal, _) = session.retry_failed_turn(&turn_id, None).unwrap();
     for index in 0..2 {
         let step =
             StepContext::capture(&session, &options, "Continue", &[], provider.capabilities())

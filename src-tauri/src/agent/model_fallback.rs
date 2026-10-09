@@ -8,6 +8,10 @@ pub(super) fn used(turn: &StoredTurn) -> bool {
         .any(|item| item["_jarvis_model_fallback"].is_object())
 }
 
+pub(super) fn boundary(item: &Value) -> bool {
+    item["_jarvis_model_fallback"].is_object() || item["_jarvis_retry_model"].is_object()
+}
+
 fn eligible(turn: &StoredTurn, choice: &ModelChoice, error: &AgentError, cancelled: bool) -> bool {
     !cancelled
         && error.code == "provider_retry_exhausted"

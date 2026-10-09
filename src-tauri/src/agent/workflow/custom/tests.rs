@@ -89,7 +89,107 @@ fn standalone_github_contract_uses_direct_questions_and_completion() {
         assert!(!prompt.contains(unavailable), "{unavailable}");
     }
     assert!(prompt.contains("never ask again for those actions"));
+    assert!(prompt.contains("For an authorized non-Git follow-up, use relevant MCPs"));
+    assert!(prompt.contains("discover the required capability before reporting unavailable tools"));
+    assert!(prompt.contains("Do not mutate Git/GitHub through shell, terminals, processes or MCPs"));
     assert!(!prompt.contains("Finish the assigned step normally"));
+}
+
+#[tokio::test]
+async fn standalone_github_exposes_enabled_mcp_selection_and_keeps_discovered_schemas_callable() {
+    let (_fixture, hub) = super::super::tests::hub();
+    hub.manifest.lock().unwrap().custom_agent = Some(
+        catalog::Catalog::default()
+            .resolve_agent("builtin:github")
+            .unwrap(),
+    );
+    // Catalog discovery needs public registration metadata only; this fixture
+    // never starts an MCP process or accesses a real database or credentials.
+    hub.env.state.with_connection(&hub.env.home, |db| {
+        db.execute("INSERT INTO mcp_servers (id,name,kind,enabled,configured,revision) VALUES ('database-id','database','local',1,1,1)", [])?;
+        Ok::<_, crate::mcp::McpError>(())
+    }).unwrap();
+    let exec = Execution {
+        hub,
+        id: "main".into(),
+        role: Role::Github,
+        flow: Flow::Custom,
+        scope: vec![".".into()],
+    };
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = crate::mcp::runtime::TurnClients::discover_for_intent(
+        &exec.hub.env.mcp,
+        &exec.hub.env.state,
+        &exec.hub.env.home,
+        &exec.hub.root.root,
+        &crate::mcp::McpIntent::default(),
+        signal,
+    )
+    .await
+    .unwrap();
+    let mut definitions = clients
+        .definitions_with(
+            &exec.hub.env.mcp,
+            &exec.hub.env.state,
+            &exec.hub.env.home,
+            false,
+            |name| exec.allowed(name),
+        )
+        .await;
+    exec.filter(&mut definitions);
+    let selector = definitions
+        .iter()
+        .find(|tool| tool["name"] == "mcp_activate")
+        .unwrap();
+    assert_eq!(
+        selector["parameters"]["properties"]["server"]["enum"],
+        json!(["database"])
+    );
+    let call = ToolCall {
+        id: "mcp-selection".into(),
+        name: "mcp_activate".into(),
+        args: json!({"server":"database"}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    assert!(crate::agent::tool_contract::Catalog::new(&definitions)
+        .validate(&call)
+        .is_ok());
+    assert!(exec.preflight(&call).is_none());
+    // Schemas delivered on subsequent model steps keep the same role contract.
+    // Transport discovery/validation is exercised by the MCP runtime fixtures.
+    for name in [
+        "mcp_search_tools",
+        "mcp_load_tool",
+        "mcp_database_fixture_connect",
+        "mcp_database_fixture_query",
+    ] {
+        let mut definitions = vec![
+            json!({"type":"function","name":name,"description":"Fixture MCP capability","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}),
+        ];
+        exec.filter(&mut definitions);
+        let call = ToolCall {
+            name: name.into(),
+            args: json!({"query":"authorized follow-up"}),
+            ..call.clone()
+        };
+        assert!(
+            crate::agent::tool_contract::Catalog::new(&definitions)
+                .validate(&call)
+                .is_ok(),
+            "{name}"
+        );
+        assert!(exec.preflight(&call).is_none(), "{name}");
+    }
+    for unavailable in [
+        "jarvis_propose_agent",
+        "jarvis_propose_flow",
+        "video_run",
+        "terminal_start",
+    ] {
+        assert!(!exec.allowed(unavailable), "{unavailable}");
+    }
 }
 
 #[test]

@@ -12,7 +12,7 @@ import { FlowPicker } from "./FlowPicker";
 import { ComposerSkeleton } from "@/components/layout/LoadingSkeletons";
 import { type ProviderModelGroup, type ModelSelection, type ModelOptionDef } from "./ModelPicker";
 import { ExecutorModelPicker } from "./ExecutorModelPicker";
-import { claudeModels, executionChoice, executionSelection, executorOf, selectModelChoice, supportsFastMode } from "@/core/executors";
+import { claudeModels, executionChoice, executionSelection, executorOf, selectModelChoice, supportsFastMode, type ExecutionChoice } from "@/core/executors";
 import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
 export type { ProviderModelGroup } from "./ModelPicker";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
@@ -48,6 +48,7 @@ interface ChatComposerProps {
   agentModels?: AgentModelsController;
   chatModels?: ChatAgentModelsController;
   onSendMessage: (content: string, options: TurnOptions, parts?: MessagePart[]) => Promise<boolean>;
+  onExecutionChoiceChange?: (choice: ExecutionChoice | null) => void;
   onStop?: () => Promise<void>;
   running?: boolean;
   compacting?: boolean;
@@ -78,6 +79,7 @@ export function ChatComposer({
   agentModels,
   chatModels,
   onSendMessage,
+  onExecutionChoiceChange,
   modelGroups,
   modelBindings = [],
   modelsReady = true,
@@ -260,6 +262,15 @@ export function ChatComposer({
     currentModelDef?.reasoningLevels.includes(effectiveSelection.reasoning)
       ? effectiveSelection.reasoning
       : currentModelDef ? defaultReasoning(currentModelDef) : null;
+  const effectiveExecutor = executorOf(effectiveSelection);
+  const effectiveModel = currentModelDef?.value;
+  const effectiveTier = effectiveSelection?.serviceTier;
+  const choiceReady = selectionReady && !modelError && !customUnavailable && !chatModels?.saving && !choosingModel && !compacting;
+  useEffect(() => {
+    if (!choiceReady || !effectiveModel) { onExecutionChoiceChange?.(null); return; }
+    const choice = executionChoice({ executor: effectiveExecutor, model: effectiveModel, reasoning, ...(effectiveTier === "priority" ? { serviceTier: "priority" } : {}) });
+    onExecutionChoiceChange?.(choice.executor === "jarvis" && !choice.account ? null : choice);
+  }, [choiceReady, effectiveExecutor, effectiveModel, effectiveTier, reasoning, onExecutionChoiceChange]);
   const chooseModel = (next: ModelSelection) => {
     const choice = selectModelChoice(savedChoice ?? selectedCustomAgent?.model ?? profile, executionChoice(next), "primary");
     if (choice.fallback && invalidSelection(executionSelection(choice.fallback)!)) choice.fallback = null;

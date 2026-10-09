@@ -258,3 +258,7 @@ fn image_result(turns: &[StoredTurn], job: &Job) -> Result<Value, AgentError> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "image/contract_tests.rs"]
+mod contract_tests;

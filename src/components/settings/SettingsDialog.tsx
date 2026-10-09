@@ -62,7 +62,6 @@ import { ProviderAccountCard } from "./ProviderAccountCard";
 import { ClaudeProviderCard } from "./ClaudeProviderCard";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { OpenCodeGoProviderForm } from "./OpenCodeGoProviderForm";
-import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 import { Hint } from "@/components/ui/hint";
 
@@ -149,20 +148,18 @@ function SettingsSurface({ embedded, standalone, open, onOpenChange, children }:
   return <Dialog open={open} onOpenChange={(next, details) => { if (details.reason !== "outside-press" && details.reason !== "escape-key") onOpenChange(next); }}><DialogContent showCloseButton className="settings-panel dark flex h-[min(960px,94dvh)] max-h-[94dvh] w-[calc(100vw-2rem)] max-w-none sm:max-w-[1400px] flex-col gap-0 border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden motion-reduce:transition-none">{children}</DialogContent></Dialog>;
 }
 
-export function SettingsDialog({ open, onOpenChange, onAccountsChange, embeddedProviders = false, standalone = false, onBusyChange, onCloseRequestChange }: SettingsDialogProps) {
+export function SettingsDialog(props: SettingsDialogProps) {
+  return props.open ? <SettingsSession {...props} /> : null;
+}
+
+function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProviders = false, standalone = false, onBusyChange, onCloseRequestChange }: SettingsDialogProps) {
   const compactSettingsNavigation = useCompactSettingsNavigation();
   const bootstrap = useBootstrapResources();
-  const { layout, updateLayout } = useDesktopLayout();
-  const [windowTab, setWindowTab] = useState(() => {
-    try { const stored = localStorage.getItem("jarvis:settings-window-tab"); return SETTINGS_SECTIONS.some(section => section.value === stored) ? stored as typeof layout.settingsTab : "general"; }
-    catch { return "general"; }
-  });
-  const activeTab = standalone ? windowTab : layout.settingsTab;
+  const [activeTab, setTab] = useState("general");
   const [workflowInitialTab, setWorkflowInitialTab] = useState<"flows" | "agents">("flows");
   const setActiveTab = (value: string) => {
     if (value !== "general" && value !== "terminal" && value !== "browser" && value !== "voice" && value !== "tools" && value !== "providers" && value !== "agents" && value !== "skills" && value !== "mcps" && value !== "hooks" && value !== "plugins" && value !== "workspaces") return;
-    if (standalone) { setWindowTab(value); try { localStorage.setItem("jarvis:settings-window-tab", value); } catch { /* Keep navigation usable without persistent storage. */ } }
-    else updateLayout({ settingsTab: value });
+    setTab(value);
   };
   const [mcpCount, setMcpCount] = useState<number | null>(null);
   const [skillCount, setSkillCount] = useState<number | null>(() => bootstrap?.resources.skills?.skills.length ?? null);

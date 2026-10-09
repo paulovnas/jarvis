@@ -8,6 +8,7 @@ import type { PendingAuthoring } from "@/core/authoring";
 import { useChat } from "./use-chat";
 import { toast } from "sonner";
 import { clearChatStore, updateChatSnapshot } from "@/core/chat-store";
+import type { ExecutionChoice } from "@/core/executors";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
@@ -381,6 +382,7 @@ it("ignores invalidation events from another conversation", async () => {
 });
 
 it("retries the failed turn in place and accepts the resumed snapshot", async () => {
+  const choice: ExecutionChoice = { executor: "claude", account: "", model: "sonnet", reasoning: "high" };
   const failed: ChatSnapshot = {
     ...completed(),
     revision: 20,
@@ -405,8 +407,8 @@ it("retries the failed turn in place and accepts the resumed snapshot", async ()
   let first!: Promise<boolean>;
   let duplicate!: Promise<boolean>;
   act(() => {
-    first = result.current.retryTurn("turn1");
-    duplicate = result.current.retryTurn("turn1");
+    first = result.current.retryTurn("turn1", choice);
+    duplicate = result.current.retryTurn("turn1", choice);
   });
   await expect(duplicate).resolves.toBe(false);
   expect(call.mock.calls.filter(([command]) => command === "retry_agent_turn")).toHaveLength(1);
@@ -417,7 +419,7 @@ it("retries the failed turn in place and accepts the resumed snapshot", async ()
   });
 
   expect(retried).toBe(true);
-  expect(call).toHaveBeenCalledWith("retry_agent_turn", { conversationId: "c1", turnId: "turn1" });
+  expect(call).toHaveBeenCalledWith("retry_agent_turn", { conversationId: "c1", turnId: "turn1", choice });
   expect(result.current.snapshot?.activeTurnId).toBe("turn1");
   expect(result.current.snapshot?.turns[0].status).toBe("running");
 });

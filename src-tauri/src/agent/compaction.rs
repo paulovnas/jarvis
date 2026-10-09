@@ -131,10 +131,7 @@ pub(super) fn input(data: &SessionData) -> Vec<Value> {
         }
         input.extend(items);
     }
-    if let Some(boundary) = input
-        .iter()
-        .rposition(|item| item["_jarvis_model_fallback"].is_object())
-    {
+    if let Some(boundary) = input.iter().rposition(super::model_fallback::boundary) {
         let after = input.split_off(boundary);
         super::model_fallback::portable(&mut input);
         input.extend(after);
@@ -817,6 +814,54 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_switch_projects_only_prior_private_state_without_rewriting_the_journal() {
+        for marker in [
+            json!({"_jarvis_model_fallback":{"from":"old","to":"new"}}),
+            json!({"_jarvis_retry_model":{"from":"old","to":"new"}}),
+        ] {
+            let fixture = Fixture::new();
+            let session = session(&fixture);
+            session
+                .reserve(
+                    "Continue with the saved image".into(),
+                    crate::agent::tests::options(ApprovalMode::Yolo),
+                )
+                .unwrap();
+            let mut data = session.data.lock().unwrap();
+            let receipt = json!({"type":"function_call_output","call_id":"confirmed-write","output":"Saved once"});
+            let image = json!({"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,fixture"}]});
+            let new_reasoning =
+                json!({"type":"reasoning","id":"new-reasoning","encrypted_content":"new-private"});
+            let new_session = json!({"_jarvis_claude_session":"new-session"});
+            data.turns[0].wire.extend([
+                json!({"type":"reasoning","encrypted_content":"old-private"}),
+                json!({"_jarvis_claude_session":"old-session"}),
+                json!({"role":"assistant","id":"old-message","encrypted_content":"old-private","content":"Confirmed finding"}),
+                receipt.clone(),
+                marker,
+                image.clone(),
+                new_reasoning.clone(),
+                new_session.clone(),
+            ]);
+            let original = raw(&data);
+            let replay = input(&data);
+            assert_eq!(raw(&data), original);
+            assert!(!replay
+                .iter()
+                .any(|item| item["encrypted_content"] == "old-private"
+                    || item["_jarvis_claude_session"] == "old-session"));
+            let finding = replay
+                .iter()
+                .find(|item| item["content"] == "Confirmed finding")
+                .unwrap();
+            assert!(finding.get("id").is_none());
+            for preserved in [receipt, image, new_reasoning, new_session] {
+                assert!(replay.contains(&preserved), "missing {preserved}");
+            }
+        }
+    }
 
     #[test]
     fn summary_budget_scales_and_prefers_message_boundaries_without_breaking_unicode() {

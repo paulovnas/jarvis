@@ -210,6 +210,21 @@ export type AgentTurn = Omit<GeneratedAgentTurn, "parts" | "contextWindow" | "st
   contextWindow?: number | null;
   steps: AgentStep[];
 };
+
+/** Preserve delivery text followed by an automatic LSP acknowledgement in saved turns. */
+export function finalTurnResponse(turn: AgentTurn): { text: string; firstStep: number } {
+  const lastStep = turn.steps.length - 1;
+  const latest = { text: turn.steps[lastStep]?.text ?? "", firstStep: lastStep };
+  if (turn.status !== "completed") return latest;
+  let firstStep = 0;
+  for (let index = lastStep; index >= 0; index -= 1) {
+    if (turn.steps[index].tools.length) { firstStep = index + 1; break; }
+  }
+  const tail = turn.steps.slice(firstStep);
+  if (!tail.some(step => step.coreActivities?.some(activity => activity.component === "lsp" && activity.action === "file_diagnostics"))) return latest;
+  return { text: tail.filter(step => step.text.trim()).map(step => step.text).join("\n\n"), firstStep };
+}
+
 export type AgentTool = GeneratedAgentTool;
 type LegacySnapshotDefaults = "protocolVersion" | "compacting" | "context" | "compactions" | "history";
 export type ChatSnapshot = Omit<GeneratedChatSnapshot, "turns" | "pendingQuestion" | "pendingAuthoring" | "queuedMessages" | "fileChanges" | LegacySnapshotDefaults> &

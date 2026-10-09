@@ -22,6 +22,8 @@ pub(in crate::agent) struct Bridge<'a> {
     video_jobs: video::Jobs,
     instructions: instructions::Resolver,
     repeated: tool_loop::Guard,
+    mcp_name_recovery: Option<(ToolCall, Vec<String>)>,
+    mcp_name_reminded: bool,
     diagnostics: Vec<String>,
     direct_tasks: bool,
     restricted: bool,
@@ -62,7 +64,7 @@ impl<'a> Bridge<'a> {
                 .and_then(|turn| turn.mcp_intent.clone())
                 .unwrap_or_else(|| data.inherited_mcp_intent.clone())
         };
-        let clients = if publication || global_companion {
+        let clients = if global_companion {
             crate::mcp::runtime::TurnClients::default()
         } else {
             crate::mcp::runtime::TurnClients::discover_for_intent(
@@ -309,6 +311,8 @@ impl<'a> Bridge<'a> {
             video_jobs: video::Jobs::default(),
             instructions: instructions::Resolver::new(&session.root)?,
             repeated: tool_loop::Guard::default(),
+            mcp_name_recovery: None,
+            mcp_name_reminded: false,
             diagnostics: vec![],
             direct_tasks,
             restricted,
@@ -421,22 +425,22 @@ impl<'a> Bridge<'a> {
             if web_search::enabled(self.runtime.state, self.runtime.home, &self.options) {
                 definitions.push(web_search::definition());
             }
-            definitions.extend(
-                self.clients
-                    .definitions_with(
-                        self.runtime.mcp,
-                        self.runtime.state,
-                        self.runtime.home,
-                        self.restricted,
-                        |name| {
-                            self.execution
-                                .as_ref()
-                                .is_none_or(|exec| exec.allowed(name))
-                        },
-                    )
-                    .await,
-            );
         }
+        definitions.extend(
+            self.clients
+                .definitions_with(
+                    self.runtime.mcp,
+                    self.runtime.state,
+                    self.runtime.home,
+                    self.restricted,
+                    |name| {
+                        self.execution
+                            .as_ref()
+                            .is_none_or(|exec| exec.allowed(name))
+                    },
+                )
+                .await,
+        );
         if self.execution.is_some()
             && image_generation::enabled(self.runtime.state, self.runtime.home)
         {
@@ -453,6 +457,34 @@ impl<'a> Bridge<'a> {
     }
 
     pub async fn call(&mut self, tool: &ToolCall) -> Result<String, AgentError> {
+        let mut result = self.call_inner(tool).await;
+        if result
+            .as_ref()
+            .is_err_and(|error| error.code == "tool_unavailable")
+        {
+            let definitions = self.definitions().await?;
+            if let Some(feedback) =
+                self.clients
+                    .unavailable_tool_feedback(&tool.name, &tool.args, &definitions)
+            {
+                self.mcp_name_recovery = Some((tool.clone(), feedback.tool_names));
+                if let Err(error) = &mut result {
+                    error.tool_result = Some(feedback.output);
+                }
+            }
+        } else if self
+            .mcp_name_recovery
+            .as_ref()
+            .is_some_and(|(_, candidates)| candidates.contains(&tool.name))
+        {
+            // An actual canonical result owns further recovery, including
+            // validation, authorization and uncertain-effect errors.
+            self.mcp_name_recovery = None;
+        }
+        result
+    }
+
+    async fn call_inner(&mut self, tool: &ToolCall) -> Result<String, AgentError> {
         if *self.signal.borrow() {
             return Err(AgentError::cancelled());
         }
@@ -614,7 +646,7 @@ impl<'a> Bridge<'a> {
             .await;
         let _ = self.repeated.observe(
             tool,
-            result.is_err(),
+            result.as_ref().err(),
             result
                 .as_ref()
                 .map_or_else(|error| error.message.as_str(), String::as_str),
@@ -646,9 +678,6 @@ impl<'a> Bridge<'a> {
         ) && status == "completed"
             && serde_json::from_str::<Value>(output)
                 .is_ok_and(|result| result["approved"] == true && result["status"] == "applied");
-        if !tool.name.starts_with("mcp_") && !registered {
-            return Ok(None);
-        }
         let discovery = matches!(
             tool.name.as_str(),
             "mcp_activate" | "mcp_search_tools" | "mcp_load_tool"
@@ -664,12 +693,17 @@ impl<'a> Bridge<'a> {
             return Ok(None);
         }
         let definitions = self.definitions().await?;
-        let schemas = self.clients.discovery_schemas(
-            if status == "error" { "" } else { &tool.name },
-            &tool.args,
-            output,
-            &definitions,
-        );
+        let schemas = if unavailable {
+            self.clients
+                .unavailable_tool_feedback(&tool.name, &tool.args, &definitions)
+                .map_or_else(Vec::new, |feedback| feedback.schemas)
+        } else {
+            self.clients
+                .discovery_schemas(&tool.name, &tool.args, output, &definitions)
+        };
+        if !tool.name.starts_with("mcp_") && !registered && schemas.is_empty() {
+            return Ok(None);
+        }
         let capability_context = if (registered || unavailable)
             && !self.publication
             && !companion_chat::is_global_session(&self.owner().id)
@@ -699,6 +733,7 @@ impl<'a> Bridge<'a> {
                 "callWith":call_with,
                 "catalogChanged":true,
                 "capabilityContext":capability_context,
+                "next":"Continue the current request in this same execution using the exact advertised schemas through callWith. No new user message or tools/list refresh is needed. Do not replay confirmed actions.",
             }).to_string(),
         })))
     }
@@ -748,6 +783,27 @@ impl<'a> Bridge<'a> {
             }
             Handler::Workflow => {
                 if tool.name == "hub_complete" {
+                    let definitions = self.definitions().await?;
+                    if let Some(feedback) = mcp_tool_recovery_feedback(
+                        &self.clients,
+                        &definitions,
+                        &mut self.mcp_name_recovery,
+                        &mut self.mcp_name_reminded,
+                    )? {
+                        let mut error = tool_contract::recoverable(
+                            "mcp_tool_name_recovery",
+                            &tool.name,
+                            "O handoff não foi registrado. Continue com o nome exato da ferramenta MCP disponível nesta execução.",
+                            vec![],
+                        );
+                        let mut feedback: Value =
+                            serde_json::from_str(&feedback).map_err(|_| AgentError::internal())?;
+                        feedback["error"] = json!({
+                            "code":error.code, "tool":tool.name, "message":error.message,
+                        });
+                        error.tool_result = Some(feedback.to_string());
+                        return Err(error);
+                    }
                     if !self.commands.running_ids().is_empty() {
                         return Err(AgentError::new(
                             "commands_running",
@@ -764,7 +820,7 @@ impl<'a> Bridge<'a> {
                     {
                         return Err(AgentError::new(
                             "diagnostics_feedback",
-                            "Revise os diagnósticos LSP antes do handoff.",
+                            "Revise os novos problemas de código antes do handoff; corrija o que foi introduzido ou descreva o impacto e a ação necessária para uma pendência real.",
                         ));
                     }
                 }
@@ -1028,7 +1084,7 @@ impl<'a> Bridge<'a> {
     }
 
     pub async fn refresh_mcp_intent(&mut self) -> Result<(), AgentError> {
-        if !self.publication && !companion_chat::is_global_session(&self.owner().id) {
+        if !companion_chat::is_global_session(&self.owner().id) {
             let changed = refresh_user_mcp_intent(
                 self.session,
                 self.runtime,
@@ -1076,6 +1132,15 @@ impl<'a> Bridge<'a> {
 
     pub async fn completion_feedback(&mut self) -> Result<Option<String>, AgentError> {
         self.refresh_mcp_intent().await?;
+        let definitions = self.definitions().await?;
+        if let Some(feedback) = mcp_tool_recovery_feedback(
+            &self.clients,
+            &definitions,
+            &mut self.mcp_name_recovery,
+            &mut self.mcp_name_reminded,
+        )? {
+            return Ok(Some(feedback));
+        }
         if !self.commands.running_ids().is_empty() {
             return Ok(Some("Commands are still running. Use bash_wait to obtain their results or bash_cancel before finishing.".into()));
         }
@@ -1087,7 +1152,7 @@ impl<'a> Bridge<'a> {
         )
         .await?
         {
-            return Ok(Some("Review the new LSP diagnostics before finishing. Fix errors introduced by this work or report pre-existing limitations accurately.".into()));
+            return Ok(Some(core_runtime::DIAGNOSTIC_REVIEW.into()));
         }
         if self.clients.requires_explicit_attempt() {
             return Ok(Some(self.clients.explicit_reminder()));
@@ -1111,15 +1176,16 @@ impl<'a> Bridge<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::agent) mod tests {
     use super::*;
 
-    fn fixture_bridge<'a>(
+    pub(in crate::agent) fn fixture_bridge<'a>(
         session: &'a Arc<Session>,
         runtime: TurnRuntime<'a>,
         options: TurnOptions,
         signal: watch::Receiver<bool>,
     ) -> Bridge<'a> {
+        let direct_tasks = options.direct();
         Bridge {
             session,
             runtime,
@@ -1140,8 +1206,10 @@ mod tests {
             video_jobs: video::Jobs::default(),
             instructions: instructions::Resolver::new(&session.root).unwrap(),
             repeated: tool_loop::Guard::default(),
+            mcp_name_recovery: None,
+            mcp_name_reminded: false,
             diagnostics: vec![],
-            direct_tasks: true,
+            direct_tasks,
             restricted: false,
             publication: false,
             prompt: String::new(),
@@ -1204,6 +1272,67 @@ mod tests {
 
     #[tokio::test]
     async fn live_mcp_scope_change_reaches_the_stable_cli_gateway_without_replaying_tools() {
+        for publication in [false, true] {
+            let fixture = crate::agent::tests::Fixture::new();
+            let session = crate::agent::tests::session(&fixture);
+            let state = AppState::default();
+            let oauth = OpenAiCodexState::default();
+            let mcp = crate::mcp::McpState::default();
+            let grants = execution_grants::GrantStore::default();
+            let options = crate::agent::tests::options(ApprovalMode::Yolo);
+            let signal = session
+                .reserve("Continuar".into(), options.clone())
+                .unwrap();
+            session
+                .update(true, |data| {
+                    data.turns.last_mut().unwrap().mcp_intent = Some(crate::mcp::McpIntent {
+                        mode: crate::mcp::McpIntentMode::Disabled,
+                        ..crate::mcp::McpIntent::default()
+                    });
+                })
+                .unwrap();
+            let mut bridge = fixture_bridge(
+                &session,
+                TurnRuntime {
+                    grants: &grants,
+                    state: &state,
+                    oauth: &oauth,
+                    mcp: &mcp,
+                    home: &fixture.root,
+                },
+                options,
+                signal,
+            );
+            bridge.publication = publication;
+            bridge.refresh_mcp_intent().await.unwrap();
+            {
+                let data = session.data.lock().unwrap();
+                let wire = &data.turns.last().unwrap().wire;
+                assert_eq!(wire.len(), 2, "publication={publication}");
+                assert!(wire[1]["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains("\"availableTools\":[]"));
+            }
+            assert_eq!(bridge.delivered_wire, 0);
+            bridge.refresh_mcp_intent().await.unwrap();
+            assert_eq!(
+                session
+                    .data
+                    .lock()
+                    .unwrap()
+                    .turns
+                    .last()
+                    .unwrap()
+                    .wire
+                    .len(),
+                2
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn publication_mcp_gateway_tracks_live_scope_without_connecting() {
         let fixture = crate::agent::tests::Fixture::new();
         let session = crate::agent::tests::session(&fixture);
         let state = AppState::default();
@@ -1211,17 +1340,17 @@ mod tests {
         let mcp = crate::mcp::McpState::default();
         let grants = execution_grants::GrantStore::default();
         let options = crate::agent::tests::options(ApprovalMode::Yolo);
-        let signal = session
-            .reserve("Continuar".into(), options.clone())
-            .unwrap();
+        let signal = session.reserve("Publicar".into(), options.clone()).unwrap();
         session
             .update(true, |data| {
-                data.turns.last_mut().unwrap().mcp_intent = Some(crate::mcp::McpIntent {
-                    mode: crate::mcp::McpIntentMode::Disabled,
-                    ..crate::mcp::McpIntent::default()
-                });
+                data.turns.last_mut().unwrap().mcp_intent = Some(crate::mcp::McpIntent::default());
             })
             .unwrap();
+        // Public metadata exposes on-demand discovery without credentials or a transport.
+        state.with_connection(&fixture.root, |db| {
+            db.execute("INSERT INTO mcp_servers (id,name,kind,enabled,configured,revision) VALUES ('fake-github','Github','local',1,1,1)", [])?;
+            Ok::<_, crate::mcp::McpError>(())
+        }).unwrap();
         let mut bridge = fixture_bridge(
             &session,
             TurnRuntime {
@@ -1234,18 +1363,53 @@ mod tests {
             options,
             signal,
         );
-        bridge.refresh_mcp_intent().await.unwrap();
-        {
-            let data = session.data.lock().unwrap();
-            let wire = &data.turns.last().unwrap().wire;
-            assert_eq!(wire.len(), 2);
-            assert!(wire[1]["content"]
-                .as_str()
-                .unwrap()
-                .contains("\"availableTools\":[]"));
+        bridge.publication = true;
+        let definitions = bridge.definitions().await.unwrap();
+        let activate = definitions
+            .iter()
+            .find(|tool| tool["name"] == "mcp_activate")
+            .expect("publication must expose enabled MCP discovery");
+        assert!(activate["parameters"]["properties"]["server"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("Github")));
+        assert!(definitions
+            .iter()
+            .any(|tool| tool["name"] == "jarvis_propose_publication"));
+
+        for (mode, enabled) in [
+            (crate::mcp::McpIntentMode::Disabled, false),
+            (crate::mcp::McpIntentMode::OnDemand, true),
+        ] {
+            session
+                .update(true, |data| {
+                    data.turns.last_mut().unwrap().mcp_intent = Some(crate::mcp::McpIntent {
+                        mode,
+                        ..crate::mcp::McpIntent::default()
+                    });
+                })
+                .unwrap();
+            let definitions = bridge.definitions().await.unwrap();
+            assert_eq!(
+                definitions
+                    .iter()
+                    .any(|tool| tool["name"] == "mcp_activate"),
+                enabled
+            );
         }
+        assert!(bridge.clients.tool_metadata("mcp_Github_lookup").is_none());
         assert_eq!(bridge.delivered_wire, 0);
-        bridge.refresh_mcp_intent().await.unwrap();
+        let wire_count = session
+            .data
+            .lock()
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .wire
+            .len();
+        assert_eq!(wire_count, 3);
+        bridge.definitions().await.unwrap();
         assert_eq!(
             session
                 .data
@@ -1256,7 +1420,7 @@ mod tests {
                 .unwrap()
                 .wire
                 .len(),
-            2
+            wire_count
         );
     }
 
@@ -1499,6 +1663,228 @@ mod tests {
         assert_eq!(error.message, "file action blocked");
         assert!(!fixture.root.join("forbidden.txt").exists());
         assert!(session.snapshot().unwrap().pending_approval.is_none());
+    }
+
+    #[tokio::test]
+    async fn native_mcp_gateway_recovers_unknown_names_in_the_same_run_without_replaying_effects() {
+        for outcome in ["listed_only", "lookup", "alias", "invalid", "revoked"] {
+            let fixture = crate::agent::tests::Fixture::new();
+            let session = crate::agent::tests::session(&fixture);
+            let options = crate::agent::tests::options(ApprovalMode::Yolo);
+            let signal = session
+                .reserve("Consulte a documentação.".into(), options.clone())
+                .unwrap();
+            let state = AppState::default();
+            let oauth = OpenAiCodexState::default();
+            let mcp = crate::mcp::McpState::default();
+            let grants = execution_grants::GrantStore::default();
+            let calls = fixture.root.join("mcp-calls");
+            let prepared = crate::plugins::preview(&fixture.root, 0, crate::plugins::Operation::Create {
+                draft: serde_json::from_value(json!({
+                    "name":"same-turn", "description":"Offline native MCP fixture",
+                    "mcpServers":{"documents":{
+                        "command":"node",
+                        "args":[PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/mcp/fixtures/server.mjs")],
+                        "env":{"CALLS_FILE":calls}
+                    },"other":{
+                        "command":"node",
+                        "args":[PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/mcp/fixtures/server.mjs")],
+                        "env":{"CALLS_FILE":fixture.root.join("other-mcp-calls")}
+                    }}
+                })).unwrap(),
+            }).await.unwrap();
+            crate::plugins::apply(&fixture.root, &prepared).unwrap();
+            let mut bridge = fixture_bridge(
+                &session,
+                TurnRuntime {
+                    grants: &grants,
+                    state: &state,
+                    oauth: &oauth,
+                    mcp: &mcp,
+                    home: &fixture.root,
+                },
+                options,
+                signal,
+            );
+            bridge.direct_tasks = false;
+            bridge.clients = crate::mcp::runtime::TurnClients::discover_for_intent(
+                &mcp,
+                &state,
+                &fixture.root,
+                &session.root,
+                &crate::mcp::McpIntent::default(),
+                bridge.signal.clone(),
+            )
+            .await
+            .unwrap();
+            let tool = |id: &str, name: &str, args: Value| ToolCall {
+                id: id.into(),
+                name: name.into(),
+                args,
+                status: "pending".into(),
+                output: String::new(),
+                duration_ms: 0,
+            };
+            let activate = tool(
+                "activate",
+                "mcp_activate",
+                json!({"server":"same-turn@local: documents"}),
+            );
+            let activated = super::super::execute_tool(
+                &mut bridge,
+                "activate-request",
+                &json!({"name":activate.name,"arguments":activate.args}),
+                Some(activate),
+            )
+            .await
+            .unwrap();
+            assert_eq!(activated["isError"], false);
+            let receipt = activated["content"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find_map(|item| {
+                    serde_json::from_str::<Value>(item["text"].as_str()?)
+                        .ok()
+                        .filter(|receipt| receipt["availableTools"].is_array())
+                })
+                .unwrap();
+            assert!(receipt["next"]
+                .as_str()
+                .unwrap()
+                .contains("No new user message"));
+            let lookup = receipt["availableTools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| {
+                    tool["description"]
+                        .as_str()
+                        .is_some_and(|description| description.contains("Read documentation"))
+                })
+                .unwrap();
+            let canonical = lookup["name"].as_str().unwrap().to_owned();
+            assert_eq!(lookup["inputSchema"]["required"], json!(["query"]));
+            assert!(!calls.exists());
+            if outcome == "listed_only" {
+                assert!(bridge.completion_feedback().await.unwrap().is_none());
+                continue;
+            }
+            let unknown_name = if outcome == "alias" {
+                "lookup"
+            } else {
+                "mcp_documentation_lookup"
+            };
+            let unknown = tool("unknown", unknown_name, json!({"query":"archive evidence"}));
+            let rejected = super::super::execute_tool(
+                &mut bridge,
+                "unknown-request",
+                &json!({"name":unknown.name,"arguments":unknown.args}),
+                Some(unknown),
+            )
+            .await
+            .unwrap();
+            assert_eq!(rejected["isError"], true);
+            let error: Value =
+                serde_json::from_str(rejected["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(error["error"]["code"], "tool_unavailable");
+            assert_eq!(error["executed"], false);
+            assert!(error["schemas"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == canonical));
+            assert_eq!(
+                super::super::replay_tool(&session, "unknown")
+                    .unwrap()
+                    .unwrap(),
+                rejected
+            );
+            assert!(!calls.exists());
+            if outcome == "revoked" {
+                let other = tool(
+                    "activate-other",
+                    "mcp_activate",
+                    json!({"server":"same-turn@local: other"}),
+                );
+                bridge.call(&other).await.unwrap();
+                let selected = mcp
+                    .list_for_project(&state, &fixture.root, Some(&session.root))
+                    .unwrap()
+                    .into_iter()
+                    .find(|server| server.name == "same-turn@local: documents")
+                    .unwrap();
+                session
+                    .update(true, |data| {
+                        data.turns.last_mut().unwrap().mcp_intent = Some(crate::mcp::McpIntent {
+                            excluded_servers: vec![crate::mcp::McpIntentServer {
+                                id: selected.id.clone(),
+                                name: selected.name.clone(),
+                            }],
+                            ..crate::mcp::McpIntent::default()
+                        });
+                    })
+                    .unwrap();
+                assert!(bridge.completion_feedback().await.unwrap().is_none());
+                let definitions = bridge.definitions().await.unwrap();
+                assert!(!definitions.iter().any(|tool| tool["name"] == canonical));
+                assert!(definitions
+                    .iter()
+                    .any(|tool| tool["name"].as_str().is_some_and(|name| bridge
+                        .clients
+                        .tool_metadata(name)
+                        .is_some_and(|(server, _, _)| server == "same-turn@local: other"))));
+                assert!(!calls.exists());
+                assert!(!fixture.root.join("other-mcp-calls").exists());
+                continue;
+            }
+            if outcome == "lookup" {
+                let feedback = bridge.completion_feedback().await.unwrap().unwrap();
+                assert!(feedback.contains(&canonical));
+                assert_eq!(
+                    bridge.completion_feedback().await.unwrap_err().code,
+                    "mcp_tool_unavailable"
+                );
+                assert!(!calls.exists(), "completion recovery never executes a tool");
+            }
+            let args = if outcome == "invalid" {
+                json!({"notQuery":true})
+            } else {
+                json!({"query":"archive evidence"})
+            };
+            let selected = tool("canonical", &canonical, args);
+            let params = json!({"name":selected.name,"arguments":selected.args});
+            let result = super::super::execute_tool(
+                &mut bridge,
+                "canonical-request",
+                &params,
+                Some(selected.clone()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(result["isError"], outcome == "invalid");
+            assert!(
+                bridge.completion_feedback().await.unwrap().is_none(),
+                "the canonical outcome owns further recovery"
+            );
+            if outcome == "invalid" {
+                assert!(!calls.exists());
+            } else {
+                assert!(result
+                    .to_string()
+                    .contains("Documentation: archive evidence"));
+                let replayed = super::super::execute_tool(
+                    &mut bridge,
+                    "canonical-request",
+                    &params,
+                    Some(selected),
+                )
+                .await
+                .unwrap();
+                assert_eq!(replayed, result);
+                assert_eq!(std::fs::read_to_string(&calls).unwrap(), "lookup\n");
+            }
+        }
     }
 
     #[tokio::test]

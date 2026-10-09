@@ -33,7 +33,7 @@ fn session_reference(data: &SessionData) -> Option<String> {
         .rev()
         .take_while(|turn| turn.turn.options.executor == crate::claude::Executor::Claude)
         .flat_map(|turn| turn.wire.iter().rev())
-        .take_while(|item| item.get("_jarvis_model_fallback").is_none())
+        .take_while(|item| !model_fallback::boundary(item))
         .find_map(|item| item["_jarvis_claude_session"].as_str().map(str::to_owned))
 }
 
@@ -43,12 +43,9 @@ fn initial_input(data: &SessionData, resume: bool) -> Result<String, AgentError>
         .wire
         .iter()
         .rev()
-        .take_while(|item| item.get("_jarvis_model_fallback").is_none())
+        .take_while(|item| !model_fallback::boundary(item))
         .any(|item| item["_jarvis_claude_session"].is_string());
-    let fallback = current
-        .wire
-        .iter()
-        .any(|item| item.get("_jarvis_model_fallback").is_some());
+    let fallback = current.wire.iter().any(model_fallback::boundary);
     let current_input = current
         .wire
         .iter()
@@ -587,6 +584,11 @@ async fn execute_tool(
         .transition(turn_state::TurnPhase::ExecutingTools)?;
     let started = std::time::Instant::now();
     let result = bridge.call(&tool).await;
+    let completion_failure = result
+        .as_ref()
+        .err()
+        .filter(|error| tool.name == "hub_complete" && error.code == "mcp_tool_unavailable")
+        .cloned();
     let turn_id = bridge
         .session
         .data
@@ -604,7 +606,18 @@ async fn execute_tool(
         &result,
         started.elapsed().as_millis() as u64,
     );
-    let (output, status, structured) = settle_tool_result(result)?;
+    let (mut output, status, structured) = settle_tool_result(result)?;
+    if status == "completed"
+        && matches!(
+            tool.name.as_str(),
+            "mcp_activate" | "mcp_search_tools" | "mcp_load_tool"
+        )
+    {
+        let definitions = bridge.definitions().await?;
+        output = bridge
+            .clients
+            .discovery_output(&tool.name, &tool.args, &output, &definitions);
+    }
     core_runtime::checkpoint_tool(
         bridge.session,
         &tool,
@@ -614,6 +627,10 @@ async fn execute_tool(
         structured.as_deref(),
     )
     .await?;
+    if let Some(error) = completion_failure {
+        bridge.session.flush_async().await?;
+        return Err(error);
+    }
     if status == "completed" {
         run_manual_hook(bridge.session, &bridge.manual_hooks, crate::hooks::Event::PostToolUse,
             json!({"tool_name":tool.name,"tool_input":tool.args,"tool_use_id":tool.id,"tool_response":output}), bridge.signal.clone()).await?;

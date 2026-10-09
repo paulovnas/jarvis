@@ -314,7 +314,7 @@ async fn cli_control_abort_is_retryable_interruption_unless_the_user_stopped() {
         assert_eq!(snapshot.turns[0].user, "Corrija o comportamento do chat.");
         if !user_stopped {
             let id = &snapshot.turns[0].id;
-            let (resumed, workflow) = session.retry_failed_turn(id).unwrap();
+            let (resumed, workflow) = session.retry_failed_turn(id, None).unwrap();
             assert!(!*resumed.borrow());
             assert!(workflow.is_none());
             let retried = session.snapshot().unwrap();

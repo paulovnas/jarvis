@@ -8,14 +8,16 @@ import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { httpDraft, httpSnapshot } from "@/test/http-fixtures";
 import type { LibrarySnapshot } from "@/core/library";
 import type { PendingAuthoring } from "@/core/authoring";
-import { readChat, type ChatSnapshot } from "@/core/chat";
+import { readChat, type ChatSnapshot, type TurnOptions } from "@/core/chat";
 import { clearChatStore } from "@/core/chat-store";
 import { useChat } from "@/hooks/use-chat";
+import { useChatAgentModels } from "@/hooks/use-chat-agent-models";
+import type { AgentModelConfig, ModelChoice } from "@/hooks/use-agent-models";
 import { ChatArea } from "./ChatArea";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 // Chat model persistence is covered by its hook and composer regressions; keep live-chat fixtures scoped to chat snapshots.
-vi.mock("@/hooks/use-chat-agent-models", () => ({ useChatAgentModels: () => ({ data: {}, error: null, saving: false, save: vi.fn(), refresh: vi.fn() }) }));
+vi.mock("@/hooks/use-chat-agent-models", () => ({ useChatAgentModels: vi.fn(() => ({ data: {}, error: null, saving: false, save: vi.fn(), refresh: vi.fn() })) }));
 const call = vi.mocked(invoke);
 const listeners = new Map<string, Set<EventCallback<unknown>>>();
 function TestChat({ library = populatedLibrary(), connected = true }: { library?: LibrarySnapshot; connected?: boolean }) {
@@ -52,10 +54,49 @@ async function update(snapshot: ChatSnapshot) {
 describe("Persistent live conversation", () => {
   beforeEach(() => {
     clearChatStore(); listeners.clear(); call.mockReset().mockResolvedValue(emptyChat());
+    vi.mocked(useChatAgentModels).mockImplementation(() => ({ data: {}, error: null, saving: false, save: vi.fn(), refresh: vi.fn() }));
     vi.mocked(listen).mockImplementation(async (name, callback) => {
       const set = listeners.get(name) ?? new Set(); set.add(callback); listeners.set(name, set);
       return () => { set.delete(callback); };
     });
+  });
+  it("retries with the current composer provider, model and reasoning while preserving the failed message and image", async () => {
+    const user = userEvent.setup();
+    const image = { id: "image-1", conversationId: "c1", name: "original.png", mime: "image/png", size: 100, kind: "image" as const };
+    const original = { ...savedTurn(), user: "Continue a correção.", status: "error" as const, parts: [{ type: "text" as const, text: "Continue a correção." }, { type: "attachment" as const, attachment: image }], options: { ...savedTurn().options, workflow: "designer" as const, serviceTier: "priority" as const }, error: { code: "provider_retry_exhausted", message: "O provedor anterior falhou." } };
+    const failed = { ...emptyChat(), turns: [original], revision: 20 };
+    const choice = { executor: "jarvis" as const, account: "alternate", model: "new-model", reasoning: "high" };
+    const previousOptions: TurnOptions = { ...original.options };
+    delete previousOptions.serviceTier;
+    const resumed = { ...failed, revision: 21, activeTurnId: original.id, turns: [{ ...original, status: "running" as const, error: null, options: { ...previousOptions, ...choice } }] };
+    call.mockImplementation(async command => command === "retry_agent_turn" ? resumed : command === "get_chat_attachment_image" ? "data:image/png;base64,AA==" : command === "get_workflow_catalog" ? { revision: 0, agents: [], flows: [], builtinAgents: [], builtinFlows: [] } : failed);
+    let configured: AgentModelConfig = {};
+    const save = vi.fn(async (key: string, next: ModelChoice) => { configured = { ...configured, [key]: next }; view.rerender(<RetryChat />); return true; });
+    vi.mocked(useChatAgentModels).mockImplementation(() => ({ data: configured, error: null, saving: false, save, refresh: vi.fn() }));
+    function RetryChat() {
+      const chat = useChat("c1");
+      return <ChatArea library={populatedLibrary()} chat={chat} modelGroups={[
+        { provider: "Codex", providerKind: "openai-codex", models: [{ value: "openai-codex-pessoal/model", label: "Modelo anterior", reasoningLevels: ["medium"], defaultReasoningLevel: "medium", supportsFast: true }] },
+        { provider: "Outro provedor", providerKind: "custom", models: [{ value: "alternate/new-model", label: "Modelo alternativo", reasoningLevels: ["high"], defaultReasoningLevel: "high" }] },
+      ]} />;
+    }
+    const view = render(<RetryChat />);
+    await screen.findByRole("button", { name: "Tentar novamente" });
+    await user.click(await screen.findByRole("button", { name: "Selecionar modelo de IA" }));
+    (await screen.findByRole("menuitem", { name: "Outro provedor" })).focus();
+    await user.keyboard("{ArrowRight}");
+    (await screen.findByRole("menuitem", { name: "Modelo alternativo" })).focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(within(await screen.findByRole("group", { name: "Raciocínio" })).getByRole("menuitem", { name: "Alto" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Modelo alternativo · Alto"));
+    await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
+
+    expect(call).toHaveBeenCalledWith("retry_agent_turn", { conversationId: "c1", turnId: original.id, choice });
+    expect(call.mock.calls.some(([command]) => command === "start_agent_turn")).toBe(false);
+    expect(screen.getAllByTestId(`user-message-${original.id}`)).toHaveLength(1);
+    expect(screen.getByTestId(`user-message-${original.id}`)).toHaveTextContent(original.user);
+    expect(screen.getByRole("button", { name: "Ampliar original.png" })).toBeVisible();
+    expect(save).toHaveBeenCalledWith("designer/designer", choice);
   });
   it("keeps history visible after failed recovery and restores the pending publication on retry", async () => {
     const user = userEvent.setup();

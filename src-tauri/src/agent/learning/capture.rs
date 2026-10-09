@@ -134,8 +134,17 @@ pub(super) fn feedback(session: &Session) -> Result<Vec<Feedback>, AgentError> {
         .iter()
         .rev()
         .nth(1)
-        .and_then(|t| t.turn.steps.last())
-        .map(|s| redact(&s.text).chars().take(1500).collect::<String>())
+        .map(|t| {
+            redact(
+                t.turn
+                    .lsp_final_response()
+                    .as_deref()
+                    .unwrap_or_else(|| t.turn.steps.last().map_or("", |s| &s.text)),
+            )
+            .chars()
+            .take(1500)
+            .collect::<String>()
+        })
         .unwrap_or_default();
     let make = |id: &str, content: &str, at: u64| {
         user_feedback(content).map(|excerpt| Feedback {

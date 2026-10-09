@@ -1,10 +1,11 @@
 import { useState, type ReactElement } from "react";
 import { Copy, ClipboardPaste } from "lucide-react";
 import { toast } from "sonner";
-import { readClipboardText, writeClipboardText } from "@/core/clipboard";
+import { readClipboardText, writeClipboardImage, writeClipboardText } from "@/core/clipboard";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 
 type TextContext = { text: string; paste?: (text: string) => void };
+type ImageContext = { image: string };
 
 function dispatchPaste(target: HTMLElement, text: string) {
   const data = new DataTransfer();
@@ -56,25 +57,36 @@ function textContext(target: HTMLElement): TextContext {
 }
 
 export function TextContextMenu({ children }: { children: ReactElement }) {
-  const [context, setContext] = useState<TextContext>({ text: "" });
+  const [context, setContext] = useState<TextContext | ImageContext>({ text: "" });
   const copy = async () => {
-    try { await writeClipboardText(context.text); toast.success("Texto copiado"); }
-    catch { toast.error("Não foi possível copiar o texto."); }
+    try {
+      if ("image" in context) { await writeClipboardImage(context.image); toast.success("Imagem copiada"); }
+      else { await writeClipboardText(context.text); toast.success("Texto copiado"); }
+    }
+    catch { toast.error("image" in context ? "Não foi possível copiar a imagem." : "Não foi possível copiar o texto."); }
   };
   const paste = async () => {
-    try { const text = await readClipboardText(); if (text) context.paste?.(text); }
+    try { const text = await readClipboardText(); if (text && "paste" in context) context.paste?.(text); }
     catch { toast.error("Não foi possível colar o texto."); }
   };
   return <ContextMenu>
     <ContextMenuTrigger render={children} className="select-text" onContextMenu={event => {
       if (event.defaultPrevented || !(event.target instanceof HTMLElement)) { event.preventBaseUIHandler(); return; }
+      if (event.target instanceof HTMLImageElement) {
+        const image = event.target.currentSrc || event.target.src;
+        if (!image) { event.preventDefault(); event.preventBaseUIHandler(); return; }
+        setContext({ image });
+        return;
+      }
       const next = textContext(event.target);
       if (!next.text && !next.paste) { event.preventDefault(); event.preventBaseUIHandler(); return; }
       setContext(next);
     }} />
     <ContextMenuContent finalFocus={false}>
-      {context.text && <ContextMenuItem className="cursor-pointer" onClick={() => void copy()}><Copy />Copiar</ContextMenuItem>}
-      {context.paste && <ContextMenuItem className="cursor-pointer" onClick={() => void paste()}><ClipboardPaste />Colar</ContextMenuItem>}
+      {"image" in context ? <ContextMenuItem className="cursor-pointer" onClick={() => void copy()}><Copy />Copiar imagem</ContextMenuItem> : <>
+        {context.text && <ContextMenuItem className="cursor-pointer" onClick={() => void copy()}><Copy />Copiar</ContextMenuItem>}
+        {context.paste && <ContextMenuItem className="cursor-pointer" onClick={() => void paste()}><ClipboardPaste />Colar</ContextMenuItem>}
+      </>}
     </ContextMenuContent>
   </ContextMenu>;
 }

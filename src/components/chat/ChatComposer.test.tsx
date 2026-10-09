@@ -36,6 +36,21 @@ async function openModel(user: ReturnType<typeof userEvent.setup>, name: RegExp)
 }
 
 describe("ChatComposer model reasoning", () => {
+  it("publishes only a valid effective execution choice for retry, including its reasoning and speed", async () => {
+    const changed = vi.fn();
+    const fastModels = models.map(group => ({ ...group, providerKind: "openai-codex", models: group.models.map(model => ({ ...model, supportsFast: model.value === "pessoal/compact" })) }));
+    const props = { modelGroups: fastModels, onSendMessage: vi.fn(), onExecutionChoiceChange: changed, initialOptions: { ...chatOptions, account: "pessoal", model: "compact", reasoning: "xhigh", serviceTier: "priority" as const } };
+    const { rerender } = await renderComposer(<ChatComposer {...props} />);
+    await waitFor(() => expect(changed).toHaveBeenLastCalledWith({ executor: "jarvis", account: "pessoal", model: "compact", reasoning: "xhigh", serviceTier: "priority" }));
+
+    rerender(<ChatComposer {...props} modelsReady={false} />);
+    await waitFor(() => expect(changed).toHaveBeenLastCalledWith(null));
+    const chatModels = { data: { "standard/builder": { account: "pessoal", model: "flexible", reasoning: "high" } }, error: null, saving: true, save: vi.fn(), refresh: vi.fn() };
+    rerender(<ChatComposer {...props} chatModels={chatModels} />);
+    expect(changed).toHaveBeenLastCalledWith(null);
+    rerender(<ChatComposer {...props} chatModels={{ ...chatModels, saving: false }} />);
+    await waitFor(() => expect(changed).toHaveBeenLastCalledWith({ executor: "jarvis", account: "pessoal", model: "flexible", reasoning: "high" }));
+  });
   it("appends an HTTP analysis reference once, preserves attachments, and uses the existing running-chat send path", async () => {
     const attachment = { id: "doc", conversationId: "c1", name: "contrato.md", mime: "text/markdown", size: 10, kind: "document" as const };
     const drafts = new Map<string, ChatDraft>([["c1", { content: "Meu contexto", parts: [{ type: "text", text: "Meu contexto" }, { type: "attachment", attachment }] }]]);

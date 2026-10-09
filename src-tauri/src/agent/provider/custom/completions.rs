@@ -9,6 +9,7 @@ pub(super) struct Stream {
     stop: Option<String>,
     usage: Option<Usage>,
 }
+
 impl Stream {
     pub fn finished(&self) -> bool {
         self.stop.is_some()
@@ -105,15 +106,22 @@ impl Stream {
                     let stored = self.calls.entry(index).or_insert_with(
                         || json!({"type":"function_call","call_id":"","name":"","arguments":""}),
                     );
-                    for (field, fragment) in [
+                    for (field, value) in [
                         ("call_id", &call["id"]),
                         ("name", &call["function"]["name"]),
-                        ("arguments", &call["function"]["arguments"]),
                     ] {
-                        if let Some(fragment) = fragment.as_str() {
+                        if let Some(value) = value.as_str().filter(|value| !value.is_empty()) {
                             let previous = stored[field].as_str().unwrap_or_default();
-                            stored[field] = json!(format!("{previous}{fragment}"));
+                            if !previous.is_empty() && previous != value {
+                                return Err(protocol_error());
+                            }
+                            // Compatible gateways may repeat metadata on every argument delta.
+                            stored[field] = json!(value);
                         }
+                    }
+                    if let Some(fragment) = call["function"]["arguments"].as_str() {
+                        let previous = stored["arguments"].as_str().unwrap_or_default();
+                        stored["arguments"] = json!(format!("{previous}{fragment}"));
                     }
                 }
             }
@@ -150,5 +158,92 @@ impl Stream {
             scope,
             self.usage,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(stream: &mut Stream, calls: Value) -> Result<(), AgentError> {
+        stream.event(
+            &json!({"choices":[{"index":0,"delta":{"tool_calls":calls}}]}),
+            &mut |delta| {
+                assert!(!matches!(delta, Delta::ToolReady(_)));
+                Ok(())
+            },
+        )
+    }
+
+    fn finish(mut stream: Stream) -> Response {
+        stream
+            .event(
+                &json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
+                &mut |_| Ok(()),
+            )
+            .unwrap();
+        stream.finish(&json!({})).unwrap()
+    }
+
+    #[test]
+    fn repeated_tool_metadata_preserves_names_ids_and_interleaved_argument_fragments() {
+        let mut stream = Stream::default();
+        event(
+            &mut stream,
+            json!([
+                {"index":0,"id":"call-a","function":{"name":"read_attachment","arguments":"{\"path\":\"assets/"}},
+                {"index":1,"id":"call-b","function":{"name":"read_attachment","arguments":"{\"path\":\"assets/"}}
+            ]),
+        )
+        .unwrap();
+        event(
+            &mut stream,
+            json!([
+                {"index":1,"id":"call-b","function":{"name":"read_attachment","arguments":"shot-3.png\"}"}},
+                {"index":0,"id":"call-a","function":{"name":"read_attachment","arguments":"shot-0.png\"}"}}
+            ]),
+        )
+        .unwrap();
+        let response = finish(stream);
+        let calls = response.tool_calls();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].id, "call-a");
+        assert_eq!(calls[1].id, "call-b");
+        for call in calls {
+            assert_eq!(call.name, "read_attachment");
+            assert_eq!(call.status, "pending");
+        }
+        assert_eq!(calls[0].args["path"], "assets/shot-0.png");
+        assert_eq!(calls[1].args["path"], "assets/shot-3.png");
+    }
+
+    #[test]
+    fn repeated_argument_fragments_are_preserved_verbatim() {
+        let mut stream = Stream::default();
+        for fragment in ["{\"content\":\"", "ha ", "ha ", "\"}"] {
+            event(
+                &mut stream,
+                json!([{"index":0,"id":"call-a","function":{"name":"write","arguments":fragment}}]),
+            )
+            .unwrap();
+        }
+        assert_eq!(finish(stream).tool_calls()[0].args["content"], "ha ha ");
+    }
+
+    #[test]
+    fn conflicting_tool_id_or_name_at_the_same_index_is_not_merged_or_dispatched() {
+        for conflicting in [
+            json!({"index":0,"id":"call-b","function":{"name":"read_attachment","arguments":"\"other.png\"}"}}),
+            json!({"index":0,"id":"call-a","function":{"name":"write","arguments":"\"other.png\"}"}}),
+        ] {
+            let mut stream = Stream::default();
+            event(
+                &mut stream,
+                json!([{"index":0,"id":"call-a","function":{"name":"read_attachment","arguments":"{\"path\":"}}]),
+            )
+            .unwrap();
+            assert!(event(&mut stream, json!([conflicting])).is_err());
+            assert!(stream.finish(&json!({})).is_err());
+        }
     }
 }

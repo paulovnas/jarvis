@@ -90,6 +90,75 @@ fn secondary_claude_starts_fresh_with_active_turn_receipts_on_first_turn() {
 }
 
 #[test]
+fn manual_model_switch_starts_fresh_with_confirmed_receipts_and_current_images() {
+    let fixture = Fixture::new();
+    let mut session = Arc::try_unwrap(session(&fixture)).ok().unwrap();
+    session.id = "a".repeat(32);
+    let session = Arc::new(session);
+    let mut choice = options(ApprovalMode::Yolo);
+    choice.executor = crate::claude::Executor::Claude;
+    session
+        .reserve("Inspect the image; preserve the saved file".into(), choice)
+        .unwrap();
+    let mut image = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(4, 4)
+        .write_to(&mut image, image::ImageFormat::Png)
+        .unwrap();
+    let attachment =
+        attachments::store(&fixture.root, &session.id, "screen.png", image.get_ref()).unwrap();
+    let mut data = session.data.lock().unwrap();
+    let turn = &mut data.turns[0];
+    turn.turn
+        .parts
+        .push(skill_input::MessagePart::Attachment { attachment });
+    turn.wire
+        .push(json!({"_jarvis_claude_session":"old-native-session"}));
+    turn.turn.steps.push(Step {
+        tools: vec![ToolCall {
+            id: "confirmed-write".into(),
+            name: "write".into(),
+            args: json!({"path":"saved.txt"}),
+            status: "completed".into(),
+            output: "Saved once".into(),
+            duration_ms: 1,
+        }],
+        ..Step::default()
+    });
+    turn.wire.extend([
+        json!({"role":"user","content":"Keep the current filename"}),
+        json!({"_jarvis_retry_model":{"from":"old","to":"new"}}),
+    ]);
+    let original = serde_json::to_value(&data.turns).unwrap();
+    assert!(session_reference(&data).is_none());
+    let text = initial_input(&data, false).unwrap();
+    for expected in [
+        "preserve the saved file",
+        "Keep the current filename",
+        "confirmed-write",
+        "Saved once",
+        "completed",
+        "historyIsPartial",
+    ] {
+        assert!(text.contains(expected), "missing {expected}");
+    }
+    let content =
+        handoff::content(&fixture.root, &session.id, text, &data.turns[0].turn.parts).unwrap();
+    assert_eq!(content[2]["type"], "image");
+    assert_eq!(content[2]["source"]["media_type"], "image/png");
+    assert_eq!(serde_json::to_value(&data.turns).unwrap(), original);
+    data.turns[0]
+        .wire
+        .push(json!({"_jarvis_claude_session":"new-native-session"}));
+    assert_eq!(
+        session_reference(&data).as_deref(),
+        Some("new-native-session")
+    );
+    assert!(initial_input(&data, true)
+        .unwrap()
+        .contains("interrupted Jarvis turn"));
+}
+
+#[test]
 fn executor_switch_keeps_intent_and_receipts_without_replaying_large_payloads() {
     let fixture = Fixture::new();
     let session = session(&fixture);

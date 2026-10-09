@@ -1593,6 +1593,7 @@ pub(super) fn validate_options(
 pub(super) fn recovery_checkpoint_available(
     home: &Path,
     session: &Session,
+    choice: Option<&settings::ModelChoice>,
 ) -> Result<bool, AgentError> {
     let data = session.data.lock().map_err(|_| AgentError::internal())?;
     if data.active.is_some() {
@@ -1601,8 +1602,11 @@ pub(super) fn recovery_checkpoint_available(
             "Esta conversa já possui uma execução em andamento.",
         ));
     }
-    let turn = data.turns.last().ok_or_else(AgentError::internal)?;
-    if !super::resumable_workflow_turn(turn) {
+    let mut turn = data.turns.last().ok_or_else(AgentError::internal)?.clone();
+    if let Some(choice) = choice {
+        choice.apply(&mut turn.turn.options);
+    }
+    if !super::resumable_workflow_turn(&turn) {
         return Err(invalid(
             "Esta conversa não possui um fluxo coordenado que possa ser retomado.",
         ));
@@ -1631,7 +1635,7 @@ pub(super) fn validate_recovery_checkpoint(
     home: &Path,
     session: &Session,
 ) -> Result<(), AgentError> {
-    if recovery_checkpoint_available(home, session)? {
+    if recovery_checkpoint_available(home, session, None)? {
         Ok(())
     } else {
         Err(invalid("Checkpoint do fluxo não encontrado."))

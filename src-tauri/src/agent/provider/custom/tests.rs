@@ -576,6 +576,176 @@ fn native_optional_schemas_keep_responses_opt_out_without_leaking_it_to_other_pr
 }
 
 #[test]
+fn anthropic_replay_keeps_historical_calls_paired_with_bounded_unique_ids() {
+    let anthropic = config(Protocol::AnthropicMessages);
+    let shared = "call_1234567890abcdef12345678".repeat(4);
+    let ids = [
+        format!("{shared}_first"),
+        format!("{shared}_second"),
+        "foreign/call|item:1".into(),
+        "toolu_valid-1".into(),
+        "a".repeat(64),
+    ];
+    let mut input = vec![json!({"role":"user","content":"Continue the confirmed task."})];
+    for (index, id) in ids.iter().enumerate() {
+        input.push(json!({"type":"function_call","call_id":id,"name":"read","arguments":format!("{{\"path\":\"file-{index}.txt\"}}" )}));
+    }
+    for (index, id) in ids.iter().enumerate() {
+        input.push(json!({"type":"function_call_output","call_id":id,"output":format!("Confirmed result {index}")}));
+    }
+    let original = input.clone();
+    let build = || {
+        request::body(
+            &anthropic,
+            &anthropic.models[0],
+            &options(),
+            "instructions",
+            input.clone(),
+            vec![tool()],
+        )
+        .unwrap()
+    };
+    let body = build();
+    let calls = body["messages"][1]["content"].as_array().unwrap();
+    let results = body["messages"][2]["content"].as_array().unwrap();
+    let emitted: Vec<_> = calls
+        .iter()
+        .map(|call| call["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(emitted.len(), ids.len());
+    assert_eq!(
+        emitted
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        ids.len()
+    );
+    for (index, id) in emitted.iter().enumerate() {
+        assert!(!id.is_empty() && id.len() <= 64);
+        assert!(id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')));
+        assert_eq!(results[index]["tool_use_id"], *id);
+        assert_eq!(calls[index]["input"]["path"], format!("file-{index}.txt"));
+        assert_eq!(
+            results[index]["content"],
+            format!("Confirmed result {index}")
+        );
+    }
+    assert_eq!(emitted[3], ids[3]);
+    assert_eq!(emitted[4], ids[4]);
+    assert_eq!(body, build());
+    assert_eq!(input, original);
+
+    for protocol in [Protocol::OpenaiCompletions, Protocol::OpenaiResponses] {
+        let config = config(protocol);
+        let body = request::body(
+            &config,
+            &config.models[0],
+            &options(),
+            "instructions",
+            input.clone(),
+            vec![tool()],
+        )
+        .unwrap();
+        for (index, id) in ids.iter().enumerate() {
+            match protocol {
+                Protocol::OpenaiCompletions => {
+                    assert_eq!(body["messages"][2]["tool_calls"][index]["id"], *id);
+                    assert_eq!(body["messages"][3 + index]["tool_call_id"], *id);
+                }
+                Protocol::OpenaiResponses => {
+                    assert_eq!(body["input"][1 + index]["call_id"], *id);
+                    assert_eq!(body["input"][1 + ids.len() + index]["call_id"], *id);
+                }
+                Protocol::AnthropicMessages => unreachable!(),
+            }
+        }
+    }
+}
+
+#[test]
+fn anthropic_request_projects_runtime_feedback_after_the_paired_historical_result() {
+    let config = config(Protocol::AnthropicMessages);
+    let id = "call_1234567890abcdef12345678".repeat(4);
+    let input = vec![
+        json!({"role":"user","content":"Continue the requested task."}),
+        json!({"type":"function_call","call_id":id,"name":"read","arguments":"{}"}),
+        json!({"role":"user","_jarvis_runtime":true,"_jarvis_learning":true,"content":"Validated internal feedback"}),
+        json!({"type":"function_call_output","call_id":id,"output":"Confirmed historical result"}),
+        json!({"role":"user","content":"Use the updated requirement."}),
+    ];
+    let original = input.clone();
+    let body = request::body(
+        &config,
+        &config.models[0],
+        &options(),
+        "instructions",
+        super::super::provider_input(input.clone()),
+        vec![tool()],
+    )
+    .unwrap();
+    let call = &body["messages"][1]["content"][0];
+    let result = &body["messages"][2]["content"][0];
+    assert_eq!(call["type"], "tool_use");
+    assert!(call["id"].as_str().unwrap().len() <= 64);
+    assert_eq!(body["messages"][2]["role"], "user");
+    assert_eq!(result["type"], "tool_result");
+    assert_eq!(result["tool_use_id"], call["id"]);
+    assert_eq!(result["content"], "Confirmed historical result");
+    assert_eq!(
+        body["messages"][3]["content"],
+        "Validated internal feedback"
+    );
+    assert_eq!(
+        body["messages"][4]["content"],
+        "Use the updated requirement."
+    );
+    assert_eq!(input, original);
+}
+
+#[test]
+fn anthropic_replay_reserves_valid_ids_before_normalizing_foreign_ids() {
+    let config = config(Protocol::AnthropicMessages);
+    let invalid = "call_1234567890abcdef12345678".repeat(4);
+    let mut input = vec![
+        json!({"role":"user","content":"Continue."}),
+        json!({"type":"function_call","call_id":invalid,"name":"read","arguments":"{}"}),
+        json!({"type":"function_call_output","call_id":invalid,"output":"First confirmed result"}),
+    ];
+    let build = |input: Vec<Value>| {
+        request::body(
+            &config,
+            &config.models[0],
+            &options(),
+            "instructions",
+            input,
+            vec![tool()],
+        )
+        .unwrap()
+    };
+    let initial = build(input.clone());
+    let reserved = initial["messages"][1]["content"][0]["id"].as_str().unwrap();
+    assert_ne!(reserved, invalid);
+    input.insert(
+        2,
+        json!({"type":"function_call","call_id":reserved,"name":"read","arguments":"{}"}),
+    );
+    input.push(json!({"type":"function_call_output","call_id":reserved,"output":"Second confirmed result"}));
+    let body = build(input.clone());
+    let calls = &body["messages"][1]["content"];
+    let results = &body["messages"][2]["content"];
+    assert_ne!(calls[0]["id"], calls[1]["id"]);
+    assert_eq!(calls[1]["id"], reserved);
+    for index in 0..2 {
+        let id = calls[index]["id"].as_str().unwrap();
+        assert!(id.len() <= 64);
+        assert_eq!(results[index]["tool_use_id"], id);
+    }
+    assert_eq!(body, build(input));
+}
+
+#[test]
 fn protocols_translate_tools_history_images_and_output_limits_without_codex_fields() {
     for protocol in [
         Protocol::OpenaiCompletions,

@@ -8,6 +8,8 @@ use crate::core::{
 use serde_json::{json, Value};
 use tokio::sync::watch;
 
+pub(super) const DIAGNOSTIC_REVIEW: &str = "Review the new code diagnostics within the authorized scope; fix errors or warnings introduced by this work when relevant to the requested outcome and distinguish them from pre-existing problems. Keep LSP mechanics and routine diagnostic acknowledgements in Core resources, unless the user explicitly asks about them. For a material unresolved issue, explain its concrete impact and affected file, plus the smallest corrective or preventive action supported by evidence. Do not invent causes or delegate an available fix to the user. After reviewing these new diagnostics, consolidate the final response around the user's original request, with results, verification evidence, and remaining limitations.";
+
 /// Host-owned discovery runs once per turn, before inference. The structural
 /// evidence is reference data; it cannot replace the current user's intent.
 pub(super) async fn prepare_graft(
@@ -209,13 +211,18 @@ pub(super) async fn diagnose(
         return Ok(false);
     };
     record(session, report.activities)?;
+    // Routine or stale diagnostics stay visible as Core activities. Only new
+    // current code issues require review after an otherwise useful final.
+    if !report.new_issues {
+        return Ok(false);
+    }
     session.update(true, |data| {
         data.turns.last_mut().unwrap().wire.push(json!({
             "role":"user", "_jarvis_runtime":true,
-            "content":report.observation,
+            "content":format!("{}\n\n{DIAGNOSTIC_REVIEW}", report.observation),
         }));
     })?;
-    Ok(report.new_errors)
+    Ok(report.new_issues)
 }
 
 /// A failed auxiliary capture never erases a completed action, invents an index,
@@ -228,6 +235,9 @@ pub(super) fn captured_result(
 ) -> (String, bool) {
     if let Some(error) = structured {
         return (error, false);
+    }
+    if matches!(name, "mcp_activate" | "mcp_search_tools" | "mcp_load_tool") {
+        return (output.to_owned(), false);
     }
     match captured {
         Ok(Some(compact)) => (compact.clone(), true),
@@ -246,9 +256,16 @@ pub(super) async fn checkpoint_tool(
     duration_ms: u64,
     structured: Option<&str>,
 ) -> Result<(), AgentError> {
-    let replay = structured
-        .map(str::to_owned)
-        .unwrap_or_else(|| crate::core::context::fallback_result(&tool.name, output));
+    let replay = structured.map(str::to_owned).unwrap_or_else(|| {
+        if matches!(
+            tool.name.as_str(),
+            "mcp_activate" | "mcp_search_tools" | "mcp_load_tool"
+        ) {
+            output.to_owned()
+        } else {
+            crate::core::context::fallback_result(&tool.name, output)
+        }
+    });
     session
         .update_async(|data| {
             let current = data.turns.last_mut().unwrap();
@@ -284,6 +301,157 @@ mod tests {
         tests::{options, session, Fixture},
         ApprovalMode, Step,
     };
+
+    #[cfg(unix)]
+    fn fake_lsp_server(fixture: &Fixture) {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = fixture
+            .root
+            .join("node_modules/.bin/typescript-language-server");
+        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        std::fs::write(&bin, include_str!("lsp/fixtures/server.py")).unwrap();
+        std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn record_useful_final(session: &Session) {
+        session
+            .update(true, |data| {
+                let turn = data.turns.last_mut().unwrap();
+                turn.turn.steps.push(Step {
+                    text: "Entrega útil com os resultados verificados.".into(),
+                    ..Step::default()
+                });
+                turn.wire.push(json!({
+                    "role":"assistant",
+                    "content":"Entrega útil com os resultados verificados.",
+                }));
+            })
+            .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn clean_lsp_feedback_keeps_the_useful_final_without_new_model_input() {
+        let fixture = Fixture::new();
+        fake_lsp_server(&fixture);
+        std::fs::write(fixture.root.join("app.ts"), "valid").unwrap();
+        let session = session(&fixture);
+        let signal = session
+            .reserve("Corrigir a aplicação".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        record_useful_final(&session);
+        let mut registry = lsp::Registry::new(&fixture.root, &fixture.root).unwrap();
+        let mut paths = vec!["app.ts".into()];
+
+        assert!(!diagnose(&session, &mut registry, &mut paths, signal)
+            .await
+            .unwrap());
+        assert!(paths.is_empty());
+        session.flush_async().await.unwrap();
+        let (stored, _) = journal::read_only(&session.journal).unwrap();
+        let turn = &stored[0];
+        assert_eq!(turn.wire.len(), 2);
+        assert_eq!(turn.wire.last().unwrap()["role"], "assistant");
+        assert_eq!(turn.turn.steps.len(), 1);
+        assert_eq!(
+            turn.turn.steps[0].text,
+            "Entrega útil com os resultados verificados."
+        );
+        let activity = &turn.turn.steps[0].core_activities[0];
+        assert_eq!(activity.status, Status::Applied);
+        assert_eq!(activity.sources, ["app.ts"]);
+        assert!(activity.summary.contains("Nenhum diagnóstico"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn removed_scratch_lsp_feedback_is_recorded_without_reopening_the_final() {
+        let fixture = Fixture::new();
+        let scratch = fixture.root.join(".jarvis/scratch/repro.ts");
+        std::fs::create_dir_all(scratch.parent().unwrap()).unwrap();
+        std::fs::write(&scratch, "temporary probe").unwrap();
+        std::fs::remove_file(&scratch).unwrap();
+        let session = session(&fixture);
+        let signal = session
+            .reserve("Corrigir a aplicação".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        record_useful_final(&session);
+        let mut registry = lsp::Registry::new(&fixture.root, &fixture.root).unwrap();
+        let mut paths = vec![".jarvis/scratch/repro.ts".into()];
+
+        assert!(!diagnose(&session, &mut registry, &mut paths, signal)
+            .await
+            .unwrap());
+        session.flush_async().await.unwrap();
+        let (stored, _) = journal::read_only(&session.journal).unwrap();
+        let turn = &stored[0];
+        assert_eq!(turn.wire.len(), 2);
+        assert_eq!(turn.wire.last().unwrap()["role"], "assistant");
+        assert_eq!(turn.turn.steps.len(), 1);
+        let activity = &turn.turn.steps[0].core_activities[0];
+        assert_eq!(activity.status, Status::Applied);
+        assert_eq!(activity.sources, [".jarvis/scratch/repro.ts"]);
+        assert!(activity.summary.contains("Arquivo removido"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn new_lsp_issues_remain_actionable_without_repeating_unchanged_feedback() {
+        for (source, message) in [
+            ("BROKEN", "Fixture type error"),
+            ("WARNING", "Fixture warning"),
+        ] {
+            let fixture = Fixture::new();
+            fake_lsp_server(&fixture);
+            std::fs::write(fixture.root.join("app.ts"), source).unwrap();
+            let session = session(&fixture);
+            let signal = session
+                .reserve("Corrigir a aplicação".into(), options(ApprovalMode::Yolo))
+                .unwrap();
+            record_useful_final(&session);
+            let mut registry = lsp::Registry::new(&fixture.root, &fixture.root).unwrap();
+            let mut paths = vec!["app.ts".into()];
+
+            assert!(
+                diagnose(&session, &mut registry, &mut paths, signal.clone())
+                    .await
+                    .unwrap()
+            );
+            paths.push("app.ts".into());
+            assert!(!diagnose(&session, &mut registry, &mut paths, signal)
+                .await
+                .unwrap());
+            session.flush_async().await.unwrap();
+            let (stored, _) = journal::read_only(&session.journal).unwrap();
+            let turn = &stored[0];
+            assert_eq!(turn.wire.len(), 3);
+            assert_eq!(turn.wire[1]["role"], "assistant");
+            let feedback = &turn.wire[2];
+            assert_eq!(feedback["role"], "user");
+            assert_eq!(feedback["_jarvis_runtime"], true);
+            assert!(feedback["content"].as_str().unwrap().contains(message));
+            assert!(feedback["content"]
+                .as_str()
+                .unwrap()
+                .contains("consolidate the final response around the user's original request"));
+            for instruction in [
+                "fix errors or warnings introduced by this work",
+                "distinguish them from pre-existing problems",
+                "Keep LSP mechanics and routine diagnostic acknowledgements in Core resources",
+                "concrete impact and affected file",
+                "corrective or preventive action supported by evidence",
+                "Do not invent causes or delegate an available fix to the user",
+            ] {
+                assert!(feedback["content"].as_str().unwrap().contains(instruction));
+            }
+            assert_eq!(turn.turn.user, "Corrigir a aplicação");
+            assert_eq!(turn.turn.steps.len(), 1);
+            let activities = &turn.turn.steps[0].core_activities;
+            assert_eq!(activities.len(), 2);
+            assert!(activities.iter().all(|item| item.status == Status::Issues));
+        }
+    }
 
     #[tokio::test]
     async fn plugin_skill_reads_emit_durable_receipts_without_counting_discovery_or_local_skills() {
@@ -513,6 +681,55 @@ mod tests {
         );
         assert_eq!(replay, structured);
         assert!(!indexed);
+    }
+
+    #[tokio::test]
+    async fn mcp_discovery_schemas_survive_checkpoint_and_auxiliary_compaction() {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve("Use the MCP".into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        session
+            .update(true, |data| {
+                data.turns
+                    .last_mut()
+                    .unwrap()
+                    .turn
+                    .steps
+                    .push(Step::default())
+            })
+            .unwrap();
+        let output = json!({"schemas":[{"name":"mcp_exact_name","description":"schema".repeat(4000),"inputSchema":{"type":"object"}}]}).to_string();
+        for name in ["mcp_activate", "mcp_search_tools", "mcp_load_tool"] {
+            let tool = ToolCall {
+                id: name.into(),
+                name: name.into(),
+                args: json!({}),
+                status: "pending".into(),
+                output: String::new(),
+                duration_ms: 0,
+            };
+            checkpoint_tool(&session, &tool, &output, "completed", 0, None)
+                .await
+                .unwrap();
+            {
+                let data = session.data.lock().unwrap();
+                let wire = &data.turns.last().unwrap().wire;
+                assert_eq!(
+                    wire.iter().find(|item| item["call_id"] == name).unwrap()["output"],
+                    output
+                );
+            }
+            for captured in [
+                Ok(Some("Indexed MCP catalog".into())),
+                Err(crate::core::error("memory failed")),
+            ] {
+                let (replay, indexed) = captured_result(name, &output, None, &captured);
+                assert_eq!(replay, output);
+                assert!(!indexed);
+            }
+        }
     }
 
     #[test]

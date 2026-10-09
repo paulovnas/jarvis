@@ -247,17 +247,26 @@ pub(super) fn recover(
     let directory_path = path(&env.home, &root.id)?;
     directory(directory_path.parent().ok_or_else(AgentError::storage)?)?;
     directory(&directory_path)?;
-    let run_id = root
-        .data
-        .lock()
-        .map_err(|_| AgentError::internal())?
-        .active
-        .as_ref()
-        .ok_or_else(AgentError::cancelled)?
-        .id
-        .clone();
-    let manifest = load(&directory_path, &root.id)?
+    let (run_id, options) = {
+        let data = root.data.lock().map_err(|_| AgentError::internal())?;
+        let run_id = data
+            .active
+            .as_ref()
+            .ok_or_else(AgentError::cancelled)?
+            .id
+            .clone();
+        let options = data
+            .turns
+            .last()
+            .ok_or_else(AgentError::internal)?
+            .turn
+            .options
+            .clone();
+        (run_id, options)
+    };
+    let mut manifest = load(&directory_path, &root.id)?
         .ok_or_else(|| invalid("Checkpoint do fluxo não encontrado."))?;
+    synchronize_root_model(&mut manifest, &options);
     let (manifest, resumed) =
         prepare_recovery(&directory_path, manifest, flow, &run_id, root_uncertain)?;
     save(&directory_path, &manifest)?;
@@ -283,6 +292,21 @@ pub(super) fn recover(
     });
     (hub.emit)(&hub.root.id);
     Ok((hub, resumed))
+}
+
+fn synchronize_root_model(manifest: &mut Manifest, options: &TurnOptions) {
+    let choice = settings::chat::effective_choice(options, None);
+    choice.apply(&mut manifest.options);
+    manifest
+        .options
+        .model_selection
+        .clone_from(&options.model_selection);
+    if let Some(agent) = &mut manifest.custom_agent {
+        agent.model = Some(choice.clone());
+    }
+    manifest
+        .profiles
+        .insert(settings::key(manifest.flow, manifest.flow.root()), choice);
 }
 
 pub(super) fn prepare_recovery(
@@ -575,7 +599,7 @@ pub(super) fn worker(
         .mcp_intent
         .clone();
     if let Some(turn_id) = retry_turn {
-        let (signal, uncertain) = session.retry_failed_turn(&turn_id)?;
+        let (signal, uncertain) = session.retry_failed_turn(&turn_id, None)?;
         if let Some(uncertain) = uncertain {
             hub.mutate(|state| {
                 if let Some(checkpoint) = state
@@ -652,6 +676,101 @@ pub(super) fn resume_worker(
 #[cfg(test)]
 mod retry_tests {
     use super::*;
+
+    #[test]
+    fn recovered_root_uses_its_persisted_execution_choice_without_remapping_workers() {
+        for fallback_active in [false, true] {
+            let (_fixture, hub) = super::super::tests::hub();
+            let mut worker = super::super::tests::job(&hub, Role::Builder, "backend");
+            worker.status = Status::Completed;
+            let mut manifest = hub.manifest.lock().unwrap().clone();
+            manifest.custom_agent = Some(
+                catalog::tests::example()
+                    .resolve_agent("builtin:github")
+                    .unwrap(),
+            );
+            manifest.root_status = Status::Interrupted;
+            manifest.options.manual_validation = true;
+            manifest.jobs.insert(worker.id.clone(), worker);
+            let worker_choice = settings::chat::effective_choice(&manifest.options, None);
+            manifest
+                .profiles
+                .insert(settings::key(manifest.flow, Role::Builder), worker_choice);
+            let mut options = manifest.options.clone();
+            let fallback = settings::ModelChoice {
+                executor: crate::claude::Executor::Jarvis,
+                account: "backup-account".into(),
+                model: "backup-model".into(),
+                reasoning: Some("low".into()),
+                service_tier: None,
+                fallback: None,
+            };
+            let selected = settings::ModelChoice {
+                executor: crate::claude::Executor::Claude,
+                account: String::new(),
+                model: "new-model".into(),
+                reasoning: Some("high".into()),
+                service_tier: None,
+                fallback: Some(Box::new(fallback.clone())),
+            };
+            if fallback_active {
+                fallback.apply(&mut options);
+            } else {
+                selected.apply(&mut options);
+            }
+            options.model_selection = Some(selected);
+            options.manual_validation = false;
+            options.approval_mode = ApprovalMode::Yolo;
+            let before = serde_json::to_value(&manifest).unwrap();
+            synchronize_root_model(&mut manifest, &options);
+            let (recovered, resumed) =
+                prepare_recovery(&hub.directory, manifest, Flow::Complete, "run", vec![]).unwrap();
+            assert!(resumed.is_empty());
+            save(&hub.directory, &recovered).unwrap();
+            let saved = load(&hub.directory, &hub.root.id).unwrap().unwrap();
+            let root_choice = settings::chat::effective_choice(&options, None);
+            assert_eq!(
+                settings::chat::effective_choice(&saved.options, None),
+                root_choice
+            );
+            assert_eq!(saved.options.model_selection, options.model_selection);
+            assert_eq!(
+                saved.profiles[&settings::key(saved.flow, saved.flow.root())],
+                root_choice
+            );
+            assert_eq!(
+                saved.custom_agent.as_ref().unwrap().model.as_ref(),
+                Some(&root_choice)
+            );
+            let after = serde_json::to_value(&saved).unwrap();
+            let mut previous_agent = before["customAgent"].clone();
+            let mut recovered_agent = after["customAgent"].clone();
+            previous_agent.as_object_mut().unwrap().remove("model");
+            recovered_agent.as_object_mut().unwrap().remove("model");
+            assert_eq!(previous_agent, recovered_agent);
+            assert_eq!(after["jobs"], before["jobs"]);
+            assert_eq!(after["options"]["manualValidation"], true);
+            assert_eq!(
+                after["options"]["approvalMode"],
+                before["options"]["approvalMode"]
+            );
+            for field in [
+                "flow",
+                "mcpIntent",
+                "customDefinition",
+                "validation",
+                "publicationBaseline",
+                "messages",
+            ] {
+                assert_eq!(after[field], before[field], "changed {field}");
+            }
+            let worker_key = settings::key(saved.flow, Role::Builder);
+            assert_eq!(
+                after["profiles"][&worker_key],
+                before["profiles"][&worker_key]
+            );
+        }
+    }
 
     #[test]
     fn worker_dispatch_keeps_objective_facts_followup_and_auxiliary_directions_after_reload() {

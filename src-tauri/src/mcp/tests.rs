@@ -80,6 +80,42 @@ impl Fixture {
     fn local(&self, name: &str) -> Server {
         self.local_with_request_timeout(name, 2000)
     }
+    fn single_tool(&self, name: &str, original: &str) -> Server {
+        let script = self.home.join("single-tool.mjs");
+        fs::write(
+            &script,
+            r#"import { createInterface } from 'node:readline';
+import { appendFileSync } from 'node:fs';
+const tool = { name: process.env.TOOL_NAME, description: 'Inspect a production board',
+  inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['inspect'] } },
+    required: ['action'], additionalProperties: false }, annotations: { readOnlyHint: true } };
+createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (!Object.hasOwn(request, 'id')) return;
+  let result;
+  if (request.method === 'initialize') result = { protocolVersion: '2024-11-05',
+    capabilities: { tools: {} }, serverInfo: { name: 'single-tool-fixture', version: '1' } };
+  else if (request.method === 'tools/list') result = { tools: [tool] };
+  else if (request.method === 'tools/call') {
+    appendFileSync(process.env.CALLS_FILE, `${request.params.name}\n`);
+    result = { content: [{ type: 'text', text: 'Production board inspected.' }] };
+  } else result = {};
+  process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: request.id, result })}\n`);
+});
+"#,
+        )
+        .unwrap();
+        let raw = json!({name:{"type":"local", "command":["node",script],
+            "environment":{"TOOL_NAME":original,"CALLS_FILE":self.home.join("calls")},
+            "timeout":2000,"requestTimeout":2000}})
+        .to_string();
+        self.mcp
+            .save(&self.state, &self.home, None, &raw)
+            .unwrap()
+            .into_iter()
+            .find(|server| server.name == name)
+            .unwrap()
+    }
     fn local_with_request_timeout(&self, name: &str, request_timeout: u64) -> Server {
         self.local_with_tools(name, request_timeout, 0)
     }
@@ -745,6 +781,270 @@ async fn stable_gateway_receipts_include_only_selected_and_permitted_deferred_sc
         .discovery_schemas("mcp_load_tool", &load_args, &loaded, &restricted)
         .iter()
         .any(|tool| tool["name"] == selected));
+}
+
+#[tokio::test]
+async fn small_mcp_receipts_recover_original_names_with_current_schemas_in_the_same_turn() {
+    let f = Fixture::new();
+    let server = f.single_tool("creative-production", "creative_production_board");
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &McpIntent::default(),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let activate = json!({"server":"creative-production"});
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &activate,
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(output.contains("mesma mensagem"));
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let receipt: Value = serde_json::from_str(&clients.discovery_output(
+        "mcp_activate",
+        &activate,
+        &output,
+        &definitions,
+    ))
+    .unwrap();
+    let canonical = runtime::wire_name(&server, "creative_production_board");
+    assert_eq!(receipt["schemas"].as_array().unwrap().len(), 1);
+    assert_eq!(receipt["schemas"][0]["name"], canonical);
+    assert_eq!(
+        receipt["schemas"][0]["inputSchema"]["required"],
+        json!(["action"])
+    );
+    assert!(receipt["next"]
+        .as_str()
+        .unwrap()
+        .contains("same user message"));
+    assert!(!receipt.to_string().contains("mcp_search_tools"));
+    assert!(!clients.requires_explicit_attempt());
+    assert!(clients
+        .unavailable_tool_feedback("unrelated", &json!({}), &definitions)
+        .is_none());
+    assert!(clients
+        .unavailable_tool_feedback("mcp_invented", &json!({}), &[])
+        .is_none());
+
+    let feedback = clients
+        .unavailable_tool_feedback(
+            "mcp_search_tools",
+            &json!({"name":"creative_production_board"}),
+            &definitions,
+        )
+        .unwrap();
+    assert_eq!(
+        feedback.tool_names.as_slice(),
+        std::slice::from_ref(&canonical)
+    );
+    assert_eq!(
+        feedback.schemas,
+        receipt["schemas"].as_array().unwrap().clone()
+    );
+    let error: Value = serde_json::from_str(&feedback.output).unwrap();
+    assert_eq!(error["error"]["code"], "tool_unavailable");
+    assert_eq!(error["executed"], false);
+    assert_eq!(error["recoverable"], true);
+    assert!(clients
+        .unavailable_tool_feedback("creative_production_board", &json!({}), &definitions)
+        .is_some());
+    assert!(clients
+        .unavailable_tool_feedback(
+            "invented_gateway",
+            &json!({"name":"creative_production_board"}),
+            &definitions,
+        )
+        .is_some());
+    assert!(!f.home.join("calls").exists());
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &feedback.tool_names[0],
+            &json!({"action":"inspect"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    assert!(output.contains("Production board inspected."));
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "creative_production_board\n"
+    );
+}
+
+#[tokio::test]
+async fn mcp_catalog_feedback_never_exposes_hidden_or_revoked_schemas() {
+    let f = Fixture::new();
+    let server = f.local_with_tools("large-catalog", 2000, 48);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_user(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        "Use o MCP large catalog.",
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(clients
+        .unavailable_tool_feedback("mcp_invented", &json!({}), &definitions)
+        .is_none());
+    assert!(clients
+        .unavailable_tool_feedback("catalog_tool_37", &json!({}), &definitions)
+        .is_none());
+    let args = json!({"query":"catalog tool 37", "server":"large-catalog", "limit":1});
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_search_tools",
+            &args,
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let receipt: Value = serde_json::from_str(&clients.discovery_output(
+        "mcp_search_tools",
+        &args,
+        &output,
+        &definitions,
+    ))
+    .unwrap();
+    let canonical = runtime::wire_name(&server, "catalog_tool_37");
+    assert_eq!(receipt["autoLoaded"], json!([canonical.clone()]));
+    assert!(receipt["schemas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|schema| schema["name"] == canonical));
+    let feedback = clients
+        .unavailable_tool_feedback("mcp_invented", &json!({}), &definitions)
+        .unwrap();
+    assert_eq!(
+        feedback.tool_names.as_slice(),
+        std::slice::from_ref(&canonical)
+    );
+    assert_eq!(feedback.schemas.len(), 3);
+    assert!(feedback
+        .schemas
+        .iter()
+        .any(|schema| schema["name"] == "mcp_search_tools"));
+    assert!(feedback
+        .schemas
+        .iter()
+        .any(|schema| schema["name"] == "mcp_load_tool"));
+    let restricted = clients
+        .definitions_with(&f.mcp, &f.state, &f.home, false, |name| name != canonical)
+        .await;
+    assert!(clients
+        .unavailable_tool_feedback("catalog_tool_37", &json!({}), &restricted)
+        .is_none());
+    assert!(clients
+        .unavailable_tool_feedback("mcp_invented", &json!({}), &restricted)
+        .is_none());
+    let restricted_receipt: Value = serde_json::from_str(&clients.discovery_output(
+        "mcp_search_tools",
+        &args,
+        &output,
+        &restricted,
+    ))
+    .unwrap();
+    assert!(!restricted_receipt["schemas"]
+        .to_string()
+        .contains("catalog operation 37"));
+    assert!(!f.home.join("calls").exists());
+}
+
+#[tokio::test]
+async fn mcp_original_name_feedback_keeps_ambiguity_without_selecting_or_executing() {
+    let f = Fixture::new();
+    let first = f.single_tool("first", "creative_production_board");
+    let second = f.single_tool("second", "creative_production_board");
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &McpIntent::default(),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    for server in ["first", "second"] {
+        clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+        clients
+            .execute(
+                &f.mcp,
+                &f.state,
+                &f.home,
+                "mcp_activate",
+                &json!({"server":server}),
+                false,
+                signal.clone(),
+            )
+            .await
+            .unwrap();
+    }
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let feedback = clients
+        .unavailable_tool_feedback("creative_production_board", &json!({}), &definitions)
+        .unwrap();
+    assert_eq!(
+        feedback.tool_names,
+        [
+            runtime::wire_name(&first, "creative_production_board"),
+            runtime::wire_name(&second, "creative_production_board"),
+        ]
+    );
+    assert_eq!(feedback.schemas.len(), 2);
+    assert_eq!(
+        serde_json::from_str::<Value>(&feedback.output).unwrap()["ambiguous"],
+        true
+    );
+    assert!(!f.home.join("calls").exists());
+    assert!(clients
+        .unavailable_tool_feedback("creative_production_bord", &json!({}), &definitions,)
+        .is_none());
+}
+
+#[test]
+fn mcp_discovery_receipts_preserve_uncertain_errors_and_non_discovery_outputs() {
+    let clients = runtime::TurnClients::default();
+    let error =
+        json!({"ok":false,"error":{"code":"mcp_connection_closed","outcomeUncertain":true}})
+            .to_string();
+    assert_eq!(
+        clients.discovery_output("mcp_activate", &json!({}), &error, &[]),
+        error
+    );
+    assert_eq!(
+        clients.discovery_output("mcp_operation", &json!({}), "confirmed", &[]),
+        "confirmed"
+    );
 }
 
 #[tokio::test]

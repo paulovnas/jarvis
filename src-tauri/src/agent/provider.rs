@@ -850,13 +850,9 @@ pub(super) fn project_tool_history(input: Vec<Value>) -> Vec<Value> {
     let mut pending = HashSet::new();
     let mut decisions = Vec::new();
     for (_, item) in repair_tool_outputs(input) {
-        // Approval receipts are durable before external effects, but a provider
-        // must receive every tool result before the next user message.
-        if item["role"] == "user"
-            && item["_jarvis_runtime"] == true
-            && item["_jarvis_authoring_decision"] == true
-            && !pending.is_empty()
-        {
+        // Runtime feedback can be durable before a tool settles, but providers
+        // require all results before an internal message closes the tool group.
+        if item["role"] == "user" && item["_jarvis_runtime"] == true && !pending.is_empty() {
             decisions.push(item);
             continue;
         }
@@ -1668,6 +1664,55 @@ mod tests {
         );
         assert_eq!(replay[9], latest);
         assert_eq!(provider_input(replay.clone()), replay);
+    }
+
+    #[test]
+    fn runtime_feedback_follows_confirmed_parallel_results_without_moving_user_instructions() {
+        let learning = json!({"role":"user","_jarvis_runtime":true,"_jarvis_learning":true,"content":"Validated learning feedback"});
+        let other =
+            json!({"role":"user","_jarvis_runtime":true,"content":"Validated runtime feedback"});
+        let latest = json!({"role":"user","content":"Use the updated requirement."});
+        let results = [
+            json!({"type":"function_call_output","call_id":"second","output":"Confirmed second"}),
+            json!({"type":"function_call_output","call_id":"first","output":"Confirmed first"}),
+        ];
+        let input = vec![
+            json!({"type":"function_call","call_id":"first","name":"read","arguments":"{}"}),
+            json!({"type":"function_call","call_id":"second","name":"read","arguments":"{}"}),
+            learning.clone(),
+            results[0].clone(),
+            other,
+            results[1].clone(),
+            latest.clone(),
+        ];
+        let original = input.clone();
+        let replay = provider_input(input.clone());
+        assert_eq!(&replay[2..4], &results);
+        assert_eq!(
+            replay[4],
+            json!({"role":"user","content":"Validated learning feedback"})
+        );
+        assert_eq!(
+            replay[5],
+            json!({"role":"user","content":"Validated runtime feedback"})
+        );
+        assert_eq!(replay[6], latest);
+        assert_eq!(replay.len(), input.len());
+        assert_eq!(input, original);
+        assert_eq!(provider_input(replay.clone()), replay);
+
+        let boundary = provider_input(vec![
+            json!({"type":"function_call","call_id":"first","name":"read","arguments":"{}"}),
+            learning,
+            latest.clone(),
+            results[1].clone(),
+        ]);
+        assert_eq!(
+            boundary[1],
+            json!({"role":"user","content":"Validated learning feedback"})
+        );
+        assert_eq!(boundary[2], latest);
+        assert_eq!(boundary[3], results[1]);
     }
 
     #[test]

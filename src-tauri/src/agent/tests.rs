@@ -1,6 +1,8 @@
 use super::*;
 use std::fs;
 
+mod mcp_continuation;
+
 #[cfg(unix)]
 #[tokio::test]
 async fn completion_hook_can_request_work_then_release_without_replaying_startup() {
@@ -1092,10 +1094,10 @@ fn explicit_retry_continues_failed_direct_turn_without_replaying_uncertain_tools
     journal::append(&session.journal, &failed).unwrap();
     session.data.lock().unwrap().turns.push(failed);
 
-    let unavailable = session.retry_failed_turn("older-turn").unwrap_err();
+    let unavailable = session.retry_failed_turn("older-turn", None).unwrap_err();
     assert_eq!(unavailable.code, "retry_unavailable");
 
-    let (signal, workflow_recovery) = session.retry_failed_turn("failed-turn").unwrap();
+    let (signal, workflow_recovery) = session.retry_failed_turn("failed-turn", None).unwrap();
     assert!(!*signal.borrow());
     assert!(workflow_recovery.is_none());
     let snapshot = session.snapshot().unwrap();
@@ -1139,6 +1141,93 @@ fn explicit_retry_continues_failed_direct_turn_without_replaying_uncertain_tools
 }
 
 #[test]
+fn explicit_retry_uses_current_model_and_preserves_the_original_request_and_receipts() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let mut original = options(ApprovalMode::Yolo);
+    original.workflow = Some(workflow::Flow::Designer);
+    let _signal = session
+        .reserve("Ajuste este layout".into(), original.clone())
+        .unwrap();
+    let attachment = skill_input::MessagePart::Attachment {
+        attachment: attachments::Attachment {
+            id: "image-reference".into(),
+            conversation_id: session.id.clone(),
+            name: "image.png".into(),
+            mime: "image/png".into(),
+            size: 99_911,
+            kind: "image".into(),
+        },
+    };
+    let receipt =
+        json!({"type":"function_call_output","call_id":"saved-1","output":"Arquivo salvo"});
+    session
+        .update(true, |data| {
+            let current = data.turns.last_mut().unwrap();
+            current.turn.parts.push(attachment.clone());
+            current.turn.context_window = Some(128_000);
+            current.wire.extend([
+                json!({"type":"reasoning","encrypted_content":"original-private-state"}),
+                json!({"type":"function_call","call_id":"saved-1","name":"write","arguments":"{}"}),
+                receipt.clone(),
+            ]);
+        })
+        .unwrap();
+    finish(
+        &session,
+        Err(AgentError::new("provider_request", "Falha do provedor")),
+    );
+    session
+        .update(true, |data| {
+            data.turns[0].turn.options.executor = crate::claude::Executor::Unavailable;
+        })
+        .unwrap();
+    let id = session.snapshot().unwrap().turns[0].id.clone();
+    let mut choice = workflow::settings::ModelChoice {
+        executor: crate::claude::Executor::Jarvis,
+        account: "new-account".into(),
+        model: "new-model".into(),
+        reasoning: Some("high".into()),
+        service_tier: Some(workflow::settings::ServiceTier::Priority),
+        fallback: None,
+    };
+    choice.account.clear();
+    assert!(session.retry_failed_turn(&id, Some(&choice)).is_err());
+    let failed = session.snapshot().unwrap();
+    assert_eq!(failed.active_turn_id, None);
+    assert_eq!(failed.turns[0].status, TurnStatus::Error);
+    assert_eq!(failed.turns[0].options.account, original.account);
+    choice.account = "new-account".into();
+    let (_, workflow) = session.retry_failed_turn(&id, Some(&choice)).unwrap();
+    assert!(workflow.is_none());
+    let (stored, _) = journal::read_only(&session.journal).unwrap();
+    let retried = &stored[0];
+    assert_eq!(retried.turn.id, id);
+    assert_eq!(retried.turn.user, "Ajuste este layout");
+    assert_eq!(
+        serde_json::to_value(&retried.turn.parts).unwrap(),
+        json!([attachment])
+    );
+    assert_eq!(retried.turn.options.account, choice.account);
+    assert_eq!(retried.turn.options.model, choice.model);
+    assert_eq!(retried.turn.options.reasoning, choice.reasoning);
+    assert_eq!(retried.turn.options.service_tier, choice.service_tier);
+    assert_eq!(retried.turn.options.model_selection, Some(choice));
+    assert_eq!(retried.turn.options.workflow, original.workflow);
+    assert_eq!(retried.turn.options.approval_mode, original.approval_mode);
+    assert_eq!(retried.turn.context_window, None);
+    assert_eq!(
+        retried.wire.iter().filter(|item| **item == receipt).count(),
+        1
+    );
+    assert!(retried.wire.iter().any(model_fallback::boundary));
+    assert!(!model_fallback::used(retried));
+    let replay = compaction::input(&session.data.lock().unwrap());
+    assert!(replay.contains(&receipt));
+    assert!(!replay.iter().any(|item| item["type"] == "reasoning"));
+}
+
+#[test]
 fn explicit_retry_restarts_workflow_preparation_when_no_manifest_was_created() {
     let fixture = Fixture::new();
     let session = session_with_id(&fixture, "aabbccddaabbccddaabbccddaabbccdd");
@@ -1172,8 +1261,23 @@ fn explicit_retry_restarts_workflow_preparation_when_no_manifest_was_created() {
     journal::append(&session.journal, &failed).unwrap();
     session.data.lock().unwrap().turns.push(failed);
 
-    assert!(!workflow::recovery_checkpoint_available(&fixture.root, &session).unwrap());
-    let (_, workflow_recovery) = session.retry_failed_turn("planned-turn").unwrap();
+    assert!(!workflow::recovery_checkpoint_available(&fixture.root, &session, None).unwrap());
+    let choice = workflow::settings::chat::effective_choice(
+        &session.data.lock().unwrap().turns[0].turn.options,
+        None,
+    );
+    session
+        .update(true, |data| {
+            data.turns[0].turn.options.executor = crate::claude::Executor::Unavailable;
+        })
+        .unwrap();
+    assert!(workflow::recovery_checkpoint_available(&fixture.root, &session, None).is_err());
+    assert!(
+        !workflow::recovery_checkpoint_available(&fixture.root, &session, Some(&choice)).unwrap()
+    );
+    let (_, workflow_recovery) = session
+        .retry_failed_turn("planned-turn", Some(&choice))
+        .unwrap();
 
     assert_eq!(workflow_recovery, Some(vec![]));
     assert_eq!(
@@ -1216,7 +1320,7 @@ fn explicit_retry_restarts_publication_with_current_repository_state() {
     journal::append(&session.journal, &failed).unwrap();
     session.data.lock().unwrap().turns.push(failed);
 
-    let (_, workflow_recovery) = session.retry_failed_turn("publication-turn").unwrap();
+    let (_, workflow_recovery) = session.retry_failed_turn("publication-turn", None).unwrap();
 
     assert!(workflow_recovery.is_none());
     let (stored, _) = journal::read_only(&session.journal).unwrap();

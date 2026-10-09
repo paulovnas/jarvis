@@ -94,6 +94,15 @@ const MAX_VALIDATION_ISSUES: usize = 8;
 const MCP_ACTIVATE: &str = "mcp_activate";
 const MCP_SEARCH_TOOLS: &str = "mcp_search_tools";
 const MCP_LOAD_TOOL: &str = "mcp_load_tool";
+const SAME_TURN_CATALOG_GUIDANCE: &str = "Continue automatically in this same user message using the exact offered tool name and inputSchema. No new user message, restart or 'continue' reply is needed to update the catalog. Use discovery controls only when included in these schemas; small catalogs already expose their tools directly. Preserve confirmed results, never repeat an operation with an uncertain outcome, and report genuine authorization or prerequisite errors instead of forcing another action.";
+
+/// Advisory schemas from an already filtered request catalog, never a dispatch alias.
+#[derive(Clone, Debug)]
+pub(crate) struct CatalogFeedback {
+    pub(crate) output: String,
+    pub(crate) schemas: Vec<Value>,
+    pub(crate) tool_names: Vec<String>,
+}
 
 fn result_text(value: &Value) -> String {
     // MCP servers may mirror structuredContent in a JSON text block for older
@@ -1439,6 +1448,100 @@ impl TurnClients {
             .collect()
     }
 
+    /// Keep discovery results intact while grounding the next inference in the
+    /// same turn. Callers supply their finalized permission-filtered catalog.
+    pub(crate) fn discovery_output(
+        &self,
+        name: &str,
+        args: &Value,
+        output: &str,
+        definitions: &[Value],
+    ) -> String {
+        if !matches!(name, MCP_ACTIVATE | MCP_SEARCH_TOOLS | MCP_LOAD_TOOL) {
+            return output.to_owned();
+        }
+        let parsed = serde_json::from_str::<Value>(output).unwrap_or_else(|_| json!(output));
+        if parsed.get("error").is_some() || parsed["ok"] == false {
+            return output.to_owned();
+        }
+        let mut receipt = if parsed.is_object() {
+            parsed
+        } else {
+            json!({"result":parsed})
+        };
+        receipt["schemas"] = json!(self.discovery_schemas(name, args, output, definitions));
+        receipt["next"] = json!(SAME_TURN_CATALOG_GUIDANCE);
+        receipt.to_string()
+    }
+
+    /// Enrich an actual tool_unavailable result without widening its snapshot.
+    /// Original names only identify advisory candidates; dispatch stays exact.
+    pub(crate) fn unavailable_tool_feedback(
+        &self,
+        name: &str,
+        args: &Value,
+        definitions: &[Value],
+    ) -> Option<CatalogFeedback> {
+        let current: Vec<_> = definitions
+            .iter()
+            .filter(|definition| {
+                definition["name"]
+                    .as_str()
+                    .is_some_and(|candidate| self.tool_metadata(candidate).is_some())
+            })
+            .collect();
+        let exact: Vec<_> = current
+            .iter()
+            .copied()
+            .filter(|definition| {
+                self.tool_metadata(definition["name"].as_str().unwrap())
+                    .is_some_and(|(_, original, _)| {
+                        original == name || args["name"].as_str() == Some(original)
+                    })
+            })
+            .collect();
+        if !name.starts_with("mcp_") && exact.is_empty() {
+            return None;
+        }
+        let ambiguous = exact.len() > 1;
+        let candidates = if exact.is_empty() { current } else { exact };
+        let candidates: Vec<_> = candidates.into_iter().take(SEARCH_AUTOLOAD_LIMIT).collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        let tool_names = candidates
+            .iter()
+            .filter_map(|definition| definition["name"].as_str().map(str::to_owned))
+            .collect();
+        let selected = definitions
+            .iter()
+            .filter(|definition| {
+                matches!(
+                    definition["name"].as_str(),
+                    Some(MCP_ACTIVATE | MCP_SEARCH_TOOLS | MCP_LOAD_TOOL)
+                )
+            })
+            .chain(candidates);
+        let schemas: Vec<_> = selected
+            .map(|definition| {
+                json!({"name":definition["name"],"description":definition["description"],
+                    "inputSchema":definition["parameters"]})
+            })
+            .collect();
+        let output = json!({
+            "error":{"code":"tool_unavailable","tool":name,
+                "message":"A ferramenta não foi executada. Use somente o nome exato e o schema do catálogo atual; nomes originais do servidor não são aliases executáveis."},
+            "executed":false,"recoverable":true,"ambiguous":ambiguous,
+            "schemas":schemas,"next":SAME_TURN_CATALOG_GUIDANCE,
+        })
+        .to_string();
+        Some(CatalogFeedback {
+            output,
+            schemas,
+            tool_names,
+        })
+    }
+
     pub fn requires_explicit_attempt(&self) -> bool {
         self.exposure == Exposure::Explicit && !self.explicit_attempted.load(Ordering::Relaxed)
     }
@@ -2564,7 +2667,7 @@ impl TurnClients {
                     .sort_by(|left, right| left.server.name.cmp(&right.server.name));
                 self.catalog_ready = false;
                 Ok(format!(
-                    "MCP '{}' ativado com {count} ferramenta(s). Na próxima etapa, ferramentas pequenas aparecerão diretamente; para catálogos grandes, procure e carregue somente a ferramenta necessária.",
+                    "MCP '{}' ativado com {count} ferramenta(s). O catálogo será atualizado automaticamente na próxima inferência desta mesma mensagem, sem pedir uma nova mensagem ou 'continua'. Use o nome exato do schema anunciado; catálogos pequenos expõem ferramentas diretamente e a busca só existe quando anunciada.",
                     server.name
                 ))
             }

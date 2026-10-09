@@ -4,14 +4,14 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { AgentTurn, ChatSnapshot, HistoryExcerpt } from "@/core/chat";
+import { finalTurnResponse, type AgentTurn, type ChatSnapshot, type HistoryExcerpt } from "@/core/chat";
 import { historyWindow, type HistoryDirection } from "@/core/chat-history";
 import type { ChatController } from "@/hooks/use-chat";
 import { AssistantMessageTurn } from "./AssistantMessageTurn";
 import { UserMessageBubble } from "./UserMessageBubble";
 import { CompactionMarker } from "./CompactionMarker";
 import { executionDuration, useRunningClock } from "@/hooks/use-running-clock";
-import { executionLabel } from "@/core/executors";
+import { executionLabel, type ExecutionChoice } from "@/core/executors";
 import type { ProjectLesson } from "@/core/project-learning";
 import { useChatLearning } from "@/hooks/use-chat-learning";
 
@@ -33,20 +33,20 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId, lessons, 
     : turn.status === "cancelled" || turn.status === "interrupted"
       ? "Execução interrompida"
       : "Falha na execução";
-  const latestText = turn.steps[turn.steps.length - 1]?.text ?? "";
-  const repeatedError = turn.error?.message.trim() === latestText.trim();
+  const response = finalTurnResponse(turn);
+  const repeatedError = turn.error?.message.trim() === response.text.trim();
   const exportFileName = `Resposta-Jarvis-${new Date(turn.createdAt).toISOString().slice(0, 16).replace("T", "-").replace(":", "-")}.md`;
   const sources = new Set([turn.id, ...(turn.auxiliaryMessages?.map(message => message.id) ?? [])]);
   return <AssistantMessageTurn onRetry={onRetry && retryableTurn(turn) ? () => onRetry(turn.id) : undefined} retrying={retrying} message={{
-    id: turn.id, role: "assistant", content: running || repeatedError ? "" : latestText, timestamp,
+    id: turn.id, role: "assistant", content: running || repeatedError ? "" : response.text, timestamp,
     lessons: lessons?.filter(lesson => lesson.evidence.some(source => source.conversationId === conversationId && sources.has(source.messageId))),
     model: executionLabel(turn.options), streaming: running,
-    work: running || turn.auxiliaryMessages?.length || turn.steps.some((step, index) => step.summary || step.tools.length || step.coreActivities?.length || (step.text && index < turn.steps.length - 1)) ? {
+    work: running || turn.auxiliaryMessages?.length || turn.steps.some((step, index) => step.summary || step.tools.length || step.coreActivities?.length || (step.text && index < response.firstStep)) ? {
       auxiliaryMessages: turn.auxiliaryMessages,
       retry: running ? turn.steps[turn.steps.length - 1]?.retry : undefined,
       durationSeconds: Math.floor(durationMs / 1000),
       detailContext: conversationId ? { conversationId, turnId: turn.id } : undefined,
-      steps: turn.steps.map((step, index) => ({ thinking: step.summary, tools: step.tools, coreActivities: step.coreActivities, commentary: running || index < turn.steps.length - 1 ? step.text : "" })),
+      steps: turn.steps.map((step, index) => ({ thinking: step.summary, tools: step.tools, coreActivities: step.coreActivities, commentary: running || index < response.firstStep ? step.text : "" })),
     } : undefined,
     error: turn.error ? { title: errorTitle, message: turn.error.message } : undefined,
     exportFileName,
@@ -80,7 +80,7 @@ function HistoryRail({ entries, total, active, disabled, jump }: { entries: Hist
 
 export type LatestVisibility = (conversationId: string, visible: boolean) => void;
 
-export function Transcript({ snapshot, chat, projectId, onLatestVisibility }: { snapshot: ChatSnapshot; chat: ChatController; projectId?: string; onLatestVisibility?: LatestVisibility }) {
+export function Transcript({ snapshot, chat, retryChoice, projectId, onLatestVisibility }: { snapshot: ChatSnapshot; chat: ChatController; retryChoice?: ExecutionChoice | null; projectId?: string; onLatestVisibility?: LatestVisibility }) {
   const lessons = useChatLearning(projectId, snapshot);
   const root = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
@@ -171,7 +171,7 @@ export function Transcript({ snapshot, chat, projectId, onLatestVisibility }: { 
         {snapshot.turns.map((turn, index) => <div key={turn.id} data-turn-id={turn.id} data-turn-index={window.start + index} className="[overflow-anchor:none]">
           <UserMessageBubble message={{ id: turn.id, role: "user", content: turn.user, parts: turn.parts, timestamp: new Date(turn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && !event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
-          <TurnBody turn={turn} conversationId={snapshot.conversationId} lessons={lessons} retrying={chat.retryingTurnIds.has(turn.id)} onRetry={!hasNewer && !snapshot.activeTurnId && !chat.pending && !chat.pendingTurn && window.start + index === window.total - 1 ? id => { void chat.retryTurn(id); } : undefined} />
+          <TurnBody turn={turn} conversationId={snapshot.conversationId} lessons={lessons} retrying={chat.retryingTurnIds.has(turn.id)} onRetry={retryChoice && !hasNewer && !snapshot.activeTurnId && !chat.pending && !chat.pendingTurn && window.start + index === window.total - 1 ? id => { void chat.retryTurn(id, retryChoice); } : undefined} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
         </div>)}
         {chat.pendingTurn && <div data-turn-id={chat.pendingTurn.id} data-turn-index={window.total} className="[overflow-anchor:none]">

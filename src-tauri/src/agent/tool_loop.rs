@@ -140,14 +140,24 @@ impl Guard {
     pub(super) fn observe(
         &mut self,
         tool: &ToolCall,
-        failed: bool,
+        error: Option<&AgentError>,
         output: &str,
     ) -> Option<String> {
+        let failed = error.is_some();
         if tool.name == "read" && !failed {
             for path in paths(tool) {
                 self.stale_mutation_paths.remove(&path);
             }
-        } else if failed && matches!(tool.name.as_str(), "edit" | "apply_patch") {
+        } else if matches!(tool.name.as_str(), "edit" | "apply_patch")
+            && error.is_some_and(|error| {
+                // Catalog lookup and schema validation reject before dispatch.
+                // Handler failures may have changed files or exposed a conflict.
+                !matches!(
+                    error.code.as_str(),
+                    "tool_unavailable" | "tool_arguments_invalid" | "tool_schema_invalid"
+                )
+            })
+        {
             self.stale_mutation_paths.extend(paths(tool));
         }
         if exempt(&tool.name) {
@@ -303,11 +313,11 @@ mod tests {
         let mut guard = Guard::default();
         let call = tool("read", json!({"path":"src/app.ts"}));
         for _ in 0..4 {
-            assert!(guard.observe(&call, false, "same").is_none());
+            assert!(guard.observe(&call, None, "same").is_none());
             assert!(guard.before_call(&call).is_ok());
         }
         assert!(guard
-            .observe(&call, false, "same")
+            .observe(&call, None, "same")
             .is_some_and(|message| message.contains("5 consecutive identical calls")));
         assert_eq!(
             guard.before_call(&call).unwrap_err().code,
@@ -328,7 +338,7 @@ mod tests {
         );
         let next = tool("search", json!({"path":"src", "query":"new evidence"}));
         assert!(guard.before_call(&next).is_ok());
-        guard.observe(&next, false, "useful result");
+        guard.observe(&next, None, "useful result");
         assert!(guard.before_call(&call).is_ok());
     }
 
@@ -370,10 +380,10 @@ mod tests {
         let mut guard = Guard::default();
         let first = tool("search", json!({"query":"needle","path":"src"}));
         let reordered = tool("search", json!({"path":"src","query":"needle"}));
-        assert!(guard.observe(&first, false, "one").is_none());
-        assert!(guard.observe(&reordered, false, "one").is_none());
+        assert!(guard.observe(&first, None, "one").is_none());
+        assert!(guard.observe(&reordered, None, "one").is_none());
         assert_eq!(guard.consecutive, 2);
-        assert!(guard.observe(&reordered, false, "two").is_none());
+        assert!(guard.observe(&reordered, None, "two").is_none());
         assert_eq!(guard.consecutive, 1);
     }
 
@@ -382,7 +392,7 @@ mod tests {
         let mut guard = Guard::default();
         let call = tool("process_output", json!({"id":"server"}));
         for _ in 0..20 {
-            assert!(guard.observe(&call, false, "unchanged").is_none());
+            assert!(guard.observe(&call, None, "unchanged").is_none());
             assert!(guard.before_call(&call).is_ok());
         }
         assert_eq!(guard.consecutive, 0);
@@ -392,12 +402,15 @@ mod tests {
     fn repeated_errors_share_a_result_class_even_when_messages_change() {
         let mut guard = Guard::default();
         let call = tool("web_search", json!({"query":"status"}));
+        let failure = AgentError::new("tool_error", "The handler failed.");
         for index in 0..4 {
             assert!(guard
-                .observe(&call, true, &format!("request {index} failed"))
+                .observe(&call, Some(&failure), &format!("request {index} failed"))
                 .is_none());
         }
-        assert!(guard.observe(&call, true, "request 5 failed").is_some());
+        assert!(guard
+            .observe(&call, Some(&failure), "request 5 failed")
+            .is_some());
     }
 
     #[test]
@@ -407,13 +420,16 @@ mod tests {
             "edit",
             json!({"path":"src/app.ts","oldText":"old","newText":"new"}),
         );
-        assert!(guard.observe(&edit, true, "stale excerpt").is_none());
+        let conflict = AgentError::new("tool_error", "stale excerpt");
+        assert!(guard
+            .observe(&edit, Some(&conflict), "stale excerpt")
+            .is_none());
         assert_eq!(
             guard.before_call(&edit).unwrap_err().code,
             "stale_edit_context"
         );
         let read = tool("read", json!({"path":"./src/app.ts"}));
-        guard.observe(&read, false, "fresh source");
+        guard.observe(&read, None, "fresh source");
         assert!(guard.before_call(&edit).is_ok());
     }
 
@@ -424,15 +440,118 @@ mod tests {
             "apply_patch",
             json!({"patchText":"*** Begin Patch\n*** Update File: src/a.ts\n@@\n-old\n+new\n*** Update File: src/b.ts\n@@\n-old\n+new\n*** End Patch"}),
         );
-        guard.observe(&patch, true, "hunk mismatch");
+        let conflict = AgentError::new("patch_error", "hunk mismatch");
+        guard.observe(&patch, Some(&conflict), "hunk mismatch");
         assert_eq!(
             guard.before_call(&patch).unwrap_err().code,
             "stale_edit_context"
         );
-        guard.observe(&tool("read", json!({"path":"src/a.ts"})), false, "fresh a");
+        guard.observe(&tool("read", json!({"path":"src/a.ts"})), None, "fresh a");
         assert!(guard.before_call(&patch).is_err());
-        guard.observe(&tool("read", json!({"path":"src/b.ts"})), false, "fresh b");
+        guard.observe(&tool("read", json!({"path":"src/b.ts"})), None, "fresh b");
         assert!(guard.before_call(&patch).is_ok());
+    }
+
+    #[tokio::test]
+    async fn unavailable_patch_does_not_require_a_read_before_creating_its_target() {
+        let fixture = super::super::tests::Fixture::new();
+        let mut guard = Guard::default();
+        let patch = tool(
+            "apply_patch",
+            json!({"patchText":"*** Begin Patch\n*** Add File: folder/folder.css\n+.folder {}\n*** End Patch"}),
+        );
+        let unavailable = super::super::tool_contract::Orchestrator::new(&[])
+            .preflight(&patch)
+            .unwrap_err();
+        assert_eq!(unavailable.code, "tool_unavailable");
+        for _ in 0..3 {
+            guard.observe(&patch, Some(&unavailable), unavailable.message());
+        }
+
+        let read = tool("read", json!({"path":"folder/folder.css"}));
+        let (_send, signal) = watch::channel(false);
+        let missing = super::super::tools::execute_with_revision(
+            &fixture.root,
+            &read,
+            super::super::Mode::Build,
+            signal,
+        )
+        .await
+        .map(|_| ())
+        .expect_err("the unavailable patch never created its target");
+        guard.observe(&read, Some(&missing), missing.message());
+
+        let write = tool(
+            "write",
+            json!({"path":"folder/folder.css","content":".folder {}"}),
+        );
+        assert!(guard.before_call(&patch).is_ok());
+        assert!(guard.before_call(&write).is_ok());
+        assert!(!fixture.root.join("folder/folder.css").exists());
+    }
+
+    #[test]
+    fn rejected_edit_preflight_does_not_require_a_read_before_correcting_the_call() {
+        let invalid = tool(
+            "edit",
+            json!({"path":"src/app.ts","oldText":"old","newText":123}),
+        );
+        let corrected = tool(
+            "edit",
+            json!({"path":"src/app.ts","oldText":"old","newText":"new"}),
+        );
+        for (definitions, expected_code) in [
+            (
+                super::super::tools::definitions(super::super::Mode::Build),
+                "tool_arguments_invalid",
+            ),
+            (
+                vec![json!({"type":"function","name":"edit","parameters":{"type":"invalid"}})],
+                "tool_schema_invalid",
+            ),
+        ] {
+            let mut guard = Guard::default();
+            let validation = super::super::tool_contract::Orchestrator::new(&definitions)
+                .preflight(&invalid)
+                .unwrap_err();
+            assert_eq!(validation.code, expected_code);
+            guard.observe(&invalid, Some(&validation), validation.message());
+            assert!(guard.before_call(&corrected).is_ok());
+        }
+    }
+
+    #[test]
+    fn uncertain_mutations_remain_protected_after_a_later_preflight_rejection() {
+        let mut guard = Guard::default();
+        let edit = tool(
+            "edit",
+            json!({"path":"src/app.ts","oldText":"old","newText":"new"}),
+        );
+        let mut uncertain = AgentError::new("tool_error", "The mutation outcome is uncertain.");
+        uncertain.tool_result =
+            Some(json!({"ok":false,"executed":true,"outcomeUncertain":true}).to_string());
+        guard.observe(&edit, Some(&uncertain), uncertain.message());
+        let unavailable = super::super::tool_contract::Orchestrator::new(&[])
+            .preflight(&edit)
+            .unwrap_err();
+        guard.observe(&edit, Some(&unavailable), unavailable.message());
+        let missing = AgentError::new("tool_error", "missing source");
+        guard.observe(
+            &tool("read", json!({"path":"src/app.ts"})),
+            Some(&missing),
+            missing.message(),
+        );
+        assert_eq!(
+            guard.before_call(&edit).unwrap_err().code,
+            "stale_edit_context"
+        );
+
+        guard.observe(
+            &tool("read", json!({"path":"src/app.ts"})),
+            None,
+            "fresh source",
+        );
+        assert!(guard.before_call(&edit).is_ok());
     }
 
     #[tokio::test]

@@ -97,27 +97,35 @@ describe("SettingsDialog provider accounts", () => {
     expect(changed).not.toHaveBeenCalled();
   });
 
-  it("restores the native settings tab without overwriting chat panel preferences", async () => {
+  it("starts native settings in General even when an old tab was persisted", async () => {
     invokeMock.mockResolvedValue([]);
+    localStorage.setItem("jarvis:settings-window-tab", "providers");
     const user = userEvent.setup();
     const { unmount } = render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
+    expect(screen.getByRole("tab", { name: "Geral" })).toHaveAttribute("aria-selected", "true");
     await user.click(screen.getByRole("tab", { name: /Provedores/ }));
     unmount();
     render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
-    expect(screen.getByRole("tab", { name: /Provedores/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Geral" })).toHaveAttribute("aria-selected", "true");
     expect(invokeMock).not.toHaveBeenCalledWith("save_desktop_layout", expect.anything());
   });
 
-  it("opens and restores Hooks in the native settings window", async () => {
+  it("resets a native hook draft on reopening", async () => {
     invokeMock.mockResolvedValue([]);
     const user = userEvent.setup();
     const { unmount } = render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
     await user.click(screen.getByRole("tab", { name: "Hooks" }));
     expect(await screen.findByRole("button", { name: "Adicionar hook" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Adicionar hook" }));
+    await user.type(screen.getByRole("textbox", { name: "Nome do hook" }), "Rascunho");
     unmount();
     render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
-    expect(screen.getByRole("tab", { name: "Hooks" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Geral" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("textbox", { name: "Nome do hook" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Hooks" }));
     expect(await screen.findByRole("button", { name: "Adicionar hook" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Adicionar hook" }));
+    expect(screen.getByRole("textbox", { name: "Nome do hook" })).toHaveValue("");
     expect(invokeMock).not.toHaveBeenCalledWith("save_desktop_layout", expect.anything());
   });
 
@@ -141,16 +149,41 @@ describe("SettingsDialog provider accounts", () => {
     expect(closed).toHaveBeenCalledWith(false);
   });
 
-  it("opens and restores Plugins in the native settings window", async () => {
+  it("resets the native plugin search on reopening", async () => {
     invokeMock.mockResolvedValue([]);
     const user = userEvent.setup();
     const { unmount } = render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
     await user.click(screen.getByRole("tab", { name: "Plugins" }));
     expect(await screen.findByRole("textbox", { name: "Buscar plugins" })).toBeVisible();
+    await user.type(screen.getByRole("textbox", { name: "Buscar plugins" }), "firebase");
     unmount();
     render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
-    expect(screen.getByRole("tab", { name: "Plugins" })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByRole("textbox", { name: "Buscar plugins" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Geral" })).toHaveAttribute("aria-selected", "true");
+    await user.click(screen.getByRole("tab", { name: "Plugins" }));
+    expect(await screen.findByRole("textbox", { name: "Buscar plugins" })).toHaveValue("");
+    expect(invokeMock).not.toHaveBeenCalledWith("save_desktop_layout", expect.anything());
+  });
+
+  it.each([false, true])("discards temporary provider state across open changes (standalone: %s) and retains saved accounts", async standalone => {
+    const saved = account("openai-codex-pessoal");
+    invokeMock.mockImplementation(command => Promise.resolve(command === "list_provider_accounts" ? [saved] : undefined));
+    const user = userEvent.setup();
+    const changed = vi.fn();
+    const props = { standalone, onOpenChange: changed };
+    const { rerender } = render(<SettingsDialog {...props} open />);
+    await user.click(screen.getByRole("tab", { name: /Provedores/ }));
+    await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
+    await user.type(screen.getByRole("textbox", { name: "Sufixo do alias" }), "rascunho");
+    rerender(<SettingsDialog {...props} open={false} />);
+    expect(screen.queryByRole("textbox", { name: "Sufixo do alias" })).not.toBeInTheDocument();
+    rerender(<SettingsDialog {...props} open />);
+    expect(screen.getByRole("tab", { name: "Geral" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("dialog", { name: "Adicionar conta" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /Provedores/ }));
+    expect(await screen.findByRole("button", { name: `Detalhes de ${saved.alias}` })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Adicionar conta" }));
+    expect(screen.getByRole("textbox", { name: "Sufixo do alias" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Provedor" })).toHaveTextContent("OpenAI Codex");
     expect(invokeMock).not.toHaveBeenCalledWith("save_desktop_layout", expect.anything());
   });
 

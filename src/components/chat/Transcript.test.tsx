@@ -177,18 +177,19 @@ describe("lazy transcript navigation", () => {
       status: "error" as const,
       error: { code: "provider_retry_exhausted", message: "Falha mais recente." },
     };
-    call.mockResolvedValue({
+    const stored = {
       ...emptyChat(),
       revision: 3,
       turns: [older, newest],
       history: { start: 0, total: 2 },
-    });
+    };
+    call.mockImplementation(async command => command === "get_chat_agent_models" ? {} : stored);
 
     render(<Harness />);
 
     expect(await screen.findByText("Falha anterior.")).toBeInTheDocument();
     expect(await screen.findByText("Falha mais recente.")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Tentar novamente" })).toHaveLength(1);
+    expect(await screen.findAllByRole("button", { name: "Tentar novamente" })).toHaveLength(1);
   });
 });
 
@@ -223,6 +224,44 @@ describe("estado do turno", () => {
     expect(screen.getByRole("button", { name: /Trabalhou por 4s/ })).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Vou inspecionar os arquivos relevantes.")).not.toBeInTheDocument();
     expect(await screen.findByText("A análise foi concluída.")).toBeVisible();
+  });
+
+  it("preserves the delivery report when automatic LSP feedback adds a final acknowledgement", async () => {
+    const user = userEvent.setup();
+    const turn = savedTurn();
+    const step = turn.steps[0];
+    const report = "Corrigi o descarte da transferência. Os testes passaram; a homologação continua pendente.";
+    const acknowledgement = "O LSP não reportou diagnósticos novos.";
+    turn.steps = [
+      { ...step, text: "Vou investigar a transferência." },
+      { ...step, tools: [], summary: "", text: report, coreActivities: [{ component: "lsp", action: "file_diagnostics", status: "applied", summary: "Sem diagnósticos novos", sources: ["app.ts"], durationMs: 1 }] },
+      { ...step, tools: [], summary: "", text: acknowledgement },
+    ];
+    render(<TurnBody turn={turn} />);
+
+    expect(await screen.findByText(report)).toBeVisible();
+    expect(screen.getByText(acknowledgement)).toBeVisible();
+    expect(screen.queryByText("Vou investigar a transferência.")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Salvar resposta em Markdown" }));
+    expect(call).toHaveBeenCalledWith("save_markdown_document", expect.objectContaining({ content: `${report}\n\n${acknowledgement}` }));
+    await user.click(screen.getByRole("button", { name: /Trabalhou por/ }));
+    expect(await screen.findByText("Vou investigar a transferência.")).toBeVisible();
+    expect(screen.getAllByText(report)).toHaveLength(1);
+    expect(screen.getAllByText(acknowledgement)).toHaveLength(1);
+  });
+
+  it("does not promote a report or LSP acknowledgement preceding a later tool call", async () => {
+    const turn = savedTurn();
+    const step = turn.steps[0];
+    turn.steps = [
+      { ...step, tools: [], summary: "", text: "A primeira correção foi concluída.", coreActivities: [{ component: "lsp", action: "file_diagnostics", status: "applied", summary: "Sem diagnósticos novos", sources: ["app.ts"], durationMs: 1 }] },
+      { ...step, text: "Vou corrigir também a validação." },
+      { ...step, tools: [], summary: "", text: "A correção final inclui a validação." },
+    ];
+    render(<TurnBody turn={turn} />);
+    expect(await screen.findByText("A correção final inclui a validação.")).toBeVisible();
+    expect(screen.queryByText("A primeira correção foi concluída.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Vou corrigir também a validação.")).not.toBeInTheDocument();
   });
 
   it("apresenta uma pausa do watchdog como retomável, sem tratá-la como falha", () => {

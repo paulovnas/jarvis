@@ -25,7 +25,14 @@ def diagnostics(text):
     broken = "BROKEN" in text
     if "USES_DEPENDENCY" in text:
         broken = not any(uri.endswith("/z-dependency.ts") and "EXPORTED" in value for uri, value in documents.items())
-    return [{"severity": 1, "message": "Fixture type error", "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}}}] if broken else []
+    items = [{"severity": 1, "message": "Fixture type error", "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}}}] if broken else []
+    if broken and "LONG_ERROR" in text:
+        items[0]["message"] += " detail" * 300
+    if "SECOND_ERROR" in text:
+        items.append({"severity": 1, "message": "Second fixture error", "range": {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 1}}})
+    if "WARNING" in text:
+        items.append({"severity": 2, "message": "Fixture warning", "range": {"start": {"line": 2, "character": 0}, "end": {"line": 2, "character": 1}}})
+    return list(reversed(items)) if "REVERSED" in text else items
 
 
 def publish_later(document, text):
