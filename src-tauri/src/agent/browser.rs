@@ -423,9 +423,19 @@ pub async fn browser_command(
     request: BrowserRequest,
 ) -> Result<Value, AgentError> {
     require_conversation(&app, &conversation_id).await?;
+    if request.action == "close" {
+        if let Some(id) = request.id.as_deref() {
+            if crate::core::impeccable_live::close_owned_tab(&app, &conversation_id, id)
+                .await
+                .map_err(AgentError::from)?
+            {
+                return Ok(json!({ "closed": true }));
+            }
+        }
+    }
     routing::command(&app, &conversation_id, request).await
 }
-async fn command(
+pub(crate) async fn command(
     app: &tauri::AppHandle,
     conversation: &str,
     request: BrowserRequest,

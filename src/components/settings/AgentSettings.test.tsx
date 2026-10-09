@@ -15,6 +15,18 @@ const save = vi.fn().mockResolvedValue(true);
 const accounts: ProviderAccount[] = [{ alias:"openai-codex-personal",providerKind:"openai-codex",enabled:true,createdAt:0,email:null,accountType:"personal",modelsAvailable:true,models:[{ id:"gpt-5.6-sol",name:"GPT 5.6 Sol",reasoningLevels:["high","xhigh"],defaultReasoningLevel:"high" }] }];
 beforeEach(() => { call.mockReset(); save.mockClear(); vi.mocked(useAgentModels).mockReturnValue({ data:{},error:null,saving:false,save,refresh:vi.fn() }); });
 
+it("does not mark a saved Fast agent invalid from legacy cached capabilities", () => {
+  vi.mocked(useAgentModels).mockReturnValue({ data: { "standard/builder": { account: accounts[0].alias, model: accounts[0].models[0].id, reasoning: "high", serviceTier: "priority" } }, error: null, saving: false, save, refresh: vi.fn() });
+  const { rerender } = render(<AgentSettings accounts={[{ ...accounts[0], modelsStale: true }]} />);
+  const picker = screen.getByRole("button", { name: "Modelo de Construtor no fluxo Padrão" });
+  expect(picker).toHaveTextContent("Fast");
+  expect(picker).not.toHaveTextContent("indisponível");
+  expect(picker).not.toHaveAttribute("aria-invalid", "true");
+  rerender(<AgentSettings accounts={[{ ...accounts[0], modelsStale: false }]} />);
+  expect(picker).toHaveTextContent("Fast indisponível");
+  expect(picker).toHaveAttribute("aria-invalid", "true");
+});
+
 it("groups the fourteen immutable model profiles by flow and offers useful role-specific model guidance", async () => {
   const user = userEvent.setup(); render(<AgentSettings accounts={accounts} />);
   const standard = screen.getByRole("region",{ name:"Agentes do fluxo Padrão" });

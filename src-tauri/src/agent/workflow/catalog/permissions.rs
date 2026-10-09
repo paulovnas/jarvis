@@ -152,7 +152,10 @@ fn description(name: &str) -> &'static str {
         "project_beads_list" => "Listar o histórico do Beads existente na pasta do projeto.",
         "project_beads_ready" => "Consultar tarefas disponíveis no Beads do projeto.",
         "project_beads_show" => "Ler uma tarefa do Beads do projeto sem alterá-la.",
-        "design_search" => "Pesquisar recursos do Open Design.",
+        "design_search" => "Pesquisar referências e procedimentos do Impeccable.",
+        "impeccable" => {
+            "Executar inspeções, recursos de design e iteração visual Live com o Impeccable."
+        }
         "design_read" => "Consultar templates, sistemas e skills de design.",
         "context7_resolve_library_id" => "Encontrar uma biblioteca no Context7.",
         "context7_query_docs" => "Consultar documentação e exemplos de bibliotecas.",
@@ -250,7 +253,14 @@ pub(crate) fn builtin_permissions() -> Vec<Permission> {
             "Beads do projeto · leitura",
             crate::core::beads::project_definitions(),
         ),
-        ("Open Design · Core", crate::core::design::definitions()),
+        (
+            "Impeccable · Core",
+            [
+                crate::core::design::definitions(),
+                vec![crate::agent::impeccable::definition()],
+            ]
+            .concat(),
+        ),
         ("OpenMontage · Core", video::definitions(Mode::Build)),
         ("ComfyUI · Core", image_tasks::definitions()),
         ("Context7 · Core", crate::core::context7::definitions()),

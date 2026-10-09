@@ -43,3 +43,45 @@ it("does not combine stale references with a new account list", async () => {
   await act(async () => { finish({ references: [], bindings: [] }); });
   expect(result.current.loading).toBe(false); expect(toast.error).not.toHaveBeenCalled();
 });
+
+it("keeps existing bindings ready while a model-change notification refreshes them", async () => {
+  const target = { account: "novo", model: "gpt-test", reasoning: "high" };
+  const binding = { itemKey: "chat:c1", source: item.choice, target };
+  call.mockResolvedValue({ references: [{ ...item, choice: target }], bindings: [binding] });
+  const { result } = renderHook(() => useProviderReferences(accounts, true));
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.bindings).toEqual([binding]);
+
+  let finish!: (value: unknown) => void;
+  call.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => { listeners.get("chat-agent-models:changed")?.({ event: "chat-agent-models:changed", id: 1, payload: null }); });
+  await waitFor(() => expect(call).toHaveBeenCalledTimes(2));
+  expect(result.current.loading).toBe(false);
+  expect(result.current.bindings).toEqual([binding]);
+
+  const updated = { ...binding, target: { ...target, reasoning: "medium" } };
+  await act(async () => { finish({ references: [{ ...item, choice: updated.target }], bindings: [updated] }); });
+  expect(result.current.loading).toBe(false);
+  expect(result.current.bindings).toEqual([updated]);
+});
+
+it("does not warn about saved Fast chats before their current capabilities arrive", async () => {
+  const cached = { ...referenceAccount(), modelsStale: true };
+  const choice = { account: cached.alias, model: cached.models[0].id, reasoning: "high", serviceTier: "priority" as const };
+  call.mockResolvedValue({ references: [
+    providerReference({ kind: "conversation", label: "Resolução de erro", choice }),
+    providerReference({ id: "ref-2", itemKey: "chat:c2", kind: "conversation", label: "Análise de atendimento via MCP", choice }),
+  ], bindings: [] });
+  const { result, rerender } = renderHook(({ providers }) => useProviderReferences(providers, true), { initialProps: { providers: [cached] } });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(toast.error).not.toHaveBeenCalled();
+
+  const fresh = { ...cached, modelsStale: false, models: [{ ...cached.models[0], supportsFast: true }] };
+  rerender({ providers: [fresh] });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(toast.error).not.toHaveBeenCalled();
+
+  rerender({ providers: [{ ...fresh, models: [{ ...fresh.models[0], supportsFast: false }] }] });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(toast.error).toHaveBeenCalledWith("2 configurações precisam de outro provedor ou modelo", expect.objectContaining({ description: expect.stringContaining("Fast não está disponível") }));
+});

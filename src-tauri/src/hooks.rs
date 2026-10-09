@@ -215,6 +215,18 @@ fn native_hooks() -> Vec<NativeHook> {
             "Inicializa o histórico privado e recupera contexto para a conversa.", Some(3),
         ),
         (
+            "impeccable-session", "Impeccable: contexto de design", Event::SessionStart,
+            "Inicializa a inspeção de design quando o Core Impeccable está instalado.", Some(5),
+        ),
+        (
+            "impeccable-edit", "Impeccable: qualidade da interface", Event::PostToolUse,
+            "Inspeciona arquivos de interface alterados e registra achados nos recursos do Core.", Some(5),
+        ),
+        (
+            "impeccable-stop", "Impeccable: revisão de design", Event::Stop,
+            "Revisa alterações de interface ao concluir, com no máximo uma correção automática por turno.", Some(30),
+        ),
+        (
             "context-input", "Context-mode: mensagem do usuário", Event::UserPromptSubmit,
             "Registra a intenção atual do usuário no histórico privado de eventos.", Some(3),
         ),

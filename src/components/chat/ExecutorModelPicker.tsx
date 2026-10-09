@@ -7,7 +7,7 @@ import { Hint } from "@/components/ui/hint";
 import { ClaudeProviderDialog } from "@/components/settings/ClaudeProviderCard";
 import { ModelPicker, type ProviderModelGroup } from "./ModelPicker";
 
-export function ExecutorModelPicker({ nativeDisabled = false, ...props }: ComponentProps<typeof ModelPicker> & { nativeDisabled?: boolean }) {
+export function ExecutorModelPicker(props: ComponentProps<typeof ModelPicker>) {
   const runtime = useClaudeRuntime();
   const [details, setDetails] = useState(false);
   const models = claudeModels(runtime.data);
@@ -16,7 +16,7 @@ export function ExecutorModelPicker({ nativeDisabled = false, ...props }: Compon
     ? [{ value: "default", label: "Padrão do Claude Code", reasoningLevels: [], defaultReasoningLevel: null }]
     : [];
   const groups: ProviderModelGroup[] = [
-    ...(nativeDisabled ? [] : props.modelGroups.filter(group => executorOf(group) === "jarvis")),
+    ...props.modelGroups.filter(group => executorOf(group) === "jarvis"),
     ...(runtime.data?.preferences?.enabled === false ? [] : [{ provider: "Claude Code", executor: "claude" as const, models: runtime.data?.installed ? models : offlineModels, emptyMessage: runtime.loading ? "Consultando Claude Code…" : "Configure os modelos em Configurações → Provedores → Claude Code." }]),
   ];
   const claudeSelected = executorOf(props.selection) === "claude";

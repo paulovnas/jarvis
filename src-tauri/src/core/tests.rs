@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+fn legacy_opendesign_manifest_preserves_content_and_requires_new_impeccable_installation() {
+    let home = tempfile::tempdir().unwrap();
+    let package = root(home.path()).join("open-design/legacy");
+    fs::create_dir_all(&package).unwrap();
+    fs::write(package.join("DESIGN.md"), "Existing user design decisions").unwrap();
+    fs::write(
+        root(home.path()).join("manifest.json"),
+        serde_json::json!({
+            "installations": {"open-design": {
+                "version": "1.0.0", "directory": "open-design/legacy", "files": ["DESIGN.md"]
+            }}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let manifest = read_manifest(home.path()).unwrap();
+    assert!(manifest
+        .installations
+        .contains_key(&ComponentId::OpenDesign));
+    assert!(installed(home.path(), ComponentId::OpenDesign).is_ok());
+    assert!(ComponentId::LEGACY.contains(&ComponentId::OpenDesign));
+    assert!(!ComponentId::ALL.contains(&ComponentId::OpenDesign));
+    let snapshot = CoreState::default().snapshot(home.path()).unwrap();
+    assert!(!snapshot.ready);
+    assert!(!snapshot
+        .items
+        .iter()
+        .any(|item| item.id == ComponentId::OpenDesign));
+    assert!(
+        !snapshot
+            .items
+            .iter()
+            .find(|item| item.id == ComponentId::Impeccable)
+            .unwrap()
+            .installed
+    );
+    save_manifest(home.path(), &manifest).unwrap();
+    assert_eq!(
+        read_manifest(home.path()).unwrap().installations[&ComponentId::OpenDesign].directory,
+        "open-design/legacy"
+    );
+    assert_eq!(
+        fs::read_to_string(package.join("DESIGN.md")).unwrap(),
+        "Existing user design decisions"
+    );
+}
+
+#[test]
 fn requires_structural_discovery_openmontage_without_requiring_legacy_video_packages() {
     let home = tempfile::tempdir().unwrap();
     let mut manifest = Manifest::default();
@@ -13,7 +61,7 @@ fn requires_structural_discovery_openmontage_without_requiring_legacy_video_pack
         if id == ComponentId::Ponytail {
             ponytail::tests::fixture_package(&path, "1.0.0");
         }
-        if id == ComponentId::OpenDesign {
+        if id == ComponentId::Impeccable {
             design::tests::prepare_fixture(&path, &[]).unwrap();
         }
         if id == ComponentId::Hyperframes {
@@ -34,7 +82,7 @@ fn requires_structural_discovery_openmontage_without_requiring_legacy_video_pack
         manifest.installations.insert(
             id,
             Installation {
-                version: if id == ComponentId::OpenDesign {
+                version: if id == ComponentId::Impeccable {
                     "1.2.3"
                 } else if id == ComponentId::Graft {
                     install::GRAFT_VERSION

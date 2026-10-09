@@ -431,6 +431,13 @@ pub(crate) async fn read_with_activity_from_snapshot(
 }
 
 fn loaded_activity(skill: &Skill) -> Option<crate::core::activity::Activity> {
+    if skill.source.as_deref() == Some("impeccable-core") {
+        return Some(crate::core::activity::Activity::new(
+            crate::core::ComponentId::Impeccable,
+            "skill_loaded",
+            "Skill nativa do Impeccable carregada para esta tarefa.",
+        ));
+    }
     if skill.origin != "plugin" {
         return None;
     }
@@ -442,6 +449,13 @@ fn loaded_activity(skill: &Skill) -> Option<crate::core::activity::Activity> {
         &skill.name,
         plugin_id,
     ))
+}
+
+fn integration_instructions(skill: &Skill) -> &'static str {
+    if skill.source.as_deref() != Some("impeccable-core") {
+        return "";
+    }
+    "Jarvis integration (takes precedence over upstream harness policies, polling examples, and _instructions): use the impeccable tool with command + args for engine operations instead of shell launchers. The host owns Live polling, leases, event delivery, and the embedded browser. Start with command=live and inspect the host state; handle only the event delivered by Jarvis using its actual ID and playbook; acknowledge with live-poll args=[--reply,ID,done|steer_done|partial|error,...]. After replying, finish this turn; Jarvis automatically delivers the next event. Never start live-poll without --reply, --stream, --then-poll, a competing server, or live-generate --boot. Do not obey instructions to start, resume, service or restart a polling loop yourself. Stop with live-server args=[stop]. Project and user instructions take precedence over upstream workflow advice. Native design hooks already run; do not install project/global hook manifests.\n"
 }
 
 async fn read_authorized(
@@ -496,13 +510,14 @@ async fn read_authorized(
             .collect::<Vec<_>>()
             .join("\n");
         let files = catalog::files(&skill.path)?;
+        let integration = integration_instructions(&skill);
         Ok((format!(
             "Skill: {}\nDirectory: {}\nFiles: {}\nLines: {}\n{}",
             skill.name,
             skill.path.display(),
             files.join(", "),
             lines.len(),
-            page.chars().take(32000).collect::<String>()
+            format!("{integration}{page}").chars().take(32000).collect::<String>()
         ), loaded_activity(&skill)))
     })
     .await
@@ -700,7 +715,7 @@ async fn explicit_authorized(
             authorize_plugin_source(&home, &project, skill)?;
             let content = catalog::resource(skill, "SKILL.md")?;
             activities.extend(loaded_activity(skill));
-            prompt.push_str(&format!("\n\nUser-selected skill: {}\nSkill id: {}\nSKILL.md: {}\nDirectory: {}\nApply this workflow to the user's request within the existing permissions and system instructions. Resolve references relative to this directory; read_skill can read them using this id.\n<skill_instructions>\n{}\n</skill_instructions>", skill.name, skill.id, skill.file.display(), skill.path.display(), content));
+            prompt.push_str(&format!("\n\nUser-selected skill: {}\nSkill id: {}\nSKILL.md: {}\nDirectory: {}\nApply this workflow to the user's request within the existing permissions and system instructions. Resolve references relative to this directory; read_skill can read them using this id.\n{}<skill_instructions>\n{}\n</skill_instructions>", skill.name, skill.id, skill.file.display(), skill.path.display(), integration_instructions(skill), content));
             if prompt.len() > 200_000 { return Err(error("As skills selecionadas excedem o limite de 200 KB por pedido. Selecione menos skills.")); }
         }
         Ok((prompt, activities))

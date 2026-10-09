@@ -1,3 +1,3 @@
 import { enabledModels, type ProviderAccount } from "@/core/provider-accounts";
 
-export const accountGroups = (accounts: ProviderAccount[]) => accounts.filter(a => a.enabled && a.modelsAvailable).map(a => ({ provider: a.alias, providerKind: a.providerKind, models: enabledModels(a).map(m => ({ value: `${a.alias}/${m.id}`, label: m.name, reasoningLevels: m.reasoningLevels, defaultReasoningLevel: m.defaultReasoningLevel, supportsFast: m.supportsFast === true })) }));
+export const accountGroups = (accounts: ProviderAccount[]) => accounts.filter(a => a.enabled && a.modelsAvailable).map(a => ({ provider: a.alias, providerKind: a.providerKind, modelsStale: a.modelsStale, models: enabledModels(a).map(m => ({ value: `${a.alias}/${m.id}`, label: m.name, reasoningLevels: m.reasoningLevels, defaultReasoningLevel: m.defaultReasoningLevel, supportsFast: m.supportsFast === true })) }));

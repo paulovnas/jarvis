@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { ArrowUp, Globe, Paperclip, Plus, Send, Square } from "lucide-react";
+import { ArrowUp, Globe, LoaderCircle, MousePointer2, Paperclip, Plus, Send, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/TextInput";
@@ -12,7 +12,7 @@ import { FlowPicker } from "./FlowPicker";
 import { ComposerSkeleton } from "@/components/layout/LoadingSkeletons";
 import { type ProviderModelGroup, type ModelSelection, type ModelOptionDef } from "./ModelPicker";
 import { ExecutorModelPicker } from "./ExecutorModelPicker";
-import { claudeModels, executionChoice, executionSelection, executorOf, selectModelChoice, supportsFastMode, type ExecutionChoice } from "@/core/executors";
+import { claudeModels, executionChoice, executionSelection, executorOf, fastModeUnavailable, selectModelChoice, type ExecutionChoice } from "@/core/executors";
 import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
 export type { ProviderModelGroup } from "./ModelPicker";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
@@ -25,7 +25,8 @@ import { rootRole } from "@/core/workflow";
 import { resolveChatModel, type ModelBinding } from "@/core/provider-references";
 import { useModelProblemNotice } from "@/hooks/use-provider-references";
 import { libraryError } from "@/core/library";
-import { mergeDrafts, type ChatDraft, type MessagePart, type QueuedMessage, type TurnOptions } from "@/core/chat";
+import { mergeDrafts, type ChatDraft, type ChatSnapshot, type MessagePart, type QueuedMessage, type TurnOptions } from "@/core/chat";
+import { readComposerHistory } from "@/core/composer-history";
 import { VoiceControls, VoiceSessionPanel } from "@/components/voice/VoiceControls";
 import { stopDictation } from "@/hooks/use-voice";
 import type { WorkflowSnapshot } from "@/core/workflow";
@@ -36,6 +37,7 @@ import { ChatBehaviorSettings } from "./ChatBehaviorSettings";
 import { Hint } from "@/components/ui/hint";
 import type { ModelCatalogRefresh } from "@/core/provider-accounts";
 import { defaultReasoning } from "@/core/reasoning";
+import type { ImpeccableLiveController } from "@/hooks/use-impeccable-live";
 
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
@@ -43,6 +45,8 @@ interface ChatComposerProps {
   draftInsertion?: { id: string; text: string };
   onOpenBrowser?: () => void;
   browserBusy?: boolean;
+  designLive?: ImpeccableLiveController;
+  liveUrl?: string;
   onOpenHttp?: () => void;
   httpBusy?: boolean;
   agentModels?: AgentModelsController;
@@ -60,6 +64,7 @@ interface ChatComposerProps {
   onRefreshModels?: () => Promise<ModelCatalogRefresh | null>;
   refreshingModels?: boolean;
   draftKey?: string;
+  historySnapshot?: ChatSnapshot;
   drafts?: Map<string, ChatDraft>;
   queuedMessages?: QueuedMessage[];
   onRemoveQueued?: (id: string) => Promise<ChatDraft | null>;
@@ -74,6 +79,8 @@ export function ChatComposer({
   draftInsertion,
   onOpenBrowser,
   browserBusy = false,
+  designLive,
+  liveUrl,
   onOpenHttp,
   httpBusy = false,
   agentModels,
@@ -91,6 +98,7 @@ export function ChatComposer({
   onStop,
   initialOptions,
   draftKey,
+  historySnapshot,
   drafts,
   queuedMessages = [],
   onRemoveQueued,
@@ -246,12 +254,13 @@ export function ChatComposer({
     if (executorOf(choice) === "claude" && !claude.data) return false;
     const model = modelsFor(choice).find(item => item.value === choice.model);
     const group = modelGroups.find(group => executorOf(group) === executorOf(choice) && group.models.some(item => item.value === choice.model));
-    return !model || Boolean(choice.reasoning && !model.reasoningLevels.includes(choice.reasoning)) || choice.serviceTier === "priority" && !supportsFastMode(group?.providerKind, model, choice.executor);
+    return !model || Boolean(choice.reasoning && !model.reasoningLevels.includes(choice.reasoning)) || choice.serviceTier === "priority" && fastModeUnavailable(group?.providerKind, model, choice.executor, group?.modelsStale);
   };
   const invalidAgent = configuredAgents.find(agent => invalidSelection(executionSelection(agent.choice)!) || Boolean(agent.choice.fallback && invalidSelection(executionSelection(agent.choice.fallback)!)))?.name;
   const claudeProblem = !claudeRequired || claude.loading ? null : claude.error ?? (claude.data?.preferences?.enabled === false ? "Ative o Claude Code em Configurações → Provedores." : claude.data && !claude.data.installed ? "Instale o Claude Code em Configurações → Provedores e atualize o status." : claude.data && !claude.data.authenticated ? "Entre na sua conta com claude auth login e atualize o status do Claude Code." : null);
   const removedExecutor = executorOf(effectiveSelection) === "unavailable" || configuredAgents.some(agent => executorOf(agent.choice) === "unavailable" || executorOf(agent.choice.fallback) === "unavailable");
-  const fastProblem = selectionReady && effectiveSelection?.serviceTier === "priority" && !supportsFastMode(modelGroups.find(group => group.models.some(item => item.value === effectiveSelection.model))?.providerKind, currentModelDef, effectiveSelection.executor) ? "Fast não está disponível neste provedor ou modelo. Selecione Normal ou outro modelo." : null;
+  const selectedGroup = modelGroups.find(group => group.models.some(item => item.value === effectiveSelection?.model));
+  const fastProblem = selectionReady && effectiveSelection?.serviceTier === "priority" && fastModeUnavailable(selectedGroup?.providerKind, currentModelDef, effectiveSelection.executor, selectedGroup?.modelsStale) ? "Fast não está disponível neste provedor ou modelo. Selecione Normal ou outro modelo." : null;
   const modelError = chatModels?.error ?? (removedExecutor ? "Este executor foi removido. Escolha um provedor e modelo disponíveis para continuar." : null) ?? claudeProblem ?? fastProblem ?? (!selectionReady ? null : invalidAgent
     ? `O agente ${invalidAgent} usa um modelo indisponível. Selecione um modelo válido para este chat.`
     : effectiveSelection && invalidSelection(effectiveSelection) ? `O modelo ${effectiveSelection.model} está indisponível. Revise o provedor e o modelo deste chat.` : null);
@@ -334,7 +343,7 @@ export function ChatComposer({
         onReorder={onReorderQueued}
         onResume={onResumeQueue}
       />}
-      <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} onFiles={files => { void addFiles(files); }} attachments={(attachments.length > 0 || uploading) && <div className="flex flex-wrap gap-1 px-5 pt-4" aria-label="Anexos da mensagem">{attachments.map(part => <AttachmentPreview key={part.attachment.id} attachment={part.attachment} disabled={disabled || compacting || sending} onRemove={() => { const current = draftRef.current; setDraft({ ...current, parts: current.parts?.filter(item => item.type !== "attachment" || item.attachment.id !== part.attachment.id) }); }} />)}{uploading && <Skeleton className="mb-2 size-20 rounded-lg" role="status" aria-label="Preparando anexos" />}</div>} onSend={() => { void handleSend(); }} disabled={disabled || compacting} compacting={compacting} working={running || compacting}>
+      <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} loadHistory={draftKey ? before => readComposerHistory(draftKey, historySnapshot, before) : undefined} onFiles={files => { void addFiles(files); }} attachments={(attachments.length > 0 || uploading) && <div className="flex flex-wrap gap-1 px-5 pt-4" aria-label="Anexos da mensagem">{attachments.map(part => <AttachmentPreview key={part.attachment.id} attachment={part.attachment} disabled={disabled || compacting || sending} onRemove={() => { const current = draftRef.current; setDraft({ ...current, parts: current.parts?.filter(item => item.type !== "attachment" || item.attachment.id !== part.attachment.id) }); }} />)}{uploading && <Skeleton className="mb-2 size-20 rounded-lg" role="status" aria-label="Preparando anexos" />}</div>} onSend={() => { void handleSend(); }} disabled={disabled || compacting} compacting={compacting} working={running || compacting}>
 
         <div className="flex w-full min-w-0 flex-col">
         {draftKey && <div className="px-4"><VoiceSessionPanel target={`chat:${draftKey}`} /></div>}
@@ -360,11 +369,15 @@ export function ChatComposer({
 
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}
           {draftKey && <VoiceControls target={`chat:${draftKey}`} disabled={disabled || compacting || sending || !selectionReady} onDictation={text => { setDraft(mergeDrafts(draftRef.current, { content: text })); input.current?.focus(); }} />}
+          {designLive && <Hint content={designLive.status.state === "setup" ? "O Designer está preparando o Live. Clique para desligar." : designLive.active ? "Desligar Impeccable Live" : "Editar o projeto visualmente com Impeccable Live"}><Button type="button" variant="ghost" size="icon" aria-label={designLive.active ? "Desligar Impeccable Live" : "Ativar Impeccable Live"} aria-pressed={designLive.active} disabled={!designLive.loaded || designLive.busy || (!designLive.active && (disabled || compacting || sending || !selectionReady || !!modelError || !currentModelDef))} className={`size-7.5 cursor-pointer rounded-full ${designLive.active ? "bg-onedark-purple/15 text-onedark-purple" : "text-muted-foreground hover:text-onedark-purple"}`} onClick={() => {
+            const choice = currentModelDef ? executionChoice({ executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning, ...(effectiveSelection?.serviceTier === "priority" ? { serviceTier: "priority" as const } : {}) }) : null;
+            if (choice || designLive.active) void designLive.toggle(choice ? { ...choice, mode: "build", workflow: "designer", approvalMode: "yolo", manualValidation: false } : undefined, liveUrl);
+          }}>{designLive.busy ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <MousePointer2 className="size-3.5" />}</Button></Hint>}
           <div className="composer-options flex flex-1 items-center gap-0.5">
             <ChatBehaviorSettings manualAvailable={manualValidationAvailable} manualValidation={manualValidation} onManualChange={setManualValidation} publication={githubSelected ? null : automaticPublication} onPublicationChange={setAutomaticPublication} disabled={running || sending || compacting} githubSelected={githubSelected} />
             <FlowPicker customFlows={catalog.data?.flows} customAgents={catalog.data?.agents} builtinAgents={catalog.data?.builtinAgents} value={workflow} onChange={chooseWorkflow} disabled={running || sending || compacting} />
 
-            <ExecutorModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning, ...(effectiveSelection?.serviceTier === "priority" ? { serviceTier: "priority" as const } : {}) } : effectiveSelection} onSelect={chooseModel} nativeDisabled={!modelsReady} disabled={running || sending || compacting || choosingModel || chatModels?.saving} invalid={Boolean(modelError)} showProviderIdentity allowFastMode onRefresh={onRefreshModels ? () => setRefreshDialogOpen(true) : undefined} refreshing={refreshingModels} />
+            <ExecutorModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning, ...(effectiveSelection?.serviceTier === "priority" ? { serviceTier: "priority" as const } : {}) } : effectiveSelection} onSelect={chooseModel} disabled={running || sending || compacting || choosingModel || chatModels?.saving} invalid={Boolean(modelError)} showProviderIdentity allowFastMode onRefresh={onRefreshModels ? () => setRefreshDialogOpen(true) : undefined} refreshing={refreshingModels} />
 
             {/* Botão redondo com seta pra cima no canto inferior direito */}
             {running && !compacting && <Hint content="Interromper execução"><Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button></Hint>}

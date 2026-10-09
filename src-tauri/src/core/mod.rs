@@ -11,6 +11,7 @@ pub(crate) mod graft;
 pub mod health;
 pub mod hooks;
 pub(crate) mod hyperframes;
+pub mod impeccable_live;
 mod install;
 pub mod lsp;
 pub mod openmontage;
@@ -33,6 +34,7 @@ pub enum ComponentId {
     Ponytail,
     Beads,
     OpenDesign,
+    Impeccable,
     Context7,
     Lsp,
     Hyperframes,
@@ -46,20 +48,21 @@ impl ComponentId {
         Self::ContextMode,
         Self::Ponytail,
         Self::Beads,
-        Self::OpenDesign,
+        Self::Impeccable,
         Self::Context7,
         Self::Lsp,
         Self::Openmontage,
         Self::Comfyui,
         Self::Graft,
     ];
-    pub(super) const LEGACY: [Self; 2] = [Self::Hyperframes, Self::Audiovisual];
+    pub(super) const LEGACY: [Self; 3] = [Self::OpenDesign, Self::Hyperframes, Self::Audiovisual];
     pub fn key(self) -> &'static str {
         match self {
             Self::ContextMode => "context-mode",
             Self::Ponytail => "ponytail",
             Self::Beads => "beads",
             Self::OpenDesign => "open-design",
+            Self::Impeccable => "impeccable",
             Self::Context7 => "context7",
             Self::Lsp => "lsp",
             Self::Hyperframes => "hyperframes",
@@ -78,6 +81,7 @@ impl ComponentId {
             Self::Ponytail => "Ponytail",
             Self::Beads => "Beads",
             Self::OpenDesign => "Open Design",
+            Self::Impeccable => "Impeccable",
             Self::Context7 => "Context7",
             Self::Lsp => "Servidores LSP",
             Self::Hyperframes => "Hyperframes",
@@ -93,6 +97,7 @@ impl ComponentId {
             Self::Ponytail => "DietrichGebert/ponytail",
             Self::Beads => "gastownhall/beads",
             Self::OpenDesign => "nexu-io/open-design",
+            Self::Impeccable => "pbakaus/impeccable",
             Self::Context7 => "upstash/context7",
             Self::Lsp => "typescript-language-server/typescript-language-server",
             Self::Hyperframes => "heygen-com/hyperframes",
@@ -175,7 +180,7 @@ impl Installation {
         if id == ComponentId::Ponytail {
             ponytail::Ponytail::at(&path, &self.version)?;
         }
-        if id == ComponentId::OpenDesign {
+        if id == ComponentId::Impeccable {
             design::Pack::at(&path, &self.version)?;
         }
         if id == ComponentId::Hyperframes {

@@ -107,3 +107,7 @@ junction = "2.0.0"
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["test-util"] }
 ts-rs = { version = "11", features = ["serde-json-impl", "no-serde-warnings"] }
+
+# Keep the native test binary within macOS unwind-table limits.
+[profile.test.package.jarvis]
+opt-level = 1

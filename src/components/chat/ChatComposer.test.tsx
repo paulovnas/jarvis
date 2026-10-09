@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer, type ProviderModelGroup } from "./ChatComposer";
 import type { ChatDraft } from "@/core/chat";
-import { chatOptions } from "@/test/chat-fixtures";
+import { chatOptions, emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -36,6 +36,67 @@ async function openModel(user: ReturnType<typeof userEvent.setup>, name: RegExp)
 }
 
 describe("ChatComposer model reasoning", () => {
+  it("toggles Live next to dictation with the selected model without submitting or clearing the draft", async () => {
+    const user = userEvent.setup();
+    const toggle = vi.fn();
+    const send = vi.fn();
+    const live = { status: { conversationId: "c1", state: "off" as const, url: null, tabId: null, error: null, setupNeeded: null }, active: false, loaded: true, busy: false, toggle };
+    const fastModels = models.map(group => ({ ...group, providerKind: "openai-codex", models: group.models.map(model => ({ ...model, supportsFast: true })) }));
+    const props = { draftKey: "c1", modelGroups: fastModels, onSendMessage: send, initialOptions: { ...chatOptions, account: "pessoal", model: "compact", reasoning: "xhigh", serviceTier: "priority" as const } };
+    const view = await renderComposer(<ChatComposer {...props} designLive={live} liveUrl="http://localhost:5173/" />);
+    const field = screen.getByRole("textbox", { name: "Mensagem" });
+    await user.type(field, "Meu rascunho");
+    await user.click(screen.getByRole("button", { name: "Ativar Impeccable Live" }));
+    expect(toggle).toHaveBeenCalledWith({ executor: "jarvis", account: "pessoal", model: "compact", reasoning: "xhigh", serviceTier: "priority", mode: "build", workflow: "designer", approvalMode: "yolo", manualValidation: false }, "http://localhost:5173/");
+    expect(send).not.toHaveBeenCalled();
+    expect(field).toHaveTextContent("Meu rascunho");
+    view.rerender(<ChatComposer {...props} modelGroups={[]} designLive={{ ...live, active: true, status: { ...live.status, state: "ready" } }} />);
+    const stop = screen.getByRole("button", { name: "Desligar Impeccable Live" });
+    expect(stop).toHaveAttribute("aria-pressed", "true");
+    expect(stop).toBeEnabled();
+    await user.click(stop);
+    expect(toggle).toHaveBeenLastCalledWith(undefined, undefined);
+  });
+  it("recalls full sent text from this chat and lets the user edit and resend it", async () => {
+    const user = userEvent.setup();
+    const send = vi.fn().mockResolvedValue(true);
+    const fullText = "Verifique o relatório\ne todos os resultados antes de concluir.";
+    const snapshot = { ...emptyChat(), turns: [{ ...savedTurn(), user: fullText }] };
+    await renderComposer(<ChatComposer draftKey="c1" historySnapshot={snapshot} modelGroups={models} onSendMessage={send} />);
+    const field = screen.getByRole("textbox", { name: "Mensagem" });
+    await user.click(field);
+    await user.keyboard("{ArrowUp}");
+    await waitFor(() => expect(field.textContent).toBe(fullText.replace("\n", "")));
+    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "get_chat_history")).toBe(false);
+    await user.keyboard(" Agora.{ArrowUp}{ArrowDown}{Enter}");
+    expect(send).toHaveBeenCalledWith(`${fullText} Agora.`, expect.any(Object));
+    await waitFor(() => expect(field.textContent).toBe(""));
+  });
+  it("keeps the selected model and speed visible while its bindings are being checked", async () => {
+    const fastModels = models.map(group => ({ ...group, providerKind: "openai-codex", models: group.models.map(model => ({ ...model, supportsFast: true })) }));
+    const choice = { account: "pessoal", model: "compact", reasoning: "xhigh", serviceTier: "priority" as const };
+    const chatModels = { data: { "standard/builder": choice }, error: null, saving: false, save: vi.fn(), refresh: vi.fn() };
+    const props = { modelGroups: fastModels, chatModels, onSendMessage: vi.fn() };
+    const { rerender } = await renderComposer(<ChatComposer {...props} />);
+    const picker = screen.getByRole("button", { name: "Selecionar modelo de IA" });
+    expect(picker).toHaveTextContent("Compact · Extra alto · Fast");
+    rerender(<ChatComposer {...props} modelsReady={false} />);
+    expect(picker).toHaveTextContent("Compact · Extra alto · Fast");
+    expect(picker).not.toHaveTextContent("Indisponível");
+    expect(picker).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    const next = { ...choice, model: "flexible", reasoning: "high" };
+    rerender(<ChatComposer {...props} chatModels={{ ...chatModels, data: { "standard/builder": next } }} modelsReady={false} />);
+    expect(picker).toHaveTextContent("Flexible · Alto · Fast");
+    expect(picker).not.toHaveAttribute("aria-invalid", "true");
+    rerender(<ChatComposer {...props} chatModels={{ ...chatModels, data: { "standard/builder": { ...next, serviceTier: undefined } } }} modelsReady={false} />);
+    expect(picker).toHaveTextContent("Flexible · Alto");
+    expect(picker).not.toHaveTextContent(/Fast|Indisponível/);
+    rerender(<ChatComposer {...props} chatModels={{ ...chatModels, data: { "standard/builder": next } }} />);
+    expect(picker).toHaveTextContent("Flexible · Alto · Fast");
+    expect(picker).not.toHaveAttribute("aria-invalid", "true");
+  });
   it("publishes only a valid effective execution choice for retry, including its reasoning and speed", async () => {
     const changed = vi.fn();
     const fastModels = models.map(group => ({ ...group, providerKind: "openai-codex", models: group.models.map(model => ({ ...model, supportsFast: model.value === "pessoal/compact" })) }));

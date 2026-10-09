@@ -7,7 +7,7 @@ export const AGENT_DESCRIPTIONS = {
   investigator: "Investiga o código, as instruções e o histórico do projeto. Localiza evidências, identifica riscos e entrega os achados que orientam o planejamento.",
   writer: "Transforma o plano em uma especificação executável. Registra épicos, tarefas, critérios de aceite e dependências no Beads para orientar a implementação.",
   orchestrator: "Distribui as tarefas entre os agentes e acompanha as entregas. Coordena dependências, trabalho paralelo, revisões e retomadas quando algo falha.",
-  designer: "Define a direção visual e implementa a experiência de uso. Consulta sistemas, templates e guias do Open Design, preservando a identidade do projeto.",
+  designer: "Une direção de produto, UI/UX e implementação com Impeccable. Preserva a identidade do projeto, revisa a qualidade e permite experimentar variantes no modo Live.",
   video: "Ajuda a definir público, mensagem e roteiro. Dirige demonstrações com navegação, animação, narração e música e entrega o vídeo em MP4.",
   image_generator: "Gera imagens e variações com o provedor configurado. Usa o ComfyUI para ajustar tamanho, remover fundos e entregar assets em PNG, JPG ou WEBP.",
   builder: "Implementa o comportamento solicitado no código. Usa as ferramentas do projeto, executa os testes e corrige problemas antes de entregar o resultado.",

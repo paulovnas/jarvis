@@ -6,6 +6,33 @@ const CHAT_A: &str = "11111111111111111111111111111111";
 const CHAT_B: &str = "22222222222222222222222222222222";
 
 #[test]
+fn live_admission_keeps_current_composer_choice_instead_of_saved_designer_choice() {
+    let fixture = Fixture::new();
+    let state = state(&fixture.root);
+    let saved = choice("saved-designer");
+    let mut current = choice("current-composer");
+    current.service_tier = Some(ServiceTier::Priority);
+    current.reasoning = Some("high".into());
+    let mut live = options(ApprovalMode::Yolo);
+    live.workflow = Some(Flow::Designer);
+    current.apply(&mut live);
+    let mut ordinary = live.clone();
+    state
+        .with_connection(&fixture.root, |db| {
+            write(db, CHAT_A, &key(Flow::Designer, Role::Designer), &saved)?;
+            capture_for_admission(db, &fixture.root, CHAT_A, &mut live, false)?;
+            capture_for_admission(db, &fixture.root, CHAT_A, &mut ordinary, true)
+        })
+        .unwrap();
+    assert_eq!(live.model, "current-composer");
+    assert_eq!(live.reasoning.as_deref(), Some("high"));
+    assert_eq!(live.service_tier, Some(ServiceTier::Priority));
+    assert_eq!(live.model_selection, Some(current));
+    assert_eq!(ordinary.model, "saved-designer");
+    assert_eq!(ordinary.model_selection, Some(saved));
+}
+
+#[test]
 fn accepted_queued_choice_preserves_primary_and_secondary_after_a_saved_swap_and_restart() {
     let fixture = Fixture::new();
     let state = state(&fixture.root);

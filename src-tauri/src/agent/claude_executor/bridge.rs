@@ -214,7 +214,7 @@ impl<'a> Bridge<'a> {
                 Ok(pack) => Some(pack),
                 Err(error) => {
                     activities.push(crate::core::activity::Activity::unavailable(
-                        crate::core::ComponentId::OpenDesign,
+                        crate::core::ComponentId::Impeccable,
                         "design_preparation",
                         &error.message,
                     ));
@@ -387,6 +387,7 @@ impl<'a> Bridge<'a> {
         }
         if self.design.is_some() {
             definitions.extend(crate::core::design::definitions());
+            definitions.push(impeccable::definition());
         }
         definitions.extend(self.context.definitions(self.restricted));
         definitions.extend(self.graft.definitions());
@@ -883,6 +884,25 @@ impl<'a> Bridge<'a> {
                 .execute(&tool.name, &tool.args, signal)
                 .await
                 .map_err(AgentError::from),
+            Handler::Impeccable => {
+                impeccable::execute(
+                    self.execution
+                        .as_ref()
+                        .and_then(workflow::Execution::native_app),
+                    home,
+                    self.session,
+                    &self.owner().id,
+                    &tool.args,
+                    &self.options,
+                    self.restricted
+                        || self
+                            .execution
+                            .as_ref()
+                            .is_some_and(workflow::Execution::design_inspection_only),
+                    signal,
+                )
+                .await
+            }
             Handler::Design => self
                 .design
                 .as_ref()

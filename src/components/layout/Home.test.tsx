@@ -25,6 +25,32 @@ const invokeMock = vi.mocked(invoke);
 const accountsMock = vi.fn<() => Promise<ProviderAccount[]>>();
 
 describe("Home shell", () => {
+  it("keeps saved Fast chats valid until refreshed capabilities confirm incompatibility", async () => {
+    const user = userEvent.setup();
+    const account: ProviderAccount = { alias: "work", providerKind: "openai-codex", enabled: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, modelsStale: true, models: [{ id: "gpt-test", name: "GPT Test", reasoningLevels: ["high"], defaultReasoningLevel: "high" }] };
+    accountsMock.mockResolvedValueOnce([account]).mockResolvedValueOnce([{ ...account, modelsStale: false }]);
+    const turn = savedTurn();
+    turn.options = { ...turn.options, account: account.alias, model: "gpt-test", reasoning: "high", serviceTier: "priority" };
+    const original = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation(async (command, args, options) => {
+      if (command === "subscribe_chat") return { ...emptyChat(), turns: [turn] };
+      if (command === "get_chat_agent_models") return { "standard/builder": turn.options };
+      if (command === "get_provider_model_references") return { references: [], bindings: [] };
+      return original(command, args, options);
+    });
+    render(<Home />);
+    const picker = await screen.findByRole("button", { name: "Selecionar modelo de IA" });
+    await waitFor(() => expect(picker).toHaveTextContent("GPT Test · Alto · Fast"));
+    expect(picker).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus();
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("menuitem", { name: "Atualizar lista de modelos" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Atualizar modelos" }));
+    await waitFor(() => expect(picker).toHaveTextContent("Fast indisponível"));
+    expect(picker).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toHaveTextContent("Selecione Normal");
+  }, 15_000);
   it("opens native settings while leaving the conversation and its draft available", async () => {
     vi.stubGlobal("__TAURI_INTERNALS__", {});
     const original = invokeMock.getMockImplementation()!;

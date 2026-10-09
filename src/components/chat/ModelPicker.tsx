@@ -1,5 +1,5 @@
 import { Check, ChevronDown, RefreshCw } from "lucide-react";
-import { executorOf, FAST_USAGE_NOTICE, supportsFastMode, type ExecutionSelection } from "@/core/executors";
+import { executorOf, fastModeUnavailable, FAST_USAGE_NOTICE, supportsFastMode, type ExecutionSelection } from "@/core/executors";
 import type { ProviderAccount, ProviderModel } from "@/core/provider-accounts";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { aliasSuffix } from "@/core/provider-usage";
@@ -17,6 +17,7 @@ export interface ProviderModelGroup {
   provider: string;
   executor?: "claude";
   providerKind?: ProviderAccount["providerKind"];
+  modelsStale?: boolean;
   models: ModelOptionDef[];
   emptyMessage?: string;
 }
@@ -29,7 +30,7 @@ export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLa
   const reasoning = selection?.reasoning;
   const fastAvailable = supportsFastMode(currentGroup?.providerKind, currentModelDef, executorOf(selection));
   const fastRequested = selection?.serviceTier === "priority";
-  const fastUnavailable = fastRequested && !fastAvailable;
+  const fastUnavailable = fastRequested && fastModeUnavailable(currentGroup?.providerKind, currentModelDef, executorOf(selection), currentGroup?.modelsStale);
   const displayModelLabel = currentModelDef ? `${currentModelDef.label}${reasoning ? ` · ${reasoningLabel(reasoning)}` : ""}` : selection ? `${selection.model.split("/").pop()} · Indisponível` : onClear ? clearLabel : modelGroups.some(group => group.models.length) ? "Escolher modelo" : "Nenhum modelo conectado";
   const providerLabel = showProviderIdentity && currentGroup ? aliasSuffix(currentGroup.provider) : null;
   const displayLabel = `${providerLabel ? `${providerLabel} · ${displayModelLabel}` : displayModelLabel}${fastRequested ? fastUnavailable ? " · Fast indisponível" : " · Fast" : ""}`;

@@ -10,7 +10,7 @@ fn fixture(home: &Path) -> Manifest {
         if id == ComponentId::Ponytail {
             ponytail::tests::fixture_package(&path, "1.0.0");
         }
-        if id == ComponentId::OpenDesign {
+        if id == ComponentId::Impeccable {
             design::tests::prepare_fixture(&path, &[]).unwrap();
         }
         if id == ComponentId::Hyperframes {
@@ -29,7 +29,7 @@ fn fixture(home: &Path) -> Manifest {
             openmontage::tests::fixture(&path);
         }
         let record = Installation {
-            version: if id == ComponentId::OpenDesign {
+            version: if id == ComponentId::Impeccable {
                 "1.2.3"
             } else if id == ComponentId::Graft {
                 install::GRAFT_VERSION

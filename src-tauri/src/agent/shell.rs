@@ -472,7 +472,7 @@ pub(crate) fn spawn_process(
     spawn_process_with_stdin(process, Stdio::null())
 }
 
-fn spawn_process_with_stdin(
+pub(crate) fn spawn_process_with_stdin(
     mut process: tokio::process::Command,
     stdin: Stdio,
 ) -> std::io::Result<Box<dyn ChildWrapper>> {

@@ -13,6 +13,31 @@ fn skill(dir: &Path, name: &str, body: &str) {
     fs::write(dir.join("references/guide.md"), "Reference instructions").unwrap();
 }
 
+#[test]
+fn native_design_skill_loads_host_owned_live_contract_and_core_receipt() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = root(temp.path()).join("skills/impeccable");
+    skill(
+        &directory,
+        "impeccable",
+        "Upstream live-poll examples are adapted to this host.",
+    );
+    let mut selected = snapshot(temp.path(), None).unwrap().skills[0].clone();
+    selected.source = Some("impeccable-core".into());
+    let guidance = integration_instructions(&selected);
+    assert!(guidance.contains("takes precedence over upstream harness policies"));
+    assert!(guidance.contains("After replying, finish this turn"));
+    assert!(guidance.contains("--then-poll"));
+    let receipt = loaded_activity(&selected).unwrap();
+    assert_eq!(
+        receipt.component,
+        crate::core::ComponentId::Impeccable.into()
+    );
+    assert!(receipt.plugin_id.is_none());
+    selected.source = None;
+    assert!(integration_instructions(&selected).is_empty());
+}
+
 #[cfg(unix)]
 #[test]
 fn shared_discovery_reads_two_links_deduplicates_cycles_and_ignores_other_roots() {

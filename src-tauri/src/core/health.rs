@@ -160,6 +160,7 @@ fn repair_local(home: &Path, id: ComponentId) -> Result<(), CoreError> {
         ComponentId::Context7 => vec![install::node_path(&path)],
         ComponentId::Lsp => vec![install::node_path(&path)],
         ComponentId::Graft => vec![install::node_path(&path)],
+        ComponentId::Impeccable => vec![path.join(design::executable_relative())],
         ComponentId::Hyperframes => hyperframes::executable_paths(&path)?,
         ComponentId::Openmontage => openmontage::executable_paths(&path)?,
         ComponentId::Audiovisual => vec![audiovisual::python_path(&path)],
@@ -203,6 +204,7 @@ async fn runtime(home: &Path, id: ComponentId, record: &Installation) -> Result<
         ComponentId::Openmontage => openmontage::verify(&path, &record.version).await,
         ComponentId::Comfyui => comfyui::verify(&path, &record.version).await,
         ComponentId::Graft => graft::verify(&path).await,
+        ComponentId::Impeccable => design::verify(&path, &record.version).await,
         ComponentId::Beads => {
             for executable in [
                 path.join(if cfg!(windows) { "bd.exe" } else { "bd" }),
@@ -218,7 +220,7 @@ async fn runtime(home: &Path, id: ComponentId, record: &Installation) -> Result<
             }
             Ok(())
         }
-        _ => Ok(()), // validate() parses the full Ponytail/Open Design resource contracts.
+        _ => Ok(()), // validate() parses the full reference-only package contracts.
     }
 }
 

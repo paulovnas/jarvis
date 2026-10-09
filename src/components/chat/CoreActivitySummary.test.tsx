@@ -11,6 +11,20 @@ const prepared: CoreActivity = {
 };
 const step = { thinking: "", commentary: "Vou ajustar o layout.", tools: [], coreActivities: [prepared] };
 
+it("groups Impeccable guidance and tool use without adding a legacy design resource", async () => {
+  const user = userEvent.setup();
+  render(<CoreActivitySummary steps={[{ ...step, coreActivities: [{ ...prepared, component: "impeccable", action: "design_quality", summary: "Revisão visual orientada pelo Impeccable", sources: ["project:DESIGN.md"] }], tools: [
+    { id: "design", name: "design_read", status: "completed" },
+    { id: "quality", name: "impeccable", status: "completed" },
+  ] }]} />);
+  const trigger = screen.getByRole("button", { name: /Recursos do Core/ });
+  expect(trigger).toHaveTextContent("· 1");
+  await user.click(trigger);
+  expect(screen.getByText("Impeccable")).toBeVisible();
+  expect(screen.getByText("Revisão visual orientada pelo Impeccable", { exact: false })).toBeVisible();
+  expect(screen.queryByText("Open Design")).not.toBeInTheDocument();
+});
+
 it("groups the whole OpenMontage production under one Core resource", async () => {
   const user = userEvent.setup();
   render(<CoreActivitySummary steps={[{ ...step, coreActivities: [{ ...prepared, component: "openmontage", action: "production", summary: "Roteiro e mídia preparados", sources: ["project:video/checkpoint.json"] }], tools: [

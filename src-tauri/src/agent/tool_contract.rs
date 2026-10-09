@@ -28,6 +28,7 @@ pub(super) enum Handler {
     PublicationInspection,
     Workflow,
     Design,
+    Impeccable,
     DirectTasks,
     Beads,
     ProjectBeads,
@@ -71,6 +72,8 @@ impl Handler {
             )
         {
             Self::Workflow
+        } else if name == "impeccable" {
+            Self::Impeccable
         } else if matches!(name, "design_search" | "design_read") {
             Self::Design
         } else if name == "update_tasks" {
@@ -356,6 +359,9 @@ impl Orchestrator {
             .get(&tool.name)
             .map(|spec| {
                 let mut capabilities = spec.capabilities;
+                if tool.name == "impeccable" {
+                    capabilities = super::impeccable::capabilities(&tool.args);
+                }
                 if tool.name == "browser_screenshot" && tool.args["savePath"].is_string() {
                     capabilities.effect = Effect::Mutating;
                     capabilities.approval = ApprovalPolicy::AccordingToTurn;
@@ -653,6 +659,35 @@ mod tests {
             .preflight(&call(
                 "browser_screenshot",
                 json!({"id":"tab","savePath":"assets/page.png"})
+            ))
+            .is_err());
+    }
+
+    #[test]
+    fn impeccable_contract_preserves_inspection_vs_live_effects_and_exact_engine_names() {
+        let catalog = Orchestrator::new(&[super::super::impeccable::definition()]);
+        let inspect = catalog
+            .preflight(&call(
+                "impeccable",
+                json!({"command":"detect","args":["--json","src"]}),
+            ))
+            .unwrap();
+        assert_eq!(inspect.handler, Handler::Impeccable);
+        assert_eq!(inspect.capabilities.effect, Effect::ReadOnly);
+        assert_eq!(inspect.capabilities.approval, ApprovalPolicy::Never);
+        assert!(!inspect.capabilities.parallel_safe);
+        let live = catalog
+            .preflight(&call("impeccable", json!({"command":"live","args":[]})))
+            .unwrap();
+        assert_eq!(live.capabilities.approval, ApprovalPolicy::AccordingToTurn);
+        assert_eq!(live.capabilities.effect, Effect::Stateful);
+        assert!(catalog
+            .preflight(&call("impeccable", json!({"command":"install","args":[]})))
+            .is_err());
+        assert!(catalog
+            .preflight(&call(
+                "impeccable",
+                json!({"command":"detect","args":"src"})
             ))
             .is_err());
     }

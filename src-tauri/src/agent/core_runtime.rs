@@ -177,7 +177,7 @@ pub(super) fn prepare_design(
             .flat_map(|turn| &turn.turn.steps)
             .flat_map(|step| &step.core_activities)
             .any(|activity| {
-                activity.component == ComponentId::OpenDesign.into()
+                activity.component == ComponentId::Impeccable.into()
                     && activity.fingerprint == prepared.activity.fingerprint
             });
     if was_used {
@@ -751,7 +751,7 @@ mod tests {
             .unwrap();
         let prepared = |digest: &str| {
             let mut activity = Activity::new(
-                ComponentId::OpenDesign,
+                ComponentId::Impeccable,
                 "design_preparation",
                 "Referências preparadas",
             );

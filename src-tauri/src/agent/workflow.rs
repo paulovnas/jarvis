@@ -682,6 +682,15 @@ impl Execution {
             || (self.flow == Flow::Custom
                 && (self.allowed("design_search") || self.allowed("design_read")))
     }
+    pub(super) fn design_inspection_only(&self) -> bool {
+        let writes = if self.flow == Flow::Custom {
+            self.custom_agent()
+                .is_ok_and(|agent| agent.capability == catalog::Capability::Commands)
+        } else {
+            self.role.writes()
+        };
+        self.discovery() || !writes || !self.scope.iter().any(|scope| scope == ".")
+    }
     pub(super) fn design_inputs(&self) -> Result<(Vec<String>, String), AgentError> {
         let state = self
             .hub
@@ -1487,6 +1496,7 @@ pub(super) fn compaction_context(
     }
     if role == Role::Designer {
         definitions.extend(crate::core::design::definitions());
+        definitions.push(super::impeccable::definition());
     }
     Ok((text, definitions))
 }

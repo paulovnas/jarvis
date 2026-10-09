@@ -145,6 +145,19 @@ pub(in crate::agent) fn capture(
     Ok(())
 }
 
+pub(in crate::agent) fn capture_for_admission(
+    db: &Connection,
+    home: &Path,
+    conversation: &str,
+    options: &mut TurnOptions,
+    use_saved_selection: bool,
+) -> Result<(), AgentError> {
+    if use_saved_selection {
+        apply_saved(db, conversation, options)?;
+    }
+    capture(db, home, conversation, options)
+}
+
 pub(in crate::agent) fn hydrate_idle(
     state: &AppState,
     home: &Path,

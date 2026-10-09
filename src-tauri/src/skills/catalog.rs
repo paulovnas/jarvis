@@ -209,6 +209,12 @@ pub(super) fn discover_watched(
     walk(&own, "jarvis", false, 0, config, &mut scan)?;
     let builtin = super::builtin::root(home);
     walk(&builtin, "jarvis", true, 0, config, &mut scan)?;
+    scan.watched.push(super::runtime_cache::Stamp::read(
+        &crate::core::root(home).join("manifest.json"),
+    ));
+    if let Ok(directory) = crate::core::design::skill_directory(home) {
+        native_impeccable(&directory, config, &mut scan)?;
+    }
     let overlay = crate::plugins::load_active_for_project(home, project)
         .map_err(|cause| error(cause.message))?;
     scan.watched.push(super::runtime_cache::Stamp::read(
@@ -285,6 +291,7 @@ pub(super) fn discover_watched(
             &mut scan,
         )?;
     }
+    prefer_native_impeccable_skills(&mut scan.skills);
     if scan.visited >= 6000 || scan.skills.len() >= 512 {
         scan.warnings
             .push("Limite de descoberta atingido (512 skills).".into());
@@ -296,6 +303,24 @@ pub(super) fn discover_watched(
             .then(a.id.cmp(&b.id))
     });
     Ok((scan.skills, scan.warnings, scan.watched))
+}
+
+fn native_impeccable(directory: &Path, config: &Config, scan: &mut Scan) -> Result<(), SkillError> {
+    let start = scan.skills.len();
+    walk(directory, "jarvis", true, 0, config, scan)?;
+    for skill in &mut scan.skills[start..] {
+        skill.source = Some("impeccable-core".into());
+    }
+    Ok(())
+}
+
+fn prefer_native_impeccable_skills(skills: &mut Vec<Skill>) {
+    if skills
+        .iter()
+        .any(|skill| skill.source.as_deref() == Some("impeccable-core") && skill.enabled)
+    {
+        skills.retain(|skill| skill.origin != "plugin" || !skill.name.ends_with(":impeccable"));
+    }
 }
 pub(super) fn resource(skill: &Skill, relative: &str) -> Result<String, SkillError> {
     let path = Path::new(relative);
@@ -376,4 +401,72 @@ pub(super) fn escape(value: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod native_design_tests {
+    use super::*;
+
+    #[test]
+    fn managed_native_skill_keeps_full_resources_and_deduplicates_only_equivalent_plugins() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("reference")).unwrap();
+        fs::write(directory.path().join("SKILL.md"), "---\nname: impeccable\ndescription: Professional product UI and design workflow\n---\nUse the full workflow").unwrap();
+        fs::write(
+            directory.path().join("reference/craft-floor.md"),
+            "The complete edit quality floor",
+        )
+        .unwrap();
+        let mut scan = Scan {
+            seen: Default::default(),
+            visited: 0,
+            skills: vec![],
+            warnings: vec![],
+            watched: vec![],
+        };
+        native_impeccable(directory.path(), &Config::default(), &mut scan).unwrap();
+        let native = scan.skills[0].clone();
+        assert!(native.managed && native.enabled && native.automatic);
+        assert_eq!(native.source.as_deref(), Some("impeccable-core"));
+        assert_eq!(
+            resource(&native, "reference/craft-floor.md").unwrap(),
+            "The complete edit quality floor"
+        );
+        assert!(files(&native.path)
+            .unwrap()
+            .contains(&"reference/craft-floor.md".into()));
+        let mut equivalent = native.clone();
+        equivalent.origin = "plugin".into();
+        equivalent.name = "impeccable:impeccable".into();
+        equivalent.source = Some("impeccable@local".into());
+        let mut other = equivalent.clone();
+        other.name = "impeccable:local-helper".into();
+        let mut personal = equivalent.clone();
+        personal.origin = "agents".into();
+        let mut skills = vec![native.clone(), equivalent.clone(), other, personal];
+        prefer_native_impeccable_skills(&mut skills);
+        assert_eq!(skills.len(), 3);
+        assert!(skills
+            .iter()
+            .any(|skill| skill.name == "impeccable:local-helper"));
+        assert!(skills.iter().any(|skill| skill.origin == "agents"));
+        let mut disabled = native;
+        disabled.enabled = false;
+        let mut skills = vec![disabled, equivalent];
+        prefer_native_impeccable_skills(&mut skills);
+        assert_eq!(skills.len(), 2);
+        let config = Config {
+            disabled: [id(&directory.path().canonicalize().unwrap())].into(),
+            ..Config::default()
+        };
+        let mut scan = Scan {
+            seen: Default::default(),
+            visited: 0,
+            skills: vec![],
+            warnings: vec![],
+            watched: vec![],
+        };
+        native_impeccable(directory.path(), &config, &mut scan).unwrap();
+        assert!(!scan.skills[0].enabled);
+    }
 }

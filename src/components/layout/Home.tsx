@@ -153,6 +153,7 @@ export function Home() {
     .map((account) => ({
       provider: account.alias,
       providerKind: account.providerKind,
+      modelsStale: account.modelsStale,
       models: enabledModels(account).map((model) => ({
         value: `${account.alias}/${model.id}`,
         label: model.name,

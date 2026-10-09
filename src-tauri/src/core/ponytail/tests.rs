@@ -32,7 +32,7 @@ fn install_fixture(home: &Path) -> Manifest {
         if id == ComponentId::Ponytail {
             fixture_package(&path, "4.9.0");
         }
-        if id == ComponentId::OpenDesign {
+        if id == ComponentId::Impeccable {
             crate::core::design::tests::prepare_fixture(&path, &[]).unwrap();
         }
         if id == ComponentId::Hyperframes {
@@ -53,7 +53,7 @@ fn install_fixture(home: &Path) -> Manifest {
         manifest.installations.insert(
             id,
             Installation {
-                version: if id == ComponentId::OpenDesign {
+                version: if id == ComponentId::Impeccable {
                     "1.2.3"
                 } else if id == ComponentId::Audiovisual {
                     crate::core::audiovisual::VERSION

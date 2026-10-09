@@ -23,6 +23,7 @@ pub(crate) mod history;
 mod http;
 pub(crate) mod image_generation;
 pub(crate) mod image_tasks;
+mod impeccable;
 mod instructions;
 mod journal;
 pub(crate) mod journal_maintenance;
@@ -1929,6 +1930,20 @@ pub fn get_agent_activity(
     agent.activity()
 }
 
+pub(crate) async fn read_chat_snapshot(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+) -> Result<ChatSnapshot, AgentError> {
+    let state = persistence.inner().clone();
+    let agent = agent.inner().clone();
+    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    tauri::async_runtime::spawn_blocking(move || agent.read_chat(&state, &home, &conversation_id))
+        .await
+        .map_err(|_| AgentError::internal())?
+}
+
 #[tauri::command]
 pub async fn get_chat(
     app: tauri::AppHandle,
@@ -2020,6 +2035,66 @@ pub async fn start_agent_turn(
     options: TurnOptions,
     parts: Option<Vec<skill_input::MessagePart>>,
 ) -> Result<ChatSnapshot, AgentError> {
+    start_agent_turn_admitted(
+        app,
+        persistence,
+        agent,
+        conversation_id,
+        TurnSubmission {
+            content,
+            options,
+            parts,
+            use_saved_selection: true,
+        },
+    )
+    .await
+}
+
+/// Host-originated Live work uses the explicit composer choice while retaining normal admission.
+pub(crate) async fn start_agent_turn_explicit(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+    content: String,
+    options: TurnOptions,
+    parts: Option<Vec<skill_input::MessagePart>>,
+) -> Result<ChatSnapshot, AgentError> {
+    start_agent_turn_admitted(
+        app,
+        persistence,
+        agent,
+        conversation_id,
+        TurnSubmission {
+            content,
+            options,
+            parts,
+            use_saved_selection: false,
+        },
+    )
+    .await
+}
+
+struct TurnSubmission {
+    content: String,
+    options: TurnOptions,
+    parts: Option<Vec<skill_input::MessagePart>>,
+    use_saved_selection: bool,
+}
+
+async fn start_agent_turn_admitted(
+    app: tauri::AppHandle,
+    persistence: tauri::State<'_, AppState>,
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+    submission: TurnSubmission,
+) -> Result<ChatSnapshot, AgentError> {
+    let TurnSubmission {
+        content,
+        options,
+        parts,
+        use_saved_selection,
+    } = submission;
     let content = content.trim().to_owned();
     let activity = crate::updater::begin_activity(&app)
         .map_err(|message| AgentError::new("app_updating", &message))?;
@@ -2050,8 +2125,13 @@ pub async fn start_agent_turn(
         options.model_selection = None;
         state.with_connection(&home, |db| {
             provider_links::resolve_chat(db, &conversation_id, &mut options)?;
-            workflow::settings::chat::apply_saved(db, &conversation_id, &mut options)?;
-            workflow::settings::chat::capture(db, &home, &conversation_id, &mut options)
+            workflow::settings::chat::capture_for_admission(
+                db,
+                &home,
+                &conversation_id,
+                &mut options,
+                use_saved_selection,
+            )
         })?;
         workflow::validate_options(&state, &validation_oauth, &home, &options, &conversation_id)?;
         let mut parts = parts.unwrap_or_default();
@@ -3343,8 +3423,8 @@ fn run_turn_once<'a>(
                 Ok(pack) => Some(pack),
                 Err(cause) => {
                     core_activities.push(crate::core::activity::Activity::unavailable(
-                        crate::core::ComponentId::OpenDesign, "design_preparation",
-                        &format!("As referências do Open Design estão indisponíveis; o Designer continuará com os recursos do projeto. {}", cause.message),
+                        crate::core::ComponentId::Impeccable, "design_preparation",
+                        &format!("Os recursos do Impeccable estão indisponíveis; o Designer continuará com os recursos do projeto. {}", cause.message),
                     ));
                     None
                 }
@@ -3597,6 +3677,7 @@ fn run_turn_once<'a>(
                 }
                 if design.is_some() {
                     definitions.extend(crate::core::design::definitions());
+                    definitions.push(impeccable::definition());
                 }
                 definitions.extend(context.definitions(restricted));
                 definitions.extend(graft.definitions());
@@ -4596,6 +4677,11 @@ fn run_turn_once<'a>(
                                 "Coordenação indisponível neste modo.",
                             )),
                         },
+                        Some(tool_contract::Handler::Impeccable) => impeccable::execute(
+                            execution.as_ref().and_then(workflow::Execution::native_app), home,
+                            session, &owner.id, &tool.args, &options,
+                            restricted || execution.as_ref().is_some_and(workflow::Execution::design_inspection_only), signal.clone(),
+                        ).await,
                         Some(tool_contract::Handler::Design) => match &design {
                             Some(pack) => pack
                                 .execute(&tool.name, &tool.args)

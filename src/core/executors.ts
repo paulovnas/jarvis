@@ -16,6 +16,10 @@ export function supportsFastMode(providerKind: string | undefined, model: { supp
   return executorOf({ executor }) === "jarvis" && providerKind === "openai-codex" && model?.supportsFast === true;
 }
 
+export function fastModeUnavailable(providerKind: string | undefined, model: { supportsFast?: boolean } | null | undefined, executor?: Executor, modelsStale = false): boolean {
+  return !supportsFastMode(providerKind, model, executor) && !(modelsStale && providerKind === "openai-codex" && executorOf({ executor }) === "jarvis");
+}
+
 export function selectModelChoice(current: ModelChoice | null | undefined, next: ExecutionChoice, slot: "primary" | "secondary"): ModelChoice {
   if (!current) return next;
   const { fallback, ...primary } = current;

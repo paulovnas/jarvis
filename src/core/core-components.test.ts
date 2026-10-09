@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { coreFixture } from "@/test/core-fixtures";
-import { coreDownloadEventSchema, coreSnapshotSchema } from "./core-components";
+import { ACTIVE_CORE_IDS, activeCore, coreDownloadEventSchema, coreSnapshotSchema } from "./core-components";
 
 it("accepts the unified OpenMontage Core with only Context7 optional", () => {
   const snapshot = coreFixture();
@@ -16,7 +16,7 @@ it("accepts the unified OpenMontage Core with only Context7 optional", () => {
   expect(coreDownloadEventSchema.parse({ id: "graft", download: { receivedBytes: 4096, totalBytes: null } }).id).toBe("graft");
 });
 
-it.each(["openmontage", "comfyui", "graft"] as const)("requires %s for Core readiness", id => {
+it.each(["impeccable", "openmontage", "comfyui", "graft"] as const)("requires %s for Core readiness", id => {
   const snapshot = coreFixture();
   const item = snapshot.items.find(item => item.id === id)!;
   item.installed = false;
@@ -47,4 +47,14 @@ it("preserves complete historical Core snapshots without accepting a partial mig
   const legacy = { ...snapshot, items: [...snapshot.items.filter(item => item.id !== "openmontage"), { ...video, id: "hyperframes", name: "Hyperframes" }, { ...video, id: "audiovisual", name: "Audiovisual" }] };
   expect(coreSnapshotSchema.safeParse(legacy).success).toBe(true);
   expect(coreSnapshotSchema.safeParse({ ...snapshot, items: [...snapshot.items, legacy.items[legacy.items.length - 1]] }).success).toBe(false);
+});
+
+it("replaces OpenDesign in active Core resources while preserving historical snapshots", () => {
+  const snapshot = coreFixture();
+  const design = snapshot.items.find(item => item.id === "impeccable")!;
+  const legacy = { ...snapshot, items: snapshot.items.map(item => item.id === "impeccable" ? { ...item, id: "open-design", name: "Open Design" } : item) };
+  expect(ACTIVE_CORE_IDS).toContain("impeccable");
+  expect(activeCore("open-design")).toBe(false);
+  expect(coreSnapshotSchema.safeParse(legacy).success).toBe(true);
+  expect(coreSnapshotSchema.safeParse({ ...snapshot, items: [...snapshot.items, { ...design, id: "open-design" }] }).success).toBe(false);
 });

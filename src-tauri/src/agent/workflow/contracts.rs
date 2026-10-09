@@ -381,7 +381,7 @@ fn supplemental_instructions(flow: Flow, role: Role) -> Vec<InstructionSection> 
     }
     if role == Role::Designer {
         sections.push(InstructionSection {
-            title: "Open Design",
+            title: "Impeccable",
             content: crate::core::design::INSTRUCTIONS,
         });
         sections.push(InstructionSection {

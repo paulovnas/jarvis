@@ -100,7 +100,7 @@ O Core reúne dez componentes: nove essenciais ao Jarvis e o Context7, opcional.
 | [Graft](https://github.com/trailhq/Graft) | Localiza código, símbolos, APIs e dependências em um grafo estrutural privado, atualizado sob demanda. Trabalha com o Context-mode, que conserva os resultados extensos e o histórico. Não usa modelo, chave ou serviço externo. |
 | [Ponytail](https://github.com/DietrichGebert/ponytail) | Fornece diretrizes de execução e revisão de código para reduzir ruído e retrabalho. |
 | [Beads](https://github.com/gastownhall/beads) | Mantém épicos, tarefas, dependências e comentários persistentes por projeto. |
-| [Open Design](https://github.com/nexu-io/open-design) | Disponibiliza sistemas visuais, referências, templates e recursos usados pelo Designer. |
+| [Impeccable](https://github.com/pbakaus/impeccable) | Integra skills, verificações de qualidade e direção de produto ao Designer. O modo Live abre o projeto local em uma aba do chat para pedir ajustes diretamente na interface. |
 | [Context7](https://github.com/upstash/context7) | Opcional: consulta documentação e exemplos atualizados de bibliotecas. A chave fica no armazenamento seguro do sistema. |
 | [Servidores LSP](https://github.com/typescript-language-server/typescript-language-server) | Localiza definições, referências, símbolos e diagnósticos em projetos TypeScript, JavaScript e Python. Rust e Go usam a toolchain do projeto quando disponível. |
 | [Hyperframes](https://github.com/heygen-com/hyperframes) | Cria e renderiza vídeos a partir de HTML/CSS e animações GSAP. O Jarvis instala Node, Chrome e FFmpeg em um ambiente privado, sem exigir configuração manual. |

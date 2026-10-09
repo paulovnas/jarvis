@@ -78,7 +78,7 @@ export type ContextReduction = { callId: string, originalBytes: number, retained
 
 export type CoreActivityStatus = "applied" | "reused" | "unavailable" | "pending" | "issues";
 
-export type CoreActivity = { component: "context-mode" | "ponytail" | "beads" | "open-design" | "context7" | "lsp" | "hyperframes" | "audiovisual" | "openmontage" | "comfyui" | "graft" | "manual-hooks" | "hooks" | "plugins", action: string, status: CoreActivityStatus, summary: string, sources: Array<string>, fingerprint?: string | null, durationMs: number, resourceId?: string | null, resourceName?: string | null, pluginId?: string | null, };
+export type CoreActivity = { component: "context-mode" | "ponytail" | "beads" | "impeccable" | "open-design" | "context7" | "lsp" | "hyperframes" | "audiovisual" | "openmontage" | "comfyui" | "graft" | "manual-hooks" | "hooks" | "plugins", action: string, status: CoreActivityStatus, summary: string, sources: Array<string>, fingerprint?: string | null, durationMs: number, resourceId?: string | null, resourceName?: string | null, pluginId?: string | null, };
 
 export type AgentStep = { generation?: GenerationMetrics, coreActivities?: Array<CoreActivity>, contextId?: string | null, contextSearches: number, contextReductions?: Array<ContextReduction>, readReuses?: Array<ContextReduction>, loopSteers?: number, loopAvoidedCalls?: number, progressEvents?: number, evidenceEvents?: number, progressCheckpoints?: number, progressPauses?: number, retry?: RetryStatus | null, durationMs: number, text: string, summary: string, tools: Array<AgentTool>, usage: Usage | null, };
 

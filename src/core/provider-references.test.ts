@@ -95,3 +95,16 @@ it("rejects unsupported saved Fast choices and scopes replacement bindings by re
   expect(resolveChatModel(bindings, "c1", source)).toEqual(target);
   expect(resolveChatModel(bindings, "c1", fast)).toEqual(fast);
 });
+
+it.each([undefined, false])("waits for current Fast capabilities without ignoring explicit restrictions (%s)", supportsFast => {
+  const account = { ...referenceAccount(), modelsStale: true };
+  account.models = [{ ...account.models[0], supportsFast }];
+  const fast = { account: account.alias, model: account.models[0].id, reasoning: "high", serviceTier: "priority" as const };
+  expect(modelProblem(fast, [account])).toBeNull();
+  expect(modelProblem(fast, [{ ...account, modelsAvailable: false, models: [] }])).toBeNull();
+  expect(modelProblem(fast, [{ ...account, modelsStale: false }])).toContain("Selecione Normal");
+  expect(modelProblem(fast, [{ ...account, providerKind: "opencode-go" }])).toContain("Fast");
+  expect(modelProblem({ ...fast, executor: "claude" }, [account])).toContain("executor");
+  expect(modelProblem(fast, [{ ...account, enabled: false }])).toContain("desativado");
+  expect(modelProblem(fast, [{ ...account, disabledModels: [fast.model] }])).not.toBeNull();
+});

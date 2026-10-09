@@ -634,7 +634,7 @@ pub(super) fn overview(root: &Path) -> String {
     text
 }
 
-/// Reuse the canonical design documents in the existing Open Design preparation.
+/// Reuse the canonical design documents in the native Impeccable preparation.
 pub(crate) fn design_paths(root: &Path, scopes: &[String]) -> Vec<std::path::PathBuf> {
     load_index(root)
         .map(|index| {

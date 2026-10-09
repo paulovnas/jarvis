@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { turnOptionsSchema } from "./chat";
 import { modelChoiceSchema } from "./workflow-catalog";
 import { modelProblem, resolveChatModel } from "./provider-references";
-import { claudeModels, claudeRuntimeSchema, executionChoice, executionSelection, executorOf, executionLabel, executorSchema, selectModelChoice, supportsFastMode } from "./executors";
+import { claudeModels, claudeRuntimeSchema, executionChoice, executionSelection, executorOf, executionLabel, executorSchema, fastModeUnavailable, selectModelChoice, supportsFastMode } from "./executors";
 
 describe("execution choices", () => {
   it.each(["primary", "secondary"] as const)("swaps complete assignments when %s selects the opposite model", slot => {
@@ -74,4 +74,17 @@ it("requires the account catalog capability for Fast regardless of model name", 
   expect(supportsFastMode("openai-codex", { supportsFast: false })).toBe(false);
   expect(supportsFastMode("custom", { supportsFast: true })).toBe(false);
   expect(supportsFastMode("openai-codex", { supportsFast: true }, "claude")).toBe(false);
+});
+
+it.each([undefined, false])("defers unavailable Fast only for stale native OpenAI capabilities (%s)", supportsFast => {
+  const model = { supportsFast };
+  expect(fastModeUnavailable("openai-codex", model, undefined, true)).toBe(false);
+  expect(fastModeUnavailable("openai-codex", null, undefined, true)).toBe(false);
+  expect(fastModeUnavailable("openai-codex", model)).toBe(true);
+  expect(fastModeUnavailable("openai-codex", model, "claude", true)).toBe(true);
+  expect(fastModeUnavailable("openai-codex", model, "unavailable", true)).toBe(true);
+  expect(fastModeUnavailable("custom", model, undefined, true)).toBe(true);
+  expect(fastModeUnavailable(undefined, model, undefined, true)).toBe(true);
+  expect(supportsFastMode("openai-codex", model)).toBe(false);
+  expect(fastModeUnavailable("openai-codex", { supportsFast: true })).toBe(false);
 });

@@ -246,6 +246,8 @@ impl Release {
         self.tag_name
             .strip_prefix("bun-v")
             .or_else(|| self.tag_name.strip_prefix("open-design-v"))
+            .or_else(|| self.tag_name.strip_prefix("skill-v"))
+            .or_else(|| self.tag_name.strip_prefix("engine-v"))
             .or_else(|| self.tag_name.strip_prefix("@upstash/context7-mcp@"))
             .unwrap_or_else(|| self.tag_name.trim_start_matches('v'))
             .into()
@@ -452,6 +454,7 @@ fn github_rate_limit(delay: Duration) -> CoreError {
 }
 // Source releases contain media unrelated to Jarvis. Spool the bounded archive
 // to disk instead of retaining hundreds of MB while building the resource index.
+#[cfg(test)]
 async fn source_archive(
     url: &str,
     directory: &Path,
@@ -521,6 +524,32 @@ fn context7_release(releases: Vec<Release>) -> Result<Release, CoreError> {
         .ok_or_else(|| error("Nenhuma release estável do Context7 MCP disponível."))
 }
 pub(super) async fn component_release(id: ComponentId) -> Result<Release, CoreError> {
+    if id == ComponentId::Impeccable {
+        let metadata = json("https://impeccable.style/api/version").await?;
+        let version = metadata["skills"]
+            .as_str()
+            .ok_or_else(|| error("A versão das skills Impeccable não está disponível."))?;
+        let parsed = semver::Version::parse(version)
+            .map_err(|_| error("A versão das skills Impeccable é inválida."))?;
+        if !parsed.pre.is_empty() || !parsed.build.is_empty() {
+            return Err(error(
+                "Nenhuma versão estável das skills Impeccable disponível.",
+            ));
+        }
+        let release: Release = serde_json::from_value(
+            json(&format!(
+                "https://api.github.com/repos/pbakaus/impeccable/releases/tags/skill-v{version}"
+            ))
+            .await?,
+        )
+        .map_err(|_| error("A release das skills Impeccable é inválida."))?;
+        if release.tag_name != format!("skill-v{version}") || release.draft || release.prerelease {
+            return Err(error(
+                "A release das skills Impeccable diverge da versão publicada.",
+            ));
+        }
+        return Ok(release);
+    }
     if id == ComponentId::Openmontage {
         return Ok(Release {
             tag_name: super::openmontage::VERSION.into(),
@@ -1332,36 +1361,111 @@ pub(super) async fn install(
             lsp::verify(destination).await?;
         }
         ComponentId::OpenDesign => {
-            stage("Baixando recursos de design");
-            let commit = json(&format!(
-                "https://api.github.com/repos/{}/commits/{}",
-                id.repository(),
-                release.tag_name
+            return Err(error(
+                "O Open Design foi substituído pelo Impeccable. Instale o novo componente do Core.",
             ))
-            .await?;
-            let sha = commit["sha"]
-                .as_str()
-                .filter(|sha| sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit()))
-                .ok_or_else(|| error("Referência do Open Design inválida."))?
-                .to_owned();
-            let (archive, digest) = source_archive(
-                &format!(
-                    "https://codeload.github.com/{}/tar.gz/{sha}",
-                    id.repository()
-                ),
-                &base,
-                &progress,
+        }
+        ComponentId::Impeccable => {
+            stage("Baixando engine Impeccable");
+            let engine: Release = serde_json::from_value(
+                json(&format!(
+                    "https://api.github.com/repos/pbakaus/impeccable/releases/tags/engine-v{}",
+                    design::ENGINE_VERSION
+                ))
+                .await?,
             )
-            .await?;
-            stage("Indexando sistemas, templates e guias");
-            let directory = destination.to_path_buf();
-            let expected = version.clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                design::prepare(archive.reopen()?, &directory, &expected, &sha, &digest)
-            })
-            .await
-            .map_err(|_| error("Não foi possível preparar os recursos de design."))??;
-            required.extend(["package.json", "LICENSE", "jarvis-design.json"].map(String::from));
+            .map_err(|_| error("A release do engine Impeccable é inválida."))?;
+            if engine.tag_name != format!("engine-v{}", design::ENGINE_VERSION)
+                || engine.draft
+                || engine.prerelease
+            {
+                return Err(error(
+                    "A release do engine Impeccable diverge da versão validada.",
+                ));
+            }
+            let (os, arch) = platform()?;
+            let arch = if arch == "amd64" { "x64" } else { arch };
+            let name = format!(
+                "impeccable-{os}-{arch}{}",
+                if os == "windows" { ".exe" } else { "" }
+            );
+            let asset = engine
+                .assets
+                .iter()
+                .find(|asset| asset.name == name)
+                .ok_or_else(|| error("O Impeccable não oferece engine para este sistema."))?;
+            let source = format!(
+                "https://github.com/pbakaus/impeccable/releases/download/engine-v{}/",
+                design::ENGINE_VERSION
+            );
+            if !asset.browser_download_url.starts_with(&source) {
+                return Err(error("A origem do engine Impeccable é inválida."));
+            }
+            let digest = asset
+                .digest
+                .as_deref()
+                .filter(|digest| digest.starts_with("sha256:"))
+                .ok_or_else(|| error("O engine Impeccable não oferece checksum SHA-256."))?;
+            let bytes =
+                download_with_progress(&asset.browser_download_url, DOWNLOAD_LIMIT, &progress)
+                    .await?;
+            check_hash(&bytes, digest)?;
+            let sidecar = download(&format!("{}.sha256", asset.browser_download_url), 1024).await?;
+            if std::str::from_utf8(&sidecar)
+                .ok()
+                .and_then(|sum| sum.split_whitespace().next())
+                != digest.strip_prefix("sha256:")
+            {
+                return Err(error(
+                    "O checksum publicado do engine Impeccable diverge da release.",
+                ));
+            }
+            let binary = destination.join(design::executable_relative());
+            fs::create_dir_all(
+                binary
+                    .parent()
+                    .ok_or_else(|| error("Pasta do engine inválida."))?,
+            )?;
+            fs::write(&binary, bytes)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))?;
+            }
+            fs::create_dir_all(destination.join(".agents/skills/impeccable"))?;
+            stage("Validando identidade do engine");
+            for (argument, expected) in [
+                (
+                    "engine-probe",
+                    format!("impeccable-engine {}", design::ENGINE_VERSION),
+                ),
+                ("--version", design::CLI_VERSION.into()),
+            ] {
+                let mut probe = design::command_at(destination, destination)?;
+                probe.arg(argument);
+                if command(probe, 20).await?.trim() != expected {
+                    return Err(error(
+                        "O engine Impeccable não corresponde à versão validada.",
+                    ));
+                }
+            }
+            stage("Baixando e verificando assinatura das skills Impeccable");
+            let mut install = design::command_at(destination, destination)?;
+            install.args([
+                "install",
+                "-y",
+                "--providers=codex",
+                "--scope=project",
+                "--no-hooks",
+            ]);
+            command(install, 240).await?;
+            stage("Preparando referências e playbooks Impeccable");
+            required.extend(design::prepare(
+                destination,
+                &version,
+                digest.strip_prefix("sha256:").unwrap_or_default(),
+            )?);
+            design::verify(destination, &version).await?;
         }
         ComponentId::ContextMode => {
             stage("Baixando runtime Node");
@@ -1997,11 +2101,11 @@ mod tests {
     }
     #[tokio::test]
     #[ignore = "Downloads the official release into a disposable isolated Core installation"]
-    async fn official_open_design_install() {
+    async fn official_impeccable_install() {
         let home = tempfile::tempdir().unwrap();
         let version = install(
             home.path(),
-            ComponentId::OpenDesign,
+            ComponentId::Impeccable,
             |stage| eprintln!("{stage}"),
             |_| {},
         )
@@ -2012,21 +2116,103 @@ mod tests {
             .execute("design_search", &serde_json::json!({"query":""}))
             .unwrap();
         let result: Value = serde_json::from_str(&result).unwrap();
-        assert!(result["total"].as_u64().unwrap() > 200);
+        assert!(result["total"].as_u64().unwrap() > 20);
+        assert!(design::skill_directory(home.path())
+            .unwrap()
+            .join("scripts/live-browser.js")
+            .is_file());
+        assert!(!home.path().join(".codex/hooks.json").exists());
+        let reference = pack
+            .execute(
+                "design_read",
+                &serde_json::json!({"id":"impeccable/craft-floor","file":null}),
+            )
+            .unwrap();
+        let reference: Value = serde_json::from_str(&reference).unwrap();
+        let reference = pack
+            .execute(
+                "design_read",
+                &serde_json::json!({"id":"impeccable/craft-floor","file":reference["files"][0]}),
+            )
+            .unwrap();
+        let reference: Value = serde_json::from_str(&reference).unwrap();
+        assert!(!reference["content"].as_str().unwrap().is_empty());
+        let project = tempfile::tempdir().unwrap();
+        fs::write(
+            project.path().join("PRODUCT.md"),
+            "# Product\nA compact developer tool.",
+        )
+        .unwrap();
+        fs::write(
+            project.path().join("DESIGN.md"),
+            "# Design\nReadable graphite surfaces and blue primary controls.",
+        )
+        .unwrap();
+        fs::write(project.path().join("index.html"), "<!doctype html><html><body><main><h1>Developer tool</h1><button>Continue</button></main></body></html>").unwrap();
+        let mut context = design::command(home.path(), project.path()).unwrap();
+        context.arg("context");
+        let context = command(context, 20).await.unwrap();
+        assert!(context.contains("developer tool"));
+        for args in [
+            ["doctor", "--json"].as_slice(),
+            ["detect", "--json", "index.html"].as_slice(),
+        ] {
+            let mut inspection = design::command(home.path(), project.path()).unwrap();
+            inspection.args(args);
+            let output = tokio::time::timeout(Duration::from_secs(20), inspection.output())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                serde_json::from_slice::<Value>(&output.stdout).is_ok(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let mut hook = design::command(home.path(), project.path()).unwrap();
+        hook.arg("hook");
+        command_input(&mut hook, 20, Some(br#"{"hook_event_name":"PostToolUse","tool_name":"apply_patch","tool_input":{"patch":""}}"#.to_vec())).await.unwrap();
+        let mut live = design::command(home.path(), project.path()).unwrap();
+        live.arg("live-status");
+        let live = command(live, 20).await.unwrap();
+        serde_json::from_str::<Value>(&live).unwrap();
+        fs::create_dir_all(project.path().join(".impeccable/live")).unwrap();
+        fs::write(project.path().join(".impeccable/live/config.json"), serde_json::json!({
+            "files":["index.html"], "insertBefore":"</body>", "commentSyntax":"html", "cspChecked":true
+        }).to_string()).unwrap();
+        let mut live = design::command(home.path(), project.path()).unwrap();
+        live.arg("live");
+        let boot = command(live, 30).await;
+        // Stop before checking the bootstrap result so a failing smoke cannot
+        // leave a detached helper behind in the disposable project.
+        let mut stop = design::command(home.path(), project.path()).unwrap();
+        stop.args(["live-server", "stop"]);
+        command(stop, 20).await.unwrap();
+        let boot: Value = serde_json::from_str(&boot.unwrap()).unwrap();
+        assert_eq!(boot["ok"], true, "{boot}");
+        assert!(boot["serverPort"].as_u64().unwrap() > 0);
+        assert!(!fs::read_to_string(project.path().join("index.html"))
+            .unwrap()
+            .contains("live.js"));
         eprintln!(
-            "Open Design {version}: {} resources verified",
+            "Impeccable {version}: {} resources verified",
             result["total"]
         );
     }
     #[test]
-    fn open_design_release_prefix_has_a_semantic_version() {
+    fn distinct_impeccable_release_prefixes_have_semantic_versions() {
         let release = Release {
-            tag_name: "open-design-v0.21.1".into(),
+            tag_name: "skill-v4.5.1".into(),
             assets: vec![],
             draft: false,
             prerelease: false,
         };
-        assert_eq!(release.version(), "0.21.1");
+        assert_eq!(release.version(), "4.5.1");
+        let engine = Release {
+            tag_name: "engine-v0.1.14".into(),
+            ..release
+        };
+        assert_eq!(engine.version(), "0.1.14");
     }
     #[test]
     fn context7_updates_ignore_other_packages_and_prereleases() {

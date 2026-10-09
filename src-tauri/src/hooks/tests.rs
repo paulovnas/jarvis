@@ -19,7 +19,11 @@ fn manual_edits_are_persisted_and_native_hooks_remain_read_only() {
     let initial = load(&state, home.path()).unwrap();
     assert_eq!(initial.revision, 0);
     assert!(initial.hooks.is_empty());
-    assert_eq!(initial.native_hooks.len(), 9);
+    assert_eq!(initial.native_hooks.len(), 12);
+    assert!(initial
+        .native_hooks
+        .iter()
+        .any(|hook| hook.id == "native-impeccable-edit" && hook.event == Event::PostToolUse));
     let created = upsert(&state, home.path(), hook(), 0).unwrap();
     assert_eq!(created.revision, 1);
     assert_eq!(read(home.path()).unwrap(), created);

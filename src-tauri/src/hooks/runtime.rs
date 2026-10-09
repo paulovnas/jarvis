@@ -47,6 +47,7 @@ struct BoundHook {
 }
 enum Handler {
     Command,
+    Impeccable,
     Mcp {
         server: String,
         tool: String,
@@ -101,6 +102,9 @@ impl Runtime {
             .filter(|source| source.trusted)
         {
             runtime.hooks.extend(plugin_hooks(&source)?);
+        }
+        if crate::core::design::skill_directory(home).is_ok() {
+            prefer_native_impeccable(&mut runtime.hooks);
         }
         Ok(runtime)
     }
@@ -162,13 +166,21 @@ impl Runtime {
         started: Instant,
     ) {
         let summary: String = summary.chars().take(1_200).collect();
-        let mut activity = Activity::hook(
-            event.as_str(),
-            &summary,
-            &bound.hook.id,
-            &bound.hook.name,
-            bound.plugin.as_ref().map(|source| source.plugin_id.clone()),
-        );
+        let mut activity = if matches!(bound.handler, Handler::Impeccable) {
+            Activity::new(
+                crate::core::ComponentId::Impeccable,
+                event.as_str(),
+                &summary,
+            )
+        } else {
+            Activity::hook(
+                event.as_str(),
+                &summary,
+                &bound.hook.id,
+                &bound.hook.name,
+                bound.plugin.as_ref().map(|source| source.plugin_id.clone()),
+            )
+        };
         activity.status = status;
         activity.duration_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
         if let Ok(mut pending) = self.activity.lock() {
@@ -225,7 +237,36 @@ impl Runtime {
         let hooks: Vec<_> = self
             .hooks
             .iter()
-            .filter(|hook| hook.hook.matches(event, matcher))
+            .filter(|hook| {
+                hook.hook.matches(
+                    if matches!(hook.handler, Handler::Impeccable) {
+                        impeccable_event(event)
+                    } else {
+                        event
+                    },
+                    matcher,
+                )
+            })
+            .filter(|hook| {
+                !matches!(hook.handler, Handler::Impeccable)
+                    || match impeccable_event(event) {
+                        Event::PostToolUse => {
+                            if !ui_edit(&payload) {
+                                false
+                            } else {
+                                self.lifecycle.fetch_or(256, Ordering::Relaxed);
+                                true
+                            }
+                        }
+                        Event::Stop => self.lifecycle.load(Ordering::Relaxed) & 256 != 0,
+                        _ => true,
+                    }
+            })
+            .filter(|hook| {
+                !matches!(hook.handler, Handler::Impeccable)
+                    || impeccable_event(event) != Event::Stop
+                    || self.lifecycle.fetch_or(128, Ordering::Relaxed) & 128 == 0
+            })
             .collect();
         if hooks.is_empty() {
             return Ok(Outcome::default());
@@ -285,6 +326,18 @@ impl Runtime {
                     )
                     .await
                 }
+                Handler::Impeccable => match self
+                    .home
+                    .as_deref()
+                    .map(|home| crate::core::design::command(home, &self.root))
+                {
+                    Some(Ok(mut command)) => {
+                        command.arg("hook").env("IMPECCABLE_HOOK_HARNESS", "codex");
+                        let input = impeccable_input(event, &payload);
+                        execute_process(command, &input, hook.timeout_seconds, signal.clone()).await
+                    }
+                    _ => Ok(Err("O runtime do Impeccable está indisponível.".into())),
+                },
                 Handler::Mcp {
                     server,
                     tool,
@@ -322,7 +375,12 @@ impl Runtime {
                 Ok(output) => {
                     let successful_exit = output.code == Some(0);
                     let diagnostics_before = outcome.diagnostics.len();
-                    parse(event, hook, output, &mut outcome);
+                    let native_diagnostic = if matches!(bound.handler, Handler::Impeccable) {
+                        parse_impeccable(impeccable_event(event), hook, output, &mut outcome)
+                    } else {
+                        parse(event, hook, output, &mut outcome);
+                        false
+                    };
                     if outcome.denial.is_some() {
                         (Status::Issues, "O hook bloqueou a ação.".into())
                     } else if outcome.stop_reason.is_some() {
@@ -330,7 +388,10 @@ impl Runtime {
                             Status::Issues,
                             "O hook solicitou encerrar a execução.".into(),
                         )
-                    } else if outcome.diagnostics.len() > diagnostics_before {
+                    } else if !successful_exit
+                        || native_diagnostic
+                        || outcome.diagnostics.len() > diagnostics_before
+                    {
                         (
                             if successful_exit {
                                 Status::Issues
@@ -349,9 +410,11 @@ impl Runtime {
                     }
                 }
                 Err(message) => {
-                    outcome
-                        .diagnostics
-                        .push(format!("{}: {message}", hook.name));
+                    if !matches!(bound.handler, Handler::Impeccable) {
+                        outcome
+                            .diagnostics
+                            .push(format!("{}: {message}", hook.name));
+                    }
                     (
                         Status::Unavailable,
                         "O hook não concluiu; consulte o diagnóstico registrado.".into(),
@@ -477,14 +540,39 @@ async fn execute_with_environment(
     hook: &Hook,
     root: &Path,
     input: &[u8],
-    mut signal: watch::Receiver<bool>,
+    signal: watch::Receiver<bool>,
     environment: &std::collections::BTreeMap<String, String>,
 ) -> Result<Result<Output, String>, Cancelled> {
-    let mut child =
+    let child =
         match crate::agent::shell::spawn_hook_with_environment(&hook.command, root, environment) {
             Ok(child) => child,
             Err(_) => return Ok(Err("Não foi possível iniciar o comando.".into())),
         };
+    execute_child(child, input, hook.timeout_seconds, signal).await
+}
+
+pub(crate) async fn execute_process(
+    command: tokio::process::Command,
+    input: &[u8],
+    timeout_seconds: u64,
+    signal: watch::Receiver<bool>,
+) -> Result<Result<Output, String>, Cancelled> {
+    let child = match crate::agent::shell::spawn_process_with_stdin(
+        command,
+        std::process::Stdio::piped(),
+    ) {
+        Ok(child) => child,
+        Err(_) => return Ok(Err("Não foi possível iniciar o comando.".into())),
+    };
+    execute_child(child, input, timeout_seconds, signal).await
+}
+
+async fn execute_child(
+    mut child: Box<dyn process_wrap::tokio::ChildWrapper>,
+    input: &[u8],
+    timeout_seconds: u64,
+    mut signal: watch::Receiver<bool>,
+) -> Result<Result<Output, String>, Cancelled> {
     let (Some(stdout), Some(stderr), Some(mut stdin)) = (
         child.stdout().take(),
         child.stderr().take(),
@@ -525,7 +613,7 @@ async fn execute_with_environment(
     };
     let result = tokio::select! {
         _ = cancelled(&mut signal) => Err(Cancelled),
-        result = tokio::time::timeout(Duration::from_secs(hook.timeout_seconds), work) => Ok(result.unwrap_or_else(|_| Err("Tempo limite atingido; o processo foi interrompido. Confira eventuais efeitos antes de repetir.".into()))),
+        result = tokio::time::timeout(Duration::from_secs(timeout_seconds), work) => Ok(result.unwrap_or_else(|_| Err("Tempo limite atingido; o processo foi interrompido. Confira eventuais efeitos antes de repetir.".into()))),
     };
     if !matches!(&result, Ok(Ok(_))) {
         // Tokio's kill_on_drop terminates only the direct process on Unix.
@@ -543,6 +631,168 @@ fn append(outcome: &mut Outcome, text: &str) {
         outcome.additional_context =
             bounded(&format!("{}\n{}", outcome.additional_context, text.trim()));
     }
+}
+
+fn impeccable_hooks() -> Vec<BoundHook> {
+    [
+        (Event::SessionStart, 5),
+        (Event::PostToolUse, 5),
+        (Event::Stop, 30),
+    ]
+    .into_iter()
+    .map(|(event, timeout_seconds)| BoundHook {
+        hook: Hook {
+            id: format!("native-impeccable-{}", event.as_str()),
+            name: format!("Impeccable: {}", event.as_str()),
+            event,
+            command: "Impeccable Core: hook".into(),
+            matcher: if event == Event::PostToolUse {
+                "write|edit|apply_patch|Write|Edit".into()
+            } else {
+                String::new()
+            },
+            timeout_seconds,
+            enabled: true,
+        },
+        handler: Handler::Impeccable,
+        environment: Default::default(),
+        plugin: None,
+    })
+    .collect()
+}
+
+fn impeccable_event(event: Event) -> Event {
+    // A delegated edit deserves the same deep review; this has no notification side effects.
+    if event == Event::SubagentStop {
+        Event::Stop
+    } else {
+        event
+    }
+}
+
+fn ui_edit(payload: &Value) -> bool {
+    let input = &payload["tool_input"];
+    let ui_path = |path: &str| {
+        Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "html"
+                        | "htm"
+                        | "css"
+                        | "scss"
+                        | "sass"
+                        | "less"
+                        | "jsx"
+                        | "tsx"
+                        | "vue"
+                        | "svelte"
+                        | "astro"
+                        | "svg"
+                )
+            })
+    };
+    if ["path", "file_path"]
+        .into_iter()
+        .filter_map(|key| input[key].as_str())
+        .any(ui_path)
+    {
+        return true;
+    }
+    if let Some(patch) = input["patchText"]
+        .as_str()
+        .or_else(|| input["command"].as_str())
+    {
+        if patch
+            .lines()
+            .filter_map(|line| {
+                ["*** Add File: ", "*** Update File: ", "*** Move to: "]
+                    .into_iter()
+                    .find_map(|prefix| line.strip_prefix(prefix))
+            })
+            .any(ui_path)
+        {
+            return true;
+        }
+    }
+    // Plain JS/TS can contain UI, but backend edits must not start an unsolicited design loop.
+    let script = ["path", "file_path"]
+        .into_iter()
+        .filter_map(|key| input[key].as_str())
+        .any(|path| {
+            Path::new(path)
+                .extension()
+                .is_some_and(|extension| extension == "js" || extension == "ts")
+        });
+    script
+        && ["content", "newText"]
+            .into_iter()
+            .filter_map(|key| input[key].as_str())
+            .any(|text| {
+                [
+                    "className",
+                    "innerHTML",
+                    "createElement(",
+                    "styled.",
+                    "<div",
+                    "<button",
+                    "<input",
+                    "<main",
+                ]
+                .into_iter()
+                .any(|marker| text.contains(marker))
+            })
+}
+
+fn impeccable_input(event: Event, payload: &Value) -> Vec<u8> {
+    let mut payload = payload.clone();
+    payload["hook_event_name"] = json!(impeccable_event(event));
+    if payload["tool_name"] == "apply_patch" {
+        if let Some(patch) = payload["tool_input"]["patchText"]
+            .as_str()
+            .map(str::to_owned)
+        {
+            payload["tool_input"]["command"] = json!(patch);
+            if let Some(input) = payload["tool_input"].as_object_mut() {
+                input.remove("patchText");
+            }
+        }
+    }
+    serde_json::to_vec(&payload).unwrap_or_default()
+}
+
+fn prefer_native_impeccable(hooks: &mut Vec<BoundHook>) {
+    hooks
+        .retain(|bound| bound.plugin.is_none() || !equivalent_impeccable_hook(&bound.hook.command));
+    hooks.extend(impeccable_hooks());
+}
+
+fn equivalent_impeccable_hook(command: &str) -> bool {
+    let command = command.replace('\\', "/");
+    command.contains("skills/impeccable/scripts/")
+        && (command.contains("impeccable") && command.trim_end().ends_with(" hook")
+            || command.contains("hook.mjs"))
+}
+
+fn parse_impeccable(event: Event, hook: &Hook, output: Output, outcome: &mut Outcome) -> bool {
+    let mut advisory = Outcome::default();
+    parse(event, hook, output, &mut advisory);
+    // Clean scans and detector infrastructure are Core receipts, not user-facing tasks.
+    if !advisory
+        .additional_context
+        .to_ascii_lowercase()
+        .contains("no deterministic")
+    {
+        append(outcome, &advisory.additional_context);
+    }
+    let diagnostic = !advisory.diagnostics.is_empty();
+    if event == Event::Stop {
+        // The runtime gives this native review one correction pass; it cannot trap a turn.
+        outcome.denial = advisory.denial;
+    }
+    diagnostic
 }
 
 fn parse(event: Event, hook: &Hook, output: Output, outcome: &mut Outcome) {
@@ -730,6 +980,7 @@ fn plugin_hooks(source: &crate::plugins::HookSource) -> Result<Vec<BoundHook>, H
                         tool,
                         input,
                     } => format!("MCP {server}/{tool}: {input}"),
+                    Handler::Impeccable => unreachable!("native hooks are not plugin entries"),
                 };
                 let digest = Sha256::digest(
                     format!(
@@ -766,6 +1017,198 @@ fn plugin_hooks(source: &crate::plugins::HookSource) -> Result<Vec<BoundHook>, H
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_quality_hooks_adapt_patch_and_child_completion_without_changing_manual_contracts() {
+        let patch =
+            "*** Begin Patch\n*** Update File: src/Screen.tsx\n@@\n-Old\n+New\n*** End Patch";
+        let payload = json!({"tool_name":"apply_patch","tool_input":{"patchText":patch},"session_id":"child","turn_id":"turn"});
+        assert!(ui_edit(&payload));
+        let adapted: Value =
+            serde_json::from_slice(&impeccable_input(Event::PostToolUse, &payload)).unwrap();
+        assert_eq!(adapted["tool_input"]["command"], patch);
+        assert_eq!(adapted["session_id"], "child");
+        assert!(payload["tool_input"].get("command").is_none());
+        let adapted: Value =
+            serde_json::from_slice(&impeccable_input(Event::SubagentStop, &payload)).unwrap();
+        assert_eq!(adapted["hook_event_name"], "Stop");
+        assert!(!ui_edit(
+            &json!({"tool_name":"edit","tool_input":{"path":"src/database.ts","newText":"return rows;"}})
+        ));
+        assert!(ui_edit(
+            &json!({"tool_name":"write","tool_input":{"path":"src/dom.js","content":"node.innerHTML = '<button>Go</button>';"}})
+        ));
+    }
+
+    #[tokio::test]
+    async fn native_design_review_is_internal_once_and_only_after_ui_edits() {
+        let root = tempfile::tempdir().unwrap();
+        let mut runtime = Runtime::with_hooks(vec![], root.path(), "session", "turn");
+        runtime.hooks = impeccable_hooks();
+        let (_sender, signal) = watch::channel(false);
+        for (event, payload) in [
+            (Event::Stop, json!({})),
+            (
+                Event::PostToolUse,
+                json!({"tool_name":"write","tool_input":{"path":"server.rs","content":"fn main() {}"}}),
+            ),
+            (Event::SubagentStop, json!({"agent_type":"designer"})),
+        ] {
+            runtime
+                .run(event, payload, signal.clone())
+                .await
+                .unwrap_or_else(|_| panic!("cancelled"));
+            assert!(runtime.take_activity().is_empty());
+        }
+        let outcome = runtime
+            .run(
+                Event::PostToolUse,
+                json!({"tool_name":"write","tool_input":{"path":"src/Screen.tsx"}}),
+                signal.clone(),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("cancelled"));
+        assert!(
+            outcome.diagnostics.is_empty(),
+            "Unavailable native engines remain internal"
+        );
+        assert!(outcome.additional_context.is_empty());
+        let receipts = runtime.take_activity();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(
+            receipts[0].component,
+            crate::core::ComponentId::Impeccable.into()
+        );
+        assert_eq!(receipts[0].status, Status::Unavailable);
+        runtime
+            .run(Event::SubagentStop, json!({}), signal.clone())
+            .await
+            .unwrap_or_else(|_| panic!("cancelled"));
+        let receipts = runtime.take_activity();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].action, "SubagentStop");
+        runtime
+            .run(Event::SubagentStop, json!({}), signal)
+            .await
+            .unwrap_or_else(|_| panic!("cancelled"));
+        assert!(runtime.take_activity().is_empty());
+    }
+
+    #[test]
+    fn native_design_hints_suppress_clean_and_infrastructure_output_but_keep_real_findings() {
+        let hook = impeccable_hooks().remove(1).hook;
+        let output = |value: Value| Output {
+            code: Some(0),
+            stdout: value.to_string(),
+            stderr: String::new(),
+            truncated: false,
+        };
+        let mut outcome = Outcome::default();
+        assert!(!parse_impeccable(
+            Event::PostToolUse,
+            &hook,
+            output(
+                json!({"hookSpecificOutput":{"additionalContext":"No deterministic design findings."}})
+            ),
+            &mut outcome
+        ));
+        assert!(outcome.additional_context.is_empty());
+        parse_impeccable(
+            Event::PostToolUse,
+            &hook,
+            output(
+                json!({"hookSpecificOutput":{"additionalContext":"Screen.tsx: primary action is unreadable."}}),
+            ),
+            &mut outcome,
+        );
+        assert!(outcome
+            .additional_context
+            .contains("primary action is unreadable"));
+        assert!(parse_impeccable(
+            Event::PostToolUse,
+            &hook,
+            Output {
+                code: Some(1),
+                stdout: String::new(),
+                stderr: "Missing engine dependency".into(),
+                truncated: false
+            },
+            &mut outcome
+        ));
+        assert!(outcome.diagnostics.is_empty());
+        parse_impeccable(
+            Event::Stop,
+            &hook,
+            output(
+                json!({"decision":"block","reason":"Fix the unreadable primary action in the requested screen."}),
+            ),
+            &mut outcome,
+        );
+        assert!(outcome
+            .denial
+            .unwrap()
+            .contains("unreadable primary action"));
+    }
+
+    #[test]
+    fn native_quality_hooks_replace_equivalent_plugin_hooks_and_preserve_other_hooks() {
+        let root = tempfile::tempdir().unwrap();
+        let source = crate::plugins::HookSource {
+            plugin_id: "impeccable@local".into(),
+            plugin_hash: "immutable".into(),
+            component_id: "hooks:main".into(),
+            name: "Impeccable".into(),
+            definition: json!({"hooks":{"PostToolUse":[{"matcher":"Edit|Write","hooks":[{"type":"command","command":"\"${CODEX_PLUGIN_ROOT}/skills/impeccable/scripts/impeccable\" hook"},{"type":"command","command":"echo another hook"}]}]}}),
+            root: root.path().into(),
+            data_path: root.path().join("data"),
+            trusted: true,
+        };
+        let mut hooks = plugin_hooks(&source).unwrap();
+        let manual = Hook {
+            id: "manual".into(),
+            name: "Manual design check".into(),
+            event: Event::PostToolUse,
+            command: "\"/local/skills/impeccable/scripts/impeccable\" hook".into(),
+            matcher: String::new(),
+            timeout_seconds: 5,
+            enabled: true,
+        };
+        hooks.extend(Runtime::with_hooks(vec![manual], root.path(), "s", "t").hooks);
+        prefer_native_impeccable(&mut hooks);
+        assert_eq!(hooks.len(), 5);
+        assert!(hooks
+            .iter()
+            .any(|bound| bound.hook.command == "echo another hook"));
+        assert!(hooks.iter().any(|bound| bound.hook.id == "manual"));
+        assert_eq!(
+            hooks
+                .iter()
+                .filter(|bound| matches!(bound.handler, Handler::Impeccable))
+                .count(),
+            3
+        );
+        assert!(equivalent_impeccable_hook(
+            "\"C:\\plugin\\skills\\impeccable\\scripts\\impeccable.cmd\" hook"
+        ));
+        assert!(!equivalent_impeccable_hook("echo unrelated hook"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn managed_native_process_preserves_literal_arguments() {
+        let root = tempfile::tempdir().unwrap();
+        let literal = "hello; touch escaped; $(touch another)";
+        let mut command = tokio::process::Command::new("/usr/bin/printf");
+        command.current_dir(root.path()).args(["%s", literal]);
+        let (_sender, signal) = watch::channel(false);
+        let output = execute_process(command, b"", 5, signal)
+            .await
+            .unwrap_or_else(|_| panic!("cancelled"))
+            .unwrap();
+        assert_eq!(output.stdout, literal);
+        assert!(!root.path().join("escaped").exists());
+        assert!(!root.path().join("another").exists());
+    }
     #[test]
     fn mcp_hook_input_templates_preserve_json_types_and_missing_fields_never_dispatch() {
         let event = json!({"hook_event_name":"PreToolUse","tool_input":{"count":3,"path":"app.ts","safe":true}});
@@ -1329,7 +1772,7 @@ mod tests {
                 assert_eq!(tool, "inspect");
                 assert_eq!(input["path"], "x");
             }
-            Handler::Command => panic!("MCP handler lost"),
+            Handler::Command | Handler::Impeccable => panic!("MCP handler lost"),
         }
     }
 }

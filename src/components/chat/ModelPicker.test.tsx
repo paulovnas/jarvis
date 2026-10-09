@@ -139,6 +139,45 @@ it("requires an advertised capability and lets unsupported saved Fast return to 
   expect(select).toHaveBeenCalledExactlyOnceWith({ model: "work/sol", reasoning: "high" });
 });
 
+it.each([undefined, false])("keeps saved Fast neutral until current OpenAI capabilities arrive (%s)", async supportsFast => {
+  const user = userEvent.setup(), select = vi.fn();
+  const group = { ...fastGroups[0], modelsStale: true, models: [{ ...fastGroups[0].models[0], supportsFast }] };
+  const selection = { model: "work/sol", reasoning: "high", serviceTier: "priority" as const };
+  const view = render(<ModelPicker modelGroups={[group]} selection={selection} onSelect={select} allowFastMode />);
+  const trigger = screen.getByRole("button", { name: "Selecionar modelo de IA" });
+  expect(trigger).toHaveTextContent("Sol · Alto · Fast");
+  expect(trigger).not.toHaveTextContent("indisponível");
+  expect(trigger).not.toHaveAttribute("aria-invalid", "true");
+  await openSpeed(user);
+  expect(await screen.findByRole("menuitemradio", { name: "Fast" })).toHaveAttribute("aria-disabled", "true");
+  await user.click(screen.getByRole("menuitemradio", { name: "Fast" }));
+  expect(select).not.toHaveBeenCalled();
+  view.rerender(<ModelPicker modelGroups={[{ ...group, modelsStale: false }]} selection={selection} onSelect={select} allowFastMode />);
+  expect(trigger).toHaveTextContent("Fast indisponível");
+  expect(trigger).toHaveAttribute("aria-invalid", "true");
+});
+
+it.each([
+  { providerKind: "custom", executor: undefined },
+  { providerKind: "opencode-go", executor: undefined },
+  { providerKind: "openai-codex", executor: "claude" as const },
+])("reports incompatible saved Fast even with a stale $providerKind catalog and $executor executor", ({ providerKind, executor }) => {
+  const group = { ...fastGroups[0], providerKind, executor, modelsStale: true };
+  render(<ModelPicker modelGroups={[group]} selection={{ executor, model: "work/sol", reasoning: "high", serviceTier: "priority" }} onSelect={vi.fn()} allowFastMode />);
+  const trigger = screen.getByRole("button", { name: "Selecionar modelo de IA" });
+  expect(trigger).toHaveTextContent("Fast indisponível");
+  expect(trigger).toHaveAttribute("aria-invalid", "true");
+});
+
+it("does not offer Fast activation from stale unsupported metadata", async () => {
+  const user = userEvent.setup();
+  const group = { ...fastGroups[0], modelsStale: true, models: [{ ...fastGroups[0].models[0], supportsFast: false }] };
+  render(<ModelPicker modelGroups={[group]} selection={{ model: "work/sol", reasoning: "high" }} onSelect={vi.fn()} allowFastMode />);
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  expect(await screen.findByRole("menuitem", { name: "Trabalho" })).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: /Velocidade/ })).not.toBeInTheDocument();
+});
+
 it("keeps Fast on an effort change and clears it on an incompatible provider switch", async () => {
   const user = userEvent.setup(), select = vi.fn();
   render(<ModelPicker modelGroups={fastGroups} selection={{ model: "work/sol", reasoning: "high", serviceTier: "priority" }} onSelect={select} allowFastMode />);

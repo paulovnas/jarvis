@@ -34,7 +34,7 @@ export function useProviderReferences(accounts: ProviderAccount[], ready: boolea
     if (issues.length) toast.error(`${issues.length} ${issues.length === 1 ? "configuração precisa" : "configurações precisam"} de outro provedor ou modelo`, { id: "provider-invalid-models", description: issues.slice(0, 3).map(({ item, problem }) => `${item.label}: ${problem}`).join(" ") + (issues.length > 3 ? ` E mais ${issues.length - 3}.` : ""), duration: 10000 });
     else toast.dismiss("provider-invalid-models");
   }, [accounts, ready, loading, data]);
-  return { bindings: data?.bindings ?? emptyBindings, loading: loading || settledAccounts !== accounts };
+  return { bindings: data?.bindings ?? emptyBindings, loading: settledAccounts !== accounts };
 }
 
 export function useModelProblemNotice(label: string, problem: string | null, key = label) {

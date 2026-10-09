@@ -1,171 +1,134 @@
 use super::*;
-use flate2::{write::GzEncoder, Compression};
 
-fn archive_with_version(version: &str, extra: &[(&str, &str)]) -> Vec<u8> {
-    let mut archive = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::fast()));
-    let package = format!(r#"{{"name":"open-design","version":"{version}"}}"#);
-    for (path, content) in [
-        ("package.json", package.as_str()),
-        ("LICENSE", "Apache-2.0"),
-        (
-            "design-systems/test/manifest.json",
-            r#"{"name":"Test System","description":"Developer tools"}"#,
-        ),
-        ("design-systems/test/DESIGN.md", "Graphite and blue"),
-        (
-            "design-templates/landing/SKILL.md",
-            "---\nname: Landing\ndescription: Marketing page\n---\n# Landing",
-        ),
-        (
-            "skills/design-brief/SKILL.md",
-            "---\nname: Brief\ndescription: Design decisions\n---\n# Brief",
-        ),
-        ("craft/color.md", "# Color contrast"),
-    ]
-    .into_iter()
-    .chain(extra.iter().copied())
-    {
-        let mut header = tar::Header::new_gnu();
-        header.set_size(content.len() as u64);
-        header.set_mode(0o644);
-        header.set_cksum();
-        archive
-            .append_data(&mut header, format!("source/{path}"), content.as_bytes())
-            .unwrap();
-    }
-    archive.into_inner().unwrap().finish().unwrap()
-}
+const ENGINE: &str = "#!/bin/sh\nif [ \"$1\" = engine-probe ]; then printf 'impeccable-engine 0.1.14\\n'; else printf '4.0.0\\n'; fi\n";
 
-fn archive(extra: &[(&str, &str)]) -> Vec<u8> {
-    archive_with_version("1.2.3", extra)
-}
 pub(in crate::core) fn prepare_fixture(
     directory: &Path,
     extra: &[(&str, &str)],
 ) -> Result<(), CoreError> {
+    for (relative, content) in [
+        (".agents/skills/impeccable/SKILL.md", "---\nname: impeccable\ndescription: Design direction, UX and accessible interfaces\nmetadata:\n  version: 1.2.3\n---\n# Impeccable\nUse the actual project identity."),
+        (".agents/skills/impeccable/scripts/VERSION", "0.1.12\n"),
+        (".agents/skills/impeccable/scripts/impeccable", "#!/bin/sh\nexec \"$IMPECCABLE_BIN\" \"$@\"\n"),
+        (".agents/skills/impeccable/scripts/impeccable.cmd", "@echo off\r\n\"%IMPECCABLE_BIN%\" %*\r\n"),
+        (".agents/skills/impeccable/scripts/live-browser.js", "export const live = true;"),
+        (".agents/skills/impeccable/reference/craft-floor.md", "# Craft floor\nPreserve user intent and verify interaction."),
+        (".agents/skills/impeccable/reference/new-work.md", "# New work\nExplore the actual product and choose a coherent visual direction."),
+        (".agents/skills/impeccable/reference/forms.md", "# Accessible forms\nAccessible form controls and buttons."),
+        (".agents/skills/impeccable/reference/color.md", "# Color contrast\nReadable foreground and background color contrast."),
+        (".agents/skills/impeccable/agents/reviewer.toml", "description = \"Design reviewer\"\n"),
+    ].into_iter().chain(extra.iter().copied()) {
+        let path = directory.join(relative);
+        fs::create_dir_all(path.parent().ok_or_else(invalid)?)?;
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+        use std::io::Write;
+        file.write_all(content.as_bytes())?;
+    }
+    let binary = directory.join(executable_relative());
+    fs::create_dir_all(binary.parent().ok_or_else(invalid)?)?;
+    fs::write(&binary, ENGINE)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(binary, fs::Permissions::from_mode(0o755))?;
+    }
     prepare(
-        std::io::Cursor::new(archive(extra)),
         directory,
         "1.2.3",
-        &"a".repeat(40),
-        &"b".repeat(64),
-    )
+        &format!("{:x}", Sha256::digest(ENGINE.as_bytes())),
+    )?;
+    Ok(())
 }
 #[test]
-fn extracts_only_portable_resources_and_preserves_license_and_provenance() {
-    let dir = tempfile::tempdir().unwrap();
+fn keeps_complete_skill_runtime_assets_and_separate_version_receipts() {
+    let directory = tempfile::tempdir().unwrap();
+    prepare_fixture(directory.path(), &[]).unwrap();
+    let pack = Pack::at(directory.path(), "1.2.3").unwrap();
+    assert_eq!(pack.index.version, "1.2.3");
+    assert_eq!(pack.index.engine_version, ENGINE_VERSION);
+    assert_eq!(pack.index.cli_version, CLI_VERSION);
+    assert_eq!(pack.index.bundle_engine_version, "0.1.12");
+    assert!(directory
+        .path()
+        .join(".agents/skills/impeccable/scripts/live-browser.js")
+        .is_file());
+    assert!(directory
+        .path()
+        .join(".agents/skills/impeccable/agents/reviewer.toml")
+        .is_file());
+    assert!(fs::read_to_string(directory.path().join("LICENSE"))
+        .unwrap()
+        .contains("Apache License"));
+    assert!(!directory.path().join(".codex/hooks.json").exists());
+    assert!(Pack::at(directory.path(), "9.0.0").is_err());
+}
+#[test]
+fn reads_full_references_in_bounded_unicode_pages_and_rejects_path_escape() {
+    let directory = tempfile::tempdir().unwrap();
+    let long = format!("# Long reference\n{}", "á".repeat(13000));
     prepare_fixture(
-        dir.path(),
-        &[
-            ("apps/daemon/server.ts", "never executed"),
-            ("skills/ui-ux-pro-max/SKILL.md", "catalogue pointer"),
-            (
-                "skills/design-brief/scripts/install.js",
-                "unsafe host install",
-            ),
-            ("design-systems/_schema/schema.json", "{}"),
-            ("design-systems/README.md", "readme"),
-        ],
+        directory.path(),
+        &[(".agents/skills/impeccable/reference/long.md", &long)],
     )
     .unwrap();
-    assert!(!dir.path().join("apps").exists());
-    assert!(!dir.path().join("skills/ui-ux-pro-max").exists());
-    assert!(!dir
-        .path()
-        .join("skills/design-brief/scripts/install.js")
-        .exists());
-    assert_eq!(
-        fs::read_to_string(dir.path().join("LICENSE")).unwrap(),
-        "Apache-2.0"
-    );
-    let pack = Pack::at(dir.path(), "1.2.3").unwrap();
-    assert_eq!(pack.index.resources.len(), 4);
-    assert_eq!(pack.index.commit, "a".repeat(40));
-    assert!(Pack::at(dir.path(), "9.0.0").is_err());
-}
-#[test]
-fn searches_metadata_and_reads_unicode_in_bounded_pages_without_path_escape() {
-    let dir = tempfile::tempdir().unwrap();
-    let long = "á".repeat(13000);
-    prepare_fixture(dir.path(), &[("design-systems/test/tokens.css", &long)]).unwrap();
-    let pack = Pack::at(dir.path(), "1.2.3").unwrap();
-    let search: Value = serde_json::from_str(
+    let pack = Pack::at(directory.path(), "1.2.3").unwrap();
+    let listing: Value = serde_json::from_str(
+        &pack
+            .execute("design_read", &json!({"id":"impeccable/long","file":null}))
+            .unwrap(),
+    )
+    .unwrap();
+    let file = listing["files"][0].as_str().unwrap();
+    let first: Value = serde_json::from_str(
+        &pack
+            .execute("design_read", &json!({"id":"impeccable/long","file":file}))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(first["content"].as_str().unwrap().chars().count(), 12000);
+    assert_eq!(first["hostInstructions"], HOST_ADAPTATION);
+    let second: Value = serde_json::from_str(
         &pack
             .execute(
-                "design_search",
-                &json!({"query":"developer","kind":"system"}),
+                "design_read",
+                &json!({"id":"impeccable/long","file":file,"offset":12000}),
             )
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(search["total"], 1);
-    assert!(search["resources"][0].get("files").is_none());
-    let listing: Value = serde_json::from_str(
-        &pack
-            .execute("design_read", &json!({"id":"design-systems/test"}))
-            .unwrap(),
-    )
-    .unwrap();
-    assert!(listing["files"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("design-systems/test/tokens.css")));
-    for file in [Value::Null, json!(""), json!(".")] {
-        let listing: Value = serde_json::from_str(
-            &pack
-                .execute(
-                    "design_read",
-                    &json!({"id":"design-systems/test","file":file,"offset":0}),
-                )
-                .unwrap(),
-        )
-        .unwrap();
-        assert!(listing["files"].is_array());
-    }
-    let schema = definitions()
-        .into_iter()
-        .find(|d| d["name"] == "design_read")
-        .unwrap();
-    assert_eq!(schema["strict"], false);
-    let validator = jsonschema::validator_for(&schema["parameters"]).unwrap();
-    assert!(validator.is_valid(&json!({"id":"design-systems/test","file":null})));
-    assert!(validator.is_valid(&json!({"id":"design-systems/test"})));
-    let args = json!({"id":"design-systems/test","file":"design-systems/test/tokens.css"});
-    let read: Value = serde_json::from_str(&pack.execute("design_read", &args).unwrap()).unwrap();
-    assert_eq!(read["content"].as_str().unwrap().chars().count(), 12000);
-    assert_eq!(read["nextOffset"], 12000);
-    let mut next = args.clone();
-    next["offset"] = json!(12000);
-    let page: Value = serde_json::from_str(&pack.execute("design_read", &next).unwrap()).unwrap();
-    assert_eq!(page["content"].as_str().unwrap().chars().count(), 1000);
+    assert!(second["nextOffset"].is_null());
+    assert_eq!(
+        first["content"].as_str().unwrap().chars().count()
+            + second["content"].as_str().unwrap().chars().count(),
+        long.chars().count()
+    );
     assert!(pack
         .execute(
             "design_read",
-            &json!({"id":"design-systems/test","file":"../../secret"})
+            &json!({"id":"impeccable/long","file":"../../secret"})
         )
         .is_err());
     assert!(pack
         .execute("design_search", &json!({"query":"","offset":-1}))
         .is_err());
 }
-
 #[test]
-fn portuguese_intent_search_ranks_partial_matches_and_preserves_filters_and_pages() {
-    let dir = tempfile::tempdir().unwrap();
+fn searches_portuguese_intents_and_pages_the_impeccable_playbooks() {
+    let directory = tempfile::tempdir().unwrap();
     let paths: Vec<_> = (0..14)
-        .map(|n| format!("design-templates/form-{n:02}/SKILL.md"))
+        .map(|index| format!(".agents/skills/impeccable/reference/form-{index:02}.md"))
         .collect();
-    let extra: Vec<_> = paths
+    let extras: Vec<_> = paths
         .iter()
         .map(|path| {
             (
                 path.as_str(),
-                "---\nname: Form\ndescription: Accessible form controls and buttons\n---\n# Form",
+                "# Form\nAccessible form controls and buttons.",
             )
         })
         .collect();
-    prepare_fixture(dir.path(), &extra).unwrap();
-    let pack = Pack::at(dir.path(), "1.2.3").unwrap();
+    prepare_fixture(directory.path(), &extras).unwrap();
+    let pack = Pack::at(directory.path(), "1.2.3").unwrap();
     let search = |query: &str, kind: &str, offset: usize| -> Value {
         serde_json::from_str(
             &pack
@@ -177,156 +140,144 @@ fn portuguese_intent_search_ranks_partial_matches_and_preserves_filters_and_page
         )
         .unwrap()
     };
-    // No resource contains every original Portuguese word; task synonyms and
-    // ranked partial overlap still find all of the relevant form references.
-    let first = search(
-        "Quero melhorar acessibilidade dos formulários e botões",
-        "template",
-        0,
-    );
-    assert_eq!(first["total"], 14);
+    let first = search("acessibilidade formulários botões", "craft", 0);
     assert_eq!(first["resources"].as_array().unwrap().len(), 12);
     assert_eq!(first["nextOffset"], 12);
-    let second = search("acessibilidade formularios botoes", "template", 12);
-    assert_eq!(second["total"], 14);
-    assert_eq!(second["resources"].as_array().unwrap().len(), 2);
-    assert!(second["nextOffset"].is_null());
-    assert_ne!(first["resources"][0]["id"], second["resources"][0]["id"]);
-    assert_eq!(search("formulários", "system", 0)["total"], 0);
+    assert_eq!(
+        search("acessibilidade formulários botões", "craft", 12)["resources"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(search("", "system", 0)["total"], 0);
     assert_eq!(search("nadaequivalente", "all", 0)["total"], 0);
-    assert_eq!(search("", "template", 0)["total"], 15);
     assert_eq!(
         search("contraste de cores", "craft", 0)["resources"][0]["id"],
-        "craft/color.md"
+        "impeccable/color"
     );
 }
-
 #[test]
-fn named_resource_ranks_above_incidental_description_matches() {
-    let dir = tempfile::tempdir().unwrap();
-    prepare_fixture(
-        dir.path(),
-        &[
-            (
-                "design-systems/stripe/manifest.json",
-                r#"{"name":"Stripe","description":"Payment surfaces"}"#,
-            ),
-            ("design-systems/stripe/DESIGN.md", "Stripe rules"),
-            (
-                "design-systems/incidental/manifest.json",
-                r#"{"name":"Incidental","description":"Examples related to Stripe"}"#,
-            ),
-            ("design-systems/incidental/DESIGN.md", "Other rules"),
-        ],
+fn refuses_racing_skill_versions_new_engine_requirements_and_modified_executables() {
+    let directory = tempfile::tempdir().unwrap();
+    prepare_fixture(directory.path(), &[]).unwrap();
+    let digest = format!("{:x}", Sha256::digest(ENGINE.as_bytes()));
+    assert!(prepare(directory.path(), "1.2.4", &digest).is_err());
+    fs::write(
+        directory
+            .path()
+            .join(".agents/skills/impeccable/scripts/VERSION"),
+        "0.2.0",
     )
     .unwrap();
-    let result: Value = serde_json::from_str(
-        &Pack::at(dir.path(), "1.2.3")
-            .unwrap()
-            .execute(
-                "design_search",
-                &json!({"query":"sistema Stripe contraste","kind":"system"}),
-            )
-            .unwrap(),
+    assert!(prepare(directory.path(), "1.2.3", &digest).is_err());
+    fs::write(
+        directory
+            .path()
+            .join(".agents/skills/impeccable/scripts/VERSION"),
+        "0.1.12",
     )
     .unwrap();
-    assert_eq!(result["total"], 2);
-    assert_eq!(result["resources"][0]["id"], "design-systems/stripe");
-}
-#[test]
-fn incomplete_or_duplicate_packages_never_validate() {
-    let dir = tempfile::tempdir().unwrap();
-    assert!(prepare_fixture(dir.path(), &[("LICENSE", "duplicate")]).is_err());
-    let dir = tempfile::tempdir().unwrap();
-    assert!(prepare(
-        std::io::Cursor::new(archive(&[])),
-        dir.path(),
-        "2.0.0",
-        &"a".repeat(40),
-        &"b".repeat(64)
+    fs::write(
+        directory.path().join(executable_relative()),
+        "changed binary",
     )
-    .is_err());
+    .unwrap();
+    assert!(Pack::at(directory.path(), "1.2.3").is_err());
 }
-
 #[test]
-fn accepts_a_source_manifest_that_lags_the_release_by_one_or_more_patches() {
-    let dir = tempfile::tempdir().unwrap();
-    prepare(
-        std::io::Cursor::new(archive_with_version("1.2.1", &[])),
-        dir.path(),
+fn private_preparation_keeps_signed_assets_without_redundant_launcher_engine() {
+    let directory = tempfile::tempdir().unwrap();
+    prepare_fixture(directory.path(), &[]).unwrap();
+    let fallback = directory
+        .path()
+        .join(".agents/skills/impeccable/scripts/bin/platform/impeccable");
+    fs::create_dir_all(fallback.parent().unwrap()).unwrap();
+    fs::write(&fallback, [0u8; 16]).unwrap();
+    let files = prepare(
+        directory.path(),
         "1.2.3",
-        &"a".repeat(40),
-        &"b".repeat(64),
+        &format!("{:x}", Sha256::digest(ENGINE.as_bytes())),
     )
     .unwrap();
-    assert!(Pack::at(dir.path(), "1.2.3").is_ok());
-
-    let incompatible = tempfile::tempdir().unwrap();
-    assert!(prepare(
-        std::io::Cursor::new(archive_with_version("1.1.9", &[])),
-        incompatible.path(),
-        "1.2.3",
-        &"a".repeat(40),
-        &"b".repeat(64),
-    )
-    .is_err());
+    assert!(!fallback.exists());
+    assert!(!files.iter().any(|file| file.contains("scripts/bin/")));
+    assert!(files
+        .iter()
+        .any(|file| file.ends_with("scripts/live-browser.js")));
+    assert!(files.contains(&executable_relative()));
+    assert!(Pack::at(directory.path(), "1.2.3").is_ok());
 }
-
 #[test]
-fn uses_the_packaged_manifest_when_the_monorepo_version_lags_the_release() {
-    let dir = tempfile::tempdir().unwrap();
-    prepare(
-        std::io::Cursor::new(archive_with_version(
-            "1.2.3",
-            &[(
-                "apps/packaged/package.json",
-                r#"{"name":"@open-design/packaged","version":"1.3.0"}"#,
-            )],
-        )),
-        dir.path(),
-        "1.3.0",
-        &"a".repeat(40),
-        &"b".repeat(64),
-    )
-    .unwrap();
-
-    assert!(dir.path().join("apps/packaged/package.json").is_file());
-    assert!(Pack::at(dir.path(), "1.3.0").is_ok());
-}
-
-#[test]
-fn rejects_an_untrusted_packaged_manifest_name() {
-    let dir = tempfile::tempdir().unwrap();
-    assert!(prepare(
-        std::io::Cursor::new(archive_with_version(
-            "1.2.3",
-            &[(
-                "apps/packaged/package.json",
-                r#"{"name":"different-package","version":"1.3.0"}"#,
-            )],
-        )),
-        dir.path(),
-        "1.3.0",
-        &"a".repeat(40),
-        &"b".repeat(64),
-    )
-    .is_err());
+fn managed_commands_use_project_cwd_and_private_upstream_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    prepare_fixture(directory.path(), &[]).unwrap();
+    let command = command_at(directory.path(), project.path()).unwrap();
+    let command = command.as_std();
+    let project_path = fs::canonicalize(project.path()).unwrap();
+    let expected =
+        PathBuf::from(crate::library::strip_verbatim(&project_path.to_string_lossy()).as_ref());
+    assert_eq!(command.get_current_dir(), Some(expected.as_path()));
+    let env = |key: &str| {
+        command
+            .get_envs()
+            .find(|(name, _)| *name == key)
+            .and_then(|(_, value)| value)
+            .map(|value| value.to_string_lossy().into_owned())
+    };
+    assert_eq!(env("IMPECCABLE_PROVIDER_ID").as_deref(), Some("codex"));
+    assert_eq!(env("IMPECCABLE_LIVE_COPY_AGENT").as_deref(), Some("chat"));
+    assert_eq!(
+        env("IMPECCABLE_BIN").as_deref(),
+        command.get_program().to_str()
+    );
+    assert!(Path::new(&env("IMPECCABLE_SKILL_DIR").unwrap()).ends_with(SKILL_DIRECTORY));
+    assert!(Path::new(&env("IMPECCABLE_HOME").unwrap()).ends_with("cache"));
+    assert!(command
+        .get_envs()
+        .any(|(name, value)| name == "IMPECCABLE_CONTEXT_DIR" && value.is_none()));
+    #[cfg(windows)]
+    {
+        assert!(!command.get_program().to_string_lossy().starts_with(r"\\?\"));
+        assert!(!env("IMPECCABLE_SKILL_DIR").unwrap().starts_with(r"\\?\"));
+    }
+    assert!(!project.path().join(".impeccable").exists());
 }
 #[cfg(unix)]
 #[test]
-fn resource_symlinks_cannot_escape_the_active_package() {
-    let dir = tempfile::tempdir().unwrap();
-    prepare_fixture(dir.path(), &[]).unwrap();
-    let outside = tempfile::NamedTempFile::new().unwrap();
-    fs::write(outside.path(), "secret").unwrap();
-    let file = dir.path().join("design-systems/test/DESIGN.md");
-    fs::remove_file(&file).unwrap();
-    std::os::unix::fs::symlink(outside.path(), file).unwrap();
-    let pack = Pack::at(dir.path(), "1.2.3").unwrap();
+fn rejects_pack_and_executable_symlinks_outside_managed_generation() {
+    let directory = tempfile::tempdir().unwrap();
+    let external = tempfile::NamedTempFile::new().unwrap();
+    prepare_fixture(directory.path(), &[]).unwrap();
+    let pack = Pack::at(directory.path(), "1.2.3").unwrap();
+    let reference = ".agents/skills/impeccable/reference/color.md";
+    fs::remove_file(directory.path().join(reference)).unwrap();
+    std::os::unix::fs::symlink(external.path(), directory.path().join(reference)).unwrap();
     assert!(pack
         .execute(
             "design_read",
-            &json!({"id":"design-systems/test","file":"design-systems/test/DESIGN.md"})
+            &json!({"id":"impeccable/color","file":reference})
         )
         .is_err());
+    assert!(prepare(
+        directory.path(),
+        "1.2.3",
+        &format!("{:x}", Sha256::digest(ENGINE.as_bytes()))
+    )
+    .is_err());
+    fs::remove_file(directory.path().join(executable_relative())).unwrap();
+    std::os::unix::fs::symlink(
+        external.path(),
+        directory.path().join(executable_relative()),
+    )
+    .unwrap();
+    assert!(command_at(directory.path(), directory.path()).is_err());
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn verifies_both_managed_engine_identity_and_cli_version() {
+    let directory = tempfile::tempdir().unwrap();
+    prepare_fixture(directory.path(), &[]).unwrap();
+    verify(directory.path(), "1.2.3").await.unwrap();
 }

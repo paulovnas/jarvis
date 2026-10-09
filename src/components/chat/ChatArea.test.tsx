@@ -60,6 +60,38 @@ describe("Persistent live conversation", () => {
       return () => { set.delete(callback); };
     });
   });
+  it("opens Live in the chat's native browser tabs and closes the session without submitting the draft", async () => {
+    const user = userEvent.setup();
+    let ready = false;
+    const live = () => ({ conversationId: "c1", state: ready ? "ready" : "off", url: ready ? "http://localhost:5173/" : null, tabId: ready ? "live-page" : null, error: null, setupNeeded: null });
+    let activeId: string | null = null;
+    call.mockImplementation(async (command, args) => {
+      if (command === "get_impeccable_live") return live();
+      if (command === "get_workflow_catalog") return { revision: 0, agents: [], flows: [], builtinAgents: [], builtinFlows: [] };
+      if (command === "start_impeccable_live" || command === "stop_impeccable_live") {
+        ready = command === "start_impeccable_live"; activeId = ready ? "live-page" : null;
+        for (const handler of listeners.get("browser:changed") ?? []) handler({ event: "browser:changed", id: 1, payload: { conversationId: "c1" } });
+        return live();
+      }
+      if (command === "get_browser_tabs") return { tabs: ready ? [{ id: "live-page", conversationId: "c1", title: "Projeto · Live", url: "http://localhost:5173/", loading: false }] : [], activeId, backend: "embedded" };
+      if (command === "browser_command") { activeId = (args as { request: { id?: string } }).request.id ?? null; return {}; }
+      return emptyChat();
+    });
+    render(<TestChat />);
+    await user.type(await screen.findByRole("textbox", { name: "Mensagem" }), "Rascunho preservado");
+    const start = await screen.findByRole("button", { name: "Ativar Impeccable Live" });
+    await waitFor(() => expect(start).toBeEnabled());
+    await user.click(start);
+    expect(await screen.findByRole("tab", { name: "Projeto · Live" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("textbox", { name: "Endereço do navegador" })).toHaveValue("http://localhost:5173/");
+    await user.click(screen.getByRole("tab", { name: "Chat" }));
+    expect(screen.getByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho preservado");
+    await user.click(screen.getByRole("button", { name: "Desligar Impeccable Live" }));
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "Projeto · Live" })).not.toBeInTheDocument());
+    expect(call).toHaveBeenCalledWith("start_impeccable_live", { conversationId: "c1", options: expect.objectContaining({ model: "model", workflow: "designer", approvalMode: "yolo" }) });
+    expect(call).toHaveBeenCalledWith("stop_impeccable_live", { conversationId: "c1" });
+    expect(call.mock.calls.some(([command]) => command === "start_agent_turn")).toBe(false);
+  });
   it("retries with the current composer provider, model and reasoning while preserving the failed message and image", async () => {
     const user = userEvent.setup();
     const image = { id: "image-1", conversationId: "c1", name: "original.png", mime: "image/png", size: 100, kind: "image" as const };

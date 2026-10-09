@@ -210,6 +210,7 @@ pub fn run() {
         .manage(voice::VoiceState::default())
         .manage(core::CoreState::default())
         .manage(core::openmontage::BacklotState::default())
+        .manage(core::impeccable_live::ImpeccableLiveState::default())
         .manage(persistence::AppState::default())
         .manage(openai_codex::OpenAiCodexState::default())
         .manage(claude::ClaudeState::default())
@@ -397,6 +398,9 @@ pub fn run() {
                 app_exit::cancel_app_exit,
                 updater::install_app_update,
                 core::get_core_status,
+                core::impeccable_live::get_impeccable_live,
+                core::impeccable_live::start_impeccable_live,
+                core::impeccable_live::stop_impeccable_live,
                 core::check_core_updates,
                 core::install_core_component,
                 core::cancel_core_installation,
@@ -619,6 +623,7 @@ fn prepare_exit_with_reason(
         &app.state::<system::SystemState>(),
         &app.state::<agent::AgentState>(),
     )?;
+    core::impeccable_live::shutdown_sync(app);
     app.state::<remote::RemoteState>().shutdown();
     app.state::<voice::VoiceState>().shutdown(app, None);
     app_exit::allow(app);

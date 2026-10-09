@@ -4,7 +4,7 @@ export function coreFixture(installed = true): CoreSnapshot {
     { id: "context-mode", name: "Context-mode", repository: "https://github.com/mksglu/context-mode" },
     { id: "ponytail", name: "Ponytail", repository: "https://github.com/DietrichGebert/ponytail" },
     { id: "beads", name: "Beads", repository: "https://github.com/gastownhall/beads" },
-    { id: "open-design", name: "Open Design", repository: "https://github.com/nexu-io/open-design" },
+    { id: "impeccable", name: "Impeccable", repository: "https://github.com/pbakaus/impeccable" },
     { id: "context7", name: "Context7", repository: "https://github.com/upstash/context7" },
     { id: "lsp", name: "Servidores LSP", repository: "https://github.com/typescript-language-server/typescript-language-server" },
     { id: "openmontage", name: "OpenMontage", repository: "https://github.com/calesthio/OpenMontage" },

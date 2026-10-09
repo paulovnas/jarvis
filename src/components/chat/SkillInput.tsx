@@ -1,4 +1,4 @@
-import { useEffect, useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Extension, Node, EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, type Editor, type JSONContent, type NodeViewProps } from "@tiptap/react";
 import { Plugin } from "@tiptap/pm/state";
@@ -8,6 +8,7 @@ import Text from "@tiptap/extension-text";
 import HardBreak from "@tiptap/extension-hard-break";
 import { UndoRedo } from "@tiptap/extensions";
 import { BookOpen, X } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
@@ -147,16 +148,22 @@ interface Props {
   children: ReactNode;
   attachments?: ReactNode;
   onFiles?: (files: File[]) => void;
+  loadHistory?: (before?: number) => Promise<{ messages: string[]; before: number }>;
   ref?: Ref<{ focus: () => void }>;
 }
 
-export function SkillInput({ draft, onChange, onSend, disabled, compacting, working, children, attachments, onFiles, ref }: Props) {
+export function SkillInput({ draft, onChange, onSend, disabled, compacting, working, children, attachments, onFiles, loadHistory, ref }: Props) {
   const [query, setQuery] = useState<Query | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<{ skills?: Skill[]; error?: string } | null>(null);
   const [selected, setSelected] = useState("");
   const listId = useId();
   const current = useRef(draft);
+  const history = useRef<{ messages: string[]; before?: number; index: number; empty: ChatDraft } | null>(null);
+  const historyRequest = useRef(0);
+  const historyLoading = useRef(false);
+  const cancelHistory = useCallback(() => { history.current = null; historyRequest.current++; historyLoading.current = false; }, []);
+  useEffect(() => cancelHistory, [cancelHistory]);
   // React may commit an older echo after a newer editor transaction. Only external
   // draft replacements (queue restoration / successful send) may reset the document.
   const emittedDrafts = useRef(new WeakSet<ChatDraft>());
@@ -171,7 +178,7 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
     content: initialDocument,
     editable: !disabled,
     editorProps,
-    onUpdate: ({ editor }) => { const next = readDraft(editor); const files = current.current.parts?.filter(part => part.type === "attachment") ?? []; current.current = files.length ? { ...next, parts: [...(next.parts ?? [{ type: "text", text: next.content }]), ...files] } : next; emittedDrafts.current.add(current.current); onChange(current.current); refreshQuery(editor); },
+    onUpdate: ({ editor }) => { cancelHistory(); const next = readDraft(editor); const files = current.current.parts?.filter(part => part.type === "attachment") ?? []; current.current = files.length ? { ...next, parts: [...(next.parts ?? [{ type: "text", text: next.content }]), ...files] } : next; emittedDrafts.current.add(current.current); onChange(current.current); refreshQuery(editor); },
     onSelectionUpdate: ({ editor }) => refreshQuery(editor),
     onBlur: () => { setQuery(null); setCatalog(null); },
     onFocus: ({ editor }) => refreshQuery(editor),
@@ -179,6 +186,7 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
   useImperativeHandle(ref, () => ({ focus: () => { if (editor && !editor.isDestroyed) { editor.commands.setTextSelection(editor.state.doc.content.size - 1); editor.view.focus(); } } }), [editor]);
   useEffect(() => {
     if (editor && !editor.isDestroyed && !emittedDrafts.current.has(draft) && JSON.stringify(draft) !== JSON.stringify(current.current)) {
+      cancelHistory();
       const unchanged = JSON.stringify(inputDocument(draft)) === JSON.stringify(inputDocument(current.current));
       current.current = draft;
       if (unchanged) return;
@@ -186,12 +194,49 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
       editor.commands.setTextSelection(editor.state.doc.content.size - 1);
       setQuery(null);
     }
-  }, [draft, editor]);
+  }, [draft, editor, cancelHistory]);
   useEffect(() => {
+    if (disabled) cancelHistory();
     if (!editor || editor.isDestroyed) return;
     editor.setEditable(!disabled);
     editor.view.dom.setAttribute("aria-disabled", String(disabled));
-  }, [editor, disabled]);
+  }, [editor, disabled, cancelHistory]);
+  async function navigateHistory(direction: -1 | 1) {
+    if (!editor || !loadHistory || historyLoading.current) return;
+    let state = history.current ?? { messages: [], before: undefined, index: 0, empty: current.current };
+    history.current = state;
+    let index = state.index + direction;
+    const request = ++historyRequest.current;
+    historyLoading.current = true;
+    try {
+      while (index < 0 && (state.before === undefined || state.before > 0)) {
+        const previous = state.before;
+        const page = await loadHistory(previous);
+        // An edit, external draft replacement or closed chat invalidates pending reads.
+        if (request !== historyRequest.current || editor.isDestroyed || !editor.isEditable) return;
+        state = { ...state, messages: [...page.messages, ...state.messages], index: state.index + page.messages.length, before: page.before };
+        history.current = state;
+        index += page.messages.length;
+        if (previous !== undefined && page.before >= previous) break;
+      }
+      if (index < 0) return;
+      const files = current.current.parts?.filter(part => part.type === "attachment") ?? [];
+      const text = state.messages[index];
+      const next: ChatDraft = index >= state.messages.length ? state.empty : files.length ? { content: text, parts: [{ type: "text", text }, ...files] } : { content: text };
+      editor.commands.setContent(inputDocument(next), { emitUpdate: false });
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+      current.current = next;
+      emittedDrafts.current.add(next);
+      onChange(next);
+      setQuery(null); setCatalog(null);
+      if (index >= state.messages.length) cancelHistory();
+      else history.current = { ...state, index };
+    } catch {
+      if (request === historyRequest.current) { cancelHistory(); toast.error("Não foi possível carregar o histórico de mensagens."); }
+    } finally {
+      if (request === historyRequest.current) historyLoading.current = false;
+    }
+  }
   const queryKey = query ? `${query.from}:${query.text}` : null;
   const open = query !== null && dismissed !== queryKey && !disabled;
   useEffect(() => {
@@ -217,7 +262,7 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
     if (open && activeSkill) editor.view.dom.setAttribute("aria-activedescendant", `${listId}-${activeSkill.id}`);
     else editor.view.dom.removeAttribute("aria-activedescendant");
   }, [editor, open, activeSkill, listId]);
-  return <div onPasteCapture={event => {
+  return <div onCompositionStartCapture={cancelHistory} onPasteCapture={event => {
     const files = Array.from(event.clipboardData.files);
     if (files.length) { event.preventDefault(); event.stopPropagation(); if (!disabled) onFiles?.(files); }
   }} onKeyDownCapture={event => {
@@ -234,6 +279,11 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
       if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
         event.preventDefault(); event.stopPropagation(); if (activeSkill) choose(activeSkill); return;
       }
+    }
+    if ((event.key === "ArrowUp" || event.key === "ArrowDown") && event.target === editor?.view.dom && editor.state.selection.empty && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && loadHistory && (history.current || (event.key === "ArrowUp" && current.current.content === ""))) {
+      event.preventDefault(); event.stopPropagation();
+      void navigateHistory(event.key === "ArrowUp" ? -1 : 1);
+      return;
     }
     if (event.key === "Enter" && !event.shiftKey && event.target === editor?.view.dom) { event.preventDefault(); event.stopPropagation(); onSend(); }
   }}>

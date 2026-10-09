@@ -52,7 +52,7 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
           <div className="mb-4 flex items-start justify-between">
             <div className={`flex size-10 items-center justify-center rounded-md border ${color} ${tint}`}><Icon className="size-5" /></div>
             <div className="flex items-center gap-1">
-              {item.id === "open-design" && <Tooltip><TooltipTrigger render={<Button size="icon-sm" variant="ghost" />} aria-label="Sobre a instalação do Open Design" className="cursor-pointer text-muted-foreground"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent className="max-w-64 border border-border bg-card text-xs leading-5 text-foreground">O Open Design inclui muitos recursos visuais. O download e a preparação podem levar alguns minutos.</TooltipContent></Tooltip>}
+              {item.id === "impeccable" && <Tooltip><TooltipTrigger render={<Button size="icon-sm" variant="ghost" />} aria-label="Sobre a instalação do Impeccable" className="cursor-pointer text-muted-foreground"><CircleHelp className="size-3.5" /></TooltipTrigger><TooltipContent className="max-w-64 border border-border bg-card text-xs leading-5 text-foreground">O Impeccable instala o motor local e as skills de design. O download e a preparação podem levar alguns minutos.</TooltipContent></Tooltip>}
               <Hint content={`Abrir ${item.name} no GitHub`}><Button size="icon-sm" variant="ghost" aria-label={`Abrir ${item.name} no GitHub`} onClick={() => void openUrl(item.repository).catch(() => toast.error("Não foi possível abrir o GitHub."))}><ExternalLink className="size-3 text-muted-foreground" /></Button></Hint>
             </div>
           </div>

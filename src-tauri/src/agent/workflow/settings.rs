@@ -521,9 +521,7 @@ mod instruction_tests {
                     assert!(!section.content.contains("runtime-agent-id"));
                 }
                 assert_eq!(
-                    sections
-                        .iter()
-                        .any(|section| section.title == "Open Design"),
+                    sections.iter().any(|section| section.title == "Impeccable"),
                     *role == Role::Designer
                 );
                 assert_eq!(

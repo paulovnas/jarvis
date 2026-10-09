@@ -129,20 +129,20 @@ describe("ResourceUpdates", () => {
       event: "core:download",
       id: 2,
       payload: {
-        id: "open-design",
+        id: "impeccable",
         download: { receivedBytes: 12 * 1024 * 1024, totalBytes: null },
       },
     }));
 
-    const progress = screen.getByRole("progressbar", { name: "Atualização de Open Design" });
+    const progress = screen.getByRole("progressbar", { name: "Atualização de Impeccable" });
     expect(progress).toHaveAttribute("data-indeterminate");
     expect(progress).not.toHaveAttribute("aria-valuenow");
     expect(screen.getByText("12 MB")).toBeVisible();
 
     invokeMock.mockResolvedValueOnce(downloading);
-    await user.click(screen.getByRole("button", { name: "Cancelar atualização de Open Design" }));
-    expect(invokeMock).toHaveBeenCalledWith("cancel_core_installation", { id: "open-design" });
-    expect(screen.getByRole("button", { name: "Cancelar atualização de Open Design" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Cancelar atualização de Impeccable" }));
+    expect(invokeMock).toHaveBeenCalledWith("cancel_core_installation", { id: "impeccable" });
+    expect(screen.getByRole("button", { name: "Cancelar atualização de Impeccable" })).toBeDisabled();
 
     await act(async () => finishInstall(finished));
   });
@@ -169,7 +169,7 @@ describe("ResourceUpdates", () => {
     await user.click(screen.getByRole("button", { name: "1 atualização de recurso disponível" }));
     await user.click(screen.getByRole("button", { name: "Instalar atualização" }));
 
-    expect(await screen.findByText("Open Design: Manifesto da distribuição incompatível.")).toBeVisible();
+    expect(await screen.findByText("Impeccable: Manifesto da distribuição incompatível.")).toBeVisible();
     expect(screen.queryByText("Uma ou mais ferramentas do Core não puderam ser atualizadas.")).not.toBeInTheDocument();
   });
 });

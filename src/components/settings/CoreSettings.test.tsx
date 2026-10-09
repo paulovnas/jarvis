@@ -94,12 +94,12 @@ it("restores an ongoing download without inventing a percentage when the server 
   state.items[3].download = { receivedBytes: 12582912, totalBytes: null };
   invokeMock.mockResolvedValue(state);
   render(<CoreSettings />);
-  const bar = await screen.findByRole("progressbar", { name: "Instalação de Open Design" });
+  const bar = await screen.findByRole("progressbar", { name: "Instalação de Impeccable" });
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
   expect(bar).not.toHaveAttribute("aria-valuenow");
   expect(bar).toHaveAttribute("data-indeterminate");
   expect(screen.getByText("12 MB")).toBeInTheDocument();
-  await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: "open-design", download: { receivedBytes: 16777216, totalBytes: null } } }));
+  await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: "impeccable", download: { receivedBytes: 16777216, totalBytes: null } } }));
   expect(screen.getByText("16 MB")).toBeInTheDocument();
 });
 
@@ -114,26 +114,26 @@ it("preserves newer download progress when an earlier update check finishes", as
   render(<CoreSettings />);
   await screen.findByText("12 MB");
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
-  await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: "open-design", download: { receivedBytes: 16777216, totalBytes: null } } }));
+  await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: "impeccable", download: { receivedBytes: 16777216, totalBytes: null } } }));
   expect(screen.getByText("16 MB")).toBeInTheDocument();
   await act(async () => finishCheck(state));
   expect(screen.getByText("16 MB")).toBeInTheDocument();
   expect(screen.queryByText("12 MB")).not.toBeInTheDocument();
 });
 
-it("explains the longer Open Design installation through its help tooltip", async () => {
+it("explains the longer Impeccable installation through its help tooltip", async () => {
   const user = userEvent.setup(); invokeMock.mockResolvedValue(coreFixture());
   render(<CoreSettings />);
-  await user.hover(await screen.findByRole("button", { name: "Sobre a instalação do Open Design" }));
+  await user.hover(await screen.findByRole("button", { name: "Sobre a instalação do Impeccable" }));
   expect(await screen.findByText(/O download e a preparação podem levar alguns minutos/)).toBeVisible();
 });
 
-it("offers Open Design installation alongside the other Core resources", async () => {
+it("offers Impeccable installation alongside the other Core resources", async () => {
   const state = coreFixture(); state.ready = false; state.items[3].installed = false; state.items[3].installedVersion = null;
   invokeMock.mockResolvedValue(state);
   render(<CoreSettings />);
-  fireEvent.click(await screen.findByRole("button", { name: "Instalar Open Design" }));
-  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "open-design" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Instalar Impeccable" }));
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("install_core_component", { id: "impeccable" }));
   expect(screen.getByText("7/8 essenciais")).toBeInTheDocument();
 });
 
@@ -147,7 +147,7 @@ it("presents one OpenMontage production core for video, narration and music", as
   expect(screen.queryByRole("button", { name: "Instalar Brag" })).not.toBeInTheDocument();
 });
 
-it.each(["openmontage", "comfyui", "graft"] as const)("offers required %s installation in the essential Core", async id => {
+it.each(["impeccable", "openmontage", "comfyui", "graft"] as const)("offers required %s installation in the essential Core", async id => {
   const state = coreFixture();
   const video = state.items.find(item => item.id === id)!;
   video.installed = false; video.configured = false; video.installedVersion = null;
@@ -288,7 +288,7 @@ it("oferece reinstalação no card e no diagnóstico após uma atualização fal
   invokeMock.mockImplementation(async command => command === "get_diagnostic_summary" ? diagnosticSummary : state);
   render(<CoreSettings />);
 
-  const cardReinstall = await screen.findByRole("button", { name: "Reinstalar Open Design" });
+  const cardReinstall = await screen.findByRole("button", { name: "Reinstalar Impeccable" });
   expect(screen.getByText("Atenção")).toBeInTheDocument();
   fireEvent.click(cardReinstall);
   expect(await screen.findByRole("alertdialog")).toHaveTextContent("baixada e verificada antes de substituir");
@@ -297,9 +297,9 @@ it("oferece reinstalação no card e no diagnóstico após uma atualização fal
   fireEvent.click(screen.getByRole("button", { name: "Diagnóstico e Reparo" }));
   const dialog = await screen.findByRole("dialog", { name: "Diagnóstico e Reparo" });
   expect(within(dialog).getByText("Core funcional · ação pendente")).toBeVisible();
-  const diagnosticReinstall = within(dialog).getByRole("button", { name: "Reinstalar Open Design" });
+  const diagnosticReinstall = within(dialog).getByRole("button", { name: "Reinstalar Impeccable" });
   await waitFor(() => expect(diagnosticReinstall).toBeEnabled());
   fireEvent.click(diagnosticReinstall);
   fireEvent.click(await screen.findByRole("button", { name: "Confirmar reinstalação" }));
-  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("repair_core_component", { id: "open-design", reinstall: true }));
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("repair_core_component", { id: "impeccable", reinstall: true }));
 });

@@ -187,6 +187,7 @@ pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
             | "jarvis_propose_mcp"
             | "jarvis_propose_hook"
             | "jarvis_propose_plugin"
+            | "impeccable"
     ) || crate::core::context::needs_approval(name)
     {
         return capability == Capability::Commands;

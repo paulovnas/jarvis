@@ -198,7 +198,7 @@ fn executor_switch_keeps_intent_and_receipts_without_replaying_large_payloads() 
     session
         .reserve("Continue, mantendo essas restrições".into(), choice)
         .unwrap();
-    session.update(true, |data| { data.turns.last_mut().unwrap().wire.push(json!({"role":"user","_jarvis_runtime":true,"_jarvis_core_design":true,"content":"Prepared OpenDesign references"})); }).unwrap();
+    session.update(true, |data| { data.turns.last_mut().unwrap().wire.push(json!({"role":"user","_jarvis_runtime":true,"_jarvis_core_design":true,"content":"Prepared Impeccable references"})); }).unwrap();
     let data = session.data.lock().unwrap();
     let text = initial_input(&data, false).unwrap();
     assert!(text.len() < 12_000);
@@ -207,7 +207,7 @@ fn executor_switch_keeps_intent_and_receipts_without_replaying_large_payloads() 
         "não publique",
         "Use UTC",
         "Continue, mantendo",
-        "Prepared OpenDesign references",
+        "Prepared Impeccable references",
         "Arquivo salvo",
         "completed",
         "historyIsPartial",
